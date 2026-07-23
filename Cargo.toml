@@ -271,6 +271,9 @@ members = [
     "kask/crates/hkask-goal",
     "kask/crates/hkask-keystore",
     "kask/crates/hkask-regulation",
+    "kask/crates/hkask-guard",
+    "kask/crates/hkask-forecast",
+    "kask/crates/hkask-templates",
 ]
 default-members = ["crates/zed"]
 
@@ -816,6 +819,12 @@ hkask-capability = { path = "kask/crates/hkask-capability" }
 hkask-identity = { path = "kask/crates/hkask-identity" }
 hkask-goal = { path = "kask/crates/hkask-goal" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
+hkask-guard = { path = "kask/crates/hkask-guard" }
+hkask-forecast = { path = "kask/crates/hkask-forecast" }
+hkask-templates = { path = "kask/crates/hkask-templates" }
+llm-guard = "0.2"
+minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
+serde_yaml_neo = "0.11"
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
 ed25519-dalek = "2"
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }

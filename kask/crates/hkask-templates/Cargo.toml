@@ -1,0 +1,46 @@
+[package]
+name = "hkask-templates"
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
+description = "Registry, vocabulary, and template execution for hKask"
+publish = false
+
+[dependencies]
+hkask-types = { path = "../hkask-types" }
+hkask-capability = { path = "../hkask-capability" }
+hkask-forecast = { path = "../hkask-forecast" }
+hkask-guard = { path = "../hkask-guard" }
+hkask-regulation = { path = "../hkask-regulation" }
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_neo.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+ed25519-dalek.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+walkdir.workspace = true
+
+[[test]]
+name = "manifest_fuzz"
+path = "tests/manifest_fuzz.rs"
+
+[[test]]
+name = "yaml_schema_validation"
+path = "tests/yaml_schema_validation.rs"
+
+[[test]]
+name = "template_rendering"
+path = "tests/template_rendering.rs"
+
+[[test]]
+name = "bootstrap_test"
+path = "tests/bootstrap_test.rs"
+
+[features]
+default = []

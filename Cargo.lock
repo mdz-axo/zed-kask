@@ -8629,6 +8629,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-forecast"
+version = "0.31.0"
+dependencies = [
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "hkask-goal"
 version = "0.31.0"
 dependencies = [
@@ -8636,6 +8643,22 @@ dependencies = [
  "hkask-types",
  "serde",
  "uuid",
+]
+
+[[package]]
+name = "hkask-guard"
+version = "0.31.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures-util",
+ "hex",
+ "hkask-regulation",
+ "hkask-types",
+ "llm-guard",
+ "rand 0.9.4",
+ "tokio",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -8683,6 +8706,28 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "hkask-templates"
+version = "0.31.0"
+dependencies = [
+ "ed25519-dalek",
+ "hkask-capability",
+ "hkask-forecast",
+ "hkask-guard",
+ "hkask-regulation",
+ "hkask-types",
+ "minijinja",
+ "proptest 1.10.0",
+ "serde",
+ "serde_json",
+ "serde_yaml_neo",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "zeroize",
 ]
 
 [[package]]
@@ -10723,6 +10768,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "llm-guard"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f23b7f94b95a9d2e621cc9dde79b3a7a9bd3f33ca4e9502c38d0d57707fa657e"
+dependencies = [
+ "aho-corasick",
+ "base64 0.22.1",
+ "regex",
+ "unicode-security",
+]
+
+[[package]]
 name = "lmdb-master-sys"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11276,6 +11333,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "memo-map"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b"
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11504,6 +11567,17 @@ dependencies = [
  "scroll",
  "thiserror 2.0.17",
  "uds",
+]
+
+[[package]]
+name = "minijinja"
+version = "2.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb3d648e68cea56d9858d535ee28f9538404e2dd8cb08ed0bd05dca379477f39"
+dependencies = [
+ "memo-map",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -20323,6 +20397,16 @@ name = "unicode-script"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "383ad40bb927465ec0ce7720e033cb4ca06912855fc35db31b5755d0de75b1ee"
+
+[[package]]
+name = "unicode-security"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e4ddba1535dd35ed8b61c52166b7155d7f4e4b8847cec6f48e71dc66d8b5e50"
+dependencies = [
+ "unicode-normalization",
+ "unicode-script",
+]
 
 [[package]]
 name = "unicode-segmentation"
