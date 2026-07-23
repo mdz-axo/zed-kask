@@ -27,7 +27,7 @@ hKask's own Matrix/7R7 transport is **not** carried into Zed-Kask. Federation an
 
 ### Sign-in is Zed's job too
 
-There is no cloud server, no Kubernetes, no hKask OAuth, and no Admin/Member roles or invite flow. Users sign in with their **existing Zed account** — that single login gates the Zed-based features (communication, collaboration, voice). The local userpod is bound to the signed-in account at startup. hKask's identity layer is trimmed to the userpod/pod data structures only.
+There is no cloud server, no Kubernetes, no hKask OAuth, and no Admin/Member roles or invite flow. Users sign in with their **existing Zed account** — that single login gates the Zed-based features (communication, collaboration, voice). The local userpod is bound to the signed-in account at startup. hKask's separate identity crate is removed entirely — identity is the Zed account, and pod identity lives in the pod runtime (`hkask-pods`) and the primitives in `hkask-types` (`PodID`, `WebID`, `UserID`, `WalletId`).
 
 ### What hKask Is Not
 

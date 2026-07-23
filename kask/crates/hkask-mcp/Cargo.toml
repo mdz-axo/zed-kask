@@ -1,0 +1,22 @@
+[package]
+name = "hkask-mcp"
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
+description = "MCP runtime and governance for hKask"
+publish = false
+
+[dependencies]
+hkask-types = { path = "../hkask-types" }
+hkask-capability = { path = "../hkask-capability" }
+hkask-regulation = { path = "../hkask-regulation" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io", "client", "transport-child-process"] }
+tokio-util.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+jsonschema.workspace = true
+
+[features]
+default = []

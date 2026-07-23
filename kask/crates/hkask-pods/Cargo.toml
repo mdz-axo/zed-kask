@@ -1,0 +1,33 @@
+[package]
+name = "hkask-pods"
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
+description = "Agent pods, ACP, and userpod management for hKask"
+publish = false
+
+[dependencies]
+hkask-types = { path = "../hkask-types" }
+hkask-capability = { path = "../hkask-capability" }
+hkask-mcp = { path = "../hkask-mcp" }
+hkask-templates = { path = "../hkask-templates" }
+hkask-regulation = { path = "../hkask-regulation" }
+hkask-keystore = { path = "../hkask-keystore" }
+hkask-memory = { path = "../hkask-memory" }
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+tokio-util.workspace = true
+ed25519-dalek.workspace = true
+
+[features]
+default = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

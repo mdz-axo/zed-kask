@@ -58,7 +58,6 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-pods` | **Curator + UserPod** + deployment (sovereignty + curator). |
 | `hkask-guard` | **Magna Carta floor (P3.1)** — becomes a layer in zed-kask's inference path. |
 | `hkask-capability` | **OCAP** — sovereignty enforcement. |
-| `hkask-identity` (trimmed) | **UserPod + PodDeployment only** — the sovereignty container data structures. WebID-as-separate-identity, OAuth, `HumanUser` Admin/Member roles, and the invite flow are **deleted**; identity/sign-on is the Zed account (§0), bound to the single local UserPod at startup. |
 | `hkask-keystore` (trimmed) | **Sovereignty crypto only:** OCAP signing, DB passphrase, internal-secret derivation w/ versioning. *Storage* backend → zed-kask keystore. |
 | `hkask-wallet`, `hkask-ledger` | rJoule energy budget + hMem accounting. |
 | 12 MCP servers (default load; §2.4) | **The tools** — hosted in-process in zed-kask. |

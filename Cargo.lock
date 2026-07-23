@@ -1523,7 +1523,7 @@ dependencies = [
  "log",
  "num-rational",
  "num-traits",
- "pastey",
+ "pastey 0.1.1",
  "rayon",
  "thiserror 2.0.17",
  "v_frame",
@@ -8662,16 +8662,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-identity"
-version = "0.31.0"
-dependencies = [
- "chrono",
- "hkask-types",
- "serde",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "hkask-keystore"
 version = "0.31.0"
 dependencies = [
@@ -8691,6 +8681,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp"
+version = "0.31.0"
+dependencies = [
+ "hkask-capability",
+ "hkask-regulation",
+ "hkask-types",
+ "jsonschema",
+ "rmcp",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "hkask-memory"
 version = "0.31.0"
 dependencies = [
@@ -8706,6 +8712,30 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tracing",
+]
+
+[[package]]
+name = "hkask-pods"
+version = "0.31.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "ed25519-dalek",
+ "hkask-capability",
+ "hkask-keystore",
+ "hkask-mcp",
+ "hkask-memory",
+ "hkask-regulation",
+ "hkask-templates",
+ "hkask-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -8848,7 +8878,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e815d50d9e411ba2690d730e6ec139c08260dddb756df315dbd16d01a587226"
 dependencies = [
  "memchr",
- "pastey",
+ "pastey 0.1.1",
  "phf 0.13.1",
  "phf_codegen 0.13.1",
  "serde_json",
@@ -11936,6 +11966,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.1",
+ "cfg-if",
+ "cfg_aliases 0.2.1",
+ "libc",
+]
+
+[[package]]
 name = "node_runtime"
 version = "0.1.0"
 dependencies = [
@@ -13200,6 +13242,12 @@ name = "pastey"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "path"
@@ -14487,6 +14535,20 @@ dependencies = [
  "syn 2.0.117",
  "version_check",
  "yansi",
+]
+
+[[package]]
+name = "process-wrap"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e842efad9119158434d193c6682e2ebee4b44d6ad801d7b349623b3f57cdf55"
+dependencies = [
+ "futures 0.3.32",
+ "indexmap 2.14.0",
+ "nix 0.31.3",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -16046,6 +16108,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmcp"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1f571c72940a19d9532fe52dbea8bc9912bf1d766c2970bb824056b86f3f59"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures 0.3.32",
+ "pastey 0.2.3",
+ "pin-project-lite",
+ "process-wrap",
+ "rmcp-macros",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "rmcp-macros"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aad0035b69380782d78ea95b508327e6deaa2235909053e596eea8f27b5e1d5"
+dependencies = [
+ "darling 0.23.0",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "rmp"
 version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16637,6 +16736,7 @@ version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82d20c4491bc164fa2f6c5d44565947a52ad80b9505d8e36f8d54c27c739fcd0"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "indexmap 2.14.0",
  "ref-cast",
@@ -19577,6 +19677,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

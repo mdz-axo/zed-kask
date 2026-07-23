@@ -267,7 +267,6 @@ members = [
     "kask/crates/kask_panel",
     "kask/crates/hkask-types",
     "kask/crates/hkask-capability",
-    "kask/crates/hkask-identity",
     "kask/crates/hkask-goal",
     "kask/crates/hkask-keystore",
     "kask/crates/hkask-regulation",
@@ -275,6 +274,8 @@ members = [
     "kask/crates/hkask-forecast",
     "kask/crates/hkask-templates",
     "kask/crates/hkask-memory",
+    "kask/crates/hkask-mcp",
+    "kask/crates/hkask-pods",
 ]
 default-members = ["crates/zed"]
 
@@ -817,16 +818,19 @@ sha2 = "0.10"
 blake3 = "1"
 hkask-types = { path = "kask/crates/hkask-types" }
 hkask-capability = { path = "kask/crates/hkask-capability" }
-hkask-identity = { path = "kask/crates/hkask-identity" }
 hkask-goal = { path = "kask/crates/hkask-goal" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-templates = { path = "kask/crates/hkask-templates" }
 hkask-memory = { path = "kask/crates/hkask-memory" }
+hkask-mcp = { path = "kask/crates/hkask-mcp" }
+hkask-pods = { path = "kask/crates/hkask-pods" }
 llm-guard = "0.2"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"
+rmcp = "1"
+tokio-util = { version = "0.7", features = ["rt"] }
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
 ed25519-dalek = "2"
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }

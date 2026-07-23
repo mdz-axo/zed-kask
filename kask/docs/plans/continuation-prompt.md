@@ -22,22 +22,22 @@ Migrating hKask into the `zed-kask` fork of Zed (`Clones/zed-kask`, origin `mdz-
 
 hKask conforms to zed's dependency versions where there are conflicts. **Do NOT bump zed's workspace deps.** The `libsqlite3-sys` conflict: zed pins `0.30.1` (via `sqlez` + `sqlx-sqlite` → `collab`); no `rusqlite` version is compatible. **Resolution:** `hkask-storage` will be rewritten to use a `StoragePort` trait (now defined in `hkask-types` as `StorageDriver`), implemented by `kask_bridge` over zed's `sqlez`. SQLCipher → application-layer encryption (encrypt before store, decrypt after read). See DIVERGENCE.md + seam-specs.md "T0.6-storage".
 
-## Current state — 7 workspace members, 5 compiling
+## Current state — 6 workspace members, 4 compiling
 
 | Crate | Status | Notes |
 |---|---|---|
 | `hkask-types` | ✅ compiles | Now includes `storage.rs` with `DbValue`, `DbRow`, `StorageDriver` trait, `define_driver_store!` macro, `query_map`/`query_row` helpers |
 | `hkask-capability` | ✅ compiles | OCAP ToolPort + DelegationToken |
-| `hkask-identity` | ✅ compiles | Trimmed: UserPod/PodDeployment only. Identity/sign-on = Zed account (no WebID-as-separate-identity, OAuth, Admin/Member roles, invite). WebID, HumanUser, UserPod types still present — to be trimmed per §0 of the plan. |
+
 | `hkask-goal` | ✅ compiles | Goal types |
 | `hkask-keystore` | ✅ compiles | OS keychain, AES-256-GCM (trimmed: sovereignty crypto only) |
 | `kask_bridge` | stub (empty) | D8 — the sole bidirectional seam |
 | `kask_panel` | stub (empty) | D10 — native GPUI Panel |
 | **`hkask-regulation`** | **2 errors remaining** | Port-ified: all `hkask_storage` refs replaced with `hkask_types::storage`. See below. |
 
-Workspace deps added for hKask: `blake3 = "1"`, `ed25519-dalek = "2"`, `keyring`, `aes-gcm`, `argon2`, `hmac`, `hex` (with `serde` feature), `hkask-types`, `hkask-capability`, `hkask-identity`, `hkask-goal`, `hkask-keystore`, `hkask-regulation`.
+Workspace deps added for hKask: `blake3 = "1"`, `ed25519-dalek = "2"`, `keyring`, `aes-gcm`, `argon2`, `hmac`, `hex` (with `serde` feature), `hkask-types`, `hkask-capability`, `hkask-goal`, `hkask-keystore`, `hkask-regulation`.
 
-Workspace members in `Cargo.toml`: `kask/crates/kask_bridge`, `kask/crates/kask_panel`, `kask/crates/hkask-types`, `kask/crates/hkask-capability`, `kask/crates/hkask-identity`, `kask/crates/hkask-goal`, `kask/crates/hkask-keystore`, `kask/crates/hkask-regulation`.
+Workspace members in `Cargo.toml`: `kask/crates/kask_bridge`, `kask/crates/kask_panel`, `kask/crates/hkask-types`, `kask/crates/hkask-capability`, `kask/crates/hkask-goal`, `kask/crates/hkask-keystore`, `kask/crates/hkask-regulation`.
 
 ## The 2 errors to fix in `hkask-regulation`
 
