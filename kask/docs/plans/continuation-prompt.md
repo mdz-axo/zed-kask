@@ -28,7 +28,7 @@ hKask conforms to zed's dependency versions where there are conflicts. **Do NOT 
 |---|---|---|
 | `hkask-types` | ✅ compiles | Now includes `storage.rs` with `DbValue`, `DbRow`, `StorageDriver` trait, `define_driver_store!` macro, `query_map`/`query_row` helpers |
 | `hkask-capability` | ✅ compiles | OCAP ToolPort + DelegationToken |
-| `hkask-identity` | ✅ compiles | WebID, HumanUser, UserPod |
+| `hkask-identity` | ✅ compiles | Trimmed: UserPod/PodDeployment only. Identity/sign-on = Zed account (no WebID-as-separate-identity, OAuth, Admin/Member roles, invite). WebID, HumanUser, UserPod types still present — to be trimmed per §0 of the plan. |
 | `hkask-goal` | ✅ compiles | Goal types |
 | `hkask-keystore` | ✅ compiles | OS keychain, AES-256-GCM (trimmed: sovereignty crypto only) |
 | `kask_bridge` | stub (empty) | D8 — the sole bidirectional seam |

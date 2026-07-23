@@ -8691,6 +8691,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-memory"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "hkask-capability",
+ "hkask-regulation",
+ "hkask-types",
+ "proptest 1.10.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
 name = "hkask-regulation"
 version = "0.31.0"
 dependencies = [

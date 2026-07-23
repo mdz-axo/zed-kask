@@ -274,6 +274,7 @@ members = [
     "kask/crates/hkask-guard",
     "kask/crates/hkask-forecast",
     "kask/crates/hkask-templates",
+    "kask/crates/hkask-memory",
 ]
 default-members = ["crates/zed"]
 
@@ -822,6 +823,7 @@ hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-templates = { path = "kask/crates/hkask-templates" }
+hkask-memory = { path = "kask/crates/hkask-memory" }
 llm-guard = "0.2"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"

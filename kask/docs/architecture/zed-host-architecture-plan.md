@@ -22,6 +22,7 @@ Reasoning chain: `pragmatic-semantics` → `pragmatic-cybernetics` → `falsifia
 - **Divergence policy:** keep `main` a near-clone of `upstream/main`. All hKask integration is isolated to a **small, named set of crates/files** (§3) so `git fetch upstream && git merge upstream/main` stays low-conflict. No scattered edits across Zed's tree.
 - **hKask wiring (FULL MERGE — §14):** hKask's keep-crates + skills registry + scripts + docs are moved **into the zed-kask repo** under a `kask/` namespace (`kask/crates/hkask-*`, `kask/mcp-servers/hkask-mcp-*`, `kask/skills/`, `kask/scripts/`, `kask/docs/`) and added as zed-kask workspace members. The `mdz-axo/hKask` repo is **archived** (read-only reference). zed-kask is the single source of truth — one clone, one build, one CI. (Replaces the prior path-dep/submodule approach, which dissolved once hKask could no longer run standalone.)
 - **Sync cadence (ongoing, Phase 7):** rebase/merge `upstream/main` regularly; resolve conflicts only in the divergent crates; run the hKask integration tests after each sync. The whole point of the fork is to *inherit Zed's improvements for free* — divergence is the cost, so minimize it.
+- **Deployment & identity model (load-bearing):** zed-kask is a **local single-user install** — one user, one sovereign UserPod, on the user's own machine. There is **no cloud server, no Kubernetes/K3s deployment, no hKask OAuth, no Admin/Member roles, no invite flow.** Identity and sign-on are **Zed's**: the user signs into their existing Zed account (`*.zed.dev` account/collab endpoints, kept by D7), and the local UserPod is bound to that signed-in account at startup. Multiplayer, collaboration, voice, and federation ride on **Zed's comms/voip/CRDT** — hKask's Matrix/7R7 transport is dropped entirely. hKask's own identity crate is trimmed to the UserPod/PodDeployment data structures only (§2.2); WebID-as-separate-identity, OAuth, roles, and invite are deleted.
 
 ---
 
@@ -34,7 +35,7 @@ Reasoning chain: `pragmatic-semantics` → `pragmatic-cybernetics` → `falsifia
 > 3. **Divergence #2 — Curator agent:** add the Curator (VSM S4) as a native in-process zed-kask agent (singleton; `CuratorHandle` mpsc authority never crosses a process boundary), selectable in the Agent Panel. ACP is optional (only for external-agent interop).
 > 4. **Divergence #3 — hKask tool processing:** compile hKask's keep-crates into zed-kask; host the 12 default-load MCP tools (§2.4) **in-process** (new transport alongside `context_server`'s `StdioTransport`); emit `reg.*` spans directly.
 > 5. **Thread → memory:** zed-kask threads parsed into UserPod / Curator episodic + semantic memory (extends the existing ACP per-turn encoding).
-> 6. **Remove everything redundant from hKask:** inference router, daemon, ACP seam, MCP-stdio, REPL, chat service, Matrix (all of it), communication MCP, backward-compat shims. **Nothing is removed from zed-kask** — it tracks upstream.
+> 6. **Remove everything redundant from hKask:** inference router, daemon, ACP seam, MCP-stdio, REPL, chat service, Matrix (all of it), communication MCP, **hKask identity/OAuth/Admin-Member roles/invite flow + cloud/Hetzner/K3s deployment**, backward-compat shims. Identity/sign-on becomes **Zed's account** (the user logs into their existing Zed account); the local UserPod is bound to it. **Nothing is removed from zed-kask** — it tracks upstream.
 > 7. **Magnac Carta P1–P4, P12 non-negotiable.** `hkask-guard` becomes a layer in zed-kask's inference path so **every** LLM boundary (direct chat + skill cascade + Curator) is guarded — coverage *improves*.
 
 ---
@@ -57,7 +58,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-pods` | **Curator + UserPod** + deployment (sovereignty + curator). |
 | `hkask-guard` | **Magna Carta floor (P3.1)** — becomes a layer in zed-kask's inference path. |
 | `hkask-capability` | **OCAP** — sovereignty enforcement. |
-| `hkask-identity` | **WebID** — sovereignty identity. |
+| `hkask-identity` (trimmed) | **UserPod + PodDeployment only** — the sovereignty container data structures. WebID-as-separate-identity, OAuth, `HumanUser` Admin/Member roles, and the invite flow are **deleted**; identity/sign-on is the Zed account (§0), bound to the single local UserPod at startup. |
 | `hkask-keystore` (trimmed) | **Sovereignty crypto only:** OCAP signing, DB passphrase, internal-secret derivation w/ versioning. *Storage* backend → zed-kask keystore. |
 | `hkask-wallet`, `hkask-ledger` | rJoule energy budget + hMem accounting. |
 | 12 MCP servers (default load; §2.4) | **The tools** — hosted in-process in zed-kask. |
@@ -65,7 +66,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.3 hKask deletes (redundant; jobs move to zed-kask)
 
-`hkask-inference` (router/providers/config — keep only the `InferencePort` *trait* in `hkask-types`), `hkask-acp` (no cross-process), `hkask-repl`, `hkask-services-chat`, `hkask-communication`, `mcp-servers/hkask-mcp-communication`, the daemon/`kask serve`, Matrix sidecar + all Matrix refs, cloud/Hetzner deploy, `hkask-api` chat/chat_ws, backward-compat shims. `hkask-cli` → slim to backup/wallet/repair/admin (links hKask crates). Deletion-test candidates (decide T0.5): `hkask-condenser`, `hkask-git-cas`, `hkask-services-*`. **Decided — deleted:** `hkask-mcp-filesystem` (zed provides fs tools; §2.4).
+`hkask-inference` (router/providers/config — keep only the `InferencePort` *trait* in `hkask-types`), `hkask-acp` (no cross-process), `hkask-repl`, `hkask-services-chat`, `hkask-communication`, `mcp-servers/hkask-mcp-communication`, the daemon/`kask serve`, Matrix sidecar + all Matrix refs, cloud/Hetzner/K3s deploy, `hkask-api` chat/chat_ws, **hKask identity layer (WebID-as-separate-identity, OAuth, `HumanUser` Admin/Member roles, invite flow — identity is the Zed account; §0)**, backward-compat shims. `hkask-cli` → slim to backup/wallet/repair (local single-user; no group admin). Deletion-test candidates (decide T0.5): `hkask-condenser`, `hkask-git-cas`, `hkask-services-*`. **Decided — deleted:** `hkask-mcp-filesystem` (zed provides fs tools; §2.4).
 
 ---
 
@@ -117,7 +118,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | F1 | TTS/voice in `hkask-mcp-communication` + `TranscriptViewer` audio | → zed-kask voip |
 | F2 | Curator Matrix posting via the communication MCP (`loop_body.rs` L901) | → post to a zed-kask Curator thread (in-process) |
 | F3 | 7R7 passive listener (Matrix rooms → `reg.*`) | → zed-kask thread-watcher background task |
-| F4 | Onboarding creates Matrix creds + userpod | → zed-kask first-launch (create UserPod, register agents, no Matrix) |
+| F4 | Onboarding creates Matrix creds + userpod | → zed-kask first-launch: user signs into their **Zed account**, the local UserPod is bound to it, UserPod+Curator registered, no Matrix, no OAuth/invite |
 | F5 | Federation CRDT transport depends on Matrix | → defer for local MVP; intra-process A2A already in-process |
 | F6 | `hkask-api` HTTP server (chat, chat_ws, episodic, consolidation, sovereignty, admin) | deletion-test; keep sovereignty/consolidation/admin only if no in-process path |
 | F7 | Model providers — zed-kask owns router; hKask keeps guard + `InferencePort` trait | resolved by the fork (D4) |
@@ -179,11 +180,11 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 - **T5.5** Delete Matrix sidecar + `hkask-api` Matrix refs + cloud/Hetzner `matrix_url` + `deploy/k8s/conduit`. M.
 - **T5.6** Deletion-test `hkask-api` routes (F6); keep sovereignty/consolidation/admin only if no in-process path. S.
 - **T5.7** Delete backward-compat shims (F9) + per T0.5 verdicts (condenser/git-cas/services-*); **filesystem-MCP already decided deleted** (§2.4). M.
-- **T5.8** Trim `hkask-cli` to backup/wallet/repair/admin. S.
+- **T5.8** Trim `hkask-cli` to backup/wallet/repair (local single-user; no group admin/roles/invite). S.
 - **Checkpoint 5:** minimal hKask; zed-kask owns all generic infra; CI green.
 
 ### Phase 6 — Local install (no daemon)
-- **T6.1** zed-kask first-launch onboarding: create UserPod, write `agent.yaml`, register UserPod+Curator, no Matrix. AC: fresh-machine install → both agents in the Panel <5 min. M.
+- **T6.1** zed-kask first-launch onboarding: user signs into their **Zed account** (required — gates the Zed-based features: comms, collab, voip); create the single local UserPod bound to that account, write `agent.yaml`, register UserPod+Curator, no Matrix, no OAuth/invite. AC: fresh-machine install → sign in → both agents in the Panel <5 min. M.
 - **T6.2** Verify sovereignty invariants (P1/P4/P11/P12): per-pod SQLCipher, OCAP gating, WebID, consent. S.
 - **Checkpoint 6:** end-to-end local install verified on a clean machine.
 
@@ -471,7 +472,7 @@ Hexagonal pattern: hKask defines the ports; the bridge crate is the adapter; the
 ### 13.3 Composition root (startup — DI pattern)
 zed-kask app startup constructs **one `KaskCore`** (the hKask runtime singleton) and wires the adapters:
 1. **Load `KaskSettings` (D9a)** → bind to `KaskCore` construction params (regulation set-points, gas defaults, consolidation cadence, guard strategy, MCP load set = the 12, §2.4). **Settings→config is construction-time, not a runtime port** (config-struct-validated-on-construction).
-2. **Construct `KaskCore`:** per-pod SQLCipher storage, Regulation runtime, memory, the singleton Curator (`CuratorHandle` mpsc in-process), the 12 MCP servers (with **direct storage/regulation/memory handles** — R4), the `ManifestExecutor`.
+2. **Construct `KaskCore`:** the single local UserPod (identity bound to the signed-in Zed account — §0; no hKask OAuth/roles), per-pod encrypted storage, Regulation runtime, memory, the singleton Curator (`CuratorHandle` mpsc in-process), the 12 MCP servers (with **direct storage/regulation/memory handles** — R4), the `ManifestExecutor`.
 3. **Build the bridge:** `InferencePort`-over-`LanguageModel` (+guard), `ToolPort`-over-tool-registry, `SecretsPort`-over-`CredentialsProvider`, `CuratorTurnPort`, `MemoryPort`; inject into `ManifestExecutor`/Curator/MCP servers/kask panel.
 4. **Spawn** the regulation + Curator metacognition tokio loops on the `gpui_tokio` runtime (R1) — the loop driver.
 5. **Register** the **UserPod** + **Curator** native agents (D2) and the **KaskPanel** (D10); add `ToggleKaskPanel` + `workspace.add_panel`.

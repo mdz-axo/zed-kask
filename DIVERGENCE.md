@@ -5,6 +5,9 @@ This file is the **single source of truth** for what `zed-kask` changes relative
 ## Repository consolidation (full merge)
 hKask is **fully merged into zed-kask** under a `kask/` namespace (`kask/crates/hkask-*`, `kask/mcp-servers/hkask-mcp-*`, `kask/skills/`, `kask/scripts/`, `kask/docs/`). The `mdz-axo/hKask` repo is **archived** (read-only reference). zed-kask is the single source of truth — one clone, one build, one CI. **Everything under `kask/` is OURS (additive); upstream never touches it, so it never conflicts on sync.** Everything outside `kask/` is upstream zed except the D-seam edits below.
 
+## Deployment & identity model
+zed-kask is a **local single-user install**. There is **no cloud server, no Kubernetes/K3s, no hKask OAuth, no Admin/Member roles, no invite flow.** Identity and sign-on are **Zed's**: the user signs into their existing Zed account (the shared `*.zed.dev` account/collab endpoints are kept by D7), and the single local UserPod is bound to that account at startup. Multiplayer, collaboration, voice, and federation ride on **Zed's comms/voip/CRDT** — hKask's Matrix/7R7 transport is dropped. `hkask-identity` is trimmed to UserPod/PodDeployment data structures only; WebID-as-separate-identity, OAuth, roles, and invite are deleted.
+
 ## Governing invariant
 **hKask crates (under `kask/crates/hkask-*`) NEVER depend on zed crates (under `crates/`); zed-kask depends on hKask.** The **sole bidirectional seam** is the bridge crate `kask/crates/kask_bridge` (D8), which depends on both hKask port traits and zed types and implements every adapter. Enforced by `kask/scripts/check-hkask-no-zed-deps.sh` in CI.
 
@@ -27,7 +30,7 @@ Everything else outside `kask/` is byte-identical to upstream and re-merged with
 > D8, D10 (and the hKask keep-crates, skills, scripts, docs) live **under `kask/`** (additive — not an upstream-merge surface). D1–D7, D9 are edits in zed's tree (the real merge surfaces) + the `[workspace.members]`/`[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
 ## hKask keep-crates (now under `kask/crates/`)
-`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-templates` (ManifestExecutor), `hkask-pods` (Curator+UserPod), `hkask-guard`, `hkask-capability` (OCAP/ToolPort), `hkask-identity` (WebID), `hkask-keystore` (trimmed: sovereignty crypto), `hkask-wallet`, `hkask-ledger`, `hkask-mcp-server` (framework), + the 15 MCP server crates under `kask/mcp-servers/` (12 loaded by default).
+`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-templates` (ManifestExecutor), `hkask-pods` (Curator+UserPod), `hkask-guard`, `hkask-capability` (OCAP/ToolPort), `hkask-identity` (trimmed: UserPod/PodDeployment only; identity = Zed account), `hkask-keystore` (trimmed: sovereignty crypto), `hkask-wallet`, `hkask-ledger`, `hkask-mcp-server` (framework), + the 15 MCP server crates under `kask/mcp-servers/` (12 loaded by default).
 
 ## MCP default load set (12)
 Loaded: `memory`, `condenser`, `research`, `companies`, `media`, `docproc`, `training`, `replica`, `kata-kanban`, `codegraph`, `scenarios`, `regulation`.

@@ -12,6 +12,7 @@ pub mod error;
 pub mod event;
 pub mod fusion;
 pub mod goal;
+pub mod hmem;
 pub mod id;
 pub mod identity;
 pub mod keychain_keys;
@@ -68,6 +69,11 @@ pub use template_type::TemplateType;
 pub use tool_taint::ToolTaint;
 pub use transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 pub use visibility::{Confidence, Dimension, Visibility};
+
+pub use hmem::{HMem, HMemError};
+pub use ports::embedding_port::{
+    EmbeddingError, EmbeddingPort, SimilarityResult, StoredEmbedding,
+};
 
 pub use ports::*;
 pub use wallet_types::{

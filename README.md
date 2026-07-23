@@ -3,7 +3,7 @@
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
 [![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
 
-Welcome to **Zed-Kask** — a fork of [Zed](https://zed.dev), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter), with [hKask](#what-hkask-is) — a minimal viable container for users and AI tools — fully merged in.
+Welcome to **Zed-Kask** — a fork of [Zed](https://zed.dev), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter), with [hKask](#what-hkask-is) — a minimal viable container for users and AI tools — running as a local single-user install inside the editor. Multiplayer and federation ride on Zed's existing collaboration capabilities; hKask's own Matrix transport is not carried over.
 
 Zed-Kask is one clone, one build, one CI. Everything hKask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the small set of seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md).
 
@@ -11,7 +11,7 @@ Zed-Kask is one clone, one build, one CI. Everything hKask lives under [`kask/`]
 
 ## What hKask Is
 
-hKask is a **minimal viable container for users and AI tools**. It is not an agent framework — there is no autonomous agent loop by default; the human is in the loop and skills escalate *to the user*, not away from them. The Curator is the system's cybernetic regulator, not an autonomous agent.
+hKask is a **minimal viable container for users and AI tools**. In Zed-Kask it runs as a **local, single-user install**: one user, one sovereign userpod, on the user's own machine. It is not an agent framework — there is no autonomous agent loop by default; the human is in the loop and skills escalate *to the user*, not away from them. The Curator is the system's cybernetic regulator, not an autonomous agent.
 
 Three things sit between the user and a model:
 
@@ -19,13 +19,21 @@ Three things sit between the user and a model:
 2. **MCP servers** — built-in Model Context Protocol servers (research, memory, codegraph, media, filesystem, regulation, …) exposed as tools through `rmcp`.
 3. **Inference routing** — one router across multiple providers, with fusion, circuit breakers, and per-call gas accounting.
 
-Everything else in hKask — pods, federation, wallet, ledger, regulation, keystore — exists to keep each user's session **sovereign** within the shared install: per-userpod SQLCipher, OCAP dual gate, visibility gating.
+Everything else in hKask — the userpod, wallet, ledger, regulation, keystore — exists to keep the user's local session **sovereign**: per-userpod encrypted storage, OCAP dual gate, visibility gating.
+
+### Federation is Zed's job
+
+hKask's own Matrix/7R7 transport is **not** carried into Zed-Kask. Federation and multi-user communication ride on **Zed's existing collaboration capabilities** (channels, rooms, voice, contact sharing). The local hKask userpod stays sovereign; reaching other users happens through Zed's comms layer, not through hKask's federation plumbing.
+
+### Sign-in is Zed's job too
+
+There is no cloud server, no Kubernetes, no hKask OAuth, and no Admin/Member roles or invite flow. Users sign in with their **existing Zed account** — that single login gates the Zed-based features (communication, collaboration, voice). The local userpod is bound to the signed-in account at startup. hKask's identity layer is trimmed to the userpod/pod data structures only.
 
 ### What hKask Is Not
 
 - Not an agent framework. No autonomous agent loop by default; skills escalate *to the user*.
-- Not a public multi-tenant SaaS. An install serves a defined group via OAuth + invite, not arbitrary public sign-up. Per-userpod sovereignty is structural, not row-level.
-- Not a single-user local-only tool. Local `kask tui` is supported, but the reference deployment is a cloud server accessed via browser or Matrix.
+- Not a multi-tenant cloud server. Zed-Kask is a local single-user install — sovereignty is the local userpod, not row-level isolation across a group.
+- Not its own transport. Federation and multiplayer go through Zed's collab/voip, not hKask's Matrix stack.
 
 The full hKask README (architecture diagrams, the four essential patterns, crate structure, current metrics, design philosophy) lives at [`kask/README.md`](./kask/README.md). The fork's divergence manifest and upstream-sync procedure live at [`DIVERGENCE.md`](./DIVERGENCE.md).
 
