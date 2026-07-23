@@ -1,0 +1,30 @@
+# Dispatch Manifest — Chat Template Crate
+#
+# Routes for the ephemeral chat-session pod:
+# - inference: primary LLM generation
+# - episodic: private memory write/recall
+# - semantic: public knowledge recall
+
+dispatch:
+  - id: inference
+    type: inference
+    route: inference
+    description: "Primary LLM inference for chat"
+
+  - id: episodic_write
+    type: memory
+    route: episodic
+    action: write
+    description: "Store private episodic traces"
+
+  - id: episodic_recall
+    type: memory
+    route: episodic
+    action: read
+    description: "Recall private episodic memory"
+
+  - id: semantic_recall
+    type: memory
+    route: semantic
+    action: read
+    description: "Recall shared public knowledge"

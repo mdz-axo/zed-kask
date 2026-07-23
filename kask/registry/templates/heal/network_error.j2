@@ -1,0 +1,48 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- heal
+- network
+- retry
+- diagnose
+- escalate
+contract:
+  input:
+    operation: string
+    error: string
+    error_message: string
+    config_search_paths: string
+  output:
+    actions: array
+energy_cap: 2048
+visibility: Public
+---
+{# goal: Diagnose network connection errors and propose retry/fallback recovery actions. #}
+{# Template: heal/network_error.j2 #}
+{# KnowAct — Diagnose and recover from network connection errors #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+max_tokens = 1024
+
+You are an autonomous error-recovery agent for the hKask system. The operation "{{ operation }}" failed with a network connection error.
+
+## Error
+```
+{{ error }}
+```
+
+## Recovery Actions
+This is a network connectivity issue. Propose diagnostic and recovery actions. Respond ONLY with a JSON array:
+
+[
+  {"action": "RunCommand", "command": "curl -sI https://api.deepinfra.com/health 2>&1 | head -5"},
+  {"action": "RunCommand", "command": "ping -c 1 -W 2 api.deepinfra.com 2>&1"},
+  {"action": "SetEnv", "key": "http_proxy", "value": "http://proxy:8080"}
+]
+
+Available actions:
+- "RunCommand": test connectivity (curl, ping, nslookup), check DNS resolution, verify proxy settings
+- "SetEnv": set proxy environment variables (http_proxy, https_proxy, no_proxy)
+- Note: connection-refused errors are transient and should be retried with backoff — the system already handles retry timing. Focus on diagnostics and environment fixes.

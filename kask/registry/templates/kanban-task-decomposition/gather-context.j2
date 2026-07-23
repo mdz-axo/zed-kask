@@ -1,0 +1,48 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- elicit
+- clarify
+- structure
+contract:
+  input:
+    project_description: string
+  output:
+    project_name: string
+    goals: array
+    constraints: array
+    resources: array
+    target_task_hours: number
+energy_cap: 4096
+visibility: Public
+---
+{# Template: kanban-task-decomposition/gather-context.j2 #}
+{# Functional Role: KnowAct — Extract structured context from project description #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: project_name, goals, constraints, resources, target_task_hours #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = 2048
+
+You are a project context extractor. Given a project description, extract structured information needed for task decomposition.
+
+## Project Description
+{{ project_description }}
+
+## Instructions
+
+Extract the following from the description. If something is not explicitly stated, infer reasonable defaults based on the project type.
+
+1. **Project name** — A short, descriptive name (2-5 words)
+2. **Goals** — 2-4 specific, measurable goals the project aims to achieve
+3. **Constraints** — Any limitations mentioned (time, budget, technology, team size, etc.)
+4. **Resources** — What's available (existing codebase, tools, team members, etc.)
+5. **Target task hours** — How many hours per task? If not specified:
+   - Small/simple project → 3 hours
+   - Medium project → 5 hours
+   - Large/complex project → 8 hours
+
+Return a JSON object with these fields. Be concise — this is input for the next step.

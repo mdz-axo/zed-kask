@@ -1,0 +1,86 @@
+{# gml/bind-effector.j2 - KnowAct: analogy, infer, abduct, bind #}
+{# Purpose: Apply effector to port, infer state-shift #}
+
+{% from 'gml/validate-inputs.j2' import validate_concept, validate_effectors %}
+{% from 'gml/reg-instrument.j2' import start_span, end_span, record_error, audit_log %}
+{% from 'gml/macros.j2' import mwc_state_function, hill_coefficient, partition_function %}
+
+{% set concept = inputs.concept %}
+{% set effectors = inputs.effectors %}
+
+{# Regulation span start #}
+{{ start_span('bind', concept.id | default('unknown')) }}
+
+{# Validate inputs #}
+{% set concept_errors = validate_concept(concept) %}
+{% set effector_errors = validate_effectors(effectors) %}
+
+{% if concept_errors and concept_errors | length > 0 %}
+{{ record_error('bind', 'GML_INVALID_CONCEPT', concept_errors | join('; ')) }}
+{% include 'gml/error-validation.j2' %}
+{{ end_span('bind', 'error', {'errors': concept_errors | length}) }}
+{% elif effector_errors and effector_errors | length > 0 %}
+{{ record_error('bind', 'GML_INVALID_EFFECTOR', effector_errors | join('; ')) }}
+{% include 'gml/error-validation.j2' %}
+{{ end_span('bind', 'error', {'errors': effector_errors | length}) }}
+{% else %}
+
+{% set compatible_ports = [] %}
+{% for effector in effectors %}
+{% for port in concept.ports %}
+{% if port.effector_shape == effector.shape %}
+{% set _ = compatible_ports.append({'effector': effector, 'port': port}) %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+
+**Compatible bindings identified:**
+
+{% for binding in compatible_ports %}
+- {{ binding.effector.name }} → {{ binding.port.name }} (c = {{ binding.port.affinity_c }})
+{% endfor %}
+
+### Equilibrium Shift Prediction
+
+{% set old_alpha = concept.current_alpha %}
+{% set new_alpha = old_alpha + (effectors | sum(attribute='concentration')) %}
+{% set n = concept.ports | length %}
+{% set c_avg = (concept.ports | sum(attribute='affinity_c')) / n if n > 0 else 1.0 %}
+{% set L = concept.l %}
+
+{% set old_r_bar = mwc_state_function(concept.l, c_avg, n, old_alpha) %}
+{% set new_r_bar = mwc_state_function(concept.l, c_avg, n, new_alpha) %}
+
+| Parameter | Before | After | Δ |
+|-----------|--------|-------|---|
+| α (contextual pressure) | {{ old_alpha | round(3) }} | {{ new_alpha | round(3) }} | {{ (new_alpha - old_alpha) | round(3) }} |
+| R̄ (progressive probability) | {{ (old_r_bar * 100) | round(1) }}% | {{ (new_r_bar * 100) | round(1) }}% | {{ ((new_r_bar - old_r_bar) * 100) | round(1) }}% |
+
+{% if new_r_bar > old_r_bar %}
+**Interpretation:** The effector(s) shift the concept toward **progressive/open** interpretation.
+{% elif new_r_bar < old_r_bar %}
+**Interpretation:** The effector(s) shift the concept toward **conservative/closed** interpretation.
+{% else %}
+**Interpretation:** The effector(s) produce **no net shift** in interpretive equilibrium.
+{% endif %}
+
+### Binding Analogy
+
+{% if compatible_ports | length > 0 %}
+{% set binding = compatible_ports[0] %}
+{% if binding.port.affinity_c < 1 %}
+Like oxygen binding to hemoglobin, {{ binding.effector.name }} binds with higher affinity to the R-state,
+stabilizing the progressive interpretation and shifting the conformational equilibrium.
+{% elif binding.port.affinity_c > 1 %}
+Like 2,3-BPG binding to hemoglobin, {{ binding.effector.name }} binds with higher affinity to the T-state,
+stabilizing the conservative interpretation and reducing access to the progressive frame.
+{% else %}
+Like a neutral ligand, {{ binding.effector.name }} binds without strong state preference,
+shifting equilibrium through concentration rather than selectivity.
+{% endif %}
+{% endif %}
+
+{# Audit log #}
+{{ audit_log('bind', concept.id, old_r_bar, new_r_bar, 'success') }}
+{{ end_span('bind', 'success', {'delta_r_bar': new_r_bar - old_r_bar}) }}
+{% endif %}

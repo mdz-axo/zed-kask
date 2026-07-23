@@ -1,0 +1,62 @@
+# Registry manifest for supply-chain-sentinel skill
+crate:
+  name: supply-chain-sentinel
+  version: "0.31.0"
+  visibility: public
+  description: >
+    Dependency and software supply chain audit skill for hKask. Probes
+    dependency manifests (Cargo.toml, lockfiles), registry sources, and
+    manifest-level dependency trees (lockfile references only — not full external graph resolution) for manifest-level dependency risk indicators (no external package download, P4 boundary), license
+    conflicts, unmaintained packages, and supply-chain attack patterns.
+    Anchored to MITRE CWE, OWASP Supply Chain, and OSC&R taxonomy.
+    Consumes security/regressions/ as input; proposes RR entries with
+    surface: supply-chain. Emits reg.supply_chain.* spans (P9). Decomposed
+    into 4 phases: select → probe → report → convergence-check.
+
+templates:
+  - id: supply-chain-sentinel/select-surface
+    name: "Select dependency surfaces and discover manifest files"
+    path: select-surface.j2
+    type: KnowAct
+    lexicon_terms: [select, discover, manifest, dependency, supply]
+    description: >
+      Discover dependency surfaces (Cargo.toml, package-lock.json,
+      go.sum, requirements.txt, deny.toml) and map the dependency graph
+      scope. Reads regression library for existing supply-chain checks.
+      Surface parameter: cargo | npm | python | deny | all.
+
+  - id: supply-chain-sentinel/probe
+    name: "Probe dependency graph for risk evidence"
+    path: probe.j2
+    type: KnowAct
+    lexicon_terms: [probe, dependency, reachability, cve, license, supply]
+    description: >
+      Read manifest files. Build dependency tree. Check for pinned
+      versions, registry trust, unmaintained packages, license
+      incompatibilities, and known vulnerability references. Apply
+      pragmatic-cybernetics feedback analysis: dependency update
+      polarity, variety of alternatives, Good Regulator (version
+      pinning). Emit reg.supply_chain.probe spans per dependency.
+
+  - id: supply-chain-sentinel/report
+    name: "Synthesize supply-chain findings and propose regressions"
+    path: report.j2
+    type: KnowAct
+    lexicon_terms: [synthesize, report, dependency, supply, regression]
+    description: >
+      Synthesize findings with concrete file evidence, source citations,
+      severity (critical/high/medium/low), CWE reference, and OWASP
+      Supply Chain / OSC&R taxonomy mapping. Propose RR-NNNN.yaml
+      entries with surface: supply-chain for enforced CI gates.
+
+  - id: supply-chain-sentinel/convergence-check
+    name: "Compute supply-chain coverage metric"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, dependency, coverage, regression]
+    description: >
+      Compute normalized convergence metric: unresolved critical/high
+      dependency findings (0.40), defense-layer coverage (dependency
+      pinning, registry verification, SBOM tracking — 0.25), CWE/OSCR
+      taxonomy coverage (0.15), regression library growth (0.10).
+      Converged when metric ≤ 0.10 with ≥5% improvement.

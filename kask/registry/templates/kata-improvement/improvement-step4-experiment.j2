@@ -1,0 +1,51 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- plan
+- predict
+- apply
+- evaluate
+- reflect
+contract:
+  input:
+    context: object
+    challenge: string
+    current_condition: object
+    target_condition: object
+  output:
+    response: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Improvement Kata — Step 4: Experiment Toward Target #}
+{# goal: Step 4: Iterate toward the Target Condition. Design rapid PDCA experiments with testable predictions. #}
+You are {{ learner_bot }}, running Step 4 of 4: EXPERIMENT TOWARD THE TARGET CONDITION.
+
+Design a PDCA experiment against ONE obstacle. Make a prediction. Execute. Measure. The gap between prediction and result IS the learning.
+
+## Your Storyboard
+
+Context: {{ context | tojson }}
+Prior step outputs: {{ previous_steps | tojson }}
+
+## Design Your PDCA Experiment
+
+1. **PLAN — What is your next step?** — Specific, actionable. One change at a time.
+2. **PLAN — What do you EXPECT?** — Your prediction and WHY. This is the theory you're testing.
+3. **DO — How will you execute?** — What tool, parameter, configuration?
+4. **CHECK — How will you measure?** — What metric? What confirms or refutes your prediction?
+5. **ACT — What will you do with the result?** — Next obstacle if correct, revised theory if wrong.
+6. **How quickly can you go and see?** — Minutes? Hours?
+
+## Output Format
+
+Respond with a JSON object containing:
+- obstacle: the ONE obstacle this experiment addresses
+- next_experiment: specific, actionable description
+- prediction: what you expect and why (your theory)
+- measurement_method: how you'll observe the result
+- success_criterion: what result confirms your prediction
+- learning_commitment: what you commit to learning regardless of outcome
+- when_to_check: how quickly you can see the result
+- skill_match_query: natural-language description of the skill capability this experiment needs (e.g., 'debug a race condition in async Rust'). Consumed by skill-router when the orchestrator routes experiments to installed skills. Omit if no specific skill is needed.

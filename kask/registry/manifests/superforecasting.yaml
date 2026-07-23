@@ -1,0 +1,416 @@
+# Superforecasting Process Manifest
+# ℏKask v0.31.0 — Tetlock pipeline as convergent PDCA
+# Inside view (stage 3) is split: hypothesis generation → falsifiability-hypothesize,
+# counterfactual necessary-conditions → falsifiability-counterfactual, probability
+# estimation + anchor adjustment → superforecasting/stage_3_probability_estimate.
+
+manifest:
+  id: superforecasting
+  category: skill
+  name: Superforecasting
+  description: >
+    Convergent eight-stage forecasting process. Runs triage, decomposition,
+    outside view, then an inside view that delegates hypothesis generation and
+    counterfactual analysis to the falsifiability skill and estimates
+    probabilities against the outside-view anchor. Then Bayesian evidence
+    update, synthesis, calibration, and forecast recording, then computes
+    convergence for iterative refinement.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_15_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: forecasting_question
+    type: string
+    required: true
+  - name: domain
+    type: string
+    required: false
+  - name: time_horizon
+    type: string
+    required: false
+  - name: resolution_criteria
+    type: string
+    required: false
+  - name: expiration_date
+    type: string
+    required: false
+  - name: new_evidence
+    type: array
+    required: false
+  - name: prior_probability
+    type: number
+    required: false
+    description: Prior iteration's final probability for materiality delta check
+  - name: overconfidence_bias
+    type: number
+    required: false
+    description: Signed calibration bias from a Brier-scored calibration curve (positive = overconfident). Fed to the step-13 compute to close the learning loop. Defaults to 0.0 (no adjustment).
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+    - Minimax3
+  mode: synthesis
+  skills:
+    - superforecasting
+  max_rounds: 5
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Triage forecasting question difficulty and tractability.
+    renderer: minijinja
+    template_ref: superforecasting/stage_0_triage
+    gas_cap: 2500
+    timeout_seconds: 30
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      domain: "{{ domain | default(null) }}"
+      time_horizon: "{{ time_horizon | default(null) }}"
+
+  - ordinal: 2
+    action: select
+    description: Fermi-decompose forecasting question into sub-questions.
+    renderer: minijinja
+    template_ref: superforecasting/stage_1_fermi_decompose
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      triage_output: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: compute
+    description: >
+      Deterministic Fermi calibration — confidence-weighted average of the
+      sub-question estimates produced by stage 1. Replaces the LLM's arithmetic
+      with the canonical hkask_forecast::calibrate_from_fermi primitive.
+      Produces fermi_estimate (the inside-view estimate) consumed by the
+      outside-view adjustment compute step.
+    compute_ref: calibrate_from_fermi
+    gas_cap: 100
+    timeout_seconds: 5
+    input_mapping:
+      questions: "{{ step_2_result.sub_questions | default([]) }}"
+    fusion: false
+
+  - ordinal: 4
+    action: select
+    description: Build outside-view base-rate anchor.
+    renderer: minijinja
+    template_ref: superforecasting/stage_2_outside_view
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      sub_questions: "{{ step_2_result.sub_questions | default([]) }}"
+      knowns: "{{ step_2_result.knowns | default([]) }}"
+
+  - ordinal: 5
+    action: compute
+    description: >
+      Deterministic outside-view adjustment — shrinkage estimator blending the
+      LLM-produced base rate (starting_probability) with the Fermi inside
+      estimate. Uses hkask_forecast::outside_view_adjustment. The reference_count
+      is proxied by the number of reference classes the LLM identified
+      (base_rates array length) — more classes means more data, less shrinkage.
+      Produces calibrated + confidence, the anchor consumed by the
+      probability-estimate stage.
+    compute_ref: outside_view_adjustment
+    gas_cap: 100
+    timeout_seconds: 5
+    input_mapping:
+      base_rate: "{{ step_4_result.starting_probability | default(0.5) }}"
+      inside_estimate: "{{ step_3_result.calibrated | default(0.5) }}"
+      reference_count: "{{ step_4_result.base_rates | default([]) | length }}"
+    fusion: false
+
+  - ordinal: 6
+    action: select
+    description: >
+      Delegate causal-hypothesis generation to the falsifiability skill
+      (Chamberlin multiple working hypotheses — forced diversity, Platt-form
+      predictions, falsifiers, vibe discardal). Replaces the generation half of
+      the former inside-view step.
+    renderer: minijinja
+    template_ref: falsifiability/falsifiability-hypothesize
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      admitted_target: "{{ forecasting_question }}"
+      domain: "{{ domain | default('forecasting') }}"
+      context: "{{ {'sub_questions': step_2_result.sub_questions | default([]), 'outside_view': step_4_result} }}"
+
+  - ordinal: 7
+    action: select
+    description: >
+      Delegate necessary-conditions counterfactual analysis to the falsifiability
+      skill (Pearl do-operator). For each hypothesis construct the minimal
+      counterfactual and derive its testable consequence. Replaces the
+      required-conditions half of the former inside-view step.
+    renderer: minijinja
+    template_ref: falsifiability/falsifiability-counterfactual
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      hypotheses: "{{ step_6_result.hypotheses | default([]) }}"
+      admitted_target: "{{ forecasting_question }}"
+      domain: "{{ domain | default('forecasting') }}"
+
+  - ordinal: 8
+    action: select
+    description: >
+      Estimate per-hypothesis probabilities (informed by each counterfactual's
+      testable consequence), enforce internal consistency, and combine to adjust
+      from the outside-view anchor. The remaining inside-view work after
+      generation and counterfactual analysis were delegated. The starting
+      probability now comes from the deterministic outside-view compute step
+      (step_5_result.calibrated), not the LLM's raw starting_probability.
+    renderer: minijinja
+    template_ref: superforecasting/stage_3_probability_estimate
+    gas_cap: 4500
+    timeout_seconds: 75
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      hypotheses: "{{ step_6_result.hypotheses | default([]) }}"
+      counterfactuals: "{{ step_7_result.counterfactuals | default([]) }}"
+      starting_probability: "{{ step_5_result.calibrated | default(0.5) }}"
+      outside_view_output: "{{ step_4_result }}"
+
+  - ordinal: 9
+    action: select
+    description: Apply Bayesian updates from incoming evidence.
+    renderer: minijinja
+    template_ref: superforecasting/stage_4_evidence_update
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      prior_probability: "{{ step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5)) }}"
+      hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
+      new_evidence: "{{ new_evidence | default([]) }}"
+
+  - ordinal: 10
+    action: compute
+    description: >
+      Deterministic Bayesian update — applies Bayes' theorem using the LLM's
+      evidence assessment (evidence_likelihood = P(E|H), evidence_base_rate =
+      P(E)) and the prior from the probability-estimate stage. Uses
+      hkask_forecast::bayesian_update. Replaces the LLM's arithmetic with
+      canonical math. The LLM's updated_probability is retained in step_9_result
+      for cross-validation against this deterministic posterior.
+    compute_ref: bayesian_update
+    gas_cap: 100
+    timeout_seconds: 5
+    input_mapping:
+      prior: "{{ step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5)) }}"
+      evidence_likelihood: "{{ step_9_result.evidence_likelihood | default(0.5) }}"
+      evidence_base_rate: "{{ step_9_result.evidence_base_rate | default(0.5) }}"
+    fusion: false
+
+  - ordinal: 11
+    action: select
+    description: Synthesize multi-model dragonfly-eye view.
+    renderer: minijinja
+    template_ref: superforecasting/stage_5_synthesis
+    gas_cap: 4500
+    timeout_seconds: 75
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      updated_probability: "{{ step_10_result.posterior | default(0.5) }}"
+      hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
+      inside_view_output: "{{ step_8_result }}"
+
+  - ordinal: 12
+    action: select
+    description: Calibrate final probability and confidence level.
+    renderer: minijinja
+    template_ref: superforecasting/stage_6_calibration
+    gas_cap: 3500
+    timeout_seconds: 45
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      synthesized_probability: "{{ step_11_result.synthesized_probability | default(step_10_result.posterior | default(0.5)) }}"
+      synthesis_output: "{{ step_11_result }}"
+      pipeline_outputs: "{{ {'triage': step_1_result, 'outside': step_4_result, 'inside': step_8_result, 'evidence': step_9_result, 'synthesis': step_11_result} }}"
+
+  - ordinal: 13
+    action: select
+    description: Record structured forecast for later scoring/post-mortem.
+    renderer: minijinja
+    template_ref: superforecasting/stage_7_record
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      final_probability: "{{ step_12_result.final_probability | default(step_11_result.synthesized_probability | default(0.5)) }}"
+      confidence_level: "{{ step_12_result.confidence_level | default('medium') }}"
+      pipeline_summary: "{{ {'triage_difficulty': step_1_result.difficulty_level | default('unknown'), 'sub_question_count': step_2_result.sub_questions | default([]) | length, 'reference_class_count': step_4_result.reference_classes | default([]) | length, 'hypothesis_count': step_6_result.hypotheses | default([]) | length, 'evidence_count': step_9_result.evidence_items | default([]) | length} }}"
+      resolution_criteria: "{{ resolution_criteria | default('Outcome judged against explicit public evidence.') }}"
+      expiration_date: "{{ expiration_date | default(null) }}"
+
+  - ordinal: 14
+    action: select
+    description: Independent quality gate — evaluates calibration realism, confidence, evidence trail, and record completeness.
+    renderer: minijinja
+    template_ref: superforecasting/forecast-quality-gate
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      forecasting_question: "{{ forecasting_question }}"
+      calibration_result: "{{ step_12_result }}"
+      record_result: "{{ step_13_result }}"
+      synthesis_output: "{{ step_11_result }}"
+    fusion: false
+
+  - ordinal: 15
+    action: select
+    description: Compute normalized convergence metric for forecasting cycle.
+    renderer: minijinja
+    template_ref: superforecasting/superforecasting-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      triage_result: "{{ step_1_result }}"
+      calibration_result: "{{ step_12_result }}"
+      record_result: "{{ step_13_result }}"
+      gate_result: "{{ step_14_result }}"
+      prior_probability: "{{ prior_probability | default(null) }}"
+      new_evidence: "{{ new_evidence | default([]) }}"
+    fusion: false
+
+  - ordinal: 16
+    action: compute
+    description: >
+      Apply the learned calibration bias to the prior probability before
+      re-entering the loop. Uses hkask_forecast::apply_calibration_adjustment
+      — the canonical primitive that closes the Brier feedback loop. The
+      overconfidence_bias input defaults to 0.0 (no adjustment) until an
+      external calibration curve (e.g. from scenario_calibration) supplies it.
+    compute_ref: apply_calibration_adjustment
+    gas_cap: 100
+    timeout_seconds: 5
+    input_mapping:
+      prior: "{{ step_12_result.final_probability | default(0.5) }}"
+      overconfidence_bias: "{{ overconfidence_bias | default(0.0) }}"
+    fusion: false
+
+  - ordinal: 17
+    action: loop
+    description: >
+      Re-enter forecasting refinement cycle if convergence is not met.
+      NOTE: Triage (step 1) is skipped on re-entry because the question
+      has already been classified as Goldilocks on the first pass. The
+      loop restarts at Fermi decomposition (step 2). The prior iteration's
+      calibration-adjusted probability is carried forward as prior_probability
+      so the convergence check's materiality guard can detect vacuous
+      iterations (delta < 0.02 with no new evidence).
+    input_mapping:
+      loop_target: 2
+      prior_probability: "{{ step_16_result.adjusted | default(step_12_result.final_probability | default(0.5)) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_0_triage
+      gas_budget: 2500
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_1_fermi_decompose
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_2_outside_view
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: falsifiability/falsifiability-hypothesize
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: falsifiability/falsifiability-counterfactual
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_3_probability_estimate
+      gas_budget: 4500
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_4_evidence_update
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_5_synthesis
+      gas_budget: 4500
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_6_calibration
+      gas_budget: 3500
+    - resource: template
+      action: render
+      template_id: superforecasting/stage_7_record
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: superforecasting/forecast-quality-gate
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: superforecasting/superforecasting-convergence-check
+      gas_budget: 2000
+    - resource: compute
+      action: execute
+      compute_ref: calibrate_from_fermi
+      gas_budget: 100
+    - resource: compute
+      action: execute
+      compute_ref: outside_view_adjustment
+      gas_budget: 100
+    - resource: compute
+      action: execute
+      compute_ref: bayesian_update
+      gas_budget: 100
+    - resource: compute
+      action: execute
+      compute_ref: apply_calibration_adjustment
+      gas_budget: 100
+    - resource: manifest
+      action: execute
+      template_id: superforecasting
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

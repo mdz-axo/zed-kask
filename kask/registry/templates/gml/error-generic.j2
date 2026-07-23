@@ -1,0 +1,48 @@
+{# gml/error-generic.j2 - Generic error template #}
+{# Purpose: Display any GML error with code, message, and context #}
+
+## Error: {{ error_code | default('GML_UNKNOWN_ERROR') }}
+
+{% if message %}
+**Message:** {{ message }}
+{% endif %}
+
+{% if context and context | length > 0 %}
+**Context:**
+
+| Property | Value |
+|----------|-------|
+{% for key, value in context.items() %}
+| {{ key }} | {{ value }} |
+{% endfor %}
+{% endif %}
+
+### Suggested Actions
+
+{% if error_code == 'GML_CAPABILITY_DENIED' %}
+1. **Request elevated capability** from the capability issuer
+2. **Use a different operation** within your current capability scope
+3. **Contact the concept owner** for shared access
+{% elif error_code == 'GML_NO_COMPATIBLE_PORT' %}
+1. **Use a different effector** with a shape matching an available port
+2. **Add a port** with the required shape to the concept
+3. **Check effector shape spelling** (case-sensitive)
+{% elif error_code == 'GML_BUDGET_EXCEEDED' %}
+1. **Reduce effector concentration** to within your budget
+2. **Split into multiple applications** of smaller concentrations
+3. **Request elevated capability** with higher budget from issuer
+{% elif error_code == 'GML_MISSING_INPUT' %}
+1. **Provide all required fields** as shown in schema
+2. **Check field names** for typos (case-sensitive)
+3. **Verify nested structure** (t_state, r_state, ports)
+{% else %}
+1. **Review the error message** and context above
+2. **Check input validation** against schema
+3. **Consult documentation** at docs/gml/
+{% endif %}
+
+---
+
+*Error code: `{{ error_code | default('GML_UNKNOWN_ERROR') }}`*
+*Timestamp: {{ timestamp | default('unknown') }}*
+{% if capability_hash %}*Capability hash: {{ capability_hash }}*{% endif %}

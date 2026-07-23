@@ -1,0 +1,220 @@
+manifest:
+  id: skill-logic-audit
+  category: skill
+  name: skill-logic-audit
+  description: >
+    Bounded dual-layer logic audit cascade for hKask templates and manifests.
+    Loads the annotated goal, critiques the artifact against that goal, filters
+    the critique for soundness, composes a concrete revised artifact and diff,
+    computes convergence, and iterates until no material flaws remain or
+    the loop budget is exhausted.
+  version: "0.31.0"
+  editor: hkask
+  visibility: Public
+  functional_role: flowdef
+
+convergence:
+  threshold: 0.10
+  improvement_gate: threshold_only
+  max_iterations: 4
+  min_iterations: 1
+  convergence_field: step_6_result.convergence_metric
+  on_not_reached: escalate
+
+inputs:
+  - name: target_path
+    type: string
+    description: Path to the template or manifest being audited.
+    required: true
+  - name: target_content
+    type: string
+    description: Full content of the target artifact (.j2 template or .yaml manifest). SKILL.md files are NOT valid audit targets.
+    required: true
+  - name: template_type
+    type: string
+    description: j2 or manifest.
+    required: true
+  - name: loop_depth
+    type: integer
+    description: Current review-loop depth.
+    required: true
+  - name: max_depth
+    type: integer
+    description: Maximum allowed review-loop depth.
+    required: true
+  - name: user_counter_proposal
+    type: string|null
+    description: User edits supplied during a counter-proposal step.
+    required: false
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Parse the annotated goal block from the target artifact.
+    renderer: minijinja
+    template_ref: skill-logic-audit/load-goal
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      target_path: "{{ target_path }}"
+      target_content: "{{ target_content }}"
+      template_type: "{{ template_type }}"
+    output_schema:
+      type: object
+      properties:
+        goal:
+          type: string
+        goal_valid:
+          type: boolean
+
+  - ordinal: 2
+    action: select
+    description: Adversarial critique anchored to the extracted goal.
+    renderer: minijinja
+    template_ref: skill-logic-audit/critique-template
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      target_path: "{{ target_path }}"
+      target_content: "{{ target_content }}"
+      template_type: "{{ template_type }}"
+      goal: "{{ step_1_result.goal }}"
+    output_schema:
+      type: object
+      properties:
+        flaws:
+          type: array
+          items:
+            type: object
+        valid_concerns:
+          type: array
+          items:
+            type: string
+        spurious_concerns:
+          type: array
+          items:
+            type: string
+        verdict:
+          type: string
+
+  - ordinal: 3
+    action: select
+    description: Soundness filter — separate valid concerns from spurious ones.
+    renderer: minijinja
+    template_ref: skill-logic-audit/critique-critique
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      goal: "{{ step_1_result.goal }}"
+      prior_critique: "{{ step_2_result }}"
+    output_schema:
+      type: object
+      properties:
+        valid_concerns:
+          type: array
+          items:
+            type: object
+        spurious_concerns:
+          type: array
+          items:
+            type: object
+        calibrated_verdict:
+          type: string
+
+  - ordinal: 4
+    action: select
+    description: Compose a concrete revised artifact and diff.
+    renderer: minijinja
+    template_ref: skill-logic-audit/compose-proposal
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      target_path: "{{ target_path }}"
+      original_content: "{{ target_content }}"
+      goal: "{{ step_1_result.goal }}"
+      valid_concerns: "{{ step_3_result.valid_concerns }}"
+      user_counter_proposal: "{{ user_counter_proposal | default(null) }}"
+    output_schema:
+      type: object
+      properties:
+        revised_content:
+          type: string
+        diff:
+          type: string
+        rationale:
+          type: string
+        confidence:
+          type: number
+
+  - ordinal: 5
+    action: select
+    description: Present the proposal and capture accept/reject/counter-proposal.
+    renderer: minijinja
+    template_ref: skill-logic-audit/user-choice
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      target_path: "{{ target_path }}"
+      proposal: "{{ step_4_result.revised_content }}"
+      diff: "{{ step_4_result.diff }}"
+      rationale: "{{ step_4_result.rationale }}"
+      confidence: "{{ step_4_result.confidence }}"
+      loop_depth: "{{ loop_depth | default(0) }}"
+      max_depth: "{{ max_depth | default(4) }}"
+    output_schema:
+      type: object
+      properties:
+        user_choice:
+          type: string
+        next_action:
+          type: string
+        reason:
+          type: string
+
+  - ordinal: 6
+    action: select
+    description: Compute normalized convergence metric for audit cycle.
+    renderer: minijinja
+    template_ref: skill-logic-audit/convergence-check
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      calibrated_verdict: "{{ step_3_result.calibrated_verdict }}"
+      valid_concerns: "{{ step_3_result.valid_concerns }}"
+      loop_depth: "{{ loop_depth | default(0) }}"
+      max_depth: "{{ max_depth | default(4) }}"
+    output_schema:
+      type: object
+      properties:
+        convergence_metric:
+          type: number
+        rationale:
+          type: string
+        unresolved_concerns:
+          type: integer
+
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter audit cycle. If user made counter-proposal (step_5 user_choice = 'counter_proposal'),
+      loop to step 1 to re-parse revised goal/artifact. Otherwise loop to step 2 for revised critique cycle.
+    input_mapping:
+      loop_target: "{{ 1 if user_counter_proposal is defined and user_counter_proposal else 2 }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort

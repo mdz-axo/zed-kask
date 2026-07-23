@@ -1,0 +1,53 @@
+# Template crate manifest for idiomatic-rust skill
+# hKask v0.31.0
+
+crate:
+  name: idiomatic-rust
+  version: "0.31.0"
+  description: >
+    Idiomatic Rust design through Graydon Hoare's lens. Convergent inquiry loop:
+    anchor design problems against Hoare's principles, propose type-driven
+    solutions with code examples, challenge and refine through adversarial
+    review, and converge toward deeper, more idiomatic designs.
+
+templates:
+  - id: idiomatic-rust/idiomatic-rust-inquiry
+    name: "Assess a Rust design problem against Graydon Hoare's principles"
+    path: idiomatic-rust-inquiry.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, classify, orient, anchor, specify]
+    description: >
+      Assess a Rust design problem against Graydon Hoare's principles.
+      Identify invariants, invalid states, ownership graphs, and error domains.
+      Produce a scored design assessment with specific improvement targets.
+
+  - id: idiomatic-rust/idiomatic-rust-design
+    name: "Propose type-driven Rust solutions with code examples"
+    path: idiomatic-rust-design.j2
+    type: KnowAct
+    lexicon_terms: [design, compose, specify, generate, verify]
+    description: >
+      Propose type-driven Rust solutions with code examples. Apply algebraic
+      types, ownership patterns, error propagation, and trait design. Reference
+      std library patterns, ecosystem best practices, and relevant RFCs.
+
+  - id: idiomatic-rust/idiomatic-rust-challenge
+    name: "Adversarial review of a Rust design proposal"
+    path: idiomatic-rust-challenge.j2
+    type: KnowAct
+    lexicon_terms: [challenge, critique, evaluate, discriminate, orient]
+    description: >
+      Adversarial review of a Rust design proposal. Find gaps, test edge cases,
+      challenge assumptions, identify deeper connections. Produce a scored
+      critique with specific refinement directives. Few-shot: if the critique
+      score is below threshold, loop back to design with concrete targets.
+
+  - id: idiomatic-rust/idiomatic-rust-convergence
+    name: "Compute a normalized convergence metric for an idiomatic-rust inquiry…"
+    path: idiomatic-rust-convergence.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, score, verify]
+    description: >
+      Compute a normalized convergence metric for an idiomatic-rust inquiry
+      cycle. Synthesizes design quality, critique depth, and connection
+      richness into a score in [0,1] where 0 means maximally idiomatic.

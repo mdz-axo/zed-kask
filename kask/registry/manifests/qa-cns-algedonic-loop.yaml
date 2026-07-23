@@ -1,0 +1,78 @@
+# QA Regulation Algedonic Loop — v0.31.0
+#
+# Verifies the Regulation (Cybernetic Nervous System) feedback loop integrity
+# by running the hkask-regulation test suite (94 tests) and classifying results.
+#
+# This manifest closes a cybernetic gap: the Regulation is the system's regulator
+# (VSM S3), and without verifying its feedback loop, there's no way to
+# confirm the regulator correctly models the system (Good Regulator theorem).
+#
+# Regulation invariants (94 tests across 4 test files + 20 #[cfg(test)] modules):
+#   - Algedonic signal emission and threshold enforcement
+#   - Variety counter tracking and deficit detection
+#   - Gas estimation and energy budget enforcement
+#   - Homeostatic loop: sensor → model → comparator → actuator
+#   - Calibrated energy estimator accuracy
+#   - Governed inference budget tracking
+#
+# Runner readiness: EXECUTABLE — run_command steps work today;
+#   classify step gracefully degrades without DI_API_KEY.
+
+manifest:
+  id: qa-regulation-algedonic-loop
+  category: qa-script
+  name: QA Regulation Algedonic Loop
+  version: 0.31.0
+  visibility: Private
+  description: >
+    Verifies Regulation feedback loop integrity through the hkask-regulation test suite
+    (94 tests). Ensures algedonic signals, variety counters, gas estimation,
+    and governed inference all function correctly. Classifier triages failures.
+
+gas:
+  cap: 20000
+  hard_limit: true
+
+steps:
+  # Step 1: Run Regulation test suite
+  - ordinal: 1
+    action: run_command
+    command: "cargo test -p hkask-regulation 2>&1 | tail -20"
+    branching:
+      success: 2
+      failure: 4
+
+  # Step 2: Classify test output
+  - ordinal: 2
+    action: classify
+    classifier: qa-triage
+    description: "Test suite: hkask-regulation (94 tests). Verify Regulation feedback loop: algedonic signal emission, variety counter tracking and deficit detection, gas estimation, energy budget enforcement, homeostatic sensor→model→comparator→actuator loop, calibrated energy estimator accuracy, and governed inference budget tracking. The Regulation is the VSM S3 regulator — failures here mean the system cannot self-regulate."
+    branching:
+      high_confidence: 3
+      medium_confidence: 3
+      low_confidence: 5
+      flake: 2
+      unparseable: 5
+      classifier_unavailable: 5
+
+  # Step 3: PASS
+  - ordinal: 3
+    action: run_command
+    command: "echo '[QA:regulation] PASS — Regulation feedback loop verified (94 tests)'"
+    terminal: true
+
+  # Step 4: FAIL
+  - ordinal: 4
+    action: run_command
+    command: "echo '[QA:regulation] FAIL — Regulation test suite failed. Feedback loop may be broken: algedonic signals, variety counters, or gas enforcement.'"
+    terminal: true
+
+  # Step 5: WARN
+  - ordinal: 5
+    action: run_command
+    command: "echo '[QA:regulation] WARN — classifier uncertain on Regulation test output. Manual review recommended.'"
+    terminal: true
+
+ledger:
+  emit_spans: true
+  alert: qa.reg.algedonic

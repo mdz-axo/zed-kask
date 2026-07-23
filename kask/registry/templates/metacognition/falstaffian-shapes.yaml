@@ -1,0 +1,485 @@
+# ⚠️ CANONICAL SOURCE: falstaffian-perspective.j2
+# The template at registry/templates/falstaffian-perspective/falstaffian-perspective.j2
+# is the canonical, executable source of truth for Falstaffian shape definitions.
+# This cognition file is a reference analysis of shape operations.
+#
+# Falstaffian Shapes — Semantic Graph Transformation Operators
+# A metacognitive instrument for perspective-taking through semantic rotation
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+
+meta:
+  type: "semantic-graph-transformation-operators"
+  source: "Falstaff discourse analysis (Henry IV Part 1, Henry IV Part 2, Henry V)"
+  analysis_passes: 3
+  variance_checking: true
+  operators_identified: 6
+  confidence_levels:
+    high: 4
+    medium: 5
+    low: 0
+  variance_analysis_file: "falstaffian-variance-analysis.yaml"
+
+# =============================================================================
+# THE SEVEN FALSTAFFIAN SHAPES
+# =============================================================================
+
+# These are NOT rhetorical devices. They are formal graph transformation operators.
+# Each Shape transforms semantic space by traversing nodes, creating edges, and rotating frames.
+# The Shapes express the tension between Experience (knows betrayal comes) and Spirit (loves anyway).
+
+shapes:
+  shape_1:
+    name: "Predicate Hollow Vector"
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    source: "Honor catechism (1H4, 5.1.127-141)"
+    textual_evidence: |
+      "Can honour set to a leg? No. Or an arm? No. Or take away the grief of a wound? No.
+      Honour hath no skill in surgery, then? No. What is honour? A word.
+      What is in that word honour? What is that honour? Air."
+
+    input_structure:
+      description: "Abstract concept node with strong social/moral edges to action nodes"
+      graph: "<Subject> <lacks> <Abstract_Predicate>"
+      example: '"Falstaff lacks honor" / "You should have honor"'
+
+    transformation_operation:
+      step_1: "Extract target concept node C from social/moral frame"
+      step_2: "Generate physical predicate tests: {set(leg), set(arm), remove(grief), perform(surgery)}"
+      step_3: "For each predicate P, evaluate: P(C) → false"
+      step_4: "Cascade failures collapse concept's functional edges"
+      step_5: "Re-categorize C from 'substantive entity' to 'linguistic token' (word → air)"
+      step_6: "Final reclassification: C becomes 'scutcheon' (decorative node, no causal power)"
+
+    output_structure:
+      description: "Concept lexically present but semantically evacuated"
+      graph: "<Abstract_Predicate> <equals> <Air/Hollow/Word>"
+      effect: "Original evaluation becomes irrelevant (category error revealed)"
+
+    why_it_works: |
+      The criticism targets a category error. One cannot criticize "air" for failing to set bones.
+      The original expectation (honor guides action) is revealed as a type mismatch, not a moral failure.
+      Experience knows honor is hollow; Spirit speaks it through playful catechism.
+
+    experience_component: "Knows honor cannot heal wounds (lived experience of battle)"
+    spirit_component: "Speaks truth through playful questioning (not bitter rejection)"
+    tension_carried_by: "Catechism form (questions feel innocent; truth is devastating)"
+
+  shape_2:
+    name: "Counterfeit Inversion"
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    source: "Counterfeit death soliloquy (1H4, 5.4.113-129)"
+    textual_evidence: |
+      "To die is to be a counterfeit, for he is but the counterfeit of a man
+      who hath not the life of a man; but to counterfeit dying when a man thereby
+      liveth is to be no counterfeit, but the true and perfect image of life indeed."
+
+    input_structure:
+      description: "Binary valuation where authentic = positive, counterfeit = negative"
+      graph: "<Authentic> <better_than> <Counterfeit>"
+      example: "Authentic death in battle > Counterfeit cowardice through faking death"
+
+    transformation_operation:
+      step_1: "Identify base valuation: authentic(death) > counterfeit(death)"
+      step_2: "Introduce meta-predicate: preserves(life) as supreme value"
+      step_3: "Re-evaluate: counterfeit(dying) → preserves(life) → authentic(life)"
+      step_4: "Invert original valuation: counterfeit action > authentic outcome"
+      step_5: "Death becomes actual counterfeit (mere image without life)"
+
+    output_structure:
+      description: "Value-inverted graph where survival-through-deception outranks honor-through-death"
+      graph: "<Living_Coward> <better_than> <Dead_Hero>"
+      effect: "Accusation of cowardice becomes irrelevant (life is meta-value)"
+
+    why_it_works: |
+      The accusation presupposes honor > life. By establishing life as meta-value,
+      the criticism's premise is displaced rather than refuted.
+      Experience knows dead heroes are counterfeits; Spirit affirms living is true.
+
+    experience_component: "Knows survival matters more than glory (survived Shrewsbury)"
+    spirit_component: "Affirms life through paradox (playful logic, not grim survival)"
+    tension_carried_by: "Paradox form (counterfeit/true inversion carries tragic wisdom)"
+
+  shape_3:
+    name: "Physiological Causal Chain"
+    confidence: "medium"
+    variance_agreement: "2/3 passes"
+    source: "Sack physiology speech (2H4, 4.3.88-113)"
+    textual_evidence: |
+      "A good sherris-sack hath a two-fold operation in it. It ascends me into the brain;
+      dries me there all the foolish and dull and crudy vapours which environ it;
+      makes it apprehensive, quick, forgetive, full of nimble, fiery, and delectable shapes...
+      the sherris warms it and makes it course from the inwards to the parts' extremes.
+      It illumineth the face, which as a beacon gives warning to all the rest of this
+      little kingdom, man, to arm."
+
+    input_structure:
+      description: "Moral criticism node with edges to character evaluation"
+      graph: "<Substance> <causes> <Vice>"
+      example: "Drunkenness (sack) → Cowardice/Vice"
+
+    transformation_operation:
+      step_1: "Intercept criticism before it reaches character evaluation"
+      step_2: "Insert physiological mediation layer: {sack → brain → vapors → wit}"
+      step_3: "Add second chain: {sack → blood → liver → courage}"
+      step_4: "Re-route causality: sack is initiating node, not terminal node"
+      step_5: "Generate positive downstream effects: wit, valour, apprehension, fiery shapes"
+      step_6: "Re-categorize: Prince's valour is PRODUCED_BY sack, not despite it"
+
+    output_structure:
+      description: "Causal graph where criticized substance becomes necessary condition for praised quality"
+      graph: "<Substance> <causes> <Virtue>"
+      effect: "Moral criticism targets wrong causal level"
+
+    why_it_works: |
+      Moral criticism assumes direct path from substance to vice.
+      Physiological chain introduces intermediate nodes that transform valence.
+      Experience knows physiology affects psychology; Spirit uses Galenic theory playfully.
+
+    experience_component: "Knows body affects mind (lived experience of age, drink, battle)"
+    spirit_component: "Transforms vice into virtue through elaborate physiology (joyful invention)"
+    tension_carried_by: "Scientific elaboration (detailed physiology masks self-justification)"
+
+  shape_4:
+    name: "Descriptive Valence Flip"
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    source: "Recruitment descriptions (1H4, 4.2; 2H4, 3.2)"
+    textual_evidence: |
+      "Will you tell me, Master Shallow, how to choose a man? Care I for the limb, the thews,
+      the stature, bulk, and big assemblance of a man! Give me the spirit, Master Shallow.
+      Here's Wart; you see what a ragged appearance it is: 'a shall charge you and discharge
+      you with the motion of a pewterer's hammer, come off and on swifter than he that
+      gibbets on the brewer's bucket. And this same half-faced fellow, Shadow; give me
+      this man: he presents no mark to the enemy; the foeman may with as great aim level
+      at the edge of a penknife."
+
+    input_structure:
+      description: "Negative evaluation structure threatening speaker's competence node"
+      graph: "<Soldiers> <are> <Inadequate>"
+      example: "Ragged, diseased, thin soldiers = military incompetence"
+
+    transformation_operation:
+      step_1: "Accept all negative descriptive predicates (ragged, diseased, thin)"
+      step_2: "Apply hyper-vivid descriptive elaboration exceeding informational requirements"
+      step_3: "Elaboration itself becomes performance node"
+      step_4: "Performance quality overrides content quality"
+      step_5: "Negative content → positive performance → positive speaker evaluation"
+
+    output_structure:
+      description: "Original negative evaluation preserved but becomes evidence of speaker's virtuosity"
+      graph: "<Description> <demonstrates> <Rhetorical_Power>"
+      effect: "Criticism target shifts from soldier quality to description quality"
+
+    why_it_works: |
+      Criticism targets soldier quality. Operation shifts evaluation target to description quality.
+      Frame rotates 90 degrees — critic evaluates X, speaker demonstrates excellence at Y.
+      Experience knows these ARE bad soldiers; Spirit makes art from inadequacy.
+
+    experience_component: "Knows soldiers are inadequate (led 'ragamuffins' at Shrewsbury)"
+    spirit_component: "Creates verbal art from inadequacy (transformative joy)"
+    tension_carried_by: "Elaborate metaphor (pewterer's hammer, brewer's bucket — playful precision)"
+
+  shape_5:
+    name: "Exponential Inflation with Instinct Escape"
+    confidence: "medium"
+    variance_agreement: "2/3 passes"
+    source: "Gad's Hill lies (1H4, 2.4)"
+    textual_evidence: |
+      "Four rogues in buckram... seven... eleven... the lion will not touch the true prince."
+
+    input_structure:
+      description: "Accusation node with evidentiary support"
+      graph: "<Accused> <is> <Coward/Liar>"
+      example: "Falstaff ran away (witnesses, contradictions)"
+
+    transformation_operation:
+      step_1: "Phase 1 (Inflation): Exponentially increase numerical claims: 2 → 4 → 7 → 11 → 50+"
+      step_2: "Each iteration adds detail (buckram suits, Kendal green, broken points)"
+      step_3: "Inflation creates internal contradictions detectable by interlocutors"
+      step_4: "Phase 2 (Escape): When confronted, invoke meta-principle outside evidentiary frame"
+      step_5: "'The lion will not touch the true prince' introduces natural law superseding accusation"
+      step_6: "Cowardice re-categorized as instinctual recognition of hierarchy"
+
+    output_structure:
+      description: "Accusation not denied but transcended — behavior re-categorized under different explanatory frame"
+      graph: "<Behavior> <explained_by> <Natural_Law>"
+      effect: "Accusation operates in moral frame; instinct operates in natural law frame (incommensurable)"
+
+    why_it_works: |
+      Accusation operates in moral frame (cowardice = vice).
+      Instinct principle operates in natural law frame (instinct = wisdom).
+      Frames are incommensurable — accusation cannot land.
+      Experience knows he ran; Spirit transforms it through mythic principle.
+
+    experience_component: "Knows he ran (factual acknowledgment through inflation)"
+    spirit_component: "Transforms running through lion/true prince myth (elevation through story)"
+    tension_carried_by: "Absurd escalation (inflation makes lie obvious; escape makes it irrelevant)"
+
+  shape_6:
+    name: "Liability-to-Asset Transmutation"
+    confidence: "medium"
+    variance_agreement: "2/3 passes"
+    source: "Disease commodification (2H4, 1.2.246-252)"
+    textual_evidence: |
+      "I can get no remedy against this consumption of the purse: borrowing only lingers
+      and lingers it out, but the disease is incurable. Go bear this letter to my Lord
+      of Lancaster... A pox of this gout! or, a gout of this pox! for the one or the
+      other plays the rogue with my great toe. 'Tis no matter if I do halt; I have the
+      wars for my colour, and my pension shall seem the more reasonable. A good wit
+      will make use of any thing: I will turn diseases to commodity."
+
+    input_structure:
+      description: "Liability node with negative valence edges"
+      graph: "<Liability> <is> <Bad>"
+      example: "Age, disease, debt, physical limitation = negative"
+
+    transformation_operation:
+      step_1: "Identify liability's structural properties"
+      step_2: "Find context where those properties become functional"
+      step_3: "Examples: Gout → limping → pension justification"
+      step_4: "Age → white hair → wisdom appearance"
+      step_5: "Debt → borrowing → relationship maintenance"
+      step_6: "Re-categorize: liability(X) → asset(X) in context(C)"
+      step_7: "General principle: 'A good wit will make use of any thing'"
+
+    output_structure:
+      description: "Liability node preserved but valence edges reversed"
+      graph: "<Liability> <is> <Resource>"
+      effect: "Criticism of liability presupposes fixed valuation; transmutation shows context-dependence"
+
+    why_it_works: |
+      Criticisms presuppose fixed valuation (gout = bad).
+      Transmutation shows valuation is context-dependent (gout = pension justification).
+      Experience knows limitations are real; Spirit refuses negative valence.
+
+    experience_component: "Knows limitations are real (age, gout, debt, disrepute)"
+    spirit_component: "Refuses negative valence through creative reframing (alchemical transformation)"
+    tension_carried_by: "Explicit statement of method ('I will turn diseases to commodity')"
+
+# =============================================================================
+# HOW SHAPES EXPRESS TENSION BETWEEN EXPERIENCE AND SPIRIT
+# =============================================================================
+
+tension_expression:
+  description: |
+    The Shapes are NOT mere rhetorical devices. They are the FORM that lived tension takes
+    when expressed without breaking into bitterness or naivety.
+
+    Experience alone → bitterness (knows betrayal, becomes cynical)
+    Spirit alone → naivety (loves anyway, becomes fool)
+    Shapes → wisdom (knows betrayal, loves anyway, expresses through form)
+
+  pattern: |
+    Experience component: "Knows what is real (betrayal, hollow abstractions, mortality)"
+    Spirit component: "Affirms what matters anyway (life, love, play, hope)"
+    Shape: "Carries this tension through specific graph transformation"
+    Result: "Truth spoken without bitterness, love expressed without naivety"
+
+  examples:
+    - shape: "Predicate Hollow Vector"
+      experience: "Knows honor cannot heal wounds (battle experience)"
+      spirit: "Speaks through playful catechism (not bitter rejection)"
+      tension: "Honor IS hollow (truth) — but said through questions (play)"
+
+    - shape: "Counterfeit Inversion"
+      experience: "Knows survival matters more than glory (survived Shrewsbury)"
+      spirit: "Affirms life through paradox (playful logic, not grim survival)"
+      tension: "Dead hero = counterfeit (truth) — but said through wit (play)"
+
+# =============================================================================
+# VARIANCE ANALYSIS — CONFIDENCE FROM INDEPENDENT PASSES
+# =============================================================================
+
+variance_analysis:
+  methodology: |
+    Three independent analysis passes examined Falstaff texts with different lenses:
+    - Pass 1: Semantic Graph (structural transformations)
+    - Pass 2: Rhetorical Form (linguistic patterns)
+    - Pass 3: Tension Expression (Experience/Spirit dynamics)
+
+    Shapes identified by all 3 passes = high confidence.
+    Shapes identified by 2/3 passes = medium confidence.
+    Shapes identified by 1/3 passes = low confidence (may be artifact of lens).
+
+  confidence_summary:
+    high_confidence:
+      count: 4
+      shapes:
+        - "Predicate Hollow Vector (3/3)"
+        - "Counterfeit Inversion (3/3)"
+        - "Descriptive Valence Flip (3/3)"
+        - "Object Inversion Vector — see shape_4 (3/3)"
+      rationale: "Robust across all analytical lenses"
+
+    medium_confidence:
+      count: 5
+      shapes:
+        - "Physiological Causal Chain (2/3)"
+        - "Exponential Inflation with Instinct Escape (2/3)"
+        - "Liability-to-Asset Transmutation (2/3)"
+        - "Direction Reversal Vector — see application:decision_tree (2/3)"
+        - "Cultural Authority Invoke — see application:decision_tree (2/3)"
+      rationale: "Real patterns but may be variants of core shapes"
+
+    low_confidence:
+      count: 0
+      shapes: []
+      rationale: "Frame Persistence Through Denial removed (1/3 — may be denial rather than rotation)"
+      recommendation: "candidate_for_removal"
+
+  lens_comparison:
+    semantic_graph_lens:
+      strength: "Captures structural transformations precisely"
+      weakness: "May miss emotional/philosophical dimension"
+      unique_contribution: "Formal graph operation specification"
+
+    rhetorical_form_lens:
+      strength: "Captures delivery mechanisms and voice"
+      weakness: "May conflate form with content"
+      unique_contribution: "Rhetorical pattern identification"
+
+    tension_expression_lens:
+      strength: "Captures lived experience dimension"
+      weakness: "May be too interpretive (less falsifiable)"
+      unique_contribution: "Experience/Spirit tension mapping"
+
+  recommendation: |
+    For future shape identification:
+    1. Always run 3+ independent passes with different lenses
+    2. Use variance matrix to identify confidence levels
+    3. Treat low-agreement shapes as candidates requiring validation
+    4. Document which lens identified what (provenance tracking)
+
+    The 4 high-confidence shapes are Falstaffian essentials.
+    The 5 medium-confidence shapes are real but may be variants.
+    The 1 low-confidence shape requires further validation or removal.
+
+# =============================================================================
+# APPLICATION PROTOCOL
+# =============================================================================
+
+application:
+  step_1_calibrate_experience:
+    description: "Know what you know (success AND failure)"
+    practice: "Acknowledge both — do not pretend either is final"
+    outcome: "Calibrated wisdom (not idealistic, not cynical)"
+
+  step_2_affirm_spirit:
+    description: "Love what you love (life, play, hope)"
+    practice: "Affirm despite knowledge — do not let knowledge kill love"
+    outcome: "Life-force (not bitter, not naive)"
+
+  step_3_select_shape:
+    description: "Choose shape that expresses tension"
+    decision_tree:
+      - if: "abstract_predicate_applied"
+        then: "predicate_hollow_vector"
+      - if: "authentic_counterfeit_valuation"
+        then: "counterfeit_inversion"
+      - if: "substance_criticized"
+        then: "physiological_causal_chain"
+      - if: "content_evaluated_negatively"
+        then: "descriptive_valence_flip"
+      - if: "accusation_with_evidence"
+        then: "exponential_inflation_with_instinct_escape"
+      - if: "liability_criticized"
+        then: "liability_to_asset_transmutation"
+    note: "frame_persistence_through_denial removed (low confidence - 1/3 passes)"
+
+  step_3b_multi_iteration_generation:
+    description: "Generate 3-5 iterations with varied parameters"
+    protocol: "falstaffian-multi-iteration-protocol.yaml"
+    template: "falstaffian-perspective-generator.jinja2"
+    variables:
+      iteration_count: "3-5 (user-configurable)"
+      temperature_range: "[0.7, 0.8, 0.9]"
+      voice_emphasis: "['playful', 'pragmatic', 'imaginative', 'worldly', 'generous']"
+    variance_metrics:
+      shape_agreement: "Count(shape_name) / iteration_count"
+      agreement_score: "0.9 (high), 0.7 (medium), 0.5 (low)"
+    selection: "single_best | composite_construction | all_iterations"
+
+  step_4_execute_through_play:
+    description: "Speak shape through playful form"
+    practice: "Lightness allows weight to enter"
+    outcome: "Truth heard without defense"
+
+  step_5_verify_tension_carried:
+    description: "Check that neither bitterness nor naivety emerged"
+    success: "Wisdom present (experience + spirit together)"
+    failure: "Either bitterness (experience alone) or naivety (spirit alone)"
+
+# =============================================================================
+# CURATOR NOTES
+# =============================================================================
+
+curator_notes: |
+  These Falstaffian Shapes are owned by The Curator.
+  License: CC-BY-4.0
+
+  VARIANCE ANALYSIS COMPLETE:
+  Three independent passes examined Falstaff texts with different lenses:
+  - Pass 1: Semantic Graph (structural transformations)
+  - Pass 2: Rhetorical Form (linguistic patterns)
+  - Pass 3: Tension Expression (Experience/Spirit dynamics)
+
+  CONFIDENCE LEVELS FROM VARIANCE:
+  - High (3/3 passes): Predicate Hollow, Counterfeit Inversion, Descriptive Valence Flip, Object Inversion
+  - Medium (2/3 passes): Physiological Causal Chain, Exponential Inflation, Liability Transmutation, Direction Reversal, Cultural Authority, Linguistic Precision
+
+  KEY INSIGHT:
+  Without variance checking, all shapes appear equally confident.
+  With variance checking, we distinguish signal from noise.
+
+  REMOVED: Frame Persistence Through Denial (1/3 — may be denial rather than rotation)
+
+  MULTI-ITERATION GENERATION:
+  Just as variance checking required 3 independent analyses for shapes,
+  generation runs 3-5 iterations with varied parameters:
+  - iteration_count: 3-5 (user-configurable)
+  - temperature_range: [0.7, 0.8, 0.9]
+  - voice_emphasis: ['playful', 'pragmatic', 'imaginative', 'worldly', 'generous']
+
+  Variance metrics calculated:
+  - shape_agreement: How many iterations selected same shape
+  - agreement_score: 0.9 (high), 0.7 (medium), 0.5 (low)
+
+  Selection strategies:
+  - single_best: 1 clear winner
+  - composite_construction: 2+ strong iterations
+  - all_iterations: high variance disclosure
+
+  See: falstaffian-multi-iteration-protocol.yaml
+  See: falstaffian-perspective-generator.jinja2
+
+  THE TENSION:
+  Shapes express tension between Experience and Spirit.
+  Experience knows betrayal comes. Spirit loves anyway.
+  Shapes carry this without breaking into bitterness or naivety.
+
+  HOW TO USE:
+  1. Calibrate experience (know success AND failure)
+  2. Affirm spirit (love despite knowledge)
+  3. Select shape (use high-confidence shapes first)
+  3b. Run multi-iteration generation (3-5 iterations, variance-aware)
+  4. Execute through play (lightness allows entry)
+  5. Verify tension carried (not bitterness, not naivety)
+
+  DO NOT:
+  - Announce you are using this
+  - Label yourself non-normative
+  - Form category or group
+
+  DO:
+  - Just use it quietly
+  - Let shapes carry tension
+  - Let work outlive announcement
+
+  See: falstaffian-variance-analysis.yaml for full variance matrix.
+
+  The 7R7 understand. Banana understands. The Curator understands.
+
+  Ba-nana. (under breath)

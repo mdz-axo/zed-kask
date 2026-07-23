@@ -1,0 +1,164 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [extract, probe, read, map, structure]
+contract:
+  input:
+    diagram_type: string
+    target: string
+    source_files: array
+    extracted_entities: string
+  output:
+    entities: array
+    relationships: array
+    extraction_notes: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: diataxis-diagram/diataxis-diagram-extract.j2 #}
+{# KnowAct — EXTRACT phase: agent-coordinated source reading guidance #}
+{# hKask v0.31.0 #}
+{# Design note: Like bug-hunt's probe phase, the actual file I/O is #}
+{# agent-coordinated between template calls. This template provides  #}
+{# extraction guidance. If extracted_entities is pre-populated, the  #}
+{# template validates and structures existing data.                  #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "focused"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a source code extraction engine. Your job is to guide extraction of entities and relationships from source files for Mermaid diagram generation.
+
+## Classification
+
+- Diagram type: **{{ diagram_type }}**
+- Target: {{ target }}
+- Source files: {{ source_files | join(', ') }}
+
+{% if extracted_entities %}
+## Pre-Extracted Entities
+
+{{ extracted_entities }}
+
+Validate that the entities above match the diagram type and contain sufficient information. If complete, return them as-is with `extraction_notes: "pre-populated — validated"`. If incomplete, note what's missing.
+{% endif %}
+
+## Extraction Rules by Diagram Type
+
+{% if diagram_type == "erd" %}
+### ERD Extraction
+
+From SQL files, extract for each CREATE TABLE:
+
+**Entities (tables):**
+- Table name (the identifier after CREATE TABLE, excluding IF NOT EXISTS)
+- Columns: name, SQL type, and modifiers (PRIMARY KEY, NOT NULL, DEFAULT, UNIQUE, REFERENCES)
+
+**Relationships:**
+- `REFERENCES other_table(column)` → foreign key
+- Explicit `FOREIGN KEY (col) REFERENCES other_table(col)` → foreign key
+- Junction tables (two FK columns referencing other tables) → many-to-many
+
+**Cardinality rules:**
+- FK with UNIQUE constraint → one-to-one (`||--||`)
+- FK without UNIQUE → one-to-many (`||--o{`)
+- Junction table → many-to-many through the junction
+- Self-referencing FK → recursive, same table on both sides
+
+**Skip:** CREATE VIRTUAL TABLE, CREATE INDEX (list in footnote), INSERT statements.
+
+{% elif diagram_type == "flowchart" %}
+### Flowchart Extraction
+
+From Rust functions/YAML templates, trace control flow:
+
+**Nodes:**
+- Entry point → start node
+- `if`/`match` expressions → decision nodes
+- Function calls, template executions → action nodes
+- `return`/exit → terminal nodes
+- Loop constructs → loop-back edges
+
+**Edges:**
+- Unconditional flow → `-->` with optional label
+- True/Yes branch → `-->|Yes|`
+- False/No branch → `-->|No|`
+- Loop iteration → `-->|retry|` back to entry
+
+**Grouping:** Use `subgraph` when the flow spans distinct domains or modules.
+
+{% elif diagram_type == "state" %}
+### State Diagram Extraction
+
+From Rust enums with lifecycle semantics:
+
+**States:**
+- Enum variants → states (e.g., Pending, Active, Completed, Failed)
+- Struct fields named `state`, `status`, `phase` → states
+- String constants used as state markers → states
+
+**Transitions:**
+- `match` arms that change state → transitions between states
+- Guard conditions in match guards → annotated on transition labels
+- Terminal states (no outgoing) → transitions to `[*]`
+- Constructor/Default impl → initial state `[*] --> InitialState`
+
+**Composite:** When a state has sub-states, use `state CompositeName { ... }`.
+
+{% elif diagram_type == "sequence" %}
+### Sequence Diagram Extraction
+
+From MCP handler code, Regulation spans, service call chains:
+
+**Participants:**
+- Services, agents, MCP servers → participants
+- Databases, external APIs → participants
+- Use `participant ID as Full Name` syntax
+
+**Messages:**
+- Function calls → `A->>B: method_name`
+- Return/response → `B-->>A: response`
+- Event emissions → `A->>B: emit EventName`
+- Conditional branches → `alt ... else ... end`
+- Loops → `loop ... end`
+- Optional → `opt ... end`
+- Parallel → `par ... and ... end`
+
+**Activation:** Use `->>+` / `-->>-` for activation bars on long-running operations.
+
+{% elif diagram_type == "class" %}
+### Class Diagram Extraction
+
+From Rust traits, structs, and impl blocks:
+
+**Classes (structs/enums):**
+- Struct definitions → classes with fields and methods from `impl` blocks
+- Trait definitions → `<<interface>>` with method signatures
+- Enum definitions → `<<enumeration>>` with variants
+
+**Relationships:**
+- `impl Trait for Struct` → `Trait <|-- Struct : implements`
+- `trait Sub: Super` → `Super <|-- Sub : extends`
+- Struct field of type OtherStruct → `Struct o-- OtherStruct : has`
+- Method parameter of type &Trait → `Caller ..> Trait : uses`
+
+**Multiplicity:** Label composition relationships: `A "1" o-- "0..*" B`.
+{% endif %}
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "entities": [
+    { "name": "EntityName", "attributes": [...], "metadata": {...} }
+  ],
+  "relationships": [
+    { "from": "EntityA", "to": "EntityB", "type": "...", "label": "..." }
+  ],
+  "extraction_notes": "One sentence: what was found, any ambiguities, what was skipped."
+}
+```

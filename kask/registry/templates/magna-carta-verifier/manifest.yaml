@@ -1,0 +1,52 @@
+# Template crate manifest for magna-carta-verifier skill
+# hKask v0.28.0
+
+crate:
+  name: magna-carta-verifier
+  version: "0.30.0"
+  description: >
+    Verifies that hKask's four Magna Carta principles (User Sovereignty,
+    Affirmative Consent, Generative Space, Clear Boundaries) are correctly
+    implemented and enforced. Uses YAML manifests to declare assertions per
+    principle and Jinja2 templates to render verification procedures, reports,
+    and test cases.
+
+templates:
+  - id: magna-carta-verifier/mc-verify-procedure
+    name: "Render a step-by-step verification procedure for each assertion in a…"
+    path: mc-verify-procedure.j2
+    type: KnowAct
+    lexicon_terms: [validate, classify, detect, observe, enforce]
+    description: >
+      Render a step-by-step verification procedure for each assertion in a
+      Magna Carta principle manifest. For each assertion, produce the method
+      (structural_audit, behavioral_probe, resource_verification, absence_check),
+      targets, and expected pass/fail criteria.
+
+  - id: magna-carta-verifier/mc-verify-report
+    name: "Synthesize verification results into a structured report with…"
+    path: mc-verify-report.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, synthesize, classify, score, report]
+    description: >
+      Synthesize verification results into a structured report with per-principle
+      status, per-assertion findings (pass/fail/warning), gap identification,
+      and an overall compliance score.
+
+  - id: magna-carta-verifier/mc-verify-testcase
+    name: "Render Rust test case code blocks from assertion definitions"
+    path: mc-verify-testcase.j2
+    type: KnowAct
+    lexicon_terms: [extract, validate, verify, specify, write]
+    description: >
+      Render Rust test case code blocks from assertion definitions. Each
+      assertion produces a compilable test skeleton targeting the declared
+      crate, module, and method with the appropriate verification method.
+
+  - id: magna-carta-verifier/mc-convergence-check
+    name: "Compute normalized convergence metric for Magna Carta verification…"
+    path: mc-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for Magna Carta verification PDCA cycles.

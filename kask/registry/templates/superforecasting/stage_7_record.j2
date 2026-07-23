@@ -1,0 +1,99 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- forecast
+- record
+- tracking
+- audit
+- post-mortem
+- error analysis
+- resolution
+contract:
+  input:
+    forecasting_question: string
+    final_probability: float
+    confidence_level: string
+    pipeline_summary: object
+    resolution_criteria: string|null
+    expiration_date: string|null
+  output:
+    forecast_record: object
+    tracking_id: string
+    reg_event_id: string
+energy_cap: 2048
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# goal: Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. #}
+You are a forecast recording specialist. Your task is to create a structured record of the forecast for later tracking, scoring, and post-mortem analysis.
+
+## Forecast Summary
+
+**Question:** {{ forecasting_question }}
+
+**Final Probability:** {{ final_probability }} ({{ (final_probability * 100)|round(1) }}%)
+
+**Confidence Level:** {{ confidence_level }}
+
+{% if resolution_criteria %}
+**Resolution Criteria:** {{ resolution_criteria }}
+{% endif %}
+
+{% if expiration_date %}
+**Expiration Date:** {{ expiration_date }}
+{% endif %}
+
+## Pipeline Summary
+{% if pipeline_summary %}
+- Triage: {{ pipeline_summary.triage_difficulty|default("N/A") }}
+- Sub-questions: {{ pipeline_summary.sub_question_count|default(0) }}
+- Reference classes: {{ pipeline_summary.reference_class_count|default(0) }}
+- Hypotheses: {{ pipeline_summary.hypothesis_count|default(0) }}
+- Evidence items: {{ pipeline_summary.evidence_count|default(0) }}
+{% endif %}
+
+## Forecast Recording Requirements
+
+### Structured Record
+Create a complete record including:
+- Unique tracking ID
+- Timestamp
+- Full question text
+- Resolution criteria (how will this be judged?)
+- Probability and confidence
+- Summary of reasoning
+- Key assumptions made
+- Regulation event references
+
+### Post-Mortem Preparation
+Set up for later error analysis:
+- What would count as resolution?
+- What evidence will determine the outcome?
+- When should this be evaluated?
+
+### Regulation Integration
+The flow engine automatically emits Regulation spans during WordAct execution:
+- hkask.template.select (pipeline/template selection — engine-managed)
+- hkask.template.render (template execution — engine-managed)
+- hkask.template.outcome (forecast recorded — engine-managed)
+
+These spans are declared at the FlowDef level (reg.emit_spans: true) and
+require no explicit reg_spans declaration on this WordAct step.
+
+## Output
+
+Respond with a JSON object containing:
+- forecast_record: Object with {
+    question: string,
+    probability: float,
+    confidence: string,
+    timestamp: string (ISO 8601),
+    resolution_criteria: string,
+    expiration_date: string|null,
+    reasoning_summary: string,
+    key_assumptions: array of strings
+  }
+- tracking_id: string (unique identifier for this forecast)
+- reg_event_id: string (reference to Regulation event record)
+
+After recording, preserve the tracking ID and resolved outcome so the forecast can be scored later with the scenarios server's `scenario_score` tool.

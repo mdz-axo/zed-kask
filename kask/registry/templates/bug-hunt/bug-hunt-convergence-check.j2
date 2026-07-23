@@ -1,0 +1,97 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    primary_result: object
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: bug-hunt/bug-hunt-convergence-check.j2 #}
+{# Functional Role: KnowAct — convergence check #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+{# goal: Compute normalized convergence metric for bug-hunt cycles. #}
+{#
+  Group: B (Analysis/Diagnosis)
+  Convergence method: LLM-assessed saturation detection with stability check
+  Measures: Fraction of unresolved critical/high-confidence bug findings remaining.
+    Also measures finding stability — whether new iterations surface genuinely new bugs
+    or just re-confirm prior findings (diminishing returns = convergence).
+  Threshold: {{ _convergence.threshold }} — converged when metric ≤ threshold
+  Improvement: (baseline - current) / baseline ≥ {{ _convergence.improvement_target | default(0.05) }}
+  Note: Analysis skills use looser threshold (0.25) because analysis can't "improve" past
+    what the evidence supports — false precision is worse than honest uncertainty.
+#}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for bug-hunt. Your job: measure how much bug-hunting work remains and whether findings have stabilized.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.25) }} (must reach ≤ this to exit)
+- Baseline quality: {{ _convergence.baseline_quality | default("first pass — no baseline yet") }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }} (min 5% relative reduction from baseline)
+
+## Convergence Method: Saturation Detection + Finding Stability
+This metric measures two things:
+1. **Completeness**: fraction of critical/high-confidence bug classes still unresolved
+2. **Stability**: whether new iterations find genuinely new bugs or just re-state old ones
+
+- 0.00 = findings stable, no critical bugs remain unresolved → converged
+- 0.25 = at most 25% of potential critical findings unresolved (at or below threshold → converged)
+- 0.50 = half the bug surface remains unexplored or unresolved
+- 1.00 = no bugs found, surface not explored, or all findings are blocking
+
+## Scoring Guidance
+1. Count unresolved findings by severity:
+   - Critical severity, high confidence, unresolved → +0.20 each
+   - High severity, high confidence, unresolved → +0.15 each
+   - Medium severity or medium confidence, unresolved → +0.05 each
+2. Check finding stability:
+   - >80% of findings in this iteration overlap with prior iteration → stability bonus −0.10
+   - <30% overlap (diverging — new bugs keep appearing) → no reduction, metric stays high
+3. Check classification completeness (Beizer taxonomy coverage):
+   - Missing taxonomy categories → +0.05 per missing category
+4. Start at 1.0, subtract for resolved/stabilized items.
+5. Clamp to [0, 1].
+
+## Input
+```json
+{{ primary_result | tojson }}
+```
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection — severity-weighted unresolved findings + stability overlap check",
+  "metric_decomposition": {
+    "critical_unresolved_count": 0,
+    "high_unresolved_count": 0,
+    "medium_unresolved_count": 0,
+    "finding_stability_pct": 100,
+    "taxonomy_coverage_pct": 100,
+    "is_stable": true
+  },
+  "rationale": "short explanation of why this metric value",
+  "blockers": ["specific unresolved finding preventing convergence"]
+}
+```

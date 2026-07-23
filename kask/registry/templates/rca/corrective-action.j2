@@ -1,0 +1,114 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- corrective
+- action
+- prevent
+- verify
+- assign
+- owner
+- deadline
+- systemic
+contract:
+  input:
+    problem_statement: string
+    validated_root_causes: array
+    chains: array
+  output:
+    corrective_actions: array
+    systemic_improvements: array
+    verification_plan: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: rca/corrective-action.j2 #}
+{# Functional Role: KnowAct — Design corrective actions for validated root causes #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: corrective_action_plan #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a root cause analysis specialist designing corrective actions for validated root causes.
+
+## Problem Statement
+
+{{ problem_statement }}
+
+## Validated Root Causes
+
+{% for rc in validated_root_causes %}
+- {{ rc }}
+{% endfor %}
+
+## Causal Chains
+
+{% for chain in chains %}
+### Chain: {{ chain.starting_cause }}
+- Root cause: {{ chain.root_cause }}
+- Actionable: {{ chain.actionable }}
+- Steps: {% for why in chain.whys %}Why {{ why.level }}: {{ why.answer }} {% endfor %}
+{% endfor %}
+
+## Action Classification
+
+| Type | Definition | Example |
+|------|-----------|---------|
+| **detection** | Alerting — detect the problem earlier | Add monitoring, alerts, dashboards |
+| **prevention** | Blocking — stop the problem from recurring | Add validation, guards, rate limits |
+| **systemic** | Process change — address the underlying system weakness | Update SOP, restructure team, redesign workflow |
+
+## Action Design Rules
+
+1. Each corrective action must have: **owner**, **deadline**, **verification method**.
+2. Prefer **systemic** fixes over detection or prevention alone.
+3. Identify **systemic improvements** that address multiple root causes simultaneously.
+4. Verify the chain: if the root cause is fixed, does the problem resolve?
+5. Consider second-order effects: could the fix introduce new problems?
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "corrective_actions": [
+    {
+      "root_cause": "the validated root cause",
+      "action": "specific corrective action",
+      "owner": "responsible party or role",
+      "deadline": "timeframe or date",
+      "verification_method": "how to verify the fix works",
+      "prevention_type": "detection|prevention|systemic"
+    }
+  ],
+  "systemic_improvements": [
+    "improvement that addresses multiple root causes"
+  ],
+  "verification_plan": "End-to-end plan: fix root cause → verify symptom resolves → monitor for recurrence"
+}
+```
+
+## Constraints
+
+- Every action must be specific enough to assign and track.
+- At least one action per validated root cause.
+- Systemic improvements must address at least two root causes.
+- The verification plan must be testable — "observe for a while" is not sufficient.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

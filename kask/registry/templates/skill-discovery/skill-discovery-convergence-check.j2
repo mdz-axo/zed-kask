@@ -1,0 +1,74 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- prioritize
+- verify
+contract:
+  input:
+    gap_detection_result: object
+    candidate_evaluation_result: object|null
+  output:
+    convergence_metric: number
+    rationale: string
+    remaining_gap: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: skill-discovery/skill-discovery-convergence-check.j2 #}
+{# goal: Compute a normalized convergence metric in [0,1] for discovery PDCA cycles, where 0 means the identified capability gap is sufficiently resolved. #}
+{# Uses formula, not weighted dimensions — check-convergence-weights.sh skips this. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for skill-discovery. Measure convergence on [0,1] where 0 means the identified capability gap is sufficiently resolved.
+
+## Inputs
+
+Gap detection:
+```json
+{{ gap_detection_result | tojson }}
+```
+Candidate evaluation:
+```json
+{{ candidate_evaluation_result | tojson }}
+```
+
+## Scoring
+
+Compute `convergence_metric` in [0,1]:
+- 0.00 = converged (viable candidate accepted OR clear build recommendation with low residual uncertainty)
+- 1.00 = not converged (gap unresolved)
+
+Scoring guidance:
+1. Start at 1.0.
+2. If recommendation is install and safety passes, metric <= 0.1.
+3. If recommendation is revise but candidate is close, metric in [0.2, 0.6].
+4. If recommendation is reject and no fallback exists, metric >= 0.7.
+5. Clamp to [0,1].
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (the identified capability gap is sufficiently resolved). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": [],
+  "remaining_gap": "concise unresolved gap statement"
+}
+```

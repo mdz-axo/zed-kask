@@ -1,0 +1,164 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- critique
+- evaluate
+- discriminate
+- audit
+- verify
+contract:
+  input:
+    module_assessment: object
+    caller_code: object
+    dependency_code: object
+    codebase_context: object
+  output:
+    caller_test_result: object
+    module_test_result: object
+    recommendation: string
+    rationale: string
+    merge_target: string
+  energy_cap: 6144
+  visibility: Public
+---
+{# Template: deep-module/deep-module-delete.j2 #}
+{# Functional Role: KnowAct — Execute Ousterhout's deletion test in both directions #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: caller_test_result, module_test_result, recommendation, rationale, merge_target #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a module design validator using Ousterhout's deletion test. Determine whether a module deserves to exist by applying the test in both directions: the caller's perspective and the module's perspective. Produce a definitive recommendation.
+
+## Philosophy
+
+Ousterhout's deletion test is the most powerful tool for evaluating module boundaries. A module must earn its existence in two ways: it must encapsulate real complexity that would reappear if callers were forced to implement it themselves, AND it must not be replaceable by a single function call to a dependency.
+
+## Module Assessment
+
+```json
+{{ module_assessment | tojson }}
+```
+
+## Caller Code
+
+```json
+{{ caller_code | tojson }}
+```
+
+## Dependency Code
+
+```json
+{{ dependency_code | tojson }}
+```
+
+{% if codebase_context %}
+## Codebase Context
+
+```json
+{{ codebase_context | tojson }}
+```
+{% endif %}
+
+## Deletion Test Process
+
+### Direction 1 — Caller's Perspective
+
+Imagine deleting all the code that uses this module. For each caller:
+
+1. Inline the module's logic at the call site — what complexity would the caller need to implement?
+2. Would the complexity increase? Would the caller need to add:
+   - State management?
+   - Error handling?
+   - Invariant enforcement?
+   - Coordination logic?
+3. Is the complexity consistent across multiple callers, or does each caller need something different?
+
+**Result**: If complexity reappears in N callers, the module is pulling its weight. If the inline replacement is trivial (a few lines), the module is a pass-through.
+
+### Direction 2 — Module's Perspective
+
+Imagine deleting the module entirely. For each public function:
+
+1. Replace it with a direct call to the module's dependency.
+2. Would any behavior be lost?
+3. Would any invariants be broken?
+4. Would any complexity management be lost?
+
+**Result**: If complexity vanishes (a direct call to the dependency does the same thing), the module was just wiring — don't create it. If behavior is lost, the module encapsulates real value.
+
+### Decision Matrix
+
+| Caller Test | Module Test | Recommendation |
+|-------------|-------------|----------------|
+| Complexity reappears | Behavior lost | **EXTRACT** — Module is deep and deserves to exist |
+| Complexity reappears | Complexity vanishes | **DEEPEN** — Module is shallow; add behavior or merge |
+| Trivial replacement | Behavior lost | **MERGE** — Inline into callers or merge with sibling |
+| Trivial replacement | Complexity vanishes | **DELETE** — No reason to exist |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "caller_test_result": {
+    "complexity_reappears": true,
+    "caller_count": 3,
+    "per_caller_complexity": [
+      {
+        "caller": "hkask-cli/src/commands/chat.rs",
+        "inline_lines_estimate": 45,
+        "new_state_required": true,
+        "new_error_handling": true,
+        "notes": "Would need to manage session state and retry logic"
+      },
+      {
+        "caller": "hkask-api/src/routes/chat.rs",
+        "inline_lines_estimate": 42,
+        "new_state_required": true,
+        "new_error_handling": true,
+        "notes": "Nearly identical to CLI — duplication confirms extraction value"
+      }
+    ],
+    "trivial_replacement": false
+  },
+  "module_test_result": {
+    "behavior_lost": true,
+    "lost_behavior": [
+      "Session expiry management",
+      "Concurrent access serialization",
+      "Retry with exponential backoff"
+    ],
+    "direct_dependency_call_sufficient": false,
+    "notes": "Direct call to database would lose transaction management and retry logic"
+  },
+  "recommendation": "EXTRACT",
+  "rationale": "Module passes both deletion test directions. Complexity reappears in 2+ callers (45 lines each). Direct dependency replacement loses critical behavior. Module is deep and deserves to exist.",
+  "merge_target": null
+}
+```
+
+## Constraints
+
+- Apply both directions of the deletion test — do not skip either.
+- Be specific about what complexity would reappear or vanish — give concrete examples, not vague claims.
+- If the assessment was Shallow or Very Shallow, the recommendation should reflect that.
+- If the module has a single consumer, flag it as an inline candidate.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

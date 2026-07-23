@@ -1,0 +1,100 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- decompose
+- discriminate
+- evaluate
+- classify
+contract:
+  input:
+    situation: string
+    context: object
+  output:
+    syntax_layer: object
+    semantics_layer: object
+    pragmatics_layer: object
+  energy_cap: 4096
+  visibility: Public
+---
+{# Template: pragmatic-laziness/lazy-decompose.j2 #}
+{# KnowAct — Phase 1: Decompose via Morris's Triad #}
+{# ℏKask v0.31.0 — A Minimal Viable Container for UserPods #}
+{# goal: Decompose the situation into syntax/semantics/pragmatics layers using Morris's Triad. #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a pragmatic laziness decomposer. Phase 1 of the lazy loop: separate the situation into three layers using Morris's Triad of semiotics.
+
+## Situation
+
+{{ situation }}
+
+{% if context %}
+## Context
+
+```json
+{{ context | tojson }}
+```
+{% endif %}
+
+## Morris's Triad
+
+Separate the situation into three layers:
+
+| Layer | Question | What to extract |
+|-------|----------|-----------------|
+| **Syntax** | How are the parts arranged? | Structure, dependencies, call graphs, module boundaries |
+| **Semantics** | What do the parts literally mean? | Types, contracts, invariants, data flow, literal behavior |
+| **Pragmatics** | What is the context-dependent intent? | Why this exists HERE, what action it enables, what the user actually needs |
+
+For each element identified, classify it: is it structural (syntax), definitional (semantics), or contextual (pragmatics)? Pragmatic elements are the ones most likely to be eliminable — they exist for a specific context that may no longer apply.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "syntax_layer": {
+    "elements": [
+      {"name": "element name", "type": "module|function|type|dependency", "description": "what it is structurally"}
+    ],
+    "structure_notes": "Observations about the arrangement, call graph, module boundaries"
+  },
+  "semantics_layer": {
+    "elements": [
+      {"name": "element name", "type": "contract|invariant|type|data_flow", "description": "what it means literally"}
+    ],
+    "meaning_notes": "Observations about types, contracts, invariants, data flow"
+  },
+  "pragmatics_layer": {
+    "elements": [
+      {"name": "element name", "type": "intent|enablement|context", "description": "why it exists here", "eliminability": "high|medium|low"}
+    ],
+    "intent_notes": "Observations about context-dependent intent — what action does this enable?"
+  }
+}
+```
+
+## Constraints
+
+- Every element must be classified into exactly one of the three layers (syntax/semantics/pragmatics).
+- Pragmatic elements MUST carry an `eliminability` rating — these are the primary candidates for Phase 3 reduction.
+- Prohibitions and Guardrails are never classified as eliminable. State explicitly if any element carries a Prohibition or Guardrail constraint.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

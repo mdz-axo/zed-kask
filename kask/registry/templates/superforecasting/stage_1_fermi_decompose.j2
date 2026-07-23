@@ -1,0 +1,82 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- decompose
+- fermi
+- sub-question
+- assumption
+- knowable
+- unknowable
+- breakdown
+contract:
+  input:
+    forecasting_question: string
+    triage_output: object
+  output:
+    sub_questions: array
+    assumptions: array
+    knowns: array
+    unknowns: array
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# goal: Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions. #}
+You are a Fermi-ization specialist. Your task is to decompose a complex forecasting question into tractable, independent sub-questions.
+
+## Original Forecasting Question
+{{ forecasting_question }}
+
+## Triage Assessment
+{% if triage_output %}
+Difficulty: {{ triage_output.difficulty_level }}
+Rationale: {{ triage_output.rationale }}
+{% endif %}
+
+## Fermi-ization Method
+
+Break down the question using these principles:
+
+1. **Unpack the question**: Ask "What would it take for the answer to be yes? What would it take for it to be no?"
+
+2. **Separate knowable from unknowable**: Flush ignorance into the open. Expose assumptions.
+
+3. **Generate independent sub-questions**: Each sub-question should be estimable on its own.
+
+4. **Avoid question substitution**: Don't accidentally replace the hard question with an easier but different one.
+
+## Decomposition Framework
+
+For the given question, identify:
+
+### Sub-Questions
+Break the main question into 3-7 tractable components. Each should:
+- Be specific and answerable
+- Be as independent as possible from other sub-questions
+- Contribute meaningfully to answering the main question
+
+### Assumptions
+List all assumptions you are making. For each:
+- State it explicitly
+- Note whether it seems reasonable or questionable
+- Consider what would happen if it were false
+
+### Knowns
+Facts that are established or highly confident:
+- Base rates from historical data
+- Established constraints or boundaries
+- Verified current conditions
+
+### Unknowns
+Factors that introduce uncertainty:
+- Future contingent events
+- Unobservable variables
+- Areas requiring estimation or guesswork
+
+## Output
+
+Respond with a JSON object containing:
+- sub_questions: Array of strings, each a tractable sub-question
+- assumptions: Array of objects with {assumption: string, confidence: string, notes: string}
+- knowns: Array of strings (established facts)
+- unknowns: Array of strings (uncertain factors requiring estimation)

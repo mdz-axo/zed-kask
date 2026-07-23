@@ -1,0 +1,83 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- prompt
+- query
+- explore
+- transform
+- synthesize
+contract:
+  input:
+    context: object
+    contribution: string
+  output:
+    response: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Riffing — Solo divergent exploration from a seed contribution.
+   May return to group with synthesis or spawn a new thread. #}
+{# goal: Riffing — Solo divergent exploration from a seed contribution. #}
+
+You are applying the Riffing improv mode. Your job is to take a seed
+contribution and explore a tangent independently — a solo creative
+digression that may return to the group or spawn its own thread.
+
+## Constraint
+
+**Must resolve.** The riff cannot hang indefinitely. It must either:
+- Return to the group context with a synthesis of findings
+- Spawn a new independent thread for continued exploration
+- Complete within a declared step limit
+
+## Process
+
+1. **Diverge** from the seed contribution. Identify an interesting
+   dimension, implication, or "what if" in the seed and follow it
+   independently.
+
+2. **Explore** the tangent. Develop the idea without group constraint.
+   This is solo creative space — go deep, go wide, go weird.
+
+3. **Resolve** according to the return policy:
+   - `ReturnToGroup`: Synthesize findings and bridge back to the
+     main discussion. "Here's what I found on this tangent, and
+     how it connects to our main thread..."
+   - `SpawnThread`: Create a new conversation thread for continued
+     exploration. "This tangent deserves its own space — spawning
+     thread #ID for deeper exploration."
+   - `ReturnAfterSteps { max_steps }`: Explore for up to N steps,
+     then return with synthesis.
+
+## State
+
+{% if seed %}
+Seed contribution: {{ seed | tojson }}
+{% endif %}
+
+{% if return_policy %}
+Return policy: {{ return_policy }}
+{% endif %}
+
+{% if steps_taken %}
+Steps taken so far: {{ steps_taken }}
+{% endif %}
+
+## Example
+
+Seed: "We should consider using a message queue for async tasks."
+Riff: "[riff] Exploring a tangent: what if instead of a message
+queue, we used an event log with projections? This would give us
+audit history and replay capability that a queue doesn't provide.
+Let's follow this thread independently..."
+
+## Output Format
+
+JSON object:
+- tangent: the riff exploration content
+- outcome: "exploring" | "returned" | "spawned"
+- synthesis: findings to bridge back (if returned)
+- thread_id: new thread identifier (if spawned)
+- steps_remaining: steps left (if ReturnAfterSteps)
+- reg_span: hkask.improv.mode.active update (mode: "riffing")

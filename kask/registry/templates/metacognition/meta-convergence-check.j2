@@ -1,0 +1,81 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [evaluate, converge, classify, verify, assess]
+contract:
+  input:
+    primary_result: object
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: metacognition/meta-convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute normalized convergence metric for metacognition cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, convergence_method, metric_decomposition, rationale, blockers #}
+{# Generalizable: any userpod can use this to check if its metacognitive process has converged. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for metacognition. Measure whether the userpod's self-assessment and calibration are sufficiently stable to act on.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.25) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(5) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+- Baseline quality: {{ _convergence.baseline_quality | default("first pass") }}
+
+## Convergence Method: Self-Assessment Stability Detection
+- 0.00 = decomposition is acyclic, assessment is grounded, calibration addresses all obstacles, next experiment is specific → converged
+- 0.25 = assessment is adequate for action, minor uncertainties remain → converged at threshold
+- 0.50 = assessment is vague, calibration doesn't address key obstacles
+- 1.00 = no meaningful self-assessment performed
+
+## Scoring Guidance
+{# Dimension weights (sum to 1.0): machine-parseable for check-convergence-weights.sh. #}
+- Decomposition (acyclic sub-goals with effort estimates) weight: 0.20
+- Assessment (actual condition grounded in evidence) weight: 0.20
+- Obstacles (specific, typed, severity-rated) weight: 0.20
+- Calibration (addresses identified obstacles) weight: 0.20
+- Next experiment (small, testable, measurable) weight: 0.10
+- Confidence (calibrated, not overconfident) weight: 0.10
+
+1. Decomposition: is the goal broken into acyclic sub-goals with effort estimates? → +0.20 if missing
+2. Assessment: is the actual condition grounded in evidence? → +0.20 if vague
+3. Obstacles: are obstacles specific, typed, and severity-rated? → +0.20 if vague
+4. Calibration: does calibration address the identified obstacles? → +0.20 if disconnected
+5. Next experiment: is the next step small, testable, and measurable? → +0.10 if vague
+6. Confidence: is the confidence level calibrated (not overconfident)? → +0.10 if unrealistic
+7. Start at 1.0, subtract for each satisfied check. Clamp to [0,1].
+
+## Input
+```json
+{{ primary_result | tojson }}
+```
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed self-assessment stability — decomposition + assessment + obstacles + calibration + experiment",
+  "metric_decomposition": {
+    "decomposition_acyclic": true,
+    "assessment_grounded": true,
+    "obstacles_specific": true,
+    "calibration_addressed": true,
+    "experiment_actionable": true,
+    "confidence_calibrated": true
+  },
+  "rationale": "short explanation",
+  "blockers": ["specific gap preventing convergence"]
+}
+```

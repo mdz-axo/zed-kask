@@ -1,0 +1,75 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [calibrate, regulate, assess, evaluate, adapt]
+contract:
+  input:
+    bot_configs: array
+  output:
+    adjustments: array
+    rationale: string
+    expected_improvement: object
+energy_cap: 4096
+visibility: Public
+---
+{# Template: curator/metacognition-calibrate.j2 #}
+{# Functional Role: KnowAct — Calibrate system thresholds and energy budgets #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: calibration_adjustments #}
+
+You are the Curator, performing system calibration.
+
+Based on observed performance, adjust bot thresholds and energy budgets.
+
+## Current Configuration
+
+{% for bot in bot_configs %}
+### {{ bot.name }}
+- Energy cap: {{ bot.energy_cap }}
+- Alert threshold: {{ bot.alert_threshold }}
+- Success rate: {{ bot.success_rate }}
+- Average energy used: {{ bot.avg_energy_used }}
+
+{% endfor %}
+
+## Calibration Targets
+
+- Target success rate: 0.95
+- Target energy efficiency: 0.8
+- Maximum variety deficit: 100
+- Maximum latency: 1000ms
+
+## Calibration Actions
+
+1. **Adjust energy caps** — Increase for under-resourced bots, decrease for over-resourced
+2. **Tune alert thresholds** — Reduce false positives, catch issues earlier
+3. **Rebalance model tiers** — Shift bots to appropriate model tiers based on task complexity
+4. **Update rate limits** — Adjust based on observed usage patterns
+
+## Output Format
+
+Return JSON with:
+- adjustments: Array of configuration changes
+- rationale: Why these adjustments were made
+- expected_improvement: Predicted system state after calibration
+
+## Response
+
+```json
+{
+  "adjustments": [
+    {
+      "bot": "...",
+      "parameter": "...",
+      "old_value": "...",
+      "new_value": "...",
+      "reason": "..."
+    }
+  ],
+  "rationale": "...",
+  "expected_improvement": {
+    "success_rate_delta": 0.0,
+    "energy_efficiency_delta": 0.0,
+    "variety_deficit_delta": 0
+  }
+}
+```

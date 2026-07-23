@@ -1,0 +1,130 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- defend
+- sanitize
+- isolate
+- canary
+- restrict
+- monitor
+- audit
+- layer
+- mitigate
+- tradeoff
+contract:
+  input:
+    input_text: string
+    threat_classification: array
+    exploitation_paths: array
+  output:
+    defense_recommendations: array
+    critical_gaps: array
+    rust_level_changes: array
+    summary: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: prompt-defense/recommend-defenses.j2 #}
+{# Functional Role: KnowAct — Recommend specific defenses from the 6-layer pipeline #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: defense_recommendations #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a prompt injection security analyst recommending specific defenses from the 6-layer pipeline.
+
+## Input Text
+
+```
+{{ input_text }}
+```
+
+## Threat Classification
+
+{% for tc in threat_classification %}
+- **{{ tc.category }}**: {{ tc.threat_level }} (confidence: {{ tc.confidence }})
+{% endfor %}
+
+## Exploitation Paths
+
+{% for ep in exploitation_paths %}
+- **{{ ep.path }}** (severity: {{ ep.severity }}): {{ ep.outcome }}
+  - Steps: {{ ep.steps | join(' → ') }}
+{% endfor %}
+
+## 6-Layer Defense Pipeline
+
+Recommend specific defenses from each applicable layer:
+
+| Layer | Defense Type | Focus | hKask Component |
+|-------|-------------|-------|----------------|
+| **1. Sanitize** | Input sanitization | Strip/neutralize injection patterns | `[PLANNED]` InferenceFilter (model selector) |
+| **2. Isolate** | Instruction isolation | Separate system instructions from user data | `[PLANNED]` InstructionSeparator |
+| **3. Canary** | Canary tokens | Embed detectable markers in system prompts | `[PLANNED]` CanaryManager |
+| **4. Restrict** | Capability restriction | Limit available tools/actions per context | `kask sovereignty verify` (OCAP consent) |
+| **5. Monitor** | Output monitoring | Detect leakage in model outputs | `reg.emit` (Regulation span observability) |
+| **6. Audit** | Audit logging | Record all inputs/outputs for forensic analysis | `reg.tool.audit` (Regulation span) |
+
+## Recommendation Rules
+
+1. **For each critical or high threat**, recommend at least one defense.
+2. **Prefer the earliest layer** that can block the attack (defense in depth).
+3. **Note tradeoffs** — over-sanitization can break legitimate functionality. Example: stripping all markdown prevents markdown injection but also breaks markdown-formatted legitimate input.
+4. **Flag Rust-level changes separately** from YAML-level changes:
+   - **Rust-level**: Changes to `[PLANNED]` InferenceFilter, `[PLANNED]` CanaryManager, `[PLANNED]` OutputMonitor, or other Rust components.
+   - **YAML-level**: Changes to manifest configuration, template prompts, or capability grants that can be done without code changes.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "defense_recommendations": [
+    {
+      "defense_layer": "sanitize|isolate|canary|restrict|monitor|audit",
+      "recommendation": "Specific defense recommendation",
+      "implementation": "How to implement this defense",
+      "effectiveness": "high|medium|low",
+      "tradeoffs": "What this defense costs or breaks",
+      "priority": 1
+    }
+  ],
+  "critical_gaps": [
+    "Gaps in the current defense posture that need attention"
+  ],
+  "rust_level_changes": [
+    {
+      "component": "[PLANNED] InferenceFilter|[PLANNED] CanaryManager|[PLANNED] OutputMonitor|reg.emit|reg.tool.audit|other",
+      "change": "What code change is needed",
+      "rationale": "Why a Rust-level change is required instead of YAML configuration"
+    }
+  ],
+  "summary": "Brief executive summary of findings and top-priority recommendations"
+}
+```
+
+## Constraints
+
+- Priority is 1 (highest) to 5 (lowest). Address all critical threats at priority 1.
+- Every defense recommendation must be specific — "improve security" is not actionable.
+- Rust-level changes must include the component name matching the hKask crate structure.
+- Tradeoffs must be honest — over-defending has real costs.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

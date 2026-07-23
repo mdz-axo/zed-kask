@@ -1,0 +1,88 @@
+# Template crate manifest for falsifiability skill
+# hKask v0.31.0
+
+crate:
+  name: falsifiability
+  version: "0.31.0"
+  description: >
+    Domain-agnostic eliminative inference engine anchored to Popper
+    (falsifiability), Platt (strong inference) and Chamberlin (multiple working
+    hypotheses), with Pearl/Halpern counterfactual reasoning as the alternative
+    generator. Rules out what is not testable at the question level (admissibility
+    gate), generates multiple falsifiable hypotheses, constructs minimal
+    counterfactuals, designs discriminating tests, and eliminates the hypotheses
+    that fail — corroborating the survivors, never confirming them. A delegation
+    target: diagnose, hypothesis-framer and superforecasting delegate their
+    falsification stages here; sequential-inquiry may delegate when a
+    counterfactual scenario must be explored.
+
+templates:
+  - id: falsifiability/falsifiability-admit
+    name: "Popper admissibility gate"
+    path: falsifiability-admit.j2
+    type: KnowAct
+    lexicon_terms: [admit, classify, rule_out, test, gate]
+    description: >
+      Popper admissibility gate. For the claim or question under analysis, test
+      whether a concrete observation could contradict it. Rule out unfalsifiable
+      targets (tautologies, unfalsifiable OUGHTs, protected claims) with a recorded
+      reason; admit only what survives. Classifies testability via the
+      pragmatic-semantics IS/OUGHT and epistemic-mode axes.
+
+  - id: falsifiability/falsifiability-hypothesize
+    name: "Chamberlin multiple working hypotheses"
+    path: falsifiability-hypothesize.j2
+    type: KnowAct
+    lexicon_terms: [generate, hypothesize, predict, rank, diversify]
+    description: >
+      Chamberlin multiple working hypotheses. Generate 3-7 candidate explanations
+      for the admitted question with no early commitment. Each hypothesis must
+      carry a falsifiable prediction in Platt form — if X, then observation Y
+      under condition Z. Hypotheses with no possible falsifying observation are
+      discarded at generation, not carried forward.
+
+  - id: falsifiability/falsifiability-counterfactual
+    name: "Pearl/Halpern counterfactual generation"
+    path: falsifiability-counterfactual.j2
+    type: KnowAct
+    lexicon_terms: [construct, intervene, isolate, derive, test]
+    description: >
+      Pearl/Halpern counterfactual generation. For each surviving hypothesis,
+      construct the minimal counterfactual — if the proposed cause had not
+      occurred (do(not X)), would the effect still obtain? — and derive the
+      concrete testable consequence that distinguishes the counterfactual world
+      from the factual one.
+
+  - id: falsifiability/falsifiability-discriminate
+    name: "Platt discriminating-test design"
+    path: falsifiability-discriminate.j2
+    type: KnowAct
+    lexicon_terms: [design, discriminate, isolate, map, rank]
+    description: >
+      Platt discriminating-test design. Design tests whose outcome rules out at
+      least one hypothesis — not one test per hypothesis. Map each test to the
+      hypotheses it can falsify. Flag hypothesis pairs no available test can
+      discriminate as irreducible and surface them for the user.
+
+  - id: falsifiability/falsifiability-eliminate
+    name: "Apply evidence and eliminate"
+    path: falsifiability-eliminate.j2
+    type: KnowAct
+    lexicon_terms: [eliminate, corroborate, rule_out, record, justify]
+    description: >
+      Apply evidence and eliminate. Hypotheses whose falsifiable predictions fail
+      are ruled out — hard elimination, not Bayesian down-weighting (that is
+      superforecasting's concern). Survivors are corroborated, never confirmed.
+      Record which test eliminated which hypothesis and the falsifying observation.
+
+  - id: falsifiability/falsifiability-convergence-check
+    name: "Compute normalized convergence metric for falsifiability PDCA cycles"
+    path: falsifiability-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for falsifiability PDCA cycles.
+      Outputs convergence_metric in [0,1], where 0 means one corroborated survivor
+      remains with all alternatives eliminated. Includes a materiality guard that
+      forces convergence when no hypothesis was eliminated this cycle and no new
+      discriminating test is available.

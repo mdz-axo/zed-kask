@@ -1,0 +1,36 @@
+# Media Video — Add Caption FlowDef
+# Local ffmpeg drawtext filter for text overlay.
+
+template_type: FlowDef
+name: media_video_add_caption
+version: "1.0.0"
+description: "Add text caption overlay to a video"
+primary_model: "local/ffmpeg"
+parameters:
+  - name: video_url
+    type: string
+    required: true
+    description: "URL or path to the source video"
+  - name: text
+    type: string
+    required: true
+    description: "Caption text to overlay"
+  - name: position
+    type: enum
+    values: [top, bottom, center]
+    default: bottom
+    description: "Text position on frame"
+  - name: font_size
+    type: integer
+    required: false
+    default: 24
+    description: "Font size in pixels"
+input_type: video_url
+output_type: video_url
+latency: sync
+cost_tier: free
+---
+# Video Add Caption Pipeline
+# Step 1: Validate video_url
+# Step 2: Run ffmpeg with drawtext filter
+# Step 3: Return output video path/URL

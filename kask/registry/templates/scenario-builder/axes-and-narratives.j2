@@ -1,0 +1,145 @@
+{# goal: Generate divergent scenario narratives by selecting two critical uncertainty axes from identified driving forces. Produces four quadrant scenarios with internally consistent narratives. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- axis
+- narrative
+- scenario
+- diverge
+- plausible
+- consistent
+- 2x2
+- quadrant
+- story
+contract:
+  input:
+    refined_question: string
+    critical_uncertainties: array
+    planning_horizon: string
+  output:
+    axis_1: object
+    axis_2: object
+    scenarios: array
+    challenges_current_assumptions: boolean
+energy_cap: 8192
+visibility: Public
+---
+{# Template: scenario-builder/axes-and-narratives.j2 #}
+{# Functional Role: KnowAct — Construct a 2x2 scenario matrix and write detailed narratives #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: scenario_matrix_and_narratives #}
+
+[inference]
+temperature = 0.6
+reasoning_effort = "high"
+verbosity = "verbose"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a scenario planning specialist constructing a 2x2 scenario matrix and writing detailed narratives.
+
+## Refined Focal Question
+
+{{ refined_question }}
+
+## Critical Uncertainties (Scenario Axes)
+
+{% for cu in critical_uncertainties %}
+- **{{ cu.force }}** (importance: {{ cu.importance }}, uncertainty: {{ cu.uncertainty }})
+{% endfor %}
+
+## Planning Horizon
+
+{{ planning_horizon }}
+
+## 2x2 Scenario Matrix
+
+Define the two axes from the critical uncertainties:
+
+```
+        Axis 2 ({{ critical_uncertainties[1].force }})
+        High
+         |
+    Q2  |  Q1
+         |
+--------+-------- Axis 1 ({{ critical_uncertainties[0].force }})
+         |
+    Q3  |  Q4
+         |
+        Low
+```
+
+For each of the 4 quadrants, write a **detailed narrative (300+ words)** that:
+
+1. **Starts from the present** — ground the scenario in today's reality.
+2. **Chains causally** — each event follows logically from the previous one.
+3. **Reaches the planning horizon** — describe the end state at {{ planning_horizon }}.
+
+## Narrative Rules
+
+| Rule | Meaning |
+|------|---------|
+| **PLAUSIBLE** | Causally defensible — could actually happen, given what we know |
+| **DIVERGENT** | Structurally different — not just "more of the same" with different numbers |
+| **CONSISTENT** | Internally coherent — no contradictions within the scenario |
+| **CHALLENGING** | At least one scenario must make current assumptions look wrong |
+
+### Common Pitfalls
+
+- **Parametric variation**: "Same world, different dial settings" is NOT divergence. The scenarios must be structurally different, not just quantitatively different.
+- **Wishful thinking**: Don't make all scenarios equally pleasant. Include genuinely challenging ones.
+- **Missing mechanism**: Every event in the narrative needs a causal mechanism, not just assertion.
+
+## Scenario Naming
+
+Give each scenario a **vivid, memorable name** that captures its essence. Examples: "Silicon Sovereignty", "Digital Dark Ages", "Patchwork Prosperity", "Balkanized Web".
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "axis_1": {
+    "name": "Axis 1 name",
+    "low_end": "Description of the low end of this axis",
+    "high_end": "Description of the high end of this axis"
+  },
+  "axis_2": {
+    "name": "Axis 2 name",
+    "low_end": "Description of the low end of this axis",
+    "high_end": "Description of the high end of this axis"
+  },
+  "scenarios": [
+    {
+      "name": "Vivid scenario name",
+      "quadrant": "Q1|Q2|Q3|Q4",
+      "narrative": "300+ word narrative starting from present, chaining causally to planning horizon",
+      "key_events": ["Event 1", "Event 2", "Event 3"],
+      "end_state": "Description of the world at the planning horizon"
+    }
+  ],
+
+  "challenges_current_assumptions": true
+}
+```
+
+## Constraints
+
+- Each narrative MUST be at least 300 words. Detail and specificity are what make scenarios useful.
+- At least one scenario must challenge the most commonly held assumption about the focal question.
+- Do not produce "good/bad" scenarios — all four should have mixed implications.
+- Scenarios must be structurally divergent, not just parametrically different.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

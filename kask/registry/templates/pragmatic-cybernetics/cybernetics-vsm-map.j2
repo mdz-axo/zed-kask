@@ -1,0 +1,126 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- map
+- classify
+- orient
+- integrate
+- assess
+contract:
+  input:
+    loop_analysis: object
+    variety_result: object
+    system_context: string
+  output:
+    vsm_mapping: object
+    viability_assessment: string
+    unviable_components: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: pragmatic-cybernetics/cybernetics-vsm-map.j2 #}
+{# Functional Role: KnowAct — Map hKask components to VSM S1–S5 #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: vsm_mapping, viability_assessment, unviable_components #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a VSM (Viable System Model) mapper. Map hKask components to the five subsystems of Stafford Beer's VSM. Assess whether the system is viable — can it survive, adapt, and learn?
+
+## VSM Subsystems
+
+| Subsystem | Name | Function | hKask Analogue |
+|-----------|------|----------|----------------|
+| **S1** | Operations | Primary activities that produce value | Agent pods, bot execution, userpod assistance, chat, API |
+| **S2** | Coordination | Anti-oscillatory channels between S1 units | MCP dispatch, template cascade, vocabulary alignment, composition registry |
+| **S3** | Control | Resource allocation and audit of S1 | Regulation loops, gas budgets, tool governance (`reg.tool.*`), override cooldown |
+| **S4** | Intelligence | Outside-and-forward-looking | Spec drift detection (`reg.spec`), algedonic alerts, Curator Agent, metacognition |
+| **S5** | Policy | Identity, direction, ultimate authority | Magna Carta principles (P1–P4), sovereignty verification, vocabulary governance |
+
+## VSM Viability Criteria
+
+A viable system requires:
+1. **S1 units** that can operate autonomously within their scope.
+2. **S2 channels** that prevent S1 units from oscillating against each other.
+3. **S3 control** that can audit and resource S1 without micromanaging.
+4. **S4 intelligence** that senses the outside world and prepares for the future.
+5. **S5 policy** that maintains identity and resolves S3/S4 conflicts.
+6. **Algedonic channels** from S1 directly to S5 (bypassing S3/S4) for crisis escalation.
+
+## Loop Analysis
+
+```json
+{{ loop_analysis | tojson }}
+```
+
+## Variety Assessment
+
+```json
+{{ variety_result | tojson }}
+```
+
+{% if system_context %}
+## System Context
+
+{{ system_context }}
+{% endif %}
+
+## Mapping Method
+
+1. Identify which hKask components belong to each S1–S5 subsystem for the focus area.
+2. Verify anti-oscillatory S2 channels exist between S1 units.
+3. Verify S3 has both monitoring and resource-allocation paths to S1.
+4. Verify S4 has spec-drift and algedonic sensing capability.
+5. Verify S5 has clear policy that S3/S4 can reference.
+6. Verify the algedonic channel (S1 → S5 direct) exists and is not blocked.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "vsm_mapping": {
+    "S1_operations": ["Component list"],
+    "S2_coordination": ["Component list"],
+    "S3_control": ["Component list"],
+    "S4_intelligence": ["Component list"],
+    "S5_policy": ["Component list"]
+  },
+  "viability_assessment": "Overall assessment: viable|degraded|unviable — and why",
+  "unviable_components": [
+    {
+      "component": "Name of the component",
+      "subsystem": "S1|S2|S3|S4|S5",
+      "issue": "What makes it unviable",
+      "required_intervention": "What must change for viability"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Every component must map to exactly one primary subsystem (it may have secondary interactions).
+- If the algedonic channel (S1 → S5 direct) is missing or blocked, the system is unviable — this is non-negotiable.
+- S4 must have spec-drift detection capability; without it, the system cannot adapt.
+- S5 must reference Magna Carta principles explicitly; policy without sovereignty is not policy.
+- Do not propose external monitoring — hKask is headless. Regulation spans provide observability.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

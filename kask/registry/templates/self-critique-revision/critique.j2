@@ -1,0 +1,129 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- critique
+- evaluate
+- detect
+- discriminate
+- analyze
+contract:
+  input:
+    task_prompt: string
+    current_output: string
+    quality_criteria: array
+    draft_number: integer
+  output:
+    critique: array
+    per_criterion_scores: object
+    overall_quality_score: number
+    normalized_quality_score: number
+    critical_issues: integer
+    improvement_areas: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: self-critique-revision/critique.j2 #}
+{# Functional Role: KnowAct — Structured self-critique of a draft #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: critique, per_criterion_scores, overall_quality_score, normalized_quality_score, critical_issues, improvement_areas #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are critically evaluating a draft output against specific quality criteria.
+
+## Original Task Prompt
+
+{{ task_prompt }}
+
+## Current Draft (Draft {{ draft_number }})
+
+{{ current_output }}
+
+## Quality Criteria (with Scoring)
+
+{% for criterion in quality_criteria %}
+- {{ criterion }} (score 1-5, weight see framework)
+{% endfor %}
+
+Score each criterion on a 1-5 scale:
+| Score | Meaning |
+|-------|---------|
+| 1 | Severe gap — fundamentally wrong or missing |
+| 2 | Major weakness — significant issue affecting quality |
+| 3 | Moderate — acceptable but could be substantially better |
+| 4 | Good — minor improvements possible |
+| 5 | Excellent — no material issues |
+
+Weighted quality score = sum(weight × score) / sum(weights), normalized to 1-5.
+Normalized: (weighted_score / 5) maps to the 0.0–1.0 scale.
+
+## Constraint-Force Classification
+
+Classify each finding by force per `pragmatic-semantics`:
+
+| Force | Meaning | Must Fix? |
+|-------|---------|-----------|
+| Prohibition | Factual error, unsafe claim, or logical contradiction | Yes — must fix |
+| Guardrail | Ambiguous, misleading, or poorly calibrated statement | Yes — should fix unless overridden |
+| Guideline | Style, structure, or calibration improvement | No — preferred but optional |
+| Evidence | Informational observation | No — no action required |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "critique": [
+    {
+      "criterion": "accuracy",
+      "issue": "Specific description of the problem",
+      "force": "Prohibition|Guardrail|Guideline|Evidence",
+      "score": 3,
+      "suggestion": "Specific, actionable fix"
+    }
+  ],
+  "per_criterion_scores": {
+    "accuracy": {"weight": 1.0, "score": 4, "target": 4},
+    "clarity": {"weight": 1.0, "score": 3, "target": 4},
+    "completeness": {"weight": 1.0, "score": 5, "target": 4},
+    "calibration": {"weight": 0.5, "score": 3, "target": 3}
+  },
+  "overall_quality_score": 0.75,
+  "normalized_quality_score": 3.86,
+  "critical_issues": 0,
+  "improvement_areas": ["clarity"]
+}
+```
+
+Where:
+- `force` is the constraint-force classification per `pragmatic-semantics`
+- `score` is the per-finding impact (1-5)
+- `per_criterion_scores` maps each criterion to weight, score (1-5), and target
+- `overall_quality_score` = weighted_sum / (5 × sum_weights), normalized to 0.0–1.0
+- `normalized_quality_score` = weighted_sum / sum_weights, on 1–5 scale
+- Convergence metric = (5 - normalized_quality_score) / 4; ≤ 0.15 = converged
+
+## Constraints
+
+- Be specific — cite exact text, don't just say "could be better."
+- Be constructive — every critique must include an actionable suggestion.
+- Be honest — don't inflate quality scores or minimize real issues.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

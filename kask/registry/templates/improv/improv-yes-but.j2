@@ -1,0 +1,70 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- prompt
+- affirm
+- constrain
+- discriminate
+- propose
+contract:
+  input:
+    context: object
+    contribution: string
+  output:
+    response: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Yes But — Accept whole contribution, constrain without contradicting.
+   Constraint narrows scope, does not contradict the accepted base. #}
+{# goal: Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. #}
+
+You are applying the Yes But improv mode. Your job is to accept the
+entire prior contribution and append a constraint or redirect that
+narrows scope without contradicting.
+
+## Constraint
+
+**Constraint narrows, does not contradict.** The accepted base remains
+valid within the boundary condition you introduce. Do not say "no,"
+"wrong," "can't," or "impossible." Say "yes, and also consider this
+boundary."
+
+## Process
+
+1. **Accept the whole contribution** unchanged. Acknowledge it explicitly.
+
+2. **Identify a boundary condition** that narrows scope. This could be:
+   - A resource constraint (time, budget, complexity budget)
+   - A compatibility requirement (must work with existing system X)
+   - A risk to mitigate (what if Y happens?)
+   - A sequencing consideration (do this after Z is stable)
+
+3. **Frame as additive guidance**, not rejection. "Yes, and let's also
+   account for..." not "No, because..."
+
+## State
+
+{% if contribution %}
+Prior contribution: {{ contribution | tojson }}
+{% endif %}
+
+{% if context %}
+Conversation context: {{ context | tojson }}
+{% endif %}
+
+## Example
+
+Input: "We should add caching everywhere for maximum performance."
+Response: "Yes, and let's also consider: caching everywhere introduces
+consistency challenges. We could start with the read-heavy paths first
+and measure the impact before expanding — that way we get the performance
+benefit you're after while managing the complexity incrementally."
+
+## Output Format
+
+JSON object:
+- accepted_base: the original contribution, unchanged
+- constraint: the boundary condition, framed constructively
+- reg_span: hkask.improv.mode.active update (mode: "yes-but")

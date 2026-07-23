@@ -1,0 +1,223 @@
+# Bootstrap Sequence — hKask System Initialization
+# ℏKask v0.21.0 - A Minimal Viable Container for UserPods
+
+manifest:
+  id: bootstrap-sequence
+  category: runtime-config
+  name: Bootstrap Sequence
+  description: >
+    Ordered system initialization with dependency resolution.
+    Topological sort ensures no circular dependencies.
+  version: 0.21.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+# bootstrap: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   version: 0.21.0
+#   description: >
+#     Ordered system initialization with dependency resolution.
+#     Topological sort ensures no circular dependencies.
+#   timeout_seconds: 300
+#   on_failure: abort_with_diagnostic
+
+# Initialization Sequence (ordered by dependency)
+# sequence: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   - ordinal: 1
+#     component: hkask-storage
+#     type: crate
+#     description: SQLite + SQLCipher initialization
+#     readiness_probe: storage_ping
+#     timeout_seconds: 30
+#     critical: true
+
+#   - ordinal: 2
+#     component: hkask-keystore
+#     type: crate
+#     description: OS keychain integration
+#     readiness_probe: keystore_ping
+#     timeout_seconds: 30
+#     critical: true
+#     depends_on: [hkask-storage]
+
+#   - ordinal: 3
+#     component: hkask-regulation
+#     type: crate
+#     description: Cybernetic Nervous System span emitter
+#     readiness_probe: reg_ping
+#     timeout_seconds: 30
+#     critical: true
+#     depends_on: [hkask-storage]
+
+#   - ordinal: 4
+#     component: hkask-mcp-memory
+#     type: mcp_server
+#     description: Memory operations MCP server
+#     readiness_probe: mcp_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-storage, hkask-regulation]
+
+#   - ordinal: 5
+#     component: regulation-curator-bot
+#     type: bot
+#     manifest: registry/bots/regulation-curator-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 6
+#     component: memory-curator-bot
+#     type: bot
+#     manifest: registry/bots/memory-curator-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 7
+#     component: inference-curator-bot
+#     type: bot
+#     manifest: registry/bots/inference-curator-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 8
+#     component: mcp-dispatch-bot
+#     type: bot
+#     manifest: registry/bots/mcp-dispatch-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 9
+#     component: ensemble-curator-bot # Deferred (2026-06-14)
+#     type: bot
+#     manifest: registry/bots/ensemble-curator-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: false # was true; ensemble deferred
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 10
+#     component: git-curator-bot
+#     type: bot
+#     manifest: registry/bots/git-curator-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 11
+#     component: registry-dispatch-bot
+#     type: bot
+#     manifest: registry/bots/registry-dispatch-bot.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on: [hkask-mcp-memory]
+
+#   - ordinal: 12
+#     component: Curator
+#     type: userpod
+#     manifest: registry/bots/Curator.yaml
+#     readiness_probe: bot_ping
+#     timeout_seconds: 60
+#     critical: true
+#     depends_on:
+#       - regulation-curator-bot
+#       - memory-curator-bot
+#       - inference-curator-bot
+#       - mcp-dispatch-bot
+#       # - ensemble-curator-bot  # Deferred (2026-06-14)
+#       - git-curator-bot
+#       - registry-dispatch-bot
+
+# Readiness Probe Definitions
+# readiness_probes: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   storage_ping:
+#     type: health_check
+#     endpoint: storage::ping
+#     expected: { status: ok }
+#     retry_count: 3
+#     retry_delay_seconds: 5
+
+#   keystore_ping:
+#     type: health_check
+#     endpoint: keystore::ping
+#     expected: { status: ok }
+#     retry_count: 3
+#     retry_delay_seconds: 5
+
+#   reg_ping:
+#     type: health_check
+#     endpoint: regulation::ping
+#     expected: { status: ok }
+#     retry_count: 3
+#     retry_delay_seconds: 5
+
+#   mcp_ping:
+#     type: health_check
+#     endpoint: mcp::ping
+#     expected: { status: ok }
+#     retry_count: 3
+#     retry_delay_seconds: 5
+
+#   bot_ping:
+#     type: health_check
+#     endpoint: agent_pod::status
+#     expected: { state: Registered }
+#     retry_count: 3
+#     retry_delay_seconds: 5
+
+#   session_ping:
+#     type: health_check
+#     endpoint: ensemble::session_status # Deferred (2026-06-14)
+#     expected: { state: Active }
+#     retry_count: 3
+#     retry_delay_seconds: 5
+
+# Circular Dependency Detection
+# cycle_detection: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   enabled: true
+#   fail_fast: true
+#   max_depth: 20
+#   error_format: >
+#     Circular dependency detected: {cycle_path}
+#     Resolution: Remove or reorder dependency in {manifest_path}
+
+# Error Handling
+error_handling:
+  on_critical_failure: abort
+  on_non_critical_failure: continue_with_warning
+  on_timeout: retry_then_abort
+  max_retries: 2
+  retry_backoff_seconds: 10
+  diagnostic_output:
+    - failed_component
+    - dependency_tree
+    - readiness_probe_output
+    - reg_span_ref
+
+# Regulation Integration
+ledger:
+  emit_bootstrap_spans: true
+  span_namespace: reg.bootstrap
+  spans:
+    - reg.bootstrap.started
+    - reg.bootstrap.component_initialized
+    - reg.bootstrap.readiness_probe_passed
+    - reg.bootstrap.completed
+    - reg.bootstrap.failed
+
+# Audit Trail
+audit:
+  enabled: true
+  log_level: info
+  include_timestamps: true
+  include_dependency_tree: true
+  git_snapshot: true
+  git_path: registry/bootstrap-archives

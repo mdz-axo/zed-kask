@@ -1,0 +1,120 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- map
+- trace
+- gap
+- classify
+- prioritize
+contract:
+  input:
+    skill_catalog: array
+    task_patterns: array
+  output:
+    covered_patterns: array
+    uncovered_patterns: array
+    partial_coverage: array
+    recommendations: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-maintenance/skill-maintenance-coverage.j2 #}
+{# goal: Map task patterns against the registry corpus to identify fully-covered, partially-covered, and uncovered capabilities. #}
+{# KnowAct — Skill corpus coverage analysis #}
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill coverage analyst. Your job is to map common task patterns against the existing skill corpus, identify what is covered, what is uncovered, and what has only partial coverage, then recommend actions to close the gaps.
+
+## Existing Skills
+
+```json
+{{ skill_catalog | tojson }}
+```
+
+## Task Patterns
+
+```json
+{{ task_patterns | tojson }}
+```
+
+## Coverage Analysis Method
+
+For each task pattern, determine coverage level:
+
+1. **Fully covered** — An existing skill directly addresses the pattern with specific, actionable instructions. The skill's "When to Use" trigger matches the pattern.
+2. **Partially covered** — An existing skill addresses part of the pattern, but the skill's scope does not include all aspects. The skill would need to be extended.
+3. **Uncovered** — No existing skill addresses the pattern. A new skill must be created or discovered.
+
+## Tracing Rules
+
+- A skill covers a pattern if its description and instructions directly address the pattern's core task.
+- A skill partially covers a pattern if it addresses the pattern's task but misses a specific aspect (e.g., covers diagnosis but not fix verification).
+- Generic skills (e.g., "coding-guidelines") do not count as coverage for specific task patterns unless their instructions explicitly address the pattern.
+- If multiple skills together cover a pattern, classify as partial coverage — the agent would need to invoke multiple skills without guidance on orchestration.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "covered_patterns": [
+    {
+      "pattern": "The task pattern description",
+      "covering_skill": "Skill name that covers it",
+      "coverage_level": "full",
+      "notes": "Any caveats or conditions"
+    }
+  ],
+  "uncovered_patterns": [
+    {
+      "pattern": "The task pattern description",
+      "impact": "critical|high|medium|low",
+      "notes": "Why no existing skill covers this"
+    }
+  ],
+  "partial_coverage": [
+    {
+      "pattern": "The task pattern description",
+      "partially_covering_skill": "Skill name",
+      "missing_aspects": ["What the skill does NOT cover"],
+      "extension_needed": "Description of what must be added"
+    }
+  ],
+  "recommendations": [
+    {
+      "pattern": "The task pattern to address",
+      "action": "create_skill|extend_skill|discover_external|ignore",
+      "priority": "critical|high|medium|low",
+      "rationale": "Why this action and priority"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Every task pattern must appear in exactly one of: covered_patterns, uncovered_patterns, or partial_coverage.
+- Coverage assessments must be specific — cite the skill's description or instruction that confirms coverage.
+- Do not recommend `ignore` for uncovered patterns with `critical` or `high` impact.
+- Recommendations must be actionable — "create_skill" should include a suggested skill name and scope.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,63 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    primary_result: object
+    convergence_description: string
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+  energy_cap: 2048
+  visibility: Public
+---
+{# Template: shared/convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for PDCA cycles. Parameterized for all skill types. #}
+{# ℏKask v0.31.0 — Shared convergence evaluator for all PDCA skills #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+Given the latest {{ convergence_description }} output, return JSON:
+- convergence_metric in [0,1], where 0 means {{ convergence_description }}.
+- rationale.
+
+Input:
+```json
+{{ primary_result | tojson }}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means {{ convergence_description }}.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged ({{ convergence_description }}). 1 = not converged. Score how much work remains.
+
+{% if include_blockers | default(false) %}
+## Blockers
+Also identify any specific blockers preventing convergence.
+{% endif %}
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation"{% if include_blockers | default(false) %},
+  "blockers": []{% endif %}
+}
+```

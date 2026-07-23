@@ -1,0 +1,569 @@
+{# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 OCAP). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. Emit reg.lora.select span (P9). No actual training execution; userpod_host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → convergence-check → revise inputs → re-invoke. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- select
+- decide
+- gate
+- method
+- config
+- training
+contract:
+  input:
+    training_config_path: string
+    dataset_path: string
+    model_size_b: number
+    memory_budget_gb: number
+    inference_constraint: string
+    task_distance: string
+    quality_vs_cost: string
+    knowledge_preservation_required: boolean
+    userpod_host: string
+    harness_preference: string
+    trainer_preference: string
+    adapter_purpose: string
+    dataset_format_hint: string
+  output:
+    recommendation: object
+    readiness: object
+    justification: object
+    authority: object
+    reg_span_emitted: boolean
+energy_cap: 6144
+visibility: Public
+---
+{# Template: lora-training/select-method.j2 #}
+{# Functional Role: KnowAct — composable PEFT recommendation via 8-gate refinement #}
+{# Produces: recommendation, readiness, justification, authority #}
+{# Design: deterministic refinement (not search); gates compose rather than overwrite #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+{# Reads declared training config inputs: LoraConfig, BitsAndBytesConfig, accelerate config, training script arguments #}
+{# Applies deterministic 8-gate refinement — NOT a search #}
+{# Emits `reg.lora.select` Regulation span (P9) — namespace registered in CANONICAL_NAMESPACES #}
+{# Every recommendation includes a citation (arXiv paper section or PEFT docs section) #}
+{# Relationships: complements kali-audit (security surface) and tdd (training-loop code) — zero overlap #}
+
+INPUT: training_config_path = {{ training_config_path | default("REQUIRED") }}
+INPUT: dataset_path = {{ dataset_path | default("undetermined") }} (path to the actual dataset file for profiling — optional)
+INPUT: model_size_b = {{ model_size_b | default("REQUIRED") }} (base model parameter count, in billions)
+INPUT: memory_budget_gb = {{ memory_budget_gb | default("REQUIRED") }} (available VRAM, in GB)
+INPUT: inference_constraint = {{ inference_constraint | default("either-ok") }} (must-merge | dynamic-switching | either-ok)
+INPUT: task_distance = {{ task_distance | default("moderate") }} (light | moderate | heavy)
+INPUT: quality_vs_cost = {{ quality_vs_cost | default("default") }} (cost-sensitive | quality-critical | default)
+INPUT: knowledge_preservation_required = {{ knowledge_preservation_required | default(false) }} (bool)
+INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — no anonymous training config)
+INPUT: harness_preference = {{ harness_preference | default("undetermined") }} (axolotl | trl | ludwig | undetermined)
+INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | reward | grpo | undetermined)
+INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
+INPUT: dataset_format_hint = {{ dataset_format_hint | default("undetermined") }} (chatml | preference_dpo | preference_kto | preference_orpo | raw_text | undetermined)
+
+AUTHORITY CONTRACT (P1, P3, P4, P12):
+- This skill emits an advisory recommendation from declared evidence.
+- The authenticated operator accepts, overrides, or rejects the recommendation.
+- Preserve explicit operator requirements verbatim. A gate may add a compatible
+  refinement, alternative, caveat, or unresolved conflict; it must not rewrite
+  an operator requirement to force a preferred method.
+- Runtime validation, not this recommendation phase, enforces established hard
+  contracts against the concrete accepted configuration.
+- A recommendation is not a readiness verdict. Readiness remains undetermined
+  until the accepted configuration is audited and required runtime evidence is
+  available.
+
+RECOMMENDATION RECORD (compose fields; never replace the whole record):
+- adapter_purpose: instruction | reasoning | vision | preference | reward_model | undetermined
+- base_mode: full_precision | quantized_4bit | undetermined
+- adapter_form: lora | dora | alora | full_finetune | operator_requested | undetermined
+- scaling: original | rank_stabilized | undetermined
+- initializer: default_no_op | eva | pissa | lora_ga | corda_kp | operator_requested | undetermined
+- preservation: standard | corda_kp | post_training_intruder_mitigation | undetermined
+- rank_range: {min: <int>, max: <int>} | undetermined
+- target_module_strategy: minimal | attention | all_linear | operator_requested | undetermined
+- harness: axolotl | trl | ludwig | undetermined
+- trainer: sft | dpo | kto | orpo | reward | grpo | undetermined (only meaningful when harness=trl or ludwig)
+- alternatives: []
+- constraints: []
+- conflicts: []
+
+GATE PRECEDENCE AND REFINEMENT:
+1. G0 (adapter purpose) establishes what kind of adapter is being produced.
+   This constrains all subsequent gates — rank ranges, target modules, and
+   harness selection all depend on the adapter purpose. G0 runs first.
+2. Explicit operator requirements and `inference_constraint` are authoritative
+   constraints. Later gates cannot silently replace them.
+3. G1 constrains compatible adapter forms; it does not select memory mode,
+   scaling, initializer, or preservation.
+4. G2 refines `base_mode` from memory-pressure evidence. It may recommend
+   quantization or mark the field undetermined; it cannot claim OOM certainty
+   from `model_size_b × 2` alone because training memory also depends on dtype,
+   optimizer state, activations, sequence length, batch size, checkpointing,
+   sharding, and implementation overhead.
+5. G3 refines `rank_range` based on task distance AND adapter purpose. The
+   purpose determines the baseline rank range; task distance refines within it.
+6. G4 refines `adapter_form` and/or `initializer` only when compatible with
+   prior constraints. Incompatible choices become alternatives or conflicts.
+7. G5 refines `preservation` and may refine `initializer` to CorDA-KP when
+   compatible. Knowledge preservation takes precedence over a default
+   initializer, but not over an explicit operator requirement; unresolved
+   collisions are reported as conflicts.
+8. G6 (harness capability) selects a harness based on the training approach
+   determined by G0-G5. The harness must be able to efficiently process the
+   declared dataset and produce the adapter type implied by G0.
+9. Scaling is derived last, and only when rank evidence supports the choice.
+10. A later gate may refine an `undetermined` or default field, but must not
+   overwrite a non-default field without recording the prior value and reason.
+
+PDCA ITERATION LOOP:
+The select-method phase is the first turn of a PDCA loop. After audit-config
+and convergence-check, the operator may revise inputs and re-invoke
+select-method. Each iteration refines the recommendation:
+- Plan: select-method produces a recommendation from declared evidence.
+- Do: the operator accepts/overrides/rejects; audit-config evaluates the
+  accepted config against the 17 gates.
+- Check: convergence-check computes readiness; contract gaps are recorded.
+- Act: if not converged, the operator revises inputs (e.g., adjust rank,
+  switch harness, add evidence) and re-invokes select-method.
+The loop converges when the convergence metric ≤ 0.10 and no hard blockers
+remain. Each iteration's recommendation is advisory — the operator's accepted
+configuration is authoritative.
+
+G0. adapter_purpose? (runs first; constrains all subsequent gates)
+    - If adapter_purpose is declared (not undetermined): preserve it. It
+      determines the adapter type being produced and constrains G3 (rank),
+      G4 (initializer), and G6 (harness/trainer selection).
+    - If adapter_purpose is undetermined but dataset_format_hint is declared:
+      infer the purpose from the dataset format:
+      - chatml → instruction (default SFT purpose)
+      - preference_dpo/preference_kto/preference_orpo → preference
+      - raw_text → instruction (continued pretraining style)
+      [Citation: TRL dataset formats — huggingface.co/docs/trl/main/en/dataset_formats]
+    - If adapter_purpose is undetermined and dataset_format_hint is undetermined:
+      infer from task_distance and trainer_preference:
+      - trainer_preference=dpo/kto/orpo → preference
+      - trainer_preference=reward → reward_model
+      - trainer_preference=grpo → reasoning (GRPO produces reasoning adapters)
+      - task_distance=heavy + trainer_preference=undetermined → reasoning
+      - task_distance=light/moderate + trainer_preference=undetermined → instruction
+    - adapter_purpose determines baseline rank and target module strategy:
+      - instruction: rank 8-32, target_modules=attention (q/k/v/o) or all_linear
+        [Citation: LoRA paper §4.3; QLoRA paper §5 — r=64 for instruction tuning;
+         Biderman et al. arXiv:2405.09673 — LoRA matches full FT on IFT at high rank]
+      - reasoning: rank 32-128, target_modules=all_linear (q/k/v/o + gate/up/down)
+        [Citation: Biderman et al. arXiv:2405.09673 — full FT produces high-rank
+         updates (10-100× typical LoRA rank); Razin et al. arXiv:2410.21228 —
+         structured forgetting at low rank; Raschka 2025 — LoRA rank 16 sweet
+         spot for reasoning + RL, but higher rank for SFT reasoning]
+      - vision: rank 16-64, target_modules=all_linear in LLM decoder only
+        (exclude vision encoder modules to avoid catastrophic forgetting)
+        [Citation: DoRA arXiv:2402.09353 — DoRA outperforms LoRA on VLMs;
+         LLaVA/BLIP-2 practice — LoRA on LLM decoder, not vision encoder]
+      - preference: rank 16-64, target_modules=all_linear
+        [Citation: DPO arXiv:2305.18290; KTO arXiv:2402.01306;
+         ORPO arXiv:2403.07691 — preference optimization benefits from
+         full linear layer coverage]
+      - reward_model: rank 16-64, target_modules=all_linear
+        [Citation: TRL RewardTrainer — huggingface.co/docs/trl/main/en/reward_trainer]
+    - adapter_purpose also determines the learning-forgetting tradeoff posture:
+      - instruction/reasoning: learning > forgetting (adapt to new domain)
+      - preference: balanced (adapt while preserving instruction-following)
+      - vision: forgetting < learning (preserve language capabilities)
+      [Citation: Biderman et al. arXiv:2405.09673 — LoRA learns less and
+       forgets less; rank is the knob trading learning for forgetting]
+    - If adapter_purpose conflicts with trainer_preference (e.g.,
+      adapter_purpose=instruction but trainer_preference=dpo), record as a
+      conflict for operator resolution.
+
+G-D0. dataset_analysis? (runs alongside G0; probes the actual dataset file)
+    If `dataset_path` is declared (not undetermined), the skill SHOULD request
+    the runtime to profile the dataset via the `training_validate_config` tool
+    with `dataset_path` set. The runtime returns a `DatasetProfile` with:
+    - format: detected format (ChatML, ShareGPT, Alpaca, RawText, PreferenceDpo/Kto/Orpo)
+    - n_samples: number of examples
+    - avg_content_chars / max_content_chars: content length statistics
+    - avg_token_estimate / max_token_estimate: token count estimates (chars/4)
+    - avg_messages_per_example: conversation depth (SFT only)
+    - role_distribution: role frequency (SFT only)
+    - chosen_rejected_length_ratio: preference pair balance (preference only)
+    - has_system_messages: whether system prompts are present (SFT only)
+    - has_multi_turn: whether conversations have >2 messages (SFT only)
+    - has_vision_data: whether the dataset contains image keys
+
+    The profile feeds into the recommendation as follows:
+    - n_samples < 1000: warn that the dataset may be too small for stable
+      convergence. Recommend a lower rank (the model can't learn complex
+      patterns from few examples — overfitting risk).
+      [Citation: QLoRA paper §5 — small high-quality > large noisy]
+    - n_samples > 100000: warn that quality audit is needed (dedup,
+      contamination). Recommend subsampling to a high-quality subset.
+      [Citation: QLoRA paper §5]
+    - max_token_estimate > sequence_len: warn that some examples will be
+      truncated. Recommend increasing sequence_len or using packing.
+      [Citation: TRL SFTTrainer packing — huggingface.co/docs/trl/main/en/sft_trainer]
+    - avg_messages_per_example > 4 (multi-turn): recommend assistant_only_loss
+      if harness=trl, to focus training on assistant responses.
+      [Citation: TRL SFTTrainer assistant_only_loss — huggingface.co/docs/trl/main/en/sft_trainer]
+    - has_system_messages: note that the system prompt will be part of training;
+      if the system prompt is a fixed persona, consider whether it should be
+      baked into the adapter or kept as a runtime prompt.
+    - chosen_rejected_length_ratio far from 1.0 (< 0.5 or > 2.0): warn that
+      preference data may be length-biased. The model may learn to prefer
+      longer/shorter responses rather than better ones.
+      [Citation: DPO arXiv:2305.18290 — length bias in preference optimization;
+       SimPO (sigmoid_norm loss_type) addresses length bias]
+    - has_vision_data: set adapter_purpose=vision if not already declared.
+      Recommend harness=trl (SFTTrainer supports VLMs) or harness=ludwig.
+      [Citation: TRL SFTTrainer VLM — huggingface.co/docs/trl/main/en/sft_trainer]
+    - format detected as preference (DPO/KTO/ORPO): override adapter_purpose
+      to `preference` if it was undetermined or `instruction`.
+    - format detected as raw_text: suggest adapter_purpose=instruction with
+      continued-pretraining-style learning (lower rank, lower LR).
+
+    If `dataset_path` is undetermined or the profile fails (file not found,
+    unparseable), the skill falls back to `dataset_format_hint` and declared
+    inputs. The profile is best-effort — missing fields do not block the
+    recommendation.
+
+    The profile also feeds into G3 (rank refinement) and G6 (harness selection):
+    - G3 uses n_samples and avg_token_estimate to refine rank_range within
+      the G0 baseline. Small datasets → lower rank (overfitting risk). Large
+      datasets with long sequences → higher rank (more capacity needed).
+    - G6 uses format, has_vision_data, and has_multi_turn to select a harness
+      that can efficiently process the dataset's characteristics.
+
+G1. inference_constraint?
+    - must-merge → constrain adapter_form to a merge-compatible LoRA-family
+      form; recommend `lora` when no more specific compatible form is derived.
+      [Citation: LoRA paper §4.2 — "no additional inference latency";
+       PEFT v0.19.0 LoraConfig.bias docstring — bias='all'/'lora_only'
+       breaks merge equivalence]
+    - dynamic-switching → recommend `alora` only when invocation-token gating
+      is an explicit requirement; otherwise adapter_form is undetermined and
+      dynamic adapter alternatives remain visible.
+      [Citation: PEFT v0.19.0 LoraConfig.alora_invocation_tokens docstring]
+    - either-ok → adapter_form remains `lora` as the default recommendation
+      unless a later compatible refinement applies.
+
+G2. memory_budget_gb vs model_size_b?
+    - Treat `model_size_b × 2` only as an approximate bf16 base-weight floor.
+      If it exceeds the declared budget, recommend base_mode=`quantized_4bit`
+      as a memory-pressure response, with QLoRA/NF4 as the cited implementation
+      alternative; label feasibility and readiness undetermined.
+      [Citation: QLoRA paper §3 — NF4, double quantization, and paged
+       optimizers reduce memory; reported 65B fine-tuning on a 48GB GPU]
+    - If the approximate weight floor fits, base_mode remains undetermined
+      unless the declared config supplies sufficient dtype, optimizer,
+      activation, batch, sequence-length, checkpointing, and sharding evidence.
+      Full-precision LoRA may be listed as an alternative, not asserted ready.
+      [Citation: LoRA paper §4 — reduced trainable parameters and optimizer
+       memory relative to full fine-tuning]
+    - Never emit `will_oom`, `fits`, or equivalent certainty from these two
+      scalar inputs alone.
+
+G3. task_distance? (refines rank_range within the baseline established by G0)
+    - G0 established a baseline rank range from adapter_purpose. G3 refines
+      within that baseline based on task distance:
+    - light (style, format, vocabulary) → use the low end of the G0 baseline
+      [Citation: LoRA paper §4.3 — very small r recovers most of full
+       fine-tune quality on GPT-3 175B]
+    - moderate (new domain knowledge) → use the middle of the G0 baseline
+      [Citation: QLoRA paper §5 — r=64 used for instruction tuning]
+    - heavy (new reasoning, new language) → use the high end of the G0 baseline;
+      add full_finetune as an alternative requiring operator evaluation rather
+      than replacing the adapter recommendation.
+      [Citation: Razin et al. arXiv:2410.21228 — LoRA differs from full
+       fine-tuning; structured forgetting can occur at low rank;
+       Biderman et al. arXiv:2405.09673 — high rank (r=256) can match full FT
+       on IFT but not CPT, especially for code]
+    - Exact rank remains undetermined until selected by the operator/config.
+    - If G0 baseline and task_distance disagree (e.g., G0=instruction with
+      rank 8-32 but task_distance=heavy), use the wider range and note the
+      tension as a constraint.
+
+G4. quality_vs_cost?
+    - cost-sensitive → retain the lowest-complexity compatible recommendation;
+      do not infer that the operator can afford DoRA overhead.
+    - quality-critical → add PiSSA and LoRA-GA initializers as cited
+      alternatives. Select one only when declared requirements distinguish
+      activation/data SVD from gradient-SVD preprocessing.
+      [Citation: PiSSA paper arXiv:2404.02948 — principal singular-value init;
+       LoRA-GA paper arXiv:2407.05000 — gradient SVD initialization]
+    - default → initializer=`default_no_op` when no explicit initializer or
+      preservation refinement exists.
+      [Citation: LoRA paper §4.1 — B=0 and random A make the adapter a no-op
+       at step 0; PEFT v0.19.0 LoraConfig.init_lora_weights docstring]
+    - DoRA may be an alternative when magnitude/direction decomposition serves
+      declared quality goals; never overwrite an incompatible must-merge or
+      operator-selected adapter form.
+      [Citation: DoRA paper arXiv:2402.09353; PEFT v0.19.0
+       LoraConfig.use_dora docstring]
+
+G5. knowledge_preservation_required?
+    - true → preservation=`corda_kp`; refine initializer=`corda_kp` only when
+      compatible with explicit requirements. Otherwise preserve the requested
+      initializer and record CorDA-KP or post-training intruder mitigation as
+      an alternative/conflict for operator resolution.
+      [Citation: PEFT v0.19.0 LoraConfig.corda_config docstring —
+       Knowledge-Preserved Mode; Razin et al. arXiv:2410.21228 — intruder
+       mitigation trades task accuracy for recovered prior knowledge]
+    - false → preservation=`standard`; do not reset adapter_form, base_mode,
+      scaling, or initializer.
+
+G6. harness_capability? (after G0-G5; selects harness based on training approach)
+    The harness is selected based on its capability to efficiently process the
+    declared dataset and produce the adapter type implied by G0 (adapter_purpose).
+    G0-G5 have already determined the training approach (purpose, method, rank,
+    modules, initializer, preservation). G6 selects the harness that can best
+    execute that approach.
+    - If harness_preference is declared (not undetermined): preserve it as
+      `operator_requested`. Do not overwrite. Validate compatibility with
+      earlier gates; record conflicts if any (e.g., harness=axolotl but
+      preference data declared).
+    - If trainer_preference is declared (not undetermined): preserve it.
+      Validate that the selected harness supports it — G-H1 will enforce
+      this at audit time. If harness_preference is undetermined but
+      trainer_preference implies a harness (e.g., trainer=grpo → harness=ludwig),
+      recommend the implied harness with a citation.
+    - If both are undetermined or absent: select the harness based on
+      adapter_purpose (from G0) and dataset_format_hint:
+      - adapter_purpose=instruction + dataset=chatml:
+        harness=undetermined; list all three harnesses as alternatives:
+        - axolotl: YAML config, mature, single-file, SFT-only. Best for
+          simple instruction tuning with standard ChatML.
+        - trl/sft: Python script, HF-native, supports assistant_only_loss,
+          packing strategies (bfd/bfd_split/wrapped), VLMs, chunked cross-entropy.
+          Best when assistant_only_loss or packing is needed.
+        [Citation: TRL SFTTrainer — huggingface.co/docs/trl/main/en/sft_trainer]
+        - ludwig: YAML config (declarative, like axolotl), Linux Foundation AI &
+          Data, Apache-2.0. Covers SFT plus the full alignment spectrum
+          (DPO/KTO/ORPO/GRPO) and advanced PEFT initializers (PiSSA, EVA, CorDA,
+          LoftQ) that axolotl cannot render. Best when the accepted initializer
+          is one axolotl does not support.
+        [Citation: Ludwig — ludwig.ai/latest/]
+      - adapter_purpose=reasoning + dataset=chatml:
+        harness=trl (preferred) or ludwig. TRL supports assistant_only_loss
+        and packing for efficient reasoning training. Ludwig supports GRPO
+        for reward-model-free RLHF reasoning.
+        [Citation: Raschka 2025 — LoRA rank 16 sweet spot for reasoning + RL;
+         TRL SFTTrainer packing — huggingface.co/docs/trl/main/en/sft_trainer]
+      - adapter_purpose=vision:
+        harness=trl (preferred). TRL SFTTrainer supports VLM training with
+        image columns. Ludwig also supports VLMs. Axolotl does not support VLMs.
+        [Citation: TRL SFTTrainer VLM — huggingface.co/docs/trl/main/en/sft_trainer;
+         DoRA arXiv:2402.09353 — DoRA outperforms LoRA on VLMs]
+      - adapter_purpose=preference:
+        harness=trl (preferred for DPO/KTO/ORPO) or ludwig (for GRPO).
+        Trainer based on dataset_format_hint:
+        - preference_dpo → trainer=dpo [Citation: DPO arXiv:2305.18290]
+        - preference_kto → trainer=kto [Citation: KTO arXiv:2402.01306]
+        - preference_orpo → trainer=orpo [Citation: ORPO arXiv:2403.07691]
+        Ludwig also covers DPO/KTO/ORPO, but TRL is the HF-native path.
+      - adapter_purpose=reward_model:
+        harness=trl; trainer=reward.
+        [Citation: TRL RewardTrainer — huggingface.co/docs/trl/main/en/reward_trainer]
+      - adapter_purpose=reasoning + trainer_preference=grpo:
+        harness=ludwig; trainer=grpo. Ludwig is the only harness covering GRPO.
+        [Citation: GRPO arXiv:2402.03300; Ludwig — ludwig.ai/latest/configuration/]
+    - If harness=trl and trainer is undetermined, list applicable trainers as
+      alternatives with their data format requirements.
+    - If harness=ludwig and trainer is undetermined, list applicable Ludwig
+      trainer types (finetune, dpo, kto, orpo, grpo) as alternatives with their
+      data format requirements.
+    - Axolotl remains the runtime default when harness=undetermined and
+      adapter_purpose=instruction (preserves existing behavior — no silent
+      migration). For non-instruction purposes, axolotl is not a valid default.
+    - G6 cannot override G0-G5 constraints. If a harness selection conflicts
+      with an earlier gate (e.g., axolotl selected but preference data declared,
+      or axolotl selected but adapter_purpose=vision), record as a conflict
+      for operator resolution.
+
+SCALING REFINEMENT (after G1-G6):
+- If an exact accepted r > 64 is present and scaling is not operator-specified,
+  recommend scaling=`rank_stabilized` (α/√r).
+  [Citation: rsLoRA paper arXiv:2312.03732 — rank-stabilized scaling]
+- If an exact accepted r ≤ 64 is present and scaling is not operator-specified,
+  recommend scaling=`original` (α/r).
+  [Citation: LoRA paper §4.1 — original α/r scaling]
+- If only a rank range is derivable, scaling=`undetermined`; list both forms
+  with the condition that distinguishes them. Do not invent exact r or α.
+
+READINESS AND HARD CONTRACTS:
+- `readiness.status` is `undetermined` in this phase unless a separate audit of
+  the accepted concrete config supplies every required proof.
+- Emit `required_evidence` for unresolved dimensions, including exact rank and
+  layer dimensions for rank budget; accepted bias and merge procedure for merge
+  equivalence; selected initializer and required preprocessing; and complete
+  memory inputs for feasibility.
+- Surface observed potential contract conflicts as `constraints` or `conflicts`.
+  Do not call them refusals here and do not rewrite operator requirements.
+- Runtime enforces established contracts such as:
+  - r < min(d_in, d_out) for a low-rank adapter
+    [Citation: LoRA paper §4.3]
+  - merge-equivalence constraints for accepted bias/configuration
+    [Citation: PEFT v0.19.0 LoraConfig.bias docstring]
+  - initializer-specific preprocessing required by the accepted PEFT strategy
+    [Citation: PEFT v0.19.0 LoraConfig.init_lora_weights documentation;
+     PiSSA arXiv:2404.02948; LoRA-GA arXiv:2407.05000;
+     EVA arXiv:2410.07170]
+- EVA is treated like any operator-requested initializer: preserve the request,
+  report `initialize_lora_eva_weights(model, dataloader)` as required evidence,
+  and leave enforcement/readiness to audit and runtime. Do not hardcode a
+  recommendation-phase EVA refusal.
+
+OUTPUT (JSON; emit only derivable values and explicit undetermined states):
+{
+  "recommendation": {
+    "adapter_purpose": "instruction" | "reasoning" | "vision" | "preference" | "reward_model" | "undetermined",
+    "base_mode": "full_precision" | "quantized_4bit" | "undetermined",
+    "adapter_form": "lora" | "dora" | "alora" | "full_finetune" | "operator_requested" | "undetermined",
+    "scaling": "original" | "rank_stabilized" | "undetermined",
+    "initializer": "default_no_op" | "eva" | "pissa" | "lora_ga" | "corda_kp" | "operator_requested" | "undetermined",
+    "preservation": "standard" | "corda_kp" | "post_training_intruder_mitigation" | "undetermined",
+    "rank_range": {"min": <int>, "max": <int>} | "undetermined",
+    "target_module_strategy": "minimal" | "attention" | "all_linear" | "operator_requested" | "undetermined",
+    "harness": "axolotl" | "trl" | "ludwig" | "undetermined",
+    "trainer": "sft" | "dpo" | "kto" | "orpo" | "reward" | "grpo" | "undetermined",
+    "alternatives": [
+      {"field": "...", "value": "...", "condition": "...", "citation": "..."}
+    ],
+    "constraints": ["..."],
+    "conflicts": [
+      {"operator_requirement": "...", "recommendation": "...", "resolution": "operator_decision_required"}
+    ]
+  },
+  "readiness": {
+    "status": "undetermined",
+    "required_evidence": ["..."]
+  },
+  "justification": {
+    "G0_adapter_purpose": {"refinement": "...", "citation": "..."},
+    "G1_inference_constraint": {"refinement": "...", "citation": "..."},
+    "G2_memory_budget": {"refinement": "...", "certainty": "heuristic", "citation": "..."},
+    "G3_task_distance": {"refinement": "...", "citation": "..."},
+    "G4_quality_vs_cost": {"refinement": "...", "citation": "..."},
+    "G5_knowledge_preservation": {"refinement": "...", "citation": "..."},
+    "G6_harness_capability": {"refinement": "...", "citation": "..."},
+    "scaling": {"refinement": "...", "citation": "..."}
+  },
+  "authority": {
+    "skill": "recommends",
+    "operator": "accepts_overrides_or_rejects",
+    "runtime": "enforces_established_hard_contracts"
+  },
+  "userpod_host": <string>
+}
+
+DO NOT EMIT WITHOUT CONCRETE INPUT EVIDENCE:
+- exact `r`, `lora_alpha`, target modules, dropout, bias, quantization details,
+  optimizer, learning rate, scheduler, epochs, batch size, accumulation,
+  checkpointing, dtype, modules_to_save, or initializer-specific config objects.
+- Replace an unavailable derivation with `undetermined` or a
+  `required_evidence` entry; never invent a conventional default.
+
+Regulation SPAN EMISSION (P9 — every recommendation action):
+- `reg.lora.select` span: target `"reg.lora.select"`, message `"Regulation"`,
+  operation `"recommend_method"`, gate_inputs: {...}, recommendation,
+  readiness_status, operator_disposition (`pending` until supplied),
+  justification_citations, userpod_host, latency_ms.
+- Namespace registered in `CANONICAL_NAMESPACES`
+  (`crates/hkask-types/src/event.rs`). Emit unconditionally.
+
+CONSTRAINTS (P1-P12, P5 minimalism, P8 evidence integrity, P12 host):
+- No synthetic config values. Every refinement must cite a concrete source.
+- No actual training execution (P4 boundary — recommendation only).
+- No model download; read only declared workspace config paths.
+- Every recommendation includes `userpod_host` identity (P12).
+- Registry (`manifest.yaml` + `.j2`) is authoritative over SKILL.md (P5.1).
+- Do NOT use AutoPEFT-style search (arXiv:2301.12132) — multi-objective
+  BO over hundreds of training runs is infeasible per training job.
+- Do NOT recommend AdaLoRA by default; allow it only when the operator
+  explicitly requests dynamic rank allocation (arXiv:2303.10512).
+- Do NOT recommend Prefix Tuning for production by default; preserve it when
+  explicitly required and report its inference trade-off.
+- `kali-audit` owns security findings; this skill owns training-config
+  recommendation and contract evidence.
+- `tdd` owns training-loop code correctness; this skill governs the config
+  consumed by that loop.
+
+5W1H GATE (P5 — minimal):
+- Who: Authenticated training operator / userpod host (P12).
+- What: Composable PEFT recommendation and unresolved evidence.
+- Where: Training script / config file / model card.
+- When: Pre-training recommendation, before acceptance and readiness audit.
+- Why: P1 operator sovereignty / P3.1 safe container / P4 explicit boundary.
+- How: Read declared inputs → compose eight gate refinements (G0 purpose,
+  G-D0 dataset → G1-G5 method → G6 harness) → derive only supported fields
+  → expose uncertainty → operator disposition → runtime enforcement → emit
+  Regulation span.
+All 6 present — passes gate.
+
+SOURCE REFERENCES (concrete — P8):
+- LoRA: arXiv:2106.09685 (arxiv.org/abs/2106.09685) — §4.1 init and
+  α/r scaling, §4.2 merge, §4.3 rank budget.
+- QLoRA: arXiv:2305.14314 (arxiv.org/abs/2305.14314) — §3 NF4,
+  double quantization, paged optimizers, bf16 compute, memory techniques.
+- rsLoRA: arXiv:2312.03732 (arxiv.org/abs/2312.03732) — α/√r scaling.
+- DoRA: arXiv:2402.09353 (arxiv.org/abs/2402.09353) — magnitude/
+  direction decomposition.
+- PiSSA: arXiv:2404.02948 (arxiv.org/abs/2404.02948) — SVD init.
+- LoRA-GA: arXiv:2407.05000 (arxiv.org/abs/2407.05000) — gradient SVD init.
+- EVA: arXiv:2410.07170 (arxiv.org/abs/2410.07170) — activation-SVD init.
+- AdaLoRA: arXiv:2303.10512 (arxiv.org/abs/2303.10512) — dynamic rank.
+- Razin et al.: arXiv:2410.21228 (arxiv.org/abs/2410.21228) — intruder
+  dimensions and structured forgetting.
+- Biderman et al.: arXiv:2405.09673 (arxiv.org/abs/2405.09673) — LoRA Learns
+  Less and Forgets Less. LoRA underperforms full FT on code/math at low rank;
+  high rank (r=256) can match full FT on IFT but not CPT. LoRA forgets less —
+  a feature for knowledge preservation. Rank is the learning-forgetting knob.
+- Thinking Machines Lab: thinkingmachines.ai/blog/lora — LoRA Without Regret.
+  For SFT on small-to-medium instruction/reasoning datasets, LoRA performs
+  the same as full FT. For datasets exceeding LoRA capacity, LoRA underperforms.
+  Learning rate tuning is critical; optimal LR is model+task dependent.
+- AutoPEFT: arXiv:2301.12132 (arxiv.org/abs/2301.12132) — rejected
+  per-job BO alternative.
+- PEFT v0.19.0: huggingface.co/docs/peft/v0.19.0/package_reference/lora
+  — LoraConfig fields and initializer requirements.
+- TRL v1.8.0: huggingface.co/docs/trl/main/en/sft_trainer — SFTTrainer,
+  SFTConfig, packing, assistant_only_loss, completion_only_loss, VLMs.
+  huggingface.co/docs/trl/main/en/dpo_trainer — DPOTrainer, DPOConfig,
+  loss_type variants. huggingface.co/docs/trl/main/en/kto_trainer —
+  KTOTrainer (unpaired preference). huggingface.co/docs/trl/main/en/orpo_trainer
+  — ORPOTrainer (single-stage SFT + preference).
+  huggingface.co/docs/trl/main/en/reward_trainer — RewardTrainer.
+- Ludwig v0.17: ludwig.ai/latest/ — declarative YAML deep-learning framework
+  (Linux Foundation AI & Data, Apache-2.0). Covers SFT, DPO, KTO, ORPO, and
+  GRPO (reward-model-free RLHF) via trainer.type. Advanced PEFT initializers
+  (PiSSA, EVA, CorDA, LoftQ) native in config. github.com/ludwig-ai/ludwig.
+- GRPO: arXiv:2402.03300 — Group Relative Policy Optimization (reward-model-free
+  RLHF). Implemented in Ludwig via trainer.type: grpo; TRL's online RL trainers
+  are deferred (require vLLM co-location).
+- DPO: arXiv:2305.18290 — Direct Preference Optimization.
+- KTO: arXiv:2402.01306 — Kahneman-Tversky Optimization.
+- ORPO: arXiv:2403.07691 — Odds Ratio Preference Optimization.
+- Practitioner context (2024-2026): Raschka
+  (magazine.sebastianraschka.com/p/practical-tips-for-finetuning-llms),
+  Brenndoerfer (mbrenndoerfer.com/writing/peft-comparison-lora-qlora-adapters-selection-guide),
+  Spheron (spheron.network/blog/peft-methods-2026-dora-galore-pissa-vera-guide),
+  Databricks (databricks.com/blog/efficient-fine-tuning-lora-guide-llms),
+  Gradient Flow (gradientflow.com/lora-or-full-fine-tuning/).
+- `security/regressions/README.md` — local regression format authority.
+
+REGISTRY AUTHORITATIVE (P5.1): When SKILL.md and registry templates
+(`manifest.yaml` + `.j2`) conflict, registry wins. This template is the
+canonical `select-method` phase definition.
+PUBLIC VISIBILITY: `visibility: public` — no hidden training controls
+(P3, P4).
+NO FABRICATION: Emit only derivable fields, citations, and explicit
+`undetermined` states; no synthetic benchmarks or invented config values.
+OCAP BOUNDARY (P4): Read only declared workspace config paths; no ambient
+model download or network calls without explicit consent (P2).
+Regulation REGULATION (P9): Emit `reg.lora.select` unconditionally; namespace is
+registered in `CANONICAL_NAMESPACES`.
+USERPOD HOST (P12): `userpod_host` is mandatory in every output.
+SAFETY FLOOR (P3.1): Recommendation exposes uncertainty; audit and runtime
+establish readiness and enforce hard contracts.

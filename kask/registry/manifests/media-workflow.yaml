@@ -1,0 +1,106 @@
+# Media Workflow — Improvement Kata Process Manifest
+# hKask v0.31.0
+# Convergent PDCA loop: analyze intent → compose DAG → execute → validate → refine
+# Converges when all workflow output URLs are present and accessible.
+
+manifest:
+  id: media-workflow
+  category: skill
+  name: Media Workflow
+  description: >
+    Convergent media pipeline Improvement Kata. Analyzes user intent for
+    multi-step GPU operations, composes a Fal.ai workflow DAG via
+    media/workflow-composer, executes it atomically via media.execute_workflow,
+    validates output URLs, and refines the DAG when nodes fail or outputs
+    are missing. Converges when all pipeline steps produce valid, accessible
+    output URLs.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.0
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_4_result.all_urls_valid
+  on_not_reached: escalate
+
+gas:
+  cap: 200000
+  cost_per_iteration: 1000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 4
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: intent
+    type: string
+    required: true
+    description: "Natural language description of the media pipeline to build"
+
+steps:
+  # ── Step 1: Understand the Direction ──
+  - ordinal: 1
+    action: render
+    description: >
+      Analyze the user's media intent. Identify the ordered list of
+      operations needed, their data dependencies, and whether any steps
+      can be parallelized. Outputs a structured pipeline description.
+    renderer: minijinja
+    template_ref: media-workflow/compose-and-execute
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      intent: "{{ intent }}"
+
+  # ── Step 2: Grasp the Current Condition ──
+  - ordinal: 2
+    action: evaluate
+    description: >
+      Map pipeline steps to available Fal.ai models. Determine sync vs
+      queue execution mode for each step. Validate model constraints
+      and input format requirements.
+    renderer: minijinja
+    template_ref: media/workflow-composer
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      intent: "{{ intent }}"
+      pipeline_description: "{{ step_1_result }}"
+
+  # ── Step 3: Establish the Target Condition ──
+  - ordinal: 3
+    action: validate
+    description: >
+      Validate the generated workflow JSON. Check: has input/run/display
+      nodes, correct $references, valid model IDs, correct sync/queue
+      mode annotations. Reject and regenerate if structural validation
+      fails.
+    renderer: minijinja
+    template_ref: media/workflow-composer
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      workflow_json: "{{ step_2_result }}"
+      intent: "{{ intent }}"
+
+  # ── Step 4: Iterate via PDCA ──
+  - ordinal: 4
+    action: execute
+    description: >
+      Execute the validated workflow DAG via media.execute_workflow.
+      Collect output URLs. Validate: all URLs present, queue nodes
+      completed, no node failures. If validation fails, refine the
+      DAG (adjust model selection, fix $references) and retry up to
+      max_iterations.
+    tool: media.execute_workflow
+    gas_cap: 180000
+    timeout_seconds: 600
+    input_mapping:
+      workflow: "{{ step_3_result | tojson }}"

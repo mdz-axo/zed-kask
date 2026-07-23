@@ -1,0 +1,39 @@
+# Template crate manifest for knowact skill
+# hKask v0.28.0
+
+crate:
+  name: knowact
+  version: "0.28.0"
+  description: >
+    Core cognitive operations for agent self-awareness and adaptation. Detects
+    behavioral drift from baselines, recalibrates agent profiles, analyzes
+    gaps and omissions via ellipsis analysis, generates perspective variants,
+    and reflects on outcomes to improve.
+
+templates:
+  - id: knowact/calibrate
+    name: "Recalibrate an agent's behavioral baseline after drift is detected"
+    path: calibrate.j2
+    type: KnowAct
+    lexicon_terms: [calibrate, adapt, regulate]
+    description: >
+      Recalibrate an agent's behavioral baseline after drift is detected.
+      Produces adjustment recommendations and a new reference baseline.
+
+  - id: knowact/detect
+    name: "Detect behavioral drift by comparing current agent behavior against…"
+    path: detect.j2
+    type: KnowAct
+    lexicon_terms: [detect, monitor, assess]
+    description: >
+      Detect behavioral drift by comparing current agent behavior against
+      its baseline profile across multiple cognitive dimensions.
+
+  - id: knowact/reflect
+    name: "Reflect on completed cycle outcomes against the strategy used"
+    path: reflect.j2
+    type: KnowAct
+    lexicon_terms: [reflect, evaluate, adapt, revise]
+    description: >
+      Reflect on completed cycle outcomes against the strategy used.
+      Produces insights and recommended adaptations for future cycles.

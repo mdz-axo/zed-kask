@@ -1,0 +1,29 @@
+# QA Feedback Classifier — defers to the canonical classifier model.
+# Used by: feedback loop — correction passages and mutant-to-fuzz suggestions
+# Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
+#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   The `model:` field below is intentionally empty; ClassifierConfig::from_def
+#   fills it from the canonical path and strips the DI/ router prefix.
+# Provider: DeepInfra (cloud API, OpenAI-compatible)
+
+classifier:
+  name: qa-feedback
+  model: ""
+  provider: deepinfra
+  concurrency: 5
+  timeout_secs: 30
+
+  system_prompt: >
+    You are a QA feedback classifier. Process the input and return ONLY: {"action":"learn|suggest","summary":"one sentence","confidence":0.0-1.0}
+    For correction passages: action=learn, summarize what was learned.
+    For mutant passages: action=suggest, describe a fuzz target.
+
+  base_url: https://api.deepinfra.com/v1/openai/chat/completions
+  api_key_env: DI_API_KEY
+
+  temperature: 0.0
+  max_tokens: 300
+
+  fallback_category: Unknown
+  cost_input_nj_per_token: 30
+  cost_output_nj_per_token: 60

@@ -1,0 +1,39 @@
+{# Template: docproc/build-prompts.j2 #}
+{# Goal: Build QA generation context with KNN scaffold, ontology context, #}
+{# concept graph, and h_mem knowledge graph injection. #}
+{# Type: KnowAct — rendered by hkask-mcp-docproc via minijinja #}
+{#
+  This template produces the system+user prompt for QA generation.
+  It provides CONTEXT only — the output format is specified by generate-qa.j2
+  which wraps this prompt as the passage text in docproc_generate_qa_batch.
+  Do NOT include an output_contract here — it would conflict with generate-qa.j2.
+#}
+<system>
+You are a Capabilities Researcher training data generator. Given a primary passage from capabilities and research literature, generate ONE question-answer pair. Calibrate question depth to the expertise level indicated in the ontological context below.
+
+{{ qa_instruction }}
+
+Ground the answer in the primary passage. Do not invent facts. Use the knowledge graph triples where relevant to enrich the answer. Cite specific facts, claims, or data from the passage.
+</system>
+
+<task>
+Generate a {{ qa_type }} QA pair from this passage.
+
+## Ontological Context
+5W1H: passage answers interrogatories [{{ dimensions }}]. QA at {{ qa_type }} level for {{ expertise }} expertise.
+Dublin Core: dcterms:source={{ source }}, dcterms:type={{ dc_type }}, dcterms:subject={{ dc_subject }}
+PKO: pko:producedBy=corpus QA generation pipeline
+{% if consolidated_from %}
+PKO: pko:wasExtractedFrom={{ consolidated_from }} original passages (consolidation preserved all unique information), pko:producedBy=corpus QA generation pipeline
+{% endif %}
+Ontology tags: {{ ontology_tags }}
+
+## Context Passages (retrieved via embedding similarity)
+{{ context_passages }}
+
+## Concept Graph (salience-weighted)
+{{ concept_graph }}
+
+## Knowledge Graph (h_mems)
+{{ knowledge_graph }}
+</task>

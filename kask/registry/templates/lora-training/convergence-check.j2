@@ -1,0 +1,221 @@
+{# goal: Compute a phase-aware, normalized training-readiness convergence metric [0,1] from current evidence only. Preserve required PDCA convergence, distinguish preflight readiness from pending runtime contracts and post-training verification, emit reg.lora.convergence (P9), and require userpod_host (P12). #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- gate
+- coverage
+- training
+- readiness
+contract:
+  input:
+    unresolved_findings: array
+    gate_results: object
+    current_phase: string
+    qlora_mode: boolean
+    corda_mode: boolean
+    existing_regressions: array
+    proposed_regressions: array
+    previous_metric: number
+    userpod_host: string
+  output:
+    convergence_metric: number
+    converged: boolean
+    preflight_ready: boolean
+    runtime_contracts_pending: boolean
+    post_training_verified: boolean
+    blockers: array
+    gate_results_summary: object
+    reg_span_emitted: boolean
+energy_cap: 4096
+visibility: Public
+---
+{# Template: lora-training/convergence-check.j2 #}
+{# Functional Role: KnowAct — Phase-aware training-readiness convergence #}
+{# Produces: convergence metric, PDCA verdict, readiness booleans, blockers, gate summary #}
+{# Design: evidence-based only (P8); normalize over gates applicable now #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+{# Computes normalized risk [0, 1], where 0 = current phase fully converged #}
+{# Emits `reg.lora.convergence` Regulation span (P9) — namespace registered #}
+
+INPUT: unresolved_findings = {{ unresolved_findings }} (current evidence)
+INPUT: gate_results = {{ gate_results }} (map of gate_id → {state, phase, evidence}; state is pass/warn/fail/refuse/deferred/planned/not_evaluated/not_applicable)
+INPUT: current_phase = {{ current_phase }} (one of preflight/runtime/post_training; mandatory; preflight aggregates static_config and harness gate phases)
+INPUT: qlora_mode = {{ qlora_mode | default(false) }} (if true, G-Q1..G-Q6 may apply)
+INPUT: corda_mode = {{ corda_mode | default(false) }} (if true, G-F2 may apply)
+INPUT: existing_regressions = {{ existing_regressions }} (actual surface: training entries)
+INPUT: proposed_regressions = {{ proposed_regressions }} (actual proposals from this cycle)
+INPUT: previous_metric = {{ previous_metric | default(none) }} (optional evidence from the immediately preceding comparable phase)
+INPUT: userpod_host = {{ userpod_host }} (mandatory, P12)
+
+EVIDENCE AND APPLICABILITY RULES (P8):
+- Use only supplied findings and gate results with concrete evidence. Do
+  not infer a pass, state, phase, severity, count, or history value.
+- Every gate result uses exactly one state: `pass`, `warn`, `fail`,
+  `refuse`, `deferred`, `planned`, `not_evaluated`, or
+  `not_applicable`. Reject unknown states as blockers.
+- Phase mapping is explicit: when `current_phase=preflight`, gates declared
+  as `static_config` or `harness` are applicable; `runtime` and
+  `post_training` remain future phases. For `runtime` and `post_training`,
+  the declared gate phase must equal `current_phase`. A future- or past-phase
+  gate is excluded from the current metric denominator.
+- QLoRA gates are `not_applicable` when `qlora_mode=false`; G-F2 is
+  `not_applicable` when `corda_mode=false`. Exclude them rather than
+  crediting them as passes.
+- `planned`, `deferred`, and `not_evaluated` never count as pass. When
+  applicable in the current phase they are unmet contracts and blockers.
+
+COMPUTE CURRENT-PHASE METRIC (weighted risk, P5, P8):
+
+1. Critical/high findings, base weight 0.40:
+   contribution risk = 1 if any evidence-backed unresolved finding has
+   severity critical or high; otherwise 0. This is intentionally binary
+   and has no undeclared previous_critical/previous_high dependency.
+
+2. Gate families and base weights:
+   - Math contracts G-M1..G-M5: 0.25.
+   - QLoRA contracts G-Q1..G-Q6: 0.15 when `qlora_mode=true`.
+   - Data/eval contracts G-D1..G-D3: 0.10.
+   - Forgetting contracts G-F1..G-F2: 0.10, with G-F2 excluded when
+     `corda_mode=false`.
+
+3. For each family, include only gates applicable in `current_phase`.
+   Exclude a family with zero currently applicable gates. For each
+   included gate, map state to risk: pass=0, warn=0.5, and
+   fail/refuse/deferred/planned/not_evaluated=1. Family risk is the
+   arithmetic mean of its included gate risks.
+
+4. Normalize base weights over dimensions applicable in the current
+   phase: normalized_weight = base_weight / sum(applicable base weights).
+   The critical/high dimension is always applicable. Compute
+   convergence_metric = sum(normalized_weight * dimension_risk), clamped
+   to [0, 1]. Report the applicable gates and normalized weights so the
+   result is reproducible from evidence.
+
+CONVERGENCE CHECK (required PDCA regulation, P9):
+- Hard blockers are unresolved critical/high findings; any applicable
+  `fail`, `refuse`, `deferred`, `planned`, or `not_evaluated` gate;
+  unknown states; and missing mandatory phase/evidence/userpod_host.
+- `converged = true` when convergence_metric ≤ 0.10 and no hard blocker
+  exists. A stable metric under the threshold remains converged; ongoing
+  5% improvement is not required.
+- If a comparable `previous_metric` is supplied, report
+  improvement_pct as diagnostic evidence only. Otherwise return null.
+  Never use improvement_pct to override the threshold verdict.
+- Blockers identify concrete finding/gate evidence and the next
+  evidence-producing PDCA experiment. Do not invent configuration paths,
+  fixes, regression proposals, or evidence.
+
+PHASE-AWARE READINESS OUTPUTS:
+- `preflight_ready` is true only when the preflight phase is current and
+  converged from its applicable evidence.
+- `runtime_contracts_pending` is true whenever supplied runtime-phase gates
+  contain `planned`, `deferred`, or `not_evaluated`, regardless of current
+  preflight readiness. These future gates do not affect the preflight metric
+  and are not counted as passes.
+- `post_training_verified` is true only when post_training is current,
+  converged, and every applicable post-training gate is evidence-backed
+  `pass` or `warn`; it is false for planned, deferred, not_evaluated,
+  fail, refuse, missing, or unknown states.
+- These booleans expose lifecycle posture; they do not replace the
+  required `converged` PDCA verdict for the current phase.
+
+Regulation SPAN (P9):
+- `reg.lora.convergence` is registered in `CANONICAL_NAMESPACES`
+  (`crates/hkask-types/src/event.rs`). Emit it unconditionally with
+  target `reg.lora.convergence`, message `Regulation`, operation
+  `convergence_check`, current_phase, convergence_metric,
+  previous_metric, improvement_pct, converged, readiness booleans,
+  blockers, applicable normalized weights, userpod_host, and latency_ms.
+
+OUTPUT FORMAT (JSON):
+`{current_phase, convergence_metric, previous_metric, improvement_pct,
+converged, preflight_ready, runtime_contracts_pending,
+post_training_verified, blockers, gate_results_summary: {states,
+applicable_gates, excluded_gates, family_risks, normalized_weights},
+existing_regressions_count, proposed_regressions_count,
+unresolved_critical, unresolved_high, qlora_mode, corda_mode,
+userpod_host, reg_span_emitted: true}`.
+
+5W1H GATE (P5): Who = mandatory userpod host; What = phase-aware
+convergence; Where = current audit/training workspace; When = declared
+current phase; Why = observable PDCA regulation and lifecycle readiness;
+How = evidence-only state mapping, applicable-weight normalization,
+threshold verdict, and Regulation emission. All 6 present.
+
+MINIMAL: One `KnowAct`; no execution, synthesis, or synthetic metrics.
+EVIDENCE-BACKED ONLY (P8): Findings, gate states/phases/evidence,
+regression counts, and optional comparable previous_metric come only
+from supplied artifacts. Absence is not a pass.
+EVOLUTIONARY (P7): A blocker requests the smallest concrete experiment
+that can produce missing evidence; stability below threshold is valid
+convergence rather than forced metric churn.
+OCAP BOUNDARY (P4): Workspace evidence only; no training execution,
+model download, or network call without explicit consent (P2).
+Regulation REGULATION (P9): Emit the registered span unconditionally.
+USERPOD HOST (P12): `userpod_host` is mandatory.
+VISIBILITY (P11): Public output; no hidden training posture.
+SAFETY FLOOR (P3.1): Unconverged current-phase risk remains visible.
+SEMANTIC GROUNDING (P8): Every blocker cites supplied evidence or the
+explicit absence that prevented evaluation.
+
+SOURCE REFERENCES (P8 — concrete):
+- LoRA: arXiv:2106.09685 (arxiv.org/abs/2106.09685) — §4.1 init,
+  §4.2 merge, §4.1 α/r scaling, §4.3 rank budget, Table 5 param count.
+- QLoRA: arXiv:2305.14314 (arxiv.org/abs/2305.14314) — §3 NF4,
+  double quant, paged optim, bf16 compute; §5 data quality; §6 eval.
+- rsLoRA: arXiv:2312.03732 (arxiv.org/abs/2312.03732) — α/√r for
+  high rank.
+- DoRA: arXiv:2402.09353 (arxiv.org/abs/2402.09353) — magnitude/
+  direction decomposition.
+- PiSSA: arXiv:2404.02948 (arxiv.org/abs/2404.02948) — SVD init,
+  fast convergence.
+- LoRA-GA: arXiv:2407.05000 (arxiv.org/abs/2407.05000) — gradient
+  SVD init, 2-4× faster convergence.
+- AdaLoRA: arXiv:2303.10512 (arxiv.org/abs/2303.10512) — dynamic
+  rank (not default; overhead caveat).
+- Razin et al. (intruder dimensions): arXiv:2410.21228
+  (arxiv.org/abs/2410.21228) — LoRA ≠ full fine-tune; structured
+  forgetting.
+- PEFT v0.19.0: huggingface.co/docs/peft/v0.19.0/package_reference/lora
+  — LoraConfig field docstrings.
+- `security/regressions/README.md` (regression format and ratchet
+  lifecycle).
+- `security/regressions/` (actual regression library — read as
+  input).
+- `kali-audit` SKILL.md (§Defense-in-Depth Layer Catalog, §Relationship
+  to adversarial-red-team, §Constraints — complements this skill).
+- `tdd` SKILL.md (§Relationship — training-loop code vs training
+  config).
+- `bug-hunt` SKILL.md (§bug-hunt-convergence-check — convergence
+  metric computation pattern adopted).
+- `supply-chain-sentinel` SKILL.md (§convergence-check — parallel
+  pre-flight gate convergence pattern).
+- `principles.md` (§P5 Essentialism, §P7 Evolutionary, §P8 Semantic
+  Grounding, §P9 Homeostatic Self-Regulation, §P12 Authenticated Host
+  Mandate).
+
+REGISTRY AUTHORITATIVE (P5.1): Registry manifest + `.j2` templates
+are canonical. SKILL.md derived. If conflict, registry wins.
+PUBLIC VISIBILITY: `visibility: public` — no hidden audit controls.
+NO FABRICATION: Metric computed from evidence counts only. Blockers
+derived from actual `findings`, `gate_results`,
+`proposed_regressions`. No synthetic config references. No synthetic
+regression counts.
+CONVERGENCE INDEPENDENT: Separate `.j2` template; does not duplicate
+`report` phase logic. Uses current supplied findings and phase-tagged
+gate results. `previous_metric` is optional comparable evidence; when
+absent, improvement_pct is null and threshold convergence still applies.
+Regulation SPAN EMITTED: `reg.lora.convergence` is registered, so the span
+is always emitted. Output states `reg_span_emitted: true`.
+MINIMAL ARTIFACT: This template produces exactly the metric, verdict,
+and blockers — no extra synthesis (that is `report.j2`
+responsibility).

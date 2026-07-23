@@ -1,0 +1,91 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    triage_result: object
+    calibration_result: object
+    record_result: object
+    gate_result: object
+    prior_probability: number|null
+    new_evidence: array
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: superforecasting/superforecasting-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for superforecasting cycles. Uses a deterministic materiality guard plus a structured weighted-penalty rubric — not vague LLM self-assessment. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1000
+thinking_budget = "off"
+
+Compute convergence where 0 means the forecast is sufficiently calibrated, confidence is justified, and record quality is adequate for later scoring.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Prior probability: {{ prior_probability | default("none") }}
+- New evidence count: {{ new_evidence | default([]) | length }}
+
+Input:
+```json
+{
+  "triage_result": {{ triage_result | tojson }},
+  "calibration_result": {{ calibration_result | tojson }},
+  "record_result": {{ record_result | tojson }},
+  "gate_result": {{ gate_result | tojson }},
+  "prior_probability": {{ prior_probability | default("null") }},
+  "new_evidence": {{ new_evidence | default([]) | tojson }}
+}
+```
+
+## Materiality Guard (Deterministic)
+
+Before evaluating convergence via the weighted rubric, check for vacuous iterations:
+
+1. Compute the absolute delta: `|calibration_result.final_probability - prior_probability|` (if `prior_probability` is not null).
+2. If delta < 0.02 AND `new_evidence` is empty (length == 0), the iteration is vacuous.
+3. In that case, immediately return:
+   - `convergence_metric`: 0.0
+   - `blockers`: `["Vacuous iteration: no material change in probability (delta = <computed_delta>) and no new evidence introduced"]`
+   - `rationale`: `"Forced convergence — materiality guard triggered (delta = <computed_delta> < 0.02, no new evidence)"`
+4. Only proceed to the weighted rubric if the materiality guard does not trigger.
+
+## Convergence Method (Structured Weighted Rubric)
+
+If the materiality guard does not trigger, derive convergence from explicit checks. Start at 0.0 and add penalties:
+
+- **Independent gate**: if `gate_result.gate_pass` is false → +0.40 penalty
+- **Confidence justification**: if `calibration_result.confidence_level` is "low" → +0.30; if "medium" → +0.10; if "high" → +0.0
+- **Precision justification**: if `calibration_result.precision_justification` is empty or vague (contains hedge words: "maybe", "likely", "probably", "about") → +0.20
+- **Defensible range present**: if `calibration_result.defensible_range` is missing or has no lower/upper bounds → +0.15
+- **Record completeness**: if `record_result.resolution_criteria` is missing or empty → +0.15; if `record_result.expiration_date` is missing → +0.10
+- **Synthesis–calibration agreement**: if `calibration_result.final_probability` differs from the synthesis output's `synthesized_probability` by more than 0.05 → +0.20 (calibration diverged from synthesis without justification)
+- **Evidence–conclusion alignment**: if `new_evidence` is non-empty but `calibration_result.precision_justification` does not reference any evidence → +0.15
+
+Clamp to [0, 1].
+
+0 = fully converged: confidence justified, precision non-vague, defensible range present, record complete, synthesis–calibration aligned.
+1 = not converged: low confidence, vague precision, incomplete record, or calibration diverged from synthesis.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "Materiality guard + structured weighted rubric",
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

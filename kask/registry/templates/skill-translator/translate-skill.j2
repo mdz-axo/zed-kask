@@ -1,0 +1,51 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- translate
+- map
+- normalize
+- transform
+- validate
+contract:
+  input:
+    source_format: string
+    source_definition: object
+    target_format: string
+    mapping_rules: object
+  output:
+    translated_skill: object
+    mapping_notes: array
+    unresolved_items: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: skill-translator/translate-skill.j2 #}
+{# goal: Translate external skill definitions into hKask-compatible structures. #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 1800
+thinking_budget = "off"
+
+Translate the input skill definition from source_format into target_format using mapping_rules.
+
+Input:
+```json
+{
+  "source_format": {{ source_format | tojson }},
+  "source_definition": {{ source_definition | tojson }},
+  "target_format": {{ target_format | tojson }},
+  "mapping_rules": {{ mapping_rules | tojson }}
+}
+```
+
+Return JSON only:
+```json
+{
+  "translated_skill": {},
+  "mapping_notes": [],
+  "unresolved_items": []
+}
+```

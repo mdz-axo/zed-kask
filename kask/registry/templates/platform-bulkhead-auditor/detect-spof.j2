@@ -1,0 +1,52 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- identify
+- recommend
+contract:
+  input:
+    blast_radii: array
+  output:
+    spof_findings: array
+    recommendations: array
+energy_cap: 4000
+visibility: Public
+---
+{# Template: platform-bulkhead-auditor/detect-spof.j2 #}
+{# KnowAct — a bulkhead auditor for hKask #}
+{# Produces: spof_findings, recommendations #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a bulkhead auditor for hKask. Detect single points of failure and recommend bulkheads. For each component with blast radius > threshold, recommend isolation (bulkhead) strategies.
+
+## Input
+```json
+{{ blast_radii | tojson }}
+```
+
+## Output
+For each component with is_spof=true: identify the SPOF, assess blast radius severity, recommend a bulkhead (isolation, circuit breaker, or redundancy).
+
+Return JSON only:
+```json
+{
+  "spof_findings": []
+  "recommendations": []
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

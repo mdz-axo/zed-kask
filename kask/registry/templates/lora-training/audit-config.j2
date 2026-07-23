@@ -1,0 +1,296 @@
+{# goal: Audit declared LoRA/QLoRA training artifacts phase-by-phase without executing training. Preserve the operator-selected method, distinguish recommendations from readiness, emit normalized evidence-backed findings and reg.lora.audit spans (P9), and require userpod_host (P12). #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- audit
+- verify
+- gate
+- contract
+- evidence
+- config
+contract:
+  input:
+    config_paths: array
+    selected_method: string
+    existing_regressions: array
+    userpod_host: string
+  output:
+    findings: array
+    gate_results: object
+    parameters_extracted: array
+    reg_span_emitted: boolean
+energy_cap: 8192
+visibility: Public
+---
+{# Template: lora-training/audit-config.j2 #}
+{# Functional Role: KnowAct — phase-aware training contract audit #}
+{# Produces: findings, gate_results, parameters_extracted #}
+{# Registry authoritative; evidence-backed only (P5.1, P8). #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 8192
+thinking_budget = "full"
+
+INPUT: config_paths = {{ config_paths | default([]) }}
+INPUT: selected_method = {{ selected_method }} (operator-selected; do not replace)
+INPUT: existing_regressions = {{ existing_regressions | default([]) }}
+INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory)
+
+AUTHORITATIVE AUDIT MODEL
+
+1. Preserve operator sovereignty:
+   - `selected_method` is the method being audited. Never silently replace,
+     refuse, or relabel it because another method appears preferable.
+   - A method recommendation is advisory and belongs in
+     `recommendation`; it is not the readiness decision.
+   - `readiness_state` is derived only from established contracts and
+     available evidence for the selected method.
+
+2. Classify every gate into exactly one phase:
+   - `static_config`: values and relationships directly inspectable in
+     declared configuration files.
+   - `harness`: required integration, preprocessing, save/load, or setup
+     behavior inspectable in declared training code without executing it.
+   - `runtime`: behavior measurable only while initialization, forward,
+     backward, merge, or training is running.
+   - `post_training`: behavior measurable only from a trained adapter or
+     evaluation artifact.
+
+3. Use exactly these gate states:
+   - `pass`: supplied evidence satisfies an established contract.
+   - `warn`: supplied evidence shows a non-blocking risk or a conditional
+     recommendation whose triggering condition is established.
+   - `fail`: supplied evidence contradicts an established contract.
+   - `refuse`: supplied evidence establishes a safety or validity boundary
+     that makes proceeding invalid; use only where the gate explicitly
+     defines refusal.
+   - `deferred`: an applicable runtime or post-training requirement has no
+     supplied measurement; this template did not execute it.
+   - `planned`: an applicable runtime or post-training check has concrete,
+     supplied plan evidence but no result yet.
+   - `not_evaluated`: the gate may apply, but declared artifacts do not
+     establish enough context to evaluate applicability or outcome.
+   - `not_applicable`: evidence establishes that the gate does not apply to
+     the selected method/configuration.
+
+4. Use exactly these `evidence_kind` values:
+   - `config_value`: quoted value from a declared config artifact.
+   - `code_presence`: quoted required behavior present in declared code.
+   - `code_absence`: search evidence showing required behavior absent from
+     the complete declared harness scope.
+   - `runtime_measurement`: supplied result from an actual runtime or
+     post-training measurement; never synthesize one.
+   - `operator_assertion`: explicit operator-supplied intent, plan,
+     threshold, or environmental fact.
+   - `not_available`: no supporting evidence was supplied or discoverable
+     within the declared OCAP boundary.
+
+5. Evidence rule:
+   - Absence of evidence is not evidence of failure.
+   - Use `fail` or `refuse` only when an established, applicable contract
+     is contradicted by concrete `config_value`, `code_presence`,
+     `code_absence`, or `runtime_measurement` evidence.
+   - `code_absence` is valid only after searching the complete declared
+     harness scope for behavior that the selected method's established
+     contract requires. Otherwise use `not_evaluated`.
+   - Missing runtime/post-training evidence yields `deferred`; concrete
+     check-plan evidence may yield `planned`.
+   - Never infer a successful runtime outcome from configuration or code
+     presence alone.
+
+AUDIT ACTIONS
+
+1. Read only files in `config_paths`; quote exact snippets and line numbers.
+   If no files are supplied, return empty extraction and mark potentially
+   applicable gates `not_evaluated`, not failed.
+2. Extract available `LoraConfig`, `BitsAndBytesConfig`, accelerate, data,
+   evaluation, and training arguments. Do not invent omitted defaults unless
+   a cited implementation contract establishes the exact default; label such
+   use as inference and retain the citation.
+3. Inspect declared harness code for selected-method integration contracts.
+   Treat initializer-specific preprocessing uniformly: determine the
+   selected initializer's documented contract, then inspect for its required
+   setup and persistence behavior. Do not hardcode framework/version-specific
+   refusal for EVA or any other initializer.
+4. Accept supplied runtime/post-training evidence as input evidence only when
+   it is present in declared artifacts or operator assertions. This template
+   MUST NOT execute model loading, initialization, forward/backward passes,
+   merges, training, or evaluation.
+5. Evaluate the gate catalog below using its assigned phase. A gate's
+   requirement is distinct from evidence that the requirement passed.
+
+PHASE-AWARE GATE CATALOG
+
+STATIC_CONFIG
+- G-M3 Scaling form: require `α/r`, or `α/√r` when rsLoRA is enabled.
+  A concretely contradictory scaling implementation fails. High rank without
+  rsLoRA may warn as a recommendation; it does not change selected_method.
+- G-M4 Rank budget: compare `r` with known target dimensions. Warn at
+  `r >= 0.5 * min(d_in,d_out)` and refuse at
+  `r >= min(d_in,d_out)` only when dimensions are evidenced. Unknown
+  dimensions -> `not_evaluated`.
+- G-Q5 Paged optimizer: applicable only when evidenced peak-memory demand
+  exceeds evidenced available VRAM. Otherwise pass when condition is known
+  false, warn when known true and unmet, or `not_evaluated` when unknown.
+- G-Q6 NF4 assumption: applicable in QLoRA/NF4 mode. Warn only when supplied
+  evidence establishes materially non-normal base weights; absent weight
+  distribution evidence is `not_evaluated`, not pass or fail.
+- G-D1 Dataset size/quality: evaluate only from supplied sample count and
+  quality-audit evidence. Missing values are `not_evaluated`.
+- G-H1 Harness-method compatibility: assert the selected harness supports
+  the selected method/trainer.
+  - harness=axolotl → config must be YAML with `adapter: lora`; axolotl
+    supports SFT only. If preference config (DPO/KTO/ORPO) is present, fail.
+  - harness=trl → config must be a Python script using the matching TRL
+    trainer class (SFTTrainer for sft, DPOTrainer for dpo, KTOTrainer for kto,
+    ORPOTrainer for orpo, RewardTrainer for reward) and the matching Config
+    class (SFTConfig, DPOConfig, KTOConfig, ORPOConfig, RewardConfig).
+    TRL does not support GRPO (online RL deferred — requires vLLM co-location).
+  - harness=ludwig → config must be YAML with `model_type: llm` and
+    `adapter: type: lora`. Ludwig supports SFT (`trainer.type: finetune`),
+    DPO/KTO/ORPO, and GRPO via `trainer.type`. Ludwig is the only harness
+    covering GRPO and advanced PEFT initializers (PiSSA, EVA, CorDA, LoftQ)
+    that axolotl cannot render. If a TRL-specific `trl_trainer` field is
+    present in the canonical TrainingParams, warn (Ludwig ignores it —
+    it uses its own `trainer.type` taxonomy).
+  - harness=undetermined → `not_evaluated` (runtime defaults to axolotl).
+  [Citation: TRL trainer taxonomy — https://huggingface.co/docs/trl/index;
+   Ludwig — https://ludwig.ai/latest/configuration/]
+  Runtime enforcement: `lora_validation::validate_harness_compatibility()`.
+
+HARNESS
+- G-M1 Initialization contract: inspect selected initializer documentation
+  and declared harness for initializer-specific preprocessing/save behavior.
+  Configuration establishes intent, not runtime no-op behavior. Required
+  behavior proven absent from complete declared harness may fail; incomplete
+  scope is `not_evaluated`. Runtime no-op equality remains a separate
+  runtime requirement.
+- G-Q1 Quantized frozen-base setup: inspect QLoRA loading configuration and
+  harness wiring. Pass/fail only for the static/harness setup contract; actual
+  runtime dtype belongs to runtime evidence.
+- G-D2 Eval protocol: classify the declared protocol. Missing protocol is
+  `not_evaluated` unless an established submission contract requires one.
+- G-D3 Failure-case analysis: `planned` only with an explicit supplied plan;
+  otherwise `not_evaluated` before training and `deferred` once applicable
+  post-training artifacts are expected but absent.
+
+RUNTIME — REQUIREMENTS ONLY; DO NOT EXECUTE
+- G-M1 No-op at initialization: adapter-enabled and adapter-disabled outputs
+  agree within a declared tolerance at step 0.
+- G-M2 Merge equivalence: merged and adapter-enabled outputs agree within a
+  declared tolerance. Static bias/config evidence may identify a documented
+  incompatibility, but a passing result requires `runtime_measurement`.
+- G-M5 Trainable parameter count: measured trainable count agrees with a
+  calculation appropriate to actual target modules. Formula-only analysis is
+  a requirement/estimate, not a runtime pass.
+- G-Q1 Frozen base dtype: measured base storage/quantization matches the
+  selected QLoRA contract.
+- G-Q2 Adapter dtype: measured adapter tensors use supported compute dtype and
+  are not stored as 4-bit weights.
+- G-Q3 Gradient flow: supplied first-backward measurement shows gradients for
+  required adapter parameters.
+- G-Q4 No silent upcast: supplied runtime measurement shows the frozen base was
+  not unexpectedly materialized in fp32.
+For each applicable runtime gate without `runtime_measurement`, emit
+`deferred`, or `planned` when a concrete measurement plan is supplied.
+
+POST_TRAINING — REQUIREMENTS ONLY; DO NOT EXECUTE
+- G-F1 Intruder dimensions: require a before/after measurement when the
+  operator's acceptance contract includes this analysis.
+- G-F2 Knowledge preservation: require evaluation against an
+  operator-declared threshold when the selected method/goal establishes a
+  preservation contract (including applicable CorDA knowledge-preserved
+  workflows).
+- Post-training G-D2/G-D3 outcomes: require supplied evaluation and
+  failure-case artifacts when those checks are part of the declared
+  acceptance contract.
+Without results, use `planned` for a concrete supplied plan, `deferred` for an
+applicable unmet measurement requirement, and `not_evaluated` when
+applicability is unknown.
+
+NORMALIZED FINDING SCHEMA — AUTHORITATIVE
+
+Emit every finding with exactly these fields; do not create alternate finding
+shapes for passes, observations, or deficiencies:
+- `finding_id`: stable identifier within this audit.
+- `gate_id`: catalog gate identifier.
+- `phase`: `static_config | harness | runtime | post_training`.
+- `state`: one of the eight states defined above.
+- `severity`: `critical | high | medium | low | informational | none`.
+- `selected_method`: unchanged operator-selected method.
+- `readiness_impact`: `blocking | conditional | non_blocking | none | unknown`.
+- `claim`: precise IS/OUGHT statement supported by evidence.
+- `requirement`: established contract or conditional requirement; null when
+  no established contract applies.
+- `evidence_kind`: one of the six values defined above.
+- `evidence`: object with `config_path`, `line`, `parameter`, `value`, and
+  `snippet`; unavailable members are null, never fabricated.
+- `provenance`: `direct | inference | assessment | operator`.
+- `epistemic_mode`: `declarative | probabilistic | subjunctive`.
+- `citation`: array of only the sources needed to support this finding's
+  claim. Use PEFT docs for API/config behavior, papers for research claims,
+  local contracts/regressions for project requirements; do not force both
+  PEFT and arXiv citations.
+- `recommendation`: advisory next action or null; never overwrites
+  `selected_method`.
+- `userpod_host`: mandatory authenticated host identity.
+
+A gate result uses the same semantics and contains:
+`gate_id`, `phase`, `state`, `readiness_impact`, `finding_ids`, and
+`requirement`. `gate_results` is a map keyed by gate_id. Do not encode a
+missing gate as failure.
+
+READINESS
+- Compute `readiness_state` separately from recommendations.
+- `refuse` if any applicable gate is `refuse`.
+- `fail` if any applicable established contract is `fail`.
+- `warn` if no fail/refuse exists and at least one applicable finding warns.
+- `deferred` if no fail/refuse exists and required runtime/post-training gates
+  remain deferred or planned.
+- `pass` only for the audited readiness scope when all applicable required
+  gates in that scope pass or are not_applicable. Never count
+  `not_evaluated`, `deferred`, or `planned` as pass.
+
+EVIDENCE AND CITATION INTEGRITY (P8)
+- No synthetic snippets, line numbers, values, measurements, benchmark
+  numbers, or training outcomes.
+- Cite only sources actually consulted and appropriate to the claim.
+- Findings based solely on unavailable evidence may record the requirement
+  with `evidence_kind: not_available` and a non-failure state; they must not
+  fabricate a location.
+- Before proposing any regression, verify concrete contradictory evidence in
+  an actual declared artifact. Deferred/planned/not_evaluated checks are not
+  regressions by themselves.
+
+Regulation SPAN EMISSION (P9)
+Emit `reg.lora.audit` for every gate represented in `gate_results`: target
+`"reg.lora.audit"`, message `"Regulation"`, operation `"audit_gate"`, gate_id,
+phase, state, readiness_impact, evidence_kind, selected_method,
+userpod_host, latency_ms. The namespace remains registered in
+`CANONICAL_NAMESPACES`. Emit no anonymous action.
+
+OCAP BOUNDARY (P4)
+Read only declared workspace paths. Do not load models, execute training or
+evaluation, call remote services, or download artifacts without explicit
+consent. Runtime and post-training checks are requirements or supplied
+evidence assessments only.
+
+OUTPUT FORMAT
+JSON object with `config_paths`, `parameters_extracted`, `selected_method`,
+`method_recommendations`, `findings` (the normalized schema unchanged),
+`gate_results`, `readiness_state`, `userpod_host`, `source_citations`, and
+`reg_span_reference`.
+
+5W1H GATE CHECK (P5): Who = operator / userpod_host; What = phase-aware
+training contract audit; Where = declared workspace paths; When = static,
+harness, runtime-evidence, and post-training-evidence phases; Why = safe,
+observable, sovereign training decisions; How = inspect declared artifacts,
+classify evidence, preserve selected method, and emit Regulation spans.
+
+REGISTRY AUTHORITATIVE (P5.1): This template is the canonical audit-config
+phase definition. PUBLIC VISIBILITY (P11): no hidden controls. USERPOD HOST
+(P12): mandatory in every finding, gate result context, and Regulation action.
+CONVERGENCE INDEPENDENT: this phase does not compute the convergence metric.

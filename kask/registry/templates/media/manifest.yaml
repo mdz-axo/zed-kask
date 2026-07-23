@@ -1,0 +1,112 @@
+# Template crate manifest for media skill
+# hKask v0.30.0
+
+crate:
+  name: media
+  version: "0.30.0"
+  description: >
+    Vision LLM-powered media analysis and generation. Classifies photographic
+    style, genre, and era; generates scene descriptions in multiple modes;
+    analyzes color palettes and composition; generates logos from business
+    identity inputs with optional iterative vision-LLM refinement.
+
+templates:
+  - id: media/classify_style
+    name: "Classify an image's photographic style, genre, and era using a vision…"
+    path: classify_style.j2
+    type: KnowAct
+    lexicon_terms: [classify, discriminate, analyze]
+    description: >
+      Classify an image's photographic style, genre, and era using a
+      vision LLM. Evaluates across genre, era/style, and technique dimensions.
+
+  - id: media/describe_scene
+    name: "Generate a detailed scene description in one of four modes:…"
+    path: describe_scene.j2
+    type: KnowAct
+    lexicon_terms: [observe, analyze, document]
+    description: >
+      Generate a detailed scene description in one of four modes:
+      descriptive, artistic, technical, or accessibility alt-text.
+
+  - id: media/tag_colors
+    name: "Analyze an image's color palette: dominant colors with hex codes,…"
+    path: tag_colors.j2
+    type: KnowAct
+    lexicon_terms: [analyze, classify, detect]
+    description: >
+      Analyze an image's color palette: dominant colors with hex codes,
+      approximate area coverage, compositional role, palette style,
+      temperature, and saturation level.
+
+  - id: media/tag_composition
+    name: "Analyze an image's photographic composition: focal point, rule of…"
+    path: tag_composition.j2
+    type: KnowAct
+    lexicon_terms: [analyze, evaluate, structure]
+    description: >
+      Analyze an image's photographic composition: focal point, rule of
+      thirds, leading lines, depth of field, perspective, framing,
+      symmetry, and negative space.
+
+  - id: media/logo-discovery
+    name: "Discovery-phase pipeline: map qualitative brand identity inputs to…"
+    path: logo-discovery.yaml
+    type: FlowDef
+    lexicon_terms: [classify, map, strategize, discover]
+    description: >
+      Discovery-phase pipeline: map qualitative brand identity inputs to
+      formal logo design parameters using the logo-discovery-map.j2
+      template, then select the appropriate generation strategy.
+
+  - id: media/logo-discovery-map
+    name: "Map qualitative brand identity inputs (industry, audience, values) to…"
+    path: logo-discovery-map.j2
+    type: KnowAct
+    lexicon_terms: [classify, map, recommend, strategize]
+    description: >
+      Map qualitative brand identity inputs (industry, audience, values) to
+      formal logo design parameters (style, type, shape, palette, density)
+      using strategic brand reasoning. From Martin's Minimum Viable Brand.
+
+  - id: media/logo-formal-prompt
+    name: "Core logo generation prompt encoding Bokhua's five design gates:…"
+    path: logo-formal-prompt.j2
+    type: KnowAct
+    lexicon_terms: [generate, design, create, formalize]
+    description: >
+      Core logo generation prompt encoding Bokhua's five design gates:
+      simplicity, monochrome viability, grid discipline, negative space,
+      and scalability. Every logo generation flow delegates to this template.
+
+  - id: media/logo-iterative-refine
+    name: "Peters-inspired iterative logo pipeline: generate N candidates, score…"
+    path: logo-iterative-refine.yaml
+    type: FlowDef
+    lexicon_terms: [generate, critique, refine, iterate, score]
+    description: >
+      Peters-inspired iterative logo pipeline: generate N candidates, score
+      each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit
+      + distinctiveness), select best, refine through critique cycles.
+      Final output is background-removed for transparent PNG deliverables.
+
+  - id: media/logo-presentation
+    name: "Generate a complete logo deliverables package from a refined logo:…"
+    path: logo-presentation.yaml
+    type: FlowDef
+    lexicon_terms: [package, export, deliver, present]
+    description: >
+      Generate a complete logo deliverables package from a refined logo:
+      transparent PNG, monochrome variant, icon-only mark, and context
+      mockup showing the logo in real-world use.
+
+  - id: media/workflow-composer
+    name: "Compose a valid Fal.ai workflow JSON DAG from a natural-language…"
+    path: workflow-composer.j2
+    type: KnowAct
+    lexicon_terms: [compose, generate, design, structure, pipeline]
+    description: >
+      Compose a valid Fal.ai workflow JSON DAG from a natural-language
+      media intent. Selects appropriate models, defines node topology,
+      and wires $references for correct data flow between nodes. Output
+      is a valid workflow JSON ready for media.execute_workflow.

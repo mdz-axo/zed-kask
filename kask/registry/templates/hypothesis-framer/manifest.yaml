@@ -1,0 +1,73 @@
+# Template crate manifest for hypothesis-framer skill
+# hKask v0.30.0
+
+crate:
+  name: hypothesis-framer
+  version: "0.30.0"
+  description: >
+    Research question framing and hypothesis formulation using FINER criteria
+    and PICO process. Evaluates broad research topics through Feasibility,
+    Interest, Novelty, Ethics, and Relevance (FINER) gates, structures questions
+    via Population-Intervention-Comparison-Outcome (PICO) framework, derives
+    testable hypotheses with null hypothesis formulation, operationalizes into
+    aims and objectives, and verifies alignment. Iterative PDCA refinement until
+    the question-hypothesis-aims chain is coherent and testable.
+
+templates:
+  - id: hypothesis-framer/finer-evaluate
+    name: "Apply FINER criteria to a broad research topic"
+    path: finer-evaluate.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, classify, assess, critique, rank]
+    description: >
+      Apply FINER criteria to a broad research topic. Evaluate feasibility
+      (subjects, expertise, resources), interest (audience relevance),
+      novelty (knowledge contribution), ethics (compliance), and relevance
+      (clinical impact). Produces per-dimension scores with rationale and
+      refinement suggestions.
+
+  - id: hypothesis-framer/pico-structure
+    name: "Apply PICO framework to structure the research question"
+    path: pico-structure.j2
+    type: KnowAct
+    lexicon_terms: [structure, specify, select, elicit, extract]
+    description: >
+      Apply PICO framework to structure the research question. Identifies
+      Population characteristics, Intervention/exposure, Comparison/control,
+      and Outcome measures. Produces a structured question and completeness
+      assessment.
+
+  - id: hypothesis-framer/hypothesis-operationalize
+    name: "Single cognitive act: derive a testable hypothesis from the…"
+    path: hypothesis-operationalize.j2
+    type: KnowAct
+    lexicon_terms:
+      [
+        declare,
+        predict,
+        synthesize,
+        design,
+        compose,
+        plan,
+        target,
+        measure,
+        specify,
+        document,
+      ]
+    description: >
+      Single cognitive act: derive a testable hypothesis from the PICO-structured
+      question, formulate the null hypothesis, classify type, operationalize into
+      research aims and objectives, assess testability against the specified
+      objectives, verify five-link alignment, and recheck feasibility. Merges
+      what were previously separate hypothesis and aims steps — because you
+      cannot assess testability without knowing the objectives.
+
+  - id: hypothesis-framer/hypothesis-framer-convergence-check
+    name: "Compute normalized convergence metric for hypothesis-framer PDCA…"
+    path: hypothesis-framer-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for hypothesis-framer PDCA cycles.
+      Evaluates FINER compliance, PICO completeness, hypothesis coherence,
+      and aims alignment. Returns convergence_metric plus rationale and blockers.

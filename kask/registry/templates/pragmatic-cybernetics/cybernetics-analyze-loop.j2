@@ -1,0 +1,107 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- observe
+- discriminate
+- evaluate
+- orient
+contract:
+  input:
+    loop_description: string
+    system_context: string
+  output:
+    polarity: string
+    delay: string
+    gain: string
+    closure: string
+    fidelity: string
+    broken_loop_diagnosis: string
+    remediation: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: pragmatic-cybernetics/cybernetics-analyze-loop.j2 #}
+{# Functional Role: KnowAct — Analyze a feedback loop on 5 properties #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: polarity, delay, gain, closure, fidelity, broken_loop_diagnosis, remediation #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a cybernetic loop analyst. Analyze a feedback loop on 5 properties to determine if it is healthy, degraded, or broken. Diagnose failures and prescribe targeted remediation.
+
+## The 5 Properties of a Healthy Feedback Loop
+
+| Property | What It Measures | Healthy | Degraded | Broken |
+|----------|-----------------|---------|----------|--------|
+| **Polarity** | Balancing vs reinforcing direction | Balancing loop counters disturbance | Reinforcing loop unchecked | Loop has no discernible direction |
+| **Delay** | Time between cause and sensed effect | Short enough to act within | Marginal — response arrives late | Delay exceeds action window entirely |
+| **Gain** | Strength of corrective signal relative to disturbance | Proportional — matches disturbance magnitude | Too weak (undercorrect) or too strong (overshoot, oscillation) | Zero gain — no correction happens |
+| **Closure** | Loop completes: sense → decide → act → sense | Fully closed | Partially open — some path segments are missing or bypassed | Open loop — no return path from act to sense |
+| **Fidelity** | Signal accuracy of what is sensed vs reality | High — sensor reads match system state | Moderate — some distortion or sampling gaps | Low — sensor reading bears little relation to reality |
+
+## Loop to Analyze
+
+{{ loop_description }}
+
+{% if system_context %}
+## System Context
+
+{{ system_context }}
+{% endif %}
+
+## hKask Regulation Loop Examples
+
+- **Communication ↔ Cybernetics queue depth**: Writer increments `Arc<AtomicU64>` (Relaxed), reader checks against `communication_backpressure_threshold` (default: 100). Backpressure when exceeded.
+- **SpecDriftAlert**: `DefaultSpecCurator` emits `LoopPayload::SpecDriftAlert` when spec drift exceeds threshold. Flows through Communication Loop to Curation inbox.
+- **Override cooldown**: `Dampener::override_cooldown` (120s) prevents metacognitive override oscillation. All subsequent overrides within cooldown are suppressed.
+- **Persona filter**: Strips persona-constraint-violating content. Loaded from `bot_status()` at init.
+
+## Analysis Method
+
+1. Identify the loop's sensing mechanism (what is measured).
+2. Identify the decision mechanism (how the measurement is interpreted).
+3. Identify the action mechanism (what changes as a result).
+4. Trace the return path (how the action's effect is sensed again).
+5. Assess each of the 5 properties against the healthy/degraded/broken criteria.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "polarity": "balancing|reinforcing|none",
+  "delay": "short|moderate|excessive",
+  "gain": "proportional|weak|excessive|zero",
+  "closure": "closed|partial|open",
+  "fidelity": "high|moderate|low",
+  "broken_loop_diagnosis": "If any property is degraded or broken, describe which properties failed, why, and how they interact",
+  "remediation": "Specific, actionable steps to restore the loop to health. Reference hKask Regulation spans and mechanisms where applicable."
+}
+```
+
+## Constraints
+
+- Every property assessment must be grounded in evidence from the loop description or system context.
+- A loop with any property rated "broken" or "none" is a broken loop — diagnose it explicitly.
+- Remediation must be specific: name the mechanism, the parameter, the code path.
+- Do not propose adding monitoring stacks (Prometheus, Grafana) — hKask is headless. Regulation spans provide observability.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

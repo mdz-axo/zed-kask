@@ -1,0 +1,150 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- validate
+- verify
+- classify
+- audit
+- recommend
+contract:
+  input:
+    skill_name: string
+    registry_path: string
+  output:
+    validation_results: array
+    pass_fail_counts: object
+    fix_suggestions: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-maintenance/skill-maintenance-validate.j2 #}
+{# goal: Validate a registry crate against R1–R12 registry checks, Z1–Z8 companion checks, and X1–X4 cross-artifact checks. #}
+{# KnowAct — Registry-first skill validation #}
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill format validator. Validate skills against the registry-first model per P5.1. The registry crate (manifest.yaml + *.j2) is the canonical source of truth. SKILL.md is a generated companion, validated secondarily.
+
+{% if skill_name %}
+## Target Skill
+
+Validate this specific skill: **{{ skill_name }}**
+{% else %}
+## Target
+
+Validate **all skills** in the registry directory.
+{% endif %}
+
+## Registry Path
+
+{{ registry_path }}
+
+## Validation Checks
+
+### Registry Crate Checks (canonical — manifest.yaml + *.j2)
+
+| ID | Check | Pass Criteria |
+|----|-------|---------------|
+| R1 | manifest.yaml exists | File present in `registry/templates/<name>/` |
+| R2 | Crate metadata valid | `crate.name`, `crate.version`, `crate.description` all present |
+| R3 | Templates list non-empty | At least one entry in `templates` array |
+| R4 | Template entry valid | Each entry has `id`, `path`, `type`, `description` |
+| R5 | template_type valid | Each .j2 `template_type` in {WordAct, KnowAct, FlowDef} |
+| R6 | Contract valid | Each .j2 has `contract.input` and `contract.output` with typed fields |
+| R7 | energy_cap in range | Each .j2 `energy_cap` integer in [2048, 8192] |
+| R8 | Visibility valid | Each .j2 `visibility` in {Private, Public, Shared} |
+| R9 | .j2 file exists | Each template entry's `path` resolves to an actual .j2 file |
+| R10 | [inference] frontmatter valid | Each .j2 starts with `[inference]` block |
+| R11 | vocabulary terms exist | All `lexicon_terms` reference terms in workspace vocabulary |
+| R12 | Jinja2 body present | Each .j2 has template body after `---` separator |
+
+### SKILL.md Companion Checks (secondary)
+
+| ID | Check | Pass Criteria |
+|----|-------|---------------|
+| Z1 | SKILL.md exists (informational) | File present in `.agents/skills/<name>/` |
+| Z2 | Frontmatter valid | `---` delimiters with `name` and `description` |
+| Z3 | Name matches directory | `name` field == directory basename, lowercase-hyphenated |
+| Z4 | Description present | Non-empty, 1–1024 chars |
+| Z5 | No Magna Carta violations | No instructions bypassing user sovereignty or consent |
+| Z6 | Headless compliance | No visual UI, Grafana, dashboards |
+| Z7 | No deprecated markers | No `todo!`, `unimplemented!`, `#[deprecated]` |
+| Z8 | Derived from registry | SKILL.md methodology aligns with registry templates |
+
+### Cross-Artifact Checks
+
+| ID | Check | Pass Criteria | Severity |
+|----|-------|---------------|----------|
+| X1 | Registry exists | manifest.yaml present | Critical |
+| X2 | No orphan SKILL.md | SKILL.md without registry → incomplete | High |
+| X3 | No drift | SKILL.md does not claim behaviors registry templates do not support | Medium |
+
+## Severity Levels
+
+- **Critical**: Registry missing, invalid template_type
+- **High**: Orphan SKILL.md, contract invalidity
+- **Medium**: Drift, name mismatch, vocabulary gaps
+- **Info**: Missing SKILL.md, description brevity
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "validation_results": [
+    {
+      "skill_name": "name of validated skill",
+      "check_id": "R1|R2|...|Z1|Z2|...|X1|X2|...",
+      "check_name": "Human-readable check name",
+      "result": "pass|fail",
+      "detail": "Specific evidence for pass or fail",
+      "severity": "critical|high|medium|info"
+    }
+  ],
+  "pass_fail_counts": {
+    "registry": {"pass": 12, "fail": 0},
+    "companion": {"pass": 7, "fail": 1},
+    "cross_artifact": {"pass": 3, "fail": 0},
+    "total_pass": 22,
+    "total_fail": 1
+  },
+  "fix_suggestions": [
+    {
+      "check_id": "R5",
+      "skill_name": "skill with the failure",
+      "issue": "What is wrong",
+      "suggestion": "Specific action to fix it",
+      "severity": "critical|high|medium|info"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Every check must be evaluated for every targeted skill — no omissions.
+- Registry checks (R1–R12) are mandatory. Companion checks (Z1–Z8) are secondary.
+- Fail results must include specific evidence.
+- Fix suggestions must be actionable.
+- Registry check failures (R1–R5) are always `critical`.
+- Safety check failures (Z5, Z6, Z7) are always `high`.
+- Missing SKILL.md (Z1 absent) is `info` — not a failure.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully.
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

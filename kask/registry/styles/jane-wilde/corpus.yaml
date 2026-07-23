@@ -1,0 +1,210 @@
+# Jane Wilde Style Mashup Configuration
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+# Version: 1.0
+# Created: 2026-06-10
+#
+# Style mashup: Jane Austen (1775-1817) × Oscar Wilde (1854-1900)
+# Replicator name: Jane Wilde
+#
+# Both are drawing-room ironists who weaponize politeness. Austen's free
+# indirect discourse and Wilde's epigrammatic inversion share the same
+# structural move: a sentence that says one thing and means another, with
+# the reader fully in on the joke. The centroid coherence is naturally
+# high — both cluster in "ironic social observation" embedding space.
+#
+# Processed by: kask embed-corpus
+# Storage: hKask sqlite-vec via EmbeddingStore
+# Pipeline: web_extract → chunk → embed_sentences → centroid → validate
+# All works are public domain (pre-1929).
+
+author: jane-wilde
+centroid_entity_ref: "style:jane-wilde:centroid"
+
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: 64
+
+works:
+  # ── Austen novels ──────────────────────────────────────────────────────
+
+  - title: "Pride and Prejudice"
+    slug: pride-and-prejudice
+    url: "https://www.gutenberg.org/cache/epub/1342/pg1342.txt"
+
+  - title: "Sense and Sensibility"
+    slug: sense-and-sensibility
+    url: "https://www.gutenberg.org/cache/epub/161/pg161.txt"
+
+  - title: "Emma"
+    slug: emma
+    url: "https://www.gutenberg.org/cache/epub/158/pg158.txt"
+
+  - title: "Mansfield Park"
+    slug: mansfield-park
+    url: "https://www.gutenberg.org/cache/epub/141/pg141.txt"
+
+  - title: "Northanger Abbey"
+    slug: northanger-abbey
+    url: "https://www.gutenberg.org/cache/epub/121/pg121.txt"
+
+  - title: "Persuasion"
+    slug: persuasion
+    url: "https://www.gutenberg.org/cache/epub/105/pg105.txt"
+
+  # ── Wilde works ────────────────────────────────────────────────────────
+
+  - title: "The Picture of Dorian Gray"
+    slug: dorian-gray
+    url: "https://www.gutenberg.org/cache/epub/174/pg174.txt"
+
+  - title: "The Importance of Being Earnest"
+    slug: being-earnest
+    url: "https://www.gutenberg.org/cache/epub/844/pg844.txt"
+
+  - title: "Lady Windermere's Fan"
+    slug: lady-windermere
+    url: "https://www.gutenberg.org/cache/epub/790/pg790.txt"
+
+  - title: "An Ideal Husband"
+    slug: ideal-husband
+    url: "https://www.gutenberg.org/cache/epub/885/pg885.txt"
+
+  - title: "A Woman of No Importance"
+    slug: woman-no-importance
+    url: "https://www.gutenberg.org/cache/epub/854/pg854.txt"
+
+  - title: "The Happy Prince and Other Tales"
+    slug: happy-prince
+    url: "https://www.gutenberg.org/cache/epub/902/pg902.txt"
+
+  - title: "De Profundis"
+    slug: de-profundis
+    url: "https://www.gutenberg.org/cache/epub/921/pg921.txt"
+
+  - title: "Intentions (incl. The Decay of Lying)"
+    slug: intentions
+    url: "https://www.gutenberg.org/cache/epub/887/pg887.txt"
+
+foundational_rules:
+  # ── Austen aesthetic manifestos ────────────────────────────────────────
+
+  - slug: truth-universally-acknowledged
+    text: >
+      It is a truth universally acknowledged, that a single man in possession
+      of a good fortune, must be in want of a wife.
+
+  - slug: little-bit-of-ivory
+    text: >
+      What should I do with your strong, manly, spirited Sketches, full of
+      Variety and Glow? How could I possibly join them on to the little bit
+      (two Inches wide) of Ivory on which I work with so fine a Brush,
+      as produces little effect after much labour?
+
+  - slug: emma-woodhouse
+    text: >
+      Emma Woodhouse, handsome, clever, and rich, with a comfortable home
+      and happy disposition, seemed to unite some of the best blessings of
+      existence; and had lived nearly twenty-one years in the world with
+      very little to distress or vex her.
+
+  # ── Wilde aesthetic manifestos ────────────────────────────────────────
+
+  - slug: resist-everything
+    text: >
+      I can resist everything except temptation.
+
+  - slug: decay-of-lying
+    text: >
+      The final revelation is that Lying, the telling of beautiful untrue things,
+      is the proper aim of Art. Life imitates Art far more than Art imitates Life.
+
+  - slug: earnest-epigrams
+    text: >
+      The truth is rarely pure and never simple. Modern life would be very tedious
+      if it were either, and modern literature a complete impossibility.
+
+  - slug: dorian-gray-preface
+    text: >
+      There is no such thing as a moral or an immoral book. Books are well written,
+      or badly written. That is all. The artist is the creator of beautiful things.
+
+chunking:
+  min_words: 50
+  max_words: 200
+  sentence_boundary: ".!? "
+
+validation:
+  centroid_distance_max: 0.18
+  exemplar_count_min: 3
+  exemplar_count_max: 7
+
+# ── Entity Declarations ──────────────────────────────────────────────────────
+
+entities:
+  characters:
+    - name: "Emma Woodhouse"
+      appears_in: []
+    - name: "Elizabeth Bennet"
+      appears_in: []
+    - name: "Mr Darcy"
+      appears_in: []
+    - name: "Dorian Gray"
+      appears_in: []
+    - name: "Lady Bracknell"
+      appears_in: []
+    - name: "Algernon"
+      appears_in: []
+    - name: "Cecily"
+      appears_in: []
+    - name: "Miss"
+      appears_in: []
+    - name: "Lady"
+      appears_in: []
+    - name: "Mrs"
+      appears_in: []
+
+  places:
+    - name: "London"
+    - name: "country"
+    - name: "drawing room"
+    - name: "estate"
+    - name: "garden"
+
+  events:
+    - name: "ball"
+    - name: "dinner"
+    - name: "marriage"
+    - name: "scandal"
+
+  concepts:
+    - name: "wit"
+    - name: "irony"
+    - name: "marriage"
+    - name: "society"
+    - name: "art"
+
+# ── Declared Methods ─────────────────────────────────────────────────────────
+
+methods:
+  - name: "epigram"
+    description: "Inverted expectation — setup then reversal in one sentence"
+    signal:
+      avg_sentence_length_min: 15.0
+      avg_sentence_length_max: 45.0
+
+  - name: "polite_destruction"
+    description: "Criticism wrapped in the language of compliment"
+    signal:
+      hedge_density_min: 1.0
+      intensifier_density_min: 1.0
+
+# ── Budget ───────────────────────────────────────────────────────────────────
+
+budget:
+  total_passages: 0
+  triple_budget_per_100: 3750
+
+# ── Classifier ────────────────────────────────────────────────────────────────
+triple_classifier: triple-extractor-literary

@@ -1,0 +1,14 @@
+# Infrastructure config manifest for git
+# hKask v0.28.0
+# This directory contains git operation selectors and MCP routing config.
+# Not a skill template crate — no [inference] .j2 templates.
+
+infrastructure:
+  name: git
+  version: "0.28.0"
+  description: >
+    Git MCP operation selectors and dispatch configuration. Maps git operations
+    to MCP server tool invocations.
+  role: config
+  contains:
+    - selectors/

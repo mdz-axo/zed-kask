@@ -1,0 +1,4 @@
+# Local download cache — populated by `kask embed-corpus run`
+# Raw Project Gutenberg texts are cached here to avoid re-downloading.
+# These are NOT committed: they are large plain-text files available from Gutenberg.
+*.txt

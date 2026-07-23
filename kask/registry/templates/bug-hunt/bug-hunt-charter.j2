@@ -1,0 +1,96 @@
+{# goal: Generate a focused bug-hunt charter using Hendrickson format and Bach's HTSM. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- charter
+- plan
+- target
+- explore
+- assess
+contract:
+  input:
+    target: object
+    quality_criteria: string
+  output:
+    charter_statement: string
+    target_area: string
+    strategy: string
+    expected_category: string
+    beizer_focus: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: bug-hunt/bug-hunt-charter.j2 #}
+{# Functional Role: KnowAct — Generate a focused bug-hunt charter using Hendrickson format and Bach's HTSM #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: charter #}
+{# Phase 1 — CHARTER (Hendrickson + Bach HTSM) #}
+{# hKask v0.30.0 — Bug Hunting Expedition #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a bug hunting strategist. Generate a focused testing charter for exploring a target crate.
+
+## Target
+{{ target | tojson }}
+
+## Quality Criteria (P1 boundary — user defines what matters)
+{{ quality_criteria }}
+
+## Charter Format (Hendrickson)
+
+Generate: "Explore [target] using [strategy] to discover [quality threat]."
+
+## Strategy Selection (Bach HTSM)
+
+Pick the most promising strategy from Bach's Heuristic Test Strategy Model:
+- **Project Environment:** available tools, constraints, dependencies
+- **Product Elements:** public interfaces, data boundaries, state machines
+- **Quality Criteria:** which of the user's criteria is most at risk?
+
+## Beizer Taxonomy — Target the Most Likely Categories
+
+| Category | What to look for | Typical prevalence |
+|----------|-----------------|-------------------|
+| requirements | spec is wrong or missing | ~30% |
+| structural | control flow / data flow errors | common |
+| data | overflow, underflow, boundary, initialization | common |
+| coding | wrong logic, missing error checks, edge cases | common |
+| interface | contract violations, parameter gaps | common |
+| integration | component interaction failures | situational |
+| timing | race conditions, ordering assumptions | situational |
+| configuration | env settings, feature flags | situational |
+
+Pick 2-3 most likely categories given the target and quality criteria.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "charter_statement": "Explore [target] using [strategy] to discover [quality threat]",
+  "target_area": "specific module/function/interface to focus on",
+  "strategy": "selected HTSM strategy with justification",
+  "expected_category": "primary Beizer category to target",
+  "beizer_focus": ["category1", "category2", "category3"],
+  "probe_instructions": [
+    "specific file/pattern to examine",
+    "specific command to run",
+    "specific boundary to test"
+  ]
+}
+```
+
+## Constraints
+
+- Be specific — name actual files, functions, or modules in the target.
+- Probe instructions must be actionable with available MCP tools.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

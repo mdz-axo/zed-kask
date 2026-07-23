@@ -1,0 +1,73 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    compact_result: object
+    artifacts_result: object
+    skills_result: object
+    compose_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: handoff/handoff-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for handoff cycles. #}
+{# Uses formula, not weighted dimensions — check-convergence-weights.sh skips this. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1000
+thinking_budget = "off"
+
+Compute handoff convergence where 0 means handoff packet is complete, actionable, and redaction-safe.
+
+Additionally, perform **structural redaction verification**:
+1. Scan the compose_result.handoff_document for known sensitive patterns:
+   - API key patterns (e.g., `sk-...`, `API_KEY=`, `token:`, `Bearer ...`)
+   - PEM blocks (e.g., `-----BEGIN ... PRIVATE KEY-----`)
+   - Connection strings (e.g., `postgres://user:pass@`, `mongodb+srv://`)
+   - Email addresses (user@domain)
+2. Verify that all flagged redactions from artifacts_result.redacted_fields appear as `[REDACTED]` in the document
+3. If any sensitive pattern is found unredacted → add to `blockers` with description
+4. If any flagged field is missing `[REDACTED]` marker → add to `blockers`
+
+Input:
+```json
+{
+  "compact_result": {{ compact_result | tojson }},
+  "artifacts_result": {{ artifacts_result | tojson }},
+  "skills_result": {{ skills_result | tojson }},
+  "compose_result": {{ compose_result | tojson }}
+}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means handoff packet is complete, actionable, and redaction-safe.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.05) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }}
+
+## Convergence Method
+0 = fully converged (handoff packet is complete, actionable, and redaction-safe). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

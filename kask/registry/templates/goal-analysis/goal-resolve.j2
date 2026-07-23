@@ -1,0 +1,65 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- resolve
+- route
+- escalate
+- complete
+contract:
+  input:
+    verdict: string
+    confidence: number
+    reason: string
+    goal: object
+  output:
+    resolution: string
+    reg_spans: array
+    escalate_to_human: boolean
+    escalate_reason: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: goal-analysis/goal-resolve.j2 #}
+{# goal: Route goal verdict to resolution action and emit appropriate Regulation spans. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "low"
+verbosity = "terse"
+max_tokens = 512
+thinking_budget = "off"
+
+Resolve the goal based on the judge's verdict. Low confidence (&lt; 0.7) escalates to human regardless of verdict.
+
+Input:
+```json
+{
+  "verdict": "{{ verdict }}",
+  "confidence": {{ confidence }},
+  "reason": "{{ reason }}",
+  "goal": {{ goal | tojson }}
+}
+```
+
+Resolution rules:
+- verdict "done" + confidence >= 0.7 → complete (emit reg.goal.complete)
+- verdict "done" + confidence &lt; 0.7 → escalate to human (emit reg.goal.alert.escalate)
+- verdict "continue" → continue loop (emit reg.goal.transition)
+- verdict "blocked" → escalate to human (emit reg.goal.block)
+- Any verdict with confidence &lt; 0.7 → escalate (low confidence may still be wrong)
+
+Emit appropriate Regulation spans based on resolution:
+- complete → ["reg.goal.verify", "reg.goal.complete"]
+- continue → ["reg.goal.verify", "reg.goal.transition"]
+- escalate (blocked) → ["reg.goal.verify", "reg.goal.block", "reg.goal.alert.escalate"]
+- escalate (low confidence) → ["reg.goal.verify", "reg.goal.alert.escalate"]
+
+Return JSON only — select the correct reg_spans for the resolution:
+```json
+{
+  "resolution": "complete",
+  "reg_spans": ["reg.goal.verify", "reg.goal.complete"],
+  "escalate_to_human": false,
+  "escalate_reason": ""
+}
+```

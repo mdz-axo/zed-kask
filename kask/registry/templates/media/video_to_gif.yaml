@@ -1,0 +1,42 @@
+# Media Video — Video to GIF FlowDef
+# Local ffmpeg subprocess for GIF conversion.
+
+template_type: FlowDef
+name: media_video_to_gif
+version: "1.0.0"
+description: "Convert a video segment to GIF format"
+primary_model: "local/ffmpeg"
+parameters:
+  - name: video_url
+    type: string
+    required: true
+    description: "URL or path to the source video"
+  - name: start_sec
+    type: float
+    required: false
+    default: 0.0
+    description: "Start time in seconds"
+  - name: duration_sec
+    type: float
+    required: false
+    default: 5.0
+    description: "Duration in seconds"
+  - name: width
+    type: integer
+    required: false
+    default: 480
+    description: "Output width in pixels"
+  - name: fps
+    type: integer
+    required: false
+    default: 10
+    description: "Frames per second"
+input_type: video_url
+output_type: gif_url
+latency: sync
+cost_tier: free
+---
+# Video to GIF Pipeline
+# Step 1: Validate video_url
+# Step 2: Run ffmpeg with palettegen + paletteuse filters
+# Step 3: Return output GIF path/URL

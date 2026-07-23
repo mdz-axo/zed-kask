@@ -1,0 +1,46 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- activate
+- track
+- observe
+- commit
+contract:
+  input:
+    goal: object
+  output:
+    activation_status: string
+    reg_span_emitted: boolean
+    goal_id: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: goal-analysis/goal-activate.j2 #}
+{# goal: Emit Regulation span for goal activation and prepare goal context for execution. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "low"
+verbosity = "terse"
+max_tokens = 512
+thinking_budget = "off"
+
+Activate a structured goal for tracking. Emit the Regulation create span and record activation.
+
+Goal:
+```json
+{{ goal | tojson }}
+```
+
+Return JSON only:
+```json
+{
+  "activation_status": "active",
+  "reg_span_emitted": true,
+  "goal_id": "goal-{{ goal.goal_text | default('unnamed') | lower | replace(' ', '-') | truncate(40, true, '') }}",
+  "goal_text": "{{ goal.goal_text | default('') }}",
+  "criteria": {{ goal.criteria | default([]) | tojson }},
+  "visibility": "{{ goal.visibility | default('private') }}",
+  "priority": "{{ goal.priority | default('medium') }}"
+}
+```

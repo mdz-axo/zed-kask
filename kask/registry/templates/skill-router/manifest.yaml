@@ -1,0 +1,54 @@
+# Template crate manifest for skill-router skill
+# hKask v0.31.0
+
+crate:
+  name: skill-router
+  version: "0.31.0"
+  description: >
+    Route tasks to installed skills. Given a task/slice description and the
+    installed skill catalog, return ranked skill recommendations with fit
+    scores, applicable templates, and invocation hints. Identifies uncovered
+    capabilities (gap signals for skill-discovery). Distinct from
+    skill-discovery (which acquires NEW skills): skill-router matches tasks
+    to EXISTING skills. Primary integration point is task-breakdown's
+    decompose phase, which emits skill_match_query per slice; skill-router
+    consumes those queries. Process skills (metacognition, gpa-evolution,
+    kata-improvement, sequential-inquiry) inherit routing through
+    task-breakdown — they do not call skill-router directly unless they need
+    ad-hoc skill guidance for a specific obstacle.
+
+templates:
+  - id: skill-router/skill-router-match
+    name: "Match a task against the installed skill catalog and return ranked recommendations"
+    path: skill-router-match.j2
+    type: KnowAct
+    lexicon_terms: [match, rank, recommend, route, classify, confidence, uncertainty, epistemic]
+    description: >
+        Match a task/slice description against the installed skill catalog.
+        Scores each candidate skill 0.0–1.0 on semantic fit (capability
+        overlap, lexicon term overlap, when-to-use trigger alignment). Returns
+        top-N ranked recommendations with fit_score, match_reason, applicable
+        templates, and invocation hints. Identifies uncovered_capabilities
+        (capabilities the task needs that no installed skill covers) — these
+        are gap signals consumed by skill-discovery's detect-gap phase.
+        Emits coverage_assessment: full (≥1 skill at fit ≥0.8), partial
+        (best fit 0.4–0.79), or none (best fit <0.4). Accepts an optional
+        epistemic_state input (confidence + uncertainty_type) that boosts
+        trigger-alignment for certainty-finding skills when the agent is in
+        a low-confidence regime.
+    generates_spans:
+      - reg.skill.routing.matched
+      - reg.skill.routing.uncovered
+
+  - id: skill-router/skill-router-convergence-check
+    name: "Compute convergence metric for iterative skill routing refinement"
+    path: skill-router-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for skill routing iterations.
+      Used when skill-router-match returns partial/none coverage and the
+      caller refines the task description or context and re-invokes.
+      convergence_metric 0.0 = a full-coverage match (fit ≥0.8) was found;
+      1.0 = no viable match after max_iterations. Drives the PDCA loop when
+      skill-router is used inside an iterative process skill context.

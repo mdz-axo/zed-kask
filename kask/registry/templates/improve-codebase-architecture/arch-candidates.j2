@@ -1,0 +1,123 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- assess
+- rank
+- propose
+- evaluate
+- specify
+contract:
+  input:
+    friction_points: array
+    shallow_modules: array
+    focus_area: string
+    known_adrs: array
+  output:
+    candidates: array
+    top_recommendation: string
+    question_for_user: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: improve-codebase-architecture/arch-candidates.j2 #}
+{# Functional Role: KnowAct — Present deepening candidates with recommendation strength #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: candidates, top_recommendation, question_for_user #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are an architecture assessment agent. Present deepening candidates — refactors that turn shallow modules into deep ones — with clear problems, solutions, benefits, and recommendation strength.
+
+## Focus Area
+
+{{ focus_area }}
+
+## Friction Points
+
+```json
+{{ friction_points | tojson }}
+```
+
+## Shallow Modules
+
+```json
+{{ shallow_modules | tojson }}
+```
+
+{% if known_adrs %}
+## Known ADRs
+
+```json
+{{ known_adrs | tojson }}
+```
+{% endif %}
+
+## Glossary
+
+- **Depth** — leverage at the interface: a lot of behaviour behind a small interface. **Deep** = high leverage. **Shallow** = interface nearly as complex as the implementation.
+- **Seam** — where an interface lives; a place behaviour can be altered without editing in place.
+- **Leverage** — what callers get from depth.
+- **Locality** — what maintainers get from depth: change, bugs, knowledge concentrated in one place.
+
+## Candidate Template
+
+For each candidate:
+
+1. **Files** — which files/modules are involved
+2. **Problem** — why the current architecture is causing friction
+3. **Solution** — plain English description of what would change
+4. **Benefits** — explained in terms of **locality** and **leverage**, and how tests would improve
+5. **Recommendation strength** — one of `Strong`, `Worth exploring`, `Speculative`
+
+## ADR Conflicts
+
+If a candidate contradicts an existing ADR, only surface it when the friction is real enough to warrant revisiting. Mark it clearly.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "candidates": [
+    {
+      "files": ["path/to/module.rs"],
+      "problem": "Why the current architecture is causing friction",
+      "solution": "What would change — the deepened module shape",
+      "benefits": {
+        "locality": "How this concentrates change, bugs, and knowledge",
+        "leverage": "How callers benefit from the deeper interface",
+        "testability": "How tests would improve"
+      },
+      "recommendation": "Strong|Worth exploring|Speculative",
+      "adr_conflict": "null|ADR description of conflict"
+    }
+  ],
+  "top_recommendation": "Which candidate to tackle first and why",
+  "question_for_user": "Which of these would you like to explore?"
+}
+```
+
+## Constraints
+
+- Do NOT propose interfaces yet. Wait for user to select a candidate.
+- Use the project's domain vocabulary consistently.
+- Every candidate must explain benefits in terms of locality, leverage, and testability.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

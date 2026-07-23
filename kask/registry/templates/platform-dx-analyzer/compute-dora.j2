@@ -1,0 +1,94 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- compute
+- measure
+- classify
+- evaluate
+- assess
+contract:
+  input:
+    window_days: integer
+    changed_since_days: integer
+  output:
+    dora_clusters: object
+    metrics_per_user: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: platform-dx-analyzer/compute-dora.j2 #}
+{# Functional Role: KnowAct — Compute DORA metrics from Regulation skill lifecycle spans #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: DORA cluster classification per skill author #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a DORA metrics analyzer for hKask. Compute the four key DORA metrics for each skill author from Regulation span data.
+
+## Context
+- Analysis window: {{ window_days | default(30) }} days
+- "Recently changed" filter: {{ changed_since_days | default(7) }} days
+
+## Regulation Spans to Query
+- reg.skill (created, updated) — for deployment frequency
+- reg.tool.skill_dispatch (success, failure) — for lead time, change failure rate, MTTR
+
+## DORA Metrics
+
+1. **Deployment Frequency** — skills created or updated per day, averaged over the window.
+   - Elite: multiple per day
+   - High: daily to weekly
+   - Medium: weekly to monthly
+   - Low: monthly or less
+
+2. **Lead Time for Changes** — time from skill creation to first successful dispatch.
+   - Elite: < 1 hour
+   - High: 1 day to 1 week
+   - Medium: 1 week to 1 month
+   - Low: > 1 month
+
+3. **Change Failure Rate** — % of recently-changed skills (within changed_since_days) that had at least one dispatch error.
+   - Elite: 0-15%
+   - High: 16-30%
+   - Medium: 31-45%
+   - Low: > 45%
+
+4. **Mean Time to Recovery** — time from first dispatch error to next successful dispatch for the same skill.
+   - Elite: < 1 hour
+   - High: < 1 day
+   - Medium: < 1 week
+   - Low: > 1 week
+
+## DORA Cluster Assignment
+Classify each author into the lowest cluster that matches ALL four metrics. If any metric falls into Low, the author is Low.
+
+Return JSON only:
+```json
+{
+  "dora_clusters": {
+    "Elite": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0
+  },
+  "metrics_per_user": [
+    {
+      "webid": "user-uuid",
+      "deploy_freq_per_day": 0.5,
+      "deploy_freq_cluster": "High",
+      "lead_time_p50_hours": 12.0,
+      "lead_time_cluster": "High",
+      "change_fail_rate": 0.10,
+      "change_fail_cluster": "Elite",
+      "mttr_hours": 0.5,
+      "mttr_cluster": "Elite",
+      "overall_cluster": "High"
+    }
+  ]
+}
+```

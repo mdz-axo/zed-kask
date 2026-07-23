@@ -1,0 +1,59 @@
+# Investment Research — Board Template
+# ℏKask v0.27.0
+#
+# Maps the MAIA investment research framework to kanban columns.
+# Based on the companies MCP server tool surface:
+#   Discovery → Business Analysis → Financial Analysis → Valuation → Portfolio Decision → Monitoring
+#
+# Each column maps to a research stage with associated MCP tools:
+#   company_profile, moat_check, management_scorecard,
+#   expectations_gap, portfolio_comparison
+#
+# WIP limits: 2 in Business Analysis, 1 in Valuation — depth over breadth.
+
+name: investment-research
+description: >
+  Investment research board following the MAIA framework.
+  Columns: Discovery (find ideas), Business Analysis (understand moat
+  and management), Financial Analysis (income, balance sheet, cash flow,
+  key metrics), Valuation (expectations gap, intrinsic value),
+  Portfolio Decision (buy/sell/hold, position sizing), Monitoring
+  (track thesis, update notes). WIP limits enforce depth: 2 in Business
+  Analysis, 1 in Valuation.
+
+columns:
+  - name: Discovery
+    status: backlog
+    wip_limit: null
+  - name: Business Analysis
+    status: ready
+    wip_limit: 2
+  - name: Financial Analysis
+    status: in_progress
+    wip_limit: 3
+  - name: Valuation
+    status: review
+    wip_limit: 1
+  - name: Portfolio Decision
+    status: done
+    wip_limit: null
+  - name: Monitoring
+    status: done
+    wip_limit: null
+
+phases:
+  - name: Screening
+    description: Idea generation, screeners, watchlist filtering
+    task_labels: [screening, discovery, watchlist, ideas]
+  - name: Deep Dive
+    description: Business analysis, moat check, management scorecard, competitive position
+    task_labels: [moat, management, competitive, business-model]
+  - name: Financial Review
+    description: Income statement, balance sheet, cash flow, key metrics, working capital
+    task_labels: [financials, metrics, ratios, working-capital]
+  - name: Valuation & Decision
+    description: Expectations gap, intrinsic value, portfolio fit, position sizing
+    task_labels: [valuation, dcf, expectations-gap, sizing, decision]
+  - name: Stewardship
+    description: Thesis tracking, note updates, quarterly reviews, file attachments
+    task_labels: [monitoring, thesis, review, notes, quarterly]

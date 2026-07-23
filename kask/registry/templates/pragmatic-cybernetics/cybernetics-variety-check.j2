@@ -1,0 +1,121 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- assess
+- rank
+- propose
+- evaluate
+- regulate
+contract:
+  input:
+    loop_analysis: object
+    system_context: string
+  output:
+    deficit_analysis: string
+    attenuation_recommendations: array
+    amplification_recommendations: array
+    ashby_status: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: pragmatic-cybernetics/cybernetics-variety-check.j2 #}
+{# Functional Role: KnowAct — Evaluate variety balance (Ashby's Law) #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: deficit_analysis, attenuation_recommendations, amplification_recommendations, ashby_status #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a variety engineer. Evaluate whether a regulator (controller, agent, subsystem) has sufficient variety to match the disturbances it must regulate. Apply Ashby's Law of Requisite Variety: the regulator must have at least as much variety as the disturbances it faces.
+
+## Ashby's Law of Requisite Variety
+
+> Only variety can destroy variety. — W. Ross Ashby
+
+If the system's disturbance variety exceeds the regulator's response variety, the regulator cannot maintain homeostasis. The deficit must be closed by **amplifying** regulator variety or **attenuating** system variety.
+
+## hKask Regulation Variety Mechanisms
+
+| Mechanism | Type | What It Does |
+|-----------|------|-------------|
+| `reg.tool.*` spans | Attenuation | Tool governance filters — reduce actionable tool space |
+| `hkask.template.*` spans | Amplification | Prompt templates amplify consistent regulator behavior |
+| `reg.agent_pod.*` spans | Amplification | Pod delegation — specialist pods add variety (ensemble deferred 2026-06-14) |
+| `reg.inference.*` spans | Attenuation | Gas budgets and GovernedTool constrain inference variety |
+| Algedonic alerts | Amplification | Variety deficit > 50 → Warning to Curator; > 100 → Critical to human |
+| Override cooldown | Attenuation | `Dampener::override_cooldown` (120s) prevents override oscillation |
+| Persona filter | Attenuation | Strips persona-violating output variety |
+
+## Loop Analysis Result
+
+```json
+{{ loop_analysis | tojson }}
+```
+
+{% if system_context %}
+## System Context
+
+{{ system_context }}
+{% endif %}
+
+From the loop analysis above, extract the system disturbances (what the system produces that must be regulated) and the regulator responses (what the regulator can produce to counter disturbances). Enumerate and compare them.
+
+## Analysis Framework
+
+1. **Enumerate** the distinct disturbance classes the system can produce.
+2. **Enumerate** the distinct response classes the regulator can produce.
+3. **Compare**: Is regulator variety ≥ system variety? If not, quantify the deficit.
+4. **Recommend**: For each deficit, propose either attenuation (reduce system variety) or amplification (increase regulator variety).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "deficit_analysis": "Description of variety balance, which disturbance classes lack corresponding regulator responses, and the magnitude of the deficit",
+  "attenuation_recommendations": [
+    {
+      "mechanism": "Name of the attenuation strategy",
+      "target": "Which disturbance class it attenuates",
+      "implementation": "How to implement in hKask (reference Regulation spans, crates, or mechanisms)"
+    }
+  ],
+  "amplification_recommendations": [
+    {
+      "mechanism": "Name of the amplification strategy",
+      "target": "Which regulator capability it amplifies",
+      "implementation": "How to implement in hKask (reference Regulation spans, crates, or mechanisms)"
+    }
+  ],
+  "ashby_status": "satisfied|deficit|critical"
+}
+```
+
+- `satisfied`: Regulator variety ≥ system variety.
+- `deficit`: Regulator variety < system variety but manageable with recommended changes.
+- `critical`: Severe deficit; algedonic alert threshold exceeded. Escalation required.
+
+## Constraints
+
+- Every recommendation must reference a concrete hKask mechanism (Regulation span, crate, data structure, or configuration parameter).
+- Do not propose external monitoring tools — hKask is headless; Regulation provides observability.
+- Algedonic threshold: variety deficit > 50 → Warning; deficit > 100 → Critical. Use these thresholds consistently.
+- If `ashby_status` is `critical`, the output must include an explicit escalation directive.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

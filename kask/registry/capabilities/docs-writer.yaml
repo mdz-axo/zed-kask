@@ -1,0 +1,42 @@
+# Documentation Writer — Capability Package
+# ℏKask v0.27.0
+#
+# Focused delegation for documentation and writing tasks.
+# Grants: read-only kanban access, document processing, research.
+# No code execution capabilities — agent is scoped to writing.
+# Memory: episodic (task-scoped, private).
+
+name: docs-writer
+description: >
+  Documentation and writing capabilities. Agent can read kanban
+  tasks for context, process documents, research topics, and write
+  output files. No code execution — intentionally scoped to prevent
+  unintended side effects on the codebase.
+
+delegation_level: minimal
+skills:
+  - kanban
+memory_scope: episodic
+
+tool_servers:
+  - hkask-mcp-kata-kanban
+  - hkask-mcp-docproc
+  - hkask-mcp-research
+
+registries:
+  - templates
+
+artifacts:
+  - ./docs/
+  - ./output/
+
+default_gas_budget: 25000
+default_timeout_seconds: 1800
+
+capability_tokens:
+  - tool:kanban:read
+  - tool:docproc:execute
+  - tool:research:execute
+  - registry:templates:read
+
+max_attenuation: 1

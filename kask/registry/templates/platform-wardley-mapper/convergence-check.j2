@@ -1,0 +1,35 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    recommendations: object
+  output:
+    convergence_metric: number
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: platform-wardley-mapper/convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute convergence for Wardley mapping PDCA cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Given a Wardley Map with strategic recommendations, compute convergence where 0 means all components are classified on the evolution axis, the value chain is mapped, movement is identified, and recommendations are actionable and loyalty-aligned.
+
+Return JSON only:
+```json
+{"convergence_metric": 0.0, "convergence_method": "LLM-assessed coverage detection", "rationale": "..."}
+```

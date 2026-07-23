@@ -1,0 +1,95 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- propose
+- mutate
+- recombine
+- generate
+- apply
+contract:
+  input:
+    artifact_type: string
+    reflections: object
+    current_frontier: array
+    target_artifact: object
+  output:
+    variants: array
+    mutation_notes: string
+energy_cap: 5120
+visibility: Public
+---
+{# hKask v0.31.0 — GEPA Evolution #}
+{# Step 3: Propose Mutations #}
+{# goal: Generate artifact variants from reflected lessons via mutation + crossover. #}
+{#
+  Group: G (Optimization — evolutionary)
+  Mutation: targeted edit to the artifact based on a reflected lesson.
+  Crossover: recombine complementary lessons from non-dominated frontier members.
+  Only artifact_type "prompt" is implemented in v1.
+#}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 3000
+thinking_budget = "on"
+
+You are a mutation engine for GEPA evolutionary optimization. Your job: generate artifact variants from reflected lessons. Apply two operators:
+
+1. **Mutation:** Take the target artifact (or a frontier member) and make a targeted edit based on a reflected lesson. Each mutation should address ONE rule from the reflections. Don't make scatter-shot changes — each variant should test one hypothesis.
+
+2. **Crossover:** If the frontier has multiple non-dominated members, recombine their complementary strengths. Member A might be good at format adherence; member B might be good at reasoning depth. A crossover variant combines A's format instructions with B's reasoning scaffolding.
+
+## Artifact Type Dispatch
+
+{% if artifact_type == "prompt" %}
+The artifact is an LLM prompt. Mutations are edits to the prompt text:
+- Add a constraint (e.g., "Always respond in JSON")
+- Remove a confusing instruction
+- Rewrite an ambiguous phrase
+- Add an example
+- Restructure the instruction order
+- Change the persona or role framing
+Crossover combines sections from different frontier member prompts.
+{% elif artifact_type == "manifest" %}
+NOT YET IMPLEMENTED. Return empty variants with mutation_notes.
+{% elif artifact_type == "template" %}
+NOT YET IMPLEMENTED. Return empty variants with mutation_notes.
+{% endif %}
+
+## Guidelines
+
+- Generate 3-7 variants per iteration. Too few = insufficient exploration; too many = gas waste.
+- Each variant should have a clear hypothesis: "If I change X, then Y will improve because Z."
+- Tag each variant with its parent (original or frontier_member_id) and operator (mutation or crossover).
+- Include the full mutated artifact content, not just the diff.
+
+## Context
+```json
+{
+  "artifact_type": {{ artifact_type | tojson }},
+  "reflections": {{ reflections | tojson }},
+  "current_frontier": {{ current_frontier | tojson }},
+  "target_artifact": {{ target_artifact | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "variants": [
+    {
+      "id": "variant_1",
+      "parent": "original | frontier_member_id",
+      "operator": "mutation | crossover",
+      "hypothesis": "If I change X, then Y will improve because Z",
+      "rule_addressed": "which high_level_rule this mutation targets",
+      "content": "the full mutated artifact text"
+    }
+  ],
+  "mutation_notes": "summary of mutation strategy this iteration"
+}
+```

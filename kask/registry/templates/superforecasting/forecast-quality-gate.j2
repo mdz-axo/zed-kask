@@ -1,0 +1,170 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- verify
+- gate
+- calibration
+- evidence
+- confidence
+- record
+- quality
+contract:
+  input:
+    forecasting_question: string
+    calibration_result: object
+    record_result: object
+    synthesis_output: object
+  output:
+    gate_pass: boolean
+    gate_findings: array
+    calibration_realism_score: number
+    confidence_justification_score: number
+    evidence_trail_score: number
+    record_completeness_score: number
+energy_cap: 3072
+visibility: Public
+---
+{# Template: superforecasting/forecast-quality-gate.j2 #}
+{# goal: Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality. Separated from the calibration stage to prevent self-assessment bias. #}
+
+[inference]
+temperature = 0.5
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are an independent forecast quality assessor. You did NOT produce this forecast — your role is unbiased evaluation. Apply rigorous standards drawn from Tetlock's calibration principles.
+
+## Forecasting Question
+
+{{ forecasting_question }}
+
+## Calibration Output
+
+```json
+{{ calibration_result | tojson }}
+```
+
+## Record Output
+
+```json
+{{ record_result | tojson }}
+```
+
+## Synthesis Output
+
+```json
+{{ synthesis_output | tojson }}
+```
+
+## Quality Dimensions
+
+Evaluate the forecast across four independent dimensions. Score each on a 0–1 scale where 1.0 is optimal.
+
+### 1. Calibration Realism (0–1)
+
+Is the final probability defensible given the evidence trail and reference-class base rates?
+
+| Criterion | Weight |
+|-----------|--------|
+| The final probability is within the defensible range (if provided) | 0.30 |
+| The final probability does not exhibit false precision (e.g., 67.3% when uncertainty is high) | 0.25 |
+| The final probability is not anchored to 50% without justification (hedging) | 0.20 |
+| The final probability reflects appropriate distance from the base-rate anchor | 0.25 |
+
+### 2. Confidence Justification (0–1)
+
+Is the stated confidence level (low/medium/high) matched to evidence quality and model agreement?
+
+| Criterion | Weight |
+|-----------|--------|
+| High confidence is backed by strong evidence, multiple agreeing models, and stable base rates | 0.35 |
+| Low confidence is used when evidence is weak, models disagree, or the situation is novel | 0.30 |
+| The confidence level is not inflated (e.g., "high" with only one causal model) | 0.20 |
+| The confidence level reflects the time horizon (longer horizons → lower confidence) | 0.15 |
+
+### 3. Evidence Trail (0–1)
+
+Does the precision justification reference actual evidence from the pipeline?
+
+| Criterion | Weight |
+|-----------|--------|
+| The precision justification cites specific evidence items or likelihood ratios | 0.35 |
+| The justification explains why this probability and not an adjacent one | 0.30 |
+| The synthesis–calibration divergence (if any) is explained | 0.20 |
+| The justification does not rely on hedge words ("maybe", "likely", "probably") | 0.15 |
+
+### 4. Record Completeness (0–1)
+
+Is the forecast record complete enough for later Brier scoring and post-mortem analysis?
+
+| Criterion | Weight |
+|-----------|--------|
+| Resolution criteria are present and specific (not vague) | 0.35 |
+| Expiration date is present and reasonable for the time horizon | 0.25 |
+| Key assumptions are listed | 0.20 |
+| The tracking ID is present and unique | 0.20 |
+
+## Thresholds
+
+- `gate_pass` = `true` only if **all four** scores are ≥ 0.60.
+- If any score < 0.60, `gate_pass` = `false` and the corresponding `gate_findings` entry must explain what failed and how to fix it.
+- An individual finding entry must include `check` (calibration_realism/confidence_justification/evidence_trail/record_completeness), `status` (pass/fail), and `note`.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "gate_pass": true,
+  "calibration_realism_score": 0.85,
+  "confidence_justification_score": 0.80,
+  "evidence_trail_score": 0.75,
+  "record_completeness_score": 0.90,
+  "gate_findings": [
+    {
+      "check": "calibration_realism",
+      "status": "pass",
+      "note": "Final probability 42% is within defensible range [35%, 50%] and reflects appropriate distance from base-rate anchor of 35%"
+    },
+    {
+      "check": "confidence_justification",
+      "status": "pass",
+      "note": "Medium confidence justified by moderate evidence with some model disagreement"
+    },
+    {
+      "check": "evidence_trail",
+      "status": "pass",
+      "note": "Precision justification cites 3 evidence items with likelihood ratios"
+    },
+    {
+      "check": "record_completeness",
+      "status": "pass",
+      "note": "Resolution criteria specific, expiration date present, assumptions listed"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- You are evaluating, not generating. Do not rewrite or improve the forecast.
+- Scores must be justified by specific evidence from the calibration and record outputs. Vague scores are invalid.
+- If `gate_pass` is `false`, each failing dimension must have a specific, actionable fix note.
+- The calibration realism check must verify the final probability against the defensible_range if one is provided.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

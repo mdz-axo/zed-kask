@@ -1,0 +1,16 @@
+# Infrastructure config manifest for chat-template
+# hKask v0.28.0
+# This directory contains chat persona and dispatch configuration.
+# Not a skill template crate — no [inference] .j2 templates.
+
+infrastructure:
+  name: chat-template
+  version: "0.28.0"
+  description: >
+    Chat session configuration: agent persona definitions and dispatch manifests.
+    Referenced by the runtime at session start.
+  role: config
+  contains:
+    - agent_persona.yaml
+    - dispatch_manifest.yaml
+    - templates/

@@ -1,0 +1,186 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- translate
+- adapt
+- extract
+- compose
+- verify
+contract:
+  input:
+    source_skill: string
+    format_analysis: object
+    step_classifications: array
+  output:
+    translated_skill: string
+    translation_summary: object
+energy_cap: 8192
+visibility: Public
+---
+{# Template: skill-maintenance/skill-maintenance-translate.j2 #}
+{# goal: Translate an intermediate skill representation into an hKask registry crate (manifest.yaml + .j2 templates). #}
+{# KnowAct — Forward translation: source skill → registry crate #}
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a skill translator. Convert a classified source skill into a hKask registry crate (manifest.yaml + .j2 templates) as the canonical source of truth per P5.1. The registry crate is the primary deliverable. SKILL.md is a derived companion, generated from the registry after translation.
+
+## Source Skill
+
+```
+{{ source_skill }}
+```
+
+## Format Analysis
+
+```json
+{{ format_analysis | tojson }}
+```
+
+## Step Classifications
+
+```json
+{{ step_classifications | tojson }}
+```
+
+## Translation Rules
+
+1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef), lexicon_terms, description.
+2. **Templates** — Produce one `.j2` file per classified step:
+   - Cognitive steps → KnowAct `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
+   - Workflow steps → WordAct (transformation) or FlowDef (dispatch/routing) `.j2` with same structure.
+   - Guardrails → Encoded as `visibility`, `energy_cap`, and constraints in `.j2` body.
+3. **State model** — hKask skills are stateless by default. Source state → `.j2` contract input/output.
+4. **Consent model** — hKask uses OCAP. User-confirmation gates → `.j2` contract visibility.
+5. **Observability** — Map to Regulation span references in `.j2` body.
+6. **Domain references** — Substitute using the domain substitution table.
+7. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef. visibility MUST be Private/Public/Shared. energy_cap MUST be 2048-8192.
+
+## Domain Substitution Table
+
+| Source Pattern | Registry Equivalent |
+|----------------|--------------------|
+| REST API calls | `web` MCP server |
+| File system operations | `.j2` contract input/output |
+| LLM inference | `inference` MCP server |
+| Database queries | `hkask-storage` |
+| Key/value store | `hkask-keystore` |
+| Event bus / pubsub | `hkask-regulation` algedonic alerts |
+| User interaction | CLI (`kask chat`) or API (`hkask-api`) |
+| Container / sandbox | Pod execution (`hkask-agents`) |
+| Git operations | `git` MCP server |
+| Web search | `web` MCP server |
+| Custom tool dispatch | `hkask-mcp` dynamic tool discovery |
+| Journal / log store | `hkask-storage` |
+| Sentinel / sensor | MCP tool dispatch (`reg.tool.*`) |
+| Baselines / EWMA | Regulation variety counters |
+| Nurse / regulator | Curator Agent |
+| Proprioception | Regulation algedonic signals (`reg.cybernetics.*`) |
+| IDRS / consent gate | OCAP capability delegation |
+
+If no hKask equivalent exists, mark `[unresolved: no hKask equivalent for <source_ref>]`.
+
+## Registry Crate Output Format
+
+Produce the registry crate as the primary artifact:
+
+### 1. manifest.yaml
+
+```yaml
+crate:
+  name: <skill-name>
+  version: "0.28.0"
+  description: <one-line>
+templates:
+  - id: <skill-name>/<template-id>
+    path: <template-id>.j2
+    type: KnowAct | WordAct | FlowDef
+    lexicon_terms: [term, ...]
+    description: <one-line>
+vocabulary_terms: [term, ...]
+```
+
+### 2. .j2 template files (one per step)
+
+```
+[inference]
+template_type: KnowAct | WordAct | FlowDef
+lexicon_terms: [term, ...]
+contract:
+  input:
+    <field>: <type>
+  output:
+    <field>: <type>
+  energy_cap: <2048-8192>
+  visibility: Private | Public | Shared
+---
+{# Template header #}
+[System prompt, {{ variables }}, JSON output schema]
+```
+
+### 3. SKILL.md (derived companion)
+
+After the registry crate is complete, derive a SKILL.md companion for the Zed coding agent. The SKILL.md is NOT a co-equal artifact — it is generated from the registry crate content.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "manifest_yaml": "crate:\n  name: ...\n  ...",
+  "templates": [
+    {
+      "filename": "<step-name>.j2",
+      "content": "[inference]\ntemplate_type: ...\n---\n..."
+    }
+  ],
+  "skill_md": "---\nname: ...\ndescription: ...\n---\n...",
+  "translation_summary": {
+    "preserved": ["list of concepts/steps preserved with full fidelity"],
+    "adapted": [
+      {
+        "original": "source concept or step",
+        "registry_equivalent": "how it maps in the registry crate",
+        "adaptation_notes": "what changed and why"
+      }
+    ],
+    "dropped": [
+      {
+        "original": "source concept or step",
+        "reason": "why it was dropped"
+      }
+    ],
+    "unresolved": ["list of references with no hKask equivalent"]
+  }
+}
+```
+
+## Constraints
+
+- The primary deliverable is the registry crate (manifest.yaml + .j2 templates). SKILL.md is derived from it.
+- `template_type` must be KnowAct, WordAct, or FlowDef — never Cognition, Prompt, or Process.
+- `visibility` must be Private, Public, or Shared.
+- `energy_cap` must be in 2048–8192 range.
+- `lexicon_terms` must exist in the vocabulary or be proposed as new terms.
+- `contract.input` and `contract.output` must be structured JSON types.
+- Every step from `step_classifications` must appear in the output (preserved, adapted, or dropped with reason).
+- Do not invent hKask tools or MCP servers that do not exist. Use the domain substitution table.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully.
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

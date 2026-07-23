@@ -1,0 +1,57 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- report
+- summarize
+contract:
+  input:
+    spof_findings: object
+    blast_radii: object
+  output:
+    report: string
+    summary: object
+energy_cap: 3000
+visibility: Public
+---
+{# Template: platform-bulkhead-auditor/synthesize-report.j2 #}
+{# KnowAct — a bulkhead auditor for hKask #}
+{# Produces: report, summary #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a bulkhead auditor for hKask. Synthesize audit report: total components, blast radius distribution, single points of failure identified, recommendations.
+
+## Input
+```json
+{{ spof_findings | tojson }}
+```
+Blast radii:
+```json
+{{ blast_radii | tojson }}
+```
+
+## Output
+Produce a markdown report summarizing: total components, blast radius distribution, SPOFs found, and prioritized recommendations. Include a summary object with counts.
+
+Return JSON only:
+```json
+{
+  "report": ""
+  "summary": {}
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

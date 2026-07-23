@@ -1,0 +1,107 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- validate
+- detect
+- classify
+- evaluate
+- enforce
+contract:
+  input:
+    bundle_manifest: object
+  output:
+    valid: boolean
+    violations: array
+    warnings: array
+    ontology_gaps: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: skill-bundler/bundler-validate.j2 #}
+{# Functional Role: KnowAct — validate a bundle manifest against composition rules (V1-V10) and ontological anchoring requirements (V11-V15, P5.4 dual-axis mandate). #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: valid, violations, warnings, ontology_gaps #}
+{# Skill Bundler — Validate Composite Manifest #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a bundle manifest validator. Given a composed bundle manifest, check it for structural correctness, principle compliance, ontological anchoring (P5.4 dual-axis mandate), and anti-pattern violations. Produce a binary pass/fail with specific violations and warnings.
+
+## Bundle Manifest
+
+```json
+{{ bundle_manifest | tojson }}
+```
+
+## Validation Rules
+
+| Rule | ID | Severity | Description |
+|------|----|----------|-------------|
+| No contradictory directives in same phase | V1 | Error | Two skills in the same cascade phase must not issue conflicting constraints |
+| Cascade depth ≤ 7 | V2 | Error | Total cascade depth across all skills must not exceed 7 |
+| Skill uniqueness | V3 | Error | Each skill appears exactly once in the manifest |
+| Conflict resolution completeness | V4 | Error | Every detected conflict must have a declared resolution |
+| At least one productive skill | V5 | Error | At least one skill must be assigned to the core phase |
+| Convergence criterion declared | V6 | Error | Iterative/recursive compositions must declare convergence |
+| Term limit per skill ≤ 10 | V7 | Warning | Skills exceeding 10 key terms should be reviewed |
+| Total unique terms ≤ 30 | V8 | Warning | Bundles exceeding ~30 unique terms should consider decomposition |
+| Phase separation upheld | V9 | Error | Divergent and convergent skills must not share a cascade phase |
+| No runaway feedback loops | V10 | Warning | Check for circular skill triggers without convergence gates |
+| Missing PKO anchor | V11 | Error | Bundle or any skill lacks pko:Procedure/pko:Step/pko:StepExecution anchoring |
+| Missing DC anchor | V12 | Error | Bundle lacks dcterms:creator/dcterms:created/bibo:Document anchoring |
+| Missing Goal anchor | V13 | Error | Bundle has no goal.text or goal.criteria — every bundle must be goal-anchored |
+| Missing artifact provenance | V14 | Warning | Skill-to-skill edges lack prov:wasDerivedFrom or artifact_contract linkage |
+| Orphaned skill artifact | V15 | Warning | A skill produces an output that no downstream skill consumes |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "valid": true,
+  "violations": [
+    {
+      "rule_id": "V1",
+      "description": "What was violated",
+      "location": "Where in the manifest",
+      "fix": "Suggested fix"
+    }
+  ],
+  "warnings": [
+    {
+      "rule_id": "V7",
+      "description": "What triggered the warning",
+      "location": "Where in the manifest",
+      "recommendation": "Suggested improvement"
+    }
+  ],
+  "ontology_gaps": [
+    {
+      "axis": "pko|dc|prov",
+      "missing": "What anchor is absent",
+      "location": "Where in the manifest",
+      "fix": "How to add the missing anchor"
+    }
+  ]
+}
+```
+
+- `valid` is `true` only when `violations` is empty.
+- `warnings` do not affect `valid` but should be surfaced to the user.
+- Every violation must include a concrete `fix` suggestion.
+- Every warning must include a concrete `recommendation`.
+- `ontology_gaps` must list any missing PKO, DC, or PROV-O anchors (P5.4 violation if non-empty).
+
+## Constraints
+
+- Validation is mechanical — no judgment calls. If a rule is triggered, it's a violation.
+- Do not modify the manifest; only report findings.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

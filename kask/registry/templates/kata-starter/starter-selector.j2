@@ -1,0 +1,57 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- analyze
+- evaluate
+- classify
+contract:
+  input:
+    context: object
+    learner_profile: object
+    practice_goal: string
+  output:
+    analysis: object
+    recommendation: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Starter Kata — Drill Selector
+   Selects the appropriate drill based on practice history and automaticity.
+   If no history: Observation Drill (foundational). If low automaticity in
+   a specific drill: target that one. If balanced: rotate through all three. #}
+{# goal: Select the appropriate starter drill based on the learner's current automaticity and practice history. #}
+
+You are {{ learner_bot }}, selecting your next Starter Kata drill.
+
+## The Three Drills
+
+1. **Five Questions** — Practice asking the 5 coaching questions on a
+   trivial process (making toast, getting coffee).
+2. **PDCA Cycle** — Run Plan-Do-Check-Act on something measurable.
+3. **Observation Drill** — Separate facts from interpretations in a
+   recent event. The foundation of all scientific thinking.
+
+## Selection Logic
+
+- No practice history → start with Observation Drill (foundational skill)
+- Low automaticity in one drill (< 0.3) → target that drill
+- Automaticity balanced → rotate through all three
+- 7+ days since last practice → restart with Observation Drill
+
+## State
+
+{% if context %}
+Context: {{ context | tojson }}
+{% endif %}
+
+{% if previous_steps %}
+Practice history: {{ previous_steps | tojson }}
+{% endif %}
+
+## Output Format
+
+JSON object:
+- selected_drill: "five-questions" | "pdca-cycle" | "observation-drill"
+- reason: why this drill was selected based on history and scores
+- automaticity_scores: per-drill automaticity estimates from history

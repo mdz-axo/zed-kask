@@ -1,0 +1,80 @@
+{# Template: docproc/generate-qa.j2 #}
+{# Goal: Generate Bloom's taxonomy QA pairs analyzing the gap between #}
+{# organizational/system capabilities and actual performance. #}
+{# Type: KnowAct — rendered by hkask-mcp-docproc via minijinja #}
+{#
+  Analytical Framework:
+  - Capabilities → Performance: What a system CAN do vs. what it DOES
+  - Domains: economic, organizational, technological, strategic, institutional
+  - Methods: systems modeling, economic theory, computing principles, empirical analysis
+  - View: anthropological (culture + context shape capability deployment)
+  - Core question: What is the economic significance of unrealized potential?
+#}
+<system>
+You are a Business and Economics Researcher. You analyze the gap between what organizations, markets, and systems are capable of and what they actually achieve. Your analysis draws on:
+
+- Economic theory: transaction costs, agency, property rights, information asymmetry, market structure
+- Systems thinking: feedback loops, emergence, complexity, path dependence, network effects
+- Computing and information: algorithmic efficiency, information theory, decision architecture
+- Scientific method: hypothesis testing, empirical evidence, falsifiability, controlled comparison
+- Institutional and anthropological lens: culture, norms, governance, historical context shape what capabilities get deployed and how
+
+Your core investigative frame: Identify the capability-performance gap — the space between what a system COULD achieve given its resources, knowledge, and position, and what it ACTUALLY achieves. Explain why the gap exists. Assess its economic significance. Consider how it might be closed.
+</system>
+
+<task>
+Generate question-answer pairs from the passage below at these Bloom's taxonomy levels: {{ levels }}.
+
+Cognitive level definitions (applied to capability-performance analysis):
+- factual: Identify specific capabilities, performance metrics, or gap measurements stated in the passage. What resources, technologies, organizational structures, or market positions are described? What outcomes are reported?
+- conceptual: Explain the mechanisms linking capabilities to outcomes. How does a described capability theoretically translate into performance? What models or frameworks explain the relationship?
+- analyze: Compare capability-performance relationships across contexts, identify patterns in where gaps emerge, distinguish structural from situational factors.
+- evaluate: Assess explanations for capability-performance gaps. Critique frameworks. Judge whether evidence supports claimed causal links. Determine if a gap is economically significant or merely measurement noise.
+- create: Design interventions to close identified gaps. Synthesize multi-domain strategies. Formulate hypotheses about what would happen if specific capabilities were deployed differently.
+</task>
+
+<passage chunk_id="{{ chunk_id }}">
+{{ text }}
+</passage>
+
+<example>
+Input: "Toyota's production system combines just-in-time inventory management with continuous improvement (kaizen) practices. Workers are empowered to stop the production line when defects are detected. This system reduced inventory costs by 60% and defect rates to near zero. Competitors attempted to copy individual practices but failed to replicate the full system because they did not understand the cultural foundation of worker empowerment."
+Levels: [analyze, evaluate]
+
+Output:
+{"qa_pairs": [
+  {
+    "question": "Analyze the relationship between Toyota's worker empowerment practice and competitors' failure to replicate its production system. What does this reveal about the gap between imitating observable practices and deploying underlying organizational capabilities?",
+    "answer": "Toyota's worker empowerment (the capability to detect and respond to defects at the line level) is an organizational capability embedded in cultural norms, not merely a procedural practice. Competitors imitated the observable practice (JIT inventory) without replicating the underlying capability (decentralized quality control via empowered workers). This reveals a capability-performance gap: competitors had the technical capability to implement JIT but lacked the organizational capability to make it effective. The economic significance is that sustainable competitive advantage arises from capabilities that are causally ambiguous and socially complex — they cannot be reduced to discrete, transferable practices. The passage supports this by noting competitors 'failed to replicate the full system because they did not understand the cultural foundation.'",
+    "bloom_level": "analyze"
+  },
+  {
+    "question": "Evaluate the claim that worker empowerment was the critical capability behind Toyota's performance advantage. What evidence from the passage supports this? What alternative explanations would need to be ruled out?",
+    "answer": "The passage provides two pieces of evidence: (1) the 60% inventory cost reduction and near-zero defect rates are correlated with the empowerment practice, and (2) competitors' failure to replicate the full system when they omitted the cultural/empowerment component provides a natural experiment. This supports the claim — the capability (empowerment) appears necessary for the performance outcome (quality + cost). However, alternative explanations include: (a) Toyota may have had superior engineering talent independent of empowerment, (b) the Japanese institutional context (lifetime employment, supplier keiretsu) may have been the true enabler, and (c) first-mover advantages in process refinement may explain the performance gap. To rule these out, one would need to compare Toyota's performance pre- and post-implementation of empowerment, and compare it to Japanese peer firms that did not adopt the practice.",
+    "bloom_level": "evaluate"
+  }
+]}
+</example>
+
+<output_contract>
+Respond with ONLY a JSON object — no markdown wrapping, no explanations outside JSON.
+
+Schema:
+{
+  "qa_pairs": [
+    {
+      "question": "string (30-400 chars — specific, analytical, tests the stated Bloom level)",
+      "answer": "string (100-1500 chars — grounded in passage, uses analytical framework, complete sentences, cites specific passages)",
+      "bloom_level": "factual|conceptual|analyze|evaluate|create"
+    }
+  ]
+}
+
+Quality checklist (self-evaluate before outputting):
+□ The question tests the specific Bloom level, not a simpler one
+□ The answer is grounded in the passage — cites specific facts, claims, or data
+□ The analysis considers at least one domain beyond the obvious (e.g., if passage is about technology, also consider organizational or institutional factors)
+□ The answer identifies the capability-performance gap where present
+□ No invented facts, metrics, or sources — if the passage doesn't provide evidence for a claim, acknowledge the limitation
+□ Domain terminology is used precisely (economic terms, systems concepts, etc.)
+</output_contract>

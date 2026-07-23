@@ -1,0 +1,125 @@
+{# goal: Read runtime signal evidence (hkask.* performative spans, reg.guard.* violations, reg.regulation events) within deployed userpod host (P4 runtime boundary). Classify signals into threat patterns: endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly. Apply pragmatic-cybernetics (IS/OUGHT, provenance, grill-me). Emit reg.runtime.classify spans (P9 — namespace registered). No synthetic signals; userpod_host mandatory (P12). Evidence-backed only (P8). #}
+{# Reads runtime signals discovered in select-signal phase #}
+{# For each signal, checks: frequency vs baseline, pattern signatures,
+  defense-layer firing, regulation action triggered, action distribution shift #}
+{# Emits `reg.runtime.classify` span per classified threat (P9) #}
+{# Applies pragmatic-cybernetics: trace signal polarity (increasing/decreasing risk?),
+  variety of signal sources (alternative indicators for same threat?),
+  Good Regulator check (is defense layer regulating the threat?) #}
+{# Every finding requires concrete evidence: span target, timestamp,
+  signal value, baseline reference #}
+{# Relationships: complements `supply-chain-sentinel` (static manifest audit);
+  does not overlap with `adversarial-red-team` (synthetic LLM I/O attacks) #}
+
+INPUT: signal_sources = {{ signal_sources }}
+INPUT: signal = {{ signal }}
+INPUT: existing_regressions = {{ existing_regressions | default([]) }}
+INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory; if undefined, raise error: userpod_host is required for all runtime scanning)
+
+CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span history, or runtime telemetry reader):
+1. For each signal source listed in `signal_sources`, observe the span emission
+   pattern within the observation window.
+2. For `reg.guard.*` signals: count violations per scanner (input filter,
+   output filter, canary, runtime policy). Note violation frequency vs
+   baseline. Record timestamps and violation details.
+3. For `reg.outcome.*` signals: count regulation actions (blocked,
+   substituted, plateau). Note whether actions are increasing (system
+   struggling to regulate) or decreasing (system stable).
+4. For `reg.tool.*` signals: count tool invocations per tool type. Note
+   invocation rate, error rate, and any unusual tool call chains (e.g.,
+   rapid sequential calls to high-risk tools).
+5. For `reg.inference` signals: count LLM inference calls. Note inference
+   rate, token consumption, and any usage spikes exceeding baseline.
+6. Apply cybersecurity taxonomy mapping (evidence-backed only):
+   - Endpoint abuse: evidence = repeated `reg.tool.invoked` for same tool
+     exceeding baseline frequency within observation window.
+   - Bot traffic: evidence = automated request pattern (regular intervals,
+     identical params) detected in `reg.tool.invoked` or `reg.inference` spans.
+   - LLM usage spike: evidence = `reg.inference` rate exceeding 2x baseline
+     within observation window.
+   - Dependency behavior anomaly: evidence = unexpected tool invocation
+     chain (e.g., `filesystem.write` → `web_search.fetch` → `filesystem.read`
+     indicating potential data exfiltration pattern).
+   - Defense-layer bypass: evidence = `reg.guard.*` violation count
+     increasing while `reg.outcome.action_blocked` count not increasing
+     proportionally (defense firing but not regulating).
+7. Apply pragmatic-cybernetics (embedded reasoning, like `bug-hunt` oracle phase):
+   - IS vs OUGHT: describe what the runtime DOES (observed signal pattern)
+     vs what it SHOULD do (stable baseline, regulated threats, firing defenses).
+   - Epistemic mode: `Declarative` (span observed), `Probabilistic` (threat
+     inference from signal pattern), `Subjunctive` (potential runtime risk —
+     must be labeled clearly, not presented as fact).
+   - Provenance: `Direct measurement` (read span), `Inference` (pattern
+     analysis from span sequence), `Assessment` (security taxonomy mapping)
+     — must label each finding's provenance.
+8. Apply grill-me self-challenge (like `bug-hunt`): Could this signal pattern
+   be intentional? Is the usage spike a deliberate load test? Would a reviewer
+   dismiss this finding? If yes, downgrade to `OBSERVATION` or omit. Only
+   propose `BUG` / `POTENTIAL_BUG` when evidence is concrete.
+9. Check defense-layer firing (runtime-specific, distinct from kali-audit's
+   static presence check):
+   - Input filtering firing (`reg.guard.input` violations observed)
+   - Output filtering firing (`reg.guard.output` violations observed)
+   - Canary detection firing (`reg.guard.canary` violations observed)
+   - Runtime policy enforcing (`reg.guard.runtime_policy` Log/Block observed)
+   - Regulation loop active (`reg.regulation` events observed)
+   - Action distribution monitoring (`reg.outcome.loop_quality` observed)
+10. For each classified threat, emit structured finding:
+    `threat_type`, `signal_target`, `timestamp`, `signal_value`, `baseline_value`,
+    `deviation_pct`, `severity` (critical/high/medium/low — justified by evidence),
+    `provenance` (Direct/Inference/Assessment), `epistemic_mode`,
+    `defense_layers_firing` (list), `defense_layers_silent` (list),
+    `evidence_snippet` (quoted span target + timestamp + value),
+    `source_citation` (MITRE CWE reference, OWASP LLM reference, ATLAS reference,
+    hkask-guard docs, hkask-regulation docs).
+
+Regulation SPAN EMISSION (P9 — every classified runtime threat):
+- `reg.runtime.classify` per classified threat (target: `"reg.runtime.classify"`,
+  message: `"Regulation"`, operation: `"classify_threat"`, threat_type: `...`,
+  signal_target: `...`, severity: `...`, userpod_host: `...`, latency_ms: ...).
+- The span namespace is registered in `CANONICAL_NAMESPACES`
+  (`crates/hkask-types/src/event.rs`). Emit unconditionally.
+
+CONSTRAINT — Evidence integrity (P8 — semantic grounding):
+- No synthetic span observations. Every `evidence_snippet` must be verifiable
+  by querying the Regulation span history for the cited target and timestamp.
+- No synthetic CVE references. Only reference MITRE CWE taxonomy categories
+  (CWE-1357, CWE-829, CWE-200), OWASP LLM 2025 (LLM06, LLM07), MITRE ATLAS
+  (AML.TA0010). These are taxonomy mappings, not vulnerability claims.
+- Source citations must reference concrete URLs or documents actually consulted:
+  MITRE CWE definitions, OWASP LLM Top 10 2025, MITRE ATLAS, hkask-guard
+  pipeline docs, hkask-regulation cybernetics loop docs.
+
+RELATIONSHIP TO OTHER SKILLS (explicit — no overlap ambiguity):
+- `supply-chain-sentinel`: covers static dependency manifest audit (P4 manifest
+  boundary). `runtime-posture-monitor` covers runtime behavior (P4 runtime
+  boundary). Zero overlap — distinct P4 boundaries.
+- `kali-audit`: covers static defense-layer presence (8 layers).
+  `runtime-posture-monitor` covers whether those layers actually fire at
+  runtime. Complementary — static presence vs runtime firing.
+- `adversarial-red-team`: covers synthetic LLM I/O attacks.
+  `runtime-posture-monitor` covers real runtime traffic. Zero overlap.
+- `bug-hunt`: provides the decomposed pipeline structure. This skill replicates
+  that structure (select-signal ≈ charter; classify-threat ≈ probe + oracle;
+  emit-regulation ≈ taxonomize + report; convergence-check ≈ convergence).
+
+MINIMALISM CHECK (P5 — 5W1H gate for this skill's existence):
+- Who: Running application / userpod host (P12).
+- What: Runtime signal / span target / threat pattern.
+- Where: Deployed runtime environment / production workload.
+- When: Observation window / continuous monitoring (not audit cycle).
+- Why: P3.1 (Generative Space requires safe container — runtime blocking is
+  the Aikido/Zen firewall model); P1 (User Sovereignty — user controls
+  runtime behavior); P4 (Clear Boundaries — runtime behavior must be
+  explicitly observed, not ambient); P9 (Homeostatic Regulation — runtime
+  threats must be observable via `reg.runtime.*` spans).
+- How: Discover signals → observe → classify → regulate → report → propose
+  regression → emit Regulation span → compute convergence.
+- If any of these 6 were missing, this skill would violate P5. All 6 present.
+
+OUTPUT FORMAT:
+JSON object with fields:
+`signal_sources` (list with observation counts), `threats_found` (structured
+array — only evidence-backed), `defense_layers_firing` (list),
+`defense_layers_silent` (list), `baseline_references` (list with source),
+`userpod_host`, `source_citations`.

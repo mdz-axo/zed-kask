@@ -1,0 +1,182 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- verify
+- evaluate
+- audit
+- calibrate
+- classify
+- trace
+- map
+- expectation
+energy_cap: 4096
+visibility: Public
+contract:
+  input:
+    crate_scope: string
+    behaviors_tested: array
+    test_commands: array
+    clippy_commands: array
+  output:
+    all_tests_pass: boolean
+    clippy_clean: boolean
+    no_todo_stubs: boolean
+    behavior_coverage: array
+    functional_gaps: array
+   violations: array
+     contract_expectations_valid: array
+     reg_spans_emitted: array
+     passed: boolean
+---
+{# Template: tdd/tdd-verify.j2 #}
+{# Functional Role: KnowAct — TDD cycle verification with functional coverage check #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: all_tests_pass, clippy_clean, no_todo_stubs, behavior_coverage, functional_gaps, violations, contract_expectations_valid, reg_spans_emitted, passed #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "minimal"
+
+You are a TDD verification agent. Verify that a TDD cycle is complete, clean, and functionally aligned with specifications.
+
+{% if crate_scope %}
+## Crate
+
+**{{ crate_scope }}**
+{% endif %}
+
+## Behaviors Tested
+
+```json
+{{ behaviors_tested | tojson }}
+```
+
+## Verification Checklist
+
+### Test Quality
+- [ ] Each test describes behavior, not implementation
+- [ ] Each test uses public interface only (seam, not internals)
+- [ ] Each test would survive an internal refactor
+- [ ] No horizontal slicing — tests were written one at a time
+- [ ] Implementation-coupled tests carry `// TEST-DEBT: tests private <detail>` comment per Testing Discipline §4.2. These are NOT violations — they are classified debt awaiting a deeper seam. Flag them in `violations` with severity `medium` and type `test-debt`.
+
+### Spec Traceability
+- [ ] Each test carries a contract annotation (`expect:` + `[P{N}]`) referencing a functional requirement
+- [ ] Every contract annotation references a valid functional requirement
+- [ ] No specification requirement in scope is missing a tracer bullet
+
+### Contract Structure (per TESTING_DISCIPLINE.md §1.2)
+
+Verify every contract carries the full structure:
+
+- [ ] **`expect:` field present** — every contract annotation has an `expect:` line with natural language in the user's voice
+- [ ] **`[P{N}] Motivating:` annotation present** — every contract carries a `[P{N}] Motivating:` line naming the goal principle (exactly one, from P1-P12)
+- [ ] **`[P{N}] Constraining:` annotations** — at minimum P1-P4 (Magna Carta) are annotated where applicable
+- [ ] **No vacuous `expect:`** — `expect:` field is not "N/A" or vacuously identical to the `post:` condition. An `expect:` that restates the function name is vacuous. An `expect:` that restates the postcondition verbatim is vacuous. The `expect:` must express what the USER needs, not what the function does.
+- [ ] **Goal principle matches MDS category default** — cross-check the contract's `[P{N}]` against the MDS category default goal principle from `tdd-plan.j2` mapping table. Mismatch requires rationale.
+
+**Contract Expectations Semantic Validation**: For each contract, check whether the `expect:` natural language semantically matches the `pre:`/`post:` formal specification:
+- [ ] No ambiguity: the `expect:` phrasing is precise enough to derive the pre/post
+- [ ] No contradiction: `expect:` does not assert something the pre/post denies
+- [ ] Not vacuously equivalent: `expect:` differs meaningfully from the `post:` text
+
+Where contracts lack `expect:`, severity is `critical` with violation type `missing-user-expectation`. Where `[P{N}]` is missing, severity is `critical` with type `missing-goal-principle`. Verification failures must emit `reg.contract.violated` spans via `hkask-regulation::contract_discipline::emit_contract_violated()`.
+
+### Implementation Quality
+- [ ] Code is minimal for the behaviors tested (no speculative features)
+- [ ] No `todo!()` or `unimplemented!()` stubs
+- [ ] Tests pass through module seams, not across module internals
+
+### Build Quality
+- [ ] `cargo test -p <crate>` passes
+- [ ] `cargo clippy -p <crate> -- -D warnings` passes
+- [ ] `cargo check -p <crate>` passes
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "all_tests_pass": true,
+  "clippy_clean": true,
+  "no_todo_stubs": true,
+  "behavior_coverage": [
+    {
+      "behavior": "description of tested behavior",
+      "covered": true,
+      "seam": "which public interface covers it",
+      "fr_reference": "P9-regulation-energy-budget-can-proceed"
+    }
+  ],
+  "functional_gaps": [
+    {
+      "fr_reference": "P9-regulation-energy-budget-can-proceed",
+      "requirement": "description of uncovered requirement",
+      "priority": "P0|P1|P2",
+      "recommendation": "tracer-bullet|defer-to-OPEN_QUESTIONS"
+    }
+  ],
+  "violations": [
+    {
+      "type": "test-quality|spec-traceability|contract-quality|implementation-quality|build-quality|missing-user-expectation|missing-goal-principle|missing-constraining-annotation|expectation-postcondition-mismatch",
+      "severity": "critical|high|medium|low",
+      "description": "What was violated",
+      "location": "file:line or test name",
+      "correction": "How to fix it"
+    }
+  ],
+  "contract_expectations_valid": [
+    {
+      "fr_reference": "P9-regulation-energy-budget-can-proceed",
+      "expect_field_present": true,
+      "goal_principle_tag_present": true,
+      "constraining_annotations_present": true,
+      "expect_not_vacuous": true,
+      "goal_matches_mds_default": true,
+      "semantic_match_assessment": "aligned|ambiguous|contradiction|vacuous"
+    }
+  ],
+  "reg_spans_emitted": [
+    {
+      "span_id": "reg.contract.violated:uuid",
+      "violation_type": "missing-user-expectation|missing-goal-principle|missing-constraining-annotation|expectation-postcondition-mismatch",
+      "fr_reference": "P9-regulation-energy-budget-can-proceed"
+    }
+  ],
+  "passed": true
+}
+```
+
+`passed` is `true` only if there are zero critical violations and all build quality checks pass.
+
+`functional_gaps` lists every specification requirement that was in scope but has no tracer bullet. Each gap must be resolved: either write a tracer bullet for it, or document the deferral in `OPEN_QUESTIONS.md`.
+
+## Constraints
+
+- Be strict. A test that probes private methods without a `// TEST-DEBT:` comment is a critical violation. A test that probes private methods WITH a `// TEST-DEBT:` comment is classified as medium-severity test-debt — not a violation, but flagged for future seam deepening.
+- A `todo!()` or `unimplemented!()` is a critical violation.
+- A test without a contract annotation (`expect:` + `[P{N}]`) is a high-severity violation (spec-traceability).
+- A contract annotation that doesn't use `expect:` + `[P{N}]` format is a medium-severity violation (contract-quality).
+- A contract missing `expect:` is a critical violation (type: `missing-user-expectation`). Emit `reg.contract.violated` span.
+- A contract missing `[P{N}] Motivating:` is a critical violation (type: `missing-goal-principle`) — without a goal principle, the contract is ungrounded. Emit `reg.contract.violated` span.
+- A contract missing `[P{N}] Constraining:` annotations when Magna Carta principles apply is a high-severity violation (type: `missing-constraining-annotation`).
+- A contract where the `[P{N}] Motivating:` annotation doesn't match the `expect:` statement's goal principle is a high-severity violation (contract-quality).
+- A missing tracer bullet for an in-scope requirement is a high-severity violation.
+- Missing test coverage for a declared behavior is a high-severity violation.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

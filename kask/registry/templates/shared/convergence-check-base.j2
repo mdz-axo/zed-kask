@@ -1,0 +1,73 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    convergence_meaning: string
+    convergence_threshold: number
+    convergence_iterations: integer
+    inputs: object
+    gate_checks: object
+  output:
+    convergence_metric: number
+    convergence_method: string
+    rationale: string
+    blockers: array
+    materiality_delta: number
+energy_cap: 2048
+visibility: Public
+---
+{# Template: shared/convergence-check-base.j2 #}
+{# goal: Compute normalized convergence metric for PDCA cycles. Shared by all skills. #}
+{# ℏKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+Compute convergence where 0 means fully converged across all dimensions. 1 means not converged at all.
+
+## Convergence Meaning
+{{ convergence_meaning }}
+
+## Context
+- Convergence threshold: {{ convergence_threshold }}
+- Iteration: {{ convergence_iterations }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Materiality Guard
+If a prior iteration result is available (`_convergence.prior_result`), compute the delta between the current result and the prior. If the absolute delta is below 0.02 and no new evidence has been introduced, set `materiality_delta` to the computed value and add a `blocker` explaining that the iteration may be vacuous.
+
+## Convergence Method
+0 = fully converged. Score how much work remains.
+
+{% if gate_checks %}
+## Gate-Specific Checks
+{% for check_name, check_result in gate_checks.items() %}
+- {{ check_name }}: {{ "PASSED" if check_result.passed else "FAILED" }}
+{% endfor %}
+
+Apply gate-specific penalties:
+- Gate failures: add +0.15 per failed gate
+- Missing checks: add +0.10 per gap
+- Start at 0.0. Clamp to [0,1].
+{% endif %}
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "gate-based convergence with materiality guard",
+  "rationale": "short explanation of why this score",
+  "blockers": [],
+  "materiality_delta": 0.0
+}
+```

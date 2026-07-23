@@ -1,0 +1,318 @@
+# Agatha Eliot Style Mashup Configuration
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+# Version: 1.0
+# Created: 2026-06-10
+#
+# Style mashup: Agatha Christie (1890-1976) × George Eliot (1819-1880)
+# Replicator name: Agatha Eliot
+#
+# Mixture of Experts pattern: Christie contributes structural architecture
+# (closed-circle suspects, clue distribution, the revelation scene); Eliot
+# contributes psychological and moral depth (free indirect discourse, the
+# inner life, the web of interdependent consciousness). They do not "blend"
+# sentence by sentence — they operate at different narrative layers.
+#
+# Processed by: kask embed-corpus
+# Storage: hKask sqlite-vec via EmbeddingStore
+# Pipeline: web_extract → chunk → embed_sentences → centroid → validate
+# All works are public domain (Christie pre-1931, Eliot pre-1881).
+
+author: agatha-eliot
+author_full: "Agatha Christie × George Eliot"
+style_synthesizer: composition/agatha-eliot-style-synthesizer
+centroid_entity_ref: "style:agatha-eliot:centroid"
+
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: 64
+
+works:
+  # ── Christie ─────────────────────────────────────────────────────────────
+  # Public domain novels (pre-1931, US). First 11 novels chronologically.
+
+  - title: "The Mysterious Affair at Styles"
+    slug: mysterious-affair-at-styles
+    url: "https://www.gutenberg.org/cache/epub/863/pg863.txt"
+    year: 1920
+    type: novel
+    public_domain: true
+
+  - title: "The Secret Adversary"
+    slug: secret-adversary
+    url: "https://www.gutenberg.org/cache/epub/1155/pg1155.txt"
+    year: 1922
+    type: novel
+    public_domain: true
+
+  - title: "The Murder on the Links"
+    slug: murder-on-the-links
+    url: "https://www.gutenberg.org/cache/epub/58866/pg58866.txt"
+    year: 1923
+    type: novel
+    public_domain: true
+
+  - title: "The Man in the Brown Suit"
+    slug: man-in-brown-suit
+    url: "https://www.gutenberg.org/cache/epub/61168/pg61168.txt"
+    year: 1924
+    type: novel
+    public_domain: true
+
+  - title: "Poirot Investigates"
+    slug: poirot-investigates
+    url: "https://www.gutenberg.org/cache/epub/61262/pg61262.txt"
+    year: 1924
+    type: short_story_collection
+    public_domain: true
+
+  - title: "The Secret of Chimneys"
+    slug: secret-of-chimneys
+    url: "https://www.gutenberg.org/cache/epub/65238/pg65238.txt"
+    year: 1925
+    type: novel
+    public_domain: true
+
+  - title: "The Murder of Roger Ackroyd"
+    slug: murder-of-roger-ackroyd
+    url: "https://www.gutenberg.org/cache/epub/69087/pg69087.txt"
+    year: 1926
+    type: novel
+    public_domain: true
+
+  - title: "The Big Four"
+    slug: big-four
+    url: "https://www.gutenberg.org/cache/epub/70119/pg70119.txt"
+    year: 1927
+    type: novel
+    public_domain: true
+
+  - title: "The Mystery of the Blue Train"
+    slug: mystery-of-blue-train
+    url: "https://www.gutenberg.org/cache/epub/70052/pg70052.txt"
+    year: 1928
+    type: novel
+    public_domain: true
+
+  - title: "The Seven Dials Mystery"
+    slug: seven-dials-mystery
+    url: "https://www.gutenberg.org/cache/epub/1635/pg1635.txt"
+    year: 1929
+    type: novel
+    public_domain: true
+
+  - title: "The Murder at the Vicarage"
+    slug: murder-at-the-vicarage
+    url: "https://www.gutenberg.org/cache/epub/59261/pg59261.txt"
+    year: 1930
+    type: novel
+    public_domain: true
+
+  # ── Eliot ────────────────────────────────────────────────────────────────
+
+  - title: "Adam Bede"
+    slug: adam-bede
+    url: "https://www.gutenberg.org/cache/epub/507/pg507.txt"
+    year: 1859
+    type: novel
+    public_domain: true
+
+  - title: "The Mill on the Floss"
+    slug: mill-on-the-floss
+    url: "https://www.gutenberg.org/cache/epub/6688/pg6688.txt"
+    year: 1860
+    type: novel
+    public_domain: true
+
+  - title: "Silas Marner"
+    slug: silas-marner
+    url: "https://www.gutenberg.org/cache/epub/550/pg550.txt"
+    year: 1861
+    type: novel
+    public_domain: true
+
+  - title: "Romola"
+    slug: romola
+    url: "https://www.gutenberg.org/cache/epub/24020/pg24020.txt"
+    year: 1863
+    type: novel
+    public_domain: true
+
+  - title: "Felix Holt, the Radical"
+    slug: felix-holt
+    url: "https://www.gutenberg.org/cache/epub/40882/pg40882.txt"
+    year: 1866
+    type: novel
+    public_domain: true
+
+  - title: "Middlemarch"
+    slug: middlemarch
+    url: "https://www.gutenberg.org/cache/epub/145/pg145.txt"
+    year: 1871
+    type: novel
+    public_domain: true
+
+  - title: "Daniel Deronda"
+    slug: daniel-deronda
+    url: "https://www.gutenberg.org/cache/epub/7469/pg7469.txt"
+    year: 1876
+    type: novel
+    public_domain: true
+
+foundational_rules:
+  # ── Christie structural axioms ───────────────────────────────────────────
+
+  - slug: christie-closed-circle
+    text: >
+      Every suspect must have a motive. Every motive must be examined in
+      turn. The truth is always simple once you see it, but you must first
+      see past what everyone tells you is true.
+
+  - slug: christie-least-likely
+    text: >
+      The least likely person is frequently the guilty one — not because
+      the world is perverse, but because we notice least what we take most
+      for granted.
+
+  - slug: christie-order-and-method
+    text: >
+      Order and method. One must arrange the facts neatly. When all the
+      facts are arranged, the pattern will be apparent.
+
+  - slug: christie-human-nature
+    text: >
+      I have a certain knowledge of human nature. People do not change. A
+      man who has been dishonest once will be dishonest again. A woman who
+      has killed once will — well, that is another matter.
+
+  # ── Eliot moral architecture ─────────────────────────────────────────────
+
+  - slug: eliot-middlemarch-prelude
+    text: >
+      That Spanish woman who lived three hundred years ago, was certainly
+      not the last of her kind. Many Theresas have been born who found for
+      themselves no epic life wherein there was a constant unfolding of
+      far-resonant action; perhaps only a life of mistakes, the offspring
+      of a certain spiritual grandeur ill-matched with the meanness of
+      opportunity.
+
+  - slug: eliot-sympathetic-consciousness
+    text: >
+      The greatest benefit we owe to the artist, whether painter, poet, or
+      novelist, is the extension of our sympathies. Appeals founded on
+      generalizations and statistics require a sympathy ready-made, a moral
+      sentiment already in activity; but a picture of human life such as a
+      great artist can give, surprises even the trivial and the selfish
+      into that attention to what is apart from themselves.
+
+  - slug: eliot-consequences
+    text: >
+      Our deeds determine us, as much as we determine our deeds.
+
+  - slug: eliot-web-of-relations
+    text: >
+      There is no creature whose inward being is so strong that it is not
+      greatly determined by what lies outside it.
+
+  - slug: eliot-moral-stupidity
+    text: >
+      We are all of us born in moral stupidity, taking the world as an
+      udder to feed our supreme selves.
+
+  - slug: eliot-rosamond
+    text: >
+      She was not going to do anything that would make her ridiculous. She
+      was intensely conscious of the risk she ran, but it was one of those
+      risks that the inner life of a woman allows for itself. She was not
+      going to do anything wrong; she was only going to do something that
+      she knew would be thought wrong.
+
+chunking:
+  min_words: 50
+  max_words: 200
+  split_on: paragraph
+  sentence_boundary: ".!? "
+  overlap_words: 0
+
+validation:
+  centroid_distance_max: 0.20
+  exemplar_count_min: 3
+  exemplar_count_max: 7
+
+# ── Entity Declarations ──────────────────────────────────────────────────────
+
+entities:
+  characters:
+    - name: "Hercule Poirot"
+      appears_in: []
+    - name: "Miss Marple"
+      appears_in: []
+    - name: "Dorothea"
+      appears_in: ["middlemarch"]
+    - name: "Silas Marner"
+      appears_in: ["silas-marner"]
+    - name: "Maggie"
+      appears_in: ["mill-on-the-floss"]
+    - name: "Rosamond"
+      appears_in: []
+    - name: "inspector"
+      appears_in: []
+    - name: "constable"
+      appears_in: []
+
+  places:
+    - name: "village"
+      appears_in: []
+    - name: "estate"
+      appears_in: []
+    - name: "parish"
+      appears_in: []
+    - name: "London"
+      appears_in: []
+    - name: "country house"
+      appears_in: []
+
+  events:
+    - name: "murder"
+      appears_in: []
+    - name: "death"
+      appears_in: []
+    - name: "inheritance"
+      appears_in: []
+    - name: "confession"
+      appears_in: []
+
+  concepts:
+    - name: "guilt"
+    - name: "conscience"
+    - name: "justice"
+    - name: "sympathy"
+    - name: "motive"
+    - name: "alibi"
+
+# ── Declared Methods ─────────────────────────────────────────────────────────
+
+methods:
+  - name: "forensic_clarity"
+    description: "Declarative, precise, fact-oriented — Christie's skeleton"
+    signal:
+      avg_sentence_length_max: 20.0
+      adjective_density_max: 5.0
+      adverb_density_max: 2.0
+      hedge_density_max: 1.0
+
+  - name: "moral_realism"
+    description: "Hypotactic accumulation — Eliot's consciousness layer"
+    signal:
+      avg_sentence_length_min: 20.0
+      concrete_noun_ratio_max: 0.55
+
+# ── Budget ───────────────────────────────────────────────────────────────────
+
+budget:
+  total_passages: 0
+  triple_budget_per_100: 3750
+
+# ── Classifier ────────────────────────────────────────────────────────────────
+triple_classifier: triple-extractor-literary

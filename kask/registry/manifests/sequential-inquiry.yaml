@@ -1,0 +1,203 @@
+# Sequential Inquiry Process Manifest
+# ℏKask v0.31.0 — Compound inquiry: think → delegate deep-dive skills → converge
+# Composes sequential-thinking engine with hypothesis-framer, mcda, and diagnose
+# as delegated deep-dive sub-steps triggered by the engine's delegation_requests.
+
+manifest:
+  id: sequential-inquiry
+  category: skill
+  name: Sequential Inquiry
+  description: >
+    Compound convergent inquiry process. Runs the sequential-thinking engine
+    to decompose and sort ideas. When the engine identifies a thought that
+    needs deeper analysis, dispatches to hypothesis-framer (FINER+PICO),
+    dispatches to hypothesis-framer (FINER+PICO),
+    mcda (weighted comparison), diagnose (root-cause analysis), or
+    falsifiability (eliminative inference / counterfactual analysis) as
+    composed sub-steps. Feeds delegation results back into the engine on the
+    next PDCA cycle. Converges when the thought chain is complete AND all
+    delegation requests have been resolved.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_6_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 120000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: problem
+    type: string
+    required: true
+  - name: domain
+    type: string
+    required: false
+  - name: constraints
+    type: array
+    required: false
+  - name: max_thoughts
+    type: integer
+    required: false
+  - name: thinking_budget
+    type: string
+    required: false
+
+steps:
+  # ── Phase 1: Think ──────────────────────────────────────────────
+  - ordinal: 1
+    action: select
+    description: >
+      Execute the sequential inquiry engine: generate, branch, revise,
+      hypothesize, and verify thoughts. When a thought identifies need
+      for deeper analysis, emit delegation_requests targeting
+      hypothesis-framer, mcda, or diagnose. On re-entry, weave prior
+      delegation results into the new thought chain.
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-engine
+    gas_cap: 9000
+    timeout_seconds: 90
+    input_mapping:
+      problem: "{{ problem }}"
+      domain: "{{ domain | default('') }}"
+      constraints: "{{ constraints | default([]) }}"
+      max_thoughts: "{{ max_thoughts | default(12) }}"
+      thinking_budget: "{{ thinking_budget | default('full') }}"
+      prior_chain: "{{ step_1_result.thought_chain | default([]) }}"
+      prior_delegation_results: "{{ {'hypothesis_framer': step_2_result | default(None), 'mcda': step_3_result | default(None), 'diagnose': step_4_result | default(None), 'falsifiability': step_5_result | default(None)} }}"
+
+  # ── Phase 2: Deep-dive delegation ────────────────────────────────
+  # Each step receives delegation_requests from the engine. If no
+  # matching request exists, the template returns {"invoked": false}.
+  # Results feed back to the engine on the next PDCA cycle via
+  # prior_delegation_results.
+
+  - ordinal: 2
+    action: select
+    description: >
+      Delegate to hypothesis-framer when the engine requests formal
+      hypothesis formulation. Routes the thought's candidate hypothesis
+      through FINER evaluation and PICO structuring.
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-delegate-hypothesis-framer
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Delegate to mcda when the engine requests multi-criteria decision
+      analysis for comparing alternatives identified in the thought chain.
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-delegate-mcda
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Delegate to diagnose when the engine identifies a bug, symptom,
+      or failure pattern that needs structured root-cause analysis.
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-delegate-diagnose
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Delegate to falsifiability when the engine branches on a counterfactual
+      scenario, needs to rule out the untestable, or needs hard elimination of
+      candidate explanations (rather than probabilistic reweighting, which is
+      superforecasting's concern). Applies the Popper/Platt/Chamberlin/Pearl
+      method: admit → hypothesize → counterfactual → discriminate → eliminate.
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-delegate-falsifiability
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
+
+  # ── Phase 3: Converge ────────────────────────────────────────────
+  - ordinal: 6
+    action: select
+    description: >
+      Compute normalized convergence metric. Scores whether the thought
+      chain is verified AND all delegation requests have been resolved.
+      Single-model inference (the convergence check is deterministic — fusion disabled for rubric stability).
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_1_result }}"
+      delegation_results: "{{ {'hypothesis_framer': step_2_result, 'mcda': step_3_result, 'diagnose': step_4_result, 'falsifiability': step_5_result} }}"
+
+  - ordinal: 7
+    action: loop
+    description: Re-enter inquiry cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-engine
+      gas_budget: 9000
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-delegate-hypothesis-framer
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-delegate-mcda
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-delegate-diagnose
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-delegate-falsifiability
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: sequential-inquiry
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

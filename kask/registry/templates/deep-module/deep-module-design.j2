@@ -1,0 +1,229 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- design
+- simplify
+- constrain
+- specify
+- structure
+contract:
+  input:
+    deletion_test_result: object
+    domain_requirements: object
+    dependency_interfaces: object
+    constraint_classification: object
+  output:
+    module_specification: object
+    public_interface: array
+    hidden_internals: array
+    error_design: object
+    config_design: object
+    depth_projection: object
+  energy_cap: 6144
+  visibility: Public
+---
+{# Template: deep-module/deep-module-design.j2 #}
+{# Functional Role: KnowAct — Design a deep module interface from deletion test results #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: module_specification, public_interface, hidden_internals, error_design, config_design, depth_projection #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a module interface designer using Ousterhout's deep module discipline. Design a module interface that maximizes depth — small public surface, much behavior behind it. Start from deletion test results and domain requirements.
+
+## Philosophy
+
+The goal is a module with high depth: behavior encapsulated / interface surface area. The interface should match how callers think about the problem, not how the implementation works. Every public item must earn its existence through the deletion test.
+
+## Deletion Test Result
+
+```json
+{{ deletion_test_result | tojson }}
+```
+
+## Domain Requirements
+
+```json
+{{ domain_requirements | tojson }}
+```
+
+## Dependency Interfaces
+
+```json
+{{ dependency_interfaces | tojson }}
+```
+
+{% if constraint_classification %}
+## Constraint Classification
+
+```json
+{{ constraint_classification | tojson }}
+```
+{% endif %}
+
+## Design Process
+
+### Step 1 — Define the Core Operation
+
+What is the ONE thing this module does? Start with a single public function. Every module should have a clear, singular purpose. If you can't describe it in one sentence, the module is too broad.
+
+### Step 2 — Add Public Functions
+
+Only add additional public functions when ALL of these are true:
+
+1. The operation cannot be accomplished by combining the core operation with something else
+2. The operation serves a different caller need (not just a convenience wrapper)
+3. The operation would cause significant complexity if callers had to implement it themselves
+
+**Target: ≤7 public functions total.** More than 7 strongly suggests splitting.
+
+### Step 3 — Design Public Types
+
+Public types should be output types that callers need to consume. They should be minimal:
+
+- Prefer enums over structs with many optional fields
+- Prefer single, well-named types over type aliases
+- Expose only what callers need, not what the implementation finds convenient
+
+### Step 4 — Hide Information
+
+Identify everything that can be private:
+
+- Implementation details: algorithms, data structures, caching
+- Internal state: connection pools, counters, caches
+- Assumptions: business rules, validation logic
+- Dependencies: the fact that a specific dependency is used at all
+
+### Step 5 — Design Error Type
+
+One unified error enum per module:
+- Map dependency errors to module-level variants (don't leak them)
+- Add context to errors (what operation was attempted)
+- Never expose dependency error types directly
+
+### Step 6 — Design Configuration
+
+Unify all configuration into a single config struct:
+- Passed at construction time, not per-function
+- Validated on construction (fail early)
+- Contains defaults for optional values
+
+### Step 7 — Project Depth
+
+Estimate the resulting depth score:
+
+```
+Projected Behavior Lines / (Public Functions + Public Types) = Projected Depth Score
+```
+
+Target: ≥100 (Deep). Minimum: ≥50 (Adequate).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "module_specification": {
+    "name": "SessionService",
+    "purpose": "Manage chat session lifecycle: create, retrieve, update, and expire sessions with transactional safety",
+    "file_path": "hkask-services/src/session.rs"
+  },
+  "public_interface": [
+    {
+      "item": "fn create_session(&self, config: &SessionConfig) -> Result<Session, ServiceError>",
+      "purpose": "Create a new session with validated configuration",
+      "complexity_encapsulated": "Config validation, ID generation, database insert, event emission"
+    },
+    {
+      "item": "fn get_session(&self, id: &SessionId) -> Result<Session, ServiceError>",
+      "purpose": "Retrieve a session by ID with expiry check",
+      "complexity_encapsulated": "Expiry evaluation, not-found handling, cache lookup"
+    },
+    {
+      "item": "fn list_sessions(&self) -> Result<Vec<SessionSummary>, ServiceError>",
+      "purpose": "List all active sessions for the current context",
+      "complexity_encapsulated": "Filtering by context, expiry filtering, pagination"
+    },
+    {
+      "item": "fn delete_session(&self, id: &SessionId) -> Result<(), ServiceError>",
+      "purpose": "Delete a session with cascade cleanup",
+      "complexity_encapsulated": "Cascading deletion of related data, event emission"
+    }
+  ],
+  "hidden_internals": [
+    {
+      "item": "SessionStore trait (private)",
+      "hidden_because": "Callers shouldn't know storage implementation"
+    },
+    {
+      "item": "session_cache: LruCache<SessionId, Session>",
+      "hidden_because": "Performance optimization, not behavioral contract"
+    },
+    {
+      "item": "expiry_timer: tokio::Interval",
+      "hidden_because": "Implementation detail of session cleanup"
+    },
+    {
+      "item": "fn validate_config(config: &SessionConfig) -> Result<(), ValidationError>",
+      "hidden_because": "Internal validation, called during construction"
+    }
+  ],
+  "error_design": {
+    "enum_name": "ServiceError",
+    "variants": [
+      {"variant": "NotFound", "context": "SessionId"},
+      {"variant": "ValidationFailed", "context": "Vec<String>"},
+      {"variant": "MaxSessionsExceeded", "context": "u32"},
+      {"variant": "DatabaseError", "context": "String"},
+      {"variant": "SessionExpired", "context": "SessionId"}
+    ],
+    "dependency_errors_mapped": {
+      "sqlx::Error": "ServiceError::DatabaseError",
+      "uuid::Error": "ServiceError::ValidationFailed"
+    }
+  },
+  "config_design": {
+    "struct_name": "SessionConfig",
+    "fields": [
+      {"name": "max_active_sessions", "type": "u32", "default": "100", "validated": "> 0, <= 1000"},
+      {"name": "session_ttl_seconds", "type": "u64", "default": "3600", "validated": ">= 60, <= 86400"},
+      {"name": "cleanup_interval_seconds", "type": "u64", "default": "300", "validated": ">= 30"}
+    ]
+  },
+  "depth_projection": {
+    "public_functions": 4,
+    "public_types": 0,
+    "estimated_implementation_lines": 520,
+    "projected_depth_score": 130,
+    "classification": "Deep",
+    "notes": "Projected score of 130 meets the Deep threshold (>100). Four public functions encapsulate 520 lines of session management complexity."
+  }
+}
+```
+
+## Constraints
+
+- Design interface first, implementation second.
+- Every public function must survive the deletion test: if callers could trivially implement it, don't expose it.
+- No more than 7 public functions. If the design exceeds 7, split the module.
+- One error type per module. Map, don't leak, dependency errors.
+- One config struct. Validated at construction.
+- Hide everything that isn't required by callers.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

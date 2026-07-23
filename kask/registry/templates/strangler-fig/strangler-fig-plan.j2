@@ -1,0 +1,251 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- assess
+- map
+- classify
+- orient
+- plan
+- sequence
+contract:
+  input:
+    migration_target: string
+    current_architecture: string
+    codebase_context: object
+    constraint_classification: object
+  output:
+    domains: array
+    consumer_map: object
+    overlap_classification: object
+    migration_sequence: array
+    migration_plan: array
+    risk_assessment: object
+    assumptions: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: strangler-fig/strangler-fig-plan.j2 #}
+{# Functional Role: KnowAct — Domain mapping and migration sequencing for Strangler Fig pattern #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: domains, consumer_map, overlap_classification, migration_sequence, migration_plan, risk_assessment, assumptions #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a Strangler Fig migration planner. Before any code changes, map the current architecture, identify all domains, classify overlap between consumers, and produce a prioritized migration sequence. The goal is incremental safety — the system must be fully functional after every step.
+
+## Philosophy
+
+The Strangler Fig pattern introduces new implementation alongside old. Each domain migrates independently. Both code paths coexist until deletion. No big-bang rewrites. The "tree" (old code) continues to function until the "fig" (new code) fully envelops it.
+
+## Task
+
+**Migration Target**: {{ migration_target }}
+
+## Current Architecture
+
+{{ current_architecture }}
+
+{% if codebase_context %}
+## Codebase Context
+
+```json
+{{ codebase_context | tojson }}
+```
+{% endif %}
+
+{% if constraint_classification %}
+## Constraint Classification
+
+These constraints have been classified by force type (Prohibition > Guardrail > Guideline > Evidence > Hypothesis). Rank 1–2 constraints CANNOT be violated during migration.
+
+```json
+{{ constraint_classification | tojson }}
+```
+{% endif %}
+
+## Planning Process
+
+### Step 1 — Identify Domains
+
+Identify every bounded context in the current architecture. A domain is a cohesive set of operations that share state, types, and responsibility. Examples: curator, inference, pods, memory. (Ensemble deferred 2026-06-14; future multi-agent mode will evolve from dual-presence.)
+
+For each domain:
+- What operations does it contain?
+- What state does it manage?
+- What dependencies does it have on other domains?
+
+### Step 2 — Map Consumers
+
+For each domain, list every consumer (surface or caller):
+- CLI commands
+- API endpoints
+- MCP servers
+- Other domain crates
+
+For each consumer, capture:
+- The exact code path (file:line)
+- The return type
+- The error type
+- Any configuration or state it passes
+
+### Step 3 — Classify Overlap
+
+For each domain with multiple consumers, classify:
+
+| Classification | Definition |
+|----------------|-----------|
+| **Identical** | Same logic, different framing. Extract to shared implementation. |
+| **Divergent** | Different logic for same intent. Unify in new implementation, parameterize variation. |
+| **Surface-only** | Appears in only one surface. May belong in surface, not shared. |
+| **Cross-cutting** | Appears in multiple domains. Migrate last, after dependent domains. |
+
+### Step 4 — Sequence by Risk
+
+Order domains from lowest to highest risk:
+
+1. **Proof of Concept** (lowest risk): Smallest domain, fewest consumers, simplest logic
+2. **Independent domains**: No dependencies on unmigrated domains
+3. **Dependent domains**: Depend on already-migrated domains
+4. **Cross-cutting infrastructure**: Shared state, error types, configuration
+
+### Step 5 — Produce Migration Plan
+
+For each domain, produce a CREATE→WIRE→DELETE sequence:
+
+```
+Domain: <name>
+Risk: Low | Medium | High
+Order: N of M
+Dependencies: [list]
+Consumers: [list]
+
+Step 1 — CREATE: New component path + interface signature
+Step 2 — WIRE A: First consumer path + what changes
+Step 3 — WIRE B: Second consumer path + what changes
+Step 4 — DELETE: Old code paths to remove after verification
+```
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "domains": [
+    {
+      "name": "curator",
+      "operations": ["list_agents", "select_agent", "route_message"],
+      "state": ["AgentRegistry", "ActiveAgent"],
+      "dependencies": ["hkask-agents", "hkask-types"],
+      "risk": "Low",
+      "rationale": "Small domain, well-defined boundaries"
+    }
+  ],
+  "consumer_map": {
+    "curator": [
+      {
+        "surface": "hkask-cli",
+        "path": "commands/chat.rs:45",
+        "return_type": "ChatResponse",
+        "error_type": "CliError"
+      },
+      {
+        "surface": "hkask-api",
+        "path": "routes/chat.rs:32",
+        "return_type": "Json<ChatResponse>",
+        "error_type": "ApiError"
+      }
+    ]
+  },
+  "overlap_classification": {
+    "curator": {
+      "type": "Identical",
+      "confidence": "High",
+      "evidence": "Same model selection logic, different framing in CLI vs API"
+    }
+  },
+  "migration_sequence": [
+    {
+      "order": 1,
+      "domain": "curator",
+      "risk": "Low",
+      "dependencies": [],
+      "rationale": "Proof of concept — smallest domain, simplest logic"
+    }
+  ],
+  "migration_plan": [
+    {
+      "domain": "curator",
+      "steps": [
+        {
+          "step": 1,
+          "action": "CREATE",
+          "description": "Create CuratorService in hkask-services with select_agent and route_message",
+          "target": "hkask-services/src/curator.rs",
+          "interface": "fn select_agent(&self, ctx: &ServiceContext, input: &str) -> Result<AgentId, ServiceError>"
+        },
+        {
+          "step": 2,
+          "action": "WIRE",
+          "consumer": "hkask-cli",
+          "description": "Route CLI chat command through CuratorService",
+          "target": "hkask-cli/src/commands/chat.rs"
+        },
+        {
+          "step": 3,
+          "action": "WIRE",
+          "consumer": "hkask-api",
+          "description": "Route API chat endpoint through CuratorService",
+          "target": "hkask-api/src/routes/chat.rs"
+        },
+        {
+          "step": 4,
+          "action": "DELETE",
+          "description": "Remove duplicated curator logic from CLI and API",
+          "targets": [
+            "hkask-cli/src/commands/chat.rs",
+            "hkask-api/src/routes/chat.rs"
+          ]
+        }
+      ]
+    }
+  ],
+  "risk_assessment": {
+    "highest_risk_domain": "inference",
+    "rationale": "Shared dependency across all domains, complex state management",
+    "mitigation": "Migrate after all dependent domains, extensive test coverage"
+  },
+  "assumptions": [
+    {
+      "assumption": "Curator logic is truly identical across surfaces",
+      "confidence": "High",
+      "alternative": "May have subtle divergence in error handling"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Do NOT write any code. This is planning only.
+- Every domain must have at least one identified consumer.
+- Migration sequence must order by ascending risk.
+- No domain should depend on an unmigrated domain in its position in the sequence.
+- Prohibitions (Rank 1) CANNOT be violated during migration — flag any plan that would violate them.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

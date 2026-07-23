@@ -1,0 +1,99 @@
+# Media — Logo Iterative Refinement FlowDef
+# Generate candidate logos, critique with vision LLM, refine best candidate.
+
+template_type: FlowDef
+name: media_logo_iterative_refine
+version: "1.0.0"
+description: "Generate logo candidates, critique with vision LLM, refine the best one"
+primary_model: "FA/flux-pro/v1"
+critique_model: "OR/openai/gpt-4o"
+parameters:
+  - name: name
+    type: string
+    required: true
+    description: "Business or group name"
+  - name: tagline
+    type: string
+    required: false
+    description: "Optional tagline or motto"
+  - name: industry
+    type: string
+    required: false
+    description: "Industry context"
+  - name: style
+    type: enum
+    values:
+      [
+        minimal,
+        modern,
+        playful,
+        corporate,
+        vintage,
+        luxury,
+        tech,
+        handmade,
+        bold,
+        elegant,
+      ]
+    default: minimal
+    description: "Visual style direction"
+  - name: palette
+    type: string
+    required: false
+    description: "Hex colors or named palette"
+  - name: logo_type
+    type: enum
+    values: [wordmark, lettermark, emblem, abstract, combination, mascot]
+    default: wordmark
+    description: "Type of logo mark"
+  - name: variants
+    type: integer
+    default: 3
+    description: "Number of initial candidates (1-5)"
+  - name: refine_rounds
+    type: integer
+    default: 1
+    description: "How many critique-and-refine cycles (0-3)"
+input_type: text
+output_type: image_urls
+latency: async
+cost_tier: high
+steps:
+  - id: generate-candidates
+    tool: generate_image
+    description: "Generate {variants} initial logo candidates using logo-formal-prompt template"
+    template: media/logo-formal-prompt
+    count: "{{ variants }}"
+
+  - id: critique
+    tool: describe_image
+    description: "Vision LLM critique of each candidate: readability, scalability, distinctiveness, professionalism"
+    condition: "refine_rounds > 0"
+    style: descriptive
+    prompt: |
+      Critique this logo design for professional quality. Evaluate:
+      1. Readability — is the name clear and legible?
+      2. Scalability — does it work at icon size and billboard size?
+      3. Distinctiveness — is it memorable, not generic?
+      4. Professionalism — would a client pay for this?
+      5. Text accuracy — are there any garbled letters, misspellings, or artifacts?
+      Return a score 1-10 for each criterion and a one-paragraph summary of the strongest weakness.
+
+  - id: refine
+    tool: generate_image
+    description: "Regenerate the best candidate incorporating critique feedback"
+    condition: "refine_rounds > 0"
+    prompt: "Redesign this logo concept addressing the following critique: {{ critique_summary }}. Keep the same business name, industry, and style direction. Fix the identified weaknesses while preserving the strengths."
+
+  - id: finalize
+    tool: image_remove_background
+    description: "Remove background from the final selected logo for transparent PNG output"
+    condition: "refine_rounds > 0"
+---
+# Logo Iterative Refinement Pipeline
+# Phase 1: Generate N candidates via generate_image with logo-formal-prompt template
+# Phase 2: Vision LLM critique each candidate via describe_image
+# Phase 3: Select best candidate (highest aggregate score)
+# Phase 4: Regenerate with critique feedback incorporated (repeat refine_rounds times)
+# Phase 5: Remove background from final logo for deliverables
+# Return: array of final image URLs with scores

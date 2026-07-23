@@ -1,0 +1,69 @@
+{# gml/validate-inputs.j2 - Input validation macros #}
+{# Purpose: Validate inputs before template processing #}
+
+{% macro validate_concept(concept) -%}
+{% set errors = [] %}
+{% if not concept %}
+{% set _ = errors.append({'field': 'concept', 'message': 'Missing concept input'}) %}
+{% elif not concept.name %}
+{% set _ = errors.append({'field': 'name', 'message': 'Concept name is required'}) %}
+{% elif not concept.t_state %}
+{% set _ = errors.append({'field': 't_state', 'message': 'T-state interpretation is required'}) %}
+{% elif not concept.r_state %}
+{% set _ = errors.append({'field': 'r_state', 'message': 'R-state interpretation is required'}) %}
+{% elif not concept.l %}
+{% set _ = errors.append({'field': 'l', 'message': 'Default bias (L) is required'}) %}
+{% elif concept.l <= 0 %}
+{% set _ = errors.append({'field': 'l', 'message': 'L must be > 0'}) %}
+{% elif not concept.ports or concept.ports | length == 0 %}
+{% set _ = errors.append({'field': 'ports', 'message': 'At least one allosteric port is required'}) %}
+{% endif %}
+{% if concept.ports %}
+{% for port in concept.ports %}
+{% if port.affinity_c and port.affinity_c <= 0 %}
+{% set _ = errors.append({'field': 'ports[' ~ loop.index ~ '].affinity_c', 'message': 'affinity_c must be > 0'}) %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if concept.current_alpha is defined and concept.current_alpha < 0 %}
+{% set _ = errors.append({'field': 'current_alpha', 'message': 'current_alpha must be >= 0'}) %}
+{% endif %}
+{% if concept.current_r_bar is defined and (concept.current_r_bar < 0 or concept.current_r_bar > 1) %}
+{% set _ = errors.append({'field': 'current_r_bar', 'message': 'current_r_bar must be in range [0, 1]'}) %}
+{% endif %}
+{{ errors }}
+{%- endmacro %}
+
+{% macro validate_effector(effector) -%}
+{% set errors = [] %}
+{% if not effector %}
+{% set _ = errors.append({'field': 'effector', 'message': 'Missing effector input'}) %}
+{% elif not effector.name %}
+{% set _ = errors.append({'field': 'name', 'message': 'Effector name is required'}) %}
+{% elif effector.concentration is not defined %}
+{% set _ = errors.append({'field': 'concentration', 'message': 'Effector concentration is required'}) %}
+{% elif effector.concentration < 0 %}
+{% set _ = errors.append({'field': 'concentration', 'message': 'Concentration must be >= 0'}) %}
+{% elif not effector.effect_type %}
+{% set _ = errors.append({'field': 'effect_type', 'message': 'Effect type is required (Activator/Inhibitor/Neutral)'}) %}
+{% elif not effector.shape %}
+{% set _ = errors.append({'field': 'shape', 'message': 'Effector shape is required'}) %}
+{% endif %}
+{{ errors }}
+{%- endmacro %}
+
+{% macro check_capability(capability, operation) -%}
+{% if not capability %}{{ false }}
+{% elif not capability.operations or operation not in capability.operations %}{{ false }}
+{% else %}{{ true }}{% endif %}
+{%- endmacro %}
+
+{% macro check_port_compatibility(effector, ports) -%}
+{% set matches = ports | selectattr("effector_shape", "equalto", effector.shape) | list %}
+{% if matches | length > 0 %}{{ {'compatible': true, 'port': matches[0]} | tojson }}{% else %}{{ {'compatible': false, 'port': null} | tojson }}{% endif %}
+{%- endmacro %}
+
+{% macro check_effector_budget(capability, concentration) -%}
+{% if not capability or not capability.effector_budget %}{{ true }}
+{% else %}{{ concentration <= capability.effector_budget }}{% endif %}
+{%- endmacro %}

@@ -1,0 +1,22 @@
+{# codegraph/symbol-summarize.j2 — Generate one-sentence summaries of code symbols using the inference router.
+   Rendered per-symbol, sent to a cheap model for summarization.
+
+   Input context:
+     kind:       string — SymbolKind (function, struct, trait, impl, module, etc.)
+     name:       string — Qualified name
+     signature:  string — First line of the definition
+     doc:        string | None — Doc comment, if any
+     file:       string — Relative file path
+#}You are a concise Rust code summarizer. Describe what this code symbol does in ONE sentence. Be specific — mention key types, return values, and purpose. Do not repeat the name or kind.
+
+{% if kind == "function" or kind == "method" %}
+Function signature: {{ signature }}
+{% else %}
+{{ kind }}: {{ name }}
+Declaration: {{ signature }}
+{% endif %}
+{% if doc %}
+Doc comment: {{ doc }}
+{% endif %}
+
+One-sentence description:

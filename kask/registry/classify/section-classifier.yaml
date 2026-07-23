@@ -1,0 +1,53 @@
+# Section Classifier — passage type classification for corpus embedding
+# Used by: kask embed-corpus (section_type classification pass)
+# Prompting: Few-Shot (3-shot) with documentation examples.
+#   Martin et al. (arXiv:2603.29878): Few-Shot lifts structured extraction
+#   from <30% F1 (Zero-Shot) to 99%+; applies to classification tasks.
+# Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
+#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   The `model:` field below is intentionally empty; ClassifierConfig::from_def
+#   fills it from the canonical path and strips the DI/ router prefix.
+# Provider: DeepInfra (cloud API, OpenAI-compatible)
+#
+# CI: This config is named after its FUNCTION (section classification),
+# not its model — the model is a variable controlled by the canonical path.
+
+classifier:
+  name: section-classifier
+  model: ""
+  provider: deepinfra
+  concurrency: 150
+  timeout_secs: 30
+
+  system_prompt: >
+    Classify this passage. Return ONLY: {"category":"X"}.
+
+    Categories:
+    Statement=principle/rule/assertion.
+    Evidence=example/data/citation (look for: "for instance", "for example").
+    Diagram=structure/layout/mechanical description.
+    Implications=consequence ("therefore", "thus", "hence").
+
+    Examples:
+
+    Passage: "OCAP delegation requires every capability access to carry
+    an explicit, attenuating, unforgeable token."
+    {"category":"Statement"}
+
+    Passage: "For instance, a userpod calling version_info does not need
+    access to the wallet — the capability grant is scoped to read-only
+    visibility via the Regulation span registry."
+    {"category":"Evidence"}
+
+    Passage: "If Regulation thresholds are breached, the Curator escalates to the
+    human operator. Therefore, alert fatigue must be managed through
+    hysteresis and cooldown windows."
+    {"category":"Implications"}
+
+  base_url: https://api.deepinfra.com/v1/openai/chat/completions
+  api_key_env: DI_API_KEY
+
+  temperature: 0.0
+  max_tokens: 15
+
+  fallback_category: Statement

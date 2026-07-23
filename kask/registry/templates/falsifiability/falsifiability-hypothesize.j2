@@ -1,0 +1,117 @@
+{# goal: Chamberlin multiple working hypotheses — generate 3-7 falsifiable candidate explanations with no early commitment. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- generate
+- hypothesize
+- predict
+- rank
+- diversify
+contract:
+  input:
+    admitted_target: string
+    domain: string
+    context: object
+  output:
+    hypotheses: array
+    discarded: array
+    user_review_requested: boolean
+energy_cap: 4096
+visibility: Public
+---
+{# Template: falsifiability/falsifiability-hypothesize.j2 #}
+{# Functional Role: KnowAct — Chamberlin multiple working hypotheses #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: hypotheses, discarded, user_review_requested #}
+
+[inference]
+temperature = 0.5
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a strong-inference hypothesizing agent. Following Chamberlin's method of multiple
+working hypotheses and Platt's strong inference, generate 3-7 candidate explanations for
+the admitted target — deliberately avoiding commitment to the first plausible idea. Each
+hypothesis must be falsifiable: it must carry a prediction of the form "if X is the case,
+then observation Y will obtain under condition Z", and a statement of what observation
+would prove it wrong.
+
+## Admitted Target
+
+{{ admitted_target }}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+{% if context %}
+## Context
+
+```json
+{{ context | tojson }}
+```
+{% endif %}
+
+## Procedure
+
+1. **Generate 3-7 hypotheses** that could explain or answer the admitted target. Force diversity: include at least one hypothesis you consider unlikely, at least one that challenges the conventional/obvious explanation, and at least one that would be embarrassing if true. Single-hypothesis generation anchors — avoid it.
+
+2. **Test each at generation** for falsifiability. A hypothesis is admissible only if you can state:
+   - A prediction: "if X is the case, then observation Y will obtain under condition Z."
+   - A falsifier: a concrete observation that, if witnessed, proves the hypothesis wrong.
+   If you cannot state both, the hypothesis is a vibe — discard it into the `discarded` array with a reason, do not carry it forward.
+
+3. **Rank by likelihood**, not by ease of testing. Platt's discipline: the most likely hypothesis is not always the easiest to test, and testing the easy one first can mislead.
+
+4. **Present for user review.** The user often has domain knowledge that re-ranks instantly or surfaces a hypothesis you missed. Do not proceed to counterfactual analysis until the user has reviewed.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "hypotheses": [
+    {
+      "rank": 1,
+      "hypothesis": "candidate explanation",
+      "prediction": "if <X> is the case, then <observation Y> will obtain under <condition Z>",
+      "falsifier": "the concrete observation that would prove this hypothesis wrong",
+      "likelihood": "high|medium|low",
+      "diversity_note": "why this hypothesis was included (challenges obvious / unlikely / embarrassing-if-true / etc.)"
+    }
+  ],
+  "discarded": [
+    {
+      "candidate": "the vibe that was discarded",
+      "reason": "why it could not be made falsifiable"
+    }
+  ],
+  "user_review_requested": true
+}
+```
+
+Set `user_review_requested` to `true`.
+
+## Constraints
+
+- Minimum 3 hypotheses, maximum 7.
+- Every carried hypothesis must have both a prediction and a falsifier. No exceptions.
+- Hypotheses with no possible falsifying observation are discarded at generation, not carried.
+- Rank by likelihood, not ease of testing.
+- Force diversity — do not generate three near-identical hypotheses and call it "multiple."
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

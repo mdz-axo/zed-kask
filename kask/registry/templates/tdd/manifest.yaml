@@ -1,0 +1,109 @@
+# Template crate manifest for tdd skill
+# hKask v0.28.0
+
+crate:
+  name: tdd
+  version: "0.30.0"
+  description: >
+    Test-driven development with red-green-refactor loop, MDS spec-anchored functional
+    testing, and gap analysis. Builds features or fixes bugs one vertical slice at a
+    time. Enforces behavior testing through public interfaces, spec traceability via
+    // REQ: tags (anchored to MDS spec/goal/capture outputs), anti-horizontal-slicing,
+    and minimal-implementation discipline. Five MDS categories: domain, composition,
+    trust, lifecycle, curation.
+  contract_energy_budget:
+    description: >
+      Calibrated inference cost for enforcing extended v0.28.0 contract checks:
+      expectation parsing, principle alignment, constraining completeness. Based on
+      hkask-services::EnergyCost model.
+    baseline_energy_cap: 8192
+    per_check_costs:
+      expectation_parsing: 512
+      principle_alignment: 1024
+      constraining_completeness: 1024
+      expectation_quality_scoring: 512
+
+templates:
+  - id: tdd/tdd-plan
+    name: "Plan a TDD cycle: extract functional requirements from specifications…"
+    path: tdd-plan.j2
+    type: KnowAct
+    lexicon_terms:
+      [assess, orient, discriminate, specify, plan, trace, anchor, principal]
+    description: >
+      Plan a TDD cycle: extract functional requirements from specifications with
+      goal-principle anchoring (each requirement names its P{N} principle), identify
+      public interfaces, classify behaviors by MDS category with default goal-principle
+      mapping, prioritize by risk (P0-P2+), and get user approval before writing any code.
+
+  - id: tdd/tdd-tracer
+    name: "Execute a tracer bullet: write ONE failing test for ONE behavior…"
+    path: tdd-tracer.j2
+    type: KnowAct
+    lexicon_terms:
+      [detect, write, verify, constrain, specify, trace, expect, expectation]
+    description: >
+      Execute a tracer bullet: write ONE failing test for ONE behavior anchored to a
+      spec requirement AND goal principle via expect: field with [P{N}] tag (per
+      PRINCIPLES.md §1.6). Contract-first: full v0.28.0 structure with expect:,
+      [P{N}] Constraining: annotations, and pre:/post:. Then minimal code to satisfy
+      the contract.
+
+  - id: tdd/tdd-refactor
+    name: "Refactor while GREEN: extract duplication, deepen modules, apply…"
+    path: tdd-refactor.j2
+    type: KnowAct
+    lexicon_terms:
+      [simplify, extract, deepen, verify, regulate, trace, constrain]
+    description: >
+      Refactor while GREEN: extract duplication, deepen modules, apply SOLID
+      principles. Preserve full v0.28.0 contract structure (expect:, [P{N}]
+      Constraining:, pre:/post:) during refactoring. Contract metadata must
+      travel with the function (Rule 6bis). Post-refactor grep verification
+      for expect: and [P{N}] annotations (Rule 8bis). Flag contract evolution
+      requiring P2 consent. Verify tests still pass after each refactor step.
+
+  - id: tdd/tdd-verify
+    name: "Verify TDD cycle completion: all tests pass, clippy clean, no…"
+    path: tdd-verify.j2
+    type: KnowAct
+    lexicon_terms:
+      [verify, evaluate, audit, calibrate, classify, trace, map, expectation]
+    description: >
+      Verify TDD cycle completion: all tests pass, clippy clean, no todo!/unimplemented!
+      stubs. Contract completeness audit including expect: user expectation, [P{N}]
+      goal-principle anchoring, and [P{N}] Constraining: annotations per v0.28.0
+      extended syntax. Emits reg.contract.violated spans for missing/malformed contracts.
+      Tests describe behavior not implementation, spec traceability via // REQ: tags,
+      functional coverage gaps identified.
+    generates_spans:
+      - reg.contract.violated
+      - reg.contract.coverage
+
+  - id: tdd/tdd-gap-check
+    name: "Functional gap analysis: compare specification requirements against…"
+    path: tdd-gap-check.j2
+    type: KnowAct
+    lexicon_terms: [trace, map, gap, defer, classify, audit]
+    description: >
+      Functional gap analysis: compare specification requirements against tested
+      behaviors including goal-principle alignment cross-reference against MDS
+      category defaults, constraining principle completeness (Magna Carta P1-P4),
+      and expectation quality scoring (0-3 scale). Identify uncovered requirements
+      (gaps) and produce deferral recommendations for OPEN_QUESTIONS.md. P0 gaps
+      MUST have tracer bullets.
+    generates_spans:
+      - reg.contract.violated
+      - reg.contract.coverage
+      - reg.contract.proposed
+      - reg.contract.accepted
+      - reg.contract.rejected
+
+  - id: tdd/tdd-convergence-check
+    name: "Compute normalized convergence metric for TDD PDCA cycles"
+    path: tdd-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for TDD PDCA cycles.
+      Returns convergence_metric plus rationale and blockers.

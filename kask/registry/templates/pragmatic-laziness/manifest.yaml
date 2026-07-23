@@ -1,0 +1,50 @@
+# Template crate manifest for pragmatic-laziness skill
+# hKask v0.28.0
+
+crate:
+  name: pragmatic-laziness
+  version: "0.30.0"
+  description: >
+    Procedural composition skill that finds the path of least action through
+    meaning-space. Describes the intersection of pragmatic-semantics,
+    pragmatic-cybernetics, essentialist, and grill-me through a 3-phase lazy
+    loop.
+
+templates:
+  - id: pragmatic-laziness/lazy-decompose
+    name: "Phase 1 of the 3-phase lazy loop"
+    path: lazy-decompose.j2
+    type: KnowAct
+    lexicon_terms: [decompose, discriminate, evaluate, classify]
+    description: >
+      Phase 1 of the 3-phase lazy loop. Decompose the situation into
+      syntax/semantics/pragmatics layers using Morris's Triad.
+
+  - id: pragmatic-laziness/lazy-identify-loops
+    name: "Phase 2 of the 3-phase lazy loop"
+    path: lazy-identify-loops.j2
+    type: KnowAct
+    lexicon_terms: [detect, observe, evaluate, map, classify]
+    description: >
+      Phase 2 of the 3-phase lazy loop. Identify feedback loops
+      (OODA, cybernetic, REPL) and effort distribution from the
+      decomposed layers produced by Phase 1.
+
+  - id: pragmatic-laziness/lazy-stationary-action
+    name: "Phase 3 of the 3-phase lazy loop"
+    path: lazy-stationary-action.j2
+    type: KnowAct
+    lexicon_terms: [simplify, verify, reduce, compose, evaluate]
+    description: >
+      Phase 3 of the 3-phase lazy loop. Apply the deletion test and
+      brachistochrone rule to find the least-action configuration.
+      Consumes outputs from Phase 1 (decomposition) and Phase 2 (loops).
+
+  - id: pragmatic-laziness/pragmatic-laziness-converge
+    name: "δS = 0 convergence check"
+    path: pragmatic-laziness-converge.j2
+    type: KnowAct
+    lexicon_terms: [converge, classify, evaluate, verify, discriminate]
+    description: >
+      δS = 0 convergence check. Compares current and previous configurations
+      to decide whether the lazy loop has reached a stationary point.

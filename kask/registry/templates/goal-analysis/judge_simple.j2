@@ -1,0 +1,38 @@
+[inference]
+template_type: KnowAct
+functional_role: KnowAct
+implementation_type: jinja2
+lexicon_terms: [assert, acknowledge]
+energy_cap: 2048
+visibility: Public
+contract:
+  input:
+    goal_text: string
+    outcome_summary: string
+  output:
+    verdict: "continue"
+    reason: string
+    confidence: 0.5
+
+---
+{# Template: goal-analysis/judge_simple.j2 #}
+{# Functional Role: KnowAct — Fallback goal verification with minimal evaluation #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: verdict, confidence #}
+
+**Goal:** {{ goal_text }}
+
+**Outcome:** {{ outcome_summary }}
+
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+The goal verification system encountered an error. Defaulting to CONTINUE verdict.
+
+```json
+{
+  "verdict": "continue",
+  "reason": "Verification system unavailable — agent should continue toward goal",
+  "confidence": 0.5
+}
+```

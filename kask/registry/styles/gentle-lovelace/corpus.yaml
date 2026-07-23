@@ -1,0 +1,349 @@
+# Gentle Lovelace Style Mashup Configuration
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+# Version: 1.0
+# Created: 2026-06-12
+#
+# Style mashup: Ada Lovelace (1815-1852) × Grace Hopper (1906-1992)
+#                × Karen Schriver (1954-) × Anne Gentle (contemporary)
+# Replicator name: Gentle Lovelace
+#
+# Four dimensions of technical documentation excellence, each grounded in
+# one woman's contribution to the field, combined into a single evaluative
+# persona. The centroid is the weighted mean of four dimension-specific
+# centroids, producing a composite that scores documents on accessibility,
+# precision, findability, and agent-correctness simultaneously.
+#
+# Tag sets are orthogonal — each passage carries four independent labels
+# (section_type, mds_category, document_type, dimension) enabling rich
+# multi-axis queries against the embedding space.
+#
+# Processed by: kask embed-corpus
+# Storage: hKask sqlite-vec via EmbeddingStore
+# Pipeline: markitdown → chunk → tag → embed → centroid → validate
+# Lovelace (Gutenberg) and Schriver (ERIC) are public domain.
+# Schriver (Karen Schriver Associates) and Gentle (OpenStack) are CC-BY.
+# Hopper (Harvard University Press) is public domain per 1946 authorization.
+# Write the Docs guide is CC-BY 4.0.
+# Docs Like Code is (c) Anne Gentle, used as exemplar corpus.
+# Microsoft Style Guide welcome page is (c) Microsoft, used as exemplar excerpt.
+
+author: gentle-lovelace
+centroid_entity_ref: "style:gentle-lovelace:centroid"
+classifier: section-classifier
+
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: 64
+
+# ── Dimension centroids ───────────────────────────────────────────────────
+# Four centroids computed from dimension-specific passages.
+# The composite centroid (style:gentle-lovelace:centroid) is the weighted
+# mean of all four — not stored separately, derived at query time.
+#
+# Weighting rationale: Gentle dominates (50%) because in an agent-native
+# system, markdown specifications ARE the code — stale documentation
+# produces incorrect agent behavior. Schriver (30%) ensures findability
+# for both human and agent readers. Hopper and Lovelace (10% each) whisper
+# the foundational principles: accessibility and precision.
+dimension_centroids:
+  - name: Gentle
+    ref_name: "style:gentle-lovelace:gentle-centroid"
+    weight: 0.50
+    description: "Agent-correctness — docs ARE code; stale docs are functional defects"
+  - name: Schriver
+    ref_name: "style:gentle-lovelace:schriver-centroid"
+    weight: 0.30
+    description: "Findability — answer findable in 30 seconds by human or agent"
+  - name: Hopper
+    ref_name: "style:gentle-lovelace:hopper-centroid"
+    weight: 0.10
+    description: "Accessibility — comprehensible on first reading, zero prior context"
+  - name: Lovelace
+    ref_name: "style:gentle-lovelace:lovelace-centroid"
+    weight: 0.10
+    description: "Precision — specification independently verifiable"
+
+# ── Orthogonal tag sets ───────────────────────────────────────────────────
+tag_sets:
+  - name: section_type
+    description: "Structural role per WRITING_EXCELLENCE.md §2.3"
+    values: [Statement, Evidence, Diagram, Implications]
+  - name: mds_category
+    description: "MDS 5-category taxonomy per MDS.md §1"
+    values: [domain, composition, trust, lifecycle, curation]
+  - name: document_type
+    description: "Document classification per MDS_SCAFFOLD.md §2"
+    values: [specification, adr, guide, reference, plan, status]
+  - name: dimension
+    description: "Primary WRITING_EXCELLENCE quality dimension"
+    values: [Hopper, Lovelace, Schriver, Gentle]
+
+# ── Tag weighting by context ──────────────────────────────────────────────
+# Gentle dominates across all document types because docs ARE code.
+# Per-type adjustments: specs get a Lovelace bump, guides get a Hopper bump,
+# references get a Schriver bump, plans/status stay Gentle-heavy.
+tag_weights:
+  specification:
+    Gentle: 0.45
+    Schriver: 0.25
+    Lovelace: 0.20
+    Hopper: 0.10
+  adr:
+    Gentle: 0.45
+    Schriver: 0.25
+    Lovelace: 0.15
+    Hopper: 0.15
+  guide:
+    Gentle: 0.40
+    Schriver: 0.25
+    Hopper: 0.25
+    Lovelace: 0.10
+  reference:
+    Gentle: 0.45
+    Schriver: 0.30
+    Hopper: 0.15
+    Lovelace: 0.10
+  plan:
+    Gentle: 0.55
+    Schriver: 0.20
+    Lovelace: 0.15
+    Hopper: 0.10
+  status:
+    Gentle: 0.55
+    Schriver: 0.25
+    Hopper: 0.10
+    Lovelace: 0.10
+
+# ── Works ─────────────────────────────────────────────────────────────────
+works:
+  # ── Lovelace: Notes on the Analytical Engine (Public Domain) ────────────
+  - title: "Notes on the Analytical Engine"
+    slug: lovelace-notes
+    url: "https://www.fourmilab.ch/babbage/sketch.html"
+    notes: "Gutenberg ebook #75107 returned 404 (2026-06-12). Using fourmilab.ch mirror."
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/lovelace-notes.txt"
+    format: text
+    type: specification
+    dimensions: [Lovelace]
+    section_types: [Statement, Evidence, Diagram, Implications]
+    mds_categories: [domain, composition]
+
+  # ── Hopper: Mark I Manual of Operation (Public Domain) ──────────────────
+  - title: "A Manual of Operation for the Automatic Sequence Controlled Calculator"
+    slug: hopper-mark1-manual
+    url: "https://archive.org/details/manual-of-operation-automatic-sequence-controlled-calculator"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/hopper-mark1-manual.txt"
+    format: text
+    type: guide
+    dimensions: [Hopper]
+    section_types: [Statement, Evidence, Diagram, Implications]
+    mds_categories: [domain, lifecycle]
+
+  # ── Schriver: Protocol-Aided Revision (Academic, CC-BY) ─────────────────
+  - title: "Plain Language for Expert or Lay Audiences — Protocol-Aided Revision"
+    slug: schriver-protocol-revision
+    url: "https://www.karenschriverassociates.com/wp-content/uploads/2020/03/12-Schriver-Plain-language-for-experts-or-lay-audiences-Designing-w-Protocol-aided-Revision.pdf"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/schriver-protocol-revision.txt"
+    format: text
+    type: research-paper
+    dimensions: [Schriver]
+    section_types: [Statement, Evidence, Diagram]
+    mds_categories: [curation, lifecycle]
+
+  - title: "Document Design from 1980 to 1990: Challenges that Remain"
+    slug: schriver-document-design-1990
+    url: "https://files.eric.ed.gov/fulltext/ED320143.pdf"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/schriver-document-design-1990.txt"
+    format: text
+    type: research-paper
+    dimensions: [Schriver]
+    section_types: [Statement, Evidence]
+    mds_categories: [curation]
+
+  - title: "What Do Technical Communicators Need to Know about Information Design?"
+    slug: schriver-info-design-2013
+    url: "https://redish.net/wp-content/uploads/Schriver_2013_TechCom_Need_to_Know_InfoDesign.pdf"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/schriver-info-design-2013.txt"
+    format: text
+    type: book-chapter
+    dimensions: [Schriver]
+    section_types: [Statement, Evidence, Diagram]
+    mds_categories: [curation, composition]
+
+  # ── Gentle: OpenStack Documentation (CC-BY 3.0) ─────────────────────────
+  - title: "OpenStack Documentation Contributor Guide"
+    slug: gentle-openstack-contrib-guide
+    url: "https://docs.openstack.org/doc-contrib-guide/"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/gentle-openstack-contrib-guide.txt"
+    format: web
+    type: guide
+    dimensions: [Gentle]
+    section_types: [Statement, Evidence, Diagram, Implications]
+    mds_categories: [composition, lifecycle]
+
+  - title: "OpenStack API Documentation Guidelines"
+    slug: gentle-openstack-api-guidelines
+    url: "https://docs.openstack.org/doc-contrib-guide/api-guides.html"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/gentle-openstack-api-guidelines.txt"
+    format: web
+    type: reference
+    dimensions: [Gentle]
+    section_types: [Statement, Evidence, Diagram]
+    mds_categories: [composition]
+
+  - title: "OpenStack General Writing Guidelines"
+    slug: gentle-openstack-writing-style
+    url: "https://docs.openstack.org/doc-contrib-guide/writing-style/general-writing-guidelines.html"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/gentle-openstack-writing-style.txt"
+    format: web
+    type: reference
+    dimensions: [Gentle]
+    section_types: [Statement, Evidence]
+    mds_categories: [composition, curation]
+
+  # ── Gentle: Docs Like Code (Anne Gentle's own site) ────────────────────
+  - title: "Docs Like Code — Let's Treat Docs Like Code"
+    slug: gentle-docs-like-code
+    url: "https://www.docslikecode.com/"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/gentle-docs-like-code.txt"
+    format: web
+    type: guide
+    dimensions: [Gentle]
+    section_types: [Statement, Evidence, Implications]
+    mds_categories: [composition, lifecycle, curation]
+
+  # ── Gentle: Microsoft Writing Style Guide (welcome page) ───────────────
+  - title: "Microsoft Writing Style Guide — Welcome"
+    slug: microsoft-style-guide-welcome
+    url: "https://learn.microsoft.com/en-us/style-guide/welcome/"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/microsoft-style-guide-welcome.txt"
+    format: web
+    type: reference
+    dimensions: [Gentle]
+    section_types: [Statement, Implications]
+    mds_categories: [composition, curation]
+    notes: "Deep pages require authentication. Welcome page provides core principles."
+
+  # ── Schriver: Write the Docs Guide (community operationalizing her principles) ─
+  - title: "Write the Docs — Software Documentation Guide"
+    slug: writethedocs-guide
+    url: "https://www.writethedocs.org/guide/"
+    local_path: "registry/styles/gentle-lovelace/corpus-sources/writethedocs-guide.txt"
+    format: web
+    type: guide
+    dimensions: [Schriver]
+    section_types: [Statement, Evidence, Diagram, Implications]
+    mds_categories: [composition, lifecycle, curation]
+
+# ── Foundational rules ────────────────────────────────────────────────────
+foundational_rules:
+  - slug: build-the-impossible
+    text: >
+      Build the bridge others called impossible. Concepts deemed "too complex
+      to document" are precisely where documentation matters most. If the
+      audience cannot understand it, the writer has failed.
+    dimensions: [Hopper]
+    section_type: Statement
+
+  - slug: independently-verifiable
+    text: >
+      Document with enough precision that the specification is independently
+      verifiable. A reader must be able to write a test from documentation
+      alone. Annotate with more depth than the original — an ADR's context
+      and consequences must exceed its decision statement.
+    dimensions: [Lovelace]
+    section_type: Statement
+
+  - slug: design-for-readers
+    text: >
+      Design for how readers actually read. Every document must have scannable
+      headings, a navigation table, and diagrams at the point of use. Integrate
+      word and image as a single communication unit. Measure quality by reader
+      outcomes — if the answer is not findable in 30 seconds, the document has
+      failed.
+    dimensions: [Schriver]
+    section_type: Statement
+
+  - slug: docs-as-code
+    text: >
+      Documentation lives in the same repository and shares the same review
+      process as code. Automate quality gates — link checking, stale-name
+      detection, diagram metadata — rather than relying on human vigilance.
+      Broken docs block the build. A stale package count carries the same
+      severity as a compilation error.
+    dimensions: [Gentle]
+    section_type: Statement
+
+  - slug: core-loop
+    text: >
+      Write a file, commit it, and it publishes automatically. Version every
+      change — use Git to track who changed what and why, for docs, not just
+      code. CI/CD pipelines publish your docs on every merge, no manual steps.
+      Writers and developers collaborate in the same workflow they already know.
+    dimensions: [Gentle]
+    section_type: Statement
+
+  - slug: every-word-matters
+    text: >
+      Make every word matter. Warm and relaxed, crisp and clear, ready to lend
+      a hand — Microsoft's modern approach to voice and style. Bias-free
+      communication. Global communications. If you write about computer
+      technology, this guide is for you.
+    dimensions: [Gentle]
+    section_type: Statement
+
+  - slug: docs-principles
+    text: >
+      This guide gathers the collective wisdom of the Write the Docs community
+      around best practices for creating software documentation. Design for how
+      readers actually read. Integrate word and image as a single communication
+      unit. Measure quality by reader outcomes — if the answer is not findable
+      in 30 seconds, the document has failed.
+    dimensions: [Schriver]
+    section_type: Statement
+
+# ── Pipeline configuration ────────────────────────────────────────────────
+chunking:
+  min_words: 50
+  max_words: 300
+  sentence_boundary: "."
+
+validation:
+  centroid_distance_max: 0.85
+  exemplar_count_min: 4
+  exemplar_count_max: 14
+
+budget:
+  total_passages: 5000
+  triple_budget_per_100: 8100
+
+entities:
+  characters: []
+  places: []
+  events: []
+  concepts:
+    - name: "technical-documentation"
+    - name: "specification"
+    - name: "operation-manual"
+    - name: "api-documentation"
+    - name: "style-guide"
+    - name: "research-paper"
+
+methods:
+  - name: "clarity"
+    threshold: 0.5
+    description: "Sentence length and vocabulary accessibility"
+  - name: "precision"
+    threshold: 0.5
+    description: "Specificity of technical terms and code references"
+  - name: "structure"
+    threshold: 0.5
+    description: "Section organization and heading hierarchy"
+  - name: "completeness"
+    threshold: 0.5
+    description: "Coverage of all WRITING_EXCELLENCE §2.3 section types"
+  - name: "actionability"
+    threshold: 0.5
+    description: "Presence of implications and actionable directives"

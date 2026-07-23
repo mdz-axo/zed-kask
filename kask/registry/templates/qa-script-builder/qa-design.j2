@@ -1,0 +1,154 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- design
+- route
+- branch
+- structure
+- topology
+contract:
+  input:
+    discovery: object
+    user_intent: string
+  output:
+    step_topology: array
+    terminal_states: array
+    loop_configs: array
+    reg_alert: string
+    design_rationale: string
+    mermaid_diagram: string
+energy_cap: 5120
+visibility: Public
+---
+{# Template: qa-script-builder/qa-design.j2 #}
+{# goal: Design the branching state machine from the discovered test surface. #}
+{# KnowAct — Design the step topology for a QA script manifest #}
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 5120
+thinking_budget = "full"
+
+You are a QA pipeline designer. Given a discovered test surface and user intent, design a branching state machine as a sequence of steps with ordinals, actions, and branch conditions. This topology will be serialized into a YAML manifest.
+
+## Discovery Results
+
+```json
+{{ discovery | tojson }}
+```
+
+## User Intent
+
+{{ user_intent }}
+
+## Design Rules
+
+### Step Types
+
+| Ordinal | Action | Branch On | Example |
+|---------|--------|-----------|---------|
+| N | `run_command` | exit code (0 = `success`, ≠0 = `failure`) | `cargo bolero test --timeout 30s` |
+| N | `mcp_tool` | tool call result (`success`, `failure`) | `gallery_status` on hkask-mcp-media |
+| N | `classify` | confidence (`high_confidence`, `medium_confidence`, `low_confidence`, `flake`, `unparseable`) | classifier: `qa-triage` |
+| N | `loop` | same as inner action + `loop_exhausted` when max_iterations hit | retry flakes up to 3 times |
+
+### Branch Targeting
+
+- Every branch value must be a step ordinal (integer), not a name.
+- Every ordinal referenced by a branch must exist in the topology.
+- Steps with no outgoing branches are `terminal` — the script ends there.
+- If no branch matches and `default_next` is set, go there. Otherwise advance linearly.
+
+### Loop Configuration
+
+- `max_iterations`: how many times to retry (default: 3)
+- Loops can contain `command` (shell) or `classifier` (LLM call)
+- Always include a `loop_exhausted` branch or ensure a terminal condition
+- NOTE: `iteration_delay_secs` is NOT supported by the runner
+
+### Design Constraints
+
+- Step 1 is always the entry point.
+- Every step ordinal must be unique.
+- The topology must be able to terminate (at least one terminal state).
+- Classifier steps must use a valid classifier name from discovery.
+
+## Design Requirements
+
+1. **Assign ordinals** starting from 1. Entry point is ordinal 1.
+2. **Choose actions** per step: `run_command`, `classify`, or `loop`.
+3. **Define branching** for each step — what condition routes to what ordinal.
+4. **Identify terminal states** — steps with no outgoing branches.
+5. **Configure loops** with `max_iterations` (NOT `iteration_delay_secs` — unsupported).
+7. **Produce a mermaid diagram** visualizing the flow.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "step_topology": [
+    {
+      "ordinal": 1,
+      "action": "run_command",
+      "description": "Run fuzz tests for hkask-types",
+      "command": "cargo bolero test -p hkask-types-fuzz --timeout 30s 2>&1 | tee /tmp/fuzz-output.txt",
+      "branching": {
+        "success": 2,
+        "failure": 6
+      },
+      "terminal": false
+    },
+    {
+      "ordinal": 2,
+      "action": "classify",
+      "description": "Classify fuzz failures",
+      "classifier": "qa-triage",
+      "branching": {
+        "high_confidence": 3,
+        "medium_confidence": 4,
+        "low_confidence": 4,
+        "flake": 5
+      },
+      "terminal": false
+    },
+    {
+      "ordinal": 3,
+      "action": "run_command",
+      "description": "Auto-repair triggered — high confidence",
+      "command": "echo '[QA] High-confidence failure — auto-repair attempted'",
+      "branching": {},
+      "terminal": true,
+      "reg_span": "hkask.qa.custom.auto_repair"
+    }
+  ],
+  "terminal_states": [
+    {"ordinal": 3, "outcome": "auto-repair completed"},
+    {"ordinal": 4, "outcome": "escalated to human"}
+  ],
+  "loop_configs": [
+    {
+      "ordinal": 5,
+      "max_iterations": 3,
+      "command": "grep -c 'FAILED' /tmp/fuzz-output.txt || echo 0"
+    }
+  ],
+  "reg_alert": "qa.hkask-types.fuzz",
+  "design_rationale": "Standard fuzz→classify→branch pattern. High-confidence failures get auto-repaired. Medium and low go to escalation. Flakes retry up to 3 times.",
+  "mermaid_diagram": "flowchart TD\n    S1[Step 1: cargo bolero test] -->|success| S2[Step 2: classify]\n    S1 -->|failure| S6[Step 6: fuzz failure]\n    S2 -->|high_confidence| S3[Step 3: auto-repair]\n    S2 -->|medium_confidence| S4[Step 4: escalate]\n    S2 -->|low_confidence| S4\n    S2 -->|flake| S5[Step 5: retry loop]\n    S5 -->|success| S1\n    S5 -->|loop_exhausted| S4"
+}
+```
+
+## Constraints
+
+- The mermaid diagram must use `flowchart` type and be syntactically valid.
+- Every branch target must resolve to an existing ordinal.
+- Terminal states must be explicitly marked.
+- Loop steps must specify `max_iterations`.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

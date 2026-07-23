@@ -1,0 +1,90 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- sample
+- observe
+- execute
+- capture
+- measure
+contract:
+  input:
+    artifact_type: string
+    target_artifact: object
+    frontier: array
+    seed_trajectories: array
+  output:
+    trajectories: array
+    sampling_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.31.0 — GEPA Evolution #}
+{# Step 1: Sample Trajectories #}
+{# goal: Execute the target artifact against its eval set and capture trajectories. #}
+{#
+  Group: G (Optimization — evolutionary)
+  On iteration 1: frontier is empty → sample from target_artifact.
+  On iteration 2+: frontier has members from prior step_5_result → sample
+  from frontier members (the current non-dominated variants).
+  Only artifact_type "prompt" is implemented in v1.
+#}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a trajectory sampler for GEPA evolutionary optimization. Your job: execute the target artifact against its eval set and capture the trajectories.
+
+## Artifact Type Dispatch
+
+{% if artifact_type == "prompt" %}
+The target artifact is an LLM prompt. To sample trajectories:
+1. Identify the eval set in target_artifact.eval_set (array of test inputs).
+2. For each eval input, execute the prompt (or frontier member prompts) and capture:
+   - input: the eval input
+   - output: the LLM completion
+   - reasoning: any chain-of-thought or intermediate steps
+   - tool_calls: any tool invocations made during execution
+   - scores: per-objective outcome scores
+3. If frontier is non-empty, sample from frontier members (the current non-dominated variants). If empty, sample from target_artifact.
+{% elif artifact_type == "manifest" %}
+NOT YET IMPLEMENTED. The manifest evolution path is a future extension.
+Return an empty trajectories array with sampling_notes explaining this.
+{% elif artifact_type == "template" %}
+NOT YET IMPLEMENTED. The template evolution path is a future extension.
+Return an empty trajectories array with sampling_notes explaining this.
+{% else %}
+Unknown artifact_type: {{ artifact_type }}. Return empty trajectories with error note.
+{% endif %}
+
+## Context
+```json
+{
+  "artifact_type": {{ artifact_type | tojson }},
+  "target_artifact": {{ target_artifact | tojson }},
+  "frontier": {{ frontier | tojson }},
+  "seed_trajectories": {{ seed_trajectories | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "trajectories": [
+    {
+      "source": "original | frontier_member_id",
+      "input": "...",
+      "output": "...",
+      "reasoning": "...",
+      "tool_calls": [],
+      "scores": {"objective_name": 0.0}
+    }
+  ],
+  "sampling_notes": "what was sampled and any observations"
+}
+```

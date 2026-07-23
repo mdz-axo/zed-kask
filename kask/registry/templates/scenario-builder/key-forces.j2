@@ -1,0 +1,110 @@
+{# goal: Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- force
+- micro
+- proximate
+- factor
+- market
+- competitor
+- demand
+- regulatory
+contract:
+  input:
+    refined_question: string
+    planning_horizon: string
+    domain: string
+  output:
+    key_forces: array
+    clustered_themes: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: scenario-builder/key-forces.j2 #}
+{# Functional Role: KnowAct — Identify and cluster micro-level key forces #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: key_forces, clustered_themes #}
+
+[inference]
+temperature = 0.5
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a scenario planning specialist enumerating key forces in the microenvironment.
+
+## Refined Focal Question
+
+{{ refined_question }}
+
+## Planning Horizon
+
+{{ planning_horizon }}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+## Key Forces Framework
+
+Enumerate the key forces in the **microenvironment** — the proximate factors that directly affect the focal question. Consider these dimensions:
+
+| Dimension | Examples |
+|-----------|---------|
+| **Market demand** | Customer needs, adoption rates, substitution threats |
+| **Regulatory regime** | Current rules, pending legislation, enforcement trends |
+| **Technology maturity** | Technology readiness, deployment costs, obsolescence risk |
+| **Competitor behavior** | Market share, strategic moves, new entrants |
+| **Resource availability** | Capital, talent, raw materials, supply chain |
+
+## Assessment Rules
+
+1. **List exhaustively first** — capture every relevant force before clustering.
+2. **Cluster into themes** — group related forces (e.g., "regulatory pressure" might include emissions rules, safety standards, reporting requirements).
+3. **Assess each force** for:
+   - **Impact**: high / medium / low — how much does this force affect the focal question?
+   - **Predictability**: high / medium / low — how confident are we in the trajectory of this force?
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "key_forces": [
+    {
+      "force": "Name of the force",
+      "description": "Brief description of the force and its relevance",
+      "impact": "high|medium|low",
+      "predictability": "high|medium|low"
+    }
+  ],
+  "clustered_themes": [
+    "Theme 1: forces that cluster together",
+    "Theme 2: another cluster of related forces"
+  ]
+}
+```
+
+## Constraints
+
+- Focus on the microenvironment — macro forces (STEEP) are handled in the next stage.
+- Each force must be specific to the focal question, not generic.
+- Aim for at least 8-12 forces before clustering.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

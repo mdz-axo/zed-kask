@@ -1,0 +1,40 @@
+# Media Video — Image to Video FlowDef
+# Routes to fal.ai Seedance 2.0 or Kling 3.0 Pro for image animation.
+
+template_type: FlowDef
+name: media_image_to_video
+version: "1.0.0"
+description: "Animate a still image into a short video clip"
+primary_model: "fal-ai/seedance-2.0/image-to-video"
+fallback_model: "fal-ai/kling-video/v3/pro/image-to-video"
+parameters:
+  - name: image_url
+    type: string
+    required: true
+    description: "URL of the source image to animate"
+  - name: prompt
+    type: string
+    required: false
+    description: "Motion description (e.g., 'gentle pan left', 'zoom in slowly')"
+  - name: duration
+    type: float
+    required: false
+    default: 5.0
+    description: "Target duration in seconds (model-capped)"
+  - name: model
+    type: enum
+    values: [seedance, kling, minimax]
+    default: seedance
+    description: "Which video model to use"
+input_type: image_url
+output_type: video_url
+latency: queue
+cost_tier: high
+---
+# Image-to-Video Pipeline
+# Step 1: Validate image_url
+# Step 2: Select model endpoint based on model parameter
+# Step 3: Build request body with image_url + prompt + duration
+# Step 4: POST to queue endpoint
+# Step 5: Poll for completion (max 60s)
+# Step 6: Return video URL

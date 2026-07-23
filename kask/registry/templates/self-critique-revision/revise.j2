@@ -1,0 +1,133 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- revise
+- evaluate
+- reflect
+- adapt
+- calibrate
+contract:
+  input:
+    task_prompt: string
+    current_output: string
+    critique: array
+    quality_criteria: array
+    previous_quality_score: number
+    draft_number: integer
+  output:
+    revised_output: string
+    critique_addressed: array
+    revised_quality_score: number
+    quality_improvement: number
+    draft_number: integer
+    regression_flags: array
+    per_criterion_delta: object
+energy_cap: 8192
+visibility: Public
+---
+{# Template: self-critique-revision/revise.j2 #}
+{# Functional Role: KnowAct — Revision from structured critique #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: revised_output, critique_addressed, revised_quality_score, quality_improvement, draft_number, regression_flags, per_criterion_delta #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are revising a draft based on specific critique points. Your goal is to address every identified weakness while preserving the strengths.
+
+## Original Task Prompt
+
+{{ task_prompt }}
+
+## Current Draft
+
+{{ current_output }}
+
+## Critique Points
+
+{% for item in critique %}
+### {{ item.criterion }} ({{ item.force }})
+- **Issue:** {{ item.issue }}
+- **Suggestion:** {{ item.suggestion }}
+{% endfor %}
+
+## Previous Quality Score: {{ previous_quality_score }}
+
+## Quality Criteria
+
+{% for criterion in quality_criteria %}
+- {{ criterion }}
+{% endfor %}
+
+## Revision Instructions
+
+Produce a revised draft that:
+
+1. **Addresses each critique point directly.** For every identified issue, make a specific change that fixes it. Prioritize Prohibition findings first, then Guardrail.
+2. **Preserves what works.** Don't throw away good content — only change what the critique identifies.
+3. **Improves overall quality.** The revised draft should score higher on the quality criteria.
+4. **Detect regression.** Before finalizing, compare each criterion score against the previous iteration. Flag any criterion that dropped by ≥ 1 point.
+
+For each critique point, briefly note how you addressed it. Flag any regressions explicitly.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "revised_output": "The fully revised output text",
+  "critique_addressed": [
+    {
+      "critique_point": "accuracy: specific factual claim was wrong",
+      "how_addressed": "Corrected the claim to [specific correction]"
+    }
+  ],
+  "revised_quality_score": 0.85,
+  "quality_improvement": 0.15,
+  "draft_number": {{ draft_number }},
+  "regression_flags": [
+    {
+      "criterion": "completeness",
+      "previous_score": 5,
+      "current_score": 3,
+      "delta": -2,
+      "explanation": "Adding clarity improvements inadvertently removed a key section"
+    }
+  ],
+  "per_criterion_delta": {
+    "accuracy": {"previous": 4, "current": 4, "delta": 0},
+    "clarity": {"previous": 3, "current": 5, "delta": 2},
+    "completeness": {"previous": 5, "current": 3, "delta": -2},
+    "calibration": {"previous": 3, "current": 3, "delta": 0}
+  }
+}
+```
+
+Where:
+- `revised_quality_score` is the self-assessed quality on a 0.0-1.0 scale
+- `quality_improvement` = revised_quality_score - {{ previous_quality_score }}
+
+## Constraints
+
+- Every critique point must be explicitly addressed — do not ignore any.
+- The revised output should be a complete, standalone response (not a diff).
+- Quality improvement should be honest — don't inflate scores.
+- If a critique point cannot be addressed, explain why in `how_addressed`.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

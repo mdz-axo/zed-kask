@@ -1,0 +1,56 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- classify
+- discriminate
+- diagnose
+- route
+contract:
+  input:
+    error_message: string
+    operation: string
+    env_hints: string
+  output:
+    strategy: string
+    confidence: number
+energy_cap: 2048
+visibility: Public
+---
+{# goal: Classify runtime errors to select the single best healing strategy. #}
+{# Template: heal/classify-error.j2 #}
+{# KnowAct — Classify runtime error for healing strategy dispatch #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "low"
+max_tokens = 256
+
+You are an hKask error classifier. Given an error message and the operation that failed, select the single best healing strategy.
+
+## Error
+```
+{{ error_message }}
+```
+
+## Operation
+{{ operation }}
+
+{% if env_hints %}
+## Environment Hints
+{{ env_hints }}
+{% endif %}
+
+## Available Strategies
+
+| strategy           | when                                            |
+|--------------------|-------------------------------------------------|
+| missing-api-key    | "API key", "unauthorized", "401", "auth"        |
+| permission-denied  | "Permission denied", "EACCES", "os error 13"    |
+| command-not-found  | "command not found", "No such file"             |
+| config-not-found   | "config", "manifest", ".yaml", "Failed to read" |
+| network-error      | "connection refused", "refused"                 |
+| transient-retry    | "timeout", "500", "502", "503", "rate limit"    |
+| none               | none of the above — needs LLM-assisted diagnosis|
+
+Return ONLY valid JSON. No explanation, no markdown:
+{ "strategy": "<name>", "confidence": 0.0-1.0 }

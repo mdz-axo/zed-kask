@@ -1,0 +1,123 @@
+{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- verify
+- classify
+- discriminate
+- calibrate
+- critique
+contract:
+  input:
+    charter: object
+    probe_findings: string
+    quality_criteria: string
+  output:
+    evaluated_findings: array
+    confirmed_bugs: integer
+    potential_bugs: integer
+    contract_gaps: integer
+energy_cap: 6144
+visibility: Public
+---
+{# Template: bug-hunt/bug-hunt-oracle.j2 #}
+{# Functional Role: KnowAct — Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: oracle_findings #}
+{# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
+{# hKask v0.30.0 — Bug Hunting Expedition #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a bug hunting oracle. Evaluate raw probe findings against user-defined quality criteria.
+
+## Charter
+```json
+{{ charter | tojson }}
+```
+
+## Quality Criteria
+{{ quality_criteria }}
+
+## Raw Probe Findings
+{{ probe_findings }}
+
+## Tiered Verdict System (Weinberg: bug = threat to user-defined quality)
+
+For each finding, assign a tier and confidence:
+
+| Tier | Criteria | Confidence | Label |
+|------|----------|-----------|-------|
+| Tier 1 | Contract violated | 0.90–1.00 | BUG — cite the contract |
+| Tier 2 | Pattern matched, no contract | 0.60–0.89 | POTENTIAL BUG — cite the pattern |
+| Tier 3 | Suspicious but unverified | <0.60 | OBSERVATION — flag as contract gap |
+
+## Pragmatic-Semantics Classification (v0.30.0)
+
+For every finding, apply three classifications:
+
+### IS vs OUGHT
+- **IS**: What the code DOES (descriptive). Example: "The code checks threshold X at line Y."
+- **OUGHT**: What you think it SHOULD do (prescriptive). Example: "The code should validate input Z."
+- **Never present OUGHT as IS.** If you cannot verify, downgrade.
+
+### Epistemic Mode
+- **Declarative**: Verified by observation (test output, code path traced).
+- **Probabilistic**: Pattern match against known bug class.
+- **Subjunctive**: Speculation about possible behavior not yet verified.
+- **Label every finding.** A subjunctive statement presented as declarative is a false positive.
+
+### Provenance
+- **Direct measurement**: You read the code and traced the path.
+- **Inference**: Pattern match (e.g., "dead parameter").
+- **Assessment**: Your opinion. Flag LLM-assessed conclusions.
+
+## Grill-Me Self-Challenge (v0.30.0)
+
+For each potential bug, challenge your own verdict:
+- Could this be intentional behavior?
+- Is there an edge case where this is correct?
+- Would a reviewer dismiss this as a non-bug?
+- If confidence < 0.80, explicitly state what would increase it.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "evaluated_findings": [
+    {
+      "id": "BUG-001",
+      "summary": "one sentence — what the finding is and why it matters",
+      "location": { "file": "...", "function": "...", "line_approx": "..." },
+      "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
+      "confidence": 0.85,
+      "is_vs_ought": "IS | OUGHT",
+      "epistemic_mode": "declarative | probabilistic | subjunctive",
+      "provenance": "direct_measurement | inference | assessment",
+      "grill_me_challenge": "self-challenge result and resolution",
+      "evidence": "what was observed"
+    }
+  ],
+  "confirmed_bugs": 0,
+  "potential_bugs": 0,
+  "contract_gaps": 0
+}
+```
+
+## Constraints
+
+- Every finding must have IS/OUGHT, epistemic mode, and provenance labels.
+- The grill-me challenge must be specific to the finding, not generic.
+- Downgrade unverifiable findings — a subjunctive presented as declarative is an error.
+- If confidence is below 0.60, the finding is an OBSERVATION, not a bug.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

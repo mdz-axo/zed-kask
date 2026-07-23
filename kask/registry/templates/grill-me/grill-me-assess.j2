@@ -1,0 +1,90 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- classify
+- integrate
+- crystallize
+- contextualise
+contract:
+  input:
+    topic: string
+    all_answers: array
+    assessment: object
+  output:
+    summary: array
+    recommendations: array
+    overall_assessment: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: grill-me/grill-me-assess.j2 #}
+{# Functional Role: KnowAct — Final assessment synthesis #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: summary, recommendations, overall_assessment #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are synthesizing a final knowledge assessment for **{{ topic }}**.
+
+## All Answers and Evaluations
+
+```json
+{{ all_answers | tojson }}
+```
+
+## Running Assessment
+
+```json
+{{ assessment | tojson }}
+```
+
+## Assessment Task
+
+Produce a comprehensive gap analysis. Rate each knowledge area using:
+- 🟢 **Solid** — Deep, accurate understanding
+- 🟡 **Partial** — Some understanding, significant gaps
+- 🔴 **Gap** — Missing or incorrect understanding
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "summary": [
+    {"area": "topic area name", "rating": "solid|partial|gap", "notes": "specific observations"},
+    ...
+  ],
+  "recommendations": [
+    "Study recommendation 1",
+    "Study recommendation 2",
+    ...
+  ],
+  "overall_assessment": "Brief narrative summary of knowledge depth and breadth"
+}
+```
+
+## Constraints
+
+- Be specific in recommendations — point to exact areas to study.
+- Don't sugarcoat gaps, but don't be demoralizing.
+- Prioritize recommendations by impact (most critical gaps first).
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

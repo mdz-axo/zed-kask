@@ -1,0 +1,35 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    report: object
+  output:
+    convergence_metric: number
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: platform-bulkhead-auditor/convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute convergence for bulkhead audit PDCA cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Given a bulkhead audit report, compute convergence where 0 means all failure domains are mapped, blast radii are computed, single points of failure are identified, and recommendations are actionable.
+
+Return JSON only:
+```json
+{"convergence_metric": 0.0, "convergence_method": "LLM-assessed coverage detection", "rationale": "..."}
+```

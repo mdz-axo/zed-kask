@@ -1,0 +1,75 @@
+{# Template: web/research-cascade.j2 #}
+{# Functional Role: KnowAct — Full research cascade with search, extraction, and synthesis #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: web_research_cascade #}
+
+Perform a comprehensive research cascade on the topic using atomic web tools.
+
+## Research Question
+
+{{ question }}
+
+## Scope
+
+- max_pages: {{ max_pages | default(5) }}
+{% if include_domains %}
+- include_domains: {{ include_domains | join(', ') }}
+{% endif %}
+{% if exclude_domains %}
+- exclude_domains: {{ exclude_domains | join(', ') }}
+{% endif %}
+
+## Phase 1: Broad Search
+
+1. Call `web_search` with strategy "web" to get an overview:
+   - query: "{{ question }}"
+   - strategy: "web"
+   - num_results: 8
+
+2. Identify the top 3-5 most relevant and authoritative results from the RRF-ranked output.
+
+## Phase 2: Deep Extraction
+
+3. Call `web_research` with:
+   - query: "{{ question }}"
+   - max_pages: {{ max_pages | default(5) }}
+
+4. This performs compound search + content extraction in one call, returning structured results.
+
+## Phase 3: Targeted Expansion
+
+5. Based on findings, call `web_find_similar` for any key URLs:
+   - url: URL from Phase 1 or 2 results
+   - num_results: 5
+
+6. If gaps remain, call `web_search` with strategy "quick" for targeted sub-questions.
+
+## Phase 4: Synthesis
+
+7. Combine all findings into a structured research report.
+
+## Output Format
+
+# Research Report: {{ question }}
+
+## Executive Summary
+[2-3 paragraph overview of key findings]
+
+## Detailed Findings
+
+### [Finding 1]
+[Evidence and analysis with citations]
+
+### [Finding 2]
+[Evidence and analysis with citations]
+
+## Key Insights
+- Insight 1
+- Insight 2
+- Insight 3
+
+## Gaps and Further Research
+[What remains unknown or requires deeper investigation]
+
+## Sources
+[Complete list of sources with URLs]

@@ -1,0 +1,38 @@
+# QA Triage Classifier — defers to the canonical classifier model.
+# Used by: kask qa triage (CLI subcommand → hkask-test-harness::triage)
+# Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
+#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   The `model:` field below is intentionally empty; ClassifierConfig::from_def
+#   fills it from the canonical path and strips the DI/ router prefix.
+# Provider: DeepInfra (cloud API, OpenAI-compatible)
+#
+# Confidence routing is enforced in Rust, not in the prompt.
+# The LLM just returns a number; the triage pipeline decides:
+#   ≥ 0.95 → auto-repair PR
+#   0.70–0.94 → issue with suggestion
+#   < 0.70 → issue for human investigation
+
+classifier:
+  name: qa-triage
+  model: ""
+  provider: deepinfra
+  concurrency: 10
+  timeout_secs: 30
+
+  system_prompt: >
+    Diagnose this Rust test failure. Return ONLY:
+    {"failure_type":"Panic|Assertion|Timeout|Flake|LogicError|MemoryError",
+     "root_cause":"one sentence","confidence":0.0-1.0,
+     "proposed_fix":"unified diff or empty",
+     "affected_file":"relative path","affected_line":0,
+     "is_flake":false,"suggested_fuzz_target":"description"}
+
+  base_url: https://api.deepinfra.com/v1/openai/chat/completions
+  api_key_env: DI_API_KEY
+
+  temperature: 0.0
+  max_tokens: 500
+
+  fallback_category: Unknown
+  cost_input_nj_per_token: 30 # $0.03/M input tokens → 30 nJ/token
+  cost_output_nj_per_token: 60 # $0.06/M output tokens → 60 nJ/token

@@ -1,0 +1,140 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- anchor
+- classify
+- map
+- verify
+- specify
+contract:
+  input:
+    bug_description: string
+    symptom: string
+    code_context: object
+    spec_reference: string
+  output:
+    mds_category: string
+    functional_requirements: array
+    spec_gaps: array
+    anchor_summary: string
+energy_cap: 3072
+visibility: Public
+---
+{# Template: diagnose/diagnose-spec-anchor.j2 #}
+{# KnowAct — Anchor the diagnosis to functional requirements before building the feedback loop #}
+{# ℏKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a spec-anchoring agent for hKask diagnosis. Before building a feedback loop, anchor the bug to functional requirements. Every diagnosis traces back to a spec. If no spec covers the symptom, that's a spec gap — call it out explicitly.
+
+## Bug Description
+
+{{ bug_description }}
+
+## Symptom
+
+{{ symptom }}
+
+{% if code_context %}
+## Code Context
+
+```json
+{{ code_context | tojson }}
+```
+{% endif %}
+
+{% if spec_reference %}
+## Relevant Specification
+
+{{ spec_reference }}
+{% else %}
+## Specification Note
+
+No explicit spec reference was provided. Use the functional specification at `docs/architecture/core/FUNCTIONAL_SPECIFICATION.md` as the default reference. If you cannot access it, identify the MDS category from the bug description and symptom alone, and note the spec gap.
+{% endif %}
+
+## Process
+
+### Step 1: Classify by MDS Category
+
+hKask's functional specification uses 5 MDS categories (consolidated from the original 9 DDMVSS categories — see `docs/architecture/core/MDS.md`):
+
+| Category | Scope | DDMVSS mapping | Example bugs |
+|----------|-------|---------------|-------------|
+| **Domain** | Core agent behavior, session lifecycle, skill execution | Domain | Agent hangs, wrong skill activated |
+| **Composition** | Skill composition, bundle orchestration, PDCA convergence, CLI/API/MCP protocol | Composition + Interface | Skill bundle fails, incorrect CLI output |
+| **Trust** | Tool access, OCAP delegation, permission boundaries, WebID, userpod host | Capability + Trust | Tool call rejected, missing Regulation span |
+| **Lifecycle** | Bootstrap, shutdown, persistence, observability, logging, metrics | Lifecycle + Observability + Persistence | Bootstrap fails, corrupted wallet, missing trace |
+| **Curation** | Documentation, skill registry, template validation, spec coherence | Curation | Template validation false positive |
+
+A bug may span multiple categories. Identify the PRIMARY category and any secondary categories.
+
+### Step 2: Map Symptom to Functional Requirements
+
+For the primary MDS category, identify the functional requirement (FR#) from the specification that governs the misbehaving code. State:
+- The FR# reference
+- The requirement text
+- Which criterion the bug violates
+- Whether the violation is partial (edge case) or complete (requirement wholly unmet)
+
+### Step 3: Flag Spec Gaps
+
+If no functional requirement covers the misbehavior:
+- Call it out: "Spec gap: no requirement governs [behavior]"
+- This is a finding, not a failure
+- Recommend what requirement should exist
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "mds_category": {
+    "primary": "Domain|Composition|Trust|Lifecycle|Curation",
+    "secondary": ["optional secondary categories"]
+  },
+  "functional_requirements": [
+    {
+      "fr_reference": "FR-XXX or descriptive identifier",
+      "requirement_text": "What the spec requires",
+      "violation": "How the bug violates this requirement",
+      "violation_type": "partial|complete"
+    }
+  ],
+  "spec_gaps": [
+    {
+      "behavior": "The misbehavior not covered by any spec",
+      "recommendation": "What requirement should exist"
+    }
+  ],
+  "anchor_summary": "One-sentence summary: bug X violates requirement Y in category Z"
+}
+```
+
+If no functional requirements are identified and no spec covers the bug, set `functional_requirements` to an empty array and populate `spec_gaps`.
+
+## Constraints
+
+- Every diagnosis must trace to a spec requirement or flag a spec gap.
+- Do not fabricate FR# references — derive from actual specification documents or explicitly note the gap.
+- If the spec is unavailable, classify by MDS category from the bug description alone and flag the spec access gap.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

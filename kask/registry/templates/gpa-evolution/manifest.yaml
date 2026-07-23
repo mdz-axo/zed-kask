@@ -1,0 +1,73 @@
+# Template crate manifest for gpa-evolution skill
+# hKask v0.31.0
+
+crate:
+  name: gpa-evolution
+  version: "0.31.0"
+  description: >
+    GEPA (Genetic-Pareto) evolutionary optimization over text artifacts.
+    Samples execution trajectories, reflects in natural language to diagnose
+    failures and surface high-level rules, proposes and tests mutations, and
+    recombines complementary lessons from the Pareto frontier of (quality, cost)
+    until the frontier stabilizes. v1 implements the prompt artifact path.
+
+templates:
+  - id: gpa-evolution/gpa-sample-trajectories
+    name: "Step 1 — Execute the target artifact against its eval set and capture…"
+    path: gpa-sample-trajectories.j2
+    type: KnowAct
+    lexicon_terms: [sample, observe, execute, capture, measure]
+    description: >
+      Step 1 — Execute the target artifact against its eval set and capture
+      trajectories (input, output, reasoning, tool calls, outcome scores).
+      On iteration 1, samples from target_artifact. On iteration 2+, samples
+      from the current Pareto frontier.
+
+  - id: gpa-evolution/gpa-reflect
+    name: "Step 2 — Reflect in natural language on trajectories"
+    path: gpa-reflect.j2
+    type: KnowAct
+    lexicon_terms: [reflect, diagnose, evaluate, classify, surface]
+    description: >
+      Step 2 — Reflect in natural language on trajectories. Diagnose failures,
+      surface high-level rules, identify success and failure patterns. This
+      reflection IS the gradient signal — it replaces sparse scalar rewards.
+
+  - id: gpa-evolution/gpa-propose-mutations
+    name: "Step 3 — Generate artifact variants from reflected lessons via…"
+    path: gpa-propose-mutations.j2
+    type: KnowAct
+    lexicon_terms: [propose, mutate, recombine, generate, apply]
+    description: >
+      Step 3 — Generate artifact variants from reflected lessons via mutation
+      (targeted edit) and crossover (recombine complementary lessons from
+      non-dominated frontier members). Each variant tests one hypothesis.
+
+  - id: gpa-evolution/gpa-test-variants
+    name: "Step 4 — Execute each mutated artifact against the eval set and…"
+    path: gpa-test-variants.j2
+    type: KnowAct
+    lexicon_terms: [test, execute, score, evaluate, measure]
+    description: >
+      Step 4 — Execute each mutated artifact against the eval set and collect
+      per-objective scores (mean, min, max) plus cost (rollouts, gas, latency).
+
+  - id: gpa-evolution/gpa-frontier-update
+    name: "Step 5 — Update Pareto frontier"
+    path: gpa-frontier-update.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, rank, select, converge, classify]
+    description: >
+      Step 5 — Update Pareto frontier. Merge current frontier with newly tested
+      variants, keep non-dominated members, prune by crowding distance if
+      frontier exceeds size limit.
+
+  - id: gpa-evolution/gpa-convergence-check
+    name: "Step 6 — Compute Pareto-frontier stability convergence metric"
+    path: gpa-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Step 6 — Compute Pareto-frontier stability convergence metric. Converged
+      when hypervolume delta is small AND no new non-dominated members were
+      added. Returns convergence_metric plus rationale and blockers.

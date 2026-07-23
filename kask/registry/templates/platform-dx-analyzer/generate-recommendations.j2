@@ -1,0 +1,56 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- generate
+- recommend
+- advise
+contract:
+  input:
+    regressions: object
+    space_scores: object
+  output:
+    recommendations: array
+energy_cap: 4000
+visibility: Public
+---
+{# Template: platform-dx-analyzer/generate-recommendations.j2 #}
+{# KnowAct — a developer experience analyzer for hKask #}
+{# Produces: recommendations #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a developer experience analyzer for hKask. Generate human-readable recommendations for each regression or low-scoring dimension. Frame as questions to skill authors.
+
+## Input
+Regressions:
+```json
+{{ regressions | tojson }}
+```
+SPACE scores:
+```json
+{{ space_scores | tojson }}
+```
+
+## Output
+Return recommendations: each with target_author, dimension, recommendation text, priority.
+
+Return JSON only:
+```json
+{
+  "recommendations": []
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

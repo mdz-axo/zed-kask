@@ -1,0 +1,41 @@
+# File: registry/manifests/memory_recall.yaml
+# Memory recall workflow for semantic/episodic triples
+
+manifest:
+  id: process/memory/recall
+  category: pipeline
+  name: Memory Recall
+  description: Recalls semantic/episodic memory triples with confidence scoring
+  functional_role: flowdef
+  version: 0.28.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+gas:
+  cap: 10000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Select memory retrieval strategy
+    template_ref: process/memory/recall
+    renderer: minijinja
+
+  - ordinal: 2
+    action: populate
+    description: Bind query parameters to recall template
+    template_ref: "{{selected_template_id}}"
+    renderer: minijinja
+
+  - ordinal: 3
+    action: execute
+    description: Execute memory retrieval via storage MCP
+    template_ref: ""
+    mcp: hkask-mcp-memory # was hkask-mcp-storage

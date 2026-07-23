@@ -1,0 +1,96 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    primary_result: object
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: tdd/tdd-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for TDD cycles. #}
+{#
+  Group: D (Structured Process)
+  Convergence method: LLM-assessed completeness fraction with blocker tracking
+  Measures: Fraction of TDD cycle steps incomplete or failing.
+    RED → GREEN → REFACTOR is a checklist. Convergence is binary-ish:
+    all three phases pass with acceptable coverage → converged (metric ≈ 0).
+    Any phase failing or incomplete → not converged.
+  Threshold: {{ _convergence.threshold }} — converged when metric ≤ threshold
+  Improvement: (baseline - current) / baseline ≥ {{ _convergence.improvement_target | default(0.05) }}
+  Note: Process skills use tight threshold (0.05) because they're checklist-complete —
+    you're either done or you're not. Small threshold means "essentially done."
+#}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for TDD. Your job: measure whether the RED→GREEN→REFACTOR cycle is complete and passing.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.05) }} (must reach ≤ this to exit — tight: "essentially done")
+- Baseline quality: {{ _convergence.baseline_quality | default("first pass — no baseline yet") }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }} (min 5% relative reduction from baseline)
+
+## Convergence Method: Completeness Fraction
+This metric measures what fraction of the TDD cycle is incomplete or failing.
+It is a checklist-completion metric — the process is done when all steps pass.
+- 0.00 = all three phases (RED, GREEN, REFACTOR) pass with acceptable coverage → converged
+- 0.05 = essentially done, minor remaining items (at or below threshold → converged)
+- 0.33 = one phase incomplete (e.g., REFACTOR not done)
+- 0.66 = two phases incomplete
+- 1.00 = no phases complete, no tests written
+
+## Scoring Guidance
+1. Check each TDD phase:
+   - RED phase missing (no failing test written) → +0.33
+   - GREEN phase incomplete (test not passing) → +0.33
+   - REFACTOR phase incomplete (cleanup not done) → +0.20
+2. Check test quality:
+   - No behavioral contract (pre:/post:) → +0.10
+   - Coverage below acceptable threshold → +0.10
+   - Test doesn't reproduce the reported bug (if fixing) → +0.10
+3. Check process adherence:
+   - Tests written AFTER implementation (not TDD) → +0.15
+   - No regression check on existing tests → +0.05
+4. Start at 1.0, subtract for each completed/passing item.
+5. Clamp to [0, 1].
+
+## Input
+```json
+{{ primary_result | tojson }}
+```
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed completeness fraction — TDD phase completion + test quality + process adherence",
+  "metric_decomposition": {
+    "red_phase_complete": true,
+    "green_phase_complete": true,
+    "refactor_phase_complete": true,
+    "contract_defined": true,
+    "coverage_acceptable": true,
+    "tdd_discipline_maintained": true
+  },
+  "rationale": "short explanation of why this metric value",
+  "blockers": ["specific incomplete phase or failing check"]
+}
+```

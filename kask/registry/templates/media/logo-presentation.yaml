@@ -1,0 +1,56 @@
+# Media — Logo Presentation FlowDef
+# Generate a complete logo deliverables package from a refined logo.
+# Agent-coordinated; uses media server tools.
+
+template_type: FlowDef
+name: media_logo_presentation
+version: "1.0.0"
+description: "Generate a complete logo deliverables package: transparent PNG, monochrome variant, icon mark, context mockups"
+parameters:
+  - name: logo_url
+    type: string
+    required: true
+    description: "URL of the final refined logo image"
+  - name: name
+    type: string
+    required: true
+    description: "Business or group name for context mockups"
+  - name: palette_hex
+    type: string
+    required: false
+    description: "Hex color codes for brand card"
+input_type: image_url
+output_type: image_urls
+latency: async
+cost_tier: medium
+steps:
+  - id: remove-background
+    tool: image_remove_background
+    description: "Produce transparent PNG from final logo"
+    input: "{{ logo_url }}"
+
+  - id: monochrome-variant
+    tool: generate_image
+    description: "Generate monochrome version for single-color applications (embroidery, stamps, fax)"
+    prompt: "Monochrome (pure black on white background) version of this logo. Same exact design, no color, no gradients. High contrast. Clean sharp edges."
+
+  - id: icon-mark
+    tool: generate_image
+    description: "Generate square icon-only version for favicon and app icon"
+    prompt: "Square icon-only version of this logo mark. Remove all text and typography, keep only the symbol/icon/graphic element. 1:1 aspect ratio. Works at 64x64 pixels. Simple and recognizable at tiny sizes."
+
+  - id: context-mockup
+    tool: generate_image
+    description: "Generate a realistic context mockup showing the logo in use"
+    prompt: >
+      Photorealistic product photography mockup showing the logo for "{{ name }}" applied in a real-world context.
+      Show it on a clean, well-lit storefront sign or website header.
+      Professional photography style. Good natural lighting. No other brands or logos visible.
+      The logo should look naturally placed, not composited.
+---
+# Logo Presentation Pipeline
+# Phase 1: Remove background from final logo → transparent PNG
+# Phase 2: Generate monochrome variant for single-color applications
+# Phase 3: Generate icon-only square mark for favicon/app icon
+# Phase 4: Generate context mockup showing logo in real-world use
+# Return: array of image URLs [transparent, monochrome, icon, mockup]

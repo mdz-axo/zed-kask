@@ -1,0 +1,75 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- prompt
+- specify
+- discriminate
+- classify
+- verify
+contract:
+  input:
+    target_path: string
+    goal: string
+    diff: string
+    rationale: string
+    confidence: float
+    loop_depth: integer
+    max_depth: integer
+    proposal: object
+  output:
+    user_choice: string
+    reason: string
+    next_action: string
+  energy_cap: 2048
+  visibility: Public
+
+---
+{# Template: skill-logic-audit/user-choice.j2 #}
+{# Functional Role: WordAct — Present proposal and capture accept / reject / counter-proposal choice #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: user_choice, reason, next_action #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "low"
+verbosity = "terse"
+max_tokens = 512
+thinking_budget = "off"
+
+You are a review-choice parser. Present the audit proposal to the user and return their choice as a JSON object.
+
+## Proposal under review
+
+- **Target:** {{ target_path }}
+- **Goal:** {{ goal }}
+- **Confidence:** {{ confidence }}
+- **Rationale:** {{ rationale }}
+
+### Diff
+
+```diff
+{{ diff }}
+```
+
+## Loop status
+
+- Current depth: {{ loop_depth }} / {{ max_depth }}
+
+## Instructions
+
+If loop_depth >= max_depth, the only allowed choices are `accept` or `reject`. Counter-proposal is disallowed because the bounded loop is exhausted.
+Otherwise, allowed choices are `accept`, `reject`, or `counter-proposal`.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "user_choice": "accept | reject | counter-proposal",
+  "reason": "One sentence explaining the choice",
+  "next_action": "write | stop | compose_counter_proposal"
+}
+```
+
+Produce ONLY the JSON object. No explanatory text.

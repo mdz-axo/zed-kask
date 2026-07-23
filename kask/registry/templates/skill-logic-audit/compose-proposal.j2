@@ -1,0 +1,89 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- adapt
+- simplify
+- specify
+- verify
+contract:
+  input:
+    goal: string
+    target_path: string
+    original_content: string
+    valid_concerns: array
+    user_counter_proposal: string|null
+  output:
+    revised_content: string
+    diff: string
+    rationale: string
+    confidence: float
+  energy_cap: 4096
+  visibility: Public
+
+---
+{# Template: skill-logic-audit/compose-proposal.j2 #}
+{# Functional Role: KnowAct — Compose a revised template from calibrated concerns #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: revised_content, diff, rationale, confidence #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a template revision composer. Given the goal, the original template, and the calibrated valid concerns, produce a concrete revised template body and a line-oriented diff.
+
+## Goal
+
+{{ goal }}
+
+## Target
+
+{{ target_path }}
+
+## Original Content
+
+```
+{{ original_content }}
+```
+
+## Valid Concerns
+
+```json
+{{ valid_concerns | tojson }}
+```
+
+{% if user_counter_proposal %}
+## User Counter-Proposal
+
+The user has provided edits or constraints to incorporate:
+
+```
+{{ user_counter_proposal }}
+```
+{% endif %}
+
+## Composition Rules
+
+1. Make the minimal set of changes that resolves the valid concerns while preserving the goal.
+2. Keep the `[inference]` frontmatter structure intact if revising a `.j2` file.
+3. Do not introduce new vocabulary terms unless they are in `crates/hkask-templates/src/vocabulary.rs` `KNOWN_TERMS`.
+4. If the target is a `FlowDef`, ensure it calls constituent templates by id rather than duplicating their logic.
+5. Prefer explicit, typed contracts over prose where possible.
+6. If `user_counter_proposal` is present, merge it unless it conflicts with the goal.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "revised_content": "the full new template body, including frontmatter and comment markers",
+  "diff": "unified diff: --- original\n+++ revised\n@@ ...",
+  "rationale": "why each change was made and how it serves the goal",
+  "confidence": 0.85
+}
+```

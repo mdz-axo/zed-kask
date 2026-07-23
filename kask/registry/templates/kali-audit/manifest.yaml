@@ -1,0 +1,55 @@
+# Template crate manifest for kali-audit skill
+# hKask v0.31.0
+
+crate:
+  name: kali-audit
+  version: "0.31.0"
+  description: >
+    Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML
+    manifests, and supply chain for security vulnerabilities. Anchored to OWASP
+    LLM Top 10, CWE, STRIDE, and MITRE ATLAS. Consumes the security regression
+    library (security/regressions/) as input and proposes new regression entries
+    for confirmed findings. Single skill with a surface parameter — not a bundle.
+
+templates:
+  - id: kali-audit/select-surface
+    name: "Select target surface and map check catalog"
+    path: select-surface.j2
+    type: KnowAct
+    lexicon_terms: [select, calibrate, target, audit, assess, classify]
+    description: >
+      Select the security audit target surface (code, template, supply-chain,
+      mcp, config) and map it to the applicable check catalog. Reads the
+      regression library to know what has already been found.
+
+  - id: kali-audit/audit
+    name: "Run security checks for the selected surface"
+    path: audit.j2
+    type: KnowAct
+    lexicon_terms: [audit, detect, probe, classify, verify, assess]
+    description: >
+      Run security checks for the selected surface. For code: unsafe blocks,
+      panics, auth bypass, crypto misuse, deserialization, path traversal. For
+      templates: SSTI, sandbox violations, untrusted input rendering. For
+      supply-chain: cargo-deny, cargo-audit, RustSec advisories. For mcp:
+      tool-behavior contracts, indirect_tool_output injection paths.
+
+  - id: kali-audit/report
+    name: "Synthesize findings and propose regression entries"
+    path: report.j2
+    type: KnowAct
+    lexicon_terms: [synthesize, report, classify, escalate, evaluate]
+    description: >
+      Synthesize audit findings into a structured report. For each confirmed
+      finding, propose a regression entry (RR-NNNN.yaml) for human review.
+      Classify by CWE, OWASP LLM, severity, and surface.
+
+  - id: kali-audit/convergence-check
+    name: "Compute coverage metric for kali-audit PDCA cycle"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for kali-audit PDCA cycles.
+      Measures CWE class coverage, regression library growth, and residual
+      risk. Returns convergence_metric plus rationale and blockers.

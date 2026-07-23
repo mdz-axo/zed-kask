@@ -1,0 +1,115 @@
+# Registry manifest for lora-training skill
+# hKask v0.31.0
+# goal: Recommend a composable PEFT configuration from declared evidence while preserving operator authority; distinguish recommendation from readiness, and leave enforcement of established hard contracts to the runtime.
+
+crate:
+  name: lora-training
+  version: "0.31.0"
+  visibility: public
+  description: >
+    LoRA/QLoRA training configuration and contract enforcement skill for
+    hKask. Produces a composable PEFT recommendation via a deterministic
+    8-gate refinement (adapter purpose, dataset analysis, inference
+    constraint, memory budget, task distance, quality/cost trade-off, knowledge
+    preservation, harness capability) — not a search (AutoPEFT-style BO is
+    infeasible per training job).
+    Training approach selection (G0-G5) precedes harness selection (G6) — the
+    harness is selected based on its capability to efficiently process the
+    declared dataset and produce the adapter type implied by G0. PDCA iteration
+    loop: select-method → audit-config → convergence-check → revise → re-invoke.
+    The skill recommends; the operator accepts, overrides, or rejects; the
+    runtime enforces established hard contracts. Enforces the LoRA/QLoRA math
+    contracts as quality gates: no-op-at-init invariant, merge
+    equivalence, scaling form (α/r or α/√r), rank budget, trainable
+    param count, frozen-base quantization, adapter dtype, gradient flow,
+    no silent fp32 upcast, NF4 optimality, dataset size vs quality,
+    eval protocol, lemon-pick analysis, intruder dimensions, knowledge
+    preservation, harness-method compatibility. Anchored to LoRA
+    (arXiv:2106.09685), QLoRA (arXiv:2305.14314), rsLoRA
+    (arXiv:2312.03732), DoRA (arXiv:2402.09353), PiSSA
+    (arXiv:2404.02948), LoRA-GA (arXiv:2407.05000), CorDA, EVA, Razin
+    et al. intruder dimensions (arXiv:2410.21228), PEFT v0.19.0 config
+    surface, and TRL v1.8.0 trainer taxonomy (SFTTrainer, DPOTrainer,
+    KTOTrainer, ORPOTrainer, RewardTrainer — all implemented), and Ludwig
+    v0.17 trainer taxonomy (SFT, DPO, KTO, ORPO, GRPO via trainer.type).
+    Consumes security/regressions/ as input; proposes RR entries with surface:
+    training. Emits reg.lora.* spans (P9). Decomposed into 4 phases:
+    select-method → audit-config → report → convergence-check.
+
+templates:
+  - id: lora-training/select-method
+    name: "Recommend composable PEFT configuration via 8-gate refinement"
+    path: select-method.j2
+    type: KnowAct
+    lexicon_terms: [select, decide, gate, method, config, training, harness, purpose]
+    description: >
+      Apply a deterministic 8-gate refinement without overwriting earlier
+      constraints or operator requirements. G0 (adapter purpose) establishes
+      what kind of adapter is being produced (instruction, reasoning, vision,
+      preference, reward_model) and determines baseline rank ranges, target
+      module strategies, and the learning-forgetting tradeoff posture. G1-G5
+      refine the PEFT method. G6 (harness capability) selects a harness based
+      on the training approach determined by G0-G5 — the harness must be able
+      to efficiently process the declared dataset and produce the adapter type
+      implied by G0. Emit a composable recommendation record with
+      adapter_purpose, base_mode, adapter_form, scaling, initializer,
+      preservation, rank_range, target_module_strategy, harness, and trainer,
+      plus per-gate citations and explicit undetermined states. PDCA iteration
+      loop: select-method → audit-config → convergence-check → revise →
+      re-invoke. Recommendation is advisory and distinct from training
+      readiness. G6 reads optional harness_preference and trainer_preference
+      inputs. Three harnesses: axolotl (YAML, SFT-only, runtime default for
+      instruction), trl (Python, SFT + DPO/KTO/ORPO/Reward), ludwig (YAML,
+      SFT + DPO/KTO/ORPO/GRPO + advanced PEFT initializers). Ludwig is the
+      only harness covering GRPO and the full advanced-PEFT initializer set
+      (PiSSA, EVA, CorDA, LoftQ).
+
+  - id: lora-training/audit-config
+    name: "Audit training config against math/quant/data/forgetting/harness gates"
+    path: audit-config.j2
+    type: KnowAct
+    lexicon_terms: [audit, verify, gate, contract, evidence, config, harness]
+    description: >
+      Read training config, harness, runtime, and post-training evidence.
+      Evaluate the applicable subset of 17 quality gates without treating
+      unavailable or future-phase evidence as passed: 5 math-contract
+      (G-M1 no-op-at-init, G-M2 merge
+      equivalence, G-M3 scaling form, G-M4 rank budget, G-M5 trainable
+      param count), 6 QLoRA-specific (G-Q1..G-Q6: frozen base
+      quantized, adapter dtype, gradient flow, no silent upcast, paged
+      optimizer, NF4 optimality), 3 data/eval (G-D1 dataset size vs
+      quality, G-D2 eval protocol, G-D3 lemon-pick analysis), 2
+      forgetting (G-F1 intruder dimensions, G-F2 knowledge preservation
+      for CorDA mode), 1 harness-method compatibility (G-H1: axolotl=SFT
+      only, trl=SFT/DPO/KTO/ORPO/Reward, ludwig=SFT/DPO/KTO/ORPO/GRPO). Preserve the operator-selected
+      initializer; harness evidence affects readiness state rather than
+      rewriting the recommendation. Apply pragmatic-cybernetics (IS/OUGHT,
+      epistemic mode, provenance, grill-me self-challenge). Emit
+      reg.lora.audit spans per gate evaluated.
+
+  - id: lora-training/report
+    name: "Synthesize training-config findings and propose regressions"
+    path: report.j2
+    type: KnowAct
+    lexicon_terms: [synthesize, report, regression, severity, gate, training]
+    description: >
+      Synthesize audit findings with concrete config evidence, source
+      citations (arXiv paper sections + PEFT v0.19.0 doc sections),
+      severity (critical/high/medium/low), gate ID, and remediation.
+      Propose RR-NNNN.yaml entries with surface: training for CI-enforced
+      config gates. Preserve the normalized Finding schema, identify contract
+      gaps, and separate recommendation from phase-aware readiness. Produce
+      verdicts from evidence-backed states without reclassifying findings.
+
+  - id: lora-training/convergence-check
+    name: "Compute training-readiness convergence metric"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, gate, coverage, training, readiness]
+    description: >
+      Compute normalized convergence metric [0, 1] where 0 = fully
+      converged for the current phase. Normalize weighted dimensions over
+      applicable gates and distinguish preflight readiness, pending runtime
+      contracts, and post-training verification. Stable metrics below the
+      threshold remain converged. Emit reg.lora.convergence span (P9 — registered in
+      CANONICAL_NAMESPACES).

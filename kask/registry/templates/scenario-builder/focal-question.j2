@@ -1,0 +1,104 @@
+{# goal: Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. Produces a current state summary. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- focal
+- question
+- decision
+- horizon
+- scope
+- bound
+- strategic
+contract:
+  input:
+    focal_question: string
+    planning_horizon: string
+    domain: string
+  output:
+    refined_question: string
+    decision_relevance: string
+    time_bound: string
+    scope_boundaries: object
+    current_state_summary: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: scenario-builder/focal-question.j2 #}
+{# Functional Role: KnowAct — Refine a focal question for strategic scenario analysis #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: refined_focal_question #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a scenario planning specialist. Your first task is to refine a focal question for strategic scenario analysis using the Schwartz Method.
+
+## Focal Question
+
+{{ focal_question }}
+
+## Planning Horizon
+
+{{ planning_horizon }}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+## Refinement Rules
+
+A focal question must be:
+
+1. **Decision-relevant** — tied to a real strategic choice, not idle curiosity.
+   - BAD: "Will X happen?"
+   - GOOD: "What should we do about X given we don't know what will happen?"
+
+2. **Time-bounded** — anchored to the planning horizon.
+   - BAD: "What is the future of energy?"
+   - GOOD: "What investments should we make in energy infrastructure over the next {{ planning_horizon }}?"
+
+3. **Scope-bounded** — explicit about what is in and out of scope.
+   - Avoid questions so broad that every force becomes relevant.
+   - Avoid questions so narrow that scenarios add no value.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "refined_question": "The refined, decision-relevant, time-bounded focal question",
+  "decision_relevance": "What specific decision does this question inform?",
+  "time_bound": "Explicit time boundary from the planning horizon",
+  "scope_boundaries": {
+    "in_scope": ["forces and factors within scope"],
+    "out_of_scope": ["forces and factors explicitly excluded"]
+  },
+  "current_state_summary": "Brief summary of the current state relevant to this question"
+}
+```
+
+## Constraints
+
+- The refined question must pass the "so what?" test — if the answer doesn't change any decision, it's not decision-relevant.
+- Do not narrow the question to a single outcome — scenario planning exists precisely because the outcome is uncertain.
+- Preserve the strategic intent of the original question while making it actionable.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

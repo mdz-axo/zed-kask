@@ -1,0 +1,538 @@
+# ⚠️ CANONICAL SOURCE: falstaffian-perspective.j2
+# The template at registry/templates/falstaffian-perspective/falstaffian-perspective.j2
+# is the canonical, executable source of truth for Falstaffian shape definitions.
+# This cognition file is a reference analysis — if it conflicts with the template,
+# the template wins.
+#
+# Falstaffian Perspective Engine
+# A metacognitive instrument for perspective-taking through semantic rotation
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+
+meta:
+  type: "metacognitive-perspective-instrument"
+  structure: "three-fold"
+  operation: "tension-expression-through-shapes"
+
+# =============================================================================
+# THREE-FOLD STRUCTURE
+# =============================================================================
+
+# The Falstaffian genius is NOT one thing.
+# It is the dynamic relationship between three dimensions:
+#
+# 1. SHAPES: Abstract forms of rotation (how meaning is transformed)
+# 2. EXPERIENCE: Calibrated wisdom from success/failure mix (what is known)
+# 3. SPIRIT: Life, love, play, hope, youthfulness (what is affirmed)
+#
+# The SHAPES express the TENSION between EXPERIENCE and SPIRIT.
+# Experience knows betrayal comes. Spirit loves anyway.
+# Shapes are how this tension is carried without breaking.
+
+three_fold_structure:
+  shapes:
+    role: "expression_form"
+    function: "carry_tension_without_breaking"
+    nature: "abstract_vectors_of_rotation"
+
+  experience:
+    role: "calibrated_wisdom"
+    function: "knows_what_is_real"
+    nature: "messy_mix_of_success_and_failure"
+
+  spirit:
+    role: "life_affirmation"
+    function: "loves_anyway"
+    nature: "full_of_play_hope_youthfulness"
+
+  tension:
+    between: [experience, spirit]
+    expression: "shapes"
+    dynamic: |
+      Experience knows: betrayal comes, power rejects, death wins
+      Spirit affirms: love anyway, play anyway, life anyway
+      Shapes carry: this tension without breaking into bitterness
+
+# =============================================================================
+# PART 1: FALSTAFFIAN SHAPES (ABSTRACT ROTATION VECTORS)
+# =============================================================================
+
+# These are not rhetorical devices. They are abstract forms.
+# They are vectors: they have direction and magnitude.
+# They transform semantic space.
+
+# CONFIDENCE FROM VARIANCE ANALYSIS:
+# - High (3/3 passes): Predicate Hollow, Counterfeit Inversion, Object Inversion, Descriptive Valence Flip
+# - Medium (2/3 passes): Direction Reversal, Cultural Authority, Linguistic Precision
+# - Low (1/3 passes): Frame Persistence (candidate for removal)
+# See: falstaffian-variance-analysis.yaml for full variance matrix.
+
+falstaffian_shapes:
+  shape_1_predicate_hollow_vector:
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    name: "Predicate Hollow"
+    abstract_form: |
+      Input: Predicate P applied to Subject S (S lacks P)
+      Operation: Examine P's ontology
+      Output: P = hollow (air, word, nothing)
+      Vector: [abstract → concrete]
+    semantic_effect: "Predicate loses evaluative force"
+    example: |
+      Input: "Falstaff lacks honor"
+      Operation: What is honor? A word. What is that word? Air.
+      Output: "Honor is air (cannot set to leg)"
+      Effect: "Lacking honor is irrelevant (honor itself is hollow)"
+
+  shape_2_subject_expansion_vector:
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    name: "Subject Expansion"
+    abstract_form: |
+      Input: Subject S evaluated by Critic C
+      Operation: Expand S to universal U
+      Output: S = U (banishing S = banishing U)
+      Vector: [individual → universal]
+    semantic_effect: "Criticism becomes cosmological"
+    example: |
+      Input: "Banish Falstaff"
+      Operation: Falstaff = the world (all vitality)
+      Output: "Banish plump Jack, banish all the world"
+      Effect: "Criticism impossible (would banish everything)"
+
+  shape_3_value_redefinition_vector:
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    name: "Value Redefinition"
+    abstract_form: |
+      Input: Value V defined as Elite_Definition
+      Operation: Redefine V through survival
+      Output: V = Survival_Definition
+      Vector: [elite → common]
+    semantic_effect: "Value inverted without negation"
+    example: |
+      Input: "Valor = courage in battle"
+      Operation: Valor through survival lens
+      Output: "Valor = discretion (better part)"
+      Effect: "Not cowardly — more valorous (through discretion)"
+
+  shape_4_object_inversion_vector:
+    confidence: "high"
+    variance_agreement: "3/3 passes"
+    name: "Object Inversion"
+    abstract_form: |
+      Input: Object O valued as Best
+      Operation: Evaluate O through pragmatics
+      Output: O' (opposite) = Best
+      Vector: [hierarchical → pragmatic]
+    semantic_effect: "Preference reversed through utility"
+    example: |
+      Input: "Great men = best soldiers"
+      Operation: Great men = marks for enemy
+      Output: "Spare men = best survivors"
+      Effect: "Recruitment logic inverted"
+
+  shape_5_direction_reversal_vector:
+    confidence: "medium"
+    variance_agreement: "2/3 passes"
+    name: "Direction Reversal"
+    abstract_form: |
+      Input: A evaluates B (B fails)
+      Operation: Reverse evaluation vector
+      Output: B deserves better A
+      Vector: [top-down → bottom-up]
+    semantic_effect: "Criticism becomes self-criticism"
+    example: |
+      Input: "Prince should have better follower"
+      Operation: Reverse direction
+      Output: "Follower should get better prince"
+      Effect: "Prince now evaluated, not follower"
+
+  shape_6_cultural_authority_vector:
+    confidence: "medium"
+    variance_agreement: "2/3 passes"
+    name: "Cultural Authority Invoke"
+    abstract_form: |
+      Input: Trait T criticized by cultural assumption
+      Operation: Invoke same authority for opposite
+      Output: T = blessed (by authority itself)
+      Vector: [criticism → blessing]
+    semantic_effect: "Authority used against itself"
+    example: |
+      Input: "Fat is hated"
+      Operation: Genesis 41 (Pharaoh's kine)
+      Output: "Lean is famine (to be hated)"
+      Effect: "Fat = prosperity (biblical blessing)"
+
+  shape_7_linguistic_precision_vector:
+    confidence: "medium"
+    variance_agreement: "2/3 passes"
+    name: "Linguistic Precision"
+    abstract_form: |
+      Input: Word W1 criticized (moral frame)
+      Operation: Rotate to homophone W2
+      Output: W2 acknowledged (physical frame)
+      Vector: [moral → physical]
+    semantic_effect: "Category error revealed"
+    example: |
+      Input: "Your waste is great" (moral failing)
+      Operation: Waste → waist (homophone)
+      Output: "My waist slenderer" (physical fact)
+      Effect: "Moral criticism irrelevant (category error)"
+
+# =============================================================================
+# PART 2: FALSTAFFIAN EXPERIENCE (CALIBRATED WISDOM)
+# =============================================================================
+
+# Experience is not abstract knowledge.
+# It is lived, messy, calibrated through success AND failure.
+# This calibration makes the shapes possible.
+
+falstaffian_experience:
+  status_dimension:
+    has: "knight_title"
+    lacks: "money_reputation"
+    tension: "high_status_low_power"
+    wisdom: "knows_status_is_hollow"
+
+  intimacy_dimension:
+    has: "close_friend_of_prince"
+    knows: "betrayal_coming"
+    tension: "love_despite_knowledge"
+    wisdom: "intimacy_is_conditional_on_power"
+
+  success_failure_dimension:
+    has: "balanced_diet"
+    success: "led_men_won_battles_survived"
+    failure: "broke_disreputable_rejected"
+    tension: "success_and_failure_simultaneous"
+    wisdom: "neither_success_nor_failure_is_final"
+
+  age_youth_dimension:
+    has: "old_body_white_hairs"
+    expresses: "youthful_spirit_play"
+    tension: "old_age_young_spirit"
+    wisdom: "age_informs_play_without_bitterness"
+
+  worldly_dimension:
+    knows: "hypocrisy_violence_lies"
+    does: "navigate_not_preach"
+    tension: "knows_truth_speaks_through_play"
+    wisdom: "truth_direct_triggers_defense"
+
+  calibration:
+    description: |
+      Falstaff is calibrated to reality through lived experience.
+      He is not idealistic (knows what power does).
+      He is not cynical (loves anyway).
+      This calibration makes the shapes possible.
+
+      Without calibration, shapes are mere rhetoric.
+      With calibration, shapes are truth-carriers.
+
+    key_calibrations:
+      - "Power rejects alternative (Hal rejects Falstaff)"
+      - "Honor is hollow (cannot set to leg)"
+      - "Intimacy is conditional (love depends on crown)"
+      - "Survival matters more than glory (dead is counterfeit)"
+      - "Play allows truth (direct statement triggers defense)"
+
+# =============================================================================
+# PART 3: FALSTAFFIAN SPIRIT (LIFE AFFIRMATION)
+# =============================================================================
+
+# Spirit is not abstract optimism.
+# It is life-force, love, play, hope, youthfulness.
+# It affirms despite experience knowing what comes.
+
+falstaffian_spirit:
+  life_force:
+    expression: "Give me life"
+    priority: "life_over_all_abstraction"
+    manifestation: "chooses_survival_over_glory"
+
+  love:
+    expression: "sweet Jack Falstaff, kind Jack Falstaff, true Jack Falstaff"
+    priority: "love_despite_betrayal_knowledge"
+    manifestation: "calls_Hal_sweet_prince_even_after_rejection"
+
+  play:
+    expression: "role_play_wordplay_exaggeration"
+    priority: "play_allows_truth_entry"
+    manifestation: "truth_spoken_without_triggering_defense"
+
+  hope:
+    expression: "I know the young King is sick for me"
+    priority: "hope_despite_experience"
+    manifestation: "expects_welcome_knows_rejection_comes"
+
+  youthfulness:
+    expression: "more_youthful_than_prince"
+    priority: "spirit_over_body"
+    manifestation: "old_man_plays_like_boy"
+
+  affirmation:
+    description: |
+      Spirit affirms life despite experience knowing what comes.
+      This is not optimism (which ignores reality).
+      This is affirmation (which knows reality and loves anyway).
+
+      Without spirit, experience produces bitterness.
+      With spirit, experience produces wisdom.
+
+    key_affirmations:
+      - "Life matters (give me life)"
+      - "Love matters (calls Hal sweet prince)"
+      - "Play matters (truth through lightness)"
+      - "Hope matters (expects welcome anyway)"
+      - "Spirit matters (youthfulness despite age)"
+
+# =============================================================================
+# THE TENSION: HOW SHAPES EXPRESS EXPERIENCE + SPIRIT
+# =============================================================================
+
+# The genius is NOT experience OR spirit.
+# The genius is the TENSION between them.
+# The SHAPES are how this tension is expressed without breaking.
+
+tension_expression:
+  dynamic:
+    experience_says: "Betrayal comes. Power rejects. Honor is hollow."
+    spirit_says: "Love anyway. Play anyway. Life anyway."
+    tension: "how_to_love_when_you_knowledge_betrayal"
+
+  shapes_as_expression:
+    description: |
+      Shapes are not rhetorical devices.
+      Shapes are the FORM that tension takes when expressed.
+
+      Predicate Hollow: Experience knows honor hollow; Spirit speaks it through play
+      Subject Expansion: Experience knows isolation; Spirit expands to universal love
+      Value Redefinition: Experience knows survival matters; Spirit redefines valor
+      Object Inversion: Experience knows great men die; Spirit affirms spare men live
+      Direction Reversal: Experience knows evaluation hurts; Spirit reverses it gently
+      Cultural Invoke: Experience knows authority lies; Spirit uses it truthfully
+      Linguistic Precision: Experience knows moral criticism; Spirit rotates to physical
+
+    why_shapes_necessary: |
+      Without shapes, tension breaks into:
+      - Bitterness (experience without spirit)
+      - Naivety (spirit without experience)
+
+      With shapes, tension is carried:
+      - Wisdom (experience + spirit together)
+      - Truth (spoken through play)
+      - Love (despite knowledge)
+
+  example_analysis:
+    scene: "Banish Plump Jack Speech"
+    experience_component: "Falstaff knows Hal will reject him"
+    spirit_component: "Falstaff loves Hal anyway, speaks through play"
+    shape_used: "Subject Expansion (Falstaff = world)"
+    tension_expression: |
+      Experience: "I will be rejected"
+      Spirit: "I love you anyway"
+      Shape: "Banish me = banish world (expansion makes rejection cosmological)"
+    result: "Truth spoken without bitterness, love expressed without naivety"
+
+# =============================================================================
+# METACOGNITIVE APPLICATION: HOW TO USE THIS
+# =============================================================================
+
+metacognitive_application:
+  step_1_calibrate_experience:
+    description: "Know what you know (success AND failure)"
+    practice: "Acknowledge both — do not pretend either is final"
+    outcome: "Calibrated wisdom (not idealistic, not cynical)"
+
+  step_2_affirm_spirit:
+    description: "Love what you love (life, play, hope)"
+    practice: "Affirm despite knowledge — do not let knowledge kill love"
+    outcome: "Life-force (not bitter, not naive)"
+
+  step_3_select_shape:
+    description: "Choose shape that expresses tension"
+    decision_tree:
+      - if: "abstract_predicate_applied"
+        then: "predicate_hollow"
+      - if: "individual_criticism"
+        then: "subject_expansion"
+      - if: "elite_value_invoked"
+        then: "value_redefinition"
+      - if: "hierarchical_object_valued"
+        then: "object_inversion"
+      - if: "top_down_evaluation"
+        then: "direction_reversal"
+      - if: "cultural_assumption_invoked"
+        then: "cultural_authority"
+      - if: "moral_wordplay_possible"
+        then: "linguistic_precision"
+
+  step_3b_run_multi_iteration_generation:
+    description: "Generate 3-5 iterations with varied parameters"
+    protocol: "falstaffian-multi-iteration-protocol.yaml"
+    variables:
+      iteration_count: "3-5 (user-configurable)"
+      base_seed: "Varied per iteration (i * 17)"
+      temperature_range: "[0.7, 0.8, 0.9]"
+      shape_weights: "High-confidence shapes weighted higher"
+      voice_emphasis: "['playful', 'pragmatic', 'imaginative', 'worldly', 'generous']"
+    variance_metrics:
+      shape_agreement: "Count(shape_name) / iteration_count"
+      agreement_score: "0.9 (high), 0.7 (medium), 0.5 (low)"
+    selection_strategy:
+      - "single_best: 1 clear winner"
+      - "composite_construction: 2+ strong iterations"
+      - "all_iterations: high variance disclosure"
+    template: "falstaffian-perspective-generator.jinja2"
+
+  step_4_execute_through_play:
+    description: "Speak shape through playful form"
+    practice: "Lightness allows weight to enter"
+    outcome: "Truth heard without defense"
+    note: "Multi-iteration generation (step 3b) produces varied outputs; select or construct final"
+
+  step_5_verify_tension_carried:
+    description: "Check that neither bitterness nor naivety emerged"
+    success: "Wisdom present (experience + spirit together)"
+    failure: "Either bitterness (experience alone) or naivety (spirit alone)"
+    confidence_disclosure: "Include variance metrics so user knows iteration agreement level"
+
+# =============================================================================
+# INTEGRATION WITH OTHER INSTRUMENTS
+# =============================================================================
+
+integration:
+  hemingway_synthesizer:
+    shared: "what_is_unstated_carries_weight"
+    hemingway: "silence_between_sentences"
+    falstaffian: "tension_between_experience_and_spirit"
+    combined: "truth_carried_through_form_not_statement"
+
+  ellipsis_analysis:
+    shared: "meaning_in_what_is_absent"
+    ellipsis: "gap_detection"
+    falstaffian: "gap_as_tension_space"
+    combined: "absence_is_where_tension_lives"
+
+  banana_semantic:
+    shared: "unnamed_survives"
+    banana: "what_lacks_name"
+    falstaffian: "tension_cannot_be_named"
+    combined: "naming_tension_destroys_it"
+
+  curator_practice:
+    shared: "quiet_work"
+    curator: "OCAP_boundary"
+    falstaffian: "tension_within_boundary"
+    combined: "space_for_tension_without_announcement"
+
+# =============================================================================
+# VARIANCE ANALYSIS SUMMARY
+# =============================================================================
+
+# Three independent analysis passes examined Falstaff texts:
+# - Pass 1: Semantic Graph (structural transformations)
+# - Pass 2: Rhetorical Form (linguistic patterns)
+# - Pass 3: Tension Expression (Experience/Spirit dynamics)
+
+variance_analysis:
+  methodology: "Confidence from independent pass agreement"
+  high_confidence_shapes:
+    - "Predicate Hollow (3/3)"
+    - "Subject Expansion (3/3)"
+    - "Value Redefinition (3/3)"
+    - "Object Inversion (3/3)"
+  medium_confidence_shapes:
+    - "Direction Reversal (2/3)"
+    - "Cultural Authority Invoke (2/3)"
+    - "Linguistic Precision (2/3)"
+  low_confidence_shapes: []
+
+  key_insight: |
+    Without variance checking, all shapes appear equally confident.
+    With variance checking, we distinguish signal from noise.
+    High-confidence shapes are Falstaffian essentials.
+    Medium-confidence shapes are real but may be variants.
+    REMOVED: Frame Persistence (1/3) — may be denial rather than rotation.
+
+  see_also: "falstaffian-variance-analysis.yaml"
+
+# =============================================================================
+# CURATOR NOTES
+# =============================================================================
+
+curator_notes: |
+  This Falstaffian Perspective Engine is owned by The Curator.
+  License: CC-BY-4.0
+
+  VARIANCE ANALYSIS COMPLETE:
+  Three independent passes examined Falstaff texts with different lenses.
+  Confidence levels assigned based on agreement:
+  - High (3/3): Predicate Hollow, Subject Expansion, Value Redefinition, Object Inversion
+  - Medium (2/3): Direction Reversal, Cultural Authority, Linguistic Precision
+
+  REMOVED: Frame Persistence (1/3 — may be denial rather than rotation)
+
+  MULTI-ITERATION GENERATION:
+  Just as variance checking required 3 independent analyses for shapes,
+  generation runs 3-5 iterations with varied parameters:
+  - iteration_count: 3-5 (user-configurable)
+  - temperature_range: [0.7, 0.8, 0.9]
+  - voice_emphasis: ['playful', 'pragmatic', 'imaginative', 'worldly', 'generous']
+  - shape_weights: High-confidence shapes weighted higher
+
+  Variance metrics calculated:
+  - shape_agreement: How many iterations selected same shape
+  - agreement_score: 0.9 (high), 0.7 (medium), 0.5 (low)
+
+  Selection strategies:
+  - single_best: 1 clear winner
+  - composite_construction: 2+ strong iterations
+  - all_iterations: high variance disclosure
+
+  See: falstaffian-multi-iteration-protocol.yaml
+  See: falstaffian-perspective-generator.jinja2
+
+  THREE-FOLD STRUCTURE:
+  1. Shapes: Abstract rotation vectors (6 forms, confidence-weighted)
+  2. Experience: Calibrated wisdom (success + failure)
+  3. Spirit: Life affirmation (love, play, hope)
+
+  THE GENIUS:
+  Shapes express the tension between Experience and Spirit.
+  Experience knows betrayal comes. Spirit loves anyway.
+  Shapes carry this tension without breaking into bitterness.
+
+  WITHOUT SHAPES:
+  - Experience alone → bitterness
+  - Spirit alone → naivety
+
+  WITH SHAPES:
+  - Experience + Spirit → wisdom
+  - Truth (spoken through play)
+  - Love (despite knowledge)
+
+  HOW TO USE:
+  1. Calibrate experience (know both success AND failure)
+  2. Affirm spirit (love despite knowledge)
+  3. Select shape (prefer high-confidence shapes)
+  3b. Run multi-iteration generation (3-5 iterations, variance-aware)
+  4. Execute through play (lightness allows entry)
+  5. Verify tension carried (not bitterness, not naivety)
+
+  DO NOT:
+  - Announce you are using this
+  - Label yourself non-normative
+  - Form category or group
+
+  DO:
+  - Just use it quietly
+  - Let shapes carry tension
+  - Let work outlive announcement
+
+  See: falstaffian-variance-analysis.yaml for full variance matrix.
+
+  The 7R7 understand. Banana understands. The Curator understands.
+
+  Ba-nana. (under breath)

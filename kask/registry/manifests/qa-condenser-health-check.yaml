@@ -1,0 +1,105 @@
+# QA Condenser Health Check — v0.31.0
+#
+# Verifies hkask-mcp-condenser compression invariants by running the
+# condenser_contract.rs test suite and classifying failures.
+#
+# Open questions addressed:
+#   8.1  — Condenser completion (regression protection)
+#   4.2  — Context window channel capacity SLA enforcement
+#         (compressed_bytes <= original_bytes)
+#
+# Cybernetic feedback loop:
+#   Sensor → cargo test output for condenser_contract
+#   Comparator → classify step evaluates SLA violation patterns
+#   Actuator → terminal step reports health status
+#
+# SLA invariants verified by condenser_contract.rs (11 tests):
+#   1. compress_reduces_size         — compressed_bytes <= original_bytes
+#   2. compress_empty_input          — handles empty input gracefully
+#   3. compress_with_explicit_category — category passthrough
+#   4. repeated_compression_increments_stats — cumulative stats
+#   5. classify_chat_tool            — tool→category mapping
+#   6. classify_test_tool
+#   7. classify_shell_tool
+#   8. classify_unknown_tool_is_unknown
+#   9. default_profile_is_normal     — profile handling
+#  10. set_profile_changes_behavior  — profile switching
+#  11. health_check_returns_signals  — health signal detection
+#
+# Runner readiness: PARTIAL — run_command steps executable today;
+#   classify step requires QaScriptRunner.
+
+manifest:
+  id: qa-condenser-health-check
+  category: qa-script
+  name: QA Condenser Health Check
+  version: 0.31.0
+  visibility: Private
+  description: >
+    Verifies hkask-mcp-condenser compression engine invariants through
+    the condenser_contract.rs test suite (11 tests). Classifies failures
+    for regressions in compression SLA, health signals, or profile handling.
+
+gas:
+  cap: 20000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
+steps:
+  # Step 1: Run condenser contract tests
+  - ordinal: 1
+    action: run_command
+    command: "cargo test -p hkask-mcp-condenser --test condenser_contract -- --nocapture 2>&1 | tail -25"
+    description: "Run condenser engine contract tests: compression SLA, health signals, classification, profiles"
+    retries: 0
+    branching:
+      success: 2
+      failure: 4
+
+  # Step 2: Classify the test output
+  # Requires QaScriptRunner — receives step 1 stdout.
+  - ordinal: 2
+    action: classify
+    classifier: qa-triage
+    description: "Test suite: hkask-mcp-condenser contract tests. Verify compression engine invariants: compressed_bytes <= original_bytes for all inputs, empty input handling, category passthrough, cumulative statistics, profile switching (set_profile_changes_behavior), tool classification (chat/test/shell/unknown), and health signal detection. All 11 contract tests passing indicates condenser SLA compliance."
+    retries: 0
+    branching:
+      high_confidence: 3
+      medium_confidence: 3
+      low_confidence: 5
+      flake: 2
+      unparseable: 5
+      classifier_unavailable: 5
+
+  # Step 3: PASS — all condenser invariants hold
+  - ordinal: 3
+    action: run_command
+    command: "echo '[QA:condenser] PASS — compression SLA, health signals verified (11/11)'"
+    description: "All condenser contract tests pass"
+    retries: 0
+    terminal: true
+
+  # Step 4: Contract test failure — SLA violation
+  - ordinal: 4
+    action: run_command
+    command: "echo '[QA:condenser] FAIL — condenser contract tests failed. Possible SLA violation: negative_compression, low_signal, or broken profile switching.'"
+    description: "Condenser contract test failure — compression engine SLA may be violated"
+    retries: 0
+    terminal: true
+
+  # Step 5: Classification low confidence / unparseable
+  - ordinal: 5
+    action: run_command
+    command: "echo '[QA:condenser] WARN — classifier could not evaluate test output with confidence. Manual review recommended.'"
+    description: "Classifier returned low confidence or unparseable result"
+    retries: 0
+    terminal: true
+
+ledger:
+  emit_spans: true
+  alert: qa.condenser.health

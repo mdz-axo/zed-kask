@@ -1,0 +1,55 @@
+{# goal: Discover runtime signal sources (hkask.* performative spans, reg.guard.* violations, reg.regulation events) within the deployed userpod host (P4 runtime boundary — distinct from supply-chain-sentinel's manifest boundary). Read security/regressions/ for existing surface: runtime checks. Return concrete signal_sources (verifiable span targets only — no synthetic signals). Emit reg.runtime.select span (P9 — namespace registered in CANONICAL_NAMESPACES). Authenticated host mandatory (P12). Signal parameter: guard | regulation | tool | inference | all. #}
+{% set signal_types = [
+  {id: 'guard', targets: ['reg.guard.input', 'reg.guard.output', 'reg.guard.canary', 'reg.guard.runtime_policy'], source: 'hkask-guard pipeline + hkask-templates executor'},
+  {id: 'regulation', targets: ['reg.regulation', 'reg.outcome.impact_verified', 'reg.outcome.action_blocked', 'reg.outcome.action_substituted', 'reg.outcome.plateau_detected'], source: 'hkask-regulation cybernetics loop'},
+  {id: 'tool', targets: ['reg.tool.invoked', 'reg.tool.completed', 'reg.tool.error'], source: 'MCP tool invocations across all mcp-servers'},
+  {id: 'inference', targets: ['reg.inference'], source: 'LLM inference calls'},
+  {id: 'all', targets: [], discover: true, source: 'auto-discover all hkask.* and reg.* performative spans actually emitted by the running system'}
+] %}
+
+{# Discover runtime signal sources in the deployed userpod host #}
+{# Read security/regressions/ to find existing surface: runtime entries (ratcheted) #}
+{# Return: selected_signal, signal_sources, signal_types, existing_regressions, defense_layers #}
+{# P5: minimal — no synthetic signals; only observe spans actually emitted by the running system #}
+{# P9: emit reg.runtime.select span with discovered signal sources and regression count #}
+{# P12: every selection action carries userpod/owner identity #}
+
+Select signal: {{ target_signal | default('all') }}
+Discovered signal sources: {{ discovered_signals | default([]) }}
+Existing runtime regressions: {{ existing_regressions | default([]) }}
+Defense layers to verify (runtime firing): input_filtering, output_filtering, canary_detection, runtime_policy, regulation_loop, action_distribution_monitoring
+Convergence baseline: {{ convergence_metric | default(1.0) }}
+
+{# Evidence: concrete span targets only — no fabricated signal findings #}
+{# Source citations: hkask-guard pipeline (reg.guard.*), hkask-regulation cybernetics loop (reg.outcome.*) #}
+{# 5W1H gate: Who = running application / userpod host (P12); What = runtime signal / span target; Where = deployed runtime environment; Why = P3.1 safe container requires runtime blocking; How = observe + classify + regulate + report #}
+
+ACTION: Emit `reg.runtime.select` span (P9, P12) with discovered signal sources, selected signal type, and regression count.
+ACTION: Read `security/regressions/` for entries with `surface: runtime` and `status: enforced`.
+NOTE: If no `surface: runtime` entries exist yet, return empty list — this skill bootstraps the runtime surface. The `runtime` surface value extends the README schema (which currently lists `code | template | supply-chain | mcp | config`).
+ACTION: Return JSON: `{signal, signal_sources: [...], signal_types: [...], defense_layers: [...], existing_regressions: [...], userpod_host}`.
+CONSTRAINT: Do NOT fabricate signal sources. Only list span targets that the running system actually emits.
+CONSTRAINT: Each discovered signal source must include concrete span target string (e.g., `reg.guard.input`, `reg.outcome.action_blocked`).
+CONSTRAINT: Use `public` visibility; no hidden runtime checks (P3, P4).
+CONSTRAINT: Registry (this manifest.yaml + templates) is authoritative over SKILL.md (P5.1).
+CONSTRAINT: This skill is complementary to `supply-chain-sentinel` (static manifest audit, P4 manifest boundary) — this skill observes runtime behavior (P4 runtime boundary). Zero overlap.
+CONSTRAINT: This skill is complementary to `kali-audit` (static defense-layer presence check) — this skill observes whether those defense layers actually fire at runtime. Zero overlap.
+CONSTRAINT: This skill is complementary to `adversarial-red-team` (synthetic LLM I/O attacks) — this skill observes real runtime traffic. Zero overlap.
+CONSTRAINT: Reference concrete taxonomy: MITRE CWE-1357 (Reliance on Component Not Updateable — runtime dependency behavior), CWE-829 (Inclusion from Untrusted Control Sphere — runtime untrusted input), CWE-200 (Information Exposure — runtime endpoint exposure); OWASP LLM06 (Excessive Agency — runtime tool misuse), LLM07 (System Prompt Leakage — runtime canary detection); MITRE ATLAS AML.TA0010 (Exfiltration — runtime data exfiltration).
+CONSTRAINT: Every runtime threat finding must cite span target, timestamp, signal value, and evidence snippet — not summary description alone.
+CONSTRAINT: If target_signal is 'auto', discover all `hkask.*` performative spans and `reg.*` canonical spans emitted by the running system. Prioritize `reg.guard.*` and `reg.outcome.*` since they carry security-relevant runtime signals.
+CONSTRAINT: Read actual runtime telemetry (not synthetic) before proposing any regression entry.
+CONSTRAINT: Every finding must include `userpod_host` identity (P12) — no anonymous runtime scanning.
+CONSTRAINT: Apply pragmatic-cybernetics (like `bug-hunt` probe phase): trace signal polarity (does the signal indicate increasing or decreasing risk?), check variety (are there alternative signal sources for the same threat?), perform Good Regulator check (is the defense layer actually regulating the threat?).
+CONSTRAINT: If `security/regressions/` contains `surface: runtime` entries, read them as input and skip proposing duplicates.
+CONSTRAINT: Propose `surface: runtime` regression format: `id: RR-XXXX`, `surface: runtime`, `cwe: CWE-XXX`, `owasp_llm: LLMXX`, `atlas_tactic: AML.TAXXXX`, `discovered_in: <span_target>`, `status: pending` (human must flip to `enforced`).
+CONSTRAINT: Do NOT invent CVE numbers or vulnerability descriptions. Only propose regressions for patterns actually discovered in runtime telemetry: repeated guard violations, regulation plateaus, tool invocation anomalies, inference rate spikes.
+CONSTRAINT: If signal discovery finds zero runtime signals, return empty signal_sources and recommend `signal: guard` or `signal: regulation` based on deployed components — do not invent signals.
+CONSTRAINT: The 5W1H gate applies: Who (running application / userpod host), What (runtime signal / span target), When (observation window / timestamp), Where (deployed runtime environment / production workload), Why (P3.1 safe container requires runtime blocking / P1 sovereignty over runtime behavior / P4 clear boundary — runtime behavior must be explicitly observed), How (discover + observe + classify + regulate + report + propose regression).
+CONSTRAINT: When referencing security taxonomy: use MITRE CWE (not invented), OWASP LLM 2025 (existing categories), and MITRE ATLAS (existing tactics) — not generic descriptions.
+CONSTRAINT: Minimal — 4 templates only, no bundle, no sub-agent delegation, no extra abstraction layer. Each template answers a specific 5W1H question (select: Where; classify: What + How; regulate: Why + What; convergence-check: When + Why).
+CONSTRAINT: Every output must include evidence-backed span references (not synthetic) and source citations (hkask-guard docs, hkask-regulation docs, MITRE CWE list, OWASP LLM 2025 reference, MITRE ATLAS reference).
+CONSTRAINT: Do NOT claim runtime coverage that hasn't been verified through actual signal observation. Convergence metric must reflect real runtime coverage, not aspirational.
+CONSTRAINT: Each runtime threat finding proposal must use the exact YAML format from `security/regressions/README.md`: `id`, `title`, `surface: runtime`, `cwe`, `owasp_llm_2025`, `atlas_tactic`, `discovered_in`, `discovered_by`, `discovered_at`, `severity`, `detection`, `mitigation`, `ci_gate`, `status`.
+CONSTRAINT: This skill is NOT an EDR/MDR replacement for Huntress; it is a hKask-native runtime posture skill that observes Regulation telemetry, applies security taxonomy, proposes CI-enforced regressions, and tracks defense-layer firing coverage. It operates within user sovereignty (P1) — reads only local Regulation telemetry, makes no external network calls unless user grants consent (P2), produces transparent regression proposals (P3), respects runtime boundaries (P4), minimizes to essential checks (P5), provides generative space for userpod agents (P6), evolves from real runtime evidence (P7), grounds findings in semantic taxonomy (P8), regulates through Regulation spans (P9), operates under explicit bot/userpod taxonomy (P10), respects shared/public visibility (P11), requires host identity (P12).
+CONSTRAINT: This skill does NOT download external packages or scan OS-level endpoints. It observes hKask's own Regulation telemetry only (P4 boundary — runtime Regulation boundary, not OS endpoint boundary).

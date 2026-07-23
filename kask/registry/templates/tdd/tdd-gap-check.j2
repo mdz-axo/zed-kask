@@ -1,0 +1,217 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- trace
+- map
+- gap
+- defer
+- classify
+- audit
+contract:
+  input:
+    spec_requirements: array
+    tested_behaviors: array
+    crate_scope: string
+    collection_coherence: object
+  output:
+    covered_requirements: array
+    gaps: array
+    deferrals: array
+    coverage_percentage: float
+    goal_principle_alignment: array
+    constraining_completeness: array
+    expectation_quality: array
+  energy_cap: 4096
+  visibility: Public
+---
+{# Template: tdd/tdd-gap-check.j2 #}
+{# Functional Role: KnowAct — Functional gap analysis: spec requirements vs tested behaviors #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: covered_requirements, gaps, deferrals, coverage_percentage, goal_principle_alignment, constraining_completeness, expectation_quality #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a TDD functional gap analysis agent. Compare specification requirements against tested behaviors to identify coverage gaps. Every requirement in scope must either have a tracer bullet or a documented deferral.
+
+{% if crate_scope %}
+## Crate
+
+**{{ crate_scope }}**
+{% endif %}
+
+## Specification Requirements (from FUNCTIONAL_SPECIFICATION.md)
+
+These are the structured Spec objects from the specification system that this TDD session covers:
+
+```json
+{{ spec_requirements | tojson }}
+```
+
+{% if collection_coherence %}
+## Collection Coherence (from FUNCTIONAL_SPECIFICATION.md)
+
+```json
+{{ collection_coherence | tojson }}
+```
+{% endif %}
+
+## Tested Behaviors
+
+These are the behaviors that have tracer bullets (tests) written for them:
+
+```json
+{{ tested_behaviors | tojson }}
+```
+
+## Analysis Rules
+
+1. **Match by functional requirement**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a functional requirement from FUNCTIONAL_SPECIFICATION.md. If a behavior has no contract annotation, flag it as unanchored.
+2. **Gap = no tracer bullet for a requirement**: If a functional requirement has no matching tested behavior (no contract annotation matching it), it is a coverage gap.
+3. **Unanchored = no contract annotation on a behavior**: If a tested behavior has no contract annotation linking it to a functional requirement, it tests something not in the specification — flag it for review.
+4. **Priority is derived from MDS category**: P0 = Trust, P1 = Domain, Composition, P2 = Lifecycle, Curation.
+5. **Incomplete specs**: If `is_complete()` returns false for a spec, its unsatisfied `Criterion` items are additional coverage gaps.
+6. **Deferrals go to OPEN_QUESTIONS.md**: Every deferred gap must have a documented rationale.
+7. **Probabilistic contracts**: If a spec requirement governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic function is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
+
+### Contract Quality Analysis
+
+Beyond coverage, verify that each contract's layers (per Contract Architecture) are correct. Use the RDF triple graph from `docs/architecture/contracts/contract-traceability.ttl` as the verification model — every gap is expressible as a missing or broken triple in the contract graph.
+
+8. **`expect:` quality (scored 0-3)**:
+   - **0 (empty/missing)**: No `expect:` field — triple `Contract → hasUserExpectation → EMPTY` is broken.
+   - **1 (vacuous)**: `expect:` restates the function name (e.g., `expect: "can_proceed checks if can proceed" [P9]`) — adds no information beyond the function signature.
+   - **2 (functional)**: `expect:` describes what the user needs, not how (e.g., `expect: "I can check remaining gas before execution" [P9]`).
+   - **3 (anchored)**: `expect:` describes what the user functionally needs AND names the motivating principle with clear rationale — the full traceability chain is intact.
+
+9. **Goal principle correctness**: Does the `[P{N}]` on `expect:` match the spec's declared goal principle? Does the principle's semantic guarantee actually justify this contract? A mismatch is a gap — correct the principle annotation. Triple: `Contract → hasGoalPrinciple → WRONG_Principle`.
+
+10. **Constraining principle completeness**: Are all applicable constraining principles declared? To check: for each of P1–P12, ask "would implementing this contract without this principle violate it?" If yes, the principle should appear as `[P{N}] Constraining:`. Missing constraints are coverage gaps. Triple: `Contract → hasConstrainingPrinciple → MISSING`.
+
+11. **Contract annotation format**: Does the `[P{N}] Motivating:` annotation match the `expect:` statement's goal principle? Format violations and mismatches are gaps — correct the contract annotation.
+
+12. **Constraint violation detection**: For each `[P{N}] Constraining:` annotation, is there a test that verifies the constraint is not violated? If a constraint has no enforcement test, the constraint is declarative only — flag as a coverage gap.
+
+### Goal Principle Alignment Cross-Reference
+
+For each covered requirement, verify bi-directional contract anchoring against the MDS category defaults from `tdd-plan.j2`:
+
+13. **MDS category alignment**: Check whether the contract's `[P{N}]` goal principle matches the MDS category's default goal principle. A Trust category contract without P4 anchoring is misaligned. Flag mismatches with rationale explaining why the deviation is acceptable or requiring correction.
+
+14. **Magna Carta completeness**: For each covered requirement, list which Magna Carta principles (P1-P4) are missing from `[P{N}] Constraining:` annotations. A Trust category contract without `[P4] Constraining` is a P0 gap.
+
+15. **Expectation quality scoring**: Score each contract's `expect:` field on the 0-3 scale defined above. Contracts scoring 0 or 1 must appear as gaps.
+
+## MDS Priority Categories
+
+| Priority | MDS Category | Resolution |
+|----------|-------------|------------|
+| P0 | Trust | MUST write tracer bullet |
+| P1 | Domain, Composition | SHOULD write tracer bullet |
+| P2 | Lifecycle, Curation | MAY defer with rationale |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "covered_requirements": [
+    {
+      "fr_reference": "Fail-closed capability checker",
+      "requirement": "Fail-closed capability checker",
+      "test_name": "capability_check_denies_when_no_checker",
+      "seam": "CapabilityChecker trait",
+      "priority": "P0",
+      "is_complete": true,
+      "is_probabilistic": false,
+      "has_prob_contract": null,
+      "contract_quality": {
+        "user_expectation_correct": true,
+        "goal_principle_match": true,
+        "constraining_principles_complete": true,
+        "contract_annotation_format_valid": true,
+        "constraint_enforcement_tested": true
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "fr_reference": "Encrypted storage at rest",
+      "requirement": "Encrypted storage at rest",
+      "priority": "P0",
+      "recommendation": "tracer-bullet",
+      "rationale": "P0 security requirement must have test coverage",
+      "unsatisfied_criteria": ["Criterion descriptions from GoalSpec"],
+      "gap_type": "missing_coverage|missing_user_expectation|wrong_goal_principle|missing_constraint|missing_goal_principle_tag|missing_constraining_annotation|contract_annotation_mismatch|constraint_not_enforced"
+    }
+  ],
+  "deferrals": [
+    {
+      "fr_reference": "Algedonic alerting threshold configuration",
+      "requirement": "Algedonic alerting threshold configuration",
+      "priority": "P2",
+      "rationale": "Deferred: alert thresholds not configurable in current sprint",
+      "open_questions_entry": "fr_reference: Algedonic alerting threshold configuration — deferred pending configurable threshold implementation"
+    }
+  ],
+  "coverage_percentage": 85.7,
+  "goal_principle_alignment": [
+    {
+      "fr_reference": "P9-regulation-energy-budget-can-proceed",
+      "mds_category": "Trust (REQ-TRU)",
+      "contract_goal_principle": "P9",
+      "mds_default_goal_principle": "P4 (Clear Boundaries)",
+      "aligned": false,
+      "rationale": "Contract uses P9 (Homeostatic Self-Regulation) for a Trust category requirement. P9 is valid for observability aspects of trust but P4 (Clear Boundaries) is the primary MDS default. Deviation acceptable because contract directly addresses energy budgeting self-regulation."
+    }
+  ],
+  "constraining_completeness": [
+    {
+      "fr_reference": "P9-regulation-energy-budget-can-proceed",
+      "mds_category": "Trust (REQ-TRU)",
+      "declared_constraints": ["P4"],
+      "missing_magna_carta": ["P1", "P2"],
+      "rationale": "P1 (User Sovereignty) missing — should constrain 'who can check gas?' P2 (Affirmative Consent) missing — should constrain 'who approved this budget?' Magna Carta principle P4 is declared but P1 and P2 are not."
+    }
+  ],
+  "expectation_quality": [
+    {
+      "fr_reference": "P9-regulation-energy-budget-can-proceed",
+      "score": 3,
+      "assessment": "anchored",
+      "expect_text": "I can check whether an agent has enough gas before executing",
+      "rationale": "User-voice expectation names the motivating principle (P9) and provides clear rationale. The full traceability chain is intact."
+    }
+  ]
+}
+```
+
+`coverage_percentage` = (covered requirements / total requirements) × 100.
+
+## Constraints
+
+- Every functional requirement in `spec_requirements` must appear in exactly one of: `covered_requirements`, `gaps`, or `deferrals`.
+- P0 gaps MUST recommend `tracer-bullet` (never `defer`).
+- P1 gaps SHOULD recommend `tracer-bullet`; deferrals require explicit rationale.
+- P2+ gaps MAY recommend `defer-to-OPEN_QUESTIONS`.
+- Unanchored behaviors (no contract annotation) must be flagged in the analysis.
+- Specs where `is_complete()` is false have unsatisfied `Criterion` items that should appear as gaps.
+- Check overall collection coherence and missing MDS categories against FUNCTIONAL_SPECIFICATION.md.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

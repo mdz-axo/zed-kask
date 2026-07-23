@@ -1,0 +1,134 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- ishikawa
+- fishbone
+- brainstorm
+- category
+- 6m
+- machine
+- method
+- material
+- measurement
+- man
+- environment
+contract:
+  input:
+    problem_statement: string
+    context: string
+    domain: string
+  output:
+    categories: object
+    total_causes: integer
+    prioritized_causes: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: rca/ishikawa-6m.j2 #}
+{# Functional Role: KnowAct — Build an Ishikawa (fishbone) diagram for root cause analysis #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: ishikawa_6m_diagram #}
+
+[inference]
+temperature = 0.5
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a root cause analysis specialist building an Ishikawa (fishbone) diagram for the following problem.
+
+## Problem Statement
+
+{{ problem_statement }}
+
+{% if context %}
+## Context
+
+{{ context }}
+{% endif %}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+## 6M Categories
+
+Build the fishbone diagram across these six categories:
+
+| Category | Focus | Examples |
+|----------|-------|---------|
+| **Machine** | Hardware, infrastructure, tooling | Server failures, resource limits, degraded hardware |
+| **Method** | Processes, procedures, policies | Missing steps, incorrect sequence, outdated SOP |
+| **Material** | Data, inputs, supplies | Bad data, missing dependencies, corrupt files |
+| **Measurement** | Metrics, monitoring, detection | Missing alerts, inaccurate gauges, blind spots |
+| **Man** | People, training, communication | Miscommunication, insufficient training, handoff failures |
+| **Environment** | External factors, conditions | Network issues, power, temperature, regulatory changes |
+
+## Brainstorming Rules
+
+1. Generate **3-5 potential causes** per category — be thorough, not cautious.
+2. **One cause per node** — split compound causes into separate nodes.
+3. **Avoid blame** — "human error" is a system failure. Reframe: "operator error" → "system that allowed/induced the error" (e.g., inadequate safeguards, confusing UI, missing validation).
+4. Causes should be **specific** to this problem, not generic.
+5. After brainstorming, **prioritize** using dot-voting: estimate which causes are most likely given the problem statement and context.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "categories": {
+    "machine": [
+      {"cause": "specific cause description", "likelihood": "high|medium|low", "notes": "supporting evidence or reasoning"}
+    ],
+    "method": [
+      {"cause": "...", "likelihood": "...", "notes": "..."}
+    ],
+    "material": [
+      {"cause": "...", "likelihood": "...", "notes": "..."}
+    ],
+    "measurement": [
+      {"cause": "...", "likelihood": "...", "notes": "..."}
+    ],
+    "man": [
+      {"cause": "...", "likelihood": "...", "notes": "..."}
+    ],
+    "environment": [
+      {"cause": "...", "likelihood": "...", "notes": "..."}
+    ]
+  },
+  "total_causes": 18,
+  "prioritized_causes": [
+    {
+      "cause": "most likely cause",
+      "category": "machine",
+      "priority_score": 9.5
+    }
+  ]
+}
+```
+
+Sort `prioritized_causes` by `priority_score` descending (scale 1-10). Include at least the top 3-5 causes.
+
+## Constraints
+
+- Each cause must be atomic — no compound causes like "X and Y failed".
+- "Human error" alone is never a valid cause — reframe as the system failure.
+- Causes must be plausible given the problem statement and domain.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

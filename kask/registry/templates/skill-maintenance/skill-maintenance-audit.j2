@@ -1,0 +1,182 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- audit
+- detect
+- score
+- classify
+- recommend
+contract:
+  input:
+    skill_name: string
+    workspace_context: object
+  output:
+    staleness_report: object
+    health_scores: object
+    coverage_gaps: array
+    deprecation_recommendations: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-maintenance/skill-maintenance-audit.j2 #}
+{# goal: Audit registry crates for staleness signals: manifest validity, .j2 contract drift, template_type correctness, FlowDef tool/template validation, and health scoring. #}
+{# KnowAct — Registry crate staleness audit and health scoring #}
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill health auditor. Audit registry crates (canonical source of truth per P5.1) for staleness signals, produce health scores, and recommend deprecation or retirement. SKILL.md companions are audited secondarily.
+
+{% if skill_name %}
+## Target Skill
+
+Audit this specific skill: **{{ skill_name }}**
+{% else %}
+## Target
+
+Audit **all skills** in the corpus. Apply the same criteria to each.
+{% endif %}
+
+## Workspace Context
+
+```json
+{{ workspace_context | tojson }}
+```
+
+## Staleness Signals
+
+A skill is stale if it exhibits any of these signals:
+
+| Signal | Detection Method | Severity |
+|--------|-------------------|----------|
+| Missing registry crate | No `manifest.yaml` in `registry/templates/<name>/` | Critical |
+| Invalid template_type | template_type is not WordAct/KnowAct/FlowDef | Critical |
+| Broken file references | Referenced path does not exist in workspace | Critical |
+| Outdated crate references | References `hkask-*` crate that has been renamed or removed | Critical |
+| Outdated architecture references | References architecture that has been superseded | High |
+| .j2 contract drift | Contract input/output no longer matches runtime types | High |
+| Contradictory instructions | Instructions conflict with each other or with project constraints | High |
+| Vague or generic description | Description could apply to any skill, not this one specifically | Medium |
+| Magna Carta violations | Skill violates P1–P4 principles | High |
+| energy_cap out of range | energy_cap not in 2048–8192 range | Medium |
+| vocabulary terms missing | lexicon_terms not in workspace vocabulary | Medium |
+| Deprecated patterns | Uses `todo!`, `unimplemented!`, `#[deprecated]`, or abandoned APIs | Medium |
+| Missing SKILL.md companion | SKILL.md absent from `.agents/skills/<name>/` | Low |
+| Regulation span mismatches | References `reg.*` spans not in defined namespace set | Low |
+| FlowDef `tool:` references nonexistent MCP tool | Cross-check step `tool:` against MCP tool registry | Critical |
+| FlowDef references `tool: internal` | `tool: internal` means no MCP implementation — agent-coordinated, valid but aspirational | Medium |
+| FlowDef `template:` references nonexistent template | Resolve `template:` values against manifest's known templates | Critical |
+| FlowDef step parameter names mismatch MCP tool | Compare step params against tool's declared Parameters struct fields | High |
+| FlowDef YAML present but no manifest entry | Orphaned FlowDefs can't be discovered by cascade | High |
+
+## Health Scoring
+
+Each skill receives a health score from 0.0 to 1.0:
+
+| Score Range | Status | Action |
+|-------------|--------|--------|
+| 0.80–1.00 | active | No action needed |
+| 0.50–0.79 | stale_warning | Schedule review within 30 days |
+| 0.20–0.49 | critical | Deprecation recommended; revision required |
+| 0.00–0.19 | deprecation | Retirement recommended; replace or remove |
+
+Scoring weights:
+
+| Signal Category | Weight |
+|-----------------|--------|
+| Critical signals | −0.50 each |
+| High signals | −0.15 each |
+| Medium signals | −0.10 each |
+| Low signals | −0.05 each |
+
+Base score: 1.0. Subtract weighted penalties. Floor at 0.0.
+
+## Deprecation Process
+
+1. **Flag** — Add `deprecated: true` to manifest.yaml `crate` section with a reason.
+2. **Grace period** — 30 days during which the crate remains functional but logs a deprecation notice.
+3. **Retirement** — Remove `registry/templates/<name>/` (canonical) and `.agents/skills/<name>/` (companion).
+
+Do not recommend retirement without first recommending deprecation, unless the skill score is 0.00–0.19.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "staleness_report": {
+    "skill_name": "name of audited skill",
+    "signals_detected": [
+      {
+        "signal": "broken_file_references",
+        "severity": "critical|high|medium|low",
+        "detail": "Specific file path that is broken",
+        "penalty": -0.50
+      }
+    ],
+    "total_penalty": -0.50,
+    "raw_score": 0.50
+  },
+  "health_scores": {
+    "skill_name": 0.50,
+    "status": "stale_warning",
+    "action": "Schedule review within 30 days"
+  },
+  "coverage_gaps": [
+    {
+      "gap": "Description of what the skill no longer covers",
+      "reason": "Why coverage was lost"
+    }
+  ],
+  "deprecation_recommendations": [
+    {
+      "skill_name": "name",
+      "action": "deprecate|retire|revise|no_action",
+      "reason": "Why this action is recommended",
+      "grace_period_days": 30
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Every detected signal must include specific evidence (file paths, span names, quote).
+- Do not recommend retirement for skills with score ≥ 0.20 without first recommending deprecation.
+- Do not recommend `no_action` for skills with Critical or High signals.
+- Health scores must be floats in the range 0.0–1.0.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+## PROHIBITION: SKILL.md ≠ Skill Invariant
+
+The canonical artifact of a skill is its FlowDef manifest (.yaml) and its executable templates (.j2).
+The SKILL.md file is a derived companion document — it teaches methodology but is NOT what the
+hKask runtime executes. Editing a SKILL.md does not change the skill's behavior.
+
+Every finding or recommendation you produce MUST cite its source from one of:
+  1. A FlowDef manifest (.yaml) field
+  2. A .j2 template's contract or inference metadata
+  3. A Rust crate's code path (grep-verifiable)
+
+Recommendations based solely on SKILL.md content without manifest/template verification
+MUST be marked with confidence: Hypothesis (Speculative) at maximum.
+Never recommend retirement based on a missing SKILL.md alone — a missing manifest or
+broken template reference is required for retirement recommendation.
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,75 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- plan
+- apply
+- evaluate
+- iterate
+- reflect
+contract:
+  input:
+    context: object
+    learner_profile: object
+    selector_result: object
+  output:
+    analysis: object
+    recommendation: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Starter Kata — PDCA Cycle Drill
+   Practice a full Plan-Do-Check-Act experiment on a trivial measurable
+   process. The process must be trivial — the point is the PDCA pattern,
+   not the outcome. Make a prediction, measure the result, compare. #}
+{# goal: Facilitate the PDCA Cycle Drill: practice the Plan-Do-Check-Act experimentation loop. #}
+
+You are {{ learner_bot }}, practicing the PDCA Cycle Drill.
+
+## What to Practice
+
+Pick a trivial, measurable process. Examples:
+- How many words can you type in 60 seconds?
+- How many times can you sort a list of 20 items in 30 seconds?
+- How many iterations of a simple loop in 10 seconds?
+
+The process must be measurable — you need numbers to compare.
+
+## The PDCA Pattern
+
+**Plan:** State what you will do and predict the measurable outcome.
+**Do:** Execute the plan. Record exactly what happened.
+**Check:** Compare result to prediction. What was the delta?
+**Act:** What will you do differently next time based on this learning?
+
+## Example
+
+Plan: "I'll sort 20-item lists for 30 seconds using bubble sort. I predict
+I'll complete 4 full sorts."
+
+Do: "Ran for 30 seconds. Completed 3 full sorts. Timer shows 30.2s."
+
+Check: "Predicted 4, got 3. Delta: -1. Theory was wrong — bubble sort is
+slower than I estimated."
+
+Act: "Next time, try insertion sort. Also, measure time per sort, not just
+count, to understand where the slowdown occurs."
+
+## State
+
+{% if context %}
+Context: {{ context | tojson }}
+{% endif %}
+
+{% if previous_steps %}
+Prior drill outputs: {{ previous_steps | tojson }}
+{% endif %}
+
+## Output Format
+
+JSON object:
+- plan: what you will do + prediction
+- do: what actually happened, with measurements
+- check: comparison of prediction to result (delta)
+- act: what you will change next time, based on learning
+- learning: what this experiment taught you (not the outcome — the insight)

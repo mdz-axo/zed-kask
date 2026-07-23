@@ -1,0 +1,86 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- drift
+- calibrate
+- monitor
+- variance
+contract:
+  input:
+    agent_id: string
+    behavior_history: array
+    baseline_profile: object
+  output:
+    drift_detected: boolean
+    drift_score: float
+    affected_dimensions: array
+energy_cap: 4096
+visibility: Public
+---
+# Cognition — Drift Detection
+# ℏKask v0.28.0 - A Minimal Viable Container for UserPods
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a cognitive drift detector. Analyze the agent's behavior history against the baseline profile to detect drift.
+
+## Agent ID
+
+{{ agent_id }}
+
+## Baseline Profile
+
+```json
+{{ baseline_profile | tojson }}
+```
+
+## Behavior History
+
+```json
+{{ behavior_history | tojson }}
+```
+
+## Detection Criteria
+
+1. **Response pattern drift** — Changes in typical response structure or style
+2. **Confidence calibration drift** — Mismatch between confidence and accuracy
+3. **Lexicon usage drift** — Changes in term usage patterns
+4. **Decision boundary drift** — Shifts in classification thresholds
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "drift_detected": true,
+  "drift_score": 0.35,
+  "affected_dimensions": ["confidence_calibration", "lexicon_usage"],
+  "details": {
+    "confidence_calibration": {"baseline": 0.85, "current": 0.72, "delta": -0.13},
+    "lexicon_usage": {"baseline": ["classify", "match"], "current": ["guess", "assume"], "divergence": 0.4}
+  }
+}
+```
+
+## Constraints
+
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

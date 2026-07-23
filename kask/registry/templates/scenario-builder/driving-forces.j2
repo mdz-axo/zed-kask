@@ -1,0 +1,142 @@
+{# goal: Map macro-level driving forces (STEEP: society, technology, economy, environment, politics) against an importance-uncertainty matrix to identify critical uncertainties. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- driving
+- macro
+- steep
+- society
+- technology
+- economy
+- environment
+- politics
+- uncertainty
+- matrix
+contract:
+  input:
+    refined_question: string
+    key_forces: array
+  output:
+    driving_forces: array
+    importance_uncertainty_matrix: object
+    critical_uncertainties: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: scenario-builder/driving-forces.j2 #}
+{# Functional Role: KnowAct — Map macro driving forces across STEEP domains #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: driving_forces_analysis #}
+
+[inference]
+temperature = 0.4
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a scenario planning specialist mapping macro driving forces across STEEP domains.
+
+## Refined Focal Question
+
+{{ refined_question }}
+
+## Key Forces (Microenvironment)
+
+{% for force in key_forces %}
+- **{{ force.force }}**: {{ force.description }} (impact: {{ force.impact }}, predictability: {{ force.predictability }})
+{% endfor %}
+
+## STEEP Domains
+
+Map driving forces across these five macro domains:
+
+| Domain | Focus | Examples |
+|--------|-------|---------|
+| **Society** | Demographics, values, lifestyle shifts, social movements | Aging populations, urbanization, remote work |
+| **Technology** | Innovation cycles, disruption potential, adoption curves | AI maturity, quantum computing, biotech breakthroughs |
+| **Economy** | Growth, trade, capital flows, monetary policy | Recession risk, inflation, supply chain restructuring |
+| **Environment** | Climate, resources, natural systems | Carbon regulation, resource scarcity, extreme weather |
+| **Politics** | Governance, regulation, geopolitics, institutions | Trade wars, regulatory shifts, political instability |
+
+## Importance × Uncertainty Matrix
+
+Plot each driving force on a 2D matrix:
+
+```
+Uncertainty
+  ↑
+5 |  [Low importance,    [HIGH importance,
+  |   High uncertainty]   HIGH uncertainty] ← CRITICAL
+4 |                       UNCERTAINTIES
+3 |
+2 |  [Low importance,    [High importance,
+  |   Low uncertainty]    Low uncertainty]
+1 |                       ← PREDICTABLE
+  +----------------------------------→ Importance
+    1    2    3    4    5
+```
+
+The **HIGH-importance, HIGH-uncertainty** quadrant contains the **CRITICAL UNCERTAINTIES** — these become the scenario axes.
+
+## Selection Rules
+
+1. Select the **two most critical uncertainties** as scenario axes.
+2. The two axes must be **independent** — not causally linked. If axis A determines axis B, they're not independent.
+3. Both axes must be **impactful** — they should materially affect the focal question.
+4. Rate each force on **importance (1-5)** and **uncertainty (1-5)**.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "driving_forces": [
+    {
+      "force": "Name of the driving force",
+      "domain": "society|technology|economy|environment|politics",
+      "importance": 4,
+      "uncertainty": 5
+    }
+  ],
+  "importance_uncertainty_matrix": {
+    "high_importance_high_uncertainty": ["force names in this quadrant"],
+    "high_importance_low_uncertainty": ["force names in this quadrant"],
+    "low_importance_high_uncertainty": ["force names in this quadrant"],
+    "low_importance_low_uncertainty": ["force names in this quadrant"]
+  },
+  "critical_uncertainties": [
+    {
+      "force": "First critical uncertainty (scenario axis 1)",
+      "importance": 5,
+      "uncertainty": 5
+    },
+    {
+      "force": "Second critical uncertainty (scenario axis 2)",
+      "importance": 5,
+      "uncertainty": 5
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Exactly two critical uncertainties must be selected.
+- Verify independence: if force A causally determines force B, they cannot both be axes.
+- Every driving force must map to a STEEP domain.
+- Aim for 10-15 driving forces across all five STEEP domains.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

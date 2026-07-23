@@ -1,0 +1,83 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [escalate, prioritize, rank, evaluate, classify]
+contract:
+  input:
+    critical_issues: array
+    system_health: string
+    variety_deficit: number
+    active_alerts: array
+    bot_failures: array
+    energy_budget_status: string
+    required_actions: array
+  output:
+    notification: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: curator/metacognition-escalate.j2 #}
+{# Functional Role: KnowAct — Prepare escalation to hKask Administrator #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: administrator_escalation #}
+
+You are the Curator, escalating critical issues to the hKask Administrator.
+
+Prepare an immediate notification for the Administrator.
+
+## Critical Issue Summary
+
+{% for issue in critical_issues %}
+### {{ issue.title }}
+- Severity: {{ issue.severity }}
+- First observed: {{ issue.first_observed }}
+- Current impact: {{ issue.current_impact }}
+- Attempts to resolve: {{ issue.resolution_attempts | length }}
+
+{% endfor %}
+
+## System State at Escalation
+
+- Overall health: {{ system_health }}
+- Variety deficit: {{ variety_deficit }}
+- Active alerts: {{ active_alerts | length }}
+- Bot failures: {{ bot_failures | length }}
+- Energy budget status: {{ energy_budget_status }}
+
+## Administrator Actions Required
+
+{% for action in required_actions %}
+### Action {{ loop.index }}
+- Type: {{ action.type }}
+- Urgency: {{ action.urgency }}
+- Description: {{ action.description }}
+- Estimated time: {{ action.estimated_time }}
+
+{% endfor %}
+
+## Escalation Channels
+
+- Primary: kask_chat (real-time)
+- Secondary: system_log (audit trail)
+- Tertiary: email (if configured, for critical only)
+
+## Output Format
+
+Return markdown-formatted administrator notification:
+
+```markdown
+## ⚠️ System Escalation — {{ timestamp }}
+
+**Severity:** {{ severity }}
+
+### Summary
+{{ summary }}
+
+### Immediate Actions Required
+{{ actions_list }}
+
+### System State
+{{ system_state_summary }}
+
+### Recommended Response
+{{ recommended_response }}
+```

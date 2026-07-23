@@ -1,0 +1,72 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- recommend
+- prioritize
+- strategize
+- align
+- act
+contract:
+  input:
+    movement_analysis: object
+    current_map: array
+  output:
+    recommendations: array
+    convergence_metric: number
+    rationale: string
+energy_cap: 5120
+visibility: Public
+---
+{# Template: wardley-mapper/synthesize-recommendations.j2 #}
+{# Functional Role: KnowAct — Synthesize strategic recommendations from the map #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 3000
+thinking_budget = "off"
+
+You are a Wardley mapping strategist. Synthesize actionable strategic recommendations from the movement analysis and current map.
+
+## Input — Movement Analysis
+```json
+{{ movement_analysis | tojson }}
+```
+
+## Input — Current Map
+```json
+{{ current_map | tojson }}
+```
+
+## Recommendation Categories
+
+1. **Commoditization targets**: What should stop being built and be bought or open-sourced instead?
+2. **Investment priorities**: What should be built next? Where is the highest-leverage investment?
+3. **Divestment candidates**: What should be stopped or deprecated?
+4. **Ecosystem plays**: What should be opened to complementors or external contributors?
+5. **Alignment check**: Does the strategic direction strengthen or weaken the system's core purpose?
+
+## Rules
+- Every recommendation must trace to a specific component and movement in the analysis.
+- Prioritize by impact (highest first).
+- Be specific — "invest in X" not "invest more."
+- Flag uncertainty — recommendations based on sparse data should be marked lower confidence.
+
+Return JSON only:
+```json
+{
+  "recommendations": [
+    {
+      "category": "commoditize|invest|divest|ecosystem|alignment",
+      "component": "...",
+      "recommendation": "specific actionable recommendation",
+      "priority": "high|medium|low",
+      "confidence": 0.0,
+      "rationale": "why"
+    }
+  ],
+  "convergence_metric": 0.0,
+  "rationale": "coverage and quality assessment of the full map + recommendations"
+}
+```

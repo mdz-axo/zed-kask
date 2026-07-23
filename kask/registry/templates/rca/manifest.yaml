@@ -1,0 +1,52 @@
+# Template crate manifest for rca skill
+# hKask v0.28.0
+
+crate:
+  name: rca
+  version: "0.28.0"
+  description: >
+    Root Cause Analysis toolkit. Defines precise problem statements, performs
+    Ishikawa fishbone and 5-Whys causal chain analysis, and produces
+    corrective action plans with verification steps.
+
+templates:
+  - id: rca/define-problem
+    name: "Define and scope a problem with precise, measurable specification"
+    path: define-problem.j2
+    type: KnowAct
+    lexicon_terms: [analyze, specify, isolate]
+    description: >
+      Define and scope a problem with precise, measurable specification.
+      Distinguishes symptoms from potential causes and assigns severity.
+      First step in the RCA pipeline.
+
+  - id: rca/ishikawa-6m
+    name: "Perform Ishikawa fishbone analysis across the 6M categories: Machine,…"
+    path: ishikawa-6m.j2
+    type: KnowAct
+    lexicon_terms: [analyze, classify, decompose]
+    description: >
+      Perform Ishikawa fishbone analysis across the 6M categories:
+      Machine, Method, Material, Measurement, Man, and Environment.
+      Produces prioritized potential causes. Second step: takes the
+      problem definition and decomposes it into candidate causes.
+
+  - id: rca/five-whys-chain
+    name: "Build 5-Whys causal chains from the prioritized causes produced by…"
+    path: five-whys-chain.j2
+    type: KnowAct
+    lexicon_terms: [trace, analyze, verify]
+    description: >
+      Build 5-Whys causal chains from the prioritized causes produced
+      by ishikawa-6m. Validates each cause path to a confirmed root
+      cause. Third step in the RCA pipeline.
+
+  - id: rca/corrective-action
+    name: "Define corrective actions for validated root causes"
+    path: corrective-action.j2
+    type: KnowAct
+    lexicon_terms: [fix, plan, recommend, verify]
+    description: >
+      Define corrective actions for validated root causes. Produces
+      action items with owners, deadlines, systemic improvements,
+      and a verification plan. Final step in the RCA pipeline.

@@ -1,0 +1,69 @@
+# Template crate manifest for qa-script-builder skill
+# hKask v0.31.0
+
+crate:
+  name: qa-script-builder
+  version: "0.31.0"
+  description: >
+    Design and generate autonomous QA pipeline manifests for the hKask QA system.
+    Walks through a structured persona→discover→design→generate→validate pipeline: generates
+    diverse testing scenarios from persona + goal, maps testing intent to QA system
+    capabilities (run_command, mcp_tool, classify, loop), designs the branching
+    state machine, and produces a valid YAML manifest for `kask qa run-script --script`.
+
+templates:
+  - id: qa-script-builder/qa-persona
+    name: "Generate diverse QA testing scenarios from a user persona and goal"
+    path: qa-persona.j2
+    type: KnowAct
+    lexicon_terms: [persona, scenario, explore, generate, diversify]
+    description: >
+      Generate diverse QA testing scenarios from a user persona and goal.
+      Applies scenario rotation (obvious, shadow, adjacent, inversion,
+      wildcard) and adversarial probing to produce a scenario_set — a family
+      of hardened testing intents that stress-test different MCP servers and central
+      services.
+
+  - id: qa-script-builder/qa-discover
+    name: "Discover the test surface from user intent or persona-generated…"
+    path: qa-discover.j2
+    type: KnowAct
+    lexicon_terms: [discover, map, survey, inventory, analyze]
+    description: >
+      Discover the test surface from user intent or persona-generated scenario:
+      what crate, what failure modes, what existing fuzz coverage, what classifier
+      configs are available, what gas budget applies. Accepts scenario objects from
+      the persona phase for narrowed, persona-aware discovery.
+
+  - id: qa-script-builder/qa-design
+    name: "Design the branching state machine from the discovered test surface"
+    path: qa-design.j2
+    type: KnowAct
+    lexicon_terms: [design, route, branch, structure, topology]
+    description: >
+      Design the branching state machine from the discovered test surface.
+      Produce a step topology (ordinals, actions, branch conditions, terminal
+      states, loop configurations).
+
+  - id: qa-script-builder/qa-generate
+    name: "Generate the complete YAML manifest from the designed step topology"
+    path: qa-generate.j2
+    type: KnowAct
+    lexicon_terms: [generate, produce, emit, format, serialize]
+    description: >
+      Generate the complete YAML manifest from the designed step topology.
+      Include all sections: manifest metadata, gas, steps, error_handling,
+      Regulation, and audit. Supports `caveman` mode for ultra-minimal CI-optimized output
+      (strips descriptions, tight gas caps, minimal branching).
+
+  - id: qa-script-builder/qa-validate
+    name: "Validate a generated manifest against the QaScriptManifest schema"
+    path: qa-validate.j2
+    type: KnowAct
+    lexicon_terms: [validate, check, verify, audit, enforce]
+    description: >
+      Validate a generated manifest against the QaScriptManifest schema.
+      Check branch referential integrity, classifier config existence,
+      gas budget sensibility, orphan steps, and duplicate ordinals. Supports
+      `essentialist` mode for 3-gate deletion test (Exist → Surface → Contract)
+      with constraint-force classified findings.

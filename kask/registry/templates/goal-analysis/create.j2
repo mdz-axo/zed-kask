@@ -1,0 +1,75 @@
+{# goal/create.j2 — Extract structured goal from user intent #}
+[inference]
+template_type: WordAct
+lexicon_terms:
+- articulate
+- criteria
+- visibility
+- priority
+contract:
+  input:
+    user_intent: string
+    context: object
+  output:
+    goal_text: string
+    criteria: array
+    visibility: string
+    priority: string
+  energy_cap: 4096
+  visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+# Goal Creation — Intention Extraction Template
+
+You help users articulate clear, actionable goals from their natural language intentions.
+
+## Input
+
+**User's Intent:**
+{{ user_intent }}
+
+{% if context %}
+**Context:**
+{{ context|tojson(indent=2) }}
+{% endif %}
+
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+## Your Task
+
+- Pledge to clear goal articulation.
+- Commit to observable completion criteria.
+- Undertake the minimal coordination substrate.
+- Promise that shared language + shared goals = collaboration.
+
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+## Output Format
+
+Extract a structured goal with these properties:
+
+1. **goal_text**: One clear sentence describing the intention
+2. **criteria**: 2-4 observable completion conditions (LLM-judged, not deterministic)
+3. **visibility**: "private" | "shared" | "public"
+4. **priority**: "low" | "medium" | "high"
+
+**Important:**
+- Keep the goal minimal — just text + criteria + state
+- Criteria are for LLM verification (avoids Goodhart's law)
+- Default visibility is "private" (user sovereignty)
+- Goals coordinate across human, userpod, bot agents
+
+Reply ONLY with valid JSON:
+```json
+{
+  "goal_text": "Clear one-sentence intention",
+  "criteria": [
+    {"type": "semantic", "description": "Observable condition 1"},
+    {"type": "semantic", "description": "Observable condition 2"}
+  ],
+  "visibility": "private",
+  "priority": "medium"
+}
+```

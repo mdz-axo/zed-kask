@@ -1,0 +1,104 @@
+# Skill Translation Process Manifest
+# ℏKask v0.30.0 — Skill translation as convergent PDCA
+
+manifest:
+  id: skill-translation
+  category: infrastructure
+  name: Skill Translation
+  description: >
+    Convergent translation process for importing external skill definitions
+    into hKask-compatible structures with iterative normalization and
+    convergence-based completion rails.
+  functional_role: flowdef
+  version: 0.30.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_2_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: source_format
+    type: string
+    required: true
+  - name: source_definition
+    type: object
+    required: true
+  - name: target_format
+    type: string
+    required: false
+  - name: mapping_rules
+    type: object
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Translate and normalize source skill definition.
+    renderer: minijinja
+    template_ref: skill-translator/translate-skill
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      source_format: "{{ source_format }}"
+      source_definition: "{{ source_definition }}"
+      target_format: "{{ target_format | default('hkask') }}"
+      mapping_rules: "{{ mapping_rules | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: Compute normalized convergence metric for translation cycle.
+    renderer: minijinja
+    template_ref: skill-translator/translation-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      translation_result: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: loop
+    description: Re-enter translation cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: skill-translator/translate-skill
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: skill-translator/translation-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: skill-translation
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

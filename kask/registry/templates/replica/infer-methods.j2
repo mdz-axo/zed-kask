@@ -1,0 +1,65 @@
+{# model_type: classifier #}
+{# Method Inference for Academic Authors
+   Infers methodological patterns from representative passages of an author's work.
+   Uses LLM to identify recurring stylistic and methodological techniques.
+
+   Inputs:
+   - author_name: string
+   - author_domain: string (e.g., "psychology", "physics", "literature")
+   - sample_passages: array of {text, work_slug} (3-5 representative passages)
+
+   Output: {methods: [{name, description, signal}]}
+
+   Signal thresholds map to the stylometric signals computed by the salience engine:
+   parataxis_ratio, adjective_density, adverb_density, dialogue_ratio,
+   passive_voice_ratio, sentence_length_variance, hedge_density,
+   intensifier_density, concrete_noun_ratio, sensory_word_ratio
+#}
+You are analyzing the methodological and stylistic patterns of academic author {{ author_name }} (domain: {{ author_domain | default("academic") }}).
+
+Given these representative passages from their work, identify 3-5 recurring methodological patterns. For each method, provide:
+
+1. **name**: A short snake_case label (e.g., "experimental_design", "meta_analysis", "quantitative_rigor", "narrative_review")
+2. **description**: One sentence describing the technique
+3. **signal** (optional): If the method manifests in measurable stylometric signals, provide threshold values. Available signals:
+   - parataxis_ratio (0.0-1.0): ratio of coordinate clauses (and/but/or) to subordinate clauses
+   - adjective_density (per 100 words): frequency of adjectives
+   - adverb_density (per 100 words): frequency of adverbs
+   - passive_voice_ratio (0.0-1.0): ratio of passive constructions
+   - sentence_length_variance: standard deviation of sentence lengths
+   - hedge_density (per 100 words): hedging words (might, could, perhaps, suggest, appear)
+   - intensifier_density (per 100 words): intensifying words (very, extremely, highly, strongly)
+   - concrete_noun_ratio (0.0-1.0): ratio of concrete to abstract nouns
+   - sensory_word_ratio (per 100 words): sensory/ perceptual words
+
+   For academic writing, common patterns include:
+   - "empirical_rigor": high passive_voice_ratio (≥0.15), high hedge_density (≥2.0)
+   - "theoretical_density": low concrete_noun_ratio (≤0.40), high sentence_length_variance
+   - "accessible_prose": low passive_voice_ratio (≤0.10), low hedge_density (≤1.5), high concrete_noun_ratio (≥0.55)
+
+Rules:
+- Only include methods you can actually observe in the passages — don't guess.
+- Signal thresholds should be conservative (wider ranges) since you're inferring from samples.
+- If a method has no clear stylometric signature, omit the signal field.
+- Limit to 5 methods maximum.
+
+Sample passages:
+{% for passage in sample_passages %}
+---
+[{{ passage.work_slug }}]
+{{ passage.text | truncate(800) }}
+{% endfor %}
+
+Output as JSON:
+{
+  "methods": [
+    {
+      "name": "method_name",
+      "description": "one sentence",
+      "signal": {
+        "passive_voice_ratio_min": 0.15,
+        "hedge_density_min": 2.0
+      }
+    }
+  ]
+}

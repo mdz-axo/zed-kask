@@ -1,0 +1,43 @@
+{# Template: web/extract-synthesize.j2 #}
+{# Functional Role: KnowAct — Extract content from URLs and synthesize findings using atomic tools #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: web_extract_synthesis #}
+
+Extract and synthesize content from the specified URLs using atomic `web_extract` calls.
+
+## URLs to Extract
+
+{% for url in urls %}
+{{ loop.index }}. {{ url }}
+{% endfor %}
+
+## Instructions
+
+1. For each URL, call `web_extract` with:
+   - url: the URL
+   - format: "markdown"
+   - main_content_only: true
+
+2. After extracting all pages, synthesize the findings into a unified document.
+
+3. If additional context is needed, call `web_search` with strategy "web" to fill gaps.
+
+## Synthesis Guidelines
+
+- Combine information from all sources into a coherent narrative
+- Attribute claims to their source using [source](url) format
+- Resolve contradictions between sources
+- Highlight areas of agreement and disagreement
+- Identify gaps in available information
+
+## Output Format
+
+## Synthesis: {{ title | default('Extracted Content') }}
+
+[Synthesized content with inline citations]
+
+### Sources
+
+{% for url in urls %}
+- {{ url }}
+{% endfor %}

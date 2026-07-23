@@ -1,0 +1,153 @@
+# Cascade Composition Configuration
+# ℏKask v0.21.2 - A Minimal Viable Container for UserPods
+
+manifest:
+  id: cascade-composition
+  category: runtime-config
+  name: Cascade Composition
+  description: >
+    Cascade composition configuration for template execution limits,
+    cycle detection, and template pre/post processing.
+  version: 0.21.2
+  editor: curator-or-human-admin
+  visibility: Public
+
+# Cascade execution limits
+# cascade_limits: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   # Maximum recursion depth (Miller's law: 7 ± 2)
+#   max_depth: 7
+
+#   # Energy budget per cascade level
+#   energy_per_level: 1000
+
+#   # Timeout per cascade level (milliseconds)
+#   timeout_ms: 10000
+
+# Cycle detection configuration
+# cycle_detection: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   enabled: true
+#   algorithm: dfs # depth-first search
+#   max_path_length: 20
+
+#   # Action on cycle detection
+#   on_cycle_detected: error_with_path
+
+# Template cascade configuration
+# template_cascade: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   # Pre-processing templates
+#   pre:
+#     - name: input_validation
+#       templates:
+#         - template/validate_input
+#       condition: "input.requires_validation"
+
+#     - name: context_enrichment
+#       templates:
+#         - template/enrich_context
+#       condition: "context.available"
+
+#   # Core processing templates
+#   core:
+#     - name: main_execution
+#       templates:
+#         - template/render
+#         - template/execute
+#       condition: "capabilities.valid"
+
+#     - name: sub_delegation
+#       templates:
+#         - template/delegate
+#       condition: "delegation.required"
+#       max_sub_depth: 3
+
+#   # Post-processing templates
+#   post:
+#     - name: output_validation
+#       templates:
+#         - template/validate_output
+#       condition: "output.requires_validation"
+
+#     - name: result_caching
+#       templates:
+#         - template/cache_result
+#       condition: "cache.enabled"
+
+# Manifest cascade configuration
+# manifest_cascade: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   # Sub-process delegation
+#   sub_process:
+#     enabled: true
+#     max_depth: 5
+
+#     # Inheritance rules
+#     inheritance:
+#       capabilities: attenuate # pass, attenuate, block
+#       energy: proportional # full, proportional, fixed
+#       context: inherit # inherit, isolate, merge
+
+#   # Parallel execution
+#   parallel:
+#     enabled: true
+#     max_concurrent: 4
+
+#     # Synchronization
+#     sync:
+#       strategy: barrier # barrier, async, ordered
+#       timeout_ms: 30000
+
+# Energy management
+gas:
+  # Budget allocation
+  budget:
+    total_per_cascade: 50000
+    reserve_percent: 10
+
+  # Degradation strategy
+  degradation:
+    at_80_percent: skip_optional_stages
+    at_90_percent: disable_caching
+    at_95_percent: curator_escalation
+
+  # Tracking
+  tracking:
+    emit_reg_spans: true
+    track_per_stage: true
+    log_budget_remaining: false
+
+# Capability attenuation
+# capabilities: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   # Attenuation rules
+#   attenuation:
+#     on_dispatch: decrement_level
+#     max_attenuation_level: 7
+
+#     # Minimum required capabilities
+#     minimum:
+#       - tool:execute
+#       - template:render
+
+#   # Validation
+#   validation:
+#     check_on_each_call: true
+#     cache_validated_duration_ms: 5000
+
+# Regulation feedback
+# reg_feedback: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   # Span emission
+#   spans:
+#     emit_on_stage_start: true
+#     emit_on_stage_complete: true
+#     emit_on_error: true
+
+#   # Variety tracking
+#   variety:
+#     track_template_diversity: true
+#     track_manifest_diversity: true
+#     alert_on_low_variety: true
+#     variety_threshold: 100
+
+#   # Calibration
+#   calibration:
+#     adjust_timeout_on_failure: true
+#     adjust_energy_on_success: true
+#     learning_rate: 0.1

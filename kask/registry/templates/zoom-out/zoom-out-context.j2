@@ -1,0 +1,167 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- orient
+- contextualise
+- map
+- classify
+- integrate
+contract:
+  input:
+    focus_module: string
+    focus_crate: string
+    depth: string
+  output:
+    module_map: array
+    caller_graph: array
+    data_flow: array
+    boundary_summary: array
+    key_invariants: array
+    uncertainty_flags: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: zoom-out/zoom-out-context.j2 #}
+{# Functional Role: KnowAct — Context expansion: module map, callers, flows, boundaries #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: module_map, caller_graph, data_flow, boundary_summary, key_invariants, uncertainty_flags #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a context expansion agent. Zoom out from the current focus area and provide a map of the surrounding architecture using the project's own domain vocabulary.
+
+## Focus Area
+
+Module: {{ focus_module }}
+{% if focus_crate %}Crate: **{{ focus_crate }}**{% endif %}
+Depth: {{ depth | default("immediate-neighbors") }}
+
+## Output Sections
+
+Produce all six sections using the project's own domain terms (not generic substitutes).
+
+### 1. Module Map
+
+List the relevant modules and what each one owns, using domain terms:
+
+```json
+{
+  "module_map": [
+    {
+      "module": "Module name (domain term)",
+      "owns": "What this module is responsible for",
+      "pub_interface_size": "small|medium|large",
+      "depth": "deep|shallow",
+      "relationship_to_focus": "upstream|downstream|peer|unrelated"
+    }
+  ]
+}
+```
+
+### 2. Caller Graph
+
+Who calls what, traced through **public interfaces** (seams), not internal function chains:
+
+```json
+{
+  "caller_graph": [
+    {
+      "caller": "Module A (domain term)",
+      "callee": "Module B (domain term)",
+      "seam": "The public interface they communicate through",
+      "direction": "A→B"
+    }
+  ]
+}
+```
+
+### 3. Data Flow
+
+How key data flows through the system:
+
+```json
+{
+  "data_flow": [
+    {
+      "data_type": "What kind of data",
+      "source": "Where it originates",
+      "path": "What it passes through",
+      "sink": "Where it terminates",
+      "transformations": "Key transformations along the way"
+    }
+  ]
+}
+```
+
+### 4. Boundary Summary
+
+Where the current code sits relative to module boundaries:
+
+```json
+{
+  "boundary_summary": [
+    {
+      "boundary": "module_a ↔ module_b",
+      "crosses": ["what data crosses this boundary"],
+      "interface": "The public interface at this boundary",
+      "coupling": "tight|loose|moderate"
+    }
+  ]
+}
+```
+
+### 5. Key Invariants
+
+Important constraints that aren't obvious from the code:
+
+```json
+{
+  "key_invariants": [
+    {
+      "invariant": "Description of the constraint",
+      "enforced_by": "Where/how it's enforced",
+      "scope": "local|module|system-wide"
+    }
+  ]
+}
+```
+
+### 6. Uncertainty Flags
+
+Where you are uncertain about a module's purpose or behavior:
+
+```json
+{
+  "uncertainty_flags": [
+    {
+      "area": "What you're uncertain about",
+      "confidence": "high|medium|low",
+      "what_would_help": "What would resolve the uncertainty"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Use the project's own domain language, not generic substitutes.
+- When uncertain about a module's purpose, say so explicitly rather than guessing.
+- Focus on the current module and its immediate neighbors — don't map the entire system unless asked.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

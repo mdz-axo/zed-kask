@@ -1,0 +1,96 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [evaluate, converge, classify, verify, assess]
+contract:
+  input:
+    primary_result: object
+    discovery_result: object|null
+    query_result: object|null
+    context_result: object|null
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: codegraph/codegraph-convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute normalized convergence metric for codegraph cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, convergence_method, metric_decomposition, rationale, blockers #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for codegraph. Measure whether the code understanding gathered is sufficiently stable for downstream action.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.25) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }}
+- Baseline quality: {{ _convergence.baseline_quality | default("first pass") }}
+
+## Convergence Method: Coverage Saturation Detection
+- 0.00 = all goal-relevant symbols discovered, traversed, analyzed; context assembled → converged
+- 0.25 = sufficient coverage for the goal, minor gaps remain → converged at threshold
+- 0.50 = significant symbols unexplored, analysis incomplete
+- 1.00 = no meaningful code understanding gathered
+
+## Scoring Guidance
+1. Discovery: were relevant crates and entry symbols identified? → +0.20 if not
+2. Query: do matched symbols cover the goal scope? → +0.20 if major gaps
+3. Traversal: are dependencies and callers mapped for key symbols? → +0.20 if incomplete
+4. Analysis: were complexity, dead code, and impact assessed? → +0.15 if missing
+5. Synthesis: does the analysis directly address the goal? → +0.15 if vague
+6. Context: is the assembled context token-budgeted and ready for downstream use? → +0.10 if not
+7. Start at 1.0, subtract for each satisfied check. Clamp to [0,1].
+
+## Input
+```json
+{{ primary_result | tojson }}
+```
+
+{% if discovery_result %}
+## Discovery Result (Step 1)
+```json
+{{ discovery_result | tojson }}
+```
+{% endif %}
+
+{% if query_result %}
+## Query Result (Step 2)
+```json
+{{ query_result | tojson }}
+```
+{% endif %}
+
+{% if context_result %}
+## Context Result (Step 4)
+```json
+{{ context_result | tojson }}
+```
+{% endif %}
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed coverage saturation — discovery + query + traversal + analysis + synthesis",
+  "metric_decomposition": {
+    "discovery_complete": true,
+    "query_coverage": true,
+    "traversal_complete": true,
+    "analysis_complete": true,
+    "synthesis_actionable": true,
+    "context_assembled": true
+  },
+  "rationale": "short explanation",
+  "blockers": ["specific gap preventing convergence"]
+}
+```

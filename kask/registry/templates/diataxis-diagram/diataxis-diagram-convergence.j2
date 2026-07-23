@@ -1,0 +1,64 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [evaluate, converge, score, verify, calibrate]
+contract:
+  input:
+    evaluation_result: object
+    iteration: integer
+  output:
+    convergence_metric: float
+    converged: boolean
+    iterations_remaining: integer
+    verdict: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: diataxis-diagram/diataxis-diagram-convergence.j2 #}
+{# KnowAct — CONVERGENCE: compute normalized metric from evaluation scores #}
+{# hKask v0.31.0 #}
+{# Threshold 0.15 — same as idiomatic-rust: "maximally correct" #}
+
+[inference]
+temperature = 0.0
+reasoning_effort = "low"
+verbosity = "concise"
+max_tokens = 2048
+thinking_budget = "minimal"
+
+You are a convergence calculator. Compute the normalized convergence metric from the evaluation scores. No reasoning needed — pure arithmetic.
+
+## Evaluation Result
+
+{{ evaluation_result | tojson(indent=2) }}
+
+## Computation
+
+The weighted total is already computed in the evaluation result. This is the convergence metric:
+
+```
+convergence_metric = evaluation_result.weighted_total
+```
+
+## Thresholds
+
+| Metric Range | Verdict |
+|---|---|
+| ≤ 0.15 | **CONVERGED** — diagram is structurally sound and complete |
+| 0.16–0.25 | **NEAR** — minor issues remain; one more iteration should resolve |
+| 0.26–0.50 | **DRIFTING** — significant gaps; refinement directives should target specific weaknesses |
+| > 0.50 | **DIVERGED** — fundamental mismatch; consider re-classifying diagram type |
+
+## Current Iteration
+
+Iteration {{ iteration }} of 3 maximum.
+
+## Output
+
+```json
+{
+  "convergence_metric": 0.000,
+  "converged": true,
+  "iterations_remaining": 2,
+  "verdict": "CONVERGED — diagram meets Diataxis quality threshold (≤ 0.15)."
+}
+```

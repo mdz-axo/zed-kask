@@ -1,0 +1,113 @@
+# Template crate manifest for metacognition skill
+# hKask v0.31.0
+
+crate:
+  name: metacognition
+  version: "0.31.0"
+  description: >
+    General-purpose metacognitive reasoning templates. Decomposes goals into
+    sub-goals, self-assesses progress, calibrates strategy based on prior
+    outcomes and ellipsis findings, computes convergence, detects ellipses
+    (what is missing) via Bloom's method, applies Falstaffian perspective
+    rotation, and improves itself through GEPA evolutionary optimization.
+    Any userpod can use these templates for self-reflection.
+
+templates:
+  # ── Skill flow templates (PDCA step-level prompts) ──
+  - id: metacognition/meta_decompose
+    name: "Decompose a high-level goal into a tree of sub-goals with…"
+    path: meta_decompose.j2
+    type: KnowAct
+    lexicon_terms: [decompose, plan, calibrate, assess]
+    description: >
+      Decompose a high-level goal into a tree of sub-goals with dependencies,
+      select a decomposition strategy, and estimate effort required based on
+      prior outcomes and available tools.
+
+  - id: metacognition/meta-assess
+    name: "Self-assess current state vs"
+    path: meta-assess.j2
+    type: KnowAct
+    lexicon_terms: [assess, evaluate, reflect, diagnose, observe]
+    description: >
+      Self-assess current state vs. target condition. Identifies typed and
+      severity-rated obstacles, estimates progress, and calibrates confidence
+      based on session history and prior outcomes.
+
+  - id: metacognition/ellipsis-analysis
+    name: "Bloom-inspired cognition method for detecting meaning in gaps and…"
+    path: ellipsis-analysis.j2
+    type: KnowAct
+    lexicon_terms: [read, detect, classify, calibrate, analyze]
+    description: >
+      Bloom-inspired cognition method for detecting meaning in gaps and
+      omissions. Differentiates ellipsis (deliberate, meaningful omission)
+      from leak (unintentional information loss). Applies Bloom's five-step
+      method: read deeply, mind the gaps, differentiate ellipsis from leak,
+      see past yourself, find what is not inferno.
+
+  - id: metacognition/meta-calibrate
+    name: "Calibrate strategy, effort estimates, and tool selection based on the…"
+    path: meta-calibrate.j2
+    type: KnowAct
+    lexicon_terms: [calibrate, adjust, adapt, regulate, tune]
+    description: >
+      Calibrate strategy, effort estimates, and tool selection based on the
+      self-assessment, ellipsis findings, and prior outcomes. Applies
+      Falstaffian perspective rotation via the shapes decision tree. Produces
+      a concrete next experiment (PDCA) with hypothesis, action, measurement,
+      and success criteria.
+
+  - id: metacognition/meta-convergence-check
+    name: "Compute normalized convergence metric for metacognition cycles"
+    path: meta-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, assess]
+    description: >
+      Compute normalized convergence metric for metacognition cycles.
+      Outputs `convergence_metric` in [0,1], where 0 means the decomposition,
+      assessment, obstacles, calibration, and next experiment are stable.
+
+  - id: metacognition/meta-gepa-improve
+    name: "GEPA self-improvement step"
+    path: meta-gepa-improve.j2
+    type: KnowAct
+    lexicon_terms: [evolve, improve, sample, reflect, mutate]
+    description: >
+      GEPA self-improvement step. Delegates to the gpa-evolution skill to
+      evolve the metacognition templates through Genetic-Pareto evolutionary
+      optimization. Samples cycle trajectories, reflects in natural language,
+      proposes and tests mutations, and updates the Pareto frontier.
+
+  # ── Falstaffian perspective engine (reference documents) ──
+  # These YAML files are reference analysis documents, not executable .j2
+  # templates. They define the Falstaffian shapes, experience calibration,
+  # and variance analysis that the metacognition skill uses for perspective
+  # rotation. They are registered as type: RenderAct for discovery and
+  # documentation purposes — they are not rendered by minijinja.
+  - id: metacognition/falstaffian-perspective-engine
+    name: "Reference: three-fold structure (shapes, experience, spirit) with…"
+    path: falstaffian-perspective-engine.yaml
+    type: RenderAct
+    lexicon_terms: [rotate, perspective, transform, tension, affirm]
+    description: >
+      Reference: three-fold structure (shapes, experience, spirit) with
+      metacognitive application steps and shape selection decision tree.
+
+  - id: metacognition/falstaffian-shapes
+    name: "Reference: seven semantic graph transformation operators — the…"
+    path: falstaffian-shapes.yaml
+    type: RenderAct
+    lexicon_terms: [shape, transform, rotate, invert, reverse]
+    description: >
+      Reference: seven semantic graph transformation operators — the
+      Falstaffian shapes with input/output structures and tension components.
+
+  - id: metacognition/falstaffian-variance-analysis
+    name: "Reference: three-pass variance calibration with agreement matrix and…"
+    path: falstaffian-variance-analysis.yaml
+    type: RenderAct
+    lexicon_terms: [variance, calibrate, verify, agree, confidence]
+    description: >
+      Reference: three-pass variance calibration with agreement matrix and
+      final taxonomy of core, secondary, and candidate shapes.

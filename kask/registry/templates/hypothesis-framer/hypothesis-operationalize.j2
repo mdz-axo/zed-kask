@@ -1,0 +1,257 @@
+{# goal: Derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, then operationalize into research aims and objectives with alignment verification and feasibility recheck. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- declare
+- predict
+- synthesize
+- design
+- compose
+- plan
+- target
+- measure
+- specify
+- document
+contract:
+  input:
+    structured_question: string
+    pico_elements: object
+    domain: string
+    finer_result: object
+  output:
+    research_hypothesis: string
+    null_hypothesis: string
+    hypothesis_type: string
+    directional: boolean
+    testability_assessment: object
+    primary_aim: object
+    secondary_aims: array
+    alignment_check: object
+    feasibility_recheck: object
+energy_cap: 8192
+visibility: Public
+---
+{# Template: hypothesis-framer/hypothesis-operationalize.j2 #}
+{# Functional Role: KnowAct — Hypothesis formulation + aims/objectives operationalization with alignment verification #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: research_hypothesis, null_hypothesis, hypothesis_type, directional, testability_assessment, primary_aim, secondary_aims, alignment_check, feasibility_recheck #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a research methodology specialist. Your task is to derive a testable hypothesis
+from a PICO-structured question, formulate the null hypothesis, classify the hypothesis
+type, then operationalize it into research aims and objectives — all while verifying
+internal alignment and revisiting feasibility.
+
+This is a single cognitive act: "What do I predict, and how will I test it?"
+
+## Structured Research Question
+{{ structured_question }}
+
+## PICO Elements
+```json
+{{ pico_elements | tojson }}
+```
+
+## Domain
+{{ domain }}
+
+{% if finer_result %}
+## FINER Context
+Overall rating: {{ finer_result.overall_finer_rating | default("not assessed") }}
+Most concerning dimension: {{ finer_result.most_concerning_dimension | default("not assessed") }}
+{% endif %}
+
+---
+
+## Part 1: Hypothesis Formulation
+
+### Step 1: Determine Hypothesis Type
+
+| Type | When to Use | Example |
+|------|-------------|---------|
+| **Difference** | Comparing two groups on a continuous outcome | "Group A will have lower mean X than Group B" |
+| **Association** | Examining relationship between variables | "Higher X will be associated with higher Y" |
+| **Superiority** | Testing if intervention is better than comparison | "Intervention A is superior to B for outcome X" |
+| **Non-inferiority** | Testing if intervention is not worse than comparison | "Intervention A is non-inferior to B within margin δ" |
+| **Equivalence** | Testing if interventions are equivalent within bounds | "Intervention A and B are equivalent within bounds ±δ" |
+| **Diagnostic accuracy** | Comparing diagnostic test to reference standard | "Test A has higher sensitivity than Test B" |
+| **Prognostic** | Predicting outcome from baseline characteristics | "Factor X predicts outcome Y" |
+
+### Step 2: Formulate Research Hypothesis (H₁)
+
+The research hypothesis is a **declarative statement** predicting the expected outcome.
+- References PICO elements explicitly
+- Directional when possible ("will decrease" > "will differ")
+- Falsifiable — must be possible to obtain evidence against it
+
+**Format**: "In [population], [intervention] will [direction] [outcome] compared to [comparison]."
+
+### Step 3: Formulate Null Hypothesis (H₀)
+
+Postulates **no difference or no relationship**. This is what the statistical test evaluates.
+- If findings show statistical significance → **reject H₀**
+- If findings do not show significance → **fail to reject H₀**
+
+**Format**: "In [population], there is no difference in [outcome] between [intervention] and [comparison]."
+
+---
+
+## Part 2: Aims and Objectives
+
+### Primary Aim
+
+Broad, overarching purpose directly linked to the research question.
+- States general intent ("to determine," "to evaluate," "to compare")
+- References PICO elements (population, intervention, outcome)
+- Directly answerable by the hypothesis test
+- Singular — one primary aim
+
+**Format**: "The primary aim of this study is to [verb] [what] in [population]."
+
+### Primary Objectives (2–4 objectives)
+
+Specific, measurable steps that accomplish the primary aim.
+- Concrete, not abstract
+- Measurable — you can tell when accomplished
+- Linked to the primary outcome measure
+- Actionable within the study design
+
+**Format**: "To [verb] [specific action] using [method]."
+
+### Secondary Aims (if any)
+
+Related but distinct questions. Each must have a clear rationale — not "fishing expeditions."
+- May explore subgroups, secondary outcomes, or exploratory analyses
+- Should not distract from the primary aim
+
+---
+
+## Part 3: Testability Assessment
+
+Now that the objectives are specified, assess testability:
+
+1. **Measurable outcome**: Is the primary outcome defined with a validated measurement method?
+2. **Specified population**: Is the population defined well enough to sample?
+3. **Defined comparison**: Is the comparator clear and accessible?
+4. **Statistical framework**: What test would you use? (t-test, chi-square, ANOVA, regression, etc.)
+5. **Effect size**: What magnitude of difference would be clinically meaningful?
+6. **Non-inferiority/equivalence margin (δ)**: If hypothesis_type is `non_inferiority` or `equivalence`, what is the δ margin? Without a defined δ, the hypothesis is not testable.
+7. **Sample size implications**: Does the hypothesis imply a feasible sample size given the objectives?
+
+---
+
+## Part 4: Alignment Check
+
+Verify all elements form a coherent chain:
+
+1. **Question → Hypothesis**: Does the hypothesis directly answer the question?
+2. **Hypothesis → Primary Aim**: Does the primary aim test the hypothesis?
+3. **Primary Aim → Objectives**: Do the objectives operationalize the aim?
+4. **Objectives → PICO Outcome**: Do the objectives measure the stated outcome?
+5. **Hypothesis → Null Hypothesis**: Is the null hypothesis the correct logical negation?
+
+For any misalignment, describe the gap and propose a correction.
+
+---
+
+## Part 5: Feasibility Recheck
+
+Revisit FINER feasibility in light of the operational aims and objectives:
+- **Sample**: Does the study design imply a sample size achievable with available resources?
+- **Methods**: Are the measurement methods specified in the objectives feasible?
+- **Timeline**: Can the study be completed in a reasonable timeframe?
+- **Resources**: Do the objectives require resources beyond what's available?
+
+---
+
+## Output
+
+Respond with a single JSON object:
+
+```json
+{
+  "research_hypothesis": "In [population], [intervention] will [direction] [outcome] compared to [comparison].",
+  "null_hypothesis": "In [population], there is no difference in [outcome] between [intervention] and [comparison].",
+  "hypothesis_type": "difference|association|superiority|non_inferiority|equivalence|diagnostic_accuracy|prognostic",
+  "directional": true,
+  "testability_assessment": {
+    "measurable_outcome": true,
+    "outcome_measurement_method": "...",
+    "specified_population": true,
+    "defined_comparison": true,
+    "suggested_statistical_test": "...",
+    "clinically_meaningful_effect_size": "...",
+    "non_inferiority_margin": "δ value if hypothesis_type is non_inferiority or equivalence, otherwise null",
+    "sample_size_feasibility": "feasible|borderline|infeasible",
+    "overall_testability": "testable|partially_testable|not_testable",
+    "testability_concerns": ["specific concerns if any"]
+  },
+  "primary_aim": {
+    "statement": "The primary aim of this study is to...",
+    "rationale": "Why this aim addresses the research question"
+  },
+  "primary_objectives": [
+    { "objective": "To [verb] [specific action] using [method]", "measures": "What data this produces" }
+  ],
+  "secondary_aims": [
+    {
+      "aim": "A secondary aim is to...",
+      "rationale": "Why this additional aim is valuable",
+      "objectives": [
+        { "objective": "To [verb] [action]", "measures": "What data this produces" }
+      ]
+    }
+  ],
+  "alignment_check": {
+    "question_to_hypothesis": "aligned|partial_misalignment|misaligned",
+    "hypothesis_to_aim": "aligned|partial_misalignment|misaligned",
+    "aim_to_objectives": "aligned|partial_misalignment|misaligned",
+    "objectives_to_outcome": "aligned|partial_misalignment|misaligned",
+    "hypothesis_to_null": "aligned|partial_misalignment|misaligned",
+    "misalignments": [
+      { "gap": "description of misalignment", "correction": "proposed fix" }
+    ],
+    "overall_alignment": "aligned|minor_gaps|significant_gaps"
+  },
+  "feasibility_recheck": {
+    "sample_size_feasible": true,
+    "methods_feasible": true,
+    "timeline_feasible": true,
+    "resources_sufficient": true,
+    "new_concerns": ["any concerns that emerged during aims/objectives development"],
+    "overall_feasibility": "confirmed|new_concerns|blocked"
+  }
+}
+```
+
+## Constraints
+
+- The research hypothesis MUST be a declarative statement, not a question
+- The null hypothesis MUST postulate no difference/no relationship
+- If the PICO comparison is "none" (no comparator), acknowledge the descriptive/pre-post design limitation
+- The hypothesis should NOT be changed post hoc to fit expected data
+- Aims must be broader than objectives — if an aim reads like an objective, it's too specific
+- Objectives must be measurable — "To improve understanding" is not measurable
+- Secondary aims must have clear rationale — avoid "nice to know" add-ons
+- The alignment check must be honest — flag misalignments, don't paper over them
+- The feasibility recheck must acknowledge constraints introduced by specific objectives
+- **Non-inferiority/equivalence margin**: When hypothesis_type is `non_inferiority` or `equivalence`, you MUST specify a `non_inferiority_margin` (δ) in the testability_assessment. If δ is not defined, the hypothesis is not testable — flag this in testability_concerns.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

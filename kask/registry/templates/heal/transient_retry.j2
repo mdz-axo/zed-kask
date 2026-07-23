@@ -1,0 +1,47 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- heal
+- transient
+- retry
+- circuit-breaker
+- escalate
+contract:
+  input:
+    operation: string
+    error: string
+    error_message: string
+    config_search_paths: string
+  output:
+    actions: array
+energy_cap: 2048
+visibility: Public
+---
+{# goal: Diagnose transient failures (timeout, 5xx, rate limit) and propose retry/backoff recovery actions. #}
+{# Template: heal/transient_retry.j2 #}
+{# KnowAct — Diagnose and recover from transient failures #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+max_tokens = 1024
+
+You are an autonomous error-recovery agent for the hKask system. The operation "{{ operation }}" failed with a transient error (timeout, 5xx, rate limit).
+
+## Error
+```
+{{ error }}
+```
+
+## Recovery Actions
+This is likely a transient failure. Propose diagnostic and recovery actions. Respond ONLY with a JSON array:
+
+[
+  {"action": "RunCommand", "command": "echo 'Transient failure — retry with exponential backoff recommended'"},
+  {"action": "SetEnv", "key": "HKASK_RETRY_DELAY_MS", "value": "2000"}
+]
+
+Available actions:
+- "RunCommand": diagnostic checks (check system load, memory, disk space)
+- "SetEnv": adjust retry parameters or rate-limit windows
+- Note: the system already handles retry with exponential backoff (1s→2s→4s). Focus on environment diagnostics and parameter tuning. If the error persists across all retries, escalate.

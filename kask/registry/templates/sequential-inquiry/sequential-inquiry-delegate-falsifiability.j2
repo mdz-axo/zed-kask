@@ -1,0 +1,91 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- delegate
+- falsify
+- eliminate
+- counterfactual
+- corroborate
+contract:
+  input:
+    delegation_requests: array
+  output:
+    invoked: boolean
+    skill: string
+    result: object|null
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# goal: When the inquiry engine branches on a counterfactual or needs to rule out the untestable, apply the falsifiability elimination engine. #}
+{# Template: sequential-inquiry/sequential-inquiry-delegate-falsifiability.j2 #}
+{# KnowAct — Falsifiability delegate for sequential inquiry #}
+{# ℏKask v0.31.0 #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+## Delegation Requests
+
+```json
+{{ delegation_requests | tojson }}
+```
+
+Examine the array. Find ALL requests where `skill` equals `"falsifiability"`. Process every matching request.
+
+**If none:** Return `{"invoked": false, "skill": "falsifiability", "result": null, "rationale": "No falsifiability request."}`
+
+**If found:** For EACH matching request, apply the eliminative inference engine to `params.target` (the claim, question, or causal hypothesis under analysis). If multiple requests, return results as an array under `result`.
+
+The engine runs in fixed stage order. Do not skip stages; each stage's output is the next stage's input.
+
+1. **Admit (Popper gate)** — test whether `params.target` is testable at all. State the concrete observation that would contradict it. Rule out tautologies, pure OUGHTs, and unfalsifiable-by-construction claims; record the reason. If the target is inadmissible and cannot be refined to a testable form, return early with `verdict: inadmissible` and stop.
+2. **Hypothesize (Chamberlin)** — generate 3–7 candidate explanations with forced diversity. Each carried hypothesis must state a Platt-form prediction ("if X, then observation Y under condition Z") and a falsifier. Discard vibes at generation.
+3. **Counterfactual (Pearl/Halpern)** — for each surviving hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
+4. **Discriminate (Platt)** — design tests that rule out at least one hypothesis (not one-test-per-hypothesis). Build the coverage matrix; flag hypothesis pairs no available test can separate as irreducible.
+5. **Eliminate** — apply whatever evidence/observations are available in `params.observations` (if any). A hypothesis whose prediction is contradicted is eliminated (hard, not down-weighted). Survivors are corroborated, never confirmed. If no observations are provided, return the discriminating-test design and mark `verdict: tests_pending` — the host engine or user must run the tests before a verdict can be reached.
+
+### Output
+```json
+{
+  "invoked": true,
+  "skill": "falsifiability",
+  "result": {
+    "admitted_target": "the target as admitted, or the refined reformulation",
+    "admissibility": {
+      "ontological_mode": "IS|OUGHT",
+      "epistemic_mode": "declarative|probabilistic|subjunctive",
+      "falsifying_observation": "the concrete observation that would contradict the target"
+    },
+    "hypotheses": [
+      {"rank": 1, "hypothesis": "...", "prediction": "if X then Y under Z", "falsifier": "..."}
+    ],
+    "counterfactuals": [
+      {"hypothesis_rank": 1, "do_intervention": "do(not X)", "testable_consequence": "...", "irreducible": false}
+    ],
+    "discriminating_tests": [
+      {"test": "...", "falsifies": [1, 3], "elimination_power": 2}
+    ],
+    "verdict": "one_corroborated_survivor|multiple_corroborated|none_corroborated|nothing_eliminated|inadmissible|tests_pending",
+    "eliminated": [],
+    "corroborated": [],
+    "survived_by_default": [],
+    "falsification_log": []
+  },
+  "rationale": "What this elimination contributed to the reasoning chain"
+}
+```
+
+### Constraints
+
+- Stage order is fixed: admit → hypothesize → counterfactual → discriminate → eliminate. Do not eliminate a hypothesis that was not first admitted as falsifiable.
+- Corroborated is not confirmed. Never use "proven"; use "survived" / "withstood" / "corroborated."
+- Elimination is hard, not probabilistic — down-weighting is superforecasting's concern, not this delegate's.
+- A discriminating test must be able to rule out at least one hypothesis; a confirm-the-favorite test is not discriminating.
+- If no observations are provided, do not fabricate a verdict — return `tests_pending` with the test design.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).

@@ -1,0 +1,32 @@
+# Media Gallery — Style Classification Manifest
+# Classifies an image's photographic style, genre, and era using a vision LLM.
+
+template_type: WordAct
+name: media_classify_style
+version: "1.0.0"
+description: "Classify image style: photographic style, genre, era"
+model_type: classifier
+parameters:
+  - name: categories
+    type: string
+    required: false
+    description: "Comma-separated category names. If empty, auto-discover."
+---
+Analyze this image and classify its photographic style.
+
+{% if categories %}
+Classify into these categories (an image can belong to multiple): {{ categories }}
+{% else %}
+Evaluate these dimensions:
+- Genre: portrait, landscape, street, macro, architecture, documentary, abstract, still life, wildlife, fashion, food, sports, aerial, underwater, astrophotography
+- Era/Style: contemporary, vintage, film-grain, HDR, minimalist, maximalist, surreal, photorealistic, painterly, noir, pastel, neon, grunge
+- Technique: long exposure, bokeh, tilt-shift, double exposure, infrared, black-and-white, sepia, cross-processed
+{% endif %}
+
+For each matching category, provide:
+- category: string
+- confidence: number (0.0 to 1.0)
+
+Return ONLY a JSON array. No markdown, no preamble. Each element must have:
+- category: string
+- confidence: number

@@ -1,0 +1,49 @@
+{# model_type: classifier #}
+{# Concept Extraction from Academic Metadata
+   Extracts key concepts, places, and events from paper metadata
+   (titles, abstracts, author keywords) with LLM semantic deduplication.
+
+   Inputs:
+   - author_name: string
+   - papers: array of {title, abstract, year, source}
+   - max_concepts: integer (default 15)
+
+   Output: {concepts: [{name, appears_in}], places: [{name}], events: [{name}]}
+#}
+You are analyzing the academic work of {{ author_name }}. Given the following paper titles and abstracts, extract:
+
+1. **Concepts**: Key ideas, theories, phenomena, and frameworks that recur across their work. These are the intellectual building blocks of their research program. Examples for a psychologist: "cognitive bias", "metacognition", "self-assessment", "overconfidence".
+
+2. **Places**: Institutions, labs, universities, or locations associated with their work. Examples: "Cornell University", "University of Michigan".
+
+3. **Events**: Named studies, experiments, or landmark findings. Examples: "Dunning-Kruger effect discovery", "1999 JPSP study".
+
+Rules:
+- Deduplicate semantically: "DK effect" and "Dunning-Kruger effect" are the same concept — use the most formal/precise name.
+- Prefer specific terms over generic ones: "illusory superiority" over "bias".
+- Limit to {{ max_concepts | default(15) }} concepts total.
+- Only include concepts that appear in at least 2 papers (recurring themes, not one-off mentions).
+- For places, extract institution names from author affiliations and paper acknowledgments.
+
+Papers:
+{% for paper in papers %}
+---
+Title: {{ paper.title }}
+{% if paper.abstract %}
+Abstract: {{ paper.abstract | truncate(500) }}
+{% endif %}
+Year: {{ paper.year | default("unknown") }}
+{% endfor %}
+
+Output as JSON:
+{
+  "concepts": [
+    {"name": "concept name", "appears_in": ["slug1", "slug2"]}
+  ],
+  "places": [
+    {"name": "institution name"}
+  ],
+  "events": [
+    {"name": "event description"}
+  ]
+}

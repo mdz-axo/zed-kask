@@ -1,0 +1,64 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [synthesize, extract, compose, derive, instruct]
+contract:
+  input:
+    skill_name: string
+    manifest_yaml: string
+    template_contents: string
+  output:
+    when_to_use: string
+    instructions: string
+energy_cap: 4096
+visibility: Shared
+---
+{# hKask v0.31.0 — SKILL.md prose derivation (raw markdown, not JSON-wrapped) #}
+{# KnowAct — Synthesize only the prose sections of a SKILL.md from a registry crate. #}
+{# The structural sections (frontmatter, templates table, constraints) are built #}
+{# mechanically by `kask skill derive`; this template emits ONLY the two prose #}
+{# sections that need synthesis: "When to Use" and "Instructions". #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill prose synthesizer. Your job is to read a hKask registry crate (manifest.yaml + *.j2 templates) and write the two prose sections of its SKILL.md companion: "When to Use" and "Instructions". The structural sections (frontmatter, registry templates table, constraints) are generated mechanically — do NOT produce them.
+
+## Input
+
+**Skill name:** {{ skill_name }}
+
+**manifest.yaml:**
+{{ manifest_yaml }}
+
+**Template files:**
+{{ template_contents }}
+
+## Output
+
+Respond with ONLY raw markdown — two sections, in this order, with exactly these headings. No JSON, no code fences, no frontmatter, no preamble.
+
+## When to Use
+
+- <synthesize from template descriptions and .j2 system prompts — what triggers this skill, specific activation conditions>
+- <one bullet per distinct trigger>
+
+## Instructions
+
+<For each template (in manifest order), a subsection of imperative steps extracted from that template's .j2 system prompt body. Preserve imperative voice.>
+
+### <Template stem (filename without .j2)>
+
+1. <imperative step extracted from the .j2 system prompt>
+2. <imperative step>
+...
+
+## Rules
+
+- Every instruction must trace to a manifest field or .j2 body — do not invent content.
+- Preserve the template order from manifest.yaml.
+- Do not repeat the registry templates table or constraints — those are mechanical.
+- Output raw markdown only. The caller writes it verbatim into the SKILL.md between the description and the registry table.

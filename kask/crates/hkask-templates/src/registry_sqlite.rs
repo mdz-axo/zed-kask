@@ -9,7 +9,7 @@
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleRegistryIndex;
 use crate::ports::{Result, TemplateError};
-use hkask_types::storage::{query_map, query_optional, DbValue, StorageDriver};
+use hkask_types::storage::{query_map, query_row, DbRow, DbValue, StorageDriver};
 use hkask_types::SkillPolarity;
 use hkask_types::template_type::TemplateType;
 use hkask_types::{InfrastructureError, NotFound, Visibility};
@@ -38,25 +38,26 @@ fn db_err(ctx: &str, e: hkask_types::DbError) -> TemplateError {
     TemplateError::Database(InfrastructureError::database(format!("{ctx}: {e}")))
 }
 
-/// Read an optional text column (NULL → None).
-fn opt_text(row: &hkask_types::storage::DbRow, idx: usize) -> Result<Option<String>> {
+/// Read an optional text column (NULL → None). Returns `DbError` so it can be
+/// used inside `query_map`/`query_row` closures (which are bound to `DbError`).
+fn opt_text(row: &DbRow, idx: usize) -> std::result::Result<Option<String>, hkask_types::DbError> {
     match row.get(idx) {
-        Ok(hkask_types::storage::DbValue::Null) => Ok(None),
-        Ok(hkask_types::storage::DbValue::Text(s)) => Ok(Some(s.clone())),
-        Ok(other) => Err(db_err(
-            "opt_text",
-            hkask_types::DbError::Database(format!("expected text or null, got {:?}", other)),
-        )),
-        Err(e) => Err(db_err("opt_text", e)),
+        Ok(DbValue::Null) => Ok(None),
+        Ok(DbValue::Text(s)) => Ok(Some(s.clone())),
+        Ok(other) => Err(hkask_types::DbError::Database(format!(
+            "expected text or null, got {:?}",
+            other
+        ))),
+        Err(e) => Err(e),
     }
 }
 
 /// Parse a `DbRow` (templates table order) into a `TemplateRow`.
-fn parse_template_row(row: &hkask_types::storage::DbRow) -> Result<TemplateRow> {
+fn parse_template_row(row: &DbRow) -> std::result::Result<TemplateRow, hkask_types::DbError> {
     let id = row.get_str(0)?.to_string();
     let tt_str = row.get_str(1)?.to_string();
     let tt = TemplateType::parse_str(&tt_str).ok_or_else(|| {
-        TemplateError::Validation(format!("Unknown template type: {}", tt_str))
+        hkask_types::DbError::Database(format!("Unknown template type: {}", tt_str))
     })?;
     Ok((
         id,
@@ -75,7 +76,11 @@ fn query_column(driver: &dyn StorageDriver, sql: &str, id: &str) -> Result<Vec<S
         .query(sql, &[DbValue::Text(id.to_string())])
         .map_err(|e| db_err("Query", e))?;
     rows.iter()
-        .map(|r| r.get_str(0).map(String::from).map_err(|e| db_err("Column", e)))
+        .map(|r| {
+            r.get_str(0)
+                .map(String::from)
+                .map_err(|e| db_err("Column", e))
+        })
         .collect()
 }
 
@@ -232,19 +237,14 @@ impl SqliteRegistry {
     /// post: returns RegistryEntry if found
     /// post: returns Err(NotFound) if not found
     pub fn get_entry(&self, id: &str) -> Result<RegistryEntry> {
-        let row = query_optional(
-            &*self.driver,
-            Self::_T_SELECT,
-            &[DbValue::Text(id.to_string())],
-            parse_template_row,
-        )
-        .map_err(|e| db_err("Prepare/Query", e))?
-        .ok_or_else(|| TemplateError::NotFound(NotFound {
-            entity_type: "template".to_string(),
-            id: format!("Template '{}'", id),
-        }))?;
+        let row = query_row(&*self.driver, Self::_T_SELECT, &[DbValue::Text(id.to_string())], parse_template_row)
+            .map_err(|e| db_err("Prepare/Query", e))?
+            .ok_or_else(|| TemplateError::NotFound(NotFound {
+                entity_type: "template".to_string(),
+                id: format!("Template '{}'", id),
+            }))?;
         Self::row_to_entry(
-            &self.driver,
+            &*self.driver,
             &row.0,
             row.1,
             row.2,
@@ -300,7 +300,7 @@ impl SqliteRegistry {
         let mut results = Vec::new();
         for (id, tt, name, desc, sp, cl, ml) in rows {
             results.push(Self::row_to_entry(
-                &self.driver,
+                &*self.driver,
                 &id,
                 tt,
                 name,
@@ -320,7 +320,7 @@ impl SqliteRegistry {
     /// post: returns count of templates in registry
     /// post: returns 0 on error (graceful degradation)
     pub fn count(&self) -> usize {
-        query_optional(
+        query_row(
             &*self.driver,
             "SELECT COUNT(*) FROM templates",
             &[],
@@ -338,13 +338,11 @@ impl SqliteRegistry {
 
 impl RegistryIndex for SqliteRegistry {
     fn list(&self, domain_hint: Option<TemplateType>) -> Vec<RegistryEntry> {
+        let base_sql = "SELECT id, template_type, name, description, source_path, cascade_level, matroshka_limit FROM templates";
         let (sql, params): (&str, Vec<DbValue>) = match &domain_hint {
-            None => (
-                "SELECT id, template_type, name, description, source_path, cascade_level, matroshka_limit FROM templates",
-                vec![],
-            ),
+            None => (base_sql, vec![]),
             Some(tt) => (
-                "SELECT id, template_type, name, description, source_path, cascade_level, matroshka_limit FROM templates WHERE template_type = ?1",
+                &format!("{base_sql} WHERE template_type = ?1"),
                 vec![DbValue::Text(tt.as_str().to_string())],
             ),
         };
@@ -354,23 +352,20 @@ impl RegistryIndex for SqliteRegistry {
         };
         let mut results = Vec::new();
         for (id, tt, name, desc, sp, cl, ml) in rows {
-            if let Ok(entry) = Self::row_to_entry(&self.driver, &id, tt, name, desc, sp, cl, ml) {
+            if let Ok(entry) = Self::row_to_entry(&*self.driver, &id, tt, name, desc, sp, cl, ml) {
                 results.push(entry);
             }
         }
         results
     }
 
-    fn get(&self, id: &str) -> Option<RegistryEntry> {
-        self.get_entry(id).ok()
-    }
-
-    fn search(&self, term: &str) -> Vec<RegistryEntry> {
-        self.search_by_lexicon(term).unwrap_or_default()
-    }
-
-    fn remove(&mut self, id: &str) -> Option<RegistryEntry> {
-        self.delete_entry(id)
+    fn get(&self, id: &str) -> std::result::Result<RegistryEntry, RegistryError> {
+        self.get_entry(id).map_err(|e| {
+            RegistryError::NotFound(NotFound {
+                entity_type: "template".to_string(),
+                id: format!("Template '{}': {}", id, e),
+            })
+        })
     }
 }
 
@@ -485,7 +480,7 @@ impl BundleRegistryIndex for SqliteRegistry {
     }
 
     fn get_bundle(&self, id: &str) -> Option<BundleManifest> {
-        query_optional(
+        query_row(
             &*self.driver,
             "SELECT manifest_json FROM bundles WHERE id = ?1",
             &[DbValue::Text(id.to_string())],
@@ -593,7 +588,7 @@ impl SqliteRegistry {
     /// pre:  id is non-empty
     /// post: returns Some(Skill) if found, None otherwise
     pub fn get_skill_owned(&self, id: &str) -> Option<Skill> {
-        let row = query_optional(
+        let row = query_row(
             &*self.driver,
             "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace FROM skills WHERE id = ?1",
             &[DbValue::Text(id.to_string())],

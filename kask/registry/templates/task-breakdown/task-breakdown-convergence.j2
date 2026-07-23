@@ -1,0 +1,101 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- score
+- verify
+- calibrate
+contract:
+  input:
+    evaluation_result: object
+    iteration: integer
+    prior_metric: number
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+    materiality_guard: boolean
+energy_cap: 2048
+visibility: Public
+---
+{# Template: task-breakdown/task-breakdown-convergence.j2 #}
+{# Functional Role: KnowAct — convergence check #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+{# goal: Compute normalized convergence metric for task-breakdown cycles. #}
+{#
+  Group: B (Analysis/Diagnosis)
+  Convergence method: LLM-assessed saturation detection
+  Measures: Plan stability and completeness.
+    Convergence = the plan stops changing between iterations AND passes the
+    red-flag/verification checklist.
+    Threshold 0.15 — same band as diataxis-diagram / idiomatic-rust ("maximally correct").
+#}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for task-breakdown. Measure whether the plan is stable and complete.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }}
+- Baseline quality: {{ _convergence.baseline_quality | default("first pass") }}
+- Prior metric: {{ prior_metric | default(null) }}
+
+## Convergence Method: Saturation Detection
+- 0.00 = plan complete: all tasks <=M, vertical slices, specific ACs, ordered, checkpointed, zero red flags
+- 0.15 = plan mostly stable, minor sizing/ordering issues remain -> converged at threshold
+- 0.50 = horizontal slicing present, vague ACs, or missing checkpoints
+- 1.00 = no coherent plan, tasks unordered, all XL
+
+## Scoring Guidance
+1. Sizing: any L+/XL task un-decomposed -> +0.25
+2. Vertical-slice integrity: horizontal layers present -> +0.20
+3. AC specificity: any task with >3 AC bullets or "implement the feature" -> +0.20
+4. Dependency ordering: a task precedes its dependency -> +0.15
+5. Checkpoints: missing between major phases -> +0.10
+6. Red flags: any red flag present (no verification, "and" in title, >5 files) -> +0.10
+7. Start at 0.0, add per violation. Clamp to [0,1].
+
+## Input
+```json
+{{ evaluation_result | tojson }}
+```
+
+## Materiality Guard (vacuous-iteration detection)
+
+If `prior_metric` is not null (iteration 2+), compare it to this iteration's metric:
+- If |metric - prior_metric| < 0.02 AND the plan is unchanged from the prior iteration
+  (same tasks, sizes, order — no new refinement applied), the plan is stable but not
+  progressing — force convergence_metric to 0.0 (converged at the achievable ceiling) and
+  set `materiality_guard: true`. This prevents the PDCA loop from spinning on a
+  stable-but-imperfect plan; the residual gap is taste, not a fixable defect.
+- Otherwise set `materiality_guard: false` and report the computed metric.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection + materiality guard (independent gate input)",
+  "materiality_guard": false,
+  "metric_decomposition": {
+    "sizing_ok": true,
+    "vertical_slices": true,
+    "ac_specific": true,
+    "dependency_order_correct": true,
+    "checkpoints_present": true,
+    "red_flags_absent": true
+  },
+  "rationale": "short explanation",
+  "blockers": ["specific gap preventing convergence"]
+}
+```

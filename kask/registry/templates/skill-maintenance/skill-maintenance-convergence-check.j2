@@ -1,0 +1,74 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- score
+- verify
+contract:
+  input:
+    audit_result: object
+    coverage_result: object|null
+  output:
+    convergence_metric: number
+    rationale: string
+    unresolved_critical_signals: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: skill-maintenance/skill-maintenance-convergence-check.j2 #}
+{# goal: Compute a normalized convergence metric in [0,1] for maintenance PDCA cycles, where 0 means critical staleness signals are resolved. #}
+{# Uses formula, not weighted dimensions — check-convergence-weights.sh skips this. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for skill-maintenance.
+
+## Inputs
+
+Audit result:
+```json
+{{ audit_result | tojson }}
+```
+Coverage result:
+```json
+{{ coverage_result | tojson }}
+```
+
+Compute `convergence_metric` in [0,1]:
+- 0.00 = converged (no critical/high unresolved staleness issues)
+- 1.00 = not converged (critical issues remain)
+
+Scoring guidance:
+1. Start at 1.0.
+2. If critical signals detected, keep metric >= 0.7.
+3. If only medium/low findings remain, set metric in [0.2, 0.6].
+4. If no critical/high and coverage gaps are bounded, metric <= 0.1.
+5. Clamp to [0,1].
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means critical staleness signals are resolved.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (critical staleness signals are resolved). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": [],
+  "unresolved_critical_signals": ["..."]
+}
+```

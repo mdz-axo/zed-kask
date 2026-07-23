@@ -1,0 +1,58 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    ranking_result: object
+    sensitivity_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: mcda/mcda-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for MCDA cycles. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1000
+thinking_budget = "off"
+
+Compute convergence where 0 means ranking confidence is high and sensitivity analysis shows acceptable robustness.
+
+Input:
+```json
+{
+  "ranking_result": {{ ranking_result | tojson }},
+  "sensitivity_result": {{ sensitivity_result | tojson }}
+}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means ranking confidence is high and sensitivity analysis shows acceptable robustness.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (ranking confidence is high and sensitivity analysis shows acceptable robustness). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

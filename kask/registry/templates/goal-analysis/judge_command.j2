@@ -1,0 +1,80 @@
+[inference]
+template_type: KnowAct
+functional_role: KnowAct
+implementation_type: jinja2
+lexicon_terms: [assert, command]
+energy_cap: 4096
+visibility: Public
+contract:
+  input:
+    completion_criteria: array
+    command_results: array
+  output:
+    verdict: "done|continue|blocked"
+    reason: string
+    failed_criteria: array
+
+---
+{# Template: goal-analysis/judge_command.j2 #}
+{# Functional Role: KnowAct — assertion via command execution #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: verdict, reason, failed_criteria #}
+
+{% set all_passed = true %}
+{% set failed = [] %}
+
+{% for criterion in completion_criteria %}
+{% if criterion.type == "command" %}
+## Criterion {{ loop.index }}: Command Check
+
+**Command:** `{{ criterion.command }}`
+**Expected Exit Code:** {{ criterion.expected_exit_code }}
+**Actual Result:** {{ command_results[loop.index0].exit_code if command_results[loop.index0] else "N/A" }}
+
+{% if command_results[loop.index0] and command_results[loop.index0].exit_code == criterion.expected_exit_code %}
+✅ **PASSED**
+{% else %}
+❌ **FAILED**
+{% set all_passed = false %}
+{% set failed = failed.append(loop.index) %}
+{% endif %}
+
+{% elif criterion.type == "state" %}
+## Criterion {{ loop.index }}: State Check
+
+**Check:** `{{ criterion.check }}`
+**Expected Pattern:** `{{ criterion.expected_pattern }}`
+**Actual Output:** {{ command_results[loop.index0].stdout if command_results[loop.index0] else "N/A" }}
+
+{% if command_results[loop.index0] and criterion.expected_pattern in command_results[loop.index0].stdout %}
+✅ **PASSED**
+{% else %}
+❌ **FAILED**
+{% set all_passed = false %}
+{% set failed = failed.append(loop.index) %}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+## Verdict
+
+{% if all_passed %}
+```json
+{
+  "verdict": "done",
+  "reason": "All {{ completion_criteria|length }} criteria passed",
+  "failed_criteria": []
+}
+```
+{% else %}
+```json
+{
+  "verdict": "continue",
+  "reason": "{{ failed|length }} of {{ completion_criteria|length }} criteria failed",
+  "failed_criteria": {{ failed|tojson }}
+}
+```
+{% endif %}

@@ -1,0 +1,53 @@
+{# Template: web/search-deep.j2 #}
+{# Functional Role: KnowAct — Deep multi-provider search with RRF fusion and extraction #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: web_search_deep #}
+
+Perform a deep web research search using atomic tools in sequence.
+
+## Query
+
+{{ query }}
+
+## Phase 1: Compound Search
+
+1. Call `web_search` with:
+   - query: "{{ query }}"
+   - strategy: "deep"
+   - num_results: {{ num_results | default(10) }}
+
+   This searches all providers simultaneously, fuses results with RRF (k=60), and reranks by recency, semantic score, and content quality.
+
+## Phase 2: Find Similar (if Exa is configured)
+
+2. If the top result is relevant, call `web_find_similar` with:
+   - url: the URL of the top result
+   - num_results: {{ breadth | default(5) }}
+
+   This finds pages similar to the top result, expanding coverage semantically.
+
+## Phase 3: Extract Content
+
+3. For the top {{ max_extract | default(5) }} results, call `web_extract` with:
+   - url: each result URL
+   - format: "markdown"
+   - main_content_only: true
+
+## Phase 4: Iterate (if depth > 0)
+
+4. Use `related_questions` from Phase 1 results. For each question, call `web_search` with:
+   - query: the related question
+   - strategy: "quick"
+   - num_results: 3
+
+## Phase 5: Synthesize
+
+5. Combine all findings into a structured answer with citations.
+
+## Output Format
+
+Provide a comprehensive answer with:
+- Key findings synthesized from multiple sources
+- Direct quotes with [source](url) citations
+- Comparison or analysis where appropriate
+- List of all sources referenced

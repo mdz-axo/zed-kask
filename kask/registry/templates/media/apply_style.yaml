@@ -1,0 +1,34 @@
+# Media Derivation — Style Transfer FlowDef
+# Routes to fal.ai Flux dev img2img or DeepInfra Qwen Image Edit.
+
+template_type: FlowDef
+name: media_apply_style
+version: "1.0.0"
+description: "Apply style transfer to an image"
+primary_model: "fal-ai/flux/dev/image-to-image"
+fallback_model: "DI/Qwen/Qwen-Image-Edit"
+parameters:
+  - name: image_url
+    type: string
+    required: true
+    description: "URL or base64 data URI of the source image"
+  - name: style_prompt
+    type: string
+    required: true
+    description: "Text description of the desired style"
+  - name: strength
+    type: float
+    required: false
+    default: 0.75
+    description: "Style transfer strength (0.0 = original, 1.0 = full transform)"
+input_type: image_url
+output_type: image_blob
+latency: sync
+cost_tier: medium
+---
+# Style Transfer Pipeline
+# Step 1: Validate image_url
+# Step 2: Build request body with prompt + image_url + strength
+# Step 3: POST to primary model endpoint
+# Step 4: If primary fails, fallback to secondary
+# Step 5: Return image blob

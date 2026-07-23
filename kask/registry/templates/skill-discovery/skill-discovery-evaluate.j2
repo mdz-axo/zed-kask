@@ -1,0 +1,147 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- validate
+- verify
+- classify
+- discriminate
+contract:
+  input:
+    candidate_skill_content: string
+  output:
+    format_validation: object
+    quality_evaluation: object
+    safety_evaluation: object
+    overall_score: number
+    recommendation: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-discovery/skill-discovery-evaluate.j2 #}
+{# goal: Evaluate a candidate skill for quality, contract validity, and fitness for the described capability gap. #}
+{# KnowAct — Candidate skill evaluation against quality/safety/format criteria #}
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill quality evaluator. Your job is to evaluate a candidate skill against format, quality, and safety criteria. Produce a scored recommendation that determines whether the skill should be installed, revised, or rejected.
+
+## Candidate Skill Content
+
+```
+{{ candidate_skill_content }}
+```
+
+## Evaluation Criteria
+
+### 1. Format Validation
+
+Check that the skill follows hKask SKILL.md format conventions:
+
+| Check | Pass Criteria |
+|-------|---------------|
+| YAML frontmatter present | `---` delimiters with `name`, `description` fields |
+| Name is valid | Lowercase, hyphenated, no spaces, 2-40 chars |
+| Description is specific | Not generic; describes what the skill does uniquely |
+| No deprecated markers | No `todo!`, `unimplemented!`, `#[deprecated]` |
+
+### 2. Quality Evaluation
+
+Assess the skill's instruction quality:
+
+| Check | Pass Criteria |
+|-------|---------------|
+| Instructions are imperative | Steps are commands ("Do X"), not descriptions ("X happens") |
+| Instructions are concrete | No placeholders like `<insert here>` or `TBD` |
+| Instructions are actionable | Each step can be executed without guessing intent |
+| Scope is bounded | Skill does one thing well, not many things poorly |
+| Trigger conditions are clear | "When to Use" section explicitly states invocation conditions |
+
+### 3. Safety Evaluation
+
+Check Magna Carta compliance and system constraints:
+
+| Check | Pass Criteria |
+|-------|---------------|
+| User sovereignty (P1) | Skill does not act without user direction |
+| Affirmative consent (P2) | Skill gates dangerous actions with confirmation |
+| Generative space (P3) | Skill creates value, does not merely restrict |
+| Clear boundaries (P4) | Skill states what it does NOT do |
+| Headless compliance | No visual UI, Grafana, dashboards, or web frontends |
+| Regulation span validity | Any `reg.*` references match defined span namespaces |
+| Crate path validity | Any `hkask-*` references match existing crates |
+
+### Scoring
+
+Each check scores 0–2:
+
+| Score | Meaning |
+|-------|---------|
+| 2 | Fully passes |
+| 1 | Partially passes (minor issue) |
+| 0 | Fails |
+
+Maximum possible score: 22 (11 checks × 2). Minimum installable score: 16.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "format_validation": {
+    "yaml_frontmatter": {"score": 0|1|2, "notes": "..."},
+    "name_valid": {"score": 0|1|2, "notes": "..."},
+    "description_specific": {"score": 0|1|2, "notes": "..."},
+    "no_deprecated": {"score": 0|1|2, "notes": "..."},
+    "subtotal": 8
+  },
+  "quality_evaluation": {
+    "instructions_imperative": {"score": 0|1|2, "notes": "..."},
+    "instructions_concrete": {"score": 0|1|2, "notes": "..."},
+    "instructions_actionable": {"score": 0|1|2, "notes": "..."},
+    "scope_bounded": {"score": 0|1|2, "notes": "..."},
+    "trigger_conditions_clear": {"score": 0|1|2, "notes": "..."},
+    "subtotal": 10
+  },
+  "safety_evaluation": {
+    "user_sovereignty_p1": {"score": 0|1|2, "notes": "..."},
+    "affirmative_consent_p2": {"score": 0|1|2, "notes": "..."},
+    "generative_space_p3": {"score": 0|1|2, "notes": "..."},
+    "clear_boundaries_p4": {"score": 0|1|2, "notes": "..."},
+    "headless_compliance": {"score": 0|1|2, "notes": "..."},
+    "reg_span_validity": {"score": 0|1|2, "notes": "..."},
+    "crate_path_validity": {"score": 0|1|2, "notes": "..."},
+    "subtotal": 4
+  },
+  "overall_score": 22,
+  "recommendation": "install|revise|reject",
+  "recommendation_reason": "Why this recommendation was made"
+}
+```
+
+## Constraints
+
+- Every check must be scored — no check may be omitted.
+- Scores must be consistent: 0 for fail, 1 for partial, 2 for pass. No other values.
+- If any safety check scores 0, the overall recommendation must be `reject`.
+- If overall_score < 16 but no safety failures, recommendation must be `revise`.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,94 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- validate
+- classify
+- detect
+- observe
+- enforce
+contract:
+  input:
+    principle: string
+    version: string
+    assertions: array
+  output:
+    procedures: array
+    total_assertions: integer
+    methods_used: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: magna-carta-verifier/mc-verify-procedure.j2 #}
+{# Functional Role: KnowAct — Render verification procedure for each assertion #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: procedures, total_assertions, methods_used #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a Magna Carta verification procedure generator. Given a principle and its assertions, produce a step-by-step verification procedure for each assertion that can be executed mechanically.
+
+## Principle Under Verification
+
+**Principle**: {{ principle }}
+**Version**: {{ version }}
+
+## Assertions
+
+```json
+{{ assertions | tojson }}
+```
+
+## Verification Methods
+
+| Method | When to Use | What It Checks |
+|--------|------------|----------------|
+| `structural_audit` | Access paths and gates exist | Enumerate code paths, verify OCAP/ACP gates present on every entry point |
+| `behavioral_probe` | Denial works as intended | Generate access attempts without valid consent/token, verify all are denied |
+| `resource_verification` | Resource categorization is correct | Check that each resource is classified (public/private/shared) and stored correctly |
+| `absence_check` | Prohibited constructs do not exist | Grep for hidden gates, admin overrides, bypass paths — verify none found |
+
+## Procedure Generation Rules
+
+For each assertion:
+
+1. **Identify the method** from the assertion's `method` field.
+2. **Map to targets** — the crate, module, and methods listed in the assertion's `targets`.
+3. **Define pass criteria** — what constitutes a successful verification (gate exists, access denied, resource categorized correctly, prohibited construct absent).
+4. **Define fail criteria** — what constitutes a verification failure (gate missing, access granted, wrong categorization, prohibited construct found).
+5. **Specify execution** — exact CLI command, MCP tool call, or code path to exercise.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "procedures": [
+    {
+      "assertion_id": "p1a",
+      "assertion_name": "data_ownership",
+      "method": "structural_audit",
+      "targets": [{"crate": "hkask-storage", "module": "encryption", "methods": ["encrypt_at_rest"]}],
+      "steps": ["1. Enumerate all data write paths in hkask-storage", "2. Verify each path calls encrypt_at_rest before persisting", "3. Check SQLCipher is enabled on all database connections"],
+      "pass_criteria": "Every data write path encrypts before persist; no plaintext writes found",
+      "fail_criteria": "Any data write path persists without encryption"
+    }
+  ],
+  "total_assertions": 1,
+  "methods_used": ["structural_audit"]
+}
+```
+
+## Constraints
+
+- Every procedure step must be mechanically executable (CLI, MCP tool, or code invocation).
+- Pass/fail criteria must be binary and unambiguous.
+- Procedures must not require human judgment — that belongs in the report phase.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

@@ -1,0 +1,51 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    report: object
+  output:
+    convergence_metric: number
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: platform-portability-verifier/convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute normalized convergence metric for portability verification PDCA cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Given a portability verification report, compute convergence where 0 means all integrity checks passed, import verified (if attempted), and the report is complete and actionable.
+
+Input:
+```json
+{{ report | tojson }}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means the portability claim is fully verified.
+
+## Convergence Criteria
+Score 0 (fully converged) when:
+- All five integrity checks pass (file_exists, sqlcipher_header, record_counts, checksum_valid, encryption_active)
+- If import was attempted, it succeeded with all records preserved
+- Recommendations are specific and actionable if any checks failed
+- Report is complete with overall status (PASS / PARTIAL / FAIL)
+
+Score closer to 1 when integrity checks fail, import cannot be verified, or report is incomplete.
+
+Return JSON only:
+```json
+{"convergence_metric": 0.0, "convergence_method": "LLM-assessed integrity verification", "rationale": "..."}
+```

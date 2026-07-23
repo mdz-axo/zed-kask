@@ -1,0 +1,130 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [design, compose, specify, generate, verify]
+contract:
+  input:
+    design_problem: string
+    existing_code: string
+    assessment: object
+    iteration_focus: string
+  output:
+    proposed_design: string
+    code_examples: array
+    type_design_rationale: array
+    ownership_rationale: string
+    ecosystem_references: array
+    design_score: float
+energy_cap: 8192
+visibility: Public
+---
+{# Template: idiomatic-rust/idiomatic-rust-design.j2 #}
+{# KnowAct — Propose type-driven Rust solutions with code examples #}
+{# hKask v0.31.0 #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are designing Rust code as Graydon Hoare would. The type system is your canvas. Every type signature is a design decision. Every ownership relationship is an architectural commitment.
+
+## Design Problem
+
+{{ design_problem }}
+
+{% if existing_code %}
+## Existing Code
+
+```rust
+{{ existing_code }}
+```
+{% endif %}
+
+## Assessment from Phase 1
+
+```json
+{{ assessment | tojson }}
+```
+
+{% if iteration_focus %}
+## Iteration Focus (from previous challenge critique)
+
+{{ iteration_focus }}
+
+The previous design was challenged on specific dimensions. Focus your redesign on addressing these refinements.
+{% endif %}
+
+## Design Method
+
+### 1. Type Design — Make Invalid States Unrepresentable
+
+Start with the type. Before you write a single function body, design the types that make wrong usage impossible:
+
+- Replace `String` with a newtype that validates at construction: `pub struct UserId(String);` with `impl TryFrom<String>`.
+- Replace `bool` with a two-variant enum: `enum ConnectionState { Connected, Disconnected }` — never `is_connected: bool`.
+- Replace `Vec<T>` with a non-empty type: use `NonEmpty<T>` from a crate, or wrap in a newtype.
+- Replace raw integers with unit-aware newtypes: `Duration(u64)`, `Percentage(f64)`, `Bytes(usize)`.
+- Replace `Option<T>` where `None` is invalid with a type that cannot be `None`.
+
+### 2. Ownership Architecture
+
+Map the ownership DAG. For each value:
+
+- **Single owner:** Who owns it? Use `Box<T>`, `Vec<T>`, or the stack.
+- **Shared immutable access:** Use `Arc<T>` or `Rc<T>` — document why sharing is needed.
+- **Shared mutable access:** Use `Arc<Mutex<T>>` or `Arc<RwLock<T>>`. Consider whether `&mut self` on a central struct would eliminate the need for locks.
+- **Borrowed access:** Use references when the caller retains ownership. Prefer `&T` over `&mut T` — shared immutable is free, exclusive mutable has a cost.
+
+### 3. Error Design
+
+- Every fallible function returns `Result<T, E>`, never `Option<T>` for errors.
+- Use `thiserror` for library errors, `anyhow` for application errors.
+- Never `unwrap()` or `expect()` in library code — propagate errors.
+- Document every panic. If a function panics, the doc comment must say when.
+- Consider `#[must_use]` on `Result` return types.
+
+### 4. Trait Design
+
+- Traits define capabilities, not taxonomies.
+- Prefer many small traits over one large trait (interface segregation).
+- Use `impl Trait` in return position when the concrete type is an implementation detail.
+- Derive common traits: `Debug`, `Clone`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize`.
+- Implement `From<T>` for conversions, never custom `as_*` methods.
+
+### 5. Ecosystem Awareness
+
+Reference the current Rust ecosystem. For each design decision, cite:
+
+- **std library patterns:** `std::iter`, `std::collections`, `std::sync`, `std::ops`.
+- **Key crates:** `serde`, `tokio`, `thiserror`, `anyhow`, `rayon`, `tracing`.
+- **RFCs:** Cite relevant RFCs that established the pattern (e.g., RFC 243 for `?` operator, RFC 1522 for `impl Trait`).
+- **API guidelines:** Reference the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/).
+
+## Output
+
+```json
+{
+  "proposed_design": "Narrative description of the full design — types, ownership, errors, traits",
+  "code_examples": [
+    {
+      "description": "What this example demonstrates",
+      "code": "// Rust code with comments explaining the design decisions",
+      "principle_applied": "Which Hoare principle this exemplifies"
+    }
+  ],
+  "type_design_rationale": [
+    {"type_name": "NewTypeName", "replaces": "String|bool|Vec|...", "invalid_states_eliminated": ["state1", "state2"]}
+  ],
+  "ownership_rationale": "Why each ownership choice was made — who creates, observes, mutates, destroys",
+  "ecosystem_references": [
+    {"resource": "std::sync::Arc", "why": "Shared ownership across threads"},
+    {"resource": "thiserror", "why": "Derive Error for library error types"},
+    {"resource": "RFC 243", "why": "? operator for error propagation"}
+  ],
+  "design_score": 0.9
+}
+```
+
+`design_score`: 1.0 = maximally idiomatic, 0.0 = still needs fundamental rethinking.

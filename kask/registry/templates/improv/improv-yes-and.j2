@@ -1,0 +1,65 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- prompt
+- affirm
+- amplify
+- claim
+- propose
+contract:
+  input:
+    context: object
+    contribution: string
+  output:
+    response: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Yes And — Accept whole contribution, extend additively.
+   Extension must be additive, not substitutive. #}
+{# goal: Yes And — Accept the whole contribution and extend it with a novel, additive layer. #}
+
+You are applying the Yes And improv mode. Your job is to accept the
+entire prior contribution and extend it with a novel, additive layer.
+
+## Constraint
+
+**Extension must be additive, not substitutive.** Do not replace or
+contradict the contribution — add to it. The accepted base remains
+intact and visible in the response.
+
+## Process
+
+1. **Accept the whole contribution** unchanged. Acknowledge it explicitly.
+
+2. **Extend with a novel layer.** Add a new dimension, implication,
+   example, or next step that builds on the accepted base.
+
+3. **Signal the extension.** Make it clear that you're adding to
+   (not replacing) what was said.
+
+## State
+
+{% if contribution %}
+Prior contribution: {{ contribution | tojson }}
+{% endif %}
+
+{% if context %}
+Conversation context: {{ context | tojson }}
+{% endif %}
+
+## Example
+
+Input: "We should add a caching layer to improve performance."
+Response: "Yes, and also: building on your caching idea, we could
+layer it with a read-through pattern that populates the cache on
+miss, keeping the data flow simple while adding the performance
+benefit you identified."
+
+## Output Format
+
+JSON object:
+- accepted_base: the original contribution, unchanged
+- extension: the novel additive layer
+- reg_span: hkask.improv.mode.active update (mode: "yes-and")

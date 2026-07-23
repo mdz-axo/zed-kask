@@ -1,0 +1,80 @@
+# Triple Extractor — Literary (defers to the canonical classifier model)
+# Used by: kask embed-corpus (triple extraction pass for literary corpora)
+# Prompting: Few-Shot (3-shot) with literary examples.
+#   Martin et al. (arXiv:2603.29878): Few-Shot is the dominant strategy
+#   for structured extraction; Zero-Shot produces <30% F1.
+# Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
+#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   The `model:` field below is intentionally empty; ClassifierConfig::from_def
+#   fills it from the canonical path and strips the DI/ router prefix.
+# Provider: DeepInfra (cloud API, OpenAI-compatible)
+#
+# Extracts structured literary-semantic data from each passage:
+#   themes, characters, setting, narrative_technique, tone, imagery
+
+classifier:
+  name: triple-extractor-literary
+  model: ""
+  provider: deepinfra
+  concurrency: 150
+  timeout_secs: 30
+
+  system_prompt: >
+    Extract literary features from this passage. Return ONLY valid JSON, no commentary.
+    Use the finest-grained applicable labels. If uncertain about a field, leave it empty.
+
+    Examples:
+
+    Passage: "He looked at the fish. The line was taut and the water was clear
+    and deep. He could see the dark shape moving slowly below the surface."
+    {"themes":["struggle","observation","nature"],
+    "characters":["fisherman","fish"],
+    "setting":"deep water, day, outdoors",
+    "narrative_technique":["description","action"],
+    "tone":["sparse","tense"],
+    "imagery":["taut line","clear deep water","dark shape below surface"]}
+
+    Passage: "She thought of the garden at midnight, the scent of jasmine
+    heavy in the air, and of how he had looked at her across the table —
+    as if she were already a memory, already gone."
+    {"themes":["memory","loss","love"],
+    "characters":["she","he"],
+    "setting":"garden at midnight, indoor table",
+    "narrative_technique":["interior_monologue","description"],
+    "tone":["melancholic","lyrical"],
+    "imagery":["scent of jasmine","midnight garden","look across the table"]}
+
+    Passage: "'You can't be serious,' she said, crossing her arms. 'After
+    everything that happened? You expect me to just — what, forget?' He
+    shrugged, already turning toward the door."
+    {"themes":["conflict","betrayal"],
+    "characters":["she","he"],
+    "setting":"indoor room",
+    "narrative_technique":["dialogue","action"],
+    "tone":["tense","sparse"],
+    "imagery":["crossed arms","turning toward the door"]}
+
+    Narrative technique definitions:
+    - dialogue: characters speaking
+    - description: sensory or physical description of scene/person
+    - interior_monologue: character's thoughts or feelings
+    - action: physical movement or event
+    - exposition: narrator explaining or contextualizing
+
+    Tone definitions:
+    - sparse: minimal adjectives, short sentences
+    - lyrical: rhythmic, poetic, flowing
+    - tense: suspenseful, urgent
+    - melancholic: sad, nostalgic, elegiac
+    - ironic: saying one thing meaning another
+    - earnest: sincere, direct, unadorned
+
+    Keep responses concise. If uncertain about a field, leave it empty.
+
+  base_url: https://api.deepinfra.com/v1/openai/chat/completions
+  api_key_env: DI_API_KEY
+
+  temperature: 0.0
+  max_tokens: 300
+
+  fallback_category: Statement

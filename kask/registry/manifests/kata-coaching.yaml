@@ -1,0 +1,193 @@
+# Coaching Kata Process Manifest
+# ℏKask v0.31.0 — Coaching dialogue as convergent PDCA
+
+manifest:
+  id: kata-coaching
+  category: skill
+  name: Kata Coaching
+  description: >
+    Convergent five-question coaching process. Runs the coaching kata
+    dialogue, computes coaching-cycle convergence, and iterates until
+    target/current/obstacle/next-step clarity is sufficient.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_6_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: challenge
+    type: string
+    required: true
+  - name: current_condition
+    type: string
+    required: false
+  - name: target_condition
+    type: string
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Q1 — establish target condition.
+    renderer: minijinja
+    template_ref: kata-coaching/coaching-q1-target.j2
+    gas_cap: 2500
+    timeout_seconds: 30
+    input_mapping:
+      challenge: "{{ challenge }}"
+      target_condition: "{{ target_condition | default('') }}"
+
+  - ordinal: 2
+    action: select
+    description: Q2 — clarify actual condition.
+    renderer: minijinja
+    template_ref: kata-coaching/coaching-q2-actual.j2
+    gas_cap: 2500
+    timeout_seconds: 30
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_condition: "{{ current_condition | default('') }}"
+      target_condition: "{{ target_condition | default(step_1_result.target_condition | default('')) }}"
+
+  - ordinal: 3
+    action: select
+    description: Q3 — identify obstacles and focus obstacle.
+    renderer: minijinja
+    template_ref: kata-coaching/coaching-q3-obstacles.j2
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+      target_condition: "{{ target_condition | default(step_1_result.target_condition | default('')) }}"
+      current_condition: "{{ current_condition | default(step_2_result.actual_condition | default('')) }}"
+
+  - ordinal: 4
+    action: select
+    description: Q4 — define next experiment and prediction.
+    renderer: minijinja
+    template_ref: kata-coaching/coaching-q4-experiment.j2
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+      focus_obstacle: "{{ step_3_result.focus_obstacle | default('') }}"
+
+  - ordinal: 5
+    action: select
+    description: Q5 — define feedback loop timing and learning checkpoint.
+    renderer: minijinja
+    template_ref: kata-coaching/coaching-q5-learn.j2
+    gas_cap: 2500
+    timeout_seconds: 30
+    input_mapping:
+      challenge: "{{ challenge }}"
+      next_experiment: "{{ step_4_result.next_experiment | default('') }}"
+      prediction: "{{ step_4_result.prediction | default('') }}"
+
+  - ordinal: 6
+    action: select
+    description: Compute normalized convergence metric for coaching cycle.
+    renderer: minijinja
+    template_ref: kata-coaching/kata-coaching-convergence-check.j2
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      q1_result: "{{ step_1_result }}"
+      q2_result: "{{ step_2_result }}"
+      q3_result: "{{ step_3_result }}"
+      q4_result: "{{ step_4_result }}"
+      q5_result: "{{ step_5_result }}"
+
+  - ordinal: 7
+    action: loop
+    description: Re-enter coaching cycle if convergence is not met.
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: kata-coaching/coaching-q1-target
+      gas_budget: 2500
+    - resource: template
+      action: render
+      template_id: kata-coaching/coaching-q2-actual
+      gas_budget: 2500
+    - resource: template
+      action: render
+      template_id: kata-coaching/coaching-q3-obstacles
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: kata-coaching/coaching-q4-experiment
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: kata-coaching/coaching-q5-learn
+      gas_budget: 2500
+    - resource: template
+      action: render
+      template_id: kata-coaching/kata-coaching-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: kata-coaching
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+# Recommends: improv skill for constructive coaching postures.
+# - Q4 (Next step? What do you expect?) → Yes But
+# - Q5 (How quickly can we go and see?) → Plussing
+
+ledger:
+  emit_spans: true
+  span_namespace: hkask.template.kata.coaching
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+  spans:
+    - reg.kata.coaching.q1.target
+    - reg.kata.coaching.q2.actual
+    - reg.kata.coaching.q3.obstacles
+    - reg.kata.coaching.q4.experiment
+    - reg.kata.coaching.q5.learn
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

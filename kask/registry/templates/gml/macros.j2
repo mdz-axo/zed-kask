@@ -1,0 +1,24 @@
+{# gml/macros.j2 - Shared macros for GML templates #}
+{# Purpose: Core MWC computations only #}
+
+{% macro mwc_state_function(L, c, n, alpha) -%}
+{% set one_plus_alpha = 1 + alpha %}
+{% set one_plus_c_alpha = 1 + c * alpha %}
+{% set numerator = one_plus_alpha ** n %}
+{% set denominator = numerator + L * (one_plus_c_alpha ** n) %}
+{% if denominator > 0 %}{{ numerator / denominator }}{% else %}0.0{% endif %}
+{%- endmacro %}
+
+{% macro hill_coefficient(n, c, alpha) -%}
+{% if alpha < 0 or c <= 0 %}0.0{% else %}
+{% set cooperativity_factor = (1 - c) / (1 + c) %}
+{% set concentration_factor = (alpha / (1 + alpha)) ** 0.5 %}
+{{ (n * cooperativity_factor * concentration_factor) | round(3) }}
+{% endif %}
+{%- endmacro %}
+
+{% macro partition_function(L, c, n, alpha) -%}
+{% set one_plus_alpha = 1 + alpha %}
+{% set one_plus_c_alpha = 1 + c * alpha %}
+{{ one_plus_alpha ** n + L * (one_plus_c_alpha ** n) }}
+{%- endmacro %}

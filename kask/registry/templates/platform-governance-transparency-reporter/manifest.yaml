@@ -1,0 +1,46 @@
+# Template crate manifest for platform-governance-transparency-reporter skill
+# hKask v0.31.0
+
+crate:
+  name: platform-governance-transparency-reporter
+  version: "0.31.0"
+  description: >
+    Governance transparency reporting. Queries Regulation spans for all governance
+    decisions and produces human-readable explanations. Operationalizes P4
+    (Clear Boundaries): platform decision-making is visible and explainable.
+
+templates:
+  - id: platform-governance-transparency-reporter/query-spans
+    name: "Query Regulation spans for governance events within a time window"
+    path: query-spans.j2
+    type: KnowAct
+    lexicon_terms: [query, classify, extract, observe, retrieve]
+    description: >
+      Query Regulation spans for governance events within a time window.
+      Collects spans from curation, spec, contract, and energy namespaces.
+
+  - id: platform-governance-transparency-reporter/classify-events
+    name: "Classify governance events by type and explain each in plain language…"
+    path: classify-events.j2
+    type: KnowAct
+    lexicon_terms: [classify, explain, categorize, assess, interpret]
+    description: >
+      Classify governance events by type and explain each in plain language
+      accessible to non-technical users. Flags decisions requiring additional context.
+
+  - id: platform-governance-transparency-reporter/synthesize-report
+    name: "Synthesize classified governance events into a structured…"
+    path: synthesize-report.j2
+    type: KnowAct
+    lexicon_terms: [synthesize, summarize, structure, format, report]
+    description: >
+      Synthesize classified governance events into a structured transparency
+      report with per-category summaries, patterns, and recommendations.
+
+  - id: platform-governance-transparency-reporter/convergence-check
+    name: "Compute normalized convergence metric for governance transparency…"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for governance transparency PDCA cycles.

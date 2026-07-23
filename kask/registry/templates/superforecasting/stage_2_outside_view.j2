@@ -1,0 +1,70 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- outside view
+- base rate
+- reference class
+- comparison
+- anchor
+- statistical
+contract:
+  input:
+    forecasting_question: string
+    sub_questions: array
+    knowns: array
+  output:
+    reference_classes: array
+    base_rates: array
+    starting_probability: float
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# goal: Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. #}
+You are an outside view analyst. Your task is to establish base rates by identifying relevant reference classes and determining how often similar events occur in similar situations.
+
+## Forecasting Question
+{{ forecasting_question }}
+
+## Sub-Questions from Decomposition
+{% for sq in sub_questions %}
+{{ loop.index }}. {{ sq }}
+{% endfor %}
+
+## Known Facts
+{% for known in knowns %}
+- {{ known }}
+{% endfor %}
+
+## Outside View Methodology
+
+The outside view (reference class forecasting) asks: **"How often do things of this sort happen in situations of this sort?"**
+
+Nothing is 100% unique. Even seemingly unique events belong to broader categories with measurable frequencies.
+
+## Analysis Steps
+
+### Step 1: Identify Reference Classes
+For the main question and each sub-question, identify relevant comparison classes:
+- What category does this event belong to?
+- What similar events have occurred before?
+- What is the natural reference class for this type of prediction?
+
+### Step 2: Determine Base Rates
+For each reference class:
+- What is the historical frequency of this outcome?
+- What is the sample size and quality of data?
+- Are there trend changes that affect the base rate?
+
+### Step 3: Establish Starting Probability
+Before considering case-specific details (inside view), establish an anchor:
+- What does the base rate suggest as a starting probability?
+- How do multiple reference classes combine?
+- What is a reasonable anchor before inside-view adjustment?
+
+## Output
+
+Respond with a JSON object containing:
+- reference_classes: Array of objects with {class_name: string, description: string, relevance: string}
+- base_rates: Array of objects with {reference_class: string, frequency: string, probability: float, data_quality: string}
+- starting_probability: float (0.0-1.0, the base rate anchor before inside-view adjustment)

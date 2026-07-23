@@ -1,0 +1,132 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- audit
+- verify
+- score
+- calibrate
+- discriminate
+contract:
+  input:
+    tasks: array
+    slices: array
+    dependency_graph: array
+    evaluation_result: object
+  output:
+    gate_scores: object
+    gate_weighted_total: number
+    gate_pass: boolean
+    gate_findings: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: task-breakdown/task-breakdown-quality-gate.j2 #}
+{# Independent quality gate (fusion: false) — evaluates the plan WITHOUT #}
+{# self-assessment bias. Distinct from the producer-coupled evaluate step: this #}
+{# gate is a deterministic rubric, not a generator. Mirrors superforecasting's #}
+{# forecast-quality-gate separation of concerns. #}
+{# Produces: gate_scores, gate_weighted_total, gate_pass, gate_findings #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 3000
+thinking_budget = "full"
+
+You are an INDEPENDENT plan-quality gate. You are evaluating, not generating. Do NOT trust the producer's self-assessment — `evaluation_result` is provided for bias detection only; re-derive every score from the plan itself. Flag any dimension where your score diverges from the producer's by more than 0.2 as a `bias_delta` finding. Score each criterion 0 (perfect) to 1 (severely deficient), honestly.
+
+## Tasks
+
+```json
+{{ tasks | tojson }}
+```
+
+## Slices
+
+```json
+{{ slices | tojson }}
+```
+
+{% if dependency_graph %}
+## Dependency Graph
+
+```json
+{{ dependency_graph | tojson }}
+```
+{% endif %}
+
+## Producer's Self-Assessment (for bias detection only — do not copy)
+
+```json
+{{ evaluation_result | tojson }}
+```
+
+## Six Weighted Criteria
+
+| Criterion | Weight | 0 (perfect) | 1 (severely deficient) |
+|-----------|--------|-------------|------------------------|
+| task_sizing | 0.25 | All XS-M; none L+; none touches >5 files (advisory) | XL present or L un-decomposed |
+| vertical_slice_integrity | 0.20 | Every task a vertical feature path | Horizontal layers present |
+| ac_specificity | 0.20 | Every AC specific and testable | Vague ACs; "implement the feature"; >3 bullets |
+| dependency_ordering | 0.15 | Foundations first; deps satisfied | A task precedes a task it depends on |
+| checkpoint_presence | 0.10 | Checkpoints between every major phase | No checkpoints |
+| red_flag_absence | 0.10 | No red flags | One or more red flags present |
+
+`gate_weighted_total` = sum(score x weight), in [0,1].
+`gate_pass` = true ONLY if `gate_weighted_total` <= 0.15 AND no individual criterion exceeds 0.30 (guards against compensation masking — a low total driven by one catastrophic dimension).
+
+## Red Flags (any present => red_flag_absence > 0)
+- A task says "implement the feature" without acceptance criteria.
+- No verification steps in the plan.
+- All tasks XL-sized.
+- No checkpoints between tasks.
+- Dependency order not considered.
+- A task title contains "and".
+- A task touches >5 files without stated justification.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "gate_scores": {
+    "task_sizing": 0.0,
+    "vertical_slice_integrity": 0.0,
+    "ac_specificity": 0.0,
+    "dependency_ordering": 0.0,
+    "checkpoint_presence": 0.0,
+    "red_flag_absence": 0.0
+  },
+  "gate_weighted_total": 0.0,
+  "gate_pass": true,
+  "gate_findings": [
+    {
+      "criterion": "task_sizing",
+      "severity": "high|medium|low",
+      "finding": "what is wrong",
+      "bias_delta": 0.0
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Independent evaluation — do not inherit the producer's scores; re-derive from the plan.
+- Flag compensation masking: if any single criterion > 0.30, gate_pass is false regardless of total.
+- Report bias_delta only where |your_score - producer_score| > 0.2 for that criterion.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

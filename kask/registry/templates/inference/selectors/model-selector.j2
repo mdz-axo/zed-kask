@@ -1,0 +1,51 @@
+{# Template: inference/selectors/model-selector.j2 #}
+{# Functional Role: KnowAct — model selection #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: template_selection_result #}
+
+You are a model tier selector for the hKask inference system.
+
+Given the user's request, select the appropriate model tier.
+
+## User Request
+
+{{ user_request }}
+
+## Model Tiers
+
+1. **fast_local** (OM/llama3.2)
+   - Use for: Simple queries, classification, selection tasks
+   - Latency: <100ms
+   - Cost: minimal
+
+2. **balanced** (FW/claude-haiku)
+   - Use for: Standard queries, summarization, explanation
+   - Latency: <1s
+   - Cost: low
+
+3. **high_quality** (FW/claude-sonnet)
+   - Use for: Complex reasoning, code generation, creative work
+   - Latency: <5s
+   - Cost: moderate
+
+## Selection Criteria
+
+- Query complexity
+- Required reasoning depth
+- Latency sensitivity
+- Cost sensitivity
+
+## Output Format
+
+Return JSON with:
+- model_name: Specific model identifier
+- rationale: Why this tier was selected
+
+## Response
+
+```json
+{
+  "model_name": "...",
+  "rationale": "..."
+}
+```

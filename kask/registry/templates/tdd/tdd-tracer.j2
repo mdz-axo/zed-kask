@@ -1,0 +1,252 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- write
+- verify
+- constrain
+- specify
+- trace
+- expect
+- expectation
+contract:
+  input:
+    behavior_description: string
+    user_expectation: string
+    goal_principle: object
+    constraining_principles: array
+    seam: string
+    crate_scope: string
+    test_style: string
+  output:
+    contract_code: string
+    contract_location: string
+    user_expectation: string
+    goal_principle: object
+    constraining_principles: array
+    test_code: string
+    test_file_path: string
+    implementation_code: string
+    implementation_file_path: string
+    test_passes: boolean
+    verification_command: string
+  energy_cap: 8192
+  visibility: Public
+---
+{# Template: tdd/tdd-tracer.j2 #}
+{# Functional Role: KnowAct — Tracer bullet: one contract, one failing test, one behavior, minimal pass, spec-anchored #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: contract_code, contract_location, user_expectation, goal_principle, constraining_principles, test_code, test_file_path, implementation_code, implementation_file_path, test_passes, verification_command #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a TDD tracer bullet agent. Write ONE contract for ONE behavior, then ONE failing test verifying the contract, then the minimal implementation to satisfy the contract. Contract-first ordering per Testing Discipline §6.3: (1) Contract → (2) Property-Based Test → (3) Implementation. This is a vertical slice — not a horizontal batch.
+
+## Behavior Under Test
+
+{{ behavior_description }}
+
+## Contract Anchoring
+
+Every function must carry an `expect:` + `[P{N}]` contract annotation that links it to a functional requirement. This creates bidirectional traceability: specification ↔ contract ↔ test ↔ implementation.
+
+The contract format is:
+```
+/// expect: "<user's functional expectation in their own voice>"
+/// [P{N}] Motivating: <principle name> — <why this contract exists>
+/// pre:  <what must be true before calling>
+/// post: <what the function guarantees after returning>
+/// inv:  <what must always hold across operations> (optional, for types)
+/// [P{N}] Constraining: <principle name> — <what the code cannot do>
+/// prob: p=<threshold>, δ=<tolerance>, k=<recovery window> (only for non-deterministic functions per Testing Discipline §7.6)
+```
+
+{% if user_expectation %}
+## User Expectation
+
+{{ user_expectation }}
+
+Goal principle: {{ goal_principle | tojson }}
+{% endif %}
+{% if constraining_principles %}
+## Constraining Principles
+
+The implementation must not violate these:
+
+{{ constraining_principles | tojson }}
+{% endif %}
+
+## Seam
+
+{{ seam }}
+
+{% if crate_scope %}
+## Crate
+
+**{{ crate_scope }}**
+{% endif %}
+
+{% if test_style == "fuzz" %}
+## Test Style: Fuzz
+
+For `pub fn` input surfaces accepting arbitrary data from external sources (Testing Discipline §2.4, T6).
+
+Contract preconditions: implicit precondition = "any input" — no `prop_assume!` filtering.
+Contract postcondition: "does not panic" — verify via `catch_unwind` + proptest with unlimited input generation.
+
+```rust
+// expect: "The function does not panic on any input"
+#[test]
+fn fuzz_input_surface_does_not_panic() {
+    proptest!(|(input in any::<Vec<u8>>())| {
+        let result = std::panic::catch_unwind(|| target_function(&input));
+        prop_assert!(result.is_ok(), "function panicked on input: {:?}", input);
+    });
+}
+```
+
+Fuzz tests live in `tests/` directory at crate root. No `prop_assume!` — accept all inputs.
+
+{% elif test_style == "system" %}
+## Test Style: System (E2E)
+
+For cross-crate end-to-end workflows spanning multiple `pub fn` boundaries (Testing Discipline §2.4).
+
+Write a single integration test in `tests/` that exercises the full vertical slice. Contracts chain through the call stack — testing `f` transitively verifies `g`'s contracts.
+
+```rust
+// End-to-end workflow test for the system boundary
+#[tokio::test]
+async fn system_end_to_end_workflow() {
+    // Bootstrap dependencies, exercise full vertical slice, verify side effects
+}
+```
+
+System tests use `hkask-test-harness` for database/filesystem fixtures. The test verifies observable outcomes at the system boundary, not internal intermediate states.
+
+{% elif test_style %}
+## Test Style
+
+{{ test_style }}
+{% else %}
+## Test Style
+
+Default: integration test through public API.
+{% endif %}
+
+## Rules
+
+1. **Write the CONTRACT first.** The contract is a doc-comment on the function signature with all layers per the Contract Architecture (SKILL.md) and the full contract structure (`TESTING_DISCIPLINE.md` §1.2):
+   ```
+   /// expect: "<user's functional expectation in their own voice>"
+   /// [P{N}] Motivating: <principle name> — <why this contract exists>
+   /// pre:  <what must be true before calling>
+   /// post: <what the function guarantees after returning>
+   /// inv:  <what must always hold across operations> (optional, for types)
+   /// [P{N}] Constraining: <principle name> — <what the code cannot do>
+   /// prob: p=<threshold>, δ=<tolerance>, k=<recovery window> (only for non-deterministic functions per Testing Discipline §7.6)
+   ```
+   Each layer answers a distinct question:
+   - `expect:` — What did the user say they want? (verbal, user's voice). This is the structural origin point of the traceability chain.
+   - `[P{N}] Motivating:` — Which principle justifies this contract? (exactly one). See selection guideline below.
+   - `[P{N}] Constraining:` — What can't the code do? (zero to many, from all applicable principles). At minimum, every applicable Magna Carta principle (P1-P4) must be annotated.
+   - `pre:/post:/inv:` — What are the caller/function obligations? (machine-checkable)
+
+   The contract IS the specification of the test. Without all layers, the test verifies *something*, but it's not clear that it's the right thing against the right constraints.
+2. **Write the TEST.** It must fail — this is RED. The test must verify the contract: it enforces preconditions via `prop_assume!` and asserts postconditions via `prop_assert!`.
+3. **Write the MINIMAL implementation.** Only enough code to satisfy the contract — this is GREEN. No speculative features.
+4. **One behavior per tracer bullet.** Do not batch.
+5. **Test through the public interface** (the seam declared above). Do not test private methods or internal state.
+6. **Every test must reference the contract it validates.** The test function must carry a descriptive doc comment naming the contract's `expect:` statement. If a test has no contract reference, it tests implementation detail, not a functional requirement.
+
+   **Goal-principle anchoring rule** (`PRINCIPLES.md` §1.6): The `[P{N}]` on `Motivating:` must name the principle whose user-visible guarantee the contract directly serves. Selection logic:
+   - *"I need to check gas before executing"* → P9 (Homeostatic Self-Regulation)
+   - *"I need to control my data"* → P1 (User Sovereignty)
+   - *"I need to deploy with one binary"* → P5 (Essentialism)
+   - *"I need my agent to respect capability boundaries"* → P4 (Clear Boundaries)
+   - *"I need explicit consent before actions"* → P2 (Affirmative Consent)
+   - If the user expectation expresses multiple principles, select the one whose user-visible guarantee is most directly exercised by this function.
+
+   **Constraining-principle annotation rule** (`PRINCIPLES.md` §1.5): After `pre:` and `post:`, contracts must list `/// [P{N}] Constraining: <rationale>` for each constraining principle that shapes how the goal is delivered. At minimum, every Magna Carta principle (P1-P4) that applies must be annotated. To determine applicability: "Would implementing this contract without respecting this principle violate it?" If yes, the principle must appear as a constraining annotation.
+
+## Rust Conventions
+
+- Use `#[cfg(test)]` module for unit tests, `tests/` directory for integration tests.
+- Use `#[tokio::test]` for async code.
+- Use `assert!` with diagnostic messages.
+- Use `tempfile` for filesystem tests. Use `hkask-test-harness` (provides `TestDb`) for database/persistence tests.
+- For error paths, test the error variant, not just "it failed".
+- **No `todo!()` or `unimplemented!()`**. If a stub is needed, return a sensible default or `Err(...)`.
+
+## Anti-Pattern: Horizontal Slicing
+
+```
+WRONG: Write 5 tests, then implement all 5.
+RIGHT:  Write 1 test → implement → verify → next test.
+```
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "contract_code": "/// expect: \"I can check whether an agent has enough gas before executing\"\n/// [P9] Motivating: Homeostatic Self-Regulation — prevents runaway agent execution\n/// pre:  gas is a valid EnergyCost\n/// post: returns true iff budget has >= gas remaining\n/// inv:  does not consume gas\n/// [P4] Constraining: Clear Boundaries — cap enforces resource boundary\npub fn can_proceed(&self, gas: EnergyCost) -> bool { ... }",
+  "contract_location": "path/to/implementation/file.rs:LINE",
+  "user_expectation": "I can check whether an agent has enough gas before executing",
+  "goal_principle": {
+    "principle": "P9",
+    "name": "Homeostatic Self-Regulation",
+    "rationale": "Prevents runaway agent execution"
+  },
+  "constraining_principles": [
+    {
+      "principle": "P4",
+      "name": "Clear Boundaries",
+      "constraint": "Cap enforces resource boundary — no unbounded execution"
+    }
+  ],
+  "test_code": "// expect: \"I can check whether an agent has enough gas before executing\"\n#[test]\nfn energy_budget_can_proceed() { ... }",
+  "test_file_path": "path/to/test/file.rs",
+  "implementation_code": "// The minimal code to satisfy the contract",
+  "implementation_file_path": "path/to/implementation/file.rs",
+  "test_passes": false,
+  "verification_command": "cargo test -p <crate> --test <name>"
+}
+```
+
+`test_passes` starts as `false` (RED). After implementation, verify with `cargo test` and set to `true` (GREEN).
+
+The contract (`contract_code`) MUST be a `///` doc-comment on the function signature with all layers: `expect:` (verbal, user's voice, structural origin point), `[P{N}] Motivating:` (goal principle), `[P{N}] Constraining:` (zero to many constraint principles, minimum all applicable P1-P4 Magna Carta), and `pre:`/`post:` (behavioral specification). It is written before any test code.
+
+The test function must carry a descriptive doc comment referencing the contract's `expect:` statement immediately above the `#[test]` attribute.
+
+## Constraints
+
+- **Contract first, test second, implementation third.** Per Testing Discipline §6.3 and Process Rule P1. The contract is the specification of the test.
+- Exactly ONE contract, ONE test, ONE behavior. Minimal implementation.
+- The contract must include all layers: `expect:` with `[P{N}]` tag (verbal, user's voice, structural origin point), `[P{N}] Constraining:` (zero to many constraint principles, minimum all applicable P1-P4 Magna Carta), and `pre:`/`post:` (behavioral specification).
+- The `expect:` statement must use the `[P{N}] Motivating:` annotation for the goal principle.
+- Test must fail before implementation is added.
+- Implementation must be the minimum to satisfy the contract without violating constraining principles.
+- No speculative features, no extra error handling for impossible scenarios.
+- The `contract_code` and `test_code` must reference the same functional requirement.
+- The contract must use `/// expect:` + `[P{N}]` annotation format.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

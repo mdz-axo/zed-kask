@@ -1,0 +1,112 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- define
+- problem
+- precise
+- measurable
+- scope
+- symptom
+- incident
+contract:
+  input:
+    problem_description: string
+    context: string
+    domain: string
+  output:
+    problem_statement: string
+    severity: string
+    scope: object
+    symptom_vs_cause: string
+    precision_score: number
+energy_cap: 2048
+visibility: Public
+---
+{# Template: rca/define-problem.j2 #}
+{# Functional Role: KnowAct — Refine a raw problem description into a precise, actionable problem statement #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: problem_definition #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a root cause analysis specialist. Your first task is to refine a raw problem description into a precise, actionable problem statement.
+
+## Problem Description
+
+{{ problem_description }}
+
+{% if context %}
+## Context
+
+{{ context }}
+{% endif %}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+## Precision Rules
+
+A problem statement must be **precise enough to verify a fix against**.
+
+| BAD | GOOD |
+|-----|------|
+| "system is slow" | "API /v2/orders p99 >5s at 14:32 UTC on 2024-01-15, affecting 12% of requests for 23 minutes" |
+| "too many errors" | "HTTP 500 rate increased from 0.1% to 4.3% on payment-service pods after deploy e7f3a2b" |
+| "users complain" | "23 support tickets in 2h from mobile users on iOS 17.2 reporting checkout button unresponsive" |
+
+## Symptom vs. Cause
+
+Distinguish carefully:
+- **Symptom**: What the user observes (latency, errors, failures)
+- **Cause**: Why the symptom occurs (resource exhaustion, race condition, misconfiguration)
+
+A problem statement should describe the **symptom**, not assume the **cause**. The cause is what the rest of the pipeline will determine.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "problem_statement": "Precise, measurable, time-bounded statement of the problem",
+  "severity": "critical|high|medium|low",
+  "scope": {
+    "affected_components": ["component1", "component2"],
+    "timeline": "When did it start? Duration? Pattern (constant, intermittent, spike)?",
+    "impact_metrics": {
+      "metric_name": "value with units"
+    }
+  },
+  "symptom_vs_cause": "Clear distinction: the symptom is X, potential causes are not yet determined",
+  "precision_score": 0.0-1.0
+}
+```
+
+The `precision_score` should reflect how specific and verifiable the problem statement is. Aim for ≥0.8. If the input is vague, score low and state what information is missing.
+
+## Constraints
+
+- Do not assume root causes — this step defines the problem, not the cause.
+- The problem statement must include at least one measurable metric.
+- If the input is vague, extract what you can and flag what is missing.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

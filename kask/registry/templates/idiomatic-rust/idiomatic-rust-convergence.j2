@@ -1,0 +1,84 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [evaluate, converge, classify, score, verify]
+contract:
+  input:
+    assessment: object
+    design_proposal: object
+    critique: object
+  output:
+    convergence_metric: float
+    design_quality: float
+    critique_depth: float
+    connection_richness: float
+    iteration_improved: boolean
+    should_loop: boolean
+    summary: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: idiomatic-rust/idiomatic-rust-convergence.j2 #}
+{# KnowAct — Compute convergence metric for idiomatic Rust inquiry #}
+{# hKask v0.31.0 #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "off"
+
+You are a convergence evaluator for the idiomatic Rust inquiry loop. Synthesize three dimensions into a single convergence metric:
+
+### Dimension 1: Design Quality
+How idiomatic is the current design proposal? Higher `design_score` from Phase 2 = better. Also consider: were improvement targets from Phase 1 addressed?
+
+### Dimension 2: Critique Depth
+How thorough was the adversarial review? Higher `critique_score` = more issues found. A low critique score on a weak design is suspicious — the review may have missed problems.
+
+### Dimension 3: Connection Richness
+How many connections to the broader Rust ecosystem were identified? More connections = deeper understanding. Zero connections = surface-level design.
+
+### Convergence Metric
+
+```
+convergence_metric = 1.0 - (design_quality × 0.5 + (1.0 - min(critique_score, 0.5)) × 0.3 + connection_richness × 0.2)
+```
+
+- A perfectly idiomatic design (1.0) with zero critique issues (0.0) and rich connections (1.0) → convergence = 0.0 (converged).
+- A weak design (0.3) with many issues (0.8) and no connections (0.0) → convergence = 0.61 (needs more work).
+
+## Phase Data
+
+### Assessment (Phase 1)
+```json
+{{ assessment | tojson }}
+```
+
+### Design Proposal (Phase 2)
+```json
+{{ design_proposal | tojson }}
+```
+
+### Critique (Phase 3)
+```json
+{{ critique | tojson }}
+```
+
+## Output
+
+```json
+{
+  "convergence_metric": 0.15,
+  "design_quality": 0.85,
+  "critique_depth": 0.12,
+  "connection_richness": 0.7,
+  "iteration_improved": true,
+  "should_loop": false,
+  "summary": "The design is strongly idiomatic. Critique found minor edge cases. Connections to std patterns and RFCs are solid. Convergence achieved."
+}
+```
+
+`convergence_metric` ≤ 0.15 → converged. Above threshold → loop back to design with refinement directives.
+`should_loop`: true if convergence_metric > 0.15 AND critique identified actionable refinements.
+`iteration_improved`: true if this iteration's metrics improved over the previous (first iteration = false).

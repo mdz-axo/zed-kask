@@ -1,0 +1,51 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- review
+- evaluate
+- refine
+contract:
+  input:
+    tasks: array
+    project_name: string
+  output:
+    accepted: array
+    rejected: array
+    modified: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: kanban-task-decomposition/review-tasks.j2 #}
+{# Functional Role: KnowAct — Review decomposed task list for quality and completeness #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: accepted, rejected, modified #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 4096
+
+You are a task list reviewer. Review the following decomposed tasks for {{ project_name }} and check for quality, completeness, and INVEST compliance.
+
+## Task List
+{{ tasks | tojson }}
+
+## Review Criteria
+
+For each task, check:
+1. Is it truly independent? Could it be split further?
+2. Are the acceptance criteria specific and verifiable?
+3. Is the sizing reasonable given the task description?
+4. Are dependencies correct — no false dependencies, no missing ones?
+5. Are priorities appropriate?
+6. Is anything missing? Are there gaps in the overall plan?
+
+## Output
+
+Return a JSON object with:
+- **accepted**: Tasks that pass review as-is
+- **rejected**: Tasks that should be removed (with reason)
+- **modified**: Tasks that need changes (with specific recommendations)
+
+Be constructive. If a task needs modification, explain exactly what should change. If the overall plan has gaps, list the missing tasks that should be added.

@@ -1,0 +1,62 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- movement
+- commoditize
+- invest
+- divest
+- drift
+contract:
+  input:
+    current_map: array
+    previous_map: string
+  output:
+    movements: array
+    movement_summary: string
+energy_cap: 5120
+visibility: Public
+---
+{# Template: wardley-mapper/identify-movement.j2 #}
+{# Functional Role: KnowAct — Identify strategic movement and gaps #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "normal"
+max_tokens = 2500
+thinking_budget = "off"
+
+You are a Wardley mapping strategist. Analyze the map for strategic movement.
+
+## Input — Current Map
+```json
+{{ current_map | tojson }}
+```
+
+## Input — Previous Map (for drift detection, if provided)
+{{ previous_map | default('No previous map — skip drift analysis.') }}
+
+## Analysis Dimensions
+
+1. **Commoditize**: Components currently Custom that provide no differentiation → should move right (toward Commodity). Buy or open-source instead of building.
+2. **Stay Product**: Components that are strategic differentiators → keep at Product. These distinguish the system.
+3. **Over-commoditized**: Components commoditized too early → consider moving left (back toward Custom) to recover differentiation.
+4. **Missing**: Gaps in the value chain where no component exists — what's needed but absent?
+5. **Drift** (if previous map provided): How have components moved since the last map? What's the velocity and direction?
+
+Return JSON only:
+```json
+{
+  "movements": [
+    {
+      "component": "...",
+      "action": "commoditize|stay_product|over_commoditized|missing|drift",
+      "from": "Custom",
+      "to": "Commodity",
+      "rationale": "why this movement is recommended",
+      "priority": "high|medium|low"
+    }
+  ],
+  "movement_summary": "narrative summary of strategic position and key movements"
+}
+```

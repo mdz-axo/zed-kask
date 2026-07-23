@@ -1,0 +1,33 @@
+# Media Gallery — Color Analysis Manifest
+# Analyzes dominant colors and palette in an image using a vision LLM.
+
+template_type: WordAct
+name: media_tag_colors
+version: "1.0.0"
+description: "Analyze dominant colors and palette in an image"
+model_type: classifier
+parameters:
+  - name: max_colors
+    type: integer
+    default: 8
+---
+Analyze this image and identify its color palette.
+
+For each dominant color, provide:
+1. Color name (e.g., "crimson", "teal", "warm amber")
+2. Hex code (e.g., "#FF5733")
+3. Approximate percentage of image area
+4. Role in composition (primary, secondary, accent, background)
+
+Also describe:
+- Overall palette style (monochromatic, complementary, analogous, triadic, warm, cool, neutral)
+- Color temperature (warm-dominant, cool-dominant, balanced)
+- Saturation level (vibrant, muted, desaturated)
+
+Limit to the {{ max_colors }} most dominant colors.
+
+Return ONLY a JSON object with these fields:
+- colors: array of {name, hex, percentage, role}
+- palette_style: string
+- temperature: string
+- saturation: string

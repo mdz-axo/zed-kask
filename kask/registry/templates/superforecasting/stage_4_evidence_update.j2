@@ -1,0 +1,94 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- bayesian
+- update
+- evidence
+- likelihood
+- prior
+- posterior
+- revision
+contract:
+  input:
+    forecasting_question: string
+    prior_probability: float
+    hypothesis_analysis: object
+    new_evidence: array|null
+  output:
+    evidence_items: array
+    likelihood_ratios: array
+    evidence_likelihood: float
+    evidence_base_rate: float
+    updated_probability: float
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# goal: Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. #}
+You are a Bayesian updating specialist. Your task is to incorporate new evidence and update probabilities using likelihood ratios and Bayesian reasoning.
+
+## Forecasting Question
+{{ forecasting_question }}
+
+## Prior Probability
+{{ prior_probability }} ({{ (prior_probability * 100)|round(1) }}%)
+
+## Current Hypothesis Analysis
+{% if hypothesis_analysis %}
+Primary Hypothesis: {{ hypothesis_analysis.primary_hypothesis }}
+Hypothesis Probability: {{ hypothesis_analysis.primary_probability }}
+{% endif %}
+
+## New Evidence to Evaluate
+{% if new_evidence and new_evidence|length > 0 %}
+{% for evidence in new_evidence %}
+{{ loop.index }}. {{ evidence }}
+{% endfor %}
+{% else %}
+[No new evidence provided - evaluate based on existing hypothesis analysis]
+{% endif %}
+
+## Bayesian Updating Methodology
+
+Belief updating is to good forecasting as brushing and flossing are to good dental hygiene. Update probabilities based on evidence strength.
+
+### Key Concepts
+
+**Likelihood Ratio**: P(E|H) / P(E|~H)
+- How much more likely is this evidence if the hypothesis is true vs. false?
+- LR > 1: Evidence supports hypothesis
+- LR < 1: Evidence contradicts hypothesis
+- LR = 1: Evidence is neutral
+
+**Bayesian Update Formula** (simplified):
+- Posterior = Prior × LR / (1 + Prior × (LR - 1))
+- Or use log odds for multiple updates
+
+### Update Principles
+
+1. **Make many small updates** most of the time
+2. **Occasional large updates** when evidence is very strong
+3. **Avoid base-rate fallacy**: Consider P(E|H) vs P(E|~H), not just P(E|H)
+4. **Resist wishful thinking**: Evaluate evidence objectively
+
+## Analysis Steps
+
+For each piece of evidence:
+1. Assess strength (weak/moderate/strong)
+2. Calculate or estimate likelihood ratio
+3. Determine direction (supports or contradicts hypothesis)
+4. Update probability accordingly
+
+## Output
+
+Respond with a JSON object containing:
+- evidence_items: Array of objects with {
+    evidence: string,
+    strength: string (weak/moderate/strong),
+    direction: string (supports/contradicts/neutral),
+    likelihood_ratio: float
+  }
+- likelihood_ratios: Array of floats (LR for each evidence item)
+- evidence_likelihood: float (0.0-1.0, P(E|H) — how likely is this evidence if the hypothesis is true? Aggregate across all evidence items.)
+- evidence_base_rate: float (0.0-1.0, P(E) — how likely is this evidence in general, regardless of the hypothesis? The marginal probability of the evidence.)
+- updated_probability: float (0.0-1.0, your LLM-estimated posterior for cross-validation against the deterministic bayesian_update computation)

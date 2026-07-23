@@ -1,0 +1,56 @@
+# Media — Logo Discovery FlowDef
+# Map business identity inputs to formal logo design parameters before generation.
+# Agent-coordinated; not executed by a FlowDef engine.
+
+template_type: FlowDef
+name: media_logo_discovery
+version: "1.0.0"
+description: "Map business identity inputs to formal logo design parameters before generation"
+parameters:
+  - name: name
+    type: string
+    required: true
+    description: "Business or group name"
+  - name: industry
+    type: string
+    required: true
+    description: "Industry context (tech, food, legal, creative, etc.)"
+  - name: audience
+    type: string
+    required: false
+    description: "Who is this for? (e.g., 'young professionals', 'enterprise CTOs')"
+  - name: values
+    type: string
+    required: false
+    description: "Core brand values as comma-separated list"
+  - name: model
+    type: string
+    required: false
+    description: "LLM for classification (default: OR/openai/gpt-4o)"
+input_type: text
+output_type: design_parameters
+latency: sync
+cost_tier: low
+steps:
+  - id: map-attributes
+    tool: inference
+    description: >
+      Agent renders media/logo-discovery-map.j2 with the brand inputs,
+      calls the inference router with the rendered prompt, and parses the
+      JSON response into design parameters (style, logo_type, dominant_shape,
+      typography_class, palette_hex, density, rationale).
+
+  - id: select-strategy
+    description: >
+      Agent chooses between single-shot (media/logo-formal-prompt.j2),
+      iterative-refine (media/logo-iterative-refine.yaml), or moodboard-first
+      based on brand complexity and user preference. Simple brands (single
+      word, clear industry) → single-shot. Complex brands (multiple products,
+      unclear audience) → iterative-refine. Visual-first brands (luxury,
+      fashion) → moodboard-first.
+---
+# Logo Discovery Pipeline
+# Phase 1: Agent renders logo-discovery-map.j2 and calls inference router
+# Phase 2: Agent parses JSON design parameters from LLM response
+# Phase 3: Agent selects generation strategy based on brand complexity
+# Output: design parameters + strategy choice for the generation phase

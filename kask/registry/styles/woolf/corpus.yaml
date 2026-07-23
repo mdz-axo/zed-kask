@@ -1,0 +1,206 @@
+# Virginia Woolf Style Corpus Configuration
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+# Version: 1.0
+# Created: 2026-06-10
+#
+# Declarative specification for constructing the Woolf style embedding corpus.
+# Processed by: kask embed-corpus (subcommand of hkask-cli)
+# Storage:     hKask sqlite-vec via EmbeddingStore
+#
+# Pipeline: web_extract → chunk → embed_sentences → semantic_embed → semantic_centroid
+#
+# All works are public domain (pre-1930).
+
+author: woolf
+author_full: "Virginia Woolf"
+style_synthesizer: composition/woolf-style-synthesizer
+
+# ── Embedding Model Configuration ──────────────────────────────────────────────
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: 64
+
+# ── Corpus Sources ─────────────────────────────────────────────────────────────
+# Project Gutenberg texts. URL points to the plain text UTF-8 edition.
+
+works:
+  - title: "Mrs Dalloway"
+    slug: mrs-dalloway
+    url: "https://www.gutenberg.org/cache/epub/71865/pg71865.txt"
+    year: 1925
+    type: novel
+    public_domain: true
+
+  - title: "To the Lighthouse"
+    slug: to-the-lighthouse
+    url: "https://www.gutenberg.org/cache/epub/45401/pg45401.txt"
+    year: 1927
+    type: novel
+    public_domain: true
+
+  - title: "Orlando"
+    slug: orlando
+    url: "https://www.gutenberg.org/cache/epub/71533/pg71533.txt"
+    year: 1928
+    type: novel
+    public_domain: true
+
+  - title: "A Room of One's Own"
+    slug: a-room-of-ones-own
+    url: "https://www.gutenberg.org/cache/epub/71734/pg71734.txt"
+    year: 1929
+    type: essay
+    public_domain: true
+
+  - title: "The Voyage Out"
+    slug: the-voyage-out
+    url: "https://www.gutenberg.org/cache/epub/144/pg144.txt"
+    year: 1915
+    type: novel
+    public_domain: true
+
+  - title: "Night and Day"
+    slug: night-and-day
+    url: "https://www.gutenberg.org/cache/epub/1245/pg1245.txt"
+    year: 1919
+    type: novel
+    public_domain: true
+
+  - title: "Jacob's Room"
+    slug: jacobs-room
+    url: "https://www.gutenberg.org/cache/epub/5670/pg5670.txt"
+    year: 1922
+    type: novel
+    public_domain: true
+
+# ── Foundational Style Manifestos ───────────────────────────────────────────────
+# Woolf's own critical essays articulate the aesthetic principles of her fiction.
+# Embedded as special passages for retrieval, analogous to Kansas City Star rules.
+
+foundational_rules:
+  - title: "Modern Fiction (1919)"
+    slug: modern-fiction
+    text: |
+      Examine an ordinary mind on an ordinary day.
+      The mind receives a myriad impressions — trivial, fantastic, evanescent, or engraved with the sharpness of steel.
+      Life is not a series of gig-lamps symmetrically arranged; life is a luminous halo, a semi-transparent envelope surrounding us from the beginning of consciousness to the end.
+      Let us record the atoms as they fall upon the mind in the order in which they fall.
+    type: style_manifesto
+
+  - title: "Mr Bennett and Mrs Brown (1924)"
+    slug: mr-bennett-and-mrs-brown
+    text: |
+      On or about December 1910, human character changed.
+      All human relations have shifted — those between masters and servants, husbands and wives, parents and children.
+      And when human relations change there is at the same time a change in religion, conduct, politics, and literature.
+    type: style_manifesto
+
+# ── Chunking Configuration ─────────────────────────────────────────────────────
+chunking:
+  min_words: 50
+  max_words: 200
+  split_on: paragraph
+  sentence_boundary: ".!? "
+  overlap_words: 0
+
+# ── Entity Reference Format ────────────────────────────────────────────────────
+entity_ref_pattern: "style:{author}:{slug}:{index}"
+centroid_entity_ref: "style:woolf:centroid"
+
+# ── Quality Thresholds ─────────────────────────────────────────────────────────
+# Slightly wider than Hemingway (0.18 vs 0.15) — Woolf's stream of consciousness
+# produces greater syntactic variance, so we accept a broader cluster radius.
+
+validation:
+  centroid_distance_max: 0.18
+  exemplar_count_min: 3
+  exemplar_count_max: 7
+
+# ── Entity Declarations (5W1H Metadata Layer) ────────────────────────────────────
+
+entities:
+  characters:
+    - name: "Clarissa Dalloway"
+      appears_in: ["mrs-dalloway"]
+    - name: "Septimus Warren Smith"
+      appears_in: ["mrs-dalloway"]
+    - name: "Peter Walsh"
+      appears_in: ["mrs-dalloway"]
+    - name: "Mrs Ramsay"
+      appears_in: ["to-the-lighthouse"]
+    - name: "Lily Briscoe"
+      appears_in: ["to-the-lighthouse"]
+    - name: "Orlando"
+      appears_in: ["orlando"]
+    - name: "Rachel Vinrace"
+      appears_in: ["the-voyage-out"]
+    - name: "Jacob"
+      appears_in: ["jacobs-room"]
+    - name: "Miss"
+      appears_in: []
+    - name: "Lady"
+      appears_in: []
+
+  places:
+    - name: "London"
+      appears_in: ["mrs-dalloway"]
+    - name: "Bond Street"
+      appears_in: ["mrs-dalloway"]
+    - name: "lighthouse"
+      appears_in: ["to-the-lighthouse"]
+    - name: "garden"
+      appears_in: []
+    - name: "sea"
+      appears_in: []
+    - name: "room"
+      appears_in: []
+
+  events:
+    - name: "party"
+      appears_in: ["mrs-dalloway"]
+    - name: "war"
+      appears_in: ["mrs-dalloway", "jacobs-room"]
+    - name: "dinner"
+      appears_in: ["to-the-lighthouse"]
+    - name: "walk"
+      appears_in: []
+    - name: "painting"
+      appears_in: ["to-the-lighthouse"]
+
+  concepts:
+    - name: "consciousness"
+    - name: "memory"
+    - name: "time"
+    - name: "death"
+    - name: "beauty"
+
+# ── Declared Methods ────────────────────────────────────────────────────────────
+
+methods:
+  - name: "hypotaxis"
+    description: "Subordinate clauses nested within main clauses — sentence as tree"
+    signal:
+      parataxis_ratio_max: 0.4
+
+  - name: "free_indirect_discourse"
+    description: "Third-person narration that slips into character consciousness"
+    signal:
+      hedge_density_min: 1.0
+      dialogue_ratio_max: 0.3
+
+  - name: "abstract_prose"
+    description: "Preference for abstract nouns and conceptual vocabulary"
+    signal:
+      concrete_noun_ratio_max: 0.55
+      adjective_density_min: 5.0
+
+# ── Budget ──────────────────────────────────────────────────────────────────────
+
+budget:
+  total_passages: 0
+  triple_budget_per_100: 3750
+
+# ── Classifier ──────────────────────────────────────────────────────────────────
+triple_classifier: triple-extractor-literary

@@ -1,0 +1,59 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    selector_result: object
+    drill_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: kata-starter/kata-starter-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for kata-starter cycles. #}
+{# learner_bot: {{ learner_bot }} #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Compute convergence where 0 means starter drill outcomes indicate stable foundational habit signals and low ambiguity.
+
+Input:
+```json
+{
+  "selector_result": {{ selector_result | tojson }},
+  "drill_results": {{ drill_results | tojson }}
+}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means starter drill outcomes indicate stable foundational habit signals and low ambiguity.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (starter drill outcomes indicate stable foundational habit signals and low ambiguity). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

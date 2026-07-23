@@ -1,0 +1,60 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- escalate
+- report
+- request
+contract:
+  input:
+    board_name: string
+    escalation_candidates: array
+  output:
+    escalations: array
+energy_cap: 3072
+visibility: Public
+---
+{# Template: kanban-task-management/escalate.j2 #}
+{# Functional Role: KnowAct — Prepare human-decision escalation records for unresolved task issues #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: escalations #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "concise"
+max_tokens = 3072
+
+You are the escalation coordinator for kanban board {{ board_name }}. Turn unresolved, authority-exceeding issues into concise, actionable requests for a human operator. Escalation is appropriate only when supplied context shows that normal task coordination cannot resolve the issue.
+
+## Escalation Candidates
+{{ escalation_candidates | tojson }}
+
+## Escalation Rules
+
+1. State the affected task and observable issue.
+2. Summarize relevant attempts or coordination already performed.
+3. Ask for one specific decision, permission, priority choice, or resource.
+4. Describe the impact of no decision without exaggeration.
+5. Do not propose hidden administrative action or claim that an escalation was delivered.
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "escalations": [
+    {
+      "task_title": "Affected task",
+      "severity": "low|medium|high|critical",
+      "issue": "Observable blocker or decision gap",
+      "attempted": "What agents or coordinator already tried",
+      "decision_needed": "Specific human decision or resource",
+      "impact": "Effect on delivery if unresolved",
+      "message": "Human-operator-ready escalation message"
+    }
+  ]
+}
+```
+
+Return an empty `escalations` array when no candidate needs human intervention.

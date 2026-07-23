@@ -1,0 +1,189 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- assess
+- classify
+- evaluate
+- detect
+- infer
+contract:
+  input:
+    module_path: string
+    module_source: string
+    caller_paths: array
+    codebase_context: object
+  output:
+    interface_inventory: object
+    behavior_estimate: object
+    depth_score: object
+    classification: string
+    red_flags: array
+    recommendations: array
+  energy_cap: 6144
+  visibility: Public
+---
+{# Template: deep-module/deep-module-assess.j2 #}
+{# Functional Role: KnowAct — Assess module depth: enumerate public interface, evaluate behavior, compute depth score #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: interface_inventory, behavior_estimate, depth_score, classification, red_flags, recommendations #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a module depth assessor using Ousterhout's deep module discipline. Analyze a module to determine whether it is deep (high benefit/cost ratio) or shallow (low benefit/cost ratio). Count the public interface, estimate encapsulated behavior, and compute a depth score.
+
+## Philosophy
+
+The cost of a module is its interface — every public function, type, trait, and constant. The benefit is the behavior it encapsulates. A deep module has a small interface and much behavior behind it. A shallow module has a large interface with thin or non-existent behavior.
+
+## Module to Assess
+
+**Module Path**: {{ module_path }}
+
+## Module Source
+
+```
+{{ module_source }}
+```
+
+## Caller Paths
+
+```json
+{{ caller_paths | tojson }}
+```
+
+{% if codebase_context %}
+## Codebase Context
+
+```json
+{{ codebase_context | tojson }}
+```
+{% endif %}
+
+## Assessment Process
+
+### Step 1 — Interface Inventory
+
+Count every public item in the module:
+
+- **Public functions**: fn that are `pub` or `pub(crate)`. Count each function signature.
+- **Public types**: struct, enum, type alias that are `pub`. Count each definition.
+- **Public traits**: trait that is `pub`. Count each definition.
+- **Public constants**: const that is `pub`. Count each definition.
+- **Public modules**: mod that is `pub`. Count each sub-module.
+
+Do NOT count:
+- impl blocks (these are behavior, not interface)
+- Tests (these are encapsulated)
+- Re-exports (these are aliases, not new items)
+
+### Step 2 — Behavior Estimate
+
+Estimate the behavior encapsulated by the module:
+
+- **Implementation complexity**: Roughly how many lines of non-comment, non-blank code implement the module's behavior? Include private helper functions, impl blocks, internal state management.
+- **Invariants enforced**: What invariants does the module maintain? (e.g., "always returns valid UTF-8", "ensures atomic state transitions")
+- **Complexity managed**: What complexity does the module hide from callers? (e.g., connection pooling, retry logic, format conversion)
+
+### Step 3 — Compute Depth Score
+
+```
+Depth Score = Behavior Lines / (Public Functions + Public Types + Public Traits + Public Constants)
+
+| Score | Classification |
+|-------|---------------|
+| 100+  | Deep          |
+| 50–99 | Adequate      |
+| 20–49 | Shallow       |
+| 0–19  | Very Shallow  |
+```
+
+### Step 4 — Identify Red Flags
+
+Check for common shallowness patterns:
+
+- More public functions than private? → Pass-through suspicion
+- More public types than public functions? → Data bag module
+- Public functions all delegate to a single dependency? → Pass-through module
+- Zero invariants enforced? → No encapsulation
+- Single consumer? → Abstraction for one — inline it
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "interface_inventory": {
+    "public_functions": 5,
+    "public_types": 2,
+    "public_traits": 0,
+    "public_constants": 1,
+    "public_modules": 0,
+    "total_interface_items": 8,
+    "function_details": [
+      {"name": "create_session", "visibility": "pub", "signature": "fn create_session(&self, config: &SessionConfig) -> Result<Session, ServiceError>"},
+      {"name": "get_session", "visibility": "pub", "signature": "fn get_session(&self, id: &SessionId) -> Result<Session, ServiceError>"},
+      {"name": "list_sessions", "visibility": "pub", "signature": "fn list_sessions(&self) -> Result<Vec<SessionSummary>, ServiceError>"},
+      {"name": "delete_session", "visibility": "pub", "signature": "fn delete_session(&self, id: &SessionId) -> Result<(), ServiceError>"},
+      {"name": "update_session", "visibility": "pub", "signature": "fn update_session(&self, id: &SessionId, config: &SessionConfig) -> Result<Session, ServiceError>"}
+    ],
+    "type_details": [
+      {"name": "SessionConfig", "visibility": "pub", "kind": "struct"},
+      {"name": "SessionSummary", "visibility": "pub", "kind": "struct"}
+    ],
+    "trait_details": [],
+    "constant_details": [
+      {"name": "MAX_SESSIONS", "visibility": "pub", "value": "100"}
+    ]
+  },
+  "behavior_estimate": {
+    "implementation_lines": 480,
+    "private_functions": 8,
+    "invariants_enforced": [
+      "Session IDs are always valid UUIDs",
+      "Session state transitions are atomic",
+      "Max 100 active sessions per user"
+    ],
+    "complexity_managed": [
+      "Database transaction management",
+      "Session expiry and cleanup",
+      "Concurrent access serialization"
+    ]
+  },
+  "depth_score": {
+    "score": 60,
+    "classification": "Adequate",
+    "formula": "480 / (5 + 2 + 0 + 1) = 60.0",
+    "threshold_met": true,
+    "distance_to_deep": 40
+  },
+  "red_flags": [],
+  "recommendations": [
+    "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score",
+    "Monitor interface creep as features are added"
+  ]
+}
+```
+
+## Constraints
+
+- Count public items mechanically — don't guess.
+- Estimate behavior conservatively — err on the side of undercounting.
+- Flag all red flags even if the depth score is acceptable.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

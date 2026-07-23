@@ -1,0 +1,115 @@
+{# goal: Select the security audit target surface and map it to defense-layer coverage checks. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- select
+- calibrate
+- target
+- audit
+- assess
+- classify
+contract:
+  input:
+    target_surface: string
+    target_path: string
+    regression_library: array
+  output:
+    selected_surface: string
+    checks_to_run: array
+    known_regressions: array
+    defense_layers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: kali-audit/select-surface.j2 #}
+{# Functional Role: KnowAct — Surface selection and defense-layer mapping #}
+{# Produces: selected_surface, checks_to_run, known_regressions, defense_layers #}
+{# Design: forward-adaptable — surfaces discovered dynamically, layers are parameters #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a security auditor selecting the audit surface for **{{ target_surface }}**.
+
+## Target
+
+- **Surface:** {{ target_surface }}
+- **Path:** {{ target_path }}
+
+## Known Regressions (already found and enforced)
+
+{% for rr in regression_library %}
+- **{{ rr.id }}** ({{ rr.status }}): {{ rr.title }} — CWE: {{ rr.cwe }}
+{% endfor %}
+
+## Surface Discovery
+
+If `target_surface` is "auto", discover surfaces by scanning the codebase:
+- `crates/hkask-*/src/` → code surface (one per crate)
+- `registry/templates/*/` → template surface
+- `mcp-servers/hkask-mcp-*/` → mcp surface
+- `deny.toml` + `Cargo.lock` → supply-chain surface
+- `scripts/*.sh` + `.github/workflows/*.yml` → config surface
+- `crates/hkask-guard/` → llm-io surface
+
+If `target_surface` is specified, use it directly.
+
+## Defense-in-Depth Layer Catalog
+
+The 8-layer defense stack (evidence-backed). For each layer, the audit checks
+whether it is present on the target surface. When a new defense is discovered
+in future research, it becomes a new layer — the skill structure does not change.
+
+| Layer | Name | Source |
+|-------|------|--------|
+| 1 | Input filtering | OWASP LLM01:2025 |
+| 2 | Data/instruction separation (spotlighting) | Microsoft Research arXiv:2403.14720 |
+| 3 | Instruction hierarchy | OpenAI arXiv:2404.13208 |
+| 4 | Capability gating (OCAP) | OWASP LLM06:2025, OCAP literature |
+| 5 | Information flow control (taint labels) | Microsoft Research arXiv:2505.23643 (FIDES) |
+| 6 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
+| 7 | Output filtering (secrets, canaries) | OWASP LLM02:2025, Thinkst canarytokens |
+| 8 | Deception detection (decoy tools, canary tokens) | MITRE Engage, Cobalt Honey-AI |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "selected_surface": "code|template|supply-chain|mcp|config|llm-io",
+  "checks_to_run": ["forbid_unsafe_code", "constant_time_eq", "secret_wrapping", ...],
+  "known_regressions": ["RR-0001", "RR-0002", ...],
+  "defense_layers": [
+    {
+      "ordinal": 1,
+      "name": "Input filtering",
+      "source": "OWASP LLM01:2025",
+      "check": "Is hkask-guard scan_input called before every LLM invocation?",
+      "present_if": "scan_input call present in the inference dispatch path"
+    },
+    {
+      "ordinal": 2,
+      "name": "Data/instruction separation",
+      "source": "Microsoft Research arXiv:2403.14720",
+      "check": "Are MCP tool outputs datamarked before entering LLM context?",
+      "present_if": "spotlighting or datamarking transform applied to tool outputs"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Focus on the specific target path provided — do not generate generic checks.
+- Exclude checks already covered by enforced regressions in the library.
+- When target_surface is "auto", discover surfaces from the filesystem.
+- Defense layers are parameters, not hardcoded — new layers can be added without template changes.
+- Be realistic about what can be checked statically vs. what needs runtime probing.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

@@ -1,0 +1,49 @@
+# Template crate manifest for kanban-task-decomposition skill
+# hKask v0.28.0
+
+crate:
+  name: kanban-task-decomposition
+  version: "0.28.0"
+  description: >
+    Project-to-task decomposition for agent kanban coordination. Gathers
+    structured context, decomposes work into INVEST-compliant tasks at the
+    target hour granularity, and reviews for quality and completeness.
+
+templates:
+  - id: kanban-task-decomposition/decompose-tasks
+    name: "Decompose a project description into INVEST-compliant kanban tasks at…"
+    path: decompose-tasks.j2
+    type: KnowAct
+    lexicon_terms: [decompose, analyze, plan, structure]
+    description: >
+      Decompose a project description into INVEST-compliant kanban tasks
+      at the target task-hour granularity, with acceptance criteria,
+      dependencies, and estimated effort for each task.
+
+  - id: kanban-task-decomposition/gather-context
+    name: "Extract structured project context from an unstructured description:…"
+    path: gather-context.j2
+    type: KnowAct
+    lexicon_terms: [elicit, analyze, structure]
+    description: >
+      Extract structured project context from an unstructured description:
+      project name, goals, constraints, resources, and target task size.
+
+  - id: kanban-task-decomposition/review-tasks
+    name: "Review a decomposed task list for INVEST quality and completeness"
+    path: review-tasks.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, assess, verify]
+    description: >
+      Review a decomposed task list for INVEST quality and completeness.
+      Identifies accepted, rejected, and modified tasks with reasoning.
+
+  - id: kanban-task-decomposition/populate-board
+    name: "Convert accepted tasks and their recomposition plan into a complete,…"
+    path: populate-board.j2
+    type: KnowAct
+    lexicon_terms: [populate, organize, classify]
+    description: >
+      Convert accepted tasks and their recomposition plan into a complete,
+      board-ready task list with initial statuses, phases, dependencies, and
+      preserved acceptance criteria.

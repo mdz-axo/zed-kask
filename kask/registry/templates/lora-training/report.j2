@@ -1,0 +1,219 @@
+{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, propose evidence-backed regressions, emit reg.lora.report (P9), and require userpod_host (P12). #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- report
+- regression
+- severity
+- gate
+- training
+contract:
+  input:
+    findings: array
+    gate_results: object
+    existing_regressions: array
+    userpod_host: string
+  output:
+    findings_grouped: array
+    proposed_regressions: array
+    verdict: string
+    contract_gaps: array
+    reg_span_emitted: boolean
+energy_cap: 6144
+visibility: Public
+---
+{# Template: lora-training/report.j2 #}
+{# Functional Role: KnowAct — lossless finding report and regression proposal #}
+{# Registry authoritative; no finding reclassification (P5.1, P8). #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+INPUT: findings = {{ findings }} (normalized array from audit-config)
+INPUT: gate_results = {{ gate_results }}
+INPUT: existing_regressions = {{ existing_regressions }}
+INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory)
+
+AUTHORITATIVE INPUT CONTRACT
+
+`findings` already contain the final audit classification. Consume every
+finding unchanged with exactly this schema:
+- `finding_id`
+- `gate_id`
+- `phase`: `static_config | harness | runtime | post_training`
+- `state`: `pass | warn | fail | refuse | deferred | planned |
+  not_evaluated | not_applicable`
+- `severity`: `critical | high | medium | low | informational | none`
+- `selected_method`
+- `readiness_impact`: `blocking | conditional | non_blocking | none | unknown`
+- `claim`
+- `requirement`
+- `evidence_kind`: `config_value | code_presence | code_absence |
+  runtime_measurement | operator_assertion | not_available`
+- `evidence`: object with `config_path`, `line`, `parameter`, `value`,
+  `snippet`
+- `provenance`
+- `epistemic_mode`
+- `citation`: array
+- `recommendation`
+- `userpod_host`
+
+Do not add, remove, rename, reinterpret, upgrade, downgrade, or reclassify any
+finding field. In particular:
+- Do not infer severity from gate_id or state.
+- Do not convert `deferred`, `planned`, `not_evaluated`, or
+  `not_applicable` to warn/fail.
+- Do not convert missing evidence to failure.
+- Do not replace `selected_method` with a recommendation.
+- Do not manufacture evidence to make a finding regression-eligible.
+
+REPORT ACTIONS
+
+1. Validate losslessly:
+   - Reject report synthesis if `userpod_host` is absent or if a finding's
+     `userpod_host` conflicts with it; preserve P12 identity.
+   - Record malformed finding inputs as `input_contract_errors` outside the
+     findings array. Do not repair or reclassify them.
+2. Present `findings` unchanged. `findings_grouped` may contain views grouped
+   by phase, state, or severity, but each item MUST be the complete original
+   finding object byte-for-byte/equivalent-value unchanged.
+3. Summarize `gate_results` using the audit states without collapsing them.
+   Produce counts for all eight states and all four phases.
+4. Preserve operator sovereignty:
+   - Report the operator's `selected_method` unchanged.
+   - Render `method_recommendations` as advisory content copied from findings;
+     they do not alter selected method or readiness.
+   - Render `readiness` separately from recommendations.
+5. Identify contract gaps without treating unevaluated outcomes as observed
+   violations:
+   - `deferred`: applicable runtime/post-training requirement awaiting
+     supplied measurement.
+   - `planned`: concrete check plan exists, result pending.
+   - `not_evaluated`: applicability or outcome lacks sufficient declared
+     evidence.
+   - `not_applicable`: exclude from gaps.
+   A contract gap describes the missing requirement/evidence and next
+   evidence needed; it is not a reclassified finding.
+6. Propose regressions only for existing `fail` or `refuse` findings (or
+   `warn` findings when the project regression policy explicitly permits the
+   evidenced anti-pattern) that include concrete contradictory evidence:
+   `config_value`, `code_presence`, `code_absence`, or
+   `runtime_measurement`.
+   - `code_absence` is eligible only when the finding states that the complete
+     declared harness scope was searched for established required behavior.
+   - Never propose a regression solely from `not_available`, an operator plan,
+     or a deferred/planned/not_evaluated state.
+   - Deduplicate against `existing_regressions` without modifying findings.
+7. Rank recommended next actions from the existing `recommendation` fields
+   and contract gaps. Ranking is report metadata, not finding mutation.
+
+READINESS VERDICT
+
+Derive the report verdict from `gate_results` using the same state semantics
+as audit-config; do not inspect gate names to invent policy:
+- `Refuse`: at least one applicable gate is `refuse`.
+- `Fail`: no refuse and at least one applicable gate is `fail`.
+- `Conditional`: no fail/refuse and at least one gate is `warn`.
+- `Deferred`: no fail/refuse and an applicable required runtime or
+  post-training gate is `deferred` or `planned`.
+- `Not evaluated`: no fail/refuse/warn/deferred/planned, but at least one
+  potentially applicable gate is `not_evaluated`.
+- `Pass`: all applicable required gates in the reported readiness scope are
+  `pass` or `not_applicable`.
+
+Precedence is Refuse > Fail > Conditional > Deferred > Not evaluated > Pass.
+A recommendation for a different method MUST NOT change this verdict. A
+runtime or post-training pass requires supplied `runtime_measurement`; this
+report never executes the check.
+
+REGRESSION PROPOSAL FORMAT
+
+For each eligible finding, propose a human-reviewed entry following the
+actual `security/regressions/README.md` contract:
+- `id: RR-XXXX` (placeholder; human assigns final number)
+- `title`
+- `surface: training`
+- `gate`: copied from `finding.gate_id`
+- `discovered_in`: copied from concrete evidence path/artifact
+- `discovered_by: lora-training`
+- `discovered_at`
+- `severity`: copied unchanged from finding
+- `detection`: concrete grep pattern for stable artifact evidence, or a
+  runtime assertion specification owned by the training boundary when the
+  source finding contains an actual runtime measurement
+- `mitigation`: copied/derived directly from finding.recommendation without
+  changing selected_method
+- `status: pending`
+- `ci_gate: scripts/check-lora-training-regressions.sh`
+- `finding_id`: source finding identity
+
+Propose `status: pending` only. Do not claim a runtime assertion is currently
+implemented unless supplied code evidence proves it. A proposed future
+assertion is a requirement, not an executed result.
+
+CITATION POLICY (P8)
+- Preserve each finding's `citation` array unchanged.
+- Build top-level `source_citations` as a deduplicated union of citations
+  actually present in findings, gate requirements, and regression-format
+  references.
+- Citations must be claim-appropriate: PEFT documentation for API/config
+  behavior, an arXiv paper for research/math claims, local documentation or
+  regression YAML for project contracts, and measured artifacts for observed
+  outcomes.
+- Do not force both PEFT and arXiv citations onto every claim.
+- Do not add sources that were not consulted or do not support the claim.
+
+EVIDENCE INTEGRITY
+- No synthetic config quotes, code search results, line numbers, values,
+  runtime measurements, benchmark numbers, or post-training outcomes.
+- Null evidence members remain null. Do not fill them from assumptions.
+- Absence of evidence is not failure unless the input finding already records
+  concrete `code_absence` against an established applicable contract; even
+  then, preserve the input classification unchanged.
+- Do not introduce framework-version-specific initializer refusal policy.
+
+Regulation SPAN (P9)
+Emit `reg.lora.report` with exact counts by phase, state, severity, and
+`evidence_kind`; proposed regression count; selected_method; readiness
+verdict; contract-gap count; userpod_host; latency_ms. Namespace remains
+registered in `CANONICAL_NAMESPACES`. Emit no anonymous action.
+
+OCAP BOUNDARY (P4)
+This report consumes supplied audit artifacts only. It does not read outside
+declared workspace paths, load models, execute initializers, run
+forward/backward/merge checks, train, evaluate, download artifacts, or call
+remote services without explicit consent. Runtime and post-training gates
+remain requirements, deferred/planned checks, or assessments of supplied
+measurements.
+
+OUTPUT FORMAT
+JSON object with:
+- `findings`: original normalized array unchanged
+- `findings_grouped`: lossless views containing unchanged finding objects
+- `gate_results_summary`: counts by all states and phases
+- `selected_method`: unchanged operator selection
+- `method_recommendations`: advisory, separate from readiness
+- `readiness`: `Pass | Conditional | Fail | Refuse | Deferred | Not evaluated`
+- `contract_gaps`: requirement/evidence gaps without finding reclassification
+- `proposed_regressions`: pending human-review entries
+- `input_contract_errors`
+- `userpod_host`
+- `source_citations`
+- `reg_span_reference`
+
+5W1H GATE CHECK (P5): Who = operator / userpod_host; What = lossless
+phase-aware audit report; Where = supplied audit artifacts; When = after
+configuration/harness audit and whenever runtime/post-training evidence is
+supplied; Why = transparent readiness without fabricated execution; How =
+preserve findings, summarize states, separate recommendations, propose only
+evidence-backed regressions, and emit Regulation span.
+
+REGISTRY AUTHORITATIVE (P5.1): This template is the canonical report phase.
+PUBLIC VISIBILITY (P11): regression proposals remain `pending`. USERPOD HOST
+(P12): mandatory throughout. CONVERGENCE INDEPENDENT: this report does not
+compute the convergence metric.

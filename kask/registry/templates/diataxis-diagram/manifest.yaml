@@ -1,0 +1,96 @@
+# Template crate manifest for diataxis-diagram skill
+# hKask v0.31.0
+# Diataxis diagramming — anchored in https://diataxis.fr/ methodology
+# Mermaid syntax — anchored in https://mermaid.js.org/
+
+crate:
+  name: diataxis-diagram
+  version: "0.31.0"
+  description: >
+    Generate Mermaid diagrams from code using Diataxis methodology. Convergent
+    PDCA loop: classify target and diagram type, extract entities from source,
+    generate Mermaid syntax, evaluate against Diataxis quality criteria, iterate
+    until convergence. Three core types (ERD, flowchart, state) and two extended
+    (sequence, class). All diagrams render natively in Zed.
+
+templates:
+  - id: diataxis-diagram/diataxis-diagram-classify
+    name: "Classify the target for diagram generation"
+    path: diataxis-diagram-classify.j2
+    type: KnowAct
+    lexicon_terms: [classify, evaluate, orient, map, select]
+    description: >
+      Classify the target for diagram generation. Determine which Mermaid diagram
+      type is appropriate (ERD, flowchart, state, sequence, or class), which
+      Diataxis quadrant the diagram will serve, and which source files to read.
+      Produces a classification verdict with rationale.
+    generates_spans:
+      - reg.diataxis-diagram.classify
+
+  - id: diataxis-diagram/diataxis-diagram-extract
+    name: "EXTRACT phase — agent-coordinated source reading"
+    path: diataxis-diagram-extract.j2
+    type: KnowAct
+    lexicon_terms: [extract, probe, read, map, structure]
+    description: >
+      EXTRACT phase — agent-coordinated source reading. Provides extraction
+      guidance for the target diagram type: what to look for in SQL schemas
+      (tables, columns, PK/FK), Rust code (enums, traits, control flow), or
+      documentation. The actual file I/O is agent-coordinated between template
+      calls. If extracted_entities is pre-populated, skip extraction and proceed.
+    generates_spans:
+      - reg.diataxis-diagram.extract
+
+  - id: diataxis-diagram/diataxis-diagram-generate
+    name: "Render extracted entities into valid Mermaid syntax"
+    path: diataxis-diagram-generate.j2
+    type: KnowAct
+    lexicon_terms: [generate, compose, render, structure, format]
+    description: >
+      Render extracted entities into valid Mermaid syntax. Apply type-specific
+      conventions: Crow's Foot cardinality for ERD, node shapes for flowcharts,
+      transition labels for state diagrams, block constructs for sequences,
+      interface markers for class diagrams. Accepts refinement directives from
+      the evaluate step for iterative improvement.
+    generates_spans:
+      - reg.diataxis-diagram.generate
+
+  - id: diataxis-diagram/diataxis-diagram-evaluate
+    name: "Score a generated diagram against Diataxis quality criteria"
+    path: diataxis-diagram-evaluate.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, score, critique, verify, calibrate]
+    description: >
+      Score a generated diagram against Diataxis quality criteria. Six weighted
+      dimensions: entity completeness (0.30), relationship accuracy (0.25), label
+      readability (0.15), type appropriateness (0.15), Diataxis voice (0.10),
+      cross-linking (0.05). Produces a scored evaluation with specific refinement
+      directives when quality gaps are found.
+    generates_spans:
+      - reg.diataxis-diagram.evaluate
+
+  - id: diataxis-diagram/diataxis-diagram-convergence
+    name: "Compute normalized convergence metric from the evaluation scores"
+    path: diataxis-diagram-convergence.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, score, verify, calibrate]
+    description: >
+      Compute normalized convergence metric from the evaluation scores.
+      Weighted sum across six Diataxis criteria, normalized to [0,1] where
+      0 = diagram perfectly matches source and Diataxis standards.
+      Threshold: 0.15 (same as idiomatic-rust — "maximally correct").
+    generates_spans:
+      - reg.diataxis-diagram.convergence
+
+  - id: diataxis-diagram/diataxis-diagram-write
+    name: "Finalize the diagram into a markdown file"
+    path: diataxis-diagram-write.j2
+    type: KnowAct
+    lexicon_terms: [write, compose, structure, format, finalize]
+    description: >
+      Finalize the diagram into a markdown file. Wraps the Mermaid source in a
+      code block, adds a plain-English description paragraph keyed to the target
+      Diataxis quadrant's voice, includes cross-links to related documentation,
+      and outputs to docs/diagrams/{type}-{target}.md.
+    generates_spans:
+      - reg.diataxis-diagram.write

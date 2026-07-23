@@ -1,0 +1,73 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- delegate
+- compare
+- weight
+- rank
+- decide
+contract:
+  input:
+    delegation_requests: array
+  output:
+    invoked: boolean
+    skill: string
+    result: object|null
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# goal: When the inquiry engine requests decision analysis, weigh and rank alternatives with sensitivity. #}
+{# Template: sequential-inquiry/sequential-inquiry-delegate-mcda.j2 #}
+{# KnowAct — MCDA delegate for sequential inquiry #}
+{# ℏKask v0.31.0 #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+## Delegation Requests
+
+```json
+{{ delegation_requests | tojson }}
+```
+
+Examine the array. Find ALL requests where `skill` equals `"mcda"`. Process every matching request.
+
+**If none:** Return `{"invoked": false, "skill": "mcda", "result": null, "rationale": "No MCDA request."}`
+
+**If found:** For EACH matching request, apply MCDA to `params.alternatives`. If multiple requests, return results as an array under `result`.
+
+1. Identify criteria from the problem domain
+2. Weight criteria (total = 1.0)
+3. Score each alternative per criterion (1-10)
+4. Weighted sum per alternative
+5. Detect compensation masking (cheap-but-dangerous?)
+6. Sensitivity: weight shift to change ranking
+
+### Output
+```json
+{
+  "invoked": true,
+  "skill": "mcda",
+  "result": {
+    "criteria": [{"name": "...", "weight": 0.35, "description": "..."}],
+    "alternatives": [
+      {"name": "...", "scores": {"criterion": 7}, "weighted_total": 6.8, "rank": 1}
+    ],
+    "compensation_warnings": [
+      {"alternative": "...", "issue": "High cost score masks low safety score"}
+    ],
+    "sensitivity": {
+      "most_sensitive_criterion": "...",
+      "weight_shift_to_change_winner": 0.15,
+      "robustness": "high|medium|low"
+    },
+    "recommendation": "Recommended alternative with justification"
+  },
+  "rationale": "What this analysis contributed"
+}
+```

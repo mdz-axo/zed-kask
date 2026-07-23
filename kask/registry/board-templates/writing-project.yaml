@@ -1,0 +1,35 @@
+# Writing Project — Board Template
+# ℏKask v0.27.0
+
+name: writing-project
+description: >
+  Board for documentation, articles, or content projects.
+  WIP limits: 2 in InProgress, 1 in Review.
+
+columns:
+  - name: Ideas
+    status: backlog
+    wip_limit: null
+  - name: Outlining
+    status: ready
+    wip_limit: 3
+  - name: Drafting
+    status: in_progress
+    wip_limit: 2
+  - name: Editing
+    status: review
+    wip_limit: 1
+  - name: Published
+    status: done
+    wip_limit: null
+
+phases:
+  - name: Research
+    description: Topic research, source gathering
+    task_labels: [research, sources]
+  - name: Writing
+    description: Drafting and editing content
+    task_labels: [draft, edit, content]
+  - name: Publication
+    description: Formatting, review, release
+    task_labels: [format, review, publish]

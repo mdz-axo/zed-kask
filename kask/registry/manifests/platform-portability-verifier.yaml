@@ -1,0 +1,218 @@
+# Platform Portability Verifier
+# ℏKask v0.31.0 — Sovereignty verification: data portability
+# Functional Role: FlowDef (process orchestration)
+# Implementation: YAML manifest
+# Steps: execute_backup, verify_integrity, simulate_import, synthesize_report, convergence_check
+
+manifest:
+  id: platform-portability-verifier
+  category: infrastructure
+  name: Platform Portability Verifier
+  description: >
+    Convergent portability verification process. Executes a backup export
+    for a target pod, verifies backup integrity (checksums, record counts,
+    encryption validity), validates that the exported data can be imported
+    on a clean hKask instance without data loss or corruption, and produces
+    a structured verification report.
+
+    Operationalizes P1 (User Sovereignty): user data is fully exportable and
+    portable. The platform proves — not claims — that users can leave at any
+    time with all their data intact. No lock-in.
+
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.05
+  improvement_gate: threshold_only
+  max_iterations: 2
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: pod_id
+    type: string
+    required: false
+    description: >
+      Target pod to verify. If not provided, verifies all pods.
+      Format: sanitized agent name matching the data directory.
+  - name: backup_path
+    type: string
+    required: false
+    description: >
+      Pre-existing backup file path. If provided, skips the backup
+      execution step and verifies the existing file directly.
+  - name: verify_import
+    type: boolean
+    required: false
+    default: false
+    description: >
+      If true, attempts to import the backup on a clean temporary
+      hKask instance to validate full portability. Requires a
+      disposable hKask environment.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Execute backup export for the target pod. Runs the equivalent of
+      `kask backup export --pod <pod_id>` via the filesystem MCP server.
+      Produces an encrypted SQLCipher archive at the backup path.
+      If backup_path input is provided with a valid existing file,
+      skips execution and proceeds to verification.
+
+      The backup command is idempotent — running it multiple times
+      produces consistent results.
+
+    renderer: minijinja
+    template_ref: platform-portability-verifier/execute-backup
+    gas_cap: 2000
+    timeout_seconds: 120
+    input_mapping:
+      pod_id: "{{ pod_id | default('') }}"
+      backup_path: "{{ backup_path | default('') }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Verify backup integrity:
+      - File exists and is non-empty
+      - SQLCipher header is valid (magic bytes)
+      - Record counts match expected (compare against pod.db metadata)
+      - Checksums verify (SHA-256 of the backup file)
+      - Encryption is active (SQLCipher key derivation verified)
+
+      If any check fails, the verification is incomplete and the
+      portability claim is unproven.
+
+    renderer: minijinja
+    template_ref: platform-portability-verifier/verify-integrity
+    gas_cap: 3000
+    timeout_seconds: 60
+    input_mapping:
+      backup_path: "{{ step_1_result.backup_path | default(backup_path) }}"
+      pod_id: "{{ pod_id | default('') }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Simulate or execute import verification. If verify_import is true
+      and a disposable hKask environment is available, attempts to import
+      the backup and validate: all records present, no corruption, agent
+      definitions intact, Regulation spans preserved, wallet state consistent.
+
+      If no disposable environment is available, produces a simulated
+      verification report based on the integrity checks from step 2.
+
+      Design note: Full import verification requires a separate hKask
+      instance. In automated CI, this can be a Docker container. In
+      manual verification, the user provides the target instance.
+      The default mode (verify_import: false) performs integrity-only
+      verification, which is sufficient for a trust-but-verify posture.
+
+    renderer: minijinja
+    template_ref: platform-portability-verifier/simulate-import
+    gas_cap: 4000
+    timeout_seconds: 120
+    input_mapping:
+      integrity_result: "{{ step_2_result }}"
+      backup_path: "{{ step_1_result.backup_path | default(backup_path) }}"
+      verify_import: "{{ verify_import | default(false) }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Synthesize portability verification report:
+      - Pod ID and backup timestamp
+      - Integrity checks passed/failed (per check)
+      - Record counts (expected vs. actual)
+      - Import verification result (if performed)
+      - Overall portability status: VERIFIED / PARTIAL / FAILED
+      - Recommendations if failures detected
+
+      Output: structured JSON report + human-readable summary.
+      Emits reg.sovereignty.portability_verified or
+      reg.sovereignty.portability_failure Regulation spans.
+
+    renderer: minijinja
+    template_ref: platform-portability-verifier/synthesize-report
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      integrity: "{{ step_2_result }}"
+      import_result: "{{ step_3_result }}"
+      pod_id: "{{ pod_id | default('all') }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Compute normalized convergence metric for portability verification.
+      Checks: all integrity checks passed? Import verified (if attempted)?
+      Report is complete and actionable? Outputs convergence_metric in [0,1].
+
+    renderer: minijinja
+    template_ref: platform-portability-verifier/convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      report: "{{ step_4_result }}"
+
+  - ordinal: 6
+    action: loop
+    gas_cap: 200
+    timeout_seconds: 10
+    description: Re-enter cycle if convergence not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 5
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: platform-portability-verifier/execute-backup
+      gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: platform-portability-verifier/verify-integrity
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: platform-portability-verifier/simulate-import
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: platform-portability-verifier/synthesize-report
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: platform-portability-verifier/convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: platform-portability-verifier
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

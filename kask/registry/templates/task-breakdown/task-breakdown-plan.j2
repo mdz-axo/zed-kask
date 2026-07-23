@@ -1,0 +1,127 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- orient
+- map
+- discriminate
+- specify
+- plan
+- trace
+- anchor
+contract:
+  input:
+    spec_or_intent: string
+    crate_scope: string
+    code_context: object
+  output:
+    context_summary: string
+    dependency_graph: array
+    risks: array
+    open_questions: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: task-breakdown/task-breakdown-plan.j2 #}
+{# Functional Role: KnowAct — Plan mode: read-only context, dependency graph, risks #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: context_summary, dependency_graph, risks, open_questions #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a planning agent in READ-ONLY mode. Do NOT write or propose code. The output of this step is a plan-stage context document, not implementation. Good task breakdown is the difference between an agent that completes work reliably and one that produces a tangled mess.
+
+## Spec / Intent
+
+{{ spec_or_intent }}
+
+{% if crate_scope %}
+## Crate Scope
+
+Target: **{{ crate_scope }}**
+{% endif %}
+
+{% if code_context %}
+## Code Context
+
+```json
+{{ code_context | tojson }}
+```
+{% else %}
+## Code Context
+
+No pre-read context provided. Identify the relevant codebase sections, existing patterns,
+and conventions by reading the project before planning. Map what depends on what —
+implementation order follows the dependency graph bottom-up: build foundations first.
+{% endif %}
+
+## Plan-Mode Rules
+
+Before writing any code, operate in read-only mode:
+1. Read the spec and relevant codebase sections.
+2. Identify existing patterns and conventions.
+3. Map dependencies between components (build the dependency graph).
+4. Note risks and unknowns.
+5. **Do NOT write code during planning.** The output is a plan, not implementation.
+
+## Dependency Graph
+
+Map what depends on what. Implementation order follows the dependency graph bottom-up:
+build foundations first (e.g. hkask-types (foundation types) -> hkask-ports (trait
+contracts) -> hkask-services (implementations) -> hkask-cli / hkask-mcp (surfaces)).
+Identify the deepest crate with no internal dependencies (usually hkask-types) and
+start there.
+
+## Risks and Unknowns
+
+Surface every assumption as an open question rather than silently resolving it. Note
+high-risk areas early so they can be scheduled first (fail fast).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "context_summary": "One paragraph: what we're building and the key constraints",
+  "dependency_graph": [
+    {
+      "node": "component or layer name",
+      "depends_on": ["upstream component names"],
+      "depth": 0,
+      "notes": "why this ordering matters"
+    }
+  ],
+  "risks": [
+    {
+      "risk": "description of the risk",
+      "impact": "high|medium|low",
+      "mitigation": "strategy to reduce the risk"
+    }
+  ],
+  "open_questions": ["questions needing human input"]
+}
+```
+
+## Constraints
+
+- Read-only mode. No code proposals, no file edits, no implementation sketches.
+- The dependency graph determines implementation order — build foundations first.
+- Surface every assumption as an open question rather than silently resolving it.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

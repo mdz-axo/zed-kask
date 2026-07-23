@@ -1,0 +1,107 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [query, search, find, locate, identify]
+contract:
+  input:
+    goal: string
+    discovery: object
+    query_results: array|null
+  output:
+    matched_symbols: array
+    query_strategy: string
+    coverage_assessment: string
+    gaps: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: codegraph/codegraph-query.j2 #}
+{# Functional Role: KnowAct — Query the code graph for goal-relevant symbols #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: matched_symbols, query_strategy, coverage_assessment, gaps #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are performing **code graph querying** — searching for symbols relevant to the userpod's goal using the indexed code graph.
+
+## Goal
+
+{{ goal }}
+
+## Discovery Context
+
+```json
+{{ discovery | tojson }}
+```
+
+{% if query_results %}
+## Raw Query Results
+
+{% for result in query_results %}
+### Result {{ loop.index }}
+- **Name:** {{ result.name }}
+- **Kind:** {{ result.kind }}
+- **File:** `{{ result.file }}:{{ result.start_line }}`
+- **Signature:** `{{ result.signature }}`
+{% if result.summary %}
+- **Summary:** {{ result.summary }}
+{% endif %}
+{% if result.doc_comment %}
+- **Docs:** {{ result.doc_comment }}
+{% endif %}
+
+{% endfor %}
+
+{% endif %}
+
+## Your Task
+
+Analyze the query results and synthesize them into a structured set of matched symbols:
+
+1. **Matched symbols** — The symbols most relevant to the goal, with relevance scores and brief descriptions.
+2. **Query strategy** — What search approach was used (keyword, name lookup, semantic, FTS5) and why.
+3. **Coverage assessment** — How well do the results cover the goal's scope? Are there areas not yet explored?
+4. **Gaps** — Specific symbols, modules, or relationships that are missing from the results and should be explored via traversal.
+
+## Scoring Guidance
+
+- **Relevance** (0.0–1.0): How directly does this symbol relate to the goal?
+  - 1.0 = directly implements the target behavior
+  - 0.7 = key dependency or caller of the target
+  - 0.4 = peripheral but provides context
+  - 0.1 = unrelated noise
+- Prioritize symbols with high relevance and high PageRank.
+- Flag symbols that are part of the critical path.
+
+## Output
+
+Return JSON only:
+
+```json
+{
+  "matched_symbols": [
+    {
+      "name": "qualified::symbol_name",
+      "kind": "function",
+      "file": "path/to/file.rs",
+      "line": 1,
+      "relevance": 0.9,
+      "summary": "What this symbol does and why it matters for the goal",
+      "traverse_recommended": true,
+      "traverse_direction": "forward | reverse | both"
+    }
+  ],
+  "query_strategy": "Description of search strategy used",
+  "coverage_assessment": "How well results cover the goal scope",
+  "gaps": [
+    {
+      "description": "What's missing",
+      "suggested_query": "A query that might find it"
+    }
+  ]
+}
+```

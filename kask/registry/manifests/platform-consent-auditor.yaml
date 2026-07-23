@@ -1,0 +1,202 @@
+# Platform Consent Auditor
+# ℏKask v0.31.0 — Sovereignty verification: consent audit
+# Functional Role: FlowDef (process orchestration)
+# Implementation: YAML manifest
+# Steps: query_tokens, correlate_usage, detect_anomalies, synthesize_report, convergence_check
+
+manifest:
+  id: platform-consent-auditor
+  category: infrastructure
+  name: Platform Consent Auditor
+  description: >
+    Convergent consent audit process. Queries the DelegationToken registry
+    for all tokens issued within the window, correlates each token with
+    Regulation spans showing actual usage, detects anomalous patterns (expired
+    tokens still in registry, tokens issued by deleted agents, unusual
+    access patterns), synthesizes a structured audit report with per-token
+    status, and iterates until audit coverage is complete.
+
+    Operationalizes P2 (Affirmative Consent): every DelegationToken is
+    traceable to its issuer and recipient. No operation happens without
+    visible authorization. The audit proves consent was respected — or
+    flags where it wasn't.
+
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.10
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 75000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: window_days
+    type: integer
+    required: false
+    default: 30
+  - name: webid_filter
+    type: string
+    required: false
+    description: If set, audit only tokens involving this WebID.
+  - name: token_registry_data
+    type: string
+    required: false
+    description: >
+      Pre-populated DelegationToken registry dump (JSON).
+      In flow-only execution, this is provided externally.
+      In MCP-mediated execution, the step queries the wallet MCP.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Query the DelegationToken registry for all tokens within the window.
+      Retrieves: token ID, issuer WebID, recipient WebID, resource type,
+      action granted, issued timestamp, expiry timestamp, revocation status.
+      If token_registry_data input is provided, skips the MCP query and
+      uses the pre-populated data.
+
+      Design note: This step requires wallet MCP server access. The
+      delegation_token_registry is managed by hkask-wallet. In flow-only
+      execution, token_registry_data must be pre-populated. In MCP-mediated
+      execution, the agent queries the wallet MCP server.
+
+    renderer: minijinja
+    template_ref: platform-consent-auditor/query-tokens
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      window_days: "{{ window_days | default(30) }}"
+      webid_filter: "{{ webid_filter | default('') }}"
+      token_registry_data: "{{ token_registry_data | default('') }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Correlate each DelegationToken with Regulation span data showing actual usage.
+      For each token: was it ever used? How many times? Which operations?
+      Does actual usage match the granted scope? Flags tokens that grant
+      more access than was ever used (over-provisioned consent).
+
+    renderer: minijinja
+    template_ref: platform-consent-auditor/correlate-usage
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      tokens: "{{ step_1_result }}"
+      reg_spans: "{{ reg_spans | default('') }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Detect anomalous patterns in the consent data:
+      - Expired tokens not yet revoked (stale consent)
+      - Tokens issued by agents that no longer exist (orphaned consent)
+      - Tokens with Critical severity issued outside working hours
+      - Single recipient receiving tokens from many issuers (consent concentration)
+      - Tokens never used (over-provisioned consent)
+      - Tokens used for operations outside their declared scope (scope violation)
+
+    renderer: minijinja
+    template_ref: platform-consent-auditor/detect-anomalies
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      correlated_tokens: "{{ step_2_result }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Synthesize the audit into a structured report:
+      - Total tokens audited
+      - Active / expired / revoked breakdown
+      - Anomalies found (per category, with severity)
+      - Per-user consent profile summary
+      - Recommendations for consent hygiene
+
+      Output: structured JSON report + human-readable summary.
+
+    renderer: minijinja
+    template_ref: platform-consent-auditor/synthesize-report
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      anomalies: "{{ step_3_result }}"
+      tokens: "{{ step_1_result }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Compute normalized convergence metric for the consent audit.
+      Checks: are all tokens covered? Are anomalies classified?
+      Are recommendations actionable? Outputs convergence_metric in [0,1].
+
+    renderer: minijinja
+    template_ref: platform-consent-auditor/convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      report: "{{ step_4_result }}"
+      total_tokens_audited: "{{ step_1_result | length }}"
+
+  - ordinal: 6
+    action: loop
+    gas_cap: 200
+    timeout_seconds: 10
+    description: Re-enter cycle if convergence not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 2
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: platform-consent-auditor/query-tokens
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: platform-consent-auditor/correlate-usage
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: platform-consent-auditor/detect-anomalies
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: platform-consent-auditor/synthesize-report
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: platform-consent-auditor/convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: platform-consent-auditor
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

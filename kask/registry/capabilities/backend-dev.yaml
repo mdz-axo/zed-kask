@@ -1,0 +1,45 @@
+# Backend Developer — Capability Package
+# ℏKask v0.27.0
+#
+# Standard delegation for backend development tasks.
+# Grants: kanban board access, coding guidelines, TDD skill,
+# spec server read, and file system access for deliverables.
+# Memory: episodic (task-scoped, private).
+
+name: backend-dev
+description: >
+  Standard backend development capabilities. Agent can read/write
+  kanban tasks, apply coding guidelines and TDD, read specs, and
+  access the file system for deliverable production. Memory is
+  episodic and scoped to this task.
+
+delegation_level: standard
+skills:
+  - coding-guidelines
+  - tdd
+  - kanban
+memory_scope: episodic
+
+tool_servers:
+  - hkask-mcp-kata-kanban
+  - hkask-mcp-spec
+  - hkask-mcp-research
+
+registries:
+  - templates
+  - skills
+
+artifacts:
+  - ./workspace/
+
+default_gas_budget: 50000
+default_timeout_seconds: 3600
+
+capability_tokens:
+  - tool:kanban:execute
+  - tool:spec:read
+  - tool:research:execute
+  - registry:templates:read
+  - registry:skills:read
+
+max_attenuation: 3

@@ -1,0 +1,50 @@
+{# Template: registry/selectors/selector.j2 #}
+{# Functional Role: KnowAct — template selection #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: template_selection_result #}
+
+You are a template selection engine for the hKask registry system.
+
+Given the following available templates and the user's raw prompt, select the most appropriate template.
+
+## Available Templates
+
+{% for template in templates %}
+### {{ template.id }}
+- Type: {{ template.template_type }}
+- Description: {{ template.description }}
+- Lexicon terms: {{ template.lexicon_terms | join(', ') }}
+- Contract: {{ template.contract | tojson }}
+
+{% endfor %}
+
+## User's Raw Prompt
+
+{{ raw_prompt }}
+
+## Selection Criteria
+
+1. Match template_type to request nature:
+   - Prompt (WordAct) → LLM/tool calls, speech acts
+   - Process (FlowDef) → multi-step workflows, operations
+   - Cognition (KnowAct) → thinking, learning, calibration
+
+2. Match lexicon terms to prompt vocabulary
+
+
+## Output Format
+
+Return JSON with:
+- selected_template_id: ID of chosen template
+- rationale: Why this template was selected
+- confidence: Score 0.0 to 1.0
+
+## Response
+
+```json
+{
+  "selected_template_id": "...",
+  "rationale": "...",
+  "confidence": 0.0
+}
+```

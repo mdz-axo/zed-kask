@@ -1,0 +1,179 @@
+# Refactor Service Layer Process Manifest
+# ℏKask v0.30.0 — Service extraction as convergent PDCA
+
+manifest:
+  id: refactor-service-layer
+  category: skill
+  name: Refactor Service Layer
+  description: >
+    Convergent service-layer extraction process. Audits duplication,
+    plans strangler migration per domain, verifies migration integrity,
+    computes convergence, and iterates until extraction risks are reduced.
+    Typically invoked as the execution phase after improve-codebase-architecture
+    has completed architectural analysis. The SKILL.md documents practitioner-level
+    composition with tdd, coding-guidelines, pragmatic-semantics, zoom-out,
+    strangler-fig, deep-module, and essentialist as methodological
+    guidance (not machine-executable delegation).
+  functional_role: flowdef
+  version: 0.30.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 5
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: focus_area
+    type: string
+    required: true
+  - name: code_context
+    type: object
+    required: false
+  - name: known_adrs
+    type: array
+    required: false
+  - name: constraint_forces
+    type: array
+    required: false
+  - name: domain
+    type: string
+    required: false
+  - name: service_module_name
+    type: string
+    required: false
+  - name: current_cli_path
+    type: string
+    required: false
+  - name: current_api_path
+    type: string
+    required: false
+  - name: service_context_design
+    type: object
+    required: false
+  - name: migration_phase
+    type: string
+    required: false
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+  mode: pi
+  skills:
+    - essentialist
+    - deep-module
+  max_rounds: 3
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Audit cross-surface duplication and extraction viability.
+    renderer: minijinja
+    template_ref: refactor-service-layer/rsl-audit
+    gas_cap: 7000
+    timeout_seconds: 60
+    input_mapping:
+      focus_area: "{{ focus_area }}"
+      code_context: "{{ code_context | default({}) }}"
+      known_adrs: "{{ known_adrs | default([]) }}"
+      constraint_forces: "{{ constraint_forces | default([]) }}"
+
+  - ordinal: 2
+    action: select
+    description: Plan strangler migration for selected service domain.
+    renderer: minijinja
+    template_ref: refactor-service-layer/rsl-strangle
+    gas_cap: 7000
+    timeout_seconds: 60
+    input_mapping:
+      domain: "{{ domain | default(step_1_result.top_recommendation | default('')) }}"
+      service_module_name: "{{ service_module_name | default('ExtractedService') }}"
+      current_cli_path: "{{ current_cli_path | default('') }}"
+      current_api_path: "{{ current_api_path | default('') }}"
+      service_context_design: "{{ service_context_design | default({}) }}"
+      known_adrs: "{{ known_adrs | default([]) }}"
+      constraint_forces: "{{ constraint_forces | default([]) }}"
+
+  - ordinal: 3
+    action: select
+    description: Verify migration completeness and boundary discipline.
+    renderer: minijinja
+    template_ref: refactor-service-layer/rsl-verify
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      domain: "{{ domain | default('') }}"
+      migration_phase: "{{ migration_phase | default('domain_migration') }}"
+      code_context: "{{ code_context | default(step_2_result) }}"
+      known_adrs: "{{ known_adrs | default([]) }}"
+
+  - ordinal: 4
+    action: select
+    description: Compute normalized convergence metric for service extraction cycle.
+    renderer: minijinja
+    template_ref: shared/convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_3_result }}"
+      convergence_description: "extraction path is verified and remaining blockers are non-critical"
+      include_blockers: true
+    fusion: false
+
+  - ordinal: 5
+    action: loop
+    description: Re-enter service extraction cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: refactor-service-layer/rsl-audit
+      gas_budget: 7000
+    - resource: template
+      action: render
+      template_id: refactor-service-layer/rsl-strangle
+      gas_budget: 7000
+    - resource: template
+      action: render
+      template_id: refactor-service-layer/rsl-verify
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: shared/convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: refactor-service-layer
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

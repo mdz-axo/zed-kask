@@ -1,0 +1,165 @@
+# Deep Module Process Manifest
+# ℏKask v0.31.0 — Module depth evaluation as convergent PDCA
+
+manifest:
+  id: deep-module
+  category: skill
+  name: Deep Module
+  description: >
+    Convergent module-depth process. Assesses module depth, applies Ousterhout's
+    deletion test in both directions, designs a deepened interface from results,
+    computes convergence, and iterates until depth recommendations are stable.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 5
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: module_path
+    type: string
+    required: true
+  - name: module_source
+    type: string
+    required: true
+  - name: caller_paths
+    type: array
+    required: false
+  - name: caller_code
+    type: object
+    required: false
+  - name: dependency_code
+    type: object
+    required: false
+  - name: codebase_context
+    type: object
+    required: false
+  - name: domain_requirements
+    type: object
+    required: false
+  - name: dependency_interfaces
+    type: object
+    required: false
+  - name: constraint_classification
+    type: object
+    required: false
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+  mode: synthesis
+  skills:
+    - deep-module
+  max_rounds: 3
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Assess module depth and deletion-test indicators.
+    renderer: minijinja
+    template_ref: deep-module/deep-module-assess
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      module_path: "{{ module_path }}"
+      module_source: "{{ module_source }}"
+      caller_paths: "{{ caller_paths | default([]) }}"
+      codebase_context: "{{ codebase_context | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: Execute Ousterhout's deletion test in both directions.
+    renderer: minijinja
+    template_ref: deep-module/deep-module-delete
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      module_assessment: "{{ step_1_result }}"
+      caller_code: "{{ caller_code | default({}) }}"
+      dependency_code: "{{ dependency_code | default({}) }}"
+      codebase_context: "{{ codebase_context | default({}) }}"
+
+  - ordinal: 3
+    action: select
+    description: Design a deep module interface from deletion test results.
+    renderer: minijinja
+    template_ref: deep-module/deep-module-design
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      deletion_test_result: "{{ step_2_result }}"
+      domain_requirements: "{{ domain_requirements | default({}) }}"
+      dependency_interfaces: "{{ dependency_interfaces | default({}) }}"
+      constraint_classification: "{{ constraint_classification | default({}) }}"
+
+  - ordinal: 4
+    action: select
+    description: Compute normalized convergence metric for depth cycle.
+    renderer: minijinja
+    template_ref: deep-module/deep-module-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_3_result }}"
+    fusion: false
+
+  - ordinal: 5
+    action: loop
+    description: Re-enter depth cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: deep-module/deep-module-assess
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: deep-module/deep-module-delete
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: deep-module/deep-module-design
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: deep-module/deep-module-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: deep-module
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

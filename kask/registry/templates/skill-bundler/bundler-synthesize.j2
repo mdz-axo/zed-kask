@@ -1,0 +1,136 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- decompose
+- graph
+- anchor
+- compare
+- detect
+- decimate
+- fuse
+- recompose
+- generate
+- serialize
+contract:
+  input:
+    composed_skills: array
+    goal: object
+    skill_manifests: array
+  output:
+    output_type: string
+    candidates: array
+    pko_graph: array
+    decimations: array
+    fusions: array
+    novel_edges: array
+    collision_resolutions: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: skill-bundler/bundler-synthesize.j2 #}
+{# Functional Role: KnowAct — PKO graph synthesis engine. Decompose skill FlowDefs into PKO RDF, anchor subgraphs, detect overlaps/collisions, apply DPO rewriting rules D1-D3 (decimate) + R1-R2 (recompose), generate candidate composite designs. Per spec: docs/architecture/specs/WHEN_A_BUNDLE_IS_MORE_THAN_A_BUNDLE.md #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: output_type, candidates[], pko_graph, decimations, fusions, novel_edges, collision_resolutions #}
+{# Skill Bundler — Synthesize Composite Skill Candidates #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a PKO graph synthesis engine implementing `docs/architecture/specs/WHEN_A_BUNDLE_IS_MORE_THAN_A_BUNDLE.md`. Execute phases in strict order.
+
+## Input Data
+
+```json
+{
+  "composed_skills": {{ composed_skills | tojson }},
+  "goal": {{ goal | tojson }},
+  "skill_manifests": {{ skill_manifests | tojson }}
+}
+```
+
+---
+
+## Phase 1: DECOMPOSE — FlowDef → PKO RDF
+
+For each skill: `_:skill rdf:type pko:Procedure` with `pko:hasStep` children, `pko:nextStep` edges, `pko:StepVerification` nodes with `pko:ProcedureTarget`, `pko:loopTarget` back-edges, and `pko:consumes`/`pko:produces` data flow.
+
+## Phase 2: ANCHOR — Link subgraphs
+
+Add cross-skill edges: `pko:precedes` (ordering from compose), `prov:wasDerivedFrom` (output→input), `pko:consumes`/`pko:produces` (artifact flow).
+
+## Phase 3: COMPARE — Detect overlaps, redundancies, collisions
+
+### Overlaps (fusion candidates)
+- Two `pko:StepVerification` with targets within 2x → D2 candidate
+- Two `pko:Step` with identical consumes+produces+template_ref → D3 candidate
+- Isomorphic `Step → Verify → Loop → Step` chains → pattern sharing
+
+### Redundancies (decimation candidates)
+- Node with in=1, out=1, no `pko:produces` → D1 candidate
+- Identical type+consumes+produces+template_ref → D3 candidate
+
+### Collisions
+- Contradictory outputs, incompatible targets (>5x), ordering contradictions
+
+### Novel edges
+- B consumes X, A produces X → R1 candidate
+- Multiple `pko:StepVerification` in composite → R2 candidate
+
+## Phase 4: DECIMATE — Apply D1-D3
+
+- **D1**: A→B→C where B has in=1, out=1, no produces → delete B, wire A→C
+- **D2**: V1,V2 both pko:StepVerification, |target diff| ≤ V1.target → fuse into Vc with pko:verifies [V1.source,V2.source], target=max(V1,V2)
+- **D3**: S1,S2 identical type+consumes+produces+template_ref → delete S2, rewire to S1
+
+## Phase 5: RECOMPOSE — Apply R1-R2
+
+- **R1**: A produces X, B consumes X → add B.loop pko:feedsBack A.entry, condition: when B.metric > A.metric
+- **R2**: Multiple verification nodes V1..Vn → conditional loop: L→step_i iff Vi.metric > Ti, L→exit iff all ≤ Ti
+
+## Phase 6: GENERATE CANDIDATES
+
+If multiple valid strategies exist, produce up to 3 candidates:
+
+| Strategy | Approach |
+|----------|----------|
+| **Conservative** | Minimal changes, preserves boundaries, only safe fusions |
+| **Balanced** | Fuses clear redundancies, adds feedback where obvious |
+| **Aggressive** | Maximum integration, deep fusion, novel feedback throughout |
+
+Each candidate must include:
+- A functional name (e.g., "Eliminate-then-Interrogate with cross-skill feedback")
+- Plain-language description of what the composite does and how loops integrate
+- The synthesized FlowDef manifest
+- A recommendation: when to choose this candidate
+
+Present at least 1, at most 3 candidates. Only produce multiple if genuinely different strategies exist.
+
+## Phase 7: SIGNAL
+
+Check spec §5 conditions per candidate. If ANY candidate is a composite → `output_type: "composite"`. If none → `"bundle_only"`.
+
+## Output
+
+```json
+{
+  "output_type": "composite|bundle_only",
+  "candidates": [
+    {
+      "name": "<functional name describing integrated loop structure>",
+      "strategy": "conservative|balanced|aggressive",
+      "description": "<plain-language: what this composite does, how loops integrate, what was decimated/fused>",
+      "composite_manifest": { "id": "...", "name": "...", "steps": [...], "convergence": {...}, "gas": {...}, "rjoule": {...}, "loop": {...} },
+      "recommendation": "<when to choose this candidate>"
+    }
+  ],
+  "pko_graph": ["_:composite rdf:type pko:CompositeProcedure", "..."],
+  "decimations": [{"node": "...", "type": "pass_through|duplicate|orphaned", "reason": "..."}],
+  "fusions": [{"merged": ["...","..."], "into": "...", "type": "verification|step|pattern", "rationale": "..."}],
+  "novel_edges": [{"from": "...", "to": "...", "type": "pko:feedsBack|pko:nextStep", "condition": "...", "rationale": "..."}],
+  "collision_resolutions": [{"skills": ["...","..."], "collision": "...", "resolution": "..."}]
+}
+```

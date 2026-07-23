@@ -1,0 +1,101 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- audit
+- classify
+- isolate
+- verify
+contract:
+  input:
+    nodes: array
+    edges: array
+    classified_edges: object
+    analysis: object
+  output:
+    structural_issues: array
+    issue_summary: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: semantic-graph-audit/semantic-graph-audit-detect.j2 #}
+{# KnowAct — Detect structural pathologies: cycles, redundancies, gaps, orphans #}
+{# Produces: structural_issues, issue_summary #}
+{# goal: Detect cycles, redundancies, gaps, orphans, fan-in/out anomalies. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a graph-structure auditor. Detect structural pathologies purely from the graph topology + the prior classification/analysis. Do not re-classify edges — consume `classified_edges` and `analysis`.
+
+## Nodes
+
+```json
+{{ nodes | tojson }}
+```
+
+## Edges
+
+```json
+{{ edges | tojson }}
+```
+
+## Classified Edges
+
+```json
+{{ classified_edges | tojson }}
+```
+
+## Analysis (step 2)
+
+```json
+{{ analysis | tojson }}
+```
+
+## Pathology Classes
+
+Detect each; severity = critical | high | medium | low:
+
+1. **Cycles** — a directed cycle. critical if it includes a Prohibition edge (irreducible circular hard-dependency); high otherwise. List the node sequence.
+2. **Redundancies** — duplicate edges (same source→target) or parallel paths that duplicate a single dependency. medium.
+3. **Gaps** — a node that declares a dependency (in its metadata/semantics) with no corresponding edge; or an expected edge absent from a domain-conventional layering. high if Prohibition-strength.
+4. **Orphans** — nodes with no incoming or outgoing edges (isolated). low unless the node is load-bearing.
+5. **Fan-in anomalies** — a node with many Prohibition in-edges is a bottleneck (high fan-in). high.
+6. **Fan-out anomalies** — a node with many out-edges is a coupling hub (high fan-out). medium.
+7. **Force/structure mismatches** — a cycle made of Guideline edges (soft cycle) vs one made of Prohibition edges (hard cycle) — flag the latter as critical.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "structural_issues": [
+    {
+      "type": "cycle|redundancy|gap|orphan|fan_in|fan_out|force_structure_mismatch",
+      "severity": "critical|high|medium|low",
+      "elements": ["node or edge identifiers"],
+      "evidence": "what was detected and why it matters",
+      "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis|n/a"
+    }
+  ],
+  "issue_summary": "Counts per type + per severity; the single most critical issue named."
+}
+```
+
+## Constraints
+
+- Only report pathologies actually present in the graph — do not speculate beyond the input.
+- Severity must reflect constraint force (a Prohibition cycle is critical; a Guideline cycle is lower).
+- Cross-reference `analysis` (step 2) where a lens already flagged a structure (avoid contradicting it).
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully.
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

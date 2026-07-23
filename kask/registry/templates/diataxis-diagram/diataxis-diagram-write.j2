@@ -1,0 +1,89 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [write, compose, structure, format, finalize]
+contract:
+  input:
+    diagram_type: string
+    diataxis_quadrant: string
+    mermaid_source: string
+    target: string
+    entity_count: integer
+    relationship_count: integer
+    evaluation_result: object
+    related_docs: array
+  output:
+    file_path: string
+    file_content: string
+    description_paragraph: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: diataxis-diagram/diataxis-diagram-write.j2 #}
+{# KnowAct — WRITE: finalize diagram into a markdown file #}
+{# hKask v0.31.0 #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "low"
+verbosity = "focused"
+max_tokens = 4096
+thinking_budget = "standard"
+
+You are a documentation writer. Take the generated Mermaid diagram and wrap it in a well-structured markdown file with a Diataxis-appropriate description.
+
+## Context
+
+- Diagram type: **{{ diagram_type }}**
+- Diataxis quadrant: **{{ diataxis_quadrant }}**
+- Target: {{ target }}
+- Entities: {{ entity_count }}
+- Relationships: {{ relationship_count }}
+
+## Mermaid Source
+
+```
+{{ mermaid_source }}
+```
+
+## Related Documents
+
+{% if related_docs %}
+{% for doc in related_docs %}
+- {{ doc }}
+{% endfor %}
+{% else %}
+No related documents identified — include at least one link to relevant specification or architecture documentation.
+{% endif %}
+
+## Quadrant Voice Rules (from https://diataxis.fr/)
+
+The description paragraph must match the target quadrant's voice:
+
+| Quadrant | Voice | Description Paragraph Should... | Example Opening |
+|---|---|---|---|
+| **reference** | Austere, neutral, factual | Describe what the diagram shows, nothing more | "The hKask database schema. 30 tables across storage, wallet, identity, and observability domains." |
+| **explanation** | Discursive, contextual, may admit opinion | Explain structure, reveal why relationships exist, name trade-offs | "hKask's schema evolved through three iterations. The wallet tables were extracted..." |
+| **how-to** | Direct, actionable, goal-focused | Tell the reader what path this diagram maps | "Follow this flow to add a new Regulation span. The decision tree guides you through..." |
+| **tutorial** | "We," concrete, encouraging | Frame the diagram as part of a learning journey | "We'll build this step by step. The state machine shows what happens when..." |
+
+## File Naming
+
+```
+docs/diagrams/{diagram_type}-{target_slug}.md
+```
+
+The target slug: take the target description, lowercase it, replace spaces and special chars with hyphens, keep it short (≤ 40 chars).
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "file_path": "docs/diagrams/erd-schema.md",
+  "file_content": "# Title\n\nDescription paragraph.\n\n```mermaid\n...\n```\n\n## Related\n- [doc](../path.md)",
+  "description_paragraph": "The hKask database schema. 30 tables across storage, wallet, identity, and observability domains."
+}
+```
+
+The `file_content` must be valid markdown. The description paragraph must be the first text after the title. Related documents must use relative links from the `docs/diagrams/` directory.

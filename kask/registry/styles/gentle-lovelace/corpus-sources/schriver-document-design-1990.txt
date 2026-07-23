@@ -1,0 +1,1954 @@
+                           DOCUMENT RESUME
+
+ED 320 143                                             CS 212 238
+
+AUTHOR           Schriver, Karen A.
+TITLE            Document Design from 1980 to 1990: Challenges tnat
+                 Remain. Technical Report No. 39.
+INSTITUTION      Center for the Study of Writing, Berkeley, CA.;
+                 Center for the Study of Writing, Pittsburgh, PA.
+SPONS AGENCY     Office of Educational Research and Improvement (ED),
+                 Washington, DC.
+PUB DATE         Jan 90
+NOTE             37p.; Also in the journal "Technical Communication,"
+                 volume 36, number 4, p316-333.
+PUB TYPE         Information Analyses (070) -- Viewpoints (120)
+
+EDRS PRICE       MF01/PCO2 Plus Postage.
+DESCRIPTORS      Design Requirements; Research Needs; *Rhetoric;
+                 *Theory Practice Relationship; *Writing
+                 (Composition)
+IDENTIFIERS      Design Research; *Text Design; Text Factors
+
+ABSTRACT
+                Arguing that document design had its origins in the
+1930s but that much of its development in theory, research, and
+practice has occurred in the 1980s, this paper provides a snapshot of
+the evolution of document design. The paper defines "document design"
+as the theory, research, and practice of creating cor.prehensible and
+persuasive texts. The paper includes a comprehensive list of 195
+research references and stresses the need to integrate theory and
+research with practice in the 1990s. The paper concludes by
+identifying critical challenges to the international growth of
+document design, both in the academy and industry--challenges that
+must be met if document design is to flourish. Three figures are
+included. (RS)
+
+
+
+
+     Reproductions supplied by EDRS are the best that pan be made
+                      from the original document.
+************** **************** * ****** **********************************
+     CO
+     gt14
+     r4
+
+i
+      =
+      Cq
+       CO
+
+            Center
+*I
+
+
+       =
+             for               Technical Report No. 39
+
+                              DOCUMENT DESIGN
+             the            FROM 1980 TO 1990:
+                          CHALLENGES THAT REMAIN
+
+            Study               Karen A. Schriver
+
+
+              of                    January, 1990
+
+
+
+
+            Writing
+                                           U S DEPARTMENT OF EDUCATION
+                                      Office of Educational Research and Improvement
+                                      EDUCATIONAL RESOURCES INFORMATION
+                                                 CENTER (ERIC)
+                                      C' This document has been reprOduced as
+                                         received from the person or organization
+                                         originating it
+                                      O Minor changes have been made to improve
+                                        reproduction qualtty
+
+                                         Points of new or opinions slated in this docu
+                                        ment do no' necessarily represent official
+                                        OERI posit*, or policy
+
+
+
+
+                  University of California, Berkeley
+                  Carnegie Mellon University
+
+                                2
+                       BEST COPY AVAILABLE
+                  CENTER FOR THE STUDY OF WRITING
+
+
+
+
+                                                       Technical Report No. 39
+
+                                                   DOCUMENT DESIGN
+                                              FROM 1980 TO 1990:
+                                            CHALLENGES THAT REMAIN
+
+                                                        Karen A. Schriver
+
+
+                                                           January, 1990
+
+
+
+
+Also appears in Technical Communication, 36 (4), 316-333.
+
+
+
+University of California                                     Carnegie Mellon University
+Berkeley, CA 94720                                               Pittsbu%h, PA 15213
+
+
+
+ The project presented, or reported herein, was performed pursuant to a grant from the Office of
+Educational Research and Improvement/Department of Education (OERI/ED) for the Center for the
+Study of Writing. However, the opinions expressed herein do not necessarily reflect the position or
+policy of the OERI/ED and no official endorsement by the OERIED should be inferred.
+
+
+
+
+                                                   3
+  CENTER FOR THE STUDY OF WRITING
+
+  Director                   Sarah Warshauer Freedman, University of California, Berkeley
+
+  Co-Directors              Linda Flower, Carnegie Mellon University
+                            James Gray, University of California, Berkeley
+                            J.R. Hayes, Carnegie Mellon University
+
+ Academic Coordinator       Sandra Schecter, University of California, Berkeley
+
+ Acting Editor              Andrew Bouman, University of California, Berkeley
+
+
+ Publication Review Board
+
+ Chair                      Kay Losey Fraser, University of California, Berkeley
+
+ Assistant Chairs           Anne Di Pardo, University of Galifomia, Berkeley
+                            Lorraine Higgins, Carnegie Mellon University
+
+ Advisors                   Charles Fillmore, University of California, Berkeley
+                            Jill H. Larkin, Carnegie Mellon University
+
+
+ Millie Almy, Gliversity of California, Berkeley
+ Carla Asher, Herbert H. Lehman College of the City University of New York
+ Nancie Atwell, Boothbay Region Elementary School, Boothbay Harbor, ME
+ Robert de Beaugrande, University of Florida
+ Ruby Bernstein, Northgate High School, Walnut Creek CA
+ Lois Bird, Whole Language Consultant
+ Wayne Booth, University of Chicago
+ Robert Caifee, Stanford University
+ Michael Cole, University of California, San Diego
+Colette Daiute, Harvard University
+John Daly, University of Texas, Austin
+Peter Elbow, State University of New York, Stony Brook
+JoAnne T. Eresh, Writing and Speaking Center, Pittsburgh, PA
+Donald Graves, University of New Hampshire
+Robert Gundlach, Northwestern University
+James Hahn, Fairfield High School, Fairfield , CA
+Sarah Hudelson, Arizona State University
+Julie Jensen, University of Texas, Austin
+Jo Keroes, San Francisco State University
+Aidrea Lunsford, Ohio State University
+Marian M. Mohr, Fairfax County Public Schools, Fairfax County, VA
+Lee Odell, Rensselaer Polytechnic Institute
+Charles Read, University of Wisconsin
+Victor Rental, Ohio State University
+Michael W. Stubbs, University of London
+Dtoborah Tannen, Georgetown University
+Gordon Wells, Ontario Institute for Studies in Education
+
+
+
+
+                                                                          4
+                             Document Design from 1980 to 1990:
+                                  Challenges that Remain
+                                                By
+
+                                        Karen A. Schri.r.4
+                                         Carnegie Meth . n
+
+
+Abstract
+
+Document design had its origins in the 1930s, but much of its development in theory, research, and
+practice has occurred in the past ten years (1980-1990). This article provides a snapshot of the
+evolution of document design, includes a comprehensive list of research references, and stresses the
+need to integrate theory and research with practice as we move into the 1990s. The article
+concludes by identifying critical challenges to the international growth of document design, both in
+the academy and industry--challenges that must be met if document design is to flourish.
+
+
+
+
+                                                  5
+                       DOCUMENT DESIGN FROM 1980 TO 1990:
+                           CHALLENGES THAT REMAIN
+                                                    by
+
+                                            Karen A. Schriver
+                                            Carnegie Mellon
+
+        "Document design" is the theory, research and practice of creating comprehensible, usable
+ and persuasive texts. Here, I mean "text" in its broadest sense, including both oral and written,
+ and both visual or verbal. Professional document designers are rhetoricians whose education
+ allows them to find creative solutions for the wide variety of ill-defined communication problems
+ confronting business, industry, government, and education. Document design as a practice is not
+ tied to particular text genres, particular audiences, particular subject matters, or particular text
+ purposes. It is a highly constructive activity in which building an adequate repicsentation of a
+ communication problem demands careful analysis of the unique fearzes of the given rhetorical
+ situation. Thus, while knowing about particular text genres, audiences, subject matters, and
+ purposes can be helpful, such knowledge is often a limited and even inhibiting starting point. In
+ fact, if document designers invoke such knowledge too rigidly when they are building a
+ representation of a communication problem, it can stifle their ability to find an original and creative
+ solution.
+
+       In this article, I take a brief look at the activity of document design over the last decade. In
+particular, I am concerned with relating theory and research to practice in document design. To do
+so, I first discuss changes that we have seen in the theory of and research into document design,
+suggesting Ware we are heading as we move into the 1990s. Then I raise some issues about the
+practice of document design and focus on some of the skills and sensibilities document designers
+need to cultivate. Finally, I raise some concerns about the future of document design theory and
+research, isolating some of the persistent challenges that are constraining progress in this area.
+
+
+THEORY AND RESEARCH THAT INFORM DOCUMENT DESIGN
+       Document design is an interdisciplinary area of inquiry with rich historical roots. It draws
+on a matrix of theory and research about how people produce and use text, particularly how they
+read, write, understand, and are motivated by text. At its heart, document design is concerned
+with readers and writers and how writers can most effectively find ways to provide readers with
+texts they can use, understand and perhaps even get excited about. Document design emphasizes
+both verbal features (rhetorical, linguistic, and discourse) and visual (graphic and typographic)
+dimensions of text. Thus, much of document design theory and research relates to cognitive,
+social, historical, and cultural issues which underlie the activity of creating and integrating visual
+and verbal text to meet the reader's various and frequently changing needs.
+
+      The knowledge that document designers need to draw on has been expanding rapidly in the
+past ten years. Figure 1 shows my characterization of the relevant theory and research influencing
+document design ten years ago as described by Felker and his associates at the American Institutes
+for Research, Siegel & Gale, Inc., and Carnegie Mellon University [1]. As shown, early
+conceptions of document design highlighted the importance of composition, cognitive psychology,
+instructional design, readability, human factors, typography and graphic design, and
+psycholinguistics.
+
+      Figure 2 presents my understanding of where we are now and the fields which are essential
+to current theory, research and practice. We can see that the boundaries of document design are
+expanding and this evolution is forcing us to think about our work in more complicated
+                                                                                       ways than
+
+
+
+                                                     6
+   ever before. We have enlarged our vision of the field by also drawing
+   psychology, reading comprehension, human-computer interaction,        on rhetoric, social
+   discourse analysis, and cultural studies.                          computer  technologies,
+
+
+
+
+  Figure 1. Relevant theory and research influencing document design ten
+  from Felker, 1980; see reference 1).                                         years ago (derived
+
+
+       In 1980, for example, the field of rhetoric was just beginning
+ English in the U.S. The wedding of rhetoric and composition           to reemerge in departments of
+                                                                  is providing us with a very
+ powerful historical and theoretical framework for considering
+                                                                 how people construct meaning. It
+ has also been a catalyst for building empirical theories about how
+ contexts read and write [2]. Adding rhetoric to document design people in particular rhetorical
+ audience and of diverse knowledge communities. Moreover, it hasheightened our awareness of
+ simplistic notion that we always write for "generic" lay readers.     helped us to move beyond the
+
+
+
+
+Figure 2. Relevant theory and research influencing
+                                                      document design today.
+
+      Cognitive psychology, with its emphasis on how individuals think and learn,
+us with a detailed portrait of some of the key decisions people make                   has provided
+Another promising direction for document design lies in                as they read and  write.
+                                                          exploring the literature in social
+psychology and relating those findings to our concerns. With the addition
+we can characterize readers' and writers' decisions more fully                of social psychology,
+                                                                as taking place within groups artd
+
+                                                            7
+                                             2
+ organizations. Social psychology offers a large body of information about how people form
+ impressions of others and about how they negotiate communication situations. Document
+ designers are beginning to use such information in creating and evaluating oral and written
+ discourse.
+
+       As Felker and his colleagues point out, early characterizations of document design focused
+on the readability of text as measured by readability formula: [1, 71]. That interest, while useful,
+gave us only a small window into the ways that texts can mislead and confuse readers. It also
+tended to make us concentrate on the word and sentence level of text to the exclusion of larger
+discourse structures. Early work in readability was severOv limited by a model of reading that
+emphasized text features rather than readers [3]. Current theories of reading and psycholinguistics
+are strengthened by taking a much broader view of what goes on when people read; we now look
+carefully at the complex interactions between readers and texts. Thus, from now on investigations
+into iss ies of clarity and comprehensibility in document design must take into consideration recent
+work in both reading comprehension and discourse analysis. In addition, ongoing document
+design research must give emphasis to visual dimensions of text, relating how visual and verbal
+text structures work together in helping or hindering readers' abilities to build an integrated
+understanding of text.
+
+       Certainly the growth of computing technologies has been a major influence in altering our
+ thinking about document design over the past ten years, particularly our understanding of human
+factors and instructional design issues. The explosion of the computer industry has not only made
+ us aware of innovative ways to deliver, store, and transfer information, but it has opened up new
+ ways to think about the structure of information itself. Emerging technologies have simultaneously
+created challenges for research in human-computer interaction and user interface design,
+ spotlighting the importance of developing sophisticated theories of user-centered design. If one
+were to conduct a literature search on the influence of the computer on communications design
+since 1980, it would be an enormous undertaking. For example, a few years ago a group of
+researchers at Carnegie Mellon's Communications Design Center put together a review of the
+literature relating to the design of hardcopy and online documentation [4]. We excluded anything
+that did not have an empirical base. At that time (late 1985), we found over two hundred relevant
+articles, and by the time we went to print (Spring 1986), found hundreds more that had to be
+included in a supplemental bibliography. In looking at that reyiew today, we think, "how dated!"
+Interdisciplinary research in this area will continue to influence our thinking about document design
+in the 1990s.
+
+      One of the most interesting additions to the field over the last few years is cultural studies,
+although so far, we have very little work that makes explicit connections between it and document
+design. It is clear, however, that cultural studies can contribute to document design in important
+ways. Understanding the historical, ideological, and cultural forces in organizations, societies,
+and cultures can help us better anticipate the assumptions, motivations, and reasons that people
+read and write as they do. As Odell has pointed out:
+
+             . . .we have reason to suspect that a writer may be influenced not only by
+
+             interaction with colleagues, but by something much less readily
+             observableby what Terrence E. Deal and Allen A. Kennedy [5] call the
+             "culture" of the organization in which a writer works. That is, writers
+             who are members of an organization (a corporation, a bureaucracy, a
+             school, a club) may have internalized values, attitudes, knowledge, and
+             ways of acting that are shared by other members of the organization. This
+             culture, Deal and Kennedy assert, influences "practically everything" in
+             the life of the organization [6, 250].
+
+       The last decade has prepared the way for advances in document design and it looks as though
+this theoretically exciting area of humanistic inquiry is gaining attention and momentum. Taken
+together, these new areasrhetoric, social psychology, reading comprehension, hinnan and
+computer interaction, computer technologies, discourse analysis, and cultural stu.liesalong with
+
+                                              3
+                                                       8
+ those we already embraced-composition, cognitive psychology, instructional design, human
+ factors, typography, graphic design, and psycholinguistics-are forming a more contemporary
+ conception of document design.
+
+
+ KEY CLUSTERS OF RESEARCH IN DOCUMENT DESIGN
+
+        Although document design is a vigorous field of study, it has an impoverished and scattered
+  literature [4]. In fact, to date, there are very few reviews of theory and research in document
+ design. This is so because document design is yet an emerging discipline which draws on the
+ research of many fields of inquiry. It has been difficult to define the parameters of the field and
+ even more difficult for reviewers to decide what issues to focus on. Furthermore, much of the
+ research in the area has been conducted in Britain and is not widely available in the U.S. In
+ addition, there are almost no journals devoted to document design and those that published much
+ of the early work in the area have been undergoing difficult times to "stay afloat." (I am thinking
+ of Visible Language and Information Design Journal). Thus, to review the research in document
+ design in a way that captures its interdisciplinary nature as well as its historical evolution within an
+ international research community is no minor task
+
+      There are now a number of works which, taken together, have helped to define the
+ parameters of document design [1, 4, 7-32]. The cumulative efforts of people who have
+ conducted basic research, applied what was found from research, or cautioned against moving too
+ quickly from research to application have helped to conceputalize document design.
+
+       Document designers build knowledge in Iwo primary ways: we either conduct our own
+sridies or examine the implications of existing research in related areas. Most of the work up to
+'ills point has clustered in five areas: research on (1) writers, (2) readers, (3) text design,
+(4) text evaluation, and (5) communication technologies. Researchers, of course, aim to
+draw inferences that help us to better understand how these areas interact. I will separate them
+simply for the purpose of discussion.
+
+      It is important to mention that much of the work that document designers use is not
+conducted under the name of document design. As I pointed out above, document design is an
+eclectic field and we borrow heavily from other fields to help us contextualize and refine our
+understanding of the issues that concern us. For this reason, in the characterizations that follow, I
+do not distinguish those researchers who view themselves as document designers from those who
+do not.
+
+
+Cluster One: Research rqcused on Writer-
+      In exploring the writer as a creator of text, researchers in the past ten years have been
+focusing on both writers' processes and writers' contexts. On the one hand, researchers are
+studying the process of writing itself; while on the other, they are looking at how context
+influences what writers do.
+
+      Researchers who study the process of writing tend to examine writers' key decision points as
+they plan ideas, generate text, revise text, and evaluate its success [8, 14, 16, 26-27, 33 -51].
+This work which began by exploring cognitive processes involved in reading and writing has been
+elaborated with inquiry into social processes [6, 42, 52-53]. Much of the current research into
+writing processes concentrates on the types of knowledge that are important for developing
+expertise in writing: subject matter knowledge [43, 51, 54-56], social knowledge [57-58],
+linguistic and discourse knowledge [38, 46-47, 51, 54, 59-61], strategic knowledge [8,
+40-41, 49, 62], rhetorical knowledge [8, 33, 49-51, 63-64], and perceptual knowledge [8,
+34, 37, 40, 43-44, 49, 65]. (These are, of course, only some of the areas under
+investigation.)
+                                                            9
+                                               4
+       Researchers are finding that early models of the writing process such as the 1980 Hayes and
+Flower model of composing [36] need refinement and are working on those modifications and
+elaborations [66]. During the 1970s, our attention was focused primarily on written products
+generally viewed out of context. In the 1980s, our attention turned to studying writing processes
+also generally viewed out of context. In the 1990s, our attention has expanded to include writing
+processes and products and we insist on viewing both in context. We are looking for ways to help
+writers transfer their knowledge of "writing processes" (e.g., recognizing that setting goals during
+planning is central to generating and evaluating ideas) to "creating effective texts" (e.g., actually
+generating text that is informed by one's goals during planning). To put it differently, we are
+striving to lessen separations between thinking and doing. We want to make theoretical and
+practical connections between process and product in the varied environments in which writing
+takes place.
+
+       Parallel discussions are occurring in our sister fields. Currently, in the educational research
+literature, for example, we find debate over the study of cognition in context. Researchers and
+educators are arguing over ways of studying and teaching ill-defined problem solving activijes
+(such as writing) as they are situated in the social and physical world [67-68]. They are
+concerned with building bridges between knowing and doing, between thinking and acting. Work
+discussing a theory of "situated cognition" is raising new questions (as well as reminding us of
+some old questions) about relationships among domains such as reading, writing, and mathematics
+[69-70]. Document designers are taking advantage of this recent work and are becoming
+increasingly self conscious and reflective about what they do in carrying out a complex writing
+task.
+
+      Researchers investigating the writing context explore the organizational, political, social,
+cultural, physical, and technological contexts in which writers work and the ways in which context
+influences how document design tasks are represented and carried out. Most work dur far
+concerns writers as they compose while working within organizations [6, 22-23, 52,' 1-74] or
+while participating as members of collaborative document design teams [75]. It also describes
+reading and composing while using computers [76-77] and evaluates how people interact with
+technology [78-79].
+
+      The goals of research focused on writers' processes and contexts include (1) building
+theories of writing, (2) modeling basic processes, and (3) developing methods for improving
+writers' abilities to create effective text (whether they are composing alone, within organizations,
+or as part of a team, using pen and paper or computers).
+
+
+Cluster Two: Research Focused on Readers
+       Research into readers' needs investigates the goals, expectations, information requirements,
+preferences, performance abilities and learning strategies of readers with varying educational and
+experiential backgrounds, linguistic abilities, prior knowledge, and reading skills [80-95). Work
+in this area is helping writers build a more accurate representation of particular readers as they are
+engaged in understanding and using text.
+
+      In the past ten years, we have seen a number of reviews of work in audience written by
+people in rhetoric and composition; see, for example, Ede and Lunsford's review [96]. We have
+also observed a proliferation of empirical work on readers' needs coming from reading
+comprehension theorists, educational psychologists, instructional designers, and psycholinguists.
+This work is providing us with essential information About the processes involved in reading as
+well as about the strategies people employ during comprehension. One of the more interesting
+findings is that readers' ability to construct meaning from text is partly related to their ability to
+think about their own understanding as they read. More specifically, research has underscored the
+centrality of metacognitive knowledge in readingthat is, knowledge of strategies for planning
+ahead, for checking one's understanding, and for revising one's strategies for comprehending
+during reading.
+
+                                              510
+       Many studies have :shown that children, young adults, and less able readers are not aware
+ that they need to "be strategic, plan ahead, and check their own understanding" [85, 502]. For
+ such reasons, writers need to find ways to design text that anticipates a quick, probably passive
+ reading. Document designers are well aware that such reading strategies are typical, especially
+ with instructional, functional, and science texts. As document designers, we often write for
+ readers who are in a hurry, frustrated, bored, and who would prefer to get information needed
+ from text in any other way but reading.
+
+        A related strand of research focuses on exploring the needs of computer users. Part of this
+ work aims to define and classify user groups [97-102]. Along with work that aims to
+ distinguish different kinds of users is research that is observing what users have in common.
+ Efforts in this area have focused on how users learn to use technology, the problems they have
+ with navigating through online search spaces (such as hypertext), and the mental models they bling
+ to interacting with machines [103-106]. The goals are to move from empirical findings about
+ users' needs to specifying ways to design text (either online or hardcopy) that meets those needs
+ and to build effective user interfaces and computing systems.
+
+       In Research in Written Composition, Hillocks points out that it is surprising we have not
+ seen more empirical work in this area coming from rhetoric and cot position researchers, given the
+ high profile of "audience analysis" in the literature [107, 84]. Research into readers' needs seems
+ likely to flourish in the 1990s, especially research on cultural differences, because of the creation
+ of the open market in the European community in 1992. And with international trade increasing,
+ we can expect to see more research into cross cultural negotiations [108].
+
+       The importance of this cluster of research cannot be overemphasized. Recent discussions of
+ audience argue convincingly that much of the folk wisdom about readers is too general to be
+ useful. We are also learning that guidelines about audience are often difficult to translate into
+ action [50, 109]. Writers and speakers need more detailed knowledge about what readers or
+ listeners are "actually doing with their texts." In this way, they can move from "audience analysis"
+ to making explicit text plans and revisions.
+
+
+ Cluster Three: Research Focused on Text Design
+       Research on text design concerns the effects of various text designs, both visual and verbal,
+on readers' comprehension, performance and textual preferences. This work has been directed to
+the question, "How can we design text that both appeals to an intended readership and enhances
+their ability to understand, learn, use and retrieve information?" Researchers have been trying to
+determine why some texts appear to promote seemingly effortless comprehension while others
+make readers struggle to understand.
+
+      Through evaluating how texts operate, researchers in this area are providing us with
+information about cognitive aspects of readability [110-113]. We are also gaining insights into
+readers' responses to (a) topic sentences [114]; (b) topical structure [38]; (c) paragraph structures
+[115]; (d) coherence in text [116-118]; (e) performance-oriented headings [119-120], (0
+structural signals [89, 121]; (g) examples and elaborations [122-123]; (h) metaphors and
+analogies [124-131]; (i) typography [24,132 -134]; (j) graphics, illustrations, and pictures
+[10, 15, 17-18, 21, 28, 29,135 -137]; and (k) charts, diagrams, and tables [29,138 -140].
+By looking at readers' responses to such visual and verbal text features, researchers draw
+inferences about the text structures that promote or inhibit readers' comprehension and use of text.
+
+       Recent studies are beginning to uncover the amount of content and the level of detail to
+provide for optimal understanding of text, particularly instil- 'onal texts such as tutorials for
+computer users [141-144]. Such work is also giving us a better sense of the various text
+structures that enhance readers' abilities to draw "accurate" inferences from instructional text
+[145]. These and other studies are helping us to make more informed decisions about integrating
+visual and verbal text.
+
+                                             6
+                                                             11
+ Cluster Four: Research Focused on Text Evaluation
+       Research in text evaluation develops, refines, and tests alternative methodologies for
+ assessing the effectiveness of text. Text-evaluation studies have a long history. In the 1930s,
+ work mainly focused on generating formulas to assess the relative readability of text [3]. Today,
+ most work in the area is directed to research into persuasiveness, comprehensibility, memorability,
+ and usability. Recent studies draw heavily on the literature in rhetoric, reading comprehension,
+ psycholinguistics, discourse analysis, text design, human factors, and instructional design.
+
+      Such work raises the questions: In what ways do particular methods for evaluating text
+quality help us to discriminate good from bad text? What are the advantages and disadvantages of
+particular evaluation methods? What methods give evaluators insight into problems at the global
+level of the text, e.g., problems caused by the text's organization? What kinds of feedback helps
+writers most when involved in revising to meet readers' needs? What are the best converging
+methods for evaluating text? What do writers learn from testing? How can we build computer
+programs that will help reduce the burden of text evaluation [4, 27, SO, 110, 146-161]?
+
+      Text-evaluation research is playing an enormous role in education, the military, and industry.
+Work in education, for example, is investigating methods for assessing the effectiveness of the
+textbooks used by millions of schoolchildren and adults [82]. Similarly, the e Jsion of
+usability testing in industry is fostering the development of ways to incorporate text evaluation into
+all phases of the document-development cycle, and sophisticated formative and summative
+evaluation procedures are now becoming commonplace. Writers are finding that reader-focused
+testing methods [156] help them beyond revising the text under evaluation; they also give writers
+information that is useful in planning future texts. In particular, we are learning that
+reader - focused testing methods such as protocol-aided revision have immediate and long-term
+benefits for helping writers to anticipate readers' problems with poorly written text [50,
+156-157].
+
+      Another strand of text-evaluation research focuses on characterizing the cognitive processes
+of writers as they are engaged in the activity of evaluating a text from the perspective of the
+intended reader. Researchers want to know what evaluators look for when judging text quality.
+This work is telling us that experienced text evaluators pay close attention to text problems caused
+by what is written and by what is left out. Put differently, evaluators need to be sensitive to
+problems of commission such as faulty syntax and problems of omission such as missing
+examples and elaborations [50j. Problems of omission are, of course, the most difficult to
+anticipate.
+
+      Investigations into text evaluation are changing the way we define text quality and are
+broadening our understanding of the nature of revLion. Bccause text-evaluation research is
+centrally concerned with discovering ways to decide whether what we write works, it is perhaps
+the most critical research area.
+
+
+Cluster Five: Research Focused on Communication Technologies
+      Research focused on communication technologies examines both the impact of the
+information medium and the effect of information structures on readers. This work has a wide
+rartge of general directions (for instanceonline information, online help, natural-language
+interfaces, hypertext, video disk, CD-ROM and so on) as well as a myriad of subspecialties (such
+as message, menu, and icon design). Major research thrusts include (1) how people use media,
+(2) how particular features of media influence human-machine interaction, and (3) how peoples'
+expectations and prior knowledge influence their reception of media. Most work in the area has
+specialized in creating online text and novel approaches to organizing and delivering information
+[162-166]. Recently, considerable energy is being devoted to designing approaches to
+non-linear text structures [167-172].
+
+
+
+                                             712
+        Researclvas interested in communication technologies are often intrigued by the intersection
+ of issues and duly, for example, begin by studying general questions about how people use online
+ help. The results of such an inquiry might lead them to ask a more focused question, such as how
+ pull down menus influence users' abilities to tczess help. And the results of that son of study
+ might suggest ways to study how menu-driver interfaces influences users' expectations in using
+ hypertext systems; see Duffy, Palmer, and Mehlenbacher's work, for example [163].
+
+       Work in this area has been accelerating. Document designers can take advantage of the
+ efforts of an enormous number oflesearchers in human-computer interaction, interface design, and
+ computer scier.ce. It is important that document designers who want to work in this area,
+ however, draw on and consider the literature in the other four research clusters discussed above
+ before they undertake new missions. Research into communication technologies must be
+ grounded in research on people. Humanists have an important role to play in the progress of this
+ area in the 1990s.
+
+
+SOME MISUNDERSTANDINGS REI `TED TO DOCUMENT DESIGN PRACTICE
+     Document design is not, as some have trivialized it, the process of formatting text to make it
+visually appealirT, nor is it desktop publishing. Although page design is an important skill if one
+is working with text on paper or on a screen, a good page designer or desktop publisher is not a
+document designer. These misunderstandings have an obvious origin: the name "document
+design" itself.
+
+      The word "document" in "document design" is the first problem; it connotes a restricted
+meaning (that is, paper documents) that does not adequately represent the nature of the field nor the
+scope of its activities. For such reasons, most document design firms and research organizations
+now characterize what they do as "information design" or as "communications design." Thus, the
+rationale behind the name of Carnegie Mellon's document design research organization, The
+Communications Design Center.
+
+       A second problem is with the word "design" in document design. Ask most people what
+they think of when they hear the word "design" and the: will mention graphic desig-, industrial
+design, fashion design and so on. Typically, however, most people are not familiar with hearing
+"document" and "design" used together, and are often less stereotypical in their "off the cuff"
+definition of it than they are in their definition of the phrase "technical communication."
+                                                                                            Thus, the
+relative ambiguity in the name document design can, I think, be seen to have a positive side. In his
+introduction, Felker rationalizes the choice of "document design":
+
+             Everyday, millions of people read public documents prepared by
+             government agencies, commercial and financial organizations. These
+             public documents include regulations for every conceivable kind of
+             product and process, labels for over-the-counter and prescription drugs.
+             rental agreements and insura.-ktx policies, and income tax instructions and
+             forms. . .We use the term "document design" to dercribe the overall
+             movement at [sic] producing effe .ave public documentsdocuments that
+             are comprehensible to their intended users. ..The words "document
+            design" are a deliberate choice because they convey the complexity of the
+             field. The terms "clear writing" and "plain English" are not sufficient
+            because useful, understandable documents entail more than easy words
+            and simple sentences. The organization and format of a document may be
+            just as important as its language. The degree to which the document is
+            matched to the capabilities of its users and the setting of its use may affect
+            comprehension as much as clearly written sentences. The broader term
+            "document design" encompasses these added complexities [1, 1-2].
+
+
+
+                                             8              13
+DOCUMENT DESIGN PRACTICE: KEY SKILLS AND SENSIBILITIES
+       Felker's discussion raises a host of questions that practitioners in the area face every day: What
+is a clear document? How do we know when a document is comprehens'ble for a particular
+audience? What can a document designer do to make a document more understandable? An
+important part of answering these questions lies in practitioners' abilities D recognize the kind of
+reading that "gets done" in the academy and in the workplace as well as to anticipate "what readers are
+doing" with text. Frase, Macdonald, ani Keenan describe the evolution of reading in the world of
+work:
+               As society has become more complex, so has reading. . .Reading at work
+               is especially affected. In the 1970s a professional had to read 30
+               documents a day to keep up with the field [173]. Today that figure has
+               more than doubled, and technological change has compounded the
+               problem. The Naval Air Systems Command, for instance, supplies
+               technical manuals for 135 aircraft. There are over 25,000 manuals,
+               totaling 3 million pages. In 1950 the manuals for one aircraft contained
+               fewer than 2C10 pages; today the manuals for one aircraft contain nearly
+               300,000 pages [174]. . .Not only has the information changed, but its
+               Pm as well. Computers have altered the form of information from the
+               familiar page to small packets of information displayed on a screen.
+              These Nits and pieces of information, propelled by satellite, stream around
+               the globe, ignoring geographic and national boundaries. Indeed, literacy
+               has entered a new age [150, 97-98].
+
+     In addition to changes in the amount of reading that gets done, practitioners in document design
+must anticipate a wide range of goals for engaging with text, including reading to
+
+               Learn (studying a textbook)
+
+               Enjoy (solving a mystery story in an online interactive fiction
+               program)
+
+               Dc a task (filling out a tax form)
+
+               Write (synthesizing arguments in order to construct an original
+               statement on a topic)
+
+               Understand (reading to comprel t nd one's rights in a legal contract
+               with a landlord)
+
+               Be persuaded (reading an advertisement about exercising equipment)
+
+              Find information quickly (reading a telephone directory to locate an
+              emergency phone number for the police)
+
+              Compare and contrast (reading the editorials in a newspaper)
+
+              Learn to do (reading a tutorial to learn about a procedure that needs
+              to be performed without the text)
+
+              Make a decision (reading a pamphlet that describes the implications
+              of voting for or against nuclear power)
+
+              Assess the relevance or interestingness of a text (skimming the
+              abstract of a journal article to decide if the content may be useful or
+              interesting)
+
+
+
+                                              9 14
+                 Interpret and use the information for a purpose other than the text's
+                 intended purpose (reading a computer manual to solve a problem that
+                 is not described in the text, but that may be solved by looking at examples
+                 of related problems)
+
+       The diversity of readers' needs and goals across contexts means that we cannot define "a
+ well-designed text" without reference to those needs, goals, and contexts. A good text for a novice
+ is not necessarily a good text for an expert. Novice computer users, for example, have been found
+ to prefer "asking another person for computing information" or using "hardcopy tutorials" while
+ experts prefer "figuring it out for themselves" or "online documentation" [102]. The situation is
+ complicated by the fact that an individual may be expert in one part of a domain and novice in
+ another. Document designers in industry, government, and education are finding that it is becoming
+ increasingly important to distinguish the writing they do for novices, intermediates, and experts.
+
+        Unfortunately, up to this point, we have very little research on what audiences with different
+ levels of subject matter knowledge (or domain expertise) need or want. We also have scant research
+ on the knowledge writers need to be effective in selecting the most appropriate content, at the most
+ appropriate level of detail, in the most appropriate form and media for a particular audience. We
+ have almost no empirical work from the perspective of a document designer on the questions, What
+ is the relationship between writing knowledge and subject matter knowledge? How does subject
+ matter knowledge help writers? How does it hurt writers? Is it better to have an expert writer who is
+ a subject matter novice or a novice writer who is a subject matter expert?
+
+        Obviously some combination of writing knowledge and subject matter knowledge is important
+ (and most of us who teach document design tend to emphasize "writing knowledge") but we have no
+ empirical support for our instructional practices. (My colleagues and I are undertaking some work in
+ this area [56] but have been unable to locate studies that look at the relationship between writing
+ knowledge and subject matter knowledge in context, much less across diverse contexts such as those
+ found in industry, government, and education.) Because writers need to think about readers in more
+ precise ways, we must develop and test new instructional methods to help writers recognize readers'
+ needs [50].
+
+      We now know that when writers choose a career in document design, they must be prepared to
+write just about any text genre for any sort of audience. Document designers working in the
+consumer electronics industry, for example, must feel equally comfortable with writing the
+operations guides for installing a state-of-the-art home theater system (that is, a fully integrated
+audio/video system with a wide screen television and Dolby surround sound, CD player, audio/video
+stereo receiver, dual tape deck, VCRs, giant loudspeakers, and so on) as they are in creating the
+advertising copy for television and radio ads that feature users getting "blown away" by sound and
+image. The same document designers may also have to feel equally comfortable ghost writing the
+speech for the company's chief executive officer who has to deliver "the bottomline facts" to the
+shareholders or writing the script for the company's sales representatives who are "hyping" the
+-,
+system at the international consumer electronics show.
+
+      These diverse document design tasks call on a repertory of rhetorical talents. For instance, in
+writing an operations guide or a fact-oriented speech, the writer must restrict meaning; in writing an
+ad or creating a sales pitch, the writer aims to evoke interest. The ability to move easily between
+creating a text that demands precise use of restricted meanings and one which offers readers the
+invitation to embellish, to reconstruct, to free associate, to "make the text anew" is now a requisite
+document design skill.
+
+     Thus, the old industry stereotype that "anybody who can speak can write" is proving to be
+grossly inadequate. When "anybody" is asked to write such diverse texts, they almost always fail.
+Government and industry are tired of "losing face" or profits because of poor communication [175].
+Headlines such as "Hundreds of Coleco's Adams are Returned oc Defective: Firm Blames User
+Manuals" still haunt us [176].
+
+
+                                              10            15
+      As we head into the 1990s, companies around the world have or are planning to create
+departments dedicated to document design. Further, many colleges and universities are developing
+degree programs in document design. The growth of theory and research in the area is making
+government and industry think seriously about providing in-house training programs in document
+design as well as supporting continuing education at the university level. Many writers and
+managers of publications departments are now expected to obtain a masters or doctoral degree in
+rhetoric, document design, professional or technical communication. Indeed, document design is
+rapidly becoming an area of subject matter expertise equal in sophistication to any other profession.
+
+
+CHALLENGES THAT REMAIN
+      There arc two persistent problems that have constrained research in the area. The first has been
+the status of document design within the academy. And the second has been the lack of availability
+of funding for researchers interested in either basic or applied work in the document design.
+
+The First Problem: The Status of Document Design within the Academy
+      Traditionally, investigations into nonacademic discourse (under the rubrics of professional
+writing, technical communication, or document design) have not been popular nor have they been
+rewarded in English departments in the U.S. Viewed as the ugly stepsister of acadmic discourse,
+nonacademic writing has always had the lowest political status in an English departmenteven
+lower than that of freshman composition (the traditional intellectual ghetto)and many people who
+teach nonacademic writing and direct its programs are untenured instructors or part-time adjunct
+faculty. Tenure-track faculty members in many U.S. English departments have been actively
+discouraged &out publishing in the area because it has been construed as atheoretical,
+anti-humanistic, smacking too much of the material world, and uninteresting in comparison to the
+teaching of poetry, fiction, or academic discourse.
+
+      Because document design embraces nonacademic discourse, the academy has tended to
+construe document design's object of study as only nonacademic discourse. This has been
+the view, even though document design has never excluded academic discourse. This
+misunderstanding combined with pejorative attitudes about "tech writing" led many academics to
+dismiss the area as lacking intellectual integrity. Richard E. Young summarizes the "tech writing"
+stereotype in this way:
+
+             Over the years "tech writing" has been for the most part characterized by a
+             sharp split between form and meaning, along with equally sharp
+             distinctions between convention and originality, objective and subjective
+             knowledge, personal and impersonal style. The technical writer is to
+             be concerned only with issues of linguistic form and convention, accuracy
+             of statement, about objective reality, and an impersonal style. . .The
+             teaching and practice of technical writing has been by and large an
+             ahistorical, atheoretical enterprise with only the weakest of ties to
+             rhetorical :tudies [177, 111.
+
+      Luckily, this view is changing. In the last decade, many English departments in the U.S. have
+been radically redefining what is important in studying reading and writing. Three major changes in
+English departments are playing a major role in how document design is viewed: the rising status of
+rhetoric and coati, ,Asidon, the reconceptualizing of document design as part of the study of rhetoric,
+and the evolving definition of the study of literature.
+
+      The rising status of rhetoric and composition. Ten years ago, almost no English department in
+the U.S. would think of hiring a tenure-line faculty member with a primary interest in research in
+rhetoric and composition. The few rhetoricians who were hired before 1980people such as
+Edward P. J. Corbett, Wayne Booth, W. Ross Winterowd, Richard Ohmann, Janice Lauer, Richard
+L. Larson, James Kinneavy, S. Michael Halloran, and Richard E. Youngtended to be among the
+
+                                              11 16
+ most visible scholars in rhetorical theory and history. (For a list of the most active rhetoricians in the
+ U.S. during the mid 1970s, see the Newsletter of the Rhetoric Society of America [178].) The idea
+ of hiring someone who wanted to study the process of composing in academic or nonacademic
+ contexts was unheard of. Indeed, composition teachers were grossly exploited; when research in
+ writing got done, it was not because English departments supported it, but despite their lack of
+ support.
+
+        Most of the intellectual debates of the time were not over research questions but rather over
+ whether rhetorical studies even belonged in an English depai-tment. Many of the articles were
+ rationales for or against the independence of rhetoric programs from traditional English departments.
+ See, for example, Richard Coe's 1974 "Rationale for the Independence of Rhetoric Programs"
+ [179] and Richard L. Johannesen's subsequent response [180]. Johannescn points out that the
+ discipline of rhetoric was already firmly established in departments of speech and communication ten
+ to twenty years before it became an "issue" in English. Nonetheless, during the 1970s there was
+ considerable disagreement over the role of rhetoric in English (and, in fact, debates still persist and
+ are certain to continue beyond the next decade as well). Although there have been enormous political
+ difficulties (as well as personal costs to individual rhetoricians) in creating rhetoric programs within
+ English, we have seen a dramatic rise in the status of rhetoric and composition over the last decade.
+
+      Today, the more progressive departments have not only tenured literature faculty but tenured
+rhetoric, composition, document design and technical communications faculty as well. The rise in
+status of rhetoric and composition is reflected in structural changes in the undergraduate and graduate
+curricula English departments offer. As Donald C. Stewart points out in his 1989 article, "What is
+an English Major, and What Should It Be?":
+
+              . . .the most remarkable undergraduate English program[s]. . . .offer
+              students the opportunity to concentrate on literary and cultural studies,
+              creative writing, professirnal writing, or technical writing. . . .The
+              student in such a program would have a remarkably broad perception of
+              the theoretical and practical issues in many facets of the discipline we call
+              English [181, 199].
+
+      In fact, rhetoric programs with their own graduate faculty are flourishing and research in
+writing is gaining international recognition in the academy. David Chapman and Gary Tate identify
+53 schools with doctoral programs in rhetoric and composition [182]. Of course, faculty members
+from rhetoric have always supported research in both academic and nonacademic writing. Thus,
+with the rise in status of rhetoric and composition, document design has been nurtured.
+
+       The reconceptualizing of document design as part of the study of rhetoric. Today, document
+design is viewed as a key area of rhetorical studies; but this has not always been an operating
+assumptioneven among document designers. As Figure 1 (presented earlier) shows, early
+characterizations of document design such as Felker's review of the literature did not include rhetoric
+[1]. In fact, very little work in composition was included. If readers look carefully, they will find
+                                                                                                      a
+short discussion of the early Hayes and Flower work on composing in a chapter about cognitive
+psychology under the heading "use of procedural information" [1, 36-39], We find that early
+conceptions of the field failed to emphasize the rhetorical nature of document design.
+
+    Fortunately, rhetoricians such as Carolyn R. Miller have helped us to recognize and
+embrace the connections between rhetoric and document design [183-184]. Richard E. Young
+points out that
+
+              . .a recent reconceptualization of technical writing as essentially
+             rhetorical [italics added] is producing some startling changes. This
+             reorientation in thinking about technical discourse is exemplified in Merrill
+             D. Whitburn's "The Ideal Orator and Literary Critic as Technical
+             Communicators: An Emerging Revolution in English Departments"
+             [185]; Carolyn Miller's "A Humanistic Rationale for Technical Writing"
+
+                                              12          17
+              [183]; and Walter B. Weimer's "Beyond Philosophical Reconstruction"
+              [186] and "Science as a Rhetorical Transaction: Towarci a
+              Nonjustificational Conception of Rhetoric" [187], ...Carolyn Milicr
+              remarks that "without a theory of technical and scientific discourse as
+              argument, asking about invention in such discourse is an irrelevant --or
+              foolish -- undertaking. But with the beginning attempts to examine
+              technical and scientific discourse as rhetoric, work that had seemed
+              fragmented and unrelated acquire a new orientation, as though
+              magnetized" [184, 152] [177, 11-12].
+
+Reconceptualizing document design under the aegis of rhetoric connected us a history of rhetorical
+studies extending from ancient Greece and Rome to the present [2]. In addition, the matrix of other
+disciplines that are important to document designeach with its own historygives us a much
+broader epistemological base on which to conduct new work (see Figure 2, shown earlier).
+
+       The evolving definition of the study of literature. In the past ten years, there has been a major
+change in literary studies, specifically from programs in literary studies to programs in literary and
+cultural studies [188, 34]. Recent developments in literary theory are challenging antiquated
+notions of the province of English departments. Literary theorists are seriously questioning the
+academy's traditional focus on belletrisdc texts and are championing the expansion of literary studies
+to include texts outside of the academy, including non-valorized genres and formats. In Professing
+Literature, Gerald Graff lists more than a dozen departments that have reconfigured their priorities
+within the last decade [189, 258]. If current hiring trends are any indication of the future, it seems
+likely that as more literary and cultural theorists are hired in the 1990s, we will see a more rapid
+evolution in the definition of the study of literature, and such changes may indirectly benefit the
+study of document design.
+
+       Taken together, these three changes in U.S. English departmentsthe rising status of rhetoric
+and composition, the reconceptualizing of document design as part of the study of rhetoric, and the
+evolving definition of the study of literaturerepresent the lifting of significant institutional and
+intellectual constraints on the study of document design within the U.S. academy.
+
+      Unfortunately, because of parallel misconceptions about the intellectual integrity of
+studying writing, document design is rarely taught in the academy outside of the U.S. However,
+there are beginning to be very hopeful signs in Britain [190], West Germany [191], and Canada
+[192]. Classes in writing and document design are starting to emerge in universities and colleges
+and a few institutions are mounting degree programs. There is also a great deal of interest in
+developing educational programs at the university and college level in Japan [193], Australia
+[194], and Africa [195].
+
+      As the academy's skeptical attitudes toward studying document design change, progress will
+be made, particularly in developing theory and research and relating such work to practice.
+Moreover, it also looks as though the academy's longstanding dichotomy between basic and applied
+research is beginning to abate.
+
+The Second Problem: Lack of Funding from Government and Industry for Research
+      Since the original U.S. government-sponsored Document Design Project (1978-1981) there
+have been no major funds for document design research coming from the U.S. government. And
+there h, ve been very few grants available to researchers in other countries.
+
+      Like government, industry has been slow in funding nonproprietary basic and applied research
+in document design. Many multinational corporations look at document design as a necessary but
+low-profile activity to help make their products more attractive and usable. When companies do fund
+document design work, it is typically "to put out fires," that is, to fix a particular document that isn't
+functioning well. It is unfortunaY; that government and industry often fail to see that funding basic
+and applied research could help them to solve reoccurring communication problems.
+
+                                               13 18
+                   What are the relationships among cognitive, social, and cuiturai factors
+                   in document design?
+
+                   Are there differences between writers and readers across cultures? Do
+                   the same writing strategies, for example, work for Japanese and English
+                   speaking audiences? Do readers in various cultures read and access
+                   information in similar ways?
+
+                   What is the relation between oral and written communication in social
+                   contexts? For example, how does oral and written language work
+                   together in educational, government or corporate contexts? Are there
+                   culture-specific patterns?
+
+                  What is the role of writers' knowledge in document design?
+                  Subject-matter knowledge? Linguistic knowledge? Perceptual
+                  knowledge? Strategic knowledge? Rhetorical knowledge?
+
+                  What constitutes skill in document design? What do document designers
+                  need to know to become expert? What experiences do they need?
+
+                  What is the best means for soliciting subject matter knowledge from
+                  experts? How should writers without subject-matter expertise proceed?
+
+                  How can research on reading best be applied to document design?
+
+                  What are the principles underlying the visual design of effective text? Do
+                  some visual information structures meet readers' needs better than others?
+
+                  What are the best strategies for designing texts that serve multlpk funce^ns,
+                  for example, to inform and persuade?
+
+                  How does collaboration with other experts shape the nature of the document
+                  design process? What are optimal collaboration points among people (e.g.,
+                  writers, designers, and subject-matter experts) contributing to the same text?
+
+                 How can technology facilitate the document design process? What
+                 constraints does technology place on the document design process? What
+                 are the key features of a user interface that would best support collaborative
+                 document design?
+
+                 How do the needs of expert audiences differ from those of lay audiences?
+                 How can the needs of multiple audiences best be addressed?
+
+                 Which text-evaluation methods are best suited for judging text quality?
+                 At what point(s) in the document design process are particular text-evaluation
+                 methods most useful, e.g., what tests should be used for first drafts? Can we
+                 develop more sensitive text-evaluation methods than are currently available?
+                 Are there effective combinations of existing methods?
+
+                 What do writers learn from testing documents and observing readers
+                 interacting with text? Are there long-term benefits? Can we consolidate this
+                 learning and teach it more directly?
+
+                 What are the most likely candidate text features for building online text
+                 critiquers? Can the computer help us in text evaluation more than it has?
+
+
+
+
+Figure 3. An agenda of research questions for document design in the 1990s.
+
+
+
+                                                 14
+                                                               19
+      Because government and industry tend to fund "revisions of X" or "guidelines for Y,"
+document designers have generated a lot of excellent solutions to local communication problems.
+But we are failing to get a handle on the global problems: problems that transcend company and
+product lines, that transcend our international borders. It is only through addressing the global
+issues that document design will become a powerful and respected discipline.
+
+
+A RESEARCH AGENDA FOR DOCUMENT DESIGN IN THE 1990s
+       Given the current situation, it is not surprising that some people from the academy aid from
+government and industry say that document design does not really have a research agenda and that
+our concerns are hopelessly fragmented. As we head into the next decade, it seems imperative that
+we act to mitigate such perceptions by working on a research agenda that grows both out of what we
+know and what we do not. Our research agenda should enrich our understanding of the complex
+relations among the five research clusters discussed earlier (that is, work focused on write-%
+readers, text design, text evaluation, and communication technologies). Although it is necessarily
+incomplete, I propose the set of questions shown in Figure 3 as a research agenda for document
+design in the 1990s. The cumulative effect of addressing such questions would put document design
+on the research map. And before long other disciplines will look to our work for ideas.
+
+      Despite the problems related to studying document design, research is flourishing in some
+U.S. English departments which offer a PhD in rhetoric, as well as in some departments of
+educational psychology, applied psychology, cognitive psychology, instructional design,
+information science, engineering, agriculture, and educational technology. Research is also being
+conducted in industrial research labs and in non-profit government- or university-sponsored research
+centers in the U.S., Canada, U.K., and Australia.
+
+      I am optimistic that the next ten years will mark a turning point in document design research
+internationally. It seems likely that more educational institutions around the world will recognize that
+a comprehensive theory of discourse must account for texts outside of the academy. This awareness
+should lead to a more supportive and less isolated intellectual environment for document design
+researchers in universities. It also seems likely that government and industry around the world will
+become more concerned with understanding the communication practices of other cultures. Such an
+interest will bring into focus the need for more research in document design and that recognition may
+lead government and industry to develop collaborative efforts to fund research on those problems
+that unite us.
+
+
+Acknowledgments
+
+      I want to thank John R. Hayes for encouraging me to write this article and for his insightful
+analysis and kind advice in critiquing drafts of this text; Erwin R. Steinberg and Brad Mehlenbacher
+for providing me with valuable comments and questions about this text; Richard E. Young for
+helping me to understand the relations between rhetoric and document design; and Frank R. Smith,
+who urged me to characterize what's been happening in document design over the last decade. I also
+want to thank the many people who have contributed to the study of document design; without their
+scholarship, this text would not have been possible.
+
+
+
+
+                                             15    20
+                                              REFERENCES
+     1.     Daniel B. Felker, ed., Document Design: A Relevant Review of the
+                                                                             Literature (Washington,
+            DC: American Institutes for Research, 1980).
+  2.        Karen A. Schriver, "Theory Building in Rhetoric and Composition: The Role of Empirical
+            Scholarship," Rhetoric Review 7, no. 2 (Spring 1989): 272-288.
+  3.        Nancy Spivey, "Construing Constructivism: Reading Research in the United
+            15 (1987): 169-192.                                                      States," Poetics
+
+ 4.        Karen A. Schriver, John R. Hayes, Carol Danley, Wendie Wulff, Lisa Davies, Debra
+           Graham, Karen Cerroni, and Eric Bond, Designing Computer
+                                                                       Documentation: A Review of
+           the Relevant Literature--Hardcopy, Online, and General Applications,
+                                                                                Communications
+           Design Center Technical Report # 31 (Pittsburgh, PA: Carnegie Mellon University,
+           Communications Design Center, 1986).
+ 5.        Terrence Deal and Allen A, Kennedy, Corporate Cultures (Massachusetts:
+                                                                                  Addison Wesley
+           Publishing Company, 1982).
+ 6.        Lee Odell, "Beyond the Text: Relations Between Writing and Social
+                                                                             Context," in Writing in
+           Nonacademic Settings, eds. Lee Odell and Dixie Goswami (New York, NY: Guilford Press,
+           1985): 249-280.
+ 7.        Paul V. Anderson, Carolyn R. Miller, and R. John Brockman, eds., New Essays in
+           Technical and Scientific Communication (New York, NY: Baywood Press,
+           Michael G. Moran and Debra Journet, eds., Research in Technical        1983). Also see,
+                                                                           Communication: A
+           Bibliographic Sourcebook (Westport, CN: Greenwood Press, 1985).
+ 8.        Carl Bereiter and Marlene Scardamalia, The Psychology of Written
+           NJ: Lawrence Erlbaum Associates, 1987).                          Composition (Hillsdale,
+
+9.         H. Bouma and B. Elsendoorn, eds., Working Models of Human
+           Academic Press, 1988).                                    Perception (London, UK:
+
+ 10.      Thomas Duffy and Robert Waller, eds., Designing Usable Texts (New York, NY: Academic
+          Press, 1985).
+11.        Daniel B. Felker, F. Pickering, V. R. Charrow, V. M. Holland, and J. Redish, Guidelines
+          for Document Designers (Washington, DC: American Institutes for
+           see Jonathan Pncc, How to Write a Computer Manual: A HandbookResearch,       1981). Also,
+                                                                              of Software
+           Documentation (Menlo Park, CA: Benjamin Cummings, 1984).
+12.       Carl Felsenfeld and Alan Siegel, Writing Contracts in Plain English
+                                                                              (St. Paul, MN: West
+          Publishing Co., 1981). Also, see Joseph Williams, Style: Ten Lessons
+          2nd ed. (Chicago, IL: Scott, Foresman Company, 1985); and              in Clarity and Grace
+                                                                       George Gopen, "The
+          state of Legal Writing: Res Ipsa Loquitur," Michigan. Law Review
+                                                                             86 (1987): 333-380.
+13.       Dixie Goswami, Janice Redish, Daniel Felker, and Alan Siegel,
+                                                                        Wrling in the Professions
+          (Washington, DC: American Institutes for Research, 1981).
+14.       Lee Gregg and Erwin R. Steinberg, eds., Cognitive Processes
+                                                                      in Writing: An
+          Interdisciplinary Approach (Hillsdale, NJ: Lawrence Erlbaum Associates, 1980).
+15.       James Hartley, Designing Instructional Text, 2nd ed. (London,
+          1985).                                                          UK: Kogan Page Ltd.,
+
+
+                                                       16    21
+ 16.    John R. Hayes, The Complete Problem Solver, 2nd ed. (Hillsdale, NJ: Lawrence Erlbaum
+        Associates, 1989). Also, see John R. Hayes, "Writing Research: The Analysis of a Very
+        Complex Task," in Complex Information Processing: The Impact of Herbert A. Simon,
+        eds. David Klahr and Ker.neth Kotovsky (Hillsdale, NJ: Lawrence Erlbaum Associates,
+        1989): 209-234.
+
+ 17.    David H. Jonassen, ed., The Technology of Text, Vol. 1 (Englewood Cliffs, NJ:
+        Educational Technology Publications, 1982).
+ 18.    David H. Jonassen, ed., The Technology of Text, Vol. 2 (Englewood Cliffs, NJ:
+        Educational Technology Publications, 1985).
+ 19.    Marcel A. Just and Patricia A. Carpenter, eds., Cognitive Processes in Comprehension
+        (Hillsdale, NJ: Lawrence Erlbaum Associates, 1977). Also, see Marcel A. Just and Patricia
+        A. Carpenter, The Psychology of Reading and Language Comprehension (Boston, MA:
+        Allyn and Bacon, Inc., 1987).
+
+20.     P. A. Kolers, M. D. Wrolstad, and H. Bouma, eds., Processing Visible Language 2 (New
+        York, NY: Plenum Press, 1980).
+
+21.    M. MacDonald-Rocs, "Graphics in Text," in Review of Research in Education, ed. L. S.
+       Shulman (Itasca, IL: F.E. Peacock Publishers, Inc., 1977).
+22.    Lee Odell and Dixie Goswami, "Writing in a Non-academic Setting," Research in the
+       Teaching of English 16, no. 3 (1982): 201-223.
+23.    Lee Odell and Dixie Goswami, Writing in Nonacademic Settings (New York, NY: Guilford
+       Press, 1985).
+
+24.    Rolf F. Rehe, Typography: How to Make it Most Legible, 4th ed. (Cannel, IN: Design
+       Research International, 1981). Also, see James Craig, Designing with Type: A Basic Cuurse
+       in Typography (New York, NY: Watson-Guptill Publications, 1980).
+25.    Herbert A. Simon, Sciences of the Artificial, 2nd ed. (Cambridge, MA: MIT Press, 1981).
+26.    Erwin R. Steinberg, ed., Plain Language: Principles and Practice (Detroit, MI: Wayne State
+       University Press, in press). Also, see S. Michael Halloran and Merrill D. Whitburn,
+       "Ciceronian Rhetoric and the Rise of Science: The Plain Style Reconsidered," in The
+       Rhetorical Tradition and Modern Writing ed. James J. Murphy (New York, NY: Modem
+       Language Association, 1982).
+
+27.    Joyce Swaney, Carol Janik, Sandra J. Bond, and John R. Hayes, "Editing for
+       Comprehension: Improving the Process Through Reading Protocols," Document Design
+       Project Technical Report, No. 9 (Pittsburgh, PA: Carnegie Mellon University,
+       Communications Design Center, 1981).
+
+28.    Dale M. Willows and Harvey A. Houghton, eds., The Psychology of Illustration, Vol. 1,
+       Basic Research (New York, NY: Springer-Verlag, 1987). Also, see Harvey A. Houghton
+       and Dale M. Willows, eds., The Psychology of Illustration, Vol. 2, Instructional Issues
+       (New York, NY: Springer-Verlag, 1987).
+
+29.    Patricia Wright, "Presenting Technical Information: A Survey of Research Findings,"
+       Instructional Science 6 (1977): 93-134.
+30.    Patricia Wright, "Feeding the Information Eaters: SuggeF -3 for Integrating Pure and
+       Applied Research on Language Comprehension," Instructional Science 7 (1978): 249-312.
+
+                                                    1
+                                                        2
+ 31.    Patricia Wright, "Writing Technical Information," in Review of Research in Education 14,
+        ed. E. 1 Rothkopf (Washington, DC: American Educational Research Association, 1987):
+        327-385.
+
+ 32.    Patricia Wright, "Functional Literacy: Reading and Writing at Work," Ergonomics 31 (1988):
+        265-290.
+
+ 33.    Marshall Atlas, "Addressing an Audience: A Study of Expert-Novice Differences in
+        Writing," Document Design Project Technical ReportNo. 3 (Pittsburgh, PA: Carnegie
+        Mellon University, Communications Design Center, 1979).
+ 34.    Sandra J. Bond and John R. Hayes, "Cues People Use to Paragraph Text," Research in the
+        Teaching of English 18, no. 9 (1984): 147-167.
+ 35.    Glenn J. Broadhead and Richard C. Freed, The Variables of Composition: Process and
+        Product in a Business Setting (Carbondale, IL: Southern Illinois University Press, 1986).
+ 36.    John R. Hayes and Linda Flower, "Identifying the Organization of Writing Processes," in
+        Cognitive Processes in Writing: An Interdisciplinary Approach, eds. Lee Gregg and Erwin
+        R. Steinberg (Hillsdale, NJ: Lawrence Erlbaum Associates, 1980): 3-30.
+ 37.   V. Melissa Holland, A. M. Rose, A. R. Dean, and S. L. Dory, "Processes Involved in
+       Writing Effective Procedural Instructions," Office of Naval Research (ONR) Technical
+       Report No. / (Washington, DC: American Institutes for Research, 1985).
+38.    Steven P. Witte, "Topical Structure in Revision: An Exploratory Study," College
+       Composition and Communication 34 (1983): 313-341. Also, see Lester Faigley and Steven
+       P. Witte, "Analyzing Revision," College Composition and Communication 4 (December
+       1981): 400-414. Also, see E J. Bartlett, "Learning to Revise: Some Component
+       Processes," in What Writers Know, ed. Martin Nystrand (New York, NY: Academic Press,
+       1982).
+
+39.    Linda Flower, John R. Hayes, and Heidi S warts, "Revising Functional Documents: The
+       Scenario Principle," in New Essays in Technical and Scientific Communication, eds. Paul V.
+       Anderson, R. John Brockman, and Carolyn R. Miller (New York, NY: Baywood Press,
+       1983): 41-58.
+
+40.    Linda Flower, John R. Hayes, Linda Carey, Karen A. Schriver, and James F. Stratman,
+       "Detection, Diagnosis, and the Strategies of Revision," College Composition and
+       Communication 37, no. 1 (1986): 16-55. Also, see John R. Hayes, Linda Flower, Karen
+       A. Schriver, James F. Stratman, and Linda Carey, "Cognitive Processes in Revision," in
+       Advances in Applied Psycholinguistics, Vol. 2: Reading, Writing, and Language Learning,
+       ed. Sheldon Rosenberg (Cambridge, England: Cambridge University Press, 1987):176-240.
+41.    Linda Flower, Karen A. Schriver, Christina Haas, Linda Carey, and John R. Hayes,
+       "Planning in Writing: The Cognition of a Constructive Process," to appear in A Rhetoric of
+       Doing, eds. Steven P. Witte, N. Nakadote, and Roger Cherry (Carbondale, IL: Southern
+       Illinois Press, in press).
+42.    Ann R. Gere, Writing Groups: History, Theory, and Implications (Carbondale, IL:
+       Southern Illinois Press, 1987).
+43.    John R. Hayes, Karen A. Schriver, Andrea Blaustein, and Rachel Spilka, "If It's Clear to
+       Me, It Must Be Clear to Them," paper presented at the Conference on College Composition
+       and Communication, New Orleans, LA (1986). Also discussed in John R. Hayes, "Writing
+      Research: The Analysis of a Very Complex Task," in Complex Information Processing: The
+      Impact of Herbert A. Simon, eds. David Klahr and Kenneth Kotovsky (Hillsdale, NJ:
+      Lawrence Erlbaum Associates, 1989): 209-234.
+44.   Glynda A. Hull, "The Editing Process in Writing: A Performance Study of More Skilled and
+      Less Skilled College Writers," Research in the Teaching of English 21 (1987): 8-29.
+45.   David Kaufer, Erwin Steinberg, and Sarah Toney, "Revising Medical Consent Forms: An
+      Empirical Test and Model," Law Medicine & Health Care 11, no. 4 (1983): 155-163.
+46.   Ann Matsuhashi and E. Gordon, "Revision, Addition, and the Power of the Unseen Text,"
+      in The Acquisition of Written Language: Response and Revision, ed. Sarah W. Freedman
+      (Norwood, NJ: Ablex, 1985): 226-249; and Ann Matsuhashi, "Pausing and Planning:
+      The Tempo of Written Discourse Production," Research in the Teaching of English 15 (May
+      1981): 113-134. See also, Ann Matsuhashi and K. Quinn, "Cognitive Questions from
+      Discourse Analysis: A Review and a Study," Written Communication 1 (1984): 307-339.
+47.   Max Morenberg, Donald Daiker, and Andrew Kerek, "Sentence Combining at the College
+      Level: An Experimental Study," Research in the Teaching of English 12, no. 3 (1978):
+      245-256.
+
+48.   Donald Rubin and Bennett Rafoth, "Social Cognitive Ability as a Predictor of Quality of
+      Expository and Persuasive Writing Among College Freshman," Research in the Teaching of
+      English 20 (1986): 9-21.
+
+49.   Marlene Scardamalia and Carl Bereiter, "The Development of Evaluative, Diagnostic, and
+      Remedial Capabilities in Children's Composing," in The Psychology of Written Language: A
+      Developmental Approach, ed. M. Matlew (London, UK: John Wiley and Sons, 1983).
+50.   Karen A. Schriver, "Teaching Writers to Anticipate the Reader's Needs: Empirically Based
+      Instruction," Doctoral Diss. in Rhetoric (Pittsburgh, PA: Carnegie Mellon University,
+      Department of English, 1987). For a summary of this work, see "Teaching Writers to
+      Anticipate the Reader's Needs: An Empirically Evaluated Pedagogy," Center for the Study of
+      Writing Technical Report (Berkeley, C4 and Pittsburgh, PA: University of California and
+      Carnegie Mellon, Center for the Study of Writing, 1989, in press). A detailed version of
+      this work is in preparation for the National Council of Teachers of English (NCTE) Research
+      Monograph Series (Urbana, IL: National Council of Teachers of English).
+
+51.   Gary M. Schumacher, Byron T. Scott, George R. Klare, Frank C. Cronin, and Donald A.
+      Lambert, "Cognitive Processes in Journalistic Genres: Extending Writing Models," Written
+      Communication 6, no. 3 (July 1989): 390-407. Also, see Gary M. Schumacher, George R.
+      Klare, Frank C. Cronin, and J. R. Moses, "Cognitive Activities of Beginning and Advanced
+      College Writers: A Pausal Analysis," Research in the Teaching of English 18 (1984):
+      169-187.
+
+52.   Charles Bazerman, "Scientific Writing as a Social Act: A Review of the Literature of the
+      Sociology of Science," in New Essays in Technical and Scientific Communication, eds.
+      Paul V. Anderson, R. John Brockman, and Carolyn R. Miller (New York, NY: Baywood
+      Press, 1983): 156-184. Also, see Lester Faigley, "Nonacademic Writing: The Social
+      Perspective," in Writing in Nonacademic Settings, eds. Lee Odell and Dixie Goswami (New
+      York, NY: Guilford Press, 1985): 231-248.
+
+53.   Carol Lipson, "A Social View of Technical Writing," Iowa State Journal ofBusiness and
+      Technical Communication 2, no. 1 (1988): 7-20.
+ 54.    Deborah McCutchen, "Sources of Developmental Differences in Children's Writing:
+        Knowledge of Topic and Knowledge of Discourse and Linguistic Form," Diss. in
+        Psychology (Pittsburgh, PA: University of Pittsburgh, 1985).
+ 55.    James F. Voss, T. R. Greene, T. A. Post, and B. C. Penner, "Problem Solving Skills in the
+        Social Sciences,"     ,se Psychology of Learning and Motivation: Advances in Research and
+        Theory, Vol. 17, ed. G. Bower (New York: Academic Press, 1983).
+ 56.    Karen A. Schriver, John R. Hayes, Erwin R. Steinberg, Ayami Ogura, and Joel Bloch,
+        "Connecting Writing Knowledge and Subject Matter Knowledge: Studies of Writers'
+        Processes and Products," Communications Design Center Technical Report (Pittsburgh, PA:
+        Carnegie Mellon, in preparation).
+ 57.    Greg Myers, "The Social Construction of Two Biologists' Proposals," Written
+        Communication 2, no. 3 (1985): 219-245.
+ 58.    Anna Skinner, "Writing in a Law Firm: Cognitive Processes and Texts Grounded in Social
+        Knowledge," Doctoral Diss. in English (Austin, TX: University of Texas at Austin,
+        Department of English, 1988).
+ 59.    Barbara Couture, "Effect Ideation in Written Text: A Functional Approach to Clarity and
+        Exigence," in Functional Approaches to Writing: Research Perspectives, ed. Barbara Couture
+        (Norwood, NJ: Ablex, 1986): 69-92.
+ 60.    Russell K. Durst, "Cognitive and Linguistic Demands of Analytic Writing," Research in the
+        Teaching of English 21 (1987): 347-376. Also, see Russell K. Durst, "Monitoring
+        Processes in Analytic and Summary Writing," Written Communication 6, no. 3 (July 1989):
+        340-363.
+61.    Michael A. K. Halliday, An Introduction to Functional Grammar (London, England: Edward
+       Arnold Publishing, 1985). Also, see Gunther Kress, Linguistic Processes in Sociocultural
+       Practice (Victoria, Australia: Deakin University Press, 1985).
+62.    Linda Flower, "Negotiating Academic Discourse," Center for the Study of Writing Technical
+       Report, No. 29 ( Berkeley, CP and Pittsburgh, PA: University of California at Berkeley and
+       Carnegie Mellon: Center for the Study of Writing, 1989).
+63.    James F. Stratman, "The Rhetorical Dynamics of Appellate Court Persuasion: An
+       Exploratory Comparison of Advocates' Brief Composing Process with Court Clerks' Brief
+       Reading and Review Process," Doctoral Diss. in Rhetoric (Pittsburgh, PA: Carnegie Mellon
+       University, Department of English, 1988).
+64.    Richard 0. Young, "Cognitive Processes in Argumentation: An Exploratory Study of
+       Expertise in Management Consulting," Doctoral Diss. in Rhetoric (Pittsburgh, PA: Carnegie
+       Mellon University, Department of English, 1989).
+65.    John R. Hayes and Karen A. Schriver, "Perceptual Knowledge in Writing," Center for the
+       Study of Writing Technical Report (Berkeley, CA and Pittsburgh, PA: University of
+       California at Berkeley and Carnegie Mellon: Center for the Study of Writing, in preparation).
+66.    John R. Hayes, "What's Happened to the Hayes and Flower Model of Composing Over
+                                                                                           the
+       Last Ten Years?" (Pittsburgh, PA: Carnegie Mellon University, Department of Psychology,
+       in preparation); and John R. Hayes, "Empiricism and Commonsense," (Pittsburgh, PA:
+       Carnegie Mellon University, Department of Psychology, in preparation).
+
+
+
+                                                     20    25
+ 67.   John Seely Brown, Allan Collins, and Paul Duguid, "Situated Cognition and the Culture of
+       Learning," Bolt Beranek and Newman Inc. Report No. 6886 (Cambridge, MA: Bolt
+       Beranek and Newman, Inc., December 1988). Also, see a shorter version of this paper
+       which appears in Educational Researcher 18, no. 1 (January-Feburary 1989): 32-42;
+       Annmarie Sullivan Palincsar, "Less Charted Waters," Educational Researcher 18, no. 4
+       (May 1989): 5-7; Samuel S. Wineburg, "Remembrance of Theories Past,"
+       Educational Researcher 18, no. 4 (May 1989): 7-10; and John Seely Brown, Allan
+       Collins, and Paul Duguid,"Debating the Situation: A Rejoinder to Palincsar and Wineburg,"
+       Educational Researcher 18, no. 4 (May 1989): 10-12.
+
+68.    B. Rogoff and J. Lave, eds., Everyday Cognition: Its Development in Social Context
+       (Cambridge, MA: Harvard University Press, 1984). Also, see Lauren B. Resnick,
+       "Learning in School and Out," Educational Researcher 16, no. 9 (088): 13-20; David N.
+       Perkins and Gavriel Salomon, "Are Cognitive Skills Context-Bound?' .g.'ducational
+       Researcher 18, no. 1 (January-February 1989): 16-25; and Rand J. Spiro, W. L.
+       Vispoel, J. G. Schmitz, A. Samarapungavan, and A. E. Buerger, "Knowledge Acquisition
+       for Application: Cognitive Flexibility and Transfer in Complex Content Domains," Center for
+       the Study of Reading Technical Report No. 409 (Champaign-Urbana, IL: University of
+       Illinois, Center for the Study of Reading, 1987).
+
+69.    Allan Collins, John Seely Brown, and Susan E. Newman, "Cognitive Apprenticeship:
+       Teaching the Craft of Reading, Writing, and Mathematics," in Knowing, Learning, and
+       Instruction: Essays in Honor of Robert Glaser, ed. Lauren B. Resnick (Hillsdale, NJ:
+       Erlbaurn, 1989). Originally circulated as Bolt Beranek and Newman Inc. Report No. 6459
+       (Cambridge, MA: Bolt Beranek and Newman, Inc., November 1986).
+70.    J. Lave, Cognition in Practice (Boston, MA: Cambridge University Press, 1988). Also, see
+       S. Scribner and M. Cole, The Psychology of Literacy (Cambridge, MA: Harvard University
+       Press, 1981).
+
+71.    Paul V. Anderson, "What Survey Research Tells Us About Writing at Work," in Writing in
+       Nonacademic Settings, eds. Lee Odell and Dixie Goswami (New York, NY: Guilford Press,
+       1985): 3-83.
+
+72.    Stephen Doheny-Farina, "Writing in an Emergent Business Organization: An Ethnographic
+       Study," Doctoral Diss. (Troy, NY: Rensselaer Polytechnic Institute, 191/4).
+73.    Rachel Spilka, "Studying Writer-Reader Interactions in the Workplace," The Technical
+       Writing Teacher 15, no. 3 (Fall 1988): 208-221.
+74.    Brad Mehlenbacher, "Negotiating the Demands Between Basic and Applied Research:
+       How Scientists in the Academy Write Proposals for Research Funding," Doctoral
+       Diss. in Rhetoric and Document Design (Pittsburgh, PA: Carnegie Mellon University,
+       Department of English, in preparation).
+
+75.    Wendie Wulff, "Collaboration in Document Design: A Case Study of Process and Product,"
+       Doctoral Diss. in Rhetoric and Document Design (Pittsburgh, PA: Carnegie Mellon
+       University, Department of English, in preparation).
+76.    Christina Haas, "How the Writing Medium Shapes the Writing Process: Studies of Writers
+       Composing with Pen and Paper and with Word Processing," Doctoral Diss. in Rhetoric
+       (Pittsburgh, PA: Carnegie Mellon University, Department of English, 1987).
+77.    Cynthia Selfe and Billie J. Walstrom, "Computers and Writing: Casting a Broader Net with
+       Theory and Research," Computers and the Humanities, 1 (1988): 57-66.
+
+
+
+                                                   2t 6
+  78.       Christina Haas and John R. Hayes, "What Did I Just Say? Reading Problems in Writing
+            with the Machine," Research in the Teaching ofEnglish 20. no. 1 (1986): 22-35.
+  -, 9.    Lucy A. Suchman, Plans and Situated Actions: The Problem of Hwnan Machine
+           Communication (Cambridge, UK: Cambridge University Press, 1987). Also, see Terry
+           Winograd and Fernando Flores, Understanding Computers and Cognition: A New
+           Foundation for Design (Norwood, NJ: Ablex Publishing, 19O6).
+ 80.       Richard C. Anderson, R. E. Reynolds, Diane L. Schallert, and E. T. Goetz, "Frameworks
+           for Understanding Discourse," American Educational Research Journal 15 (1977): 433-450.
+           Also, see D. E. Rumelhart, "Schemata: The Building Blocks of Cognition," in Theoretical
+           Issues in Reading Comprehension eds. R. J. Spiro, B. C. Bruce, and W. F. Brewer
+           (Hillsdale, NJ: Lawrence Erlbaum Associates, 1980).
+
+ 81. L Baker and Ann L Prown. "Metacognitive Skills in Reading," in Handbook of Reading
+      Research Vol. 1, ed. I. D. Pearson (New York, Isrv: 'Longman, 1984): 353-394. Also, see
+           R. Garner, Metacognition and Reading Comprehension (Norwood, NJ: Ablex, 1986).
+ 82.       Isabel L beck, "Toward Improving Instructional Practice Through Understanding Reading,"
+           in Cognitive Research in Subject-Matter Learning, eds. L Resnick and L Klopfer
+           (Alexandria, VA: Association for Supervision and Curriculum Development, in press).
+ 83.       Sandra 3. Bond, John R. Hayes, and Linda Flower, "Translating the Law into Common
+           Language: A Protocol Study," Document Design Project Technical Report No. 8 (Pittsburgh,
+           °P.: Carnegie Mellon University, Communications Design Center. 1980).
+ 84.       John Bransford, Human Cognition: Learning, Understanding, and Remembering (Belmont,
+           CA: Wadsworth, 1979).
+ 85.      Ann L. Brown, "Metacognition: The Development of Selective Attention Strategies for
+          Learning from Texts," in Theoretical Models and Processes of Reading 3rd ed., eds. H.
+          Singer and R. B. Ruddell, (Newark, DE: International Reading Association and Erlbaum,
+          1985): 501-526.
+
+ 86.      Kenneth S. Goodman, "A Linguistic Study of Cues and Miscues in Reading," in Theoretical
+          Models and Processes of Reading 3rd ed., eds. H. Singer and R. B. Ruddell (Newark, DE:
+          International Reading Association and Erlbaum, 1985): 129-134.
+87.       Carol Janik, Joyce Swaney, Sandra J. Bond, and John R. Hayes, "Informed Consent:
+          Reality or Illusion?" Information Design Journal 2, no. 3 & 4 (1981): 197-207.
+88.       David E. Keiras, "Thematic Processes in the Comprehension of Technical Prose," in
+          Understanding Expository Text: A Theoretical and Practical Handbook for Analyzing
+          Explanatory Text, eds. Bruce K. Britton and John B. Black (Hillsdale, NJ: Erlbaum, 1985):
+          89-107.
+
+89.       Richard E. Mager, ' Structural Analysis of Science Prose: Can We Increase Problem-Solving
+          Performance?" in Understanding Expository Text: A Theoretical and hactical Handbookfor
+          Analyzing Explanatory Text, eds. Bruce K. Britton and John B. Black (Hillsdale, NJ:
+          Lawrence Erlbaum Associates, 1985): 65-87.
+90.       Mary Lundeberg, "Metacognitive Aspects of Reading Comprehension: Understanding in
+          Legal Case Analysis," Reading Research Quarterly 22, no. 4 (1987): 408-432.
+
+
+
+
+                                                            7
+                                                      222
+        91.   G. J. Spilich, G. T. Vesonder, H. L. Chiesi, and J. F. Voss, "Text Processing of
+              Domain-Related Information for Individuals with High and Low Domain Knowledge,"
+              Journal of Verbal Learning and Behavior 18 (1979): 275-290.
+        92.   Thomas Sticht, "Comprehending Reading at Work," in Cognitive Processes in
+              Comprehension, eds. Marcel A. Just and Patricia A. Carpenter (Hillsdale, NJ: Lawrence
+              Erlbaum Associates, 1977): 221-246.
+        93.   Thomas Sticht, "Understanding Readers and Their Uses of Text," in Designing Usable
+              Texts, eds. Thomas Duffy and Robert Waller (New York, NY: Academia Press, 1985).
+    Y
+        94.   J. F. Voss and G. L. Bisanz, "Knowledge and the Processing of Narrative and Expository
+              Texts," in Understanding Expository Text: A Theoretical and Practical Handbook for
+              Analyzing Explanatory Text, eds. Bruce K. Britton and John B. Black (Hillsdale, NJ:
+              Lawrence Erlbaum Associates, 1985): 173-198.
+        95.   Patricia Wright, "The Need for Theories of NOT Reading: Some Psychological Aspects of
+              the Human-Computer Interface," in Working Models of Human Perception, eds. H. Bouma
+              and B. Elsendoorn (London, England: Academic Press, 1988).
+        96.   Lisa Ede and Andrea Lunsford, "Audience Addressed/Audience Invoked: The Role of
+              Audience in Composition Theory and Pedagogy," College Composition and Communication
+              35 (1984): 155-171.
+
+        97.   A. Chapanis, N. S. Anderson, and J. C. Licklider, Research Needs for Human Factors:
+              User Computer Interaction (Baltimore, MD: Johns Hopkins University, US Army
+              Research Institute for the Behavioral and Social Sciences, 1983).
+
+        98.   D. N. Chin, "User Modeling in the UC, the UNIX Consultant," in Proceedings of the 1986
+              Computer and Human Interaction (CHI) Conference (New York, NY: Association for
+              Computing Machinery, 1986): 24-28.
+        99.   S. W. Draper, "The Nature of Expertise in UNIX," in User Centered System Design: Part I 1,
+              Collected Papers from the UCSD HMI Project, Institute of Cognitive Science Report No.
+              8402 (San Diego, CA : University of CA, Institute for Human Information Processing,
+              1984): 19-27.
+
+        100. K. Potosnak, "Choice of Computer Interface Modes by Empirically Derived Categories of
+             Users," Doctoral Diss. (Baltimore, MD: Johns Hopkins University, 1983). Also, see
+             Nathaniel Borenstein, 'The Design and Evaluation of On-line Help Systems," Doctoral Diss.
+             in Computer Science (Pittsburgh, PA: Carnegie Mellon University, Department of Computer
+             Science).
+
+        101. K. Potosnak, P. Hayes, M. Rosson, M. Schneider, and J. Whiteside, "Classifying Users:
+             Taking a Hard Look at Some Controversial Issues," in Proceedings of the 1986 Computer
+             and Human interaction (CHI) Conference (114,,w York, NY: Association of Computing
+             Machinery, 1986): 84-88.
+
+        102. Karen A. Schriver and John R. Hayes, "Defining Computer User Groups: An Empirical
+             Approach Using Cluster Analysis," Communications Design Center Technical Report
+             (Pittsburgh, PA: Carnegie Mellon University, Communications Design Center, in
+             preparation).
+
+        103. John R. Anderson, The Architecture of Cognition (Cambridge, MA: Harvard University
+             Press, 1983). Also, see Michciene T. Chi, Robert Glaser, and Marshall J. Farr, eds., The
+             Nature of Expertise (Hillsdale, NJ: Lawrence Erlbaum Associates, 1988).
+
+
+                                                          23      28
+[
+ 104. P. N. Johnson-Laird, Mental Models (Cambridge, MA: Harvard University Press, 1984).
+      Also, see Arthur M. Glenberg, Marion Meyer, and Karen Linden, "Mental Models
+      Contribute to Foregrounding During Text Comprehension," Journal of Memory and
+      Language, 26, no. 1 (1987): 69-83.
+
+ 105. D. E. Keiras and S. Bovair, "The Role of a Mental Model in Learning to Operate a Device,"
+      Technical Report No. 13 UARZ/DP/TR-83/0NR-13 (Tucson, AR: University of Arizona,
+      Department of Psychology, 1983).
+
+ 106. Patricia Wright, "Manual Dexterity: A User-Oriented Approach to Creating Computer
+      Documentation," in Proceedings of the Association for Computing Machinery's Computer
+      and Human Interaction (CHI) Conference (New York, NY: Association for Computing
+      Machinery, 1983): 11-18.
+
+ 107. George Hillocks, Research in Written Composition: New Directions for Teaching (Urbana,
+      IL: ERIC Clearinghouse on Reading and Communication Skills and NCRE, 1986.)
+
+ 108. Peter Rosseel, Anne-Marie Cornu, and Cathy Groenendaels, "The Impact of the Rate of
+      Production in Cross-Cultural Negotiation," in Proceedik of the 1989 International
+      Technical Communication Conference (Washington, DC: Society of Technical
+      Communication, 1989): RT-18RT-21.
+ 109. Patricia Wright, "Can Research Assist Technical Communication?" in Proceedings of the
+       1989 International Technical Communication Conference (Washington, DC: Society of
+      Technical Communication, 1989): RT-3RT-6. Also, see Patricia Wright, "Five Skills
+      Technical Writers Need," IEEE Transactions on Professional Communication PC-24 (1981):
+      10-16.
+
+110. Thomas Duffy and Paula Kabance, "Testing a Readable Writing Approach to Text Revision,"
+     Journal of Educational Psychology 74, no. 5 (1982): 733-748.
+
+111. Thomas Huckin, "A Cognitive Approach to Readability," in New Essays in Scientific and
+     Technical Communication, eds. Paul V. Anderson, R. John Brockman, and Carolyn R.
+     Miller (New York, NY: Baywood Press, 1983): 90-108. Alm, see Jack Seltzer, "What
+     Constitutes a 'Readable' Technical Style?" in New Essays in Scientific and Technical
+     Communication, eds. Paul V. Anderson, R. John Brockman, and Carolyn R. Miller (New
+     York, NY: Baywood Press, 1983): 71-89.
+
+112. William J. Vande Kopple, "Something Old, Something New: The Functional Sentence
+     Perspective," Research in the Teaching of English 17, no. 1 (February 1983): 85-99.
+
+113. Leslie A. Olson and Rod Johnson, "Towards a Better Measure of Readability: Explanation
+     of Empirical Performance Results," in Proceedings of the 1989 International Technical
+     Communication Conference (Washington, DC: Society of Technical Communication, 1989):
+     RT-7RT-10.
+114. David Keiras, "Abstracting Main Ideas from Technical Prose: A Preliminary Study of Six
+     Passages," Technical Report # 5 (Tucson, AZ: University of Arizona, 19W). Also, see
+     Connie A. Bridge, Susan M. Belmore, Susan P. Moskow, Sheila S. Cohen, 'nd Patricia D.
+     Matthews, "Topicalization and Memory for Main Ideas in Prose," Journal of Reading
+     Behavior 16, no. 1(1984): 61-80.
+115. Rick Eden and Ruth Mitchell, "Paragraphing for the Reader," College Composition and
+     Communication 37, no. 4 (1986): 416-430.
+
+
+
+                                                 24 29
+116. Michael A. K. Halliday and Ruciaiya Hasan, Cohesion in English (London, England:
+     Longman, 1976).
+
+117. Teun A. van Dijk and Walter Kintsch, Strategies of Discourse Comprehension (New York,
+     NY: Academic Press, 1983).
+
+118. Steven P. Witte and Lester Faigley, "Coherence, Cohesion, and Writing Quality," College
+     Composition and Communication 32 (1981): 189-204. Also, see George A. McCulley,
+     "Writing Quality, Coherence, and Cohesion," Research in the Teaching of English 19, no. 3
+     (October 1985): 269-282.
+
+119. R. R. Kern, T. G. Sticht, D. Welty, and R, N. Hauke, Guidebook for the Development of
+     Army Training literature (Washington, DC: US Army Research Institute for the Behavioral
+     and Social Sciences, Human Resources Organization, 1976).
+
+120. Heidi Swarts, Linda Flower and John R. Hayes, "How Headings in Documents Can Mislead
+     Readers," Document Design Project Technical Report No. 9 (Piasburgh, PA: Carnegie
+     Mellon University, Communications Design Center, 1980).
+
+121. Jan H. Spyridalds and T. C. Standal, "Headings, Previews, Logical Connectives: Effects on
+     Reading Comprehension," Journal of Technical Writing and Communication 16 (1986):
+     343-354.
+
+122. Jeff Pepper, "Following Students' Instructions for Writing a Computer Programming
+     Textbook," American Educational Research Journal 18 (1981): 259-269. Also, see A.
+      Pollchik, "The Use of Embedded Questions in the Facilitation of Productive Learning,"
+     Dwtoral Diss. (Nashville, TN: Vanderbilt University, Department of Psychology, 1975).
+
+123. Lynn Reder, Davida Charney, and K. Morgan, "The Role of Elaborations in Learning a Skill
+     from an Instructional Text," Memory and Cognition 14 (1986): 64-78.
+
+124. John M. Carroll and J. C. Thomas, "Metaphor and the Cognitive Representation of
+     Computing Systems," IBM Research Report No. RC 8302 # 35942 (Yorktown Heights,
+     NY: IBM Watson Research Center, 1980).
+
+125. D. Gentner, "Structure Mapping: A Theoretical Framework for Analogy," Cognitive Science
+     7 (1983): 155-170. Also, see D. Gentner and D. R. Gentner, "Flowing Waters or Teaming
+     Crowds: Mental Models of Electricity," in Mental Models, eds. D. Gentner and A. L
+     Stevens (Hillsdale, NJ: Erlbaum Associates, 1983).
+
+126. Raizi Janus and Thomas G. Bever, "Processing of Metaphoric Language: An Investigation
+     of the Three-Stage Model of Metaphor Comprehension," Journal of Psycholinguistic
+     Research 14, no. 5 (September 1985): 473-487. Also, see Marc Marschark and R. Reed
+     Hunt, "On Memory for Metaphor," Memory and Cognition 13, no. 5 (September 1985):
+     413-424.
+
+127. S. Michael Halloran and Annette Norris Bradford, "Figures of Speech in the Rhetoric of
+     Science and Technology," in Essays on Classical Rhetoric and Modern Discourse, eds.
+     Robert J. Connors, Lisa S. Ede, and Andrea A. Lunsford (Carbondale, IL: Southern Dlinois
+     Press, 1984): 179-192.
+
+128. Lorraine Higgins, John R. Hayes, and Rebecca Burnett, "Designing Instructional Text:
+     Metaphor as Explanatory Strategy," (Pittsburgh, PA: Carnegie Mellon University,
+     Department of English, in preparation).
+
+
+
+                                                 25
+                                                          30
+ 129. Candice Soderston and Carol German, "Toward Bridging the Gap Between Theory and
+      Practice: Analogy and Person in Technical Communication," Iowa Journal of Business and
+      Technical Communication 2, no. 1 (January 1988): 79-102.
+
+ 130. Rand J. Spiro, Paul J. Feltovich., Richard L. Coulson, and Daniel K. Anderson, "Multiple
+      Analogies for Complex Concepts: Antidotes for Analogy-Induced Misconception in
+      Advanced Knowledge Acquisition," in Similarity and Analogical Reasoning, eds. S.
+      Vosniadou and A. Ortony (Cambridge, UK: Cambridge University Press, in press). Also,
+      see Paul J. Feltovich, Rand J. Spiro, and Richard L. Coulson, "The Nature of Conceptual
+      Understanding in Biomedicine: The Deep Structure of Complex Ideas and the Development
+      of Misconceptions," Conceptual Knowledge Research Project Technical Report No. 3
+      (Springfield, IL: Southern Illinois University School of Medicine, June 1988). To appear in
+      The Cognitive Sciences in Medicine, eds. D. Evans and V. Patel (Cambridge, MA: MIT
+      Press, in press).
+
+131. Donald B. Yarbrough and Ellen D. Gagne, "Metaphor and the Free Recall of Technical
+     Text," Discourse Processes 10, no. 1 (Jan-Mar. 1987): 81-91. Also, see A. W. Inhoff, S.
+     D. Lima, and P. J. Carroll, "Contextual Effects on Metaphor Comprehension in Reading,"
+     Memory and Cognition 12, no. 6 (1984): 558-567.
+
+132. Miles A. Tinker, Legibility of Print, (Ames, IA: The Iowa State University Press, 1963).
+
+133. Society of Typographic Arts, Herman Zapf and His Design Philosophy (Chicago, IL:
+     Society of Typographic Arts, 1987).
+
+134. Michael Twyman, "Typography Without Words," Visible Language 15, no. 1(1981): 5-12.
+
+135. Josef Muller- Brockmann, Grid Systems in Graphic Design (New York, NY: Visual
+      Communication Books, Hastings House Publishers, 1985).
+
+136. Jeffery K. Cochran, Sheri A. Albrecht, and Yvonne A. Green, "Guidelines for Evaluating
+     Graphical Designs: A Framework Based on Human Perception Skills," Technical
+     Communication 36 (First Quarter 1989): 25-32.
+
+137. Bill Winn, "The Role of Graphics in Training Documents: Towards an Explanatory Theory
+     of How They Communicate," IEEE Transactions in Professional Communication (in press).
+
+138. William S. Cleveland, The Elements of Graphing Data (Monterey, CA: Wadsworth
+     Advanced Books and Soft% are, 1985).
+
+139. Mary Hegarty, Patricia Carpenter, and Marcel A. Just, "Diagrams in the Comprehension of
+     Scientific Text," in Handbook of Reading Research Vol. II, eds. R. Barr, M. Kamil, P.
+     Mosenthal, and P. D. Pearson (New York, NY: Longman, in press).
+
+140. Edward R. Tufte, The Visual Display of Quantitative Information (Cheshire, CN: Graphics
+     Press, 1983).
+
+141. J. M. Carroll, P. L. Smith-Kerker, J. R. Ford and S. A. Mazur, The Minimal Manual, IBM
+     Research Report of January 21, 1986, Report No. RC 11637 #52295 (Yorktown Heights,
+     NY: 1BM Watson Research Center, 1986).
+
+142. Davida Charney and Lynn Reder, "Designing Interactive Tutorials for Computer Users,"
+     Human Computer Interaction 2 (1986): 297-317.
+
+143. Davida Charney and Lynn Reder, "Research on Manual Design," Technical Communication
+     34, no. 1 (First Quarter 1987): 52-53.
+
+                                                  26    31
+144. Gay Vander linden, Thomas G. Cocklin, and Martha McKita, "Testing and Developing
+     Minimalist Tutorials: A Case History," in Proceedings of the 1988 International Society of
+     Technical Communication Conference (Washington, DC: Society of Technical
+     Communication, 1988): RET-196RET-199.
+145. John B. Black, J. Scott Bechtold, Marco Mitrani, and John M. Carroll, "On-line Tutorials:
+     What Kind of Inference Leads to the Most Effective Learning?" in Proceedings of the 1989
+     Computer and Human Interaction (CHI '89) Conference (New York, NY: Association of
+     Computing Machinery, 1989): 81-83.
+
+146. Marshall Atlas, "The User Edit: Making Manuals Easier to Use," IEEE Transactions on
+     Professic nal Communication PC-24 (1981) 28-29.
+
+147. Sandra J. Bond, "Protocol Aided Revision: A Tool for Making Documents Usable," paper
+     presented at the IBM Academic Information Systems University AEP Conference
+     (.4.1ex.indria, VA: IBM, 1985). (Available from author at Pittsburgh Software Engineering
+     Institute, Forbes Avenue, Pittsburgh, PA 15213.)
+
+148. Mary Dieli, "Designing Successful Documents: An Investigation of Document Evaluation
+     Methods," Doctoral Diss. in Rhetoric (Pittsburgh, PA: Carnegie Mellon University,
+     Department of English, 1986).
+
+149. Thomas Duffy, "Readability Formulas: What's the Use?" in Designing Usable Texts, eds.
+     Thomas Duffy and Robert Waller (New York, NY: Academic Press, 1985).
+
+150. L. T. Frase, N. H. McDonald and S. A. Keenan, "Intuitions, Algorithms, and a Science of
+     Text Design," in Designing Usable Texts, eds. Thomas Duffy and Robert Waller (New
+     York, NY: Academic Press, 1985): 97-112.
+
+151. V. Melissa Holland, Psycholinguistic Alternative to Readability Formulas, Document Design
+     Project Technical Report No. 12 (Washington, DC: American Institutes for Research, 1981).
+
+152. V. Melissa Holland, "How to Write Procedural Instructions: Assessing Problems and
+     Solutions," paper presented at the American Educational Research Association Convention,
+     New Orleans, LA, April 5-9, 1988. (Available from author at the U.S. Army Research
+     Institute for the Behavioral and Social Sciences, 5001 Eisenhower Ave., Alexandria, VA
+     22333.)
+
+153. Carol Mills and Kenneth Dye, "Usability Testing: User Reviews," Technical Communication
+     32, no. 4 (Fourth Quarter 1985): 40-44.
+
+154. Lance A. Miller, "Computers for Composition: A Stage Model Approach to Helping,"
+     Visible Language XX, no. 2 (1986): 188-218.
+
+155. Karen A. Schriver, Revising Computer Documentation for Comprehension: Ten Lessons in
+     Protocol Aided Revision, Communications Design Center Technical Report No. 14
+     (Pittsburgh, PA: Carnegie Mellon University, Communications Design Center, 1984). Also,
+     see Karen A. Schriver and Brad Mehlenbacher, Predicting Readers' Problems with
+     Text, a hypercard version of CDC TR No. 14 created for the Apple Macintosh Computer and
+     designed to provide online instruction for document designers in predicting and diagnosing
+     usability problems created by poorly written documentation (Pittsburgh, PA: Carnegie
+     Mellon University, Communications Design Center, alpha version 1989).
+
+156. Karen A. Schriver, "Evaluating Text Quality: The Continuum from Text-Focused to
+     Reader-Focused Methods," IEEE Transactions in Professional Communication (December,
+     1989, in press).
+
+                                                  27      32
+  157. Karen A. Schriver, "Plain Language Through Protocol-Aided Revision," in Plain Language:
+       Principles and Practice, ed. Erwin R. Steinberg (Detroit, MI; Way _e State University,
+       February, 1990, in press). Also see "Writing for Expert or Lay Audiences: Designing Text
+       Using Protocol-Aided Revision," under revision for Written Communication.
+
+ 158. Gary M. Schumacher and Robert Waller, "Testing Design Alternatives: A Comparison of
+      Procedures," in Designing Usable Texts, eds. Thomas Duffy and Robert Waller (New York,
+      NY: Academic Press, 1985): 377-403.
+
+ 159. Candice Soderston, "The Usability Edit: A New Level," Technical Communication (First
+      Quarter 1985): 16-18.
+
+ 160. David D. Roberts and Patricia A. Sullivan, "Beyond the Static Audience Construct: Reading
+      Protocols in the Technical Writing Class," Journal of Technical Writing and Communication
+      14 (1984): 143-153.
+
+ 161. US Department of Health, Pretesting in Health Communications: Methods, Examples and
+      Resources for Improving Health Messages and Materials, NIH Publication No. 84-1493
+      (Bethesda, MD: US Department of Health and Human Services, Public Hea'.:11 Service,
+      National Institutes of Health, National Cancer Institute, 1984).
+ 162. R. John Brockman, Writing Better Computer User Documentation: From Paper to Online
+      (New York, NY: Wiley-Interscience, 1986). Also, see G. Kearsley Online Help: Design and
+      Implementation (Menlo Park, CA: Addison-Wesley Publishing, Co., 1988).
+
+ 163. Thomas Duffy and James Palmer, Online Yelp Systems: Design and Evaluation
+       (Bloomington, IN: Indiana University, Instructional Systems Technology, in preparation).
+       (Available from the fist author at Indiana University, Instructional Systems Technology, 210
+      Education Bldg., Bloomington, IN 47405.) Also see, Thomas M. Duffy, Brad
+      Mehlenbacher, and Jim Palmer, "The Evaluation of Online Help Systems: A Conceptual
+      Model," in The Society of Text: Hypertext, Hypermedia, and the Social Construction of
+      Information, ed. Edward Barrett (Cambridge, MA: MIT Press, 1989): 362-387; and
+      Brad Mehlenbacher, Thomas M. Duffy, and James Palmer, "Finding Information on a Menu:
+      Linking Menu Organization to the User's Goals," Human-Computer Interaction (in press).
+
+164. J. G. Hollands and P. M. Merilde, "Menu Organization and User Expertise in Information
+      Search Tasks," Human Factors 29 (1987): 577-586.
+165. Phil Rub= and Robert Krull, "Application of Research on Document Design to Online
+     Displays," Technical Communication 32 (1985): 29-34.
+166. Ben Schneiderman, Designing the User Interface: Strategies for Effective Human-Computer
+     Interaction (Reading, MA: Addison-Wesley Publishing Co., 1986).
+
+167. Edward Barrett, ed., The Society of Text: Hypertext, Hypermedia, and the Social
+     Construction of Information (Cambridge, MA: MIT Press, 1989). Also, see Edward Barrett,
+     ed., Text, ConText, and Hypertext (Cambridge, MA: MIT Press, 1988).
+
+168. Davida Charney, "Comprehending Non-linear Ter. The Role of Discourse Cues and
+     Reading Strategies, Proceedings of Hypertext '87, privately published (November 1987):
+     109-120. (Available from the author at The Pennsylvania State University, Department of
+     English, University Park, PA 16802.)
+
+169. J. Conklin, "Hypertext: An Introduction and Survey," IEEE Computer 20, no. 9 (September
+      1987): 17-41.
+
+                                                   28     33
+170. Janet H. Walker, "Hypertext and Technical Writers," in Proceedings of the 1989
+      International Technical Communication Conference (Washington, DC: Society of Technical
+      Communication, 1989): RT-176-RT-179.
+171. Patricia Wright and A. Lickorish, "Colour Cues as Location Aids in Lengthy Texts on Screen
+     and Paper," Behavior and Information Technology 7 (1988): 11-30.
+
+172. Proceedings of Hypertext 1987 (Chapel Hill, NC: University of North Carolina, Department
+     of Computer Science, November 1987). Also, see Mark Bernstein, ed., The Hypertext
+     Digest, hypertext document for the Apple Macintosh cunputer (1988). (Available from the
+     author at Eastgate Systems, Inc., P.O. Box 1307, Cambridge, MA 02238.) Also, see the
+     Special Issue on Hypertext in Communications of the Association of Computing Machinery
+     (November 1988).
+
+173. A. Chapanis, "Prelude to 2001: Explorations in Human Communication," American
+     Psychologist 26 (1971) : 949-961.
+
+174. W. G. Muller, "Usability Research in the Navy," in Reading and Readability Research in the
+     Armed Services, ed. T. G. Sticht and D. Welty-Zapf (Alexandria, VA: Human Resources
+     Research Crganization, 1976).
+
+175. Simply Stated, no. 63, Feb. 1986, and no. 56, May-June, 1985 (Washington, DC:
+     American Institutes for Research).
+
+176. "Hundreds of Coleco's Adams are Returned as Defective: Firm Blames User Manuals,"
+     Wall Street Journal, Nov. 30, 1983.
+
+177. Richard E. Young, "Recent Developments in Rhetorical Invention," in Teaching
+     Composition: Twelve Bibliographic Essays ed. Gary Tate (Fort Worth, TX: Texas Christian
+     UP, 1987): 1-38.
+
+178. George E. Yoos, ed., Newsletter: Rhetoric Society of America 5, no. 1, January 1975 (St.
+     Cloud, MN: St. Cloud State College, Department of Philosophy): 15-20.
+
+179. Richard Coe, "Rationale for the independence of Rhetoric Programs," Newsletter: Rhetoric
+     Society of America 4, no. 3, May 1974 (St. Cloud, MN: St. Cloud State College,
+     Department of Philosophy): 1-3.
+
+180. Richard L. Johannesen, "Comments on Coe's Comments," Newsletter: Rhetoric Society of
+     America 5, no. 1, January 1975 (St. Cloud, MN: St. Cloud State College, Department of
+     Philosophy): 1.
+
+181. Donald C. Stewart, "What Is an English Major, and What Should It Be?" College
+     Composition and Commmnication 40, no. 2 (May 1989): 188-202.
+
+182. Lavid Chapman and Gary Tate, "A Survey of Doctoral Programs in Rhetoric and
+     Composition," Rhetoric Review 5 (Spring 1987): 124-186.
+
+183. Carolyn Miller, "A Humanistic Rationale for Technical Writing," College English 40 (Feb.
+     1979): 610-617.
+
+184. Carolyn Miller, "Invention in Technical and Scientific Discourse: A Prospective Survey," in
+     Research on Technical Communication, eds. Michael G. Moran and Debra Journet
+     (Westport, CN: Greenwood Press, 1985): 117-162.
+  185. Merrill D. Whitburn, "The Ideal Orator and Literary Critic as Technical Communicators: An
+       Emerging Revolution in English Departments," in Essays on Classical Rhetoric and Modern
+       Discourse eds. Robert J. Connors, Lisa S. Ede, and Andrea A. Lunsford (Carbondale, IL:
+       Southern Illinois Press, 1984): 226-247.
+  186. Walter B. Weimer, "Beyond Philosophical Reconstruction," Chap
+                                                                         8 in Notes on the
+       Methodology of Scientific Researci: (Hillsdale, NJ: Lawrence Erlbaum
+       72-92.                                                                Associates, 1979):
+
+  187. Walter B. Weimer, "Science as a Rhetorical Transaction: Toward
+                                                                      a Nonjustificational
+       Conception of Rhetoric," Philosophy and Rhetoric 10 (Winter 1977): 1-29.
+
+ 188. Richard Lloyd-Jones and Andrea A. Lunsford, eds., "Report
+                                                                of the College Strand," in The
+      English Coalition Conference: Democracy Through Language (Urbana,
+      25-36.                                                               IL: NCTE, 1989):
+
+ 189. Gerald Graff, Professing literature (Chicago, IL: The University
+                                                                         of Chicago Press, 1987).
+ 190. Don Hinson, "Concerns for the Education of Technical Writers
+                                                                   in the United Kingdom," in
+      Proceedings of the 1989 International Technical Communication Conference
+      DC: Society of Techwcal Communication, 1989): ET-69ET-71.                  (Washington,
+
+ 191. Claus Noack, "Teaching Technical Communication in West
+                                                                 Germany," paper delivered at
+      the 1989 International Technical Communication Conference, Chicago, IL (1989).
+      (Available from the author at the Siemens Corporation, D ST QM 23,
+                                                                         Bereich Datentchnik,
+      Postfach 830-951, D - 8000 Munich 83, West Germany.)
+ 192. Centre for Professional Writing, "Centre for Professional Writing: The
+                                                                             Writing Needs of
+      Business Are Our Business" (Waterloo, CA: University of Waterloo, Department of English,
+      1987).
+
+ 193. Koreo Kinosita, "On the Need to Teach Expository and Technical Writing in Japan,"
+      unpublished Plenary Address presented to the Conference on Document Design
+      Academics and Industrialists (Pittsburgh, PA: Carnegie Mellon                   fo. Japanese
+                                                                     University, Communications
+      Design Center, May 1986). Also, see Koreo Kinosita, "Differences Between
+      Western Styles of Scientific and Technical Communication,"
+                                                                                    Japanese and
+                                                                  paper presented at the 2nd
+      Eindhoven Symposium on Language for Special Purposes, 1988 (available
+                                                                                 from the author
+      at Gakushuin University, Faculty of Science, Mejiro, Tokyo, Japan); Izutni Aizu
+      and Hiraku Amemyia, "The Cultural Implications of Manual
+                                                                 Design," in Proceedings of the
+      1985 International Technical Communication Conference (Washington,
+                                                                             DC: Society of
+      Technical Communication, 1985): WE-33WE-35; John W. Mackin, "The
+      Current State of Teaching Technical Communications in Japan," unpublished
+     at the 1989 international Technical Communications Conference (available paper presented
+                                                                                from the author
+     at Fujitsu Limited, Technical Documentation Section, Fukokuseimei Building,
+                                                                                     1-1-3,
+     Kaizuka, Kawasaki-ku, Kawasaki, Japan); John W. Mackin, "Surmounting the
+     Barrier Between English and Japanese Technical Documents,"
+                                                                   Technical Communication
+     (Fourth Quarter 1989, in press); Akiko Hirayama, Yoko Takamatsu, and Hiroshi
+     Takehara, "Starting a Technical Communication Department in
+     Case Study," in Proceedings of the 1989 International Technicala Large Japanese Company: A
+                                                                      Communication Conference
+     (Washington, DC: Society of Technical Communication, 1989): MG-139MG-141;
+     Kyoko Matsui, "Document Design from a Japanese Perspective: Improving the              and
+     Relationships between Clients and Writers," Technical Communication (Fourth Quarter
+     1989, in press).
+
+194. Robert D. Eagleson, "Plain Language in Banking Documents,"
+                                                                in Banking Law and Practice
+     1986, ed. R. Baxt (Melbourne, Australia: Banking Law Association,
+                                                                       1986): 121-142. Also,
+
+                                                  30     35
+     see Law Reform Commission of Victoria, Legislation, Legal Rights and Plain English:
+     Discussion Paper No. 1 (Melbourne, Australia: Law Reform Commission of Victoria, 1986);
+     and Law Reform Commission of Victoria, Plain English and the Law: Report No, 9
+     (Melbourne, Australia: Law Reform Commission of Victoria, 1987). (The last two
+     reports are available from the Law Reform Commission of Victoria, 7th Floor,
+      160 Queen Street, Melbourne Vic. 3000, Melbourne, Australia.) Also, see R. John
+     Brockman, "A Technical Communication Society Revives in Australia," Technical
+     Communication 36, no. 1 (First Quarter 1989): 43-46.
+
+195. Haggai W. Namai, "Learning and Teaching in Professional Facilities at the University of
+     Nairobi, Kenya," in Proceedings of the 1989 International Technical Communication
+     Conference (Washington, DC: Society of Technical Communication, 1989): ET-66ET-68.
+
+
+
+
+                                               31
+                                                        36
+                        NATIONAL ADVISORY PANEL
+                       The Center for the Study of Writing
+
+
+                                       Chair
+                                   Fred Hechinger
+                            The New York Times Foundation
+
+
+
+
+Alonzo Crim                                      Sibyl Jacobson
+Professor of Urban Educational Leadership        Executive Director
+Georgia State University, Atlanta, GA            Metropolitan Life Foundation
+
+
+
+Sister Regina Noel Dunn                          John Maxwell
+Teacher                                          Exeutive Director
+Villa Maria Academy, Malvern, PA                 National Council of Teachers of English
+
+
+
+Marcia Farr                                      Roy Pea
+Associate Professor of English                   Principal
+University of Illinois, Chicago, IL              Andrews High School, El Paso, TX
+
+
+
+Abraham Glassman                                 Carol Tateishi
+Chairman                                         Teacher
+Connecticut State Board of Education             Ross Elementary School, Kentfield, CA
+
+
+
+Bill Honig                                       Richard C. Wallace, Jr.
+California Superintendent                        Pittsburgh Superintendent of Schools
+   of Public Instruction                         and Secretary, Board of Education
+
+
+
+The Honorable Gary K. Hart
+California State Senator
+
+
+
+
+                                            37
+

@@ -1,0 +1,27 @@
+# Template crate manifest for ttbs skill
+# hKask v0.31.0
+
+crate:
+  name: ttbs
+  version: "0.31.0"
+  description: >
+    TTbS (Text to be Spoken) simplification template. Applies caveman-style
+    compression grammar to agent output before TTS rendering: drops articles,
+    filler, hedging; abbreviates technical references; removes markdown/code
+    markers. Economy target >=30% reduction. Non-pass-through: transforms text
+    while preserving communicative intent. Referenced by
+    registry/manifests/stt-tts.yaml (step 1, template_ref: ttbs/transform).
+
+templates:
+  - id: ttbs/transform
+    name: "Simplify agent text for spoken output (TTbS)"
+    path: transform.j2
+    type: WordAct
+    lexicon_terms: [simplify, compress, speak, transform, voice, spoken]
+    description: >
+      Apply caveman-style simplification to agent text before TTS rendering.
+      Drops articles, filler, hedging; abbreviates references; removes
+      formatting markers. Returns simplified_text, original_text,
+      simplification_applied flag, and contract_check status. When
+      simplification_mode is false, returns original text unchanged with
+      a note that TTbS was skipped.

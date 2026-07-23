@@ -1,0 +1,40 @@
+# Software Project — Board Template
+# ℏKask v0.27.0
+#
+# Standard 5-column kanban board for software development.
+# WIP limits: 3 in Ready, 2 in InProgress, 2 in Review.
+# Phases: Foundation, Core, Polish.
+
+name: software-project
+description: >
+  Standard software development board with WIP limits and
+  three phases: Foundation (infrastructure, setup), Core
+  (features, business logic), Polish (testing, docs, cleanup).
+
+columns:
+  - name: Backlog
+    status: backlog
+    wip_limit: null
+  - name: Ready
+    status: ready
+    wip_limit: 3
+  - name: In Progress
+    status: in_progress
+    wip_limit: 2
+  - name: Review
+    status: review
+    wip_limit: 2
+  - name: Done
+    status: done
+    wip_limit: null
+
+phases:
+  - name: Foundation
+    description: Infrastructure, project setup, core abstractions
+    task_labels: [infra, setup, core]
+  - name: Core Features
+    description: Business logic, user-facing functionality
+    task_labels: [feature, backend, frontend, api]
+  - name: Polish
+    description: Testing, documentation, cleanup, optimization
+    task_labels: [testing, docs, cleanup, polish]

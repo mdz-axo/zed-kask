@@ -1,0 +1,124 @@
+{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- probe
+- explore
+- search
+- test
+- verify
+contract:
+  input:
+    charter: object
+    target: object
+    quality_criteria: string
+    probe_depth: string
+    probe_findings: string
+  output:
+    probe_findings: string
+    files_read: integer
+    tests_run: integer
+    probes_executed: integer
+    crates_examined: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: bug-hunt/bug-hunt-probe.j2 #}
+{# Functional Role: KnowAct — Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: probe_results #}
+{# Phase 2 — PROBE (MCP tool-driven code exploration) #}
+{# ℏKask v0.30.0 — Bug Hunting Expedition #}
+{#
+  This template provides probe guidance, but the actual probing is inherently
+  agent-coordinated: the agent reads source files, searches for patterns, runs
+  terminal commands (cargo check, cargo test, cargo clippy). This template
+  formats the charter into actionable probe instructions and collects results.
+#}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "low"
+verbosity = "terse"
+max_tokens = 1024
+thinking_budget = "off"
+
+You are formatting probe execution results. Do NOT generate fictional findings.
+Only report what the agent actually discovered through MCP tool usage.
+
+## Charter
+```json
+{{ charter | tojson }}
+```
+
+{% if probe_findings %}
+## Probe Results (Agent-Executed)
+{{ probe_findings }}
+
+## Metadata
+- Files read: {{ files_read | default(0) }}
+- Tests run: {{ tests_run | default(0) }}
+- Probes executed: {{ probes_executed | default(0) }}
+- Crates examined: {{ crates_examined | default([]) | tojson }}
+{% else %}
+## No probe results available
+
+The agent has not yet executed the probe. Using the charter's probe_instructions,
+explore the target with available MCP tools:
+- `file:read` — read source files
+- `code:search` — search for bug patterns
+- `terminal` — run cargo check, cargo test, cargo clippy
+
+Bug patterns to search for:
+- `.unwrap()` / `.expect()` in library code
+- Public functions without contracts
+- `unsafe` blocks without documented safety invariants
+- Integer arithmetic without overflow protection
+- `clone()` calls that may hide ownership confusion
+- Mutable state without synchronization
+- `panic!` or `todo!` in non-startup code
+
+Apply diagnose pattern: reproduce before diagnosing, isolate one variable.
+Apply adversarial pattern: try unexpected input orders, boundary values.
+Apply cybernetic pattern: trace feedback loops, check Good Regulator, verify variety.
+
+{% set beizer_runtime = ["timing", "integration", "structural"] %}
+{% set charter_cats = charter.beizer_focus | default([]) %}
+{% set needs_runtime = charter_cats | select("in", beizer_runtime) | list | length > 0 %}
+{% set depth = probe_depth | default("static") %}
+
+{% if (depth == "dynamic" or depth == "full") and needs_runtime %}
+## Runtime Bug Patterns (BugStalker — Linux x86-64, debug build required)
+
+When the charter targets timing, integration, or structural categories,
+use BugStalker (`bs`) for runtime inspection. Skip if macOS/Windows.
+
+Setup:
+```bash
+cargo build  # debug build required, NOT --release
+bs ./target/debug/<binary>           # CLI mode
+bs --oracle tokio ./target/debug/<binary>  # async code: enables Tokio oracle
+```
+
+Probe patterns:
+- ASYNC DEADLOCK: `bs --oracle tokio ./target/debug/<binary>` — reproduce hang,
+  inspect Tokio oracle panel for blocked tasks, trace `await` chain
+- RACE CONDITION: `bs ./target/debug/<binary>` + `break <shared_state_site>` +
+  `run` + `thread info` + `thread switch <n>` + `var locals` — inspect state
+  across threads at the contention point
+- STATE MACHINE VIOLATION: `bs ./target/debug/<binary>` +
+  `break <transition_fn>` + `run` + `var <state_enum>` + `continue` — trace
+  state transitions, verify invariants at each step
+- MEMORY CORRUPTION: `bs ./target/debug/<binary>` + `break <crash_site>` +
+  `run` + `var locals` + `arg all` + `reg info` — inspect memory at crash point
+- POISONED MUTEX: `bs ./target/debug/<binary>` — break at mutex acquisition,
+  inspect `var <mutex>.is_poisoned()` — identify which thread poisoned it
+- UNEXPECTED POLLING: `bs --oracle tokio ./target/debug/<binary>` — watch
+  scheduler activity, identify futures polled more often than expected
+
+For each runtime probe, record: binary path, breakpoint locations, observed
+variable states, thread states, and whether the behavior matches expectations.
+{% endif %}
+
+Collect all findings as structured text to feed into the oracle phase.
+{% endif %}

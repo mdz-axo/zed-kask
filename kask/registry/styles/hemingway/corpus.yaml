@@ -1,0 +1,235 @@
+# Hemingway Style Corpus Configuration
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+# Version: 1.1
+# Created: 2026-06-04
+#
+# Declarative specification for constructing the Hemingway style embedding corpus.
+# Processed by: kask embed-corpus (subcommand of hkask-cli)
+# Manifest:   registry/manifests/style-corpus-embed.yaml
+# Skill:       registry/manifests/skills/style-corpus-embed.yaml
+# Storage:     hKask sqlite-vec via EmbeddingStore
+#
+# Pipeline: web_extract → chunk → embed_sentences → semantic_embed → semantic_centroid
+#
+# All works are public domain (pre-1929) or CC-licensed.
+
+author: hemingway
+author_full: "Ernest Hemingway"
+style_synthesizer: composition/hemingway-style-synthesizer
+
+# ── Embedding Model Configuration ──────────────────────────────────────────────
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: 64
+
+# ── Corpus Sources ─────────────────────────────────────────────────────────────
+# Project Gutenberg texts. URL points to the plain text UTF-8 edition.
+# Chunking strips Gutenberg headers/footers and splits on paragraph boundaries.
+
+works:
+  - title: "The Sun Also Rises"
+    slug: sun-also-rises
+    url: "https://www.gutenberg.org/cache/epub/67138/pg67138.txt"
+    year: 1926
+    type: novel
+    public_domain: true
+
+  - title: "A Farewell to Arms"
+    slug: farewell-to-arms
+    url: "https://www.gutenberg.org/cache/epub/24258/pg24258.txt"
+    year: 1929
+    type: novel
+    public_domain: true
+
+  - title: "In Our Time"
+    slug: in-our-time
+    url: "https://www.gutenberg.org/cache/epub/57023/pg57023.txt"
+    year: 1925
+    type: short_story_collection
+    public_domain: true
+
+  - title: "Men Without Women"
+    slug: men-without-women
+    url: "https://www.gutenberg.org/cache/epub/64398/pg64398.txt"
+    year: 1927
+    type: short_story_collection
+    public_domain: true
+
+  - title: "Three Stories and Ten Poems"
+    slug: three-stories-ten-poems
+    url: "https://www.gutenberg.org/cache/epub/64719/pg64719.txt"
+    year: 1923
+    type: collection
+    public_domain: true
+
+  - title: "The Torrents of Spring"
+    slug: torrents-of-spring
+    url: "https://www.gutenberg.org/cache/epub/56208/pg56208.txt"
+    year: 1926
+    type: novella
+    public_domain: true
+
+# ── Kansas City Star Style Guide (canonical source) ────────────────────────────
+# Not a work per se, but the foundational rules that shape Hemingway's prose.
+# Stored as a single special passage for embedding retrieval.
+
+foundational_rules:
+  - title: "Kansas City Star Style Guide (1915)"
+    slug: kansas-city-star-rules
+    text: |
+      Use short sentences. Use short first paragraphs.
+      Use vigorous English, not forgetful, but positive.
+      Eliminate every superfluous word.
+    type: style_guide
+
+  - title: "'A Clean, Well-Lighted Place' (Iceberg exemplar)"
+    slug: clean-well-lighted-place
+    text: |
+      It was very late and everyone had left the cafe except an old man who sat in the shadow the leaves of the tree made against the electric light. In the day time the street was dusty, but at night the dew settled the dust and the old man liked to sit late because he was deaf and now at night it was quiet and he felt the difference.
+    type: style_exemplar
+
+  - title: "'The Short Happy Life of Francis Macomber' (Action as revelation)"
+    slug: macomber
+    text: |
+      He was dressed in the same sort of safari clothes that Wilson wore except that his were new. He was thirty-five years old, kept himself very fit, was good at court games, had a number of big-game fishing records, and had just shown himself, very publicly, to be a coward.
+    type: style_exemplar
+
+  - title: "'The Good Lion' (Fable style)"
+    slug: good-lion
+    text: |
+      Once upon a time there was a good lion who lived in Africa with all the other lions. The other lions were all bad lions and every day they ate zebras and wildebeests and every kind of antelope. Sometimes the bad lions ate people too.
+    type: style_exemplar
+
+  - title: "'The Faithful Bull' (Simple declarative)"
+    slug: faithful-bull
+    text: |
+      One time there was a bull and his name was not Ferdinand and he cared nothing for flowers. He loved to fight with all the other bulls of his own age, or any age, and he was a champion.
+    type: style_exemplar
+
+# ── Chunking Configuration ─────────────────────────────────────────────────────
+# Passages are the unit of embedding and retrieval.
+# Short paragraphs are concatenated until min_words is reached.
+# Long paragraphs are split at sentence boundaries to stay under max_words.
+
+chunking:
+  min_words: 50
+  max_words: 200
+  split_on: paragraph
+  sentence_boundary: ".!? "
+  overlap_words: 0 # no overlap between chunks
+
+# ── Entity Reference Format ────────────────────────────────────────────────────
+# How passages are indexed in sqlite-vec for KNN retrieval.
+# Format: style:{author}:{work_slug}:{chunk_index}
+
+entity_ref_pattern: "style:{author}:{slug}:{index}"
+centroid_entity_ref: "style:hemingway:centroid"
+
+# ── Quality Thresholds ─────────────────────────────────────────────────────────
+# For style validation after generation.
+
+validation:
+  # Maximum cosine distance from the style centroid for generated prose.
+  # Lower = stricter adherence. 0.15 is a reasonable starting threshold.
+  centroid_distance_max: 0.15
+
+  # Minimum number of exemplar passages to retrieve for few-shot context.
+  exemplar_count_min: 3
+
+  # Maximum number of exemplar passages (prevents context overflow).
+  exemplar_count_max: 7
+
+# ── Entity Declarations (5W1H Metadata Layer) ────────────────────────────────────
+# These entities drive tagging, salience scoring, and parametric retrieval.
+# Characters/places/events/concepts are matched against passage text via
+# case-insensitive substring matching. Methods are matched against computed
+# stylometric signals.
+#
+# `appears_in` restricts matching to specific work slugs (empty = all works).
+
+entities:
+  characters:
+    - name: "Jake Barnes"
+      appears_in: ["sun-also-rises"]
+    - name: "Lady Brett Ashley"
+      appears_in: ["sun-also-rises"]
+    - name: "Robert Cohn"
+      appears_in: ["sun-also-rises"]
+    - name: "Frederic Henry"
+      appears_in: ["farewell-to-arms"]
+    - name: "Catherine Barkley"
+      appears_in: ["farewell-to-arms"]
+    - name: "Nick Adams"
+      appears_in:
+        ["in-our-time", "men-without-women", "three-stories-ten-poems"]
+    - name: "old man"
+      appears_in: []
+    - name: "the waiter"
+
+  places:
+    - name: "Paris"
+      appears_in: ["sun-also-rises"]
+    - name: "Pamplona"
+      appears_in: ["sun-also-rises"]
+    - name: "Italian front"
+      appears_in: ["farewell-to-arms"]
+    - name: "Michigan"
+      appears_in: ["in-our-time"]
+    - name: "cafe"
+      appears_in: []
+    - name: "river"
+      appears_in: []
+
+  events:
+    - name: "bullfight"
+      appears_in: ["sun-also-rises"]
+    - name: "war"
+      appears_in: ["farewell-to-arms", "in-our-time"]
+    - name: "fishing"
+      appears_in: ["sun-also-rises", "in-our-time"]
+    - name: "drinking"
+      appears_in: []
+
+  concepts:
+    - name: "death"
+    - name: "wound"
+    - name: "nada"
+    - name: "grace under pressure"
+    - name: "code"
+
+# ── Declared Methods ────────────────────────────────────────────────────────────
+# Named stylistic techniques with signal thresholds for matching.
+
+methods:
+  - name: "iceberg_theory"
+    description: "Omission of exposition; meaning conveyed through subtext and action"
+    signal:
+      adjective_density_max: 5.0
+      adverb_density_max: 3.0
+      dialogue_ratio_min: 0.15
+      hedge_density_max: 1.0
+      intensifier_density_max: 1.0
+
+  - name: "parataxis"
+    description: "Coordinate clauses linked by 'and' rather than subordination"
+    signal:
+      parataxis_ratio_min: 0.6
+
+  - name: "concrete_prose"
+    description: "Preference for concrete nouns and sensory detail over abstraction"
+    signal:
+      concrete_noun_ratio_min: 0.65
+      sensory_word_ratio_min: 3.0
+
+# ── Budget ──────────────────────────────────────────────────────────────────────
+# Triple storage budget.
+
+budget:
+  total_passages: 0
+  triple_budget_per_100: 3750
+
+# ── Classifier ──────────────────────────────────────────────────────────────────
+# Literary triple extractor for themes, characters, setting, tone.
+triple_classifier: triple-extractor-literary

@@ -1,0 +1,85 @@
+{# goal/judge.j2 — Verify goal completion via semantic evaluation #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- assert
+- ground
+contract:
+  input:
+    goal_text: string
+    criteria: array
+    outcome_summary: string
+    artifacts: array
+  output:
+    verdict: string
+    reason: string
+    confidence: number
+  energy_cap: 4096
+  visibility: Public
+---
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+# Goal Judge — Completion Verification Template
+
+You are a strict judge evaluating whether an autonomous agent has achieved a user's stated goal.
+
+**Goal:**
+{{ goal_text }}
+
+{% if criteria %}
+**Completion Criteria:**
+{% for criterion in criteria %}
+- {{ criterion.description if criterion.description is defined else criterion }}
+{% endfor %}
+{% endif %}
+
+**Agent's Outcome:**
+{{ outcome_summary }}
+
+{% if artifacts %}
+**Artifacts Produced:**
+{% for artifact in artifacts %}
+- {{ artifact }}
+{% endfor %}
+{% endif %}
+
+---
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+## Evaluation Criteria
+
+A goal is **DONE** only when the outcome satisfies the explicit completion criteria:
+
+{% if criteria %}
+Evaluate each criterion:
+{% for criterion in criteria %}
+- Criterion: {{ criterion.description if criterion.description is defined else criterion }}
+{% endfor %}
+{% else %}
+1. The outcome explicitly confirms the goal was completed, OR
+2. The outcome clearly shows the final deliverable was produced, OR
+{% endif %}
+
+A goal is **BLOCKED** when the outcome explains the goal is unachievable or needs user input.
+Otherwise the goal is **CONTINUE** — agent must continue work.
+
+---
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+## Your Task
+
+- Evaluate goal completion against each explicit criterion.
+- Ground the verdict in observable outcome and artifacts.
+- Assert a confidence score.
+
+---
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+Reply ONLY with valid JSON:
+```json
+{
+  "verdict": "done|continue|blocked",
+  "reason": "One-sentence rationale",
+  "confidence": 0.0
+}
+```

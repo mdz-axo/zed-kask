@@ -1,0 +1,63 @@
+{# gml/compute-equilibrium.j2 - KnowAct: calculate, compare #}
+{# Purpose: Calculate R̄, n_H, distribution #}
+
+{% from 'gml/macros.j2' import mwc_state_function, hill_coefficient, partition_function %}
+{% from 'gml/reg-instrument.j2' import start_span, end_span, record_error %}
+
+{% set before = inputs.before %}
+{% set after = inputs.after %}
+
+{{ start_span('equilibrate', before.id | default('unknown')) }}
+
+{% if not before or not after %}
+{{ record_error('equilibrate', 'GML_MISSING_INPUT', 'before and after inputs required') }}
+{% include 'gml/error-missing-input.j2' %}
+{{ end_span('equilibrate', 'error', {'reason': 'missing_input'}) }}
+{% else %}
+
+## Equilibrium Computation
+
+### State Distribution Comparison
+
+| Distribution | Before | After |
+|--------------|--------|-------|
+| P(R-state) | {{ (before.current_r_bar * 100) | round(1) }}% | {{ (after.current_r_bar * 100) | round(1) }}% |
+| P(T-state) | {{ ((1 - before.current_r_bar) * 100) | round(1) }}% | {{ ((1 - after.current_r_bar) * 100) | round(1) }}% |
+
+### Hill Coefficient Analysis
+
+{% set n = before.ports | length %}
+{% set c_before = (before.ports | sum(attribute='affinity_c')) / n if n > 0 else 1.0 %}
+{% set c_after = (after.ports | sum(attribute='affinity_c')) / n if n > 0 else 1.0 %}
+{% set alpha_before = before.current_alpha %}
+{% set alpha_after = after.current_alpha %}
+
+{% set n_h_before = hill_coefficient(n, c_before, alpha_before) %}
+{% set n_h_after = hill_coefficient(n, c_after, alpha_after) %}
+
+| Measure | Before | After | Interpretation |
+|---------|--------|-------|----------------|
+| Hill coefficient (n_H) | {{ n_h_before }} | {{ n_h_after }} | {% if n_h_after > 1 %}Switch-like{% elif n_h_after < 1 %}Graded{% else %}Linear{% endif %} |
+| Cooperativity | {% if n_h_before > 1 %}Positive{% elif n_h_before < 1 %}Negative{% else %}None{% endif %} | {% if n_h_after > 1 %}Positive{% elif n_h_after < 1 %}Negative{% else %}None{% endif %} | {% if n_h_after > n_h_before %}Amplified{% elif n_h_after < n_h_before %}Dampened{% else %}Unchanged{% endif %} |
+
+### Partition Function
+
+{% set L = before.l %}
+
+{% set Z_before = partition_function(L, c_before, n, alpha_before) %}
+{% set Z_after = partition_function(L, c_after, n, alpha_after) %}
+
+- Z_before = {{ Z_before | round(3) }}
+- Z_after = {{ Z_after | round(3) }}
+- ΔZ = {{ (Z_after - Z_before) | round(3) }}
+
+{% if Z_after > Z_before %}
+The probability landscape has **expanded** — more interpretive microstates are accessible.
+{% elif Z_after < Z_before %}
+The probability landscape has **contracted** — fewer interpretive microstates are accessible.
+{% else %}
+The probability landscape is **unchanged**.
+{% endif %}
+
+{{ end_span('equilibrate', 'success', {'n_h_before': n_h_before, 'n_h_after': n_h_after}) }}
+{% endif %}

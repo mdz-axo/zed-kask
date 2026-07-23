@@ -1,0 +1,45 @@
+{# Template: web/search-news.j2 #}
+{# Functional Role: KnowAct — News-oriented search with timeline output #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: web_search_news #}
+
+Search for recent news articles about the topic. Use atomic tools to search and organize results.
+
+## Query
+
+{{ query }}
+
+## Instructions
+
+1. Call `web_search` with:
+   - query: "{{ query }}"
+   - strategy: "news"
+   - num_results: {{ num_results | default(10) }}
+   - freshness: "{{ freshness | default('week') }}"
+
+2. Results include `published` dates and are reranked by recency. Group them into timeline buckets:
+
+   - **today**: published < 1 day ago
+   - **this_week**: published < 7 days ago
+   - **this_month**: published < 31 days ago
+   - **older**: published > 31 days ago
+
+3. Summarize the key developments chronologically.
+
+## Output Format
+
+**Today:**
+- [title](url) — summary
+
+**This Week:**
+- [title](url) — summary
+
+**This Month:**
+- [title](url) — summary
+
+**Older:**
+- [title](url) — summary
+
+## Narrative Summary
+
+[Chronological narrative of developments]

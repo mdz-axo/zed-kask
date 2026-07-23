@@ -1,0 +1,47 @@
+# Scientific Research — Board Template
+# ℏKask v0.27.0
+#
+# Maps the scientific method to kanban columns via Toyota Kata's PDCA cycle.
+# Plan (Question → Hypothesis → Design) → Do (Experiment) → Check (Analyze)
+# → Act (Conclude → Share). WIP limits enforce focus: one hypothesis at a time
+# in experiment, one in analysis.
+#
+# Phases reflect the research lifecycle: Exploration, Experimentation, Publication.
+
+name: scientific-research
+description: >
+  Scientific research board mapping the scientific method to kanban.
+  Columns follow PDCA: Question (Plan), Hypothesis & Design (Plan),
+  Experiment (Do), Analysis (Check), Conclusion (Act), Shared (Done).
+  WIP limits: 2 in Experiment, 1 in Analysis — one experiment at a time.
+
+columns:
+  - name: Questions
+    status: backlog
+    wip_limit: null
+  - name: Hypothesis & Design
+    status: ready
+    wip_limit: 3
+  - name: Experiment
+    status: in_progress
+    wip_limit: 2
+  - name: Analysis
+    status: review
+    wip_limit: 1
+  - name: Conclusions
+    status: done
+    wip_limit: null
+
+phases:
+  - name: Exploration
+    description: Literature review, question formulation, hypothesis generation
+    task_labels: [literature, question, hypothesis, background]
+  - name: Experimentation
+    description: Experimental design, data collection, methodology
+    task_labels: [experiment, data, methodology, protocol]
+  - name: Analysis
+    description: Statistical analysis, interpretation, validation
+    task_labels: [analysis, statistics, interpretation, validation]
+  - name: Dissemination
+    description: Write-up, peer review, publication, presentation
+    task_labels: [writing, review, publication, presentation]

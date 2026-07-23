@@ -1,0 +1,90 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    primary_result: object
+    delegation_results: object
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: sequential-inquiry/sequential-inquiry-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for sequential inquiry cycles. #}
+{##
+  Group: A (Reasoning/Problem-Solving)
+  Convergence method: LLM-assessed hypothesis verification + chain stability + delegation resolution
+  Measures: Whether a verified hypothesis has been reached, the thinking chain
+    has stabilized, AND all delegation requests have been resolved.
+    Threshold 0.15 — delegation results should accelerate convergence.
+  DELEGATION TIMING: The engine emits requests in cycle N, delegates resolve them in cycle N,
+    and the engine incorporates results in cycle N+1 via prior_delegation_results.
+    On cycle 1, criterion 9 (results incorporated) is NEVER satisfied because
+    the engine cannot have seen delegation results yet.
+    On cycles 2+, criterion 9 is evaluated by checking whether the engine's
+    thought_chain explicitly references insights from delegation results.
+#}
+
+{# DEPENDS-ON-EXECUTOR: `_convergence.improvement_target` is mapped from manifest `convergence.improvement_ratio`. #}
+
+[inference]
+temperature = 0.0
+verbosity = "terse"
+max_tokens = 500
+
+Score convergence. Start at 1.0, subtract for each SATISFIED criterion.
+
+1. Hypothesis exists → -0.12
+2. Hypothesis verified → -0.20
+3. Chain complete (needsMoreThoughts: false on final thought) → -0.12
+4. No unresolved branches → -0.08
+5. No pending revisions → -0.08
+6. Confidence calibrated (solution_confidence ≥ 0.7) → -0.08
+7. Answer synthesized (final_answer clear, specific, actionable) → -0.08
+8. All delegations resolved (no pending request without delegate result) → -0.12
+9. Delegation results incorporated (ONLY cycle 2+; skip cycle 1) → -0.07
+10. Chain stable (ONLY cycle 2+; skip cycle 1) → -0.05
+
+Clamp to [0, 1].
+
+Engine result:
+```json
+{{ primary_result | tojson }}
+```
+
+Delegation results:
+```json
+{{ delegation_results | tojson }}
+```
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed hypothesis verification + chain stability + delegation resolution",
+  "metric_decomposition": {
+    "hypothesis_exists": true,
+    "hypothesis_verified": true,
+    "chain_complete": true,
+    "unresolved_branches": 0,
+    "pending_revisions": 0,
+    "confidence_calibrated": true,
+    "answer_synthesized": true,
+    "all_delegations_resolved": true,
+    "delegation_results_incorporated": true,
+    "chain_stable_between_iterations": true
+  },
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

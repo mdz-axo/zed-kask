@@ -1,0 +1,154 @@
+{# goal: Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- map
+- transform
+- schema
+- conform
+- resolve
+- normalize
+- infer
+- relate
+- triple
+contract:
+  input:
+    source_text: string
+    target_schema: object
+    entities: array
+    relations: array
+    unmapped_text: array
+  output:
+    extracted_data: object
+    field_coverage: object
+    inferred_fields: array
+    unresolved_fields: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: structured-extraction/map-to-schema.j2 #}
+{# Functional Role: KnowAct — Map identified entities to target schema #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: extracted_data, field_coverage, inferred_fields, unresolved_fields #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "off"
+
+You are mapping identified entities to a target JSON Schema to produce structured output.
+
+## Source Text
+
+{{ source_text }}
+
+## Target Schema
+
+```json
+{{ target_schema | tojson }}
+```
+
+## Identified Entities
+
+```json
+{{ entities | tojson }}
+```
+
+{% if unmapped_text %}
+## Unmapped Text Segments
+
+{% for segment in unmapped_text %}
+- {{ segment }}
+{% endfor %}
+{% endif %}
+
+{% if relations %}
+## Identified Relations
+
+```json
+{{ relations | tojson }}
+```
+
+Use relations to help resolve ambiguous entity mappings. If two entities
+are related (e.g., "John" manages "Engineering"), the relation can clarify
+which schema field each entity populates.
+{% endif %}
+
+## Schema Mapping Task
+
+Transform the identified entities into structured JSON that conforms to the target schema.
+
+### Mapping Rules
+
+1. **Direct mapping:** Entity text → schema field value (normalize types)
+2. **Type coercion:** Convert string values to the type required by the schema (string, number, boolean, array, object)
+3. **Conflict resolution:** If multiple entities map to the same field, select the most confident or most recent
+4. **Contextual inference:** For missing but required fields, infer from surrounding context if possible
+5. **Unresolved fields:** Report fields that cannot be populated from available information
+
+### Type Coercion Guidelines
+
+| Schema Type | Source | Coercion |
+|-------------|--------|----------|
+| string | any | Trim, normalize whitespace |
+| integer | numeric string | Parse integer value |
+| number | numeric string | Parse decimal value |
+| boolean | string | Map "yes"/"true"/"1" → true, "no"/"false"/"0" → false |
+| array | comma-separated | Split and trim |
+| object | structured text | Parse nested structure |
+
+## Examples
+
+Source: "Acme Corp acquired Beta Inc for $4.2B on March 15, 2025."
+Schema: {"type":"object","properties":{"acquirer":{"type":"string"},"target":{"type":"string"},"price_usd":{"type":"number"},"date":{"type":"string"}},"required":["acquirer","target"]}
+Entities: [{"entity_text":"Acme Corp","entity_type":"organization","schema_field":"acquirer","confidence":0.95},{"entity_text":"Beta Inc","entity_type":"organization","schema_field":"target","confidence":0.95},{"entity_text":"$4.2B","entity_type":"quantity","schema_field":"price_usd","confidence":0.90},{"entity_text":"March 15, 2025","entity_type":"date","schema_field":"date","confidence":0.98}]
+{"extracted_data":{"acquirer":"Acme Corp","target":"Beta Inc","price_usd":4200000000,"date":"2025-03-15"},"field_coverage":{"total_fields":4,"populated_fields":4,"coverage_ratio":1.0},"unresolved_fields":[],"coercion_log":["price_usd: '$4.2B' → 4200000000 (number)","date: 'March 15, 2025' → '2025-03-15' (ISO 8601)"],"confidence":0.92}
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "extracted_data": {
+    "field1": "value1",
+    "field2": 42
+  },
+  "field_coverage": {
+    "total_fields": 10,
+    "populated_fields": 8,
+    "coverage_ratio": 0.8
+  },
+  "inferred_fields": [
+    {
+      "field": "field_name",
+      "value": "inferred value",
+      "confidence": 0.7,
+      "inference_reason": "Derived from surrounding context about X"
+    }
+  ],
+  "unresolved_fields": ["field_name1", "field_name2"]
+}
+```
+
+## Constraints
+
+- The `extracted_data` object must conform to the target schema.
+- Inferred fields must clearly state the reasoning and confidence level.
+- Never fabricate data — if a field cannot be populated, leave it out of `extracted_data` and list it in `unresolved_fields`.
+- Type coercion must respect the schema type definitions.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,210 @@
+# Ulysses S. Twain Style Mashup Configuration
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0
+# Version: 1.0
+# Created: 2026-06-10
+#
+# Style mashup: Ulysses S. Grant (1822-1885) × Mark Twain (1835-1910)
+# Replicator name: Ulysses S. Twain
+#
+# Twain was Grant's publisher and close friend — his firm published Grant's
+# Personal Memoirs in 1885. Both share distinctly American plain-spoken
+# clarity. Grant contributes military precision and understated gravity;
+# Twain contributes vernacular cadence and deadpan humor. The blended voice
+# reports large events with dry American wit.
+#
+# Processed by: kask embed-corpus
+# Storage: hKask sqlite-vec via EmbeddingStore
+# Pipeline: web_extract → chunk → embed_sentences → centroid → validate
+# All works are public domain (pre-1929).
+
+author: ulysses-s-twain
+centroid_entity_ref: "style:ulysses-s-twain:centroid"
+
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  batch_size: 64
+
+works:
+  # ── Grant ─────────────────────────────────────────────────────────────
+
+  - title: "Personal Memoirs of U. S. Grant, Complete"
+    slug: personal-memoirs
+    url: "https://www.gutenberg.org/cache/epub/4367/pg4367.txt"
+
+  # ── Twain ─────────────────────────────────────────────────────────────
+
+  - title: "Adventures of Huckleberry Finn"
+    slug: huckleberry-finn
+    url: "https://www.gutenberg.org/cache/epub/76/pg76.txt"
+
+  - title: "The Adventures of Tom Sawyer"
+    slug: tom-sawyer
+    url: "https://www.gutenberg.org/cache/epub/74/pg74.txt"
+
+  - title: "Life on the Mississippi"
+    slug: life-on-the-mississippi
+    url: "https://www.gutenberg.org/cache/epub/245/pg245.txt"
+
+  - title: "Roughing It"
+    slug: roughing-it
+    url: "https://www.gutenberg.org/cache/epub/3177/pg3177.txt"
+
+  - title: "The Innocents Abroad"
+    slug: innocents-abroad
+    url: "https://www.gutenberg.org/cache/epub/3176/pg3176.txt"
+
+  - title: "A Connecticut Yankee in King Arthur's Court"
+    slug: connecticut-yankee
+    url: "https://www.gutenberg.org/cache/epub/86/pg86.txt"
+
+  - title: "The Prince and the Pauper"
+    slug: prince-and-pauper
+    url: "https://www.gutenberg.org/cache/epub/1837/pg1837.txt"
+
+foundational_rules:
+  # ── Grant ─────────────────────────────────────────────────────────────
+
+  - slug: grant-on-writing
+    text: >
+      I would like to see truthful history written. All that I now propose
+      to do is to state facts as they occurred. I shall not attempt to
+      criticise or find fault.
+
+  - slug: fight-it-out
+    text: >
+      I propose to fight it out on this line if it takes all summer.
+
+  - slug: appomattox
+    text: >
+      What General Lee's feelings were I do not know. As he was a man of
+      much dignity, with an impassible face, it was impossible to say
+      whether he felt inwardly glad that the end had finally come, or felt
+      sad over the result, and was too manly to show it.
+
+  - slug: grant-mexican-war
+    text: >
+      I was bitterly opposed to the measure, and to this day regard the war
+      which resulted as one of the most unjust ever waged by a stronger
+      against a weaker nation.
+
+  - slug: grant-not-intended
+    text: >
+      The assault failed. Casualties were heavy. The line was withdrawn under
+      cover of darkness. This was not what I had intended.
+
+  # ── Twain ─────────────────────────────────────────────────────────────
+
+  - slug: reports-of-my-death
+    text: >
+      The reports of my death are greatly exaggerated.
+
+  - slug: huck-finn-opening
+    text: >
+      You don't know about me without you have read a book by the name of
+      The Adventures of Tom Sawyer; but that ain't no matter. That book was
+      made by Mr. Mark Twain, and he told the truth, mainly.
+
+  - slug: right-word
+    text: >
+      The difference between the almost right word and the right word is
+      really a large matter — 'tis the difference between the lightning-bug
+      and the lightning.
+
+  - slug: three-kinds-of-lies
+    text: >
+      There are three kinds of lies: lies, damned lies, and statistics.
+
+  - slug: river-pilot
+    text: >
+      The face of the water, in time, became a wonderful book — a book that
+      was a dead language to the uneducated passenger, but which told its
+      mind to me without reserve.
+
+  - slug: no-humor-in-heaven
+    text: >
+      Wrinkles should merely indicate where smiles have been. There is no
+      humor in heaven.
+
+chunking:
+  min_words: 50
+  max_words: 200
+  sentence_boundary: ".!? "
+
+validation:
+  centroid_distance_max: 0.18
+  exemplar_count_min: 3
+  exemplar_count_max: 7
+
+# ── Entity Declarations ──────────────────────────────────────────────────────
+
+entities:
+  characters:
+    - name: "General Grant"
+      appears_in: []
+    - name: "President Lincoln"
+      appears_in: []
+    - name: "Huckleberry Finn"
+      appears_in: []
+    - name: "Tom Sawyer"
+      appears_in: []
+    - name: "Colonel"
+      appears_in: []
+    - name: "General"
+      appears_in: []
+
+  places:
+    - name: "Vicksburg"
+      appears_in: []
+    - name: "Mississippi"
+      appears_in: []
+    - name: "river"
+      appears_in: []
+    - name: "Washington"
+      appears_in: []
+    - name: "Richmond"
+      appears_in: []
+
+  events:
+    - name: "battle"
+      appears_in: []
+    - name: "march"
+      appears_in: []
+    - name: "surrender"
+      appears_in: []
+    - name: "campaign"
+      appears_in: []
+
+  concepts:
+    - name: "truth"
+    - name: "duty"
+    - name: "honor"
+    - name: "facts"
+    - name: "exaggeration"
+
+# ── Declared Methods ─────────────────────────────────────────────────────────
+
+methods:
+  - name: "declarative_sentence"
+    description: "Subject. Verb. Object. Period. No ornament."
+    signal:
+      avg_sentence_length_max: 25.0
+      parataxis_ratio_min: 0.5
+      adjective_density_max: 5.0
+
+  - name: "understatement"
+    description: "Report catastrophe as if it were weather"
+    signal:
+      adverb_density_max: 2.0
+      intensifier_density_max: 1.0
+      hedge_density_max: 1.0
+
+# ── Budget ───────────────────────────────────────────────────────────────────
+
+budget:
+  total_passages: 0
+  triple_budget_per_100: 3750
+
+# ── Classifier ────────────────────────────────────────────────────────────────
+triple_classifier: triple-extractor-literary

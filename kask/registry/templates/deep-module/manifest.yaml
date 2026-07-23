@@ -1,0 +1,53 @@
+# Template crate manifest for deep-module skill
+# hKask v0.31.0
+
+crate:
+  name: deep-module
+  version: "0.31.0"
+  description: >
+    Module design discipline based on John Ousterhout's "A Philosophy of Software
+    Design." Apply the deletion test to evaluate whether a module deserves to exist:
+    delete the callers — if complexity reappears, extract. Delete the module — if
+    complexity vanishes, don't create it. Enforces depth (high benefit/cost ratio),
+    interface minimalism (≤7 public functions), and dependency direction.
+
+templates:
+  - id: deep-module/deep-module-assess
+    name: "Assess module depth: enumerate public interface items, evaluate…"
+    path: deep-module-assess.j2
+    type: KnowAct
+    lexicon_terms: [assess, classify, evaluate, detect, infer]
+    description: >
+      Assess module depth: enumerate public interface items, evaluate behavior
+      complexity, compute depth score, classify as Deep/Adequate/Shallow/
+      Very Shallow. Identify interface cost drivers and behavior gaps.
+
+  - id: deep-module/deep-module-delete
+    name: "Execute the deletion test in both directions: caller's perspective…"
+    path: deep-module-delete.j2
+    type: KnowAct
+    lexicon_terms: [critique, evaluate, discriminate, audit, verify]
+    description: >
+      Execute the deletion test in both directions: caller's perspective
+      (complexity reappears?) and module's perspective (complexity vanishes?).
+      Produce a definitive keep/extract/don't create recommendation.
+
+  - id: deep-module/deep-module-design
+    name: "Design a deep module interface from deletion test results"
+    path: deep-module-design.j2
+    type: KnowAct
+    lexicon_terms: [design, simplify, constrain, specify, structure]
+    description: >
+      Design a deep module interface from deletion test results. Minimize public
+      surface, hide information, design for caller mental model, unify config
+      and errors. Produce a module specification with ≤7 public functions.
+
+  - id: deep-module/deep-module-convergence-check
+    name: "Compute normalized convergence metric for module-depth cycles"
+    path: deep-module-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for module-depth cycles.
+      Outputs `convergence_metric` in [0,1], where 0 means deletion/surface/depth
+      checks indicate an acceptable deep-module shape.

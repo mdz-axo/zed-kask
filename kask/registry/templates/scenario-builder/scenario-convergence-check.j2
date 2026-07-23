@@ -1,0 +1,82 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    quality_gate_result: object
+    narratives_result: object
+    implications_result: object
+    prior_convergence_metric: number|null
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+    parametric_variation: object
+energy_cap: 3072
+visibility: Public
+---
+{# Template: scenario-builder/scenario-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for scenario-planning cycles. Uses independent quality gate output (not self-assessment) and the gate's parametric_variation_flag directly — does not re-derive divergence via word-overlap. Includes a stall detector to flag vacuous iterations. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1500
+thinking_budget = "off"
+
+Compute convergence where 0 means scenarios pass the independent quality gate (divergent, consistent, exhaustive coverage) and implications+indicators are actionable.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Prior convergence metric: {{ prior_convergence_metric | default("none") }}
+
+## Convergence Method
+
+Derive convergence from the independent quality gate and the gate's `parametric_variation_flag`:
+
+- Gate status: `quality_gate_result.gate_pass` — if false, add +0.50 penalty
+- Divergence score: `(1.0 - quality_gate_result.divergence_score) * 0.30` penalty
+- Consistency score: `(1.0 - quality_gate_result.consistency_score) * 0.15` penalty
+- Coverage score: `(1.0 - quality_gate_result.coverage_score) * 0.15` penalty
+- Parametric variation: if `quality_gate_result.parametric_variation_flag` is true → +0.20 penalty
+- Implications actionability: if `implications_result.robust_strategies` is empty or has < 2 entries → +0.10 penalty
+- Early indicators: if `implications_result.early_indicators` is empty or has < 2 entries → +0.10 penalty
+- Start at 0.0. Clamp to [0, 1].
+
+### Parametric Variation (consumed from gate, not re-derived)
+
+The quality gate already evaluates parametric variation semantically and produces `parametric_variation_flag`. Do NOT re-derive divergence via word-overlap — consume the gate's flag directly:
+- Set `parametric_variation.detected` to `quality_gate_result.parametric_variation_flag`.
+- Set `parametric_variation.source` to `"quality_gate"`.
+
+## Stall Detector
+
+After computing the convergence metric, check whether this iteration improved over the prior:
+
+1. If `prior_convergence_metric` is not null, compute the delta: `|computed_metric - prior_convergence_metric|`.
+2. If delta < 0.03, the regeneration did not materially improve the scenario set. Add a blocker: `"Stall detected: convergence did not improve by >= 0.03 (delta = <computed_delta>). Regeneration is not improving the scenario set — escalation recommended."`
+3. The stall detector is informational — it does NOT force convergence. The metric reflects actual quality; the blocker informs the human reviewer that the loop is vacuous.
+
+0 = fully converged: gate passed, high scores on all quality dimensions, implications actionable, indicators specific, no parametric variation.
+1 = not converged: gate failed and/or implications/indicators missing and/or parametric variation detected.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "Independent quality gate + parametric_variation_flag + stall detector",
+  "rationale": "short explanation",
+  "blockers": [],
+  "parametric_variation": {
+    "detected": false,
+    "source": "quality_gate"
+  }
+}
+```

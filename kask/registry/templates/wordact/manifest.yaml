@@ -1,0 +1,48 @@
+# Template crate manifest for wordact skill
+# hKask v0.28.0
+
+crate:
+  name: wordact
+  version: "0.28.0"
+  description: >
+    WordAct core execution framework. Selects the appropriate prompt template,
+    renders it with variable bindings, dispatches to the inference engine,
+    and produces SOAP-style operational reports for system monitoring.
+
+templates:
+  - id: wordact/execute
+    name: "Execute a rendered prompt by dispatching to the inference engine"
+    path: execute.j2
+    type: WordAct
+    lexicon_terms: [prompt, write, undertake]
+    description: >
+      Execute a rendered prompt by dispatching to the inference engine.
+      Produces the completion response and token usage.
+
+  - id: wordact/render
+    name: "Render a Jinja2 template with variable bindings into a complete…"
+    path: render.j2
+    type: WordAct
+    lexicon_terms: [transform, compose, specify]
+    description: >
+      Render a Jinja2 template with variable bindings into a complete
+      prompt ready for inference execution.
+
+  - id: wordact/selector
+    name: "Select the best-fit prompt template from available options based on…"
+    path: selector.j2
+    type: WordAct
+    lexicon_terms: [recognize, classify, match, discriminate, select]
+    description: >
+      Select the best-fit prompt template from available options based
+      on context, with confidence scoring and rationale.
+
+  - id: wordact/soap
+    name: "SOAP operational reporting template"
+    path: soap.j2
+    type: WordAct
+    lexicon_terms: [observe, assess, plan, monitor, report, probe]
+    description: >
+      SOAP operational reporting template. Produces structured reports
+      with subjective, objective (profile, severity, host samples),
+      assessment, and plan sections.

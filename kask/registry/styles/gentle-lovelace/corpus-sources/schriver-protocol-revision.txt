@@ -1,0 +1,1569 @@
+Technical Report No. 46
+
+Plain Language for
+Expert or Lay Audiences:
+Designing Text Using
+Protocol-Aided Revision
+
+Karen A. Schriver
+
+February, 1991
+
+
+                                             Abstract
+
+
+        Critics of the "plain language movement" point out that what is "plain" to one audience
+may mystify and confuse another. Questions such as "Plain language for whom?" and "How can
+we know whether a text is written in plain language?" raise legitimate concerns about the danger
+of ignoring that what is "plain" is relative to the particular audience reading and/or using a text.
+This paper addresses these questions by illustrating a concrete and empirically-tested procedure
+for revising texts to meet the needs of expert or lay audiences. Specifically, this paper details
+protocol-aided revision-a procedure which employs readers' responses to texts to guide revision
+activity-and demonstrates why actual reader feedback is the most sensible and effective criterion
+for deciding whether a text is written in plain language. It provides two case studies of texts that
+were revised for comprehensibility using protocol-aided revision, underscoring that plain
+language is more than verbal text alone; it includes effective integration of visual and verbal text.
+This article also presents a cognitive model of the process of protocol-aided revision. This paper
+may interest both proponents and critics of plain language because it argues for a redefinition of
+plain language and suggests a method for assessing if plain language goals have been met.
+
+
+
+
+               PLAIN LANGUAGE FOR EXPERT OR LAY AUDIENCES:
+               DESIGNING TEXT USING PROTOCOL-AIDED REVISION
+
+                                        Karen A. Schriver
+                                    Carnegie Mellon University
+
+INTRODUCTION
+
+        People who argue against the "plain language movement" point out that what is "plain" to
+one audience may mystify and confuse another. Questions such as "plain language for whom?"
+and "How can we know whether a text is written in plain language?" raise legitimate concerns
+about the danger of ignoring that what is "plain" is relative to the particular audience reading or
+using a text. Up to this point, plain language proponents have not sufficiently addressed the issue
+of defining plain English. This lack of definition has fueled critics of the movement to argue that
+plain language is so loosely defined that it can mean anything from the process of simplifying
+complex sentence structure to the wholesale rewriting of documents. Critics from the areas of
+medicine, law, and government are worried that plain language will be translated as "dummying
+down" their documents. They are legitimately concerned that people without subject-matter
+expertise will decide what language will be considered technical and that such people may
+misinterpret or actually change the meaning of documents with legal or medical implications
+(MacNeil/Lehrer Report, 1978).
+
+        While both proponents and critics agree that, in theory, plain language could be very
+beneficial, the questions remain, "What is plain language?" and "Will all readers benefit from
+plain language?" The purpose of this paper is to suggest that plain language can be defined and
+that specific methods exist for insuring a text's clarity for its intended readership. Through cases
+studies of the revision process of several texts, this paper provides evidence that plain language
+can indeed benefit all audiences, whether expert or lay. Thus, the definition of plain language
+will be extended to creating clearly written and usable texts that suit the unique needs and
+purposes of both subject-matter novices and subject-matter experts. This paper will show why
+collecting reader feedback in response to a text is the most effective test for judging whether it is
+plain for the intended audience. Specifically, this paper will detail "protocol-aided revision," a
+procedure which uses reader feedback to guide revision of texts for comprehensibility and
+usability. In addition, this paper will stress that plain language is more than verbal text alone; it
+includes effective integration of text and graphics. Finally, this paper provides a model of the
+protocol-aided revision process, illustrating how protocols can help writers modify text to meet
+the special needs of particular audiences.
+
+THE PROBLEM IN DEFINING "PLAIN ENGLISH"
+
+        In 1979, Veda Charrow asked proponents of the plain language movement, "What is
+plain English, anyway?" Charrow answers this question indirectly, asserting that "although most
+of us would probably not agree on what plain English is, we could probably agree on some
+aspects of what it is not" (Charrow, 1979, p. 2). Charrow explicates the variety of ways that
+advocates have defined plain English, citing that it is not "legalese," or "plain, ordinary peoples'
+language," or "texts that are written with short sentences and simple words" (Charrow, p. 3).
+Early advocates such as Charrow spent a great deal of time trying to address the needs of at least
+four distinct audiences for plain language: (1) consumers, (2) critics, (3) government officials,
+and (4) writing and reading researchers. Each audience had a different set of concerns regarding
+a definition. Consumers wanted it to mean that they would be able to understand and use the
+documents they read and sign. Critics wondered if plain language meant "elimination of all
+technical words" and worried about its implications in the marketplace, its ramifications for
+creating and revising public documents, and its effect on texts that were intended for lay and/or
+expert audiences (MacNeil/Lehrer Report, 1978, pp. 4-5). Government officials wanted to know
+what a plain language law would look like and what enforcement would involve. Writing and
+reading researchers wanted to know if there were ways to verify whether a document was written
+in plain language; they wanted to move plain language beyond the slogan stage and to create a
+research agenda involving how people read and understand functional documents such as
+textbooks, contracts, procedural texts, informational brochures, forms, leases, consumer product
+information, or computer manuals (Felker, 1980; Hartley, 1978).
+
+        At the same time advocates were trying to define plain language, they were also trying to
+educate consumers. During the late 1970s, advocates of plain language were trying to inform the
+public that confusing and hard-to-understand public documents did not have to be the norm, that
+there were alternatives to medicalese, legalese, and bureaucratese. Consequently, most effort in
+the late 1970s in Britain and in the United States was devoted toward raising the consciousness
+of consumers that they indeed have a right to demand plain language. Early advocates provoked
+controversy by arguing that unclear and purposefully vague and jargon-laden language was being
+used as a tool to keep the less knowledgeable, less powerful, less wealthy, from knowing what
+they were signing.
+
+        When plain language came to the public's attention, there were very few publications
+concerning the nature of document design and writing processes. There was also very little
+consolidated research on how people read and use public documents. (For a review of recent
+literature on document design, see Schriver, 1989b.) Part of the mission of early publications
+such as The Information Design Journal, Visible Language, and the American Institutes of
+Research newsletter, Fine Print, (now Simply Stated), and Carnegie Mellon University's
+Communications Design Newsletter was to inform researchers, educators, and practitioners of
+new findings on document design research as well as to provide a forum for raising plain
+language issues. However, before writing and document design research had time to clarify the
+goals of plain language, thus allowing it to be defined more convincingly, lawyers and
+government officials were wrangling over its definition on American television (see, for
+example, The MacNeil/Lehrer Report, "Plain English," 1978).
+
+        It is unfortunate that plain English got off to such a confused start. Almost every country
+which has advocated plain language has found itself in the position of needing to clarify what it
+is and is not. The following characterization of plain language created by Australia's Law
+Reform Commission of Victoria (1986) demonstrates the continued need to clarify the nature of
+plain English:
+
+       Plain English is a full version of the language, using the patterns of normal, adult
+       English. It is not a type of basic English, or baby-talk. While documents that are
+       converted to plain English may be described as simplified, they are simplified in
+       the sense of being rid of entangled, convoluted language-language that is difficult
+       to analyze and understand, language that submerges, confuses and conceals its
+       message. They are simplified in this sense, and not in the sense that the language
+       has been severely condensed or amputated and the message truncated. Plain
+       English is not artificially complicated, but it is clear and effective for its intended
+       audience. While it shuns the antiquated and inflated word, which can readily be
+       either omitted altogether or replaced with a more useful substitute, it does not
+       seek to rid documents of terms which express important distinctions. Nonetheless,
+       plain language documents offer non-expert readers some assistance in coping with
+       these technical terms. To a far larger extent, plain language is concerned with
+       matters of sentence and paragraph structure, with organization and design, where
+       so many of the hindrances to clear expression originate. (Law Reform
+       Commission of Victoria, 1986, p. 3)
+
+       This characterization makes two important points about the goals of plain language. First,
+to meet goals of plain language does not mean condescending to the reader. Second, writers and
+designers of plain language documents intend neither to eliminate nor to hide complex ideas or
+technical terms in documents. These points are important ones that need to be reinforced and
+demonstrated before the goals of plain language will be understood by its critics.
+         One drawback of the Victoria Commission's characterization, however, is that it appears
+to limit the scope of plain language to a focus on documents written for non-expert readers (that
+is, lay audiences or low-literate readers). Yet it is clear that many documents intended for expert
+audiences also fail to meet the expert reader's needs. For example, in a recent case before the
+United States Circuit Court in Dade County, Florida, a woman sued a medical equipment
+company for physical injuries that were caused by the malfunctioning of a device called a
+"programmable neurostimulator" (Garner vs. Cordis, 1987). This device is designed to block the
+pain associated with damage to the central nervous system by sending mild electronic impulses
+to the damaged nerves. When properly implanted, the device relieves pain. However, if
+improperly implanted, the device can create extreme pain and cause more damage to the nervous
+system. The woman (Garner) sued the company arguing that due to a malfunction of their
+equipment, she was left with severe spinal cord damage. The company (Cordis) presented a
+counter argument that the problem was caused by the physician who improperly implanted the
+device too deeply beneath the skin. Cordis claimed that their manual gave clear procedural
+information regarding how deep to implant the device and that the fault was with the physician.
+
+        The doctor's counter argument was that critical information on the depth of implanting
+was not clearly written nor was it located in a visually prominent place in the manual. The
+physician argued that the documentation did not warn physicians that "if implanted too deeply, it
+could misfire . . . possibly damaging the spinal cord" (Garner vs. Cordis, 1987, pp. 40-41). The
+question then became one of whether the documentation was written in plain language for the
+expert and whether the important information was well designed for the expert. An expert
+witness (Duffy) who evaluated the adequacy of the documentation found that indeed the text did
+not clearly state the consequences associated with implanting the device too deeply.
+Furthermore, the text did not use bold face, highlighting, or graphic features to warn physicians
+of the dire consequences associated with implanting the device too deeply (Garner vs. Cordis,
+pp. 48-49).
+
+         In other professional work environments such as that of managing a computer center,
+poorly designed paper and online computer documentation has been found to cost experienced
+system programmers valuable time and energy because of incomplete, inconsistent, and
+hard-to-locate information (Norman, 1981; Schriver & Hayes, in preparation). Similarly, the
+United States General Accounting Office describes a radar manual in which experienced
+technicians had to refer to 165 pages in eight documents and to look in 41 different places in
+those documents to repair one malfunction (Duffy, Post, and Smith, 1987; General Accounting
+Office, 1979). There is also evidence that expert pilots in the United States Air Force perform
+less efficiently with traditional manuals than they do with manuals that give precise, step-by-step
+instructions (Hatterick & Price, 1981, p. 77).
+
+         But expert audiences usually need more than accurate and logical procedural information;
+they need text that is designed to facilitate high-level problem-solving. The late Judith Resnik,
+astronaut of the U.S. Challenger Mission, reports that astronauts found the documentation for
+their training to be comprised of plodding procedural instructions that provided little assistance
+for the sophisticated problem-solving required of flight engineers under actual conditions
+(McKay, Petro, Magin, & Resnik, 1985). She argues that astronauts need to understand more
+than just which button to push or even which contingency procedures to follow because they
+need to be able to apply their understanding to the unexpected problems of each particular
+mission.
+        What experts seem to want most are detailed examples of operations or situations they
+might find themselves in; thus, experts can use either the examples directly, modify them for the
+particular task at hand, or draw implications from them and derive their own solution. McKay,
+Petro, Magin, and Resnik (1985) underscore the importance of well-constructed examples in
+texts written for experts and the need for instructional text to promote active learning.
+
+        And like the manual written for the surgeon described above, McKay, Petro, Magin, and
+Resnik point out that training manuals written for astronauts have both content and document
+design problems. They present examples of "Orbital Maneuvering" manuals produced with type
+size as small as three points; long sections of text printed in capitalized letters; schematics and
+diagrams of complex equipment that are small and hard to read and that are not placed near the
+text which describes them. Overall, they assert that training materials written for astronauts
+contain a variety of visual and verbal text that is not integrated in any meaningful way.
+
+        When texts are redesigned for the intended audience's particular needs, the changes can
+have a dramatic effect on how the audience will respond to the text. Ayoub, Cole, Sakala, and
+Smillie (1974) found that system analysts and engineers improved in their performance when the
+manuals were redesigned for expert use. Moreover, Robert Eagleson, the Australian
+government's Special Advisor on plain language, reports that putting forms and documents into
+plain language (many of which are used by experienced clerical and supervisory staff) has saved
+business and government thousands and sometimes millions of dollars (Simply Stated, 1986, pp.
+1-4).
+
+       The common theme in these examples is that like texts written for lay audiences, texts
+aimed at experts are also often both poorly written and poorly designed. Examples such as these
+make it clear that a working definition of plain language must include expert as well as lay
+audiences. A well written text in plain language, then, is one which enables the intended
+audience, whether expert or lay, to comprehend and use the text effectively.
+
+THE IMPORTANCE OF READER FEEDBACK
+
+         Since the 1940s, writers and document designers have been looking for ways to verify the
+success of public documents and many techniques have been developed to aid the document
+evaluation process. The most widely used techniques, readability formulas such as those of
+Flesch (1949) and Gunning (1952), rely on counting the number of words and syllables per
+sentence to determine a document's readability. These techniques are by definition text-based,
+that is, they focus solely on surface-level text features and not on how readers respond to the
+texts (see Schriver, 1989c, for a discussion of this issue). Tests of this sort have been shown to
+have severe limitations for guiding the revision of texts that are effective and usable (Duffy &
+Waller, 1985). While such tests can provide gross clues suggesting which sentence-level features
+may be problematic, their output provides little, if any, information about how the document is
+working at the paragraph and whole-text level. In fact, when such text-based tests are used as the
+only guide for revision, revisors may actually make the text worse instead of better (Swaney,
+Janik, Bond, & Hayes, 1981).
+
+       Successful revision has been shown to depend on the writer's ability to anticipate the
+needs of a reader and to identify ways to help clarify whole-text problems from the reader's
+perspective (Flower, Hayes, Carey, Schriver, & Stratman, 1986; Hayes, Flower, Schriver,
+Stratman, & Carey, 1987; Schriver, 1987, 1989a; Sommers, 1980). To revise a document for a
+particular audience requires that writers recognize and predict the diverse goals and reading
+strategies that people may bring to the process of understanding and using a functional
+document.
+
+       Readers have been found to bring a wide variety of goals, purposes, assumptions, and
+reading strategies to their comprehension and use of functional texts. Some of the goals and
+purposes readers may bring include reading to:
+
+1.     do a task, e.g., filling out a form for a loan application;
+
+2.     understand an idea, a concept, or definition, e.g., reading to understand one's
+       rights in a legal contract;
+
+3.     find information quickly, e.g., trying to find a procedure in a user's manual for
+       operating a computer;
+
+4.     assess the relevance of a text, e.g., reading a brochure which describes the
+       conditions for a tax rebate;
+
+5.     interpret and use the information for a purpose other than the text's intended
+       purpose, e.g., reading a computer manual to solve a problem that is not described
+       in the text, but that may be solved by analogous means;
+
+6.     refresh one's memory about a fact, procedure, or idea that is vaguely remembered,
+       e.g., reading a reference manual for a telephone answering machine to retrieve a
+       fact about remote dialing;
+
+7.     make a decision about choices or alternative ways to consider the same idea, e.g.,
+       reading a pamphlet that describes the pros and cons of building a nuclear power
+       plant.
+
+        To determine if a document is meeting the goals and purposes of the intended audience,
+writers need more feedback than text-based tests can provide. Writers and document designers
+have found standard writing advice too simplistic to guide the revision of the complex
+documents they create. Writers want more than vague maxims such as "choose a suitable design
+and hold to it" and "avoid fancy words" (Strunk & White, 1979, pp. 15 and 76).
+
+        Today's writers and document designers are often faced with a range of decisions, most
+of which are not at the sentence-level-decisions such as whether to present the text on paper or
+via online; how to organize the text to promote rapid retrieval of information, or how to choose
+optimal graphic devices to help clarify the text's structure and meaning. Instead of abstract
+"elements of style," writers are looking for answers to concrete questions concerning how well
+the text is functioning for the intended audience.
+
+        As audiences become more specialized and more educated in technical areas, they expect
+documents that are not designed "for everyone," but rather, are targeted to their particular needs.
+In many industrial and corporate document design contexts-computer, electronics, and appliance
+industries, for example-writers must tailor their texts to very particular audiences. The ability to
+adapt texts for audiences who are novices, intermediates, or experts in a particular subject-matter
+is rapidly becoming a requisite skill in industry.
+
+       Writers are finding that the best way to evaluate the success of a functional document is
+perhaps the most obvious: observe readers while they try to understand and use the document.
+An effective revision procedure that uses the feedback of readers while they are engaged in the
+process of comprehending and using a text is protocol-aided revision, a method developed in
+1980 by researchers at Carnegie Mellon University's Communications Design Center.
+
+WHAT IS PROTOCOL-AIDED REVISION?
+
+        While protocol analysis as a method for studying cognitive processes has been widely
+discussed in the literature (see, for example, Ericsson & Simon, 1984) the use of protocols to
+guide reader-based revision of functional documents has not. Protocol-aided revision is a method
+for helping writers see problems in text that they might otherwise miss. It involves using readers'
+comprehension and performance difficulties as the basis for revision activity. It is a cyclical
+activity in which each cycle consists of readers responding to a text and a writer using readers'
+responses to guide revision. The next nine sections of this paper are intended to help the reader
+understand how to use protocols in revision. These sections will cover the following topics: the
+nature of protocols and their functions, designing protocol tasks, selecting participants for a
+protocol task, creating instructions, practical issues in collecting protocols, transcribing,
+summarizing, and coding protocols, and finally, fixing problems uncovered by participants.
+
+The Nature of Protocols
+
+         A protocol is a record of events, thoughts, or behaviors that occur over a period of time.
+The record is usually obtained by using a videotape, an audiotape, or a computer program which
+monitors a person's interaction with a machine. Protocol analysis is a method for tracing a
+person's thinking or performance on a task. Psychologists, decision-making theorists, writing
+researchers, and document designers are among those who have used protocol analysis to study
+how people think as they engage in activities such as solving chess problems (Simon &
+Gilmartin, 1973); making decisions in supermarkets (Payne & Ragsdale, 1978); planning,
+writing, or revising text (Berkenkotter, 1983; Flower et al., 1986; Hayes & Flower, 1980; Hayes
+et al., 1987; Schriver, 1987, 1989c; Smagorinsky, 1989); or using computer manuals (Bond,
+1985; Schriver, 1984).
+
+        Generally, there are two categories of protocols which have relevance to writers and
+document designers: behavior protocols and thinking-aloud protocols. In behavior (or motor)
+protocols, the writer/document designer watches participants as they interact with and use texts
+such as forms, contracts, procedural instructions, or computer documentation, recording their
+actions and behaviors. The primary feature of this type of protocol is that participants do not talk
+aloud while performing a task-they simply do the task while either a document designer or a
+computer program records what they do. Typically, writers/document designers collecting
+behavior protocols are interested in such issues as: where readers look for information (in
+indexes, in tables of contents, in glossaries; how quickly people can find information (in
+searching for information online); how users make errors and recover from them while operating
+machinery; how features such as color, windowing, or display rate influence people's ability to
+use computers; or how quickly and accurately people can perform a task while using a set of
+instructions (using a manual to assemble a bicycle).
+       Behavior protocols include eye movement studies, keystroke logs, and user-edits. Eye
+movement studies have been used by document designers to determine the effect of colors,
+display rate, and cursor movement in online documentation and interface design. Keystroke logs,
+which can be collected automatically during interaction with a computer, provide detailed
+information about users' error and error-recovery patterns. User-edits, first described by Atlas
+(1981) involve having users try to work with a machine, using only its manual as a guide.
+
+        In thinking-aloud protocols, on the other hand, participants are asked to perform a task
+while thinking aloud as they interact with a document and/or with a machine. When people
+experience difficulty in comprehending or in using the document, their comments typically
+reveal the location and nature of the difficulty. Unlike participants in behavior protocols,
+think-aloud participants are asked to verbalize anything that comes to their mind as they are
+engaged in the task. Because thinking-aloud protocols are collected while the person is reading.
+and is engaged in the process of comprehension, they provide much more explicit and complete
+information than do readers' comments collected after reading is finished. Hayes and his
+colleagues introduced the use of thinking-aloud protocols to basic research in comprehension and
+writing processes (Hayes & Flower, 1980, 1983; Hayes & Simon, 1974; Hayes, Schriver,
+Blaustein, & Spilka, 1986; Hayes, Waterman, & Robinson, 1977), as well as to applied research
+in writing and document design (Bond, Flower, & Hayes, 1980; Hayes, 1982; Swaney et al.,
+1981).
+
+        Typically, the constraints of practical situations require writers/document designers to
+choose between these two types of protocols, depending on their goals and purposes in
+evaluating a text. Since each type of protocol gives the evaluator a different window on the text,
+it is important to clarify one's purpose in evaluating the document before selecting a method.
+Behavior protocols are often employed when the purpose of evaluation is to determine how
+quickly and accurately people can use a text. Think-alouds are frequently used when the goal is
+to assess how people understand, solve problems with, draw inferences about, use, or read texts.
+
+        Think-alouds are not advisable when the evaluator needs precise measures of speed in
+completing a task, mainly because verbalizing one's thoughts will increase the participant's total
+time. In addition, think-alouds may be a waste of time when the knowledge or strategies
+participants will likely employ are tacit, that is, when knowledge or procedures are so
+well-known that participants use them unconsciously and therefore do not verbalize about them.
+While think-aloud protocols do not give the evaluator a complete picture of the participant's
+thinking process as he or she completes a task, they do provide a view which is often much more
+detailed and informative than is provided by any other method.
+
+        Behavior protocols, on the other hand, are not the best choice when the goal is to debug a
+text for comprehensibility and usability. Behavior protocols, for example, often fall short of
+providing the writer with the kind of information most needed to revise. Writers and document
+designers interested in where, how, and why readers make errors in using or in understanding a
+text will find only the grossest clue for answering these questions with behavior protocols. A
+person using a computer, for instance, may make an error in issuing a command-a behavior that
+can easily be recorded with a keystroke protocol. The revisor, however, needs to know why the
+error occurred. Did the person make the error because of: (1) a slip of the finger, (2) a misreading
+of the correct command, (3) a missing instruction, (4) a poorly-worded instruction, (5) a faulty
+inference about what the instruction meant, (6) a misunderstanding of an example within the
+instruction, or (7) inaccurate, incomplete, or misleading feedback from the system itself?
+        The advantage of think-alouds is that participants often say how and why they are having
+a difficulty with the text. Therefore, the writer has both locative and diagnostic information that
+will help guide revision decisions. Knowing how many minutes it takes for a person to use a text
+does not really give writers information about how and where to revise the text.
+
+        Writers and document designers have many alternatives in choosing methods to evaluate
+a text. They may want to choose the single most informative method or they may want to choose
+the best set of converging measures. More than one kind of feedback on a document will provide
+the revisor with more complete and reliable information on which to base revisions aimed at
+improving the quality of the text for the intended audience(s). Alternative measures include
+reader feedback methods such as behavioral or "think-aloud" protocols, retrospective
+questionnaires, scaled surveys, discourse-based interviews, or a critical incident reports. Revisors
+may also employ text-focused methods such as the Flesch or Gunning readability scores. The
+advantage of the reader feedback methods is that because they elicit the response of an actual
+audience, they tend naturally to be more sensitive to differences between expert and lay
+audiences than do the text-focused methods.
+
+        An important factor in deciding the kind(s) of reader feedback to use is whether the
+method is concurrent, that is, elicits feedback during reading, or retrospective, that is, elicits
+feedback after the participant has finished reading the document. The primary difference
+between concurrent and retrospective feedback is that concurrent measures capture the real-time
+problem-solving behaviors of readers, while retrospective measures rely on the reader's
+after-the-fact reporting of events. Concurrent reader feedback tests include both behavior and
+think-aloud protocols, such as eye movement protocols, keystroke protocols, user-edits,
+thinking-aloud verbal protocols. Retrospective reader feedback tests include questionnaires,
+surveys, discourse-based interviews, critical incident techniques, and reader opinion cards.
+
+       While retrospective procedures can provide extremely useful data, researchers agree that
+concurrent measures provide the most reliable data. Over the past seven years, many writers,
+document designers, teachers, and researchers have asserted that behavior and think-aloud
+protocols are the most sensitive ways to evaluate the quality of a functional document (Atlas
+1981; Bond, 1985; Bond et al., 1980; Dieli, 1986; Lund, 1985; MacKenzie & Gerdes, 1987;
+Mills & Dye, 1985; Roberts & Sullivan, 1984; Schriver, 1984, 1987, 1989c; Schriver et al.,
+1986; Soderston, 1985; Swaney et al., 1981; Winbush & McDowell, 1980; Winkler, Ferguson, &
+Youngquist, 1985; Witman, 1987).
+
+        Protocol-aided revision is now a widely-used evaluation method in many human factors
+and testing labs across the country (Lewis, 1983). Soderston (1985), for example, provides a
+detailed account of the usability edit conducted at IBM Kingston's Human Factors Laboratory;
+she argues that this procedure consistently reveals gaps and ambiguities in texts that have already
+gone through many technical reviews. Similarly, Lund (1985), from the Control Data
+Corporation, describes using "the candid camera approach" for evaluating the user interface of a
+new interactive graphics application. In addition, protocol-aided revision is now taught in
+undergraduate and graduate courses in document design and professional and technical writing at
+the college and university level (Roberts & Sullivan, 1984; Schriver, 1984, 1987). Moreover,
+protocol-aided revision, which employs think-alouds to isolate problem areas in documents, is an
+extremely effective means for revising for comprehensibility.
+Designing an Evaluation Using Protocol-Aided Revision
+
+        Before conducting protocol-aided revision, writers/document designers will need to
+specify just what is expected from participants; that is, they will need to specify what participants
+will read or do. A primary consideration is to select a task (or tasks) which will best evaluate
+whether the document's goals for the audience are being met. For example, if the text is a
+reference manual, the task should test how successfully people are able to retrieve information
+from sections such as the index or the table of contents and then find the information in the main
+body of the text.
+
+        In addition to deciding the participants' task, writers/document designers must determine
+whether participants will read all of the text or just sections of it. If the text is too lengthy to
+conduct a complete evaluation, it is usual to isolate a section (or sections) to be evaluated. In so
+doing, it is important to select portions of the document that may be most sensitive to revealing
+how the document is functioning for the audience. It is useful to evaluate the least complex
+sections of the text as well as the most difficult. Furthermore, if the text has a table of contents or
+an index, these sections should be tested. This will allow the writer/document designer to see
+how people respond to the varying degrees of difficulty within the document as well as to the
+document's access features. It is recommended that the task should take the participant no more
+than one hour to complete; otherwise, the test results may be altered by the participant's fatigue.
+
+        In creating a context for the task, many writers/document designers use the "scenario
+approach" involving giving participants a concrete goal for doing the task. For example, suppose
+the writer of a medical brochure describing the advantages and disadvantages of various surgical
+procedures wanted to know if readers clearly understood their options. The scenario provided to
+protocol participants might be: "Imagine you are about to make an important decision about
+which surgical procedure to choose for your mother. Your goal in reading this brochure is to
+determine what decision to make based on the information provided." Usually, providing
+participants with a concrete goal or purpose will lead them to take a active role in reading and
+understanding the text. When participants have no goal or purpose in reading the text, they
+sometimes take a more passive role in their reading and understanding, tending to monitor their
+comprehension less often, thus verbalizing very little.
+
+        Selecting participants for the protocol task. To evaluate a document for its intended
+audience requires that participants in protocol-aided revision be members of (or at least share a
+great deal in common) with the intended audience. Before selecting participants for a protocol
+task, create a profile of the intended audience, for example, age, experience level, background,
+reading ability, attitudes, knowledge of technology, and so on. In general, it is a good idea to
+determine how much the participant knows about the topic as well as the participant's attitudes,
+preferences, and biases about the topic. If the audience profile is complex, it may be important to
+create a screening survey to insure that participants' backgrounds best match the profile, for
+instance, an experienced UNIX user, with five years of programming, who knows at least two
+other systems, and who prefers online documentation. For an example of a well-constructed
+participant screening survey, see Borenstein's (1985) study of online help systems.
+
+        One of the most frequent questions writers ask about protocol-aided revision is,
+"How many participants should I recruit?" While there are no definitive answers, a few
+suggestions can be made. First, keep in mind that the goal in recruiting participants is to
+gather a variety of responses to the text rather than to ensure statistical reliability. It is
+important not to confuse protocol-aided revision with an experiment— its goal is neither
+hypothesis testing nor verification. Rather, it is aimed at debugging poorly-written text. Second,
+while collecting even one protocol is better than no protocol, one may be highly idiosyncratic
+and unrepresentative of the larger intended audience. The important question is, How small can
+your participant sample be and still be useful? In practice, document designers at the
+Communications Design Center have found that five participants per cycle has proved a useful
+number in conducting protocol-aided revision.
+
+        While a single cycle of protocol-aided revision is typically very helpful in comparison to
+other revision techniques, it is wise in most cases to use several cycles. A rough rule of thumb is
+that the first pass finds about half of the reader's problems, the second pass half of the remaining
+problems, and so on. Most documents can be revised to meet the reader's needs in two or three
+cycles. For each revision cycle, five new participants should be recruited. One should avoid
+asking the same person to provide a protocol on a document (or task) more than once.
+
+         Creating instructions. In conducting protocol-aided revision, it is essential to create
+well-written instructions. Poor instructions will increase the likelihood that participants will
+misunderstand or freely interpret the task. The instructions you create will vary depending on the
+type of protocol best suited to helping you find the difficulties in the document. Either of two
+types of thinking-aloud protocols are generally useful in most document evaluation contexts:
+reading protocols or user protocols. A reading protocol differs from the latter in that the
+participant uses only the text in completing the task, for example, reading an informational
+brochure or an insurance policy. In user protocols, participants interact with machine, device, or
+piece of equipment, for instance, a computer, as they perform the task. This difference becomes
+important because a participant providing a user protocol will need to look at the document and
+the equipment alternatively. To know what the participant is focusing on, it will be important to
+provide instructions that mention talking aloud while using either the text or the machine as they
+are completing the task. In addition, unless told, participants may think the task is to test their
+ability to use the equipment rather than to test the manual. Similarly, reading protocol
+participants may think the task is to test their reading ability or their knowledge and opinions of
+the subject matter. Below are typical sets of instructions for reading and user protocols.
+
+Typical instructions for a reading protocol
+
+       Thank you for agreeing to participate in providing a think-aloud reading protocol.
+       The goal of this task is to help writers revise the document according to what
+       readers like you need. The reading protocol you provide will help writers see how
+       well or how poorly the text works for a reader. We are not testing how well you
+       read. We are not testing your knowledge or opinions of the subject matter. Rather,
+       we are testing how the text might be improved for a reader with background
+       knowledge and experience such as you have. Please read the text aloud and say
+       anything that comes to your mind as you are reading. Do not worry about what
+       you say, but do keep talking. You do not have to describe how to fix the text
+       problems you may see. Just respond to the text, noting when you do not
+       understand or when the text creates confusion.
+
+       Please remember to speak loud enough so that your voice will be recorded. If you
+       fall silent, I will ask you to "please say whatever you are thinking right now."
+       Thank you.
+Typical instructions for a user protocol
+
+       Thank you for agreeing to participate in providing a think-aloud user protocol.
+       The goal of this task is to help writers revise the document according to what
+       readers need when their goal is to use a document to help them to complete a task.
+       The user protocol you provide will help writers see how well or how poorly the
+       text functions for a reader while engaged in performing the task. We are not
+       evaluating your reading ability or your skill in performing the task. Rather, we are
+       testing how the text might be improved for someone with background knowledge
+       and experience such as you have. In a few minutes, I will explain the task. In
+       providing a user protocol, simply do the task, using the document whenever and
+       in whatever way you see fit in completing the task. As you are engaged in
+       performing the task, please say anything that comes to your mind as you are
+       reading or doing the task itself. Do not worry about what you say, but do keep
+       talking. When you refer to the text, please read the text you are looking at aloud.
+       Do not worry about describing why you are completing the task in a certain way;
+       just complete the task as best you can, noting when the text is not helping.
+
+       Because I am interested in how you use information from the text, I will not be
+       able to answer any questions during your reading. Please remember to speak loud
+       enough so that your voice will be recorded. If you fall silent, I will ask you to
+       "please say whatever you are thinking right now." Thank you.
+
+Preparing to Collect a Protocol: Some Practical Issues
+
+       To collect a protocol, you will need the following:
+
+1.     A set of clearly-written instructions that can be given to each participant.
+       Writers/document designers should note that the instructions can make or break
+       your protocol testing. Be certain to pilot test your instructions for clarity with at
+       least two people before conducting a formal protocol. The important question is,
+       Do participants interpret the task as I planned them to?
+
+2.     Recording equipment (audio, video, or computer-based). This can be as humble as
+       a typical cassette tape recorder to as lavish as equipment found in sophisticated
+       testing labs-such recording equipment might include several video cameras; an
+       eye-tracking camera; audio, dubbing, mixing equipment; a time-stamping program;
+       as well as keystroke-tracking programs.
+
+3.     A place to conduct the protocol. Depending on your goals, you will want to test the
+       document in either its actual environment (on the plant floor or in a busy office) or
+       under quiet, laboratory-like conditions.
+
+4.     The equipment described in the text if collecting a user protocol. That is, any other
+       equipment needed to conduct the protocol, depending on the document you are
+       testing (for instance, if the document is a set of instructions for using a cuisinart,
+       you will need a cuisinart).
+
+5.     Two copies of the document to be evaluated (one for you and one for the
+       participant).
+
+6.     Tapes (either audio or video). Be certain you have a backup. Test the tape(s)
+       before collecting the protocol to be sure it is working.
+
+7.     A place to observe. The person collecting the protocol should have a place to
+       observe, preferably a place that will not make the participant feel uncomfortable.
+       Many evaluators prefer to sit behind a two-way mirror. If it is necessary to sit next
+       to the participant, the chair should be positioned in a way so that the evaluator can
+       look at the screen or document the participant is reading.
+
+        In addition, you may want to devise a preliminary coding scheme. Coding of protocols,
+discussed below, proceeds much more efficiently when the evaluator has at least some idea of
+the kinds of difficulties the document may produce. Before collecting the protocol, it is important
+to have already conducted a technical and stylistic review. Such reviews allow the evaluator to
+begin protocol-aided revision with the best draft possible, that is, one that has been checked for
+technical accuracy and style. In addition, these reviews often become good sources of ideas for a
+preliminary coding scheme, for example, errors caused by descriptions, errors caused by
+procedures, errors caused by poor formatting, or errors caused by missing information. Bring
+colored pens to mark the text for various problem types. And when possible, make a tally sheet
+for summarizing the various problem types. This will make evaluating your results go very
+quickly, but make certain you allow for the creation of new categories after seeing what
+participants actually do.
+
+Collecting a Protocol
+
+       Before collecting a protocol, you will need to consider the practical issues mentioned
+above. In addition to providing participants with a well-written set of instructions, it is wise to
+play an audio or video demonstration tape of someone giving a protocol. The demonstration tape
+should be about two minutes in length and it should illustrate a range of positive and negative
+comments about the text signs of approval, questions, confusions, predictions, elaborations, or
+any reading behavior. The goal is to provide participants with an example that shows them not
+"what to do or what you expect" but the range of ways people respond to texts. The aim is to
+make participants feel comfortable in responding with whatever comes to their mind as they are
+engaged in the task. The instructions you create along with a sample tape will typically be
+enough to make most participants feel at ease about talking aloud as they read and/or perform a
+task.
+
+         As you are collecting the protocol, try to catalog all you see, including nonverbal
+behavior. Follow along as the participant reads the text so you can mark any section that is
+unclear or confusing. Once a protocol is in progress, it is best if the evaluator does not intervene.
+If participants have questions, allow them time to figure out the answer on their own. Resist
+intervening unless the participant becomes frustrated and wants to stop the protocol. After the
+participant has completed the task, answer questions, thank him or her, and explain the project in
+more detail.
+
+       Transcribing and summarizing protocols. In transcribing protocols for analysis, Bond
+(1985) recommends the following procedure:
+       Depending on your needs, you may or may not wish to have your protocols
+       transcribed. For example, if you videotape the sessions, that may be sufficient.
+       But if you tape record the sessions, a transcription on hard copy may allow you to
+       more easily detect problems than just listening to the playback alone. By all
+       means, though, if you do transcribe you protocols, you should use the hard copy
+       transcript together with the tape, because the hard copy transcript cannot capture
+       certain things like inflection that the tape can reveal . . . Protocols are typed as
+       is-everything on the tape is transcribed-every word, including curse words, and
+       every sound (Bond, p. 330).
+
+        A less exhaustive way to summarize think-aloud protocols is to listen to the audio tape or
+to watch the video tape, transcribing only selected portions (comments, questions, errors) and
+marking the original text for the location of the occurrence. When the writer/document designer
+is under time pressure to complete the evaluation, this abbreviated sort of transcription may be an
+optimal alternative. This procedure is also appropriate when the objectives for the evaluation are
+quite narrow. For example, if the objective involves simply determining how participants
+understand the examples in a text, the transcription could be limited to those comments that
+occur before and after the text's examples. The output of such a transcription is an itemized list
+which is then ready for coding.
+
+        Diagnosing and coding problems that participants experience. While collecting and
+summarizing protocols is a relatively straightforward process, interpreting their results, and using
+the feedback for revision requires sensitivity and practice on the part of the writer. Once the
+protocol has been transcribed or summarized, it should be coded. In "How to Code a
+Think-Aloud Protocol for Functional Documents," Johnson and Schriver (1986) suggest that
+coding protocols with a goal to revise the document involves classifying how participants
+respond to discernible text features such as format, style, layout, graphics, or to various
+information types such as procedures, examples, definitions, analogies, cautions, conditionals,
+etc. This paper includes sections on "how to code user protocols," "a coding scheme for user
+protocols" and "summarizing and consolidating results."
+
+         The ability to diagnose and code the problems that surface in think-aloud protocols is a
+skill that develops with practice in evaluating many protocols. Many beginning writers and
+document designers have difficulties knowing how to interpret the feedback participants provide.
+Some types of reader feedback signal obvious problems, for example, when readers say "What
+does this word mean?" Writers can easily diagnose such a problem as a "missing definition."
+Other times, however, participants will not overtly "detect" a problem at all. Instead, they may
+think that their reading of the text is correct while they are in the process of completely
+misunderstanding it. In such cases, the writer will need to have the entire protocol transcribed.
+The complete transcription is needed in order to get precise information about where
+comprehension went astray.
+
+        In general, it is best if the person who codes the protocols is not the writer of the original
+text. Some writers are threatened by reader feedback or are unwilling to accept the comments
+participants make as signals of actual problems with their text. They may tend to attribute the
+difficulty to the participant rather than to the text. Other writers, however, enjoy watching
+participants interact with their text; they find readers' problems interesting and want to learn
+more about how their texts can mislead readers.
+        Fixing problems the text creates for participants. The last and most important stage in
+protocol-aided revision is fixing the problems created by the text. When the text causes few
+problems, writers can usually solve its problems by making deletions and minor additions. But
+when readers are confused by many aspects of the text, major revisions and rewriting is often
+necessary. It is important for writers to try to determine the locus of the problems. In this way,
+they will have better information about what solution strategies to employ. As mentioned above,
+sometimes readers will misunderstand an entire text, but the misunderstanding may arise out of
+one fundamental misconception that occurs early in the text. Other times, the problems will be
+distributed throughout the text and the reader's difficulties will escalate with almost every new
+idea.
+
+        Once the protocol has been coded, writers will have a better sense of which problems are
+most severe and/or frequent. Since most revision is done while under time pressure to finish,
+writers should attend to the most severe problems and should decide which problems, if any, will
+be left unsolved. The goal, of course, is to find solutions to as many problems as time permits.
+
+       Choosing optimal revision strategies is also a skill that develops with extensive practice.
+While there are no clear-cut strategies that work in every revision situation, a few key questions
+should initiate any revision activity:
+
+1.     What problems are created by the organization, structure, or layout of the text?
+       Answering this question will help focus the writer's attention on the text's
+       macrostructure. Research in text design shows that global features such as
+       structure and levels of subordination, for example, headings and subheadings, have
+       the most impact on the memorability of a text (Britton, 1986). Similarly, research
+       in writing underscores that skilled revisors attend to the text's global features early
+       in their process, and that solving high-level problems first often has the effect of
+       eliminating lower-level problems at the same time (Flower et al., 1986; Hayes et
+       al., 1987; Schriver, 1989a).
+
+2.     What alternative verbal or visual solutions are available? Sometimes, as is
+       demonstrated in the case studies, a visual solution can help to solve most of the
+       text's problems. For functional documents, visual solutions usually take one of
+       two shapes. One way to create a visual solution lies in changing the typography,
+       section headings, margins, rules, or layout. Another more obvious means of
+       creating a visual solution is to supplement or substitute the text with pictures,
+       diagrams, tables, charts, or other graphic devices.
+
+         The goal in asking these questions is to solve the text's most severe problems in the
+shortest amount of time. Research shows that writers who revise by adopting a sentence-level
+perspective of the text typically fail to make revisions that increase the effectiveness of the whole
+text. A sentence-level perspective is one in which revisors attack text problems linearly. They
+begin by reading the first sentence of the text and by asking "Is there anything wrong with this
+sentence?" If they find a problem, they fix it and proceed to the next sentence. The drawback of
+this strategy is that it blinds revisors to how the whole text is functioning and focuses their
+attention to word and sentence-level errors (Schriver, 1989a). While it is essential to fix local
+errors, it is more important and more efficient to adopt a whole-text perspective. In this way, the
+most pervasive problems will be dealt with first, thus allowing the solution of sentence-level
+problems without the possibility of wasting time fixing problems locally and then determining
+that the whole text needs to be rewritten.
+
+PROTOCOL-AIDED REVISION IN PRACTICE: CASE STUDIES OF THE PROCESS
+
+       To help writers and document designers see how protocols can be used in revision, the
+following two case studies illustrate the process of protocol-aided revision.
+
+Case Study 1
+
+        The first case study, "The DUC System" (Figures 1-3) comes from the beginning of a
+tutorial section of a computer manual on the topic of computer-aided design. The tutorial is
+aimed at -graphic designers who are experienced in design using pen and paper but who have no
+familiarity with design using a computer. Its goal is to teach new users the fundamentals of
+computer-aided design. The manual was written to accompany a new Design Using Computers
+(DUC) system, one of the early computer-aided design (CAD) systems. In 1983, this particular
+tutorial was being used by a CAD lab within the design department at Carnegie Mellon
+University to teach undergraduate graphic designers the basics of CAD systems. The director of
+the CAD lab asked the document design team at the Communications Design Center to revise the
+text because he felt the text took students too long to "get started" and that they were making
+errors in using the equipment. To determine the nature of the text's problems for students,
+document designers chose to collect user protocols to evaluate the manner in which the tutorial
+was being read and used. Participants who volunteered to provide user protocols were senior
+undergraduate design majors who had no prior experience in using CAD equipment.
+
+       Case Study 1 illustrates how protocols can help writers and document designers substitute
+or supplement their verbal text with visual text. It is divided into three parts:
+
+1.     the original text, "The DUC System" (Figure 1);
+
+2.     a sample user protocol from one of the inexperienced "DUC" users (Figure 2);
+
+3.     a protocol-aided revision based on the inexperienced user's difficulties with the text
+       (Figure 3).
+                                         The DUC System
+
+The Display Station
+
+Each display station consists of a terminal with a display screen, a typewriter keyboard, a light
+pen, and a function keyboard.
+
+The Display Screen
+
+Message Area-provides feedback on the current status, e.g., function currently in use, scale of
+drawing, warning of invalid operation, etc.
+Menu Area-provides options which you can choose with the light pen.,
+
+The Light Pen
+
+The light pen is a device which serves two functions. You will learn how to draw points to lines
+to more complex objects such as circles and ellipses.
+
+Selecting (Sel)
+
+Selecting an item on the menu area or an element in the drawing area. Hold the pen
+perpendicular to the screen with the point touching the desired item and then push the pen point
+into the screen until the pen clicks. The terminal prompts you to select by typing Sel in the
+message area of the display screen.
+
+Indicating (Ind or Tc)
+
+Indicating an item on the drawing area of the screen. Hold the pen perpendicular to the screen at
+approximately the desired place and then hit the Indicate function key. The terminal will prompt
+you to indicate by typing IND or TC in the message area of the display screen.
+
+Both of these functions will be covered in the first exercise.
+
+Throughout the manual, we will designate instructions as follows:
+
+•      "Select" always applies to pushing the light pen into the screen until the pen clicks.
+
+•      "Indicate" always applies to touching the light pen to the screen at the specified place and
+       hitting the Indicate function.
+
+Figure 1. The original text of "The DUC System."
+                                          The DUC System
+
+Well, if I wasn't sitting in front of this terminal. I'd never guess this stuff is about a computer
+aided design system.*
+
+The Display Station. Each display station consists of a terminal with a display screen, a
+typewriter keyboard, a light pen, and a function keyboard. O.k., so I'm looking at this equipment
+and trying to tell which is which I've never used a function box or alight pen before I want to try
+out this light pen it looks fun to use. The only thing is that I'm left-handed and I don't know how
+to position my hand with all this new stuff.
+
+The Display Screen. Well. I'll assume this means the terminal screen. Message Area-provides
+feedback on the current status, e.g., function currently in use, scale of drawing, warning of
+invalid operation, etc. I really don't know what I should be looking at here. What part is the
+display screen. I haven't tried anything yet so I don't know why they're telling me this detail now
+I don't yet understand current status or invalid operations either. Menu Area-provides options
+which you can choose with the light pen. Alright. but where exactly is the menu area?
+
+The Light Pen. What is the purpose of the light pen? The light pen is a device which serves two
+functions. You will learn how to draw points to lines to more complex objects such as circles and
+ellipses. Huh? O.k.. I'm trying to learn the function of this equipment all at once because I'm
+eager to create my own drawings. I guess for this session I'll have to be satisfied with the basics
+From this introduction. I expect that I'll be moving from drawing points to lines to more complex
+elements like circles and ellipses Ok I'm ready. I wonder which functions they are referring
+to-drawing lines and circles or selecting and indicating?
+
+Selecting (Sel). Selecting an item on the menu area or an element in the drawing area. Hold the
+pen perpendicular to the screen with the point touching the desired item and then push the pen
+point into the screen until the pen clicks. I know it says what to do. but I'm having difficulty
+knowing exactly how to hold this thing. How do you make it perpendicular? I don't know how
+hard to press and I'm afraid of damaging the screen. The terminal prompts you to select by
+typing Sel in the message area of the display screen. I wonder if it always prompts you?
+
+Indicating (Ind or Tc). Indicating an item on the drawing area of the screen. Hold the pen
+perpendicular to the screen at approximately the desired place and then hit the Indicate function
+key. Where is the indicate function key located? How can I do both indicating and hitting
+function keys simultaneously? The terminal will prompt you to indicate by typing IND or TC in
+the message area of the display screen. What does TC stand for? Where is the message area of
+the screen? Couldn't they give me a better idea of how to hold the light pen with a drawing
+instead of words?
+Both of these functions will be covered in the first exercise. What is the essential difference
+between selecting and indicating? I'm not getting this from this description. Whey are they
+telling me these commands without a context?
+
+Throughout the manual, we will designate instructions as follows. Is there a reason to tell me the
+instructions without telling me when and where I will use them?
+"Select" always applies to pushing the light pen into the screen until the pen clicks. Is this really
+a two-step action? First you select and then you indicate? Or are there times when I simply
+indicate?
+
+"Indicate" always applies to touching the light pen to the screen at the specified place and hitting
+the Indicate function. Sounds fairly clear. but I still don't know in what contexts I'd choose these.
+It seems odd to put them here
+
+
+* Underlining indicates comments made by the user.
+Figure 2. A sample user protocol collected from an inexperienced user of "The DUC System."
+
+
+         This case study appears as one of ten lessons in revising computer documentation for
+comprehension using protocol-aided revision (Schriver, 1984). Figure 2, the user's protocol,
+shows the variety of problems the design student had with the text. The problems he experienced
+while trying to use the tutorial allowed a document designer to diagnose problems of several
+types. First, problems that took the shape of "what" questions, signaling a call for definitions and
+purpose statements. For example, "What is the purpose of the light pen? What is the difference
+between selecting and indicating? What does TC stand for?" Second, problems that took the
+shape of "how" questions, signaling the need for better procedural information. For example,
+"How do I hold the light pen? Do I simultaneously hit both indicating and function keys?
+Couldn't they give me a better idea of how to hold the light pen with a drawing instead of words?
+Is this really a two-step action, first you select and then you indicate?" Third, problems that took
+the shape of "where" questions, signaling the need to clarify the location of various areas of the
+screen as well as where the user should look in order to get feedback and/or confirm that his
+actions were accurate. For example, "Where should I be looking to get the point of this
+information? Will the terminal always prompt me for these commands? Where exactly is the
+message versus the menu area? Where is the indicate function key located?" Fourth, problems
+that took the shape of "why" questions, signaling a call to provide more contextual information
+about the user's goals in invoking particular commands. For example, "Why are they telling me
+these commands without a context? Is there a reason to tell me the instructions without telling
+me when and where I will use them?"
+
+        In deciding how to the revise the tutorial, the document designer, Carol Janik, felt that the
+user's problems were too numerous and too severe to warrant solving the text's problems by
+making minor sentence-level repairs. She concluded that the user's comments suggested that the
+primary difficulty with the text was that it relied exclusively on a verbal presentation when a
+graphic presentation was needed. Thus, she tried to solve the user's questions with one major
+strategy, that is, changing the text from a verbal to visual presentation.
+         Janik rewrote the text (shown in Figure 3), starting by creating a diagram designed to
+answer the user's question about the equipment and "how to hold the light pen." The revision
+eliminates most of the reader's problems by including a drawing of how to position the light pen
+in relation to the display screen. The revised information on the light pen specifies its basic
+functions and then previews that readers will learn to use the pen later in the first exercise. Since
+users need to know information about other system functions and procedures, such as logging on
+and using the function keyboard, before they can actually begin to draw, the revisor separated the
+information accordingly. The revisor also adopted graphic conventions for the meanings of
+"selecting" and "indicating" conventions that were used throughout the manual.
+
+        Janik's primary goal during revision was to make the text's organization more transparent.
+To do so, she reorganized the text, changed the page layout, and divided the information into
+manageable chunks for the reader. She also aimed to provide the reader with a better sense of the
+consequences of specific actions. The revision tells the reader specifically that selecting relates to
+points, lines, or circles while indicating is used for elements, areas, or directions on the screen.
+
+Case Study 2
+
+The original text, "The Art of Bird Watching," (Figure 4) is part of a brochure that was
+distributed to visitors at a nature conservancy in northeastern Pennsylvania. From the
+conservancy's point of view, the aim of the brochure is to provide useful information to both
+newcomers and experienced bird watchers. People who work at the conservancy are enthusiastic
+about helping visitors, whether inexperienced or experienced in bird watching, to get the most
+out of their visit and make them feel part of a growing community of people who love birds. The
+manager of the conservancy believed that it was important that everyone who visited get a good
+impression and want to come back, but he was uncertain about how well the brochure was
+meeting the needs of the various visitors.
+
+
+                                    The Art of Bird Watching
+
+        There are over 800 species of birds representing over 60 families of birds in North
+America. Bird Watching or birding is becoming very popular in North America. Birding is an
+art. To become a birder involves developing your own techniques for identifying species of
+birds. When you go birding, quick and reliable identification of birds species is essential. To
+identify birds, compare the form of a typical bird in a particular group to birds with similar
+silhouettes. At first glance, note the invariable features: range, shape, behavior, and voice.
+Take a journal and make notes that will help you develop your own system for recalling the
+important species' characteristics. Try to determine a bird's particular features and attributes
+before you look at a field guide for the answer. In time, you will be able to identify birds by their
+features and attributes with only a glimpse. The better you get a recognizing patterns related to
+flight, walking, feeding, courtship, nest-building, and care for the young, the more skilled you
+will become at identifying species of birds. Spend time studying books and looking at birds in
+the field. As you become more experienced, you will find the birding technique that works best
+for you.
+
+Figure 4. The original text of "The Art of Bird Watching."
+        To determine the effectiveness of the brochure for both audiences, protocol-aided
+revision was employed. Reading protocols were collected from two members of the intended
+audience of the brochure, an inexperienced bird watcher (Figure 5) and an experienced "birder"
+(see Figure 7). The inexperienced bird watcher was a twenty-year-old man from Philadelphia
+whose friends had invited him to the nature conservancy. He was somewhat skeptical about the
+idea of going bird watching. He said that he enjoyed getting out of the city and said he might
+learn something new. The expert bird watcher was a thirty-four-year-old woman from Lancaster,
+Pennsylvania who had been a member of the Audubon Society for ten years. She was a birding
+enthusiast and had traveled across the U.S. and Canada on "birding" camping trips. Figures 5 and
+7 are excerpts from their protocols. The passage being read (Figure 4) comes from the beginning
+of the brochure.
+
+
+                                    The Art of Bird Watching
+
+        There are over 800 species of birds representing over 60 families of birds in North
+America. That's a lot. I had no idea there were so many. Bird Watching or birding That's a funny
+word . . . birding . . . are they serious? is becoming very popular in North America. Birding is an
+art. An art of what-just watching birds? To become a birder Oh no, a birder? I'm not really into
+being that . . . sounds a little kinky to me, involves developing your own techniques for
+identifying species of birds. Like what? When you go birding, When I go birding, hmm . . . this
+is strange . . . quick and reliable identification of birds species is essential. I thought you just
+looked at the birds. I didn't know you had to figure out species. Sounds hard. Maybe I'll just have
+my friends show me. To identify birds, compare the form of a typical bird in a particular group to
+birds with similar silhouettes. Well. that would be nice, but how do I know what's typical? What
+do they mean by silhouettes-heads or beaks? I can't really picture this too good I could probably
+recognize pigeons robins and maybe bluejays. Oh. and I've seen a lot of seagulls at the Jersey
+shore At first glance, note the invariable features: Say what? This is getting beyond me ya know,
+range, Range is that the length between the beak and the tail? I think I read that somewheres.
+shape, behavior, and voice. Voice. I guess bird song. That part sounds easy. Take a journal
+Where? and make notes that will help you develop your own system for recalling the important
+species' characteristics. They've gotta be kidding taking notes Are you supposed to be Joe-
+Thoreau? This is too much for a boy from south Philly Try to determine a bird's particular
+features and attributes What's the difference between features and attributes ? before you look at
+a field guide What field guide?, for the answer. In time, you will be able to identify birds by their
+features and attributes with only a glimpse. Sure I will. The better you get a recognizing patterns
+related to flight, walking, feeding, courtship, nest-building, and care for the young, the more
+skilled you will become at identifying species of birds. I wouldn't know what patterns to look
+for. Spend time studying books Like what? Are they trying to sell me something here? and
+looking at birds in the field. As you become more experienced, you will find the birding
+technique that works best for you. And if you're lucky, they'll put you on one of those public TV
+on one of those nature shows. Sounds like it could be fun. I think.
+
+Figure 5. A sample reading protocol collected from an inexperienced bird watcher.
+        From the writer's perspective, the most interesting aspect of these protocols is that the
+two readers bring entirely different topic knowledge and expectations to bear in understanding
+the brochure. The first conclusion the revisor drew from the protocols was that the text was too
+difficult and vague for the inexperienced bird watcher and too elementary for the expert. The
+revisor decided that it would be very difficult to satisfy the diverse needs of both audiences in
+one brochure and requested permission from the director of the conservancy to create two
+brochures.
+
+         The reading protocol of the inexperienced bird watcher shows that he misunderstood
+what is involved in bird watching, thinking that it is just looking at birds. The protocol shows
+that he lacks knowledge about the meanings of "silhouette" and "range." He oversimplifies the
+complexity involved with identifying bird songs and dismisses the idea that taking notes might
+be useful. His protocol also reveals that he does not understand the difference between features
+and attributes. In addition, he misinterprets the conservancy's motive in suggesting that he look
+at a field guide, characterizing the suggestion as a sales pitch. Another major problem the
+protocol illustrates is that the reader was unable to act on the advice "to compare the form of a
+typical bird in a particular group to birds with similar silhouettes" because he did not know what
+a silhouette was. The inexperienced reader, then, missed the main point of the brochure.
+
+        In response to the reader's difficulties, the revisor chose to supplement the text with
+examples of typical silhouettes of common bird families (see Figure 6). The revisor decided that
+the original text included too many references to unexplained bird features such as range, shape,
+behavior, and voice, and that focusing on one relatively simple feature such as shape would be
+more informative to a beginner. The revisor felt that more simple descriptive and procedural
+advice was needed on how to begin recognizing the general shape of families. In contrast to the
+original text, the revised text recommends that the inexperienced bird watcher take a "staged
+approach" to becoming more experienced.
+
+        In the rewrite, the writer tried to explain more clearly why a journal and a field guide are
+useful. The revision also mentions a particular field guide. Moreover, in concluding the new
+version, the writer focuses on getting newcomers excited about birding rather than on developing
+their own unique techniques.
+
+        In contrast, the experienced birder's protocol (Figure 7) shows that the information in the
+original brochure is insufficient and in some places, misleading. The experienced birder finds
+incomplete information concerning birding as an art, methods for identifying birds, field marks
+and their use in identifying birds, kinds of books that provide information on birds, binding in
+various parts of the country, and ways to identify similar species of birds. In addition, she feels
+the brochure makes birding appear much simpler than it is. Her protocol reveals that she finds
+the information on how to "note the invariable features" to be misleading. The experienced
+birder's final comment raises the issue that "distinguishing among similar species" is perhaps the
+central skill in binding-a point the original brochure fails to make in a clear way.
+
+        To solve the problems in the text detected by the expert, the writer decided to focus the
+revision on ways to develop expert binding skills (see Figure 8). In so doing, the writer (who was
+not an expert bird watcher) consulted the director of the conservancy and the Audubon Society's
+Master Guide to Birding (Farrand, 1983). The revisor chose "posture in hawks" as a means to
+demonstrate how a feature such as posture can be used to distinguish among species. The writer
+purposefully chose an example which could be illustrated, thus adding visual support to the point
+about using features to discriminate among species. In addition, the revisor included details that
+are missing in the original details that the expert seemed to expect, such as why birding is
+becoming sophisticated; why learning field marks is a fundamental skill; how behavior clues
+vary from obvious to subtle; and why birding in various terrains, ranges, and seasons is a way to
+sharpen skill. Overall, the revision assumes that the reader is an experienced bird watcher who
+would like to become an expert.
+
+         This case study is intended to illustrate how experienced and inexperienced audiences
+may require texts that contain functionally different kinds of information. In the revision for the
+inexperienced birder, the silhouettes are provided to help newcomers understand the need to gain
+skills in recognizing shapes of birds. In the revision for an experienced birder, the drawings of
+the hawks are intended to illustrate the importance of using features to distinguish similar
+species. Moreover, this case study shows how protocols can help writers select revisions that are
+tailored to the reader's particular topic knowledge and skill level.
+                                    The Art of Bird Watching
+
+        There are over 800 species of birds representing over 60 families of birds in North
+America. That's a recent classification scheme, people actually believed there were many more
+than that in the 60s. At that time, many species were poorly understood and sometimes males and
+females of the same family were considered different species. Bird Watching or birding is
+becoming very popular in North America. It's been very popular in the U.S. for at least forty
+years. Birding is an art. Of course it's an art, but it needs to say why. Because birding is very
+sophisticated these days. Birders use all kinds of ways to identify species Birding was originally
+associated with the sport of killing birds. To become a birder involves developing your own
+techniques for identifying species of birds. When you go birding, This is oddly phrased. it's not
+like going skiing. quick and reliable identification of birds species is essential. Obviously.
+To identify birds, compare the form of a typical bird in a particular group to birds with similar
+silhouettes. This must be for a beginner, it's a much more come process than that. At first glance,
+note the invariable features: range, shape, behavior, and voice. That's sensible advice although
+one does not note the range by looking at a bird. It shouldn't say 'at first glance' either they make
+it sound so easy just take a quick look and note what you see this is misleading. Take a journal
+and make notes that will help you develop your own system for recalling the important species'
+characteristics. Try to determine a bird's particular features and attributes before you look at a
+field guide for the answer. The field guide doesn't always match what you see. but that's a good
+idea for beginners. I agree it's important to develop you own system and stile of birding But
+birders should also use the well known field marks that anyone can learn. In time, you will be
+able to identify birds by their features and attributes with only a glimpse. The better you get a
+recognizing patterns related to flight, walking, feeding, courtship, nest-building, and care for the
+young, the more skilled you will become at identifying species of birds. Okay. Spend time
+studying books and looking at birds in the field. It doesn't say what kind of books What about
+magazines? What about birding in different parts of the country? That's what I like. As you
+become more experienced, you will find the birding technique that works best for you. This
+brochure is not that useful for rye, I find it somewhat misleading and too general It would be nice
+to discuss ways to identify similar species of birds hat'. what birding is all about But
+maybe I'm asking too much for a brochure.
+
+Figure 7. A sample reading protocol collected from an experienced bird watcher.
+                                       The Art of Birding
+
+        It is not surprising with over 800 species of birds representing over 60 families in North
+America to find that birding has become very popular in the United States. Birding, the art of
+using color, pattern, shape, size, voice, habitat, and behavior to identify species has become
+increasingly sophisticated. Birders are continually finding new ways to distinguish similar
+species and to identify new species. To become an expert birder will require that you master the
+fundamental skill of identifying field marks quickly and reliably. Visiting museums and reading
+books are excellent ways to study field marks before attempting to do so while observing birds in
+motion or in flight.
+
+        To identify birds in the field will demand that you use all clues you know about a species'
+primary characteristics and features, e.g., size, shape, color, pattern, voice, habitat, and range.
+You will need to consider a number of attributes that together give a species a distinctive
+personality. Skilled birders usually attend to the species invariable characteristics such as shape,
+voice, behavior, and range.
+
+        At first, you will need to spend considerable time studying the variety of birds of the
+same species. Next, you will need to study the differences between birds that appear to be
+similar. For example, even among the closely related species, there may be differences in
+posture: Yellow-crowned Night-herons often stand in a more upright posture than do
+Black-crowned Night-herons, and Rough-legged Hawks often perch in a more horizontal posture
+than do Red-tailed Hawks (see the drawings below).
+
+
+
+
+        Expert birders also watch for behavioral patterns of flight, walking, feeding, courtship,
+nest-building, and care of the young. Some behavior clues are obvious, like the big, splashy
+dives of Northern Gannets and Ospreys, or the mothlike flight of a Common Poorwill. Others are
+more subtle, such as the flight mannerisms of kittiwakes or the wing and tail flicks of
+flycatchers.' Time spent studying books such as the Audubon Society's three volume set, The
+Master Guide to Birding will be well worthwhile. The Audubon magazine or journals such as
+American Birds or Birding are also extremely informative sources of up-to-date information.
+Perhaps the best way to sharpen your skills and increase your expertness as a birder is to get
+plenty of experience in birding in a variety of terrains, ranges, and seasons.
+
+*These behavior clues are cited in the Audubon Society's Master Guide to Birding Volume 1:
+Loons to Sandpipers, (Knopf: New York: 1983, pp. 20-221. For more information, consult this
+excellent three volume set.
+Figure 8. A protocol-aided revision for an experienced bird watcher.
+A PROCESS MODEL OF PROTOCOL-AIDED REVISION
+
+        As a way to help writers use protocols to guide revision, Figure 9 presents a process
+model of protocol-aided revision. The model is intended to help writers/document designers see
+the relationship among three components: (1) cognitive processes in protocol-aided revision, (2)
+writer/document designer activities while engaged in these processes, and (3) outputs of
+processes and activities. The first column, cognitive processes in protocol-aided revision, is
+influenced by the revision model designed by Hayes, Flower, Schriver, Stratman, and Carey
+(1987), first published in Flower et al. (1986). This model is designed to capture the cognitive
+processes involved in using protocols to revise. Protocol-aided revision, like other sorts of text
+revision, involves four key subprocesses:
+
+1.     Task Representation-the process of representing the text's goals, constraints, and
+       criteria for success;
+
+2.     Detection-the process of seeing or noticing problems;
+
+3.     Diagnosis-the process of characterizing or describing what the problem is; and
+
+4.     Strategy Selection-the process of choosing methods for solving identified
+       problems.
+
+         Within each of these subprocesses, writers have a variety of options. The ability to
+exercise these options and the ability to choose and carry out effective revisions has been shown
+to distinguish experienced from inexperienced writers.
+
+         Protocol-aided revision is different from typical revision (that is, revision that does not
+rely on protocols) in several important ways. In protocol-aided revision, the subprocesses are
+invoked in a more sequential manner than in typical revision. In typical revision, writers have
+considerably more flexibility in whether they engage in the subprocess of diagnosis. Writers
+under normal circumstances sometimes make revisions based on "gut reactions" to the text, such
+as when the writer says "I am not sure what is wrong with this section of the text, but I do not
+like it and will rewrite the whole section." In this case, the writer detects the problem and without
+diagnosis, moves directly to selecting a revision strategy. Writers who are using protocol-aided
+revision may collect participant feedback in which the participant expresses much the same "I
+don't like it" sentiment about the text. However, instead of moving directly to strategy selection,
+the writer must pause and try to figure out why the reader is having the problem and what the
+nature of the problem is. While the writer using protocol-aided revision is not always able to
+diagnose the participant's problem, attempting to do so is important in determining if the problem
+is one that other readers may experience and in deciding if the problem needs to be solved.
+
+       Protocol-aided revision is unlike other sorts of revision in that reader feedback guides the
+process of representing problems in the text. Under typical circumstances, detecting and
+diagnosing problems is constrained by the writer's comprehension and evaluation process. Since
+most writers who use protocol-aided revision collect feedback from more than one reader, the
+model accounts for how writers use the feedback from multiple readers and how writers make
+decisions about what problems to revise. Thus, the model includes the subprocesses of
+consolidating readers' comments and identifying important problems. The subprocesses are
+hierarchically organized and are intended to illustrate one complete cycle of protocol-aided
+revision. The model aims to underscore the recursive nature of protocol-aided revision, showing
+that writers must judge the effectiveness of any revision against the goals and criteria they
+establish for the text's success.
+        A task representation is a set of goals and criteria which the writer uses to guide the
+revision process and to evaluate the final product. The writer represents the task by considering
+issues such as: the document's goals (such as to instruct or persuade); the audience's needs (for
+example, to use the text to learn a new procedure or to make a decision based on the text's
+content); the audience's potential problems with the text (for instance, they may fail to
+understand the procedures or could misinterpret the content of the text); and, the inevitable
+constraints under which revision must take place (that is, lack of time and resources).
+
+        These considerations will provide the writer with information that is important in
+designing an evaluation using protocol-aided revision. With information derived from
+representing the task, the writer can decide between a reading or a user protocol, determine the
+section(s) of the text to evaluate, select participants for the protocol task, and create instructions
+for the protocol task.
+
+          But more importantly, task representation provides the writer with two sorts of plans. The
+first is a plan for carrying out the revision, that is, a plan for attacking the text's problems,
+constructed in light of both goals and constraints. The second is a plan for evaluating the text's
+success, often stated in the form of cognitive or affective goals for the reader's interaction with
+the text. Unlike writers who are revising a short story or an argument, document designers are
+usually in the position to articulate their goals in a precise manner. Document designers can
+specify both affective and cognitive goals for the audience of the text in advance. An example of
+an affective goal for the reader might be "to have a positive attitude about learning to use an
+online help system." A cognitive goal might be that new users of the online help system will be
+able "to access the help system and use a tutorial within one hour with a 95% accuracy rate in
+issuing commands." When the criteria for a document's success are well specified,
+writers/document designers can have a clear sense of the aim of their revision activity.
+Articulating the criteria for success also provides explicit guidance about how readers should
+respond to a text before it is accepted as "the final version."
+
+        The second subprocess, detection, or the process of seeing problems in text, is a
+fundamental revision skill because if the writer never sees problems in the first place, nothing
+gets revised. Writing instructors agree that teaching detection skills is very difficult, and that
+better ways are needed to help writers see problems in text.
+
+        Detection is a skill that seems to vary depending on authorship and knowledge. Research
+shows that difficulty in detecting problems in texts depends, in part, on whether revisors wrote
+the text themselves or whether it was created by a writer different from the revisor. Writers
+typically have more difficulty seeing problems in their own text than in those created by
+someone else (Bartlett, 1982; Hull, 1984). Writers are often too close to the intended meaning in
+their text to see it as representing anything less than their intentions. They often view their text as
+communicating more effectively than it actually does for the intended reader. Consequently,
+authorship of the text, that is, whether the writers are revising their own or someone else's text, is
+an important factor determining success in revision.
+
+        Another barrier to the success of the detection process is topic knowledge. Research
+shows that writers with substantial topic knowledge of the text's main ideas often have
+significant trouble in detecting problems that their documents create for readers without such
+knowledge (Bond et al., 1980; Hayes et al., 1986; Schriver, 1987). Bond et al.'s study, for
+example, asked legal professionals to revise a loan application for the small business
+administration and found that professionals in law had difficulty detecting problems and limited
+the focus of their revisions to minor editing changes. Readers who tried to fill out the loan
+applications revised by legal professionals found them hard to use and confusing.
+
+       In "If It's Clear to Me, It Must be Clear to Them," Hayes, Schriver, Blaustein, and Spilka
+(1986) describe "the knowledge effect" in writing and how topic knowledge prevents writers
+from seeing problems in text. Topic knowledge was found to act as a "blinder" to text problems.
+High-knowledge revisors tended to overestimate their audience and believed that what was
+understandable to them would be clear to anyone.
+
+         Similarly, in a study of teaching writers to predict reader's needs, I found that upperclass
+undergraduate writers with basic knowledge of word processing were extremely insensitive in
+their ability to predict problems that freshman users would have with poorly-written word
+processing manuals (Schriver, 1987, 1989a). The knowledge effect, then, may be the unseen
+culprit behind why "high-knowledge experts" such as lawyers, doctors, computer scientists,
+engineers, economists, and government representatives frequently produce incomprehensible
+texts. It may also provide a clue as to why so many university professors have difficulty in
+communicating "the basics" to freshmen in introductory college courses.
+
+        An implication from the research in detection is that writers who are revising their own
+text and who have high topic knowledge may be at a considerable disadvantage in seeing the
+problems the text may create for readers. One of the most important cognitive advantages of
+protocol-aided revision is that it provides a method for "getting around" the effects of knowledge
+and authorship. Unlike standard revision procedures which place the responsibility of detecting
+problems on the writer, protocol-aided revision places the burden of detection on the reader.
+Detection of text problems is carried out while readers are engaged in trying to understand and/or
+use the document. The reader's comments, questions, rereadings, and hesitations can be viewed
+as flagging possible problems. Very often, the protocols will help writers detect both problems of
+commission, that is, problems caused by what the text says, and problems of omission, that is,
+problems caused by what the text is missing (Schriver, 1987).
+
+        In protocol-aided revision, the writer/document designer detects problems by reading,
+listening, or viewing the audio/video tapes and transcripts, making notes about what readers say
+or do. The writer's goal during detection is to notice all problems the text creates for readers.
+While not all problems readers detect will be useful in revising the text, it is unwise to throw out
+or ignore any problems before evaluating all participants' comments as a group, thus allowing
+one to see patterns of error.
+
+        Once possible problems areas have been detected, the writer/document designer is faced
+with the somewhat mundane yet necessary evaluative process of consolidating readers'
+comments across all protocols. Consolidation of readers' comments should be done in two
+complementary ways. The first involves simply identifying the location of text areas where
+readers experience problems. This can be done by underscoring the problem areas directly on the
+"source text" and placing a tally below the text region for each reader who shares the problem.
+But this kind of consolidation provides writers with only a partial representation of the text's
+problems. Many times, it is not possible to locate problems in a precise way; problems are often
+distributed over whole sections of text. For this reason, it is important to consolidate readers'
+comments as well as to record locative information about problems.
+         The second kind of consolidation, then, involves using the individual protocol transcripts
+or the itemized "reader comment lists" (discussed earlier) to create a master list of problems
+across all participants. This list should summarize all candidate problems for revision and
+tabulate their frequency. In making this list, the writer must evaluate each comment for its
+relevance to the document's goals and criteria for success. This aspect of consolidating readers'
+comments draws on the evaluator's skill in recognizing comments that signal problems that
+should be dealt with. Writers who have not used protocols to revise their texts often have
+difficulties with recognizing (and as mentioned earlier, sometimes with accepting) the problems
+readers experience.
+
+         Along with listing what readers disliked or had problems with, it is a useful strategy to
+list those aspects of the text that readers liked and had no problems with. While protocols mainly
+provide information related to comprehension and use difficulties, readers sometimes comment
+on what they like about the text. When this occurs, writers should ask themselves, "What am I
+doing right?" "Can this successful part be repeated or done better?" Quite often, the successful
+parts of the text can be amplified or used as a model for less successful parts. Another indirect
+way to find out what is successful about the text is to examine the protocols for areas where
+participants say very little. Such areas usually indicate that readers understand and can use the
+text with little effort. Writers may want to try to figure out what is behind readers' effortless
+comprehension and use of the text.
+
+        The next process in protocol-aided revision involves identifying the important problems
+to attend to. Given the typical constraints under which writers revise, they must give priority to a
+subset of the text's problems. In identifying important problems, the writer isolates those
+problems which most inhibit the text's success. The output of this activity is a prioritized list of
+problems that, if solved, will move the text closer towards meeting its criteria for success.
+
+        After problems to be revised are determined, diagnosis, the process of characterizing the
+nature of the problem, becomes important. In diagnosis, revisors must answer: "What is the
+cause of the reader's problem?" Isolating the origin of the problem is usually much of the work in
+finding its solution. Some problems require minimal, if any, active diagnosis. Recognizing and
+classifying problems such as spelling, punctuation, or grammar become highly automated for
+experienced writers and editors. Ideally, the text should be free of such low-level problems
+before protocol-aided revision begins. Other less well-defined problems, however, call on the
+writer's interpretive and problem-solving skills. For example, the reader may say something as
+vague as "This information is coming out of nowhere." The revisor must interpret the cause of
+the problem, for example, "missing contextual information," and think of a way to remedy it, for
+instance, "add new text that creates a context."
+
+        There is now empirical evidence that using protocol-aided revision has benefits that
+extend beyond the particular revision situation. With practice in evaluating protocols of readers,
+writers can improve their detection and diagnosis skills generally. In a study of teaching writers
+to anticipate the reader's needs, I found that writers who were taught to detect and diagnose
+readers' problems in think-aloud protocols were significantly better at predicting readers'
+problems in texts where no protocol was available than writers who were taught with standard
+methods of audience analysis, such as peer critiquing methods or demographic heuristic
+techniques (Schriver, 1987). Writers showed dramatic improvement in their ability to predict
+readers' problems after their careful analysis of a sequence of lessons in protocol-aided revision
+(Schriver, 1984).
+        Writers improved most in their ability to detect and diagnose problems caused by what
+the text was missing-problems such as missing context, missing purposes, missing procedures.
+This research shows the important role that reader feedback can serve in improving writers'
+detection and diagnosis skills. It demonstrates writers' ability to learn about readers from
+observing readers and that such skills can transfer to new writing contexts. It also suggests that
+writers with practice in evaluating protocols are more likely to produce better first drafts because
+they are better able to anticipate a reader's response to the text.
+
+        Strategy selection is the act of considering optional means for solving the text's problems.
+Quite often, the process of diagnosing the text's problems suggests effective revision strategies.
+In selecting strategies, writers are influenced by the type and importance of problems. Some
+problems, such as lack of coherence, simply warrant more effort than others. In addition, writers
+are influenced by the constraints under which revision takes place. Very often, factors such as
+time and cost exert a major influence on our final decisions for revision. The impact of
+constraints on the selection of revision strategies is an important and unexplored research area in
+writing and document design (Schriver, 1989b). It is clear that writers need better advice on how
+to make design decisions under severe constraints.
+
+        During strategy selection, writers aim to identify visual and/or verbal solutions to text
+problems. For any solution that involves both visual and verbal text, they must also consider how
+best to integrate their proposed solutions. The output of strategy selection is a representation of
+ways to solve the text's problems-revise locally, paraphrase, rewrite, or reconceptualize.
+
+        In trying to find ideas for solving the text's problems, it can be helpful to consider readers'
+positive evaluations of the text. As discussed earlier, protocol participants sometimes make
+suggestions that can be used. More often, however, writers must use their own best judgement,
+drawing on all of their experience as readers and writers to make predictions about the solutions
+that will best meet the readers' needs. Strategy selection, then, draws on the writer's entire
+repertoire of writing and design skills.
+
+        After decisions have been made about what to do, the revisor can then try to fix the text's
+problems through activities such as repairing, modifying, or rewriting the text. Once the writer
+finishes a complete cycle of protocol-aided revision, the text should be compared against its
+goals and criteria for success. The results of this comparison will tell the writer if another cycle
+of protocol-aided revision is needed.
+
+IMPLICATIONS OF USING PROTOCOL-AIDED REVISION FOR WRITERS
+
+        As discussed earlier, there were at least two limitations of early conceptions of plain
+language. First, it tended to focus on the verbal expression of ideas, and second, it was targeted
+primarily at lay audiences and/or low-literate readers. The narrow focus on words and sentences
+drew criticism from writers and researchers who were looking for methods to revise texts for
+comprehensibility and usability. The goal of this paper was to extend the notions of plain
+language and to suggest that protocol-aided revision can help writers achieve plain language in
+several important ways:
+
+1.     It can help writers detect and diagnose the difficulties created by what the text says
+       and by what it fails to say-difficulties that often inhibit intelligibility and usability.
+2.     It can help writers identify the need for creating visual solutions to text problems-
+       photographs, pictures, typography,. graphs, formatting, diagrams, flowcharts, and
+       tables-and for integrating their visual and verbal decisions.
+
+Methods such as protocol-aided revision that focus on helping writers to become more sensitive
+to the complex needs of their intended readers deserve careful attention and further research.
+
+
+                                           References
+
+American Institute for Research. (1986, February). Plain language pays. Simply Stated,
+      Washington, DC: American Institute for Research, Document Design Center, 63, 1-4.
+
+Atlas, M. A. (1981). The user edit: Making manuals easier to use. Institute of Electrical and
+       Electronics Engineers (IEEE) Transactions on Professional Communication, PC-24,
+       28-29.
+
+Ayoub, M. A., Cole, J. L., Sakala, M. K., & Smillie, R. J. (1974, October). Job performance
+      aids: Assessment of needs, final report. Prepared for the Naval Air Systems Command by
+      North Carolina State University.
+
+Bartlett, E. J. (1982). Learning to revise: some component processes. In M. Nystrand (Ed.), What
+        writers know: The language, process, and structure of written discourse (pp. 345-363).
+        New York: Academic Press.
+
+Berkenkotter, C. (1983). Decisions and revisions: The planning strategies of a publishing writer.
+      College Composition and Communication, 34 (2), 156-169.
+
+Bond, S. J. (1985). Protocol-aided revision: A tool for making documents usable. Paper
+       presented at the IBM Academic Information Systems University AEP Conference,
+       Alexandria, VA.
+
+Bond, S. J., Hayes, J. R., & Flower, L. S. (1980, April). Translating the law into common
+       language: A protocol study. Document Design Project (Tech. Rep. No. 8). Pittsburgh,
+       PA: Carnegie Mellon University, Communications Design Center.
+
+Borenstein, N. S. (1985). The design and evaluation of online help systems. Doctoral
+       dissertation, Carnegie Mellon University, Pittsburgh, PA.
+
+Britton, B. (1986). Capturing art to improve text quality. Educational Psychologist, 21 (4),
+        333-356.
+
+Charrow, V. (1979, December). What is plain English, anyway? (Tech. Rep.). Washington, DC:
+      American Institute for Research, Document Design Center.
+
+Communications Design Center Newsletter. Pittsburgh, PA: Carnegie Mellon University,
+     Communications Design Center.
+Dieli, M. (1986). Representing the user: Evaluation strategies of expert writers. Paper presented
+        at the American Education Research Association (AERA) Conference, San Francisco,
+        CA.
+
+Duffy, T. M., & Waller, R. (1985). Designing usable texts. Orlando, FL: Academic Press, Inc.
+
+Duffy, T. M., Post, T., & Smith, G. (1987, May). An analysis of the process of developing
+       military technical manuals. Technical Communication, 34 (2), 70-79.
+
+Ericsson, K. A., & Simon, H. A. (1984). Protocol analysis: Verbal reports as data. Cambridge,
+       MA: The MIT Press.
+
+Farrand, J. Jr. (Ed). (1983). The Audubon society master guide to birding, Volume l: Loons to
+       sandpipers. New York, NY: Alfred A. Knopf, Inc.
+
+Felker, D. B. (1980). Document design: A review of the relevant research. Washington, DC:
+        American Institute for Research.
+
+Flesch, R. (1949). The art of readable writing. New York, NY: Harper and Row Brothers
+        Publishers [revised Harper and Row, 1974].
+
+Flower, L., Hayes, J. R., Carey, L., Schriver, K., & Stratman, J. (1986). Detection, diagnosis and
+       the strategies of revision. College Composition and Communication, 37 (1), 16-55.
+
+General Accounting Office. (1979, July). Improved management of maintenance manuals
+      needed in DOD (LCD 79-105). Washington, DC: United States General Accounting
+      Office.
+
+Garner vs. Cordis. (1987). Case number 86-17971 CA 06. Deposition of Thomas M. Duffy,
+       taken on behalf of the defendant pursuant to a notice of taking deposition. Circuit Court
+       of the Eleventh Judicial Circuit In and For Dade County Florida. North Miami, Florida:
+       General Jurisdiction Division.
+
+Gunning, R. (1952). The technique of clear writing. New York, NY: McGraw-Hill Book
+      Company [revised 1968].
+
+Hartley, J. (1978). Designing Instructional Text. New York, NY: Nichols Publishing Company.
+
+Hatterick, G. R., & Price, H. E. (1981, May). Technical order managers reference data: Final
+       report (AFHRL-TR-80 51). Brooks Air Force Base, TX: Air Force Human Resources
+       Laboratory, Air Force Systems Command.
+
+Hayes, J. R. (April, 1982). The use of reading protocols in the editing of text. Paper presented at
+       the International Reading Association (IRA), Chicago, IL.
+
+Hayes, J. R., & Flower, L. S. (1980). Identifying the organization of writing processes. In L. W.
+       Gregg & E. R. Steinberg (Eds.), Cognitive processes in writing. Hillsdale, NJ: Lawrence
+       Erlbaum Associates.
+Hayes, J. R., & Flower, L. S. (1983). Uncovering cognitive processes in writing: An introduction
+       to protocol analysis. In P. Mosenthal, L. Tamor, & S. Walmsey (Eds.) Research in
+       writing: Principles and methods. New York, NY: Longman.
+
+Hayes, J. R., & Simon, H. A. (1974). Understanding written problem instructions. In L. W.
+       Gregg (Ed.), Knowledge and cognition. Potomac, MD: Lawrence Erlbaum Associates.
+
+Hayes, J. R., Waterman, D. A., & Robinson, C. S. (1977). Identifying the relevant aspects of a
+       problem text. Cognitive Science, 1 (3), 297-313.
+
+Hayes, J. R., Schriver, K. A., Blaustein, & Spilka, R. (April, 1986). If it's clear to me, it must be
+       clear to them-How knowledge makes it difficult to judge. Paper presented at the
+       American Educational Research Association (AERA) Conference, San Francisco, CA.
+       Discussed in: J. R. Hayes. (1989). Writing research: The analysis of a very complex task.
+       In D. Klahr and K. Kotovsky (Eds.), Complex information processing: The impact of
+       Herbert A. Simon (pp. 209-234). Hillsdale, NJ: Lawrence Erlbaum Associates.
+
+Hayes, J. R., Flower, L., Schriver, K. A., Stratman, J., & Carey, L. (1987). Cognitive processes
+       in revision. In S. Rosenberg (Ed.), Advances in applied psycholinguistics, Volume II:
+       Reading, writing, and language processing. Cambridge, England: Cambridge University
+       Press.
+
+Hull, G. (1984). A performance study of the editing process in writing. Doctoral dissertation,
+       Department of English, University of Pittsburgh, Pittsburgh, PA.
+
+Information Design Journal. Milton Keynes, England: The Open University.
+
+Johnson, S., & Schriver, K. (1986). How to code a user protocol. Unpublished Communications
+      Design Center (Tech. Rep.). Pittsburgh, PA: Communications Design Center.
+
+Law Reform Commission of Victoria. (1986). Legislation, legal rights and plain English.
+      Discussion Paper No. 1. Law Reform Commission of Victoria, 7th Floor, 160 Queen
+      Street, Melbourne, Australia.
+
+McKay, M. F., Petro, A., Magin, R. L., & Resnick, J. A. (1985). High-flying training manuals.
+     Society of Technical Communications Proceedings (pp. VC-41-44). Washington, D.C.:
+     Society of Technical Communication.
+
+MacNeil/Lehrer Report. (1978, February). Plain English. Library # 625, Show 3165,
+     WNET/WETA. New York, NY: Educational Broadcasting Company.
+
+Mills, C. B., & Dye, K. L. (1985). Usability testing: User reviews. Technical Communication,
+       32 (4), 40-44.
+
+Norman, D. A. (1981) A psychologist views human processing: Human errors and other
+     phenomena suggest processing mechanisms. Vol. II Proceedings of the International
+     Joint Conference on Artificial Intelligence. Vancouver, British Columbia, Canada: IJCAI.
+Payne, J. W., & Ragsdale. (1978). Verbal protocols and direct observation of supermarket
+       shopping behavior: Some findings and a discussion of methods. In H. K. Hunt (Ed.),
+       Advances in Consumer Research, Vol. 5. Chicago, IL: Association for Consumer
+       Research.
+
+Roberts, D. D., & Sullivan, P. A. (1984). Beyond the static audience construct: Reading
+       protocols in the technical writing class. Journal of Technical Writing and
+       Communication, 14, 143-153.
+
+Schriver, K. A. (1984). Revising computer documentation for comprehension: Ten
+       exercises in protocol-aided revision (Tech. Rep. No. 14). Pittsburgh, PA: Carnegie
+       Mellon University, Communications Design Center.
+
+Schriver, K. A. (1987). Teaching writers to anticipate the reader's needs: Empirically-based
+       instruction. Doctoral dissertation, Carnegie Mellon University, Pittsburgh, PA.
+
+Schriver, K. A. (1989a). Moving from sentence-level to whole-text revision: Helping writers
+       focus on the reader's needs. In K. A. McCormick (Ed.), Expanding the repertoire: An
+       anthology of practical approaches for the teaching of writing (Reading-to-Write Report
+       No. 11, Center for the Study of Writing; Technical Report No. 30, pp. 46-57). Berkeley,
+       CA: University of California, Center for the Study of Writing.
+
+Schriver, K. A. (1989b). Document design from 1980 to 1990: Challenges that remain. Technical
+       Communication, 36 (4), 316-333.
+
+Schriver, K.A. (1989c). Evaluating text quality: The continuum from text focused to reader
+       focused approaches. IEEE Transactions on Professional Communication, 32 (4),
+       238-255.
+
+Schriver, K. A., Hayes, J. R., Danley, C., Wulff, W., Davies, L, Cerroni, K., Graham, D., Flood,
+       E., & Bond, E. (1986). Designing computer documentation: A review of the
+       literature-hardcopy, online, general applications (Tech. Rep. No. 31). Pittsburgh, PA:
+       Carnegie Mellon University, Communications Design Center.
+
+Schriver, K. A., & Hayes, J. R. (in preparation). Differences between expert and novice computer
+       users in preferred type of documentation-hardcopy or online (Technical Report).
+       Pittsburgh, PA: Carnegie Mellon University, Communications Design Center.
+
+Simon, H. A., & Gilmartin, K. A. (1973). A simulation of memory for chess positions. Cognitive
+       Psychology, 5, 29-46.
+
+Soderston, C. (1985). The usability edit: A new level. Technical Communication, 1st Quarter,
+       16-18.
+
+Sommers, N. I. (1980). Revision strategies of student writers and experienced writers. College
+     Composition and Communication, 31, 378-387
+
+Smagorinsky, P. (1989). The reliability and validity of protocol analysis. Written
+      Communication, 6 (4), 463-479.
+Strunk, W. Jr., & White, E. B. (1959). The elements of style. New York: Macmillan.
+
+Swaney, J. H., Janik, C. J., Bond, S. J., & Hayes, J. R. (1981). Editing for comprehension:
+      Improving the process through reading protocols (Document Design Project Report No.
+      14). Pittsburgh, PA: Carnegie Mellon University.
+
+Winbush, B., & McDowell, G. (1980). Testing: How to increase the usability of computer
+      manuals. Technical Communication, 4th Quarter, 20-22.
+
+Winkler, V. M., Ferguson, R., & Youngquist, D. (1985). Procedures for designing and evaluating
+      training manuals. Proceedings of the Society for Technical Communications (pp.
+      RET-6-9). Washington, DC: Society of Technical Communication.
+
+Witman, W. (1987). Using reading protocols to edit documents: A case study. Proceedings of the
+      Society for Technical Communications (pp. RET-159-161). Washington, DC: Society of
+      Technical Communication.
+

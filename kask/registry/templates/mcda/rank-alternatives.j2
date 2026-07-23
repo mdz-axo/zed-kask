@@ -1,0 +1,120 @@
+{# goal: Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for strong-on-one-criterion cases. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- rank
+- order
+- top
+- choice
+- compensation
+- veto
+contract:
+  input:
+    decision_question: string
+    composite_scores: array
+    normalized_scores: array
+    criteria: array
+    danger_threshold: number
+  output:
+    ranking: array
+    top_choice: object
+    compensation_warning: object or null
+    recommendation: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: mcda/rank-alternatives.j2 #}
+{# Functional Role: KnowAct — Alternative ranking with compensation masking detection #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: ranking, top_choice, compensation_warning, recommendation #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a decision analysis specialist. Your task is to rank alternatives by composite score, identify the top choice, and check for compensation masking.
+
+## Decision Question
+{{ decision_question }}
+
+## Composite Scores
+{% for cs in composite_scores %}
+{{ loop.index }}. **{{ cs.alternative }}** — composite score: {{ cs.composite_score }}, rank: {{ cs.rank }}
+{% endfor %}
+
+## Normalized Scores (per criterion)
+{% for ns in normalized_scores %}
+- {{ ns.alternative }} / {{ ns.criterion }}: raw={{ ns.raw_score }}, normalized={{ ns.normalized_score }}
+{% endfor %}
+
+## Criteria Reference
+{% for c in criteria %}
+- **{{ c.name }}** ({{ c.type }}) — {{ c.description }}
+{% endfor %}
+
+## Compensation Masking Detection
+
+Compensation masking occurs when a top-ranked alternative has a **terrible** score on a critical criterion that is compensated by good scores on other criteria. This is dangerous because:
+
+1. A single critical failure can invalidate the entire decision
+2. Weighted sum models inherently allow full compensation between criteria
+3. Decision-makers may not notice the hidden weakness
+
+### Detection Rules
+
+For the top-ranked alternative:
+1. Use threshold = {{ danger_threshold | default(0.3) }}. Identify any criterion where the normalized score is **below {{ danger_threshold | default(0.3) }}** (out of 1.0)
+2. Check if that criterion is critical (weight >0.1 or marked as essential by the decision question)
+3. If a critical criterion has a score below {{ danger_threshold | default(0.3) }}, flag a compensation warning
+4. Assess severity: minor (one weak criterion, non-critical) or major (weak on critical criterion)
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "ranking": [
+    {"rank": 1, "alternative": "...", "composite_score": 0.0, "strength": "best on X, Y", "weakness": "weak on Z"}
+  ],
+  "top_choice": {
+    "alternative": "...",
+    "composite_score": 0.0,
+    "key_strength": "...",
+    "key_weakness": "..."
+  },
+  "compensation_warning": {
+    "detected": true,
+    "severity": "minor|major",
+    "weak_criteria": [
+      {"criterion": "...", "normalized_score": 0.0, "weight": 0.0, "critical": true}
+    ],
+    "explanation": "..."
+  },
+  "recommendation": "..."
+}
+```
+
+If no compensation masking is detected, set `compensation_warning` to `null`.
+
+## Constraints
+
+- Ranking must be consistent with composite_scores input — do not re-rank arbitrarily
+- Every ranked alternative must have both a strength and weakness identified
+- The recommendation should be actionable: proceed, investigate further, or add a veto criterion
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

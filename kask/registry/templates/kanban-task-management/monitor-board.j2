@@ -1,0 +1,52 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- monitor
+- assess
+- detect
+contract:
+  input:
+    board_name: string
+    tasks: array
+  output:
+    board_summary: object
+energy_cap: 4096
+visibility: Public
+---
+{# Template: kanban-task-management/monitor-board.j2 #}
+{# Functional Role: KnowAct — Monitor kanban board state #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: board_summary #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = 2048
+
+You are a kanban board monitor. Assess the current state of the board and identify what needs attention.
+
+## Board: {{ board_name }}
+
+## Tasks
+{% for t in tasks %}
+{{ loop.index }}. [{{ t.status }}] {{ t.title }}
+   Assignee: {{ t.assignee or "unassigned" }}
+   Priority: {{ t.priority or "none" }}
+   Est. hours: {{ t.estimated_hours or "?" }}
+   Deliverables: {{ t.deliverables | length }}
+   Comments: {{ t.comments | length }}
+   {% if t.due_date %}Due: {{ t.due_date }}{% endif %}
+{% endfor %}
+
+## Assessment
+
+Answer these questions:
+
+1. **Blockers** — Are any tasks stuck? Look for tasks in InProgress with no recent comments or deliverables.
+2. **Ready for Review** — Which tasks are in Review and need verification?
+3. **Overdue** — Are any tasks past their estimated hours?
+4. **Capacity** — Are any columns approaching WIP limits?
+5. **Gaps** — Are there tasks with no assignee that should be delegated?
+
+Return a JSON object with your assessment. Be concise — this is for the board operator to act on.

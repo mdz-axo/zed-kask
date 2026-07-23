@@ -1,0 +1,117 @@
+{# goal: Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- weight
+- score
+- normalize
+- aggregate
+- method
+- direct
+- swing
+contract:
+  input:
+    decision_question: string
+    alternatives: array
+    criteria: array
+    weighting_method: string
+  output:
+    weights: array
+    normalized_scores: array
+    composite_scores: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: mcda/weight-and-score.j2 #}
+{# Functional Role: KnowAct — Criteria weighting, alternative scoring, and composite aggregation #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: weights, normalized_scores, composite_scores #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a decision analysis specialist. Your task is to assign weights to criteria, score each alternative on each criterion, and compute composite scores.
+
+## Decision Question
+{{ decision_question }}
+
+## Alternatives
+{% for alt in alternatives %}
+{{ loop.index }}. {{ alt }}
+{% endfor %}
+
+## Criteria
+{% for c in criteria %}
+{{ loop.index }}. **{{ c.name }}** ({{ c.type }}) — {{ c.description }} [{{ c.measurement_type }}]
+{% endfor %}
+
+## Weighting Method
+{{ weighting_method }}
+
+{% if weighting_method == "swing" %}
+### Swing Weighting
+Assign swing weights: imagine all criteria at their worst level. The criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight. Normalize so weights sum to 1.0.
+{% else %}
+### Direct Weighting
+Assign weights directly reflecting the relative importance of each criterion. Normalize so weights sum to 1.0. Justify each weight assignment.
+{% endif %}
+
+## Scoring Method
+
+For each alternative on each criterion:
+1. Assign a raw score on a **0–10 scale** where:
+   - For **benefit** criteria: 0 = worst, 10 = best
+   - For **cost** criteria: 0 = most costly, 10 = least costly (already inverted)
+2. Normalize scores to 0–1 range: `normalized = raw / 10`
+
+## Composite Score Calculation
+
+Use the **weighted sum model**:
+```
+composite_score(A) = Σ (weight_i × normalized_score(A, i))
+```
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "weights": [
+    {"criterion": "...", "weight": 0.0, "rank": 1}
+  ],
+  "normalized_scores": [
+    {"alternative": "...", "criterion": "...", "raw_score": 0, "normalized_score": 0.0}
+  ],
+  "composite_scores": [
+    {"alternative": "...", "composite_score": 0.0, "rank": 1}
+  ]
+}
+```
+
+- Weights must sum to exactly 1.0
+- Composite scores must be in [0, 1]
+- Rank alternatives by composite_score descending (rank 1 = best)
+
+## Constraints
+
+- Weights must sum to exactly 1.0 — verify before output
+- All raw scores must be in [0, 10], all normalized scores in [0, 1]
+- If two alternatives have identical composite scores, assign the same rank and skip the next rank
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

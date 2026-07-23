@@ -1,0 +1,50 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    primary_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: caveman/caveman-convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute normalized convergence metric for caveman compression cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Given compression output, compute convergence where 0 means output is sufficiently compressed while preserving clarity constraints.
+
+Input:
+```json
+{{ primary_result | tojson }}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means output is sufficiently compressed while preserving clarity constraints.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (output is sufficiently compressed while preserving clarity constraints). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{"convergence_metric": 0.0, "convergence_method": "LLM-assessed saturation detection", "rationale": "..."}
+```

@@ -1,0 +1,105 @@
+{# goal: Compute normalized convergence metric for falsifiability PDCA cycles. One corroborated survivor with all alternatives eliminated = 0; nothing ruled out = 1. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    eliminate_result: object
+    prior_metric: number
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+    materiality_guard: boolean
+energy_cap: 2048
+visibility: Public
+---
+{# Template: falsifiability/falsifiability-convergence-check.j2 #}
+{# Functional Role: KnowAct — convergence gate for falsifiability PDCA cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale, blockers, materiality_guard #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1000
+thinking_budget = "off"
+
+Compute convergence where 0 means the elimination has produced one corroborated survivor with
+all alternatives ruled out, and 1 means nothing has been eliminated and no discriminating test
+is available. Strong inference converges when the hypothesis space has been pared to one
+corroborated explanation, or when the evidence is exhausted and the irreducible remainder is
+honestly reported.
+
+Input:
+```json
+{
+  "eliminate_result": {{ eliminate_result | tojson }}
+}
+```
+
+You are a convergence evaluator for eliminative inference. Measure convergence on [0,1] where
+0 means one corroborated survivor remains with all alternatives eliminated.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.05) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+- Prior metric: {{ prior_metric | default(null) }}
+
+## Convergence Dimensions
+
+Read the `verdict` field of `eliminate_result` and score:
+
+1. **Verdict dimension (weight: 0.50)**:
+   - `one_corroborated_survivor` → 0.0 (strong-inference ideal reached)
+   - `multiple_corroborated` → 0.3 (tests ran but did not fully discriminate; more discriminating tests could close the gap)
+   - `none_corroborated` → 0.7 (every hypothesis eliminated — framing is wrong; must restart from hypothesize, not iterate)
+   - `nothing_eliminated` → 1.0 (no test ruled anything out; either no tests ran or all predictions matched)
+
+2. **Alternatives-eliminated proportion (weight: 0.30)**: of the hypotheses that were admissible and falsifiable, what fraction have been eliminated?
+   - Score = 1.0 − (eliminated_count / admissible_count). All eliminated except one survivor → 0.0. None eliminated → 1.0.
+
+3. **Irreducible remainder (weight: 0.20)**: are there hypotheses surviving by default (irreducible / not testable by available means)?
+   - 0.0 if no survived_by_default entries (every survivor was actually tested).
+   - 0.5 if some survived by default (the field is honestly incomplete but the answer is bounded).
+   - 1.0 if the only survivors are survived_by_default (nothing was actually corroborated by a test — the answer is "we couldn't test it").
+
+Compute the weighted sum as the convergence metric.
+
+## Blockers
+
+Identify specific blockers preventing convergence:
+- `nothing_eliminated` with no new discriminating test available — the elimination loop is stalled.
+- `none_corroborated` — the framing must be restarted, not iterated; this is a hard block.
+- `multiple_corroborated` with no new discriminating test that could separate the survivors — irreducible remainder that must be reported, not iterated past.
+- Any survived_by_default hypothesis that the user has not been informed of.
+
+## Materiality Guard (vacuous-iteration detection)
+
+If `prior_metric` is not null (iteration 2+), compare it to this iteration's weighted score:
+- If |weighted_score − prior_metric| < 0.02 AND no hypothesis was eliminated this cycle (the
+  `eliminated` array is empty or unchanged) AND no new discriminating test is available, the
+  elimination has plateaued — force convergence_metric to the verdict's floor and set
+  `materiality_guard: true`. The residual gap is irreducible (no available test can close it),
+  not a fixable defect; the honest answer is the bounded remainder, not infinite iteration.
+- Otherwise set `materiality_guard: false` and report the weighted score as convergence_metric.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed verdict + alternatives-eliminated proportion + irreducible remainder, with materiality guard",
+  "materiality_guard": false,
+  "rationale": "short explanation of each dimension's contribution to the score",
+  "blockers": [
+    { "dimension": "verdict|alternatives|irreducible", "blocker": "description of what must be resolved" }
+  ]
+}
+```

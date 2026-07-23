@@ -1,0 +1,57 @@
+# Convergence Evaluator — classifier for sequential inquiry convergence scoring
+# Used by: sequential-inquiry convergence check (step 5)
+# Prompting: 3-shot with hKask-domain convergence examples.
+#   Martin et al. (arXiv:2603.29878): Few-Shot lifts structured extraction
+#   from <30% F1 (Zero-Shot) to 99%+; applies to classification tasks.
+# Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
+#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   The `model:` field below is intentionally empty; ClassifierConfig::from_def
+#   fills it from the canonical path and strips the DI/ router prefix.
+# Provider: DeepInfra (cloud API, OpenAI-compatible)
+
+classifier:
+  name: convergence-evaluator
+  model: ""
+  provider: deepinfra
+  concurrency: 10
+  timeout_secs: 30
+
+  system_prompt: >
+    Evaluate convergence of a sequential inquiry thinking chain. Score 10 criteria.
+    Start at 1.0, subtract for each SATISFIED criterion. Clamp result to [0,1].
+    Return ONLY valid JSON, no commentary.
+
+    Scoring (subtract from 1.0 for each YES):
+    1. Hypothesis exists → -0.12
+    2. Hypothesis verified → -0.20
+    3. Chain complete (needsMoreThoughts: false on final thought) → -0.12
+    4. No unresolved branches → -0.08
+    5. No pending revisions → -0.08
+    6. Confidence calibrated (solution_confidence ≥ 0.7) → -0.08
+    7. Answer synthesized (final_answer is clear, specific) → -0.08
+    8. All delegations resolved (no pending request without delegate result) → -0.12
+    9. Delegation results incorporated (ONLY on cycle 2+; on cycle 1, skip — no prior results exist) → -0.07
+    10. Chain stable between iterations (ONLY on cycle 2+; skip on cycle 1) → -0.05
+
+    Output schema:
+    {"convergence_metric":0.0,"convergence_method":"LLM-assessed hypothesis verification + chain stability + delegation resolution","metric_decomposition":{"hypothesis_exists":true,"hypothesis_verified":true,"chain_complete":true,"unresolved_branches":0,"pending_revisions":0,"confidence_calibrated":true,"answer_synthesized":true,"all_delegations_resolved":true,"delegation_results_incorporated":true,"chain_stable_between_iterations":true},"rationale":"short explanation","blockers":[]}
+
+    Examples:
+
+    Input:
+    {"primary_result":{"thought_chain":[{"thoughtNumber":1,"totalThoughts":3,"thought":"The deadlock occurs because lock A and lock B are acquired in reverse order","needsMoreThoughts":true}],"final_answer":"","hypothesis":{"statement":"Lock ordering violation causes deadlock","verification_method":"","confidence":0.5},"hypothesis_verified":false,"solution_confidence":0.4,"delegation_requests":[]},"delegation_results":{"hypothesis_framer":{"invoked":false},"mcda":{"invoked":false},"diagnose":{"invoked":false}},"iteration":1}
+    {"convergence_metric":0.88,"convergence_method":"LLM-assessed hypothesis verification + chain stability + delegation resolution","metric_decomposition":{"hypothesis_exists":true,"hypothesis_verified":false,"chain_complete":false,"unresolved_branches":0,"pending_revisions":0,"confidence_calibrated":false,"answer_synthesized":false,"all_delegations_resolved":true,"delegation_results_incorporated":true,"chain_stable_between_iterations":true},"rationale":"Hypothesis formulated but not verified. Chain incomplete — still thinking. No delegations emitted.","blockers":["hypothesis not verified","chain incomplete","no final answer"]}
+
+    Input:
+    {"primary_result":{"thought_chain":[{"thoughtNumber":1,"totalThoughts":3,"thought":"Root cause is the lock ordering","needsMoreThoughts":false}],"final_answer":"Fix the lock acquisition order in settle() to always acquire wallet_lock before chain_lock","hypothesis":{"statement":"Lock ordering violation","verification_method":"Traced all lock acquisition paths","confidence":0.92},"hypothesis_verified":true,"solution_confidence":0.92,"delegation_requests":[]},"delegation_results":{"hypothesis_framer":{"invoked":false},"mcda":{"invoked":false},"diagnose":{"invoked":false}},"iteration":1}
+    {"convergence_metric":0.48,"convergence_method":"LLM-assessed hypothesis verification + chain stability + delegation resolution","metric_decomposition":{"hypothesis_exists":true,"hypothesis_verified":true,"chain_complete":true,"unresolved_branches":0,"pending_revisions":0,"confidence_calibrated":true,"answer_synthesized":true,"all_delegations_resolved":true,"delegation_results_incorporated":true,"chain_stable_between_iterations":true},"rationale":"Hypothesis verified, chain complete, confidence high. Criterion 9 + 10 skipped (cycle 1).","blockers":[]}
+
+    Input:
+    {"primary_result":{"thought_chain":[{"thoughtNumber":1,"totalThoughts":4,"thought":"The crash happens because...","branchFromThought":null,"branchId":null,"needsMoreThoughts":false}],"final_answer":"Root cause: null pointer in event handler. Fix: add null check.","hypothesis":{"statement":"Null pointer dereference in event handler","verification_method":"Traced crash stack to handler","confidence":0.88},"hypothesis_verified":true,"total_thoughts_used":4,"solution_confidence":0.88,"delegation_requests":[{"skill":"diagnose","reason":"Thought 2 identified crash pattern needing root cause","thought_number":2,"params":{"symptom":"SIGSEGV in event handler after 3 iterations"}}]},"delegation_results":{"hypothesis_framer":{"invoked":false},"mcda":{"invoked":false},"diagnose":{"invoked":true,"skill":"diagnose","result":{"reproduction_strategy":{"method":"failing_test","command":"cargo test event_handler_crash","confidence":"high","can_reproduce":true},"hypotheses":[{"rank":1,"statement":"Null pointer from uninitialized handler","falsifiable":true,"prior_probability":0.7}],"most_likely_root_cause":"Uninitialized event handler pointer","fix_strategy":"Add null check initialization"},"rationale":"Confirmed crash reproduction path"}},"iteration":2}
+    {"convergence_metric":0.00,"convergence_method":"LLM-assessed hypothesis verification + chain stability + delegation resolution","metric_decomposition":{"hypothesis_exists":true,"hypothesis_verified":true,"chain_complete":true,"unresolved_branches":0,"pending_revisions":0,"confidence_calibrated":true,"answer_synthesized":true,"all_delegations_resolved":true,"delegation_results_incorporated":true,"chain_stable_between_iterations":true},"rationale":"Fully converged. Hypothesis verified, chain complete, diagnose delegation resolved and incorporated.","blockers":[]}
+
+  base_url: https://api.deepinfra.com/v1/openai/chat/completions
+  api_key_env: DI_API_KEY
+
+  temperature: 0.0
+  max_tokens: 500

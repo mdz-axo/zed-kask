@@ -1,0 +1,222 @@
+# Technical Documentation Exemplars — Corpus Manifest
+# hKask v0.27.0
+#
+# A curated corpus of exemplary technical documentation from the four women
+# whose work defines the WRITING_EXCELLENCE.md quality dimensions:
+#   Hopper (Accessibility), Lovelace (Precision),
+#   Schriver (Findability), Gentle (Agent-Correctness)
+#
+# Each entry maps to one of the four WRITING_EXCELLENCE dimensions and
+# provides a section-type tag per §2.3 (Statement, Evidence, Diagram,
+# Implications).
+
+corpus:
+  name: technical-documentation-exemplars
+  version: "0.1.0"
+  description: >
+    Curated corpus of exemplary technical documentation patterns from
+    Grace Hopper, Ada Lovelace, Karen Schriver, and Anne Gentle.
+    Used by the document-update skill's semantic quality analysis to
+    measure structural similarity and detect missing section types.
+  purpose: semantic-documentation-quality
+  dimensions: [Hopper, Lovelace, Schriver, Gentle]
+
+  sources:
+    - id: lovelace-notes-1843
+      author: Ada Lovelace (Augusta Ada Byron King, Countess of Lovelace)
+      title: "Notes on the Analytical Engine"
+      date: 1843
+      type: technical-specification
+      primary_dimension: Lovelace
+      secondary_dimensions: [Hopper]
+      source_url: https://www.gutenberg.org/ebooks/75107
+      license: Public Domain
+      section_types:
+        - Statement # Note A: "The Analytical Engine is an embodying of the science of operations"
+        - Evidence # Note D: 11-operation diagram for solving two simultaneous equations
+        - Diagram # Note G: Bernoulli Numbers computation table with 25 operation steps
+        - Implications # Note A: "A new, a vast, and a powerful language is developed"
+      notes: >
+        First published algorithm. Specifies a machine that did not exist with
+        sufficient precision that the specification remains independently
+        verifiable 180 years later — the canonical Lovelace test.
+
+    - id: hopper-mark1-manual-1946
+      author: Grace Hopper (primary author, chapters 1-3 + appendices)
+      title: "A Manual of Operation for the Automatic Sequence Controlled Calculator"
+      date: 1946
+      type: operation-manual
+      primary_dimension: Hopper
+      secondary_dimensions: [Schriver, Gentle]
+      source_url: https://archive.org/details/marki_operman_1946
+      license: Public Domain (authorized reproduction)
+      section_types:
+        - Statement # Ch.1: "What the machine is and what it can do"
+        - Evidence # Ch.2: Detailed component descriptions with photographs
+        - Diagram # Throughout: mechanical diagrams, operation code tables
+        - Implications # Ch.3: "How to program Mark I" — the first programming textbook
+      notes: >
+        First computer programming textbook. Written for operators with no prior
+        computing experience — the canonical Hopper test: can a reader with zero
+        prior context accomplish the task by following only what is written?
+
+    - id: schriver-protocol-aided-revision-1991
+      author: Karen A. Schriver
+      title: "Plain Language for Expert or Lay Audiences: Designing Text Using Protocol-Aided Revision"
+      date: 1991
+      type: research-paper
+      primary_dimension: Schriver
+      secondary_dimensions: [Lovelace]
+      source_url: https://www.karenschriverassociates.com/wp-content/uploads/2020/03/12-Schriver-Plain-language-for-experts-or-lay-audiences-Designing-w-Protocol-aided-Revision.pdf
+      license: Academic (freely available)
+      section_types:
+        - Statement # "Protocol-aided revision employs think-alouds to isolate problem areas"
+        - Evidence # Case Study 1: CAD tutorial revision with before/after user protocols
+        - Diagram # Figures 1-3: original text → user protocol → protocol-aided revision
+        - Implications # "Writers taught with reader-protocol method improved significantly"
+      notes: >
+        Demonstrates the Schriver test in action: measuring document quality by
+        reader outcomes, not author intent. The CAD tutorial case study shows
+        the full Statement→Evidence→Diagram→Implications cycle.
+
+    - id: schriver-document-design-1990
+      author: Karen A. Schriver
+      title: "Document Design from 1980 to 1990: Challenges that Remain"
+      date: 1990
+      type: research-paper
+      primary_dimension: Schriver
+      secondary_dimensions: [Hopper]
+      source_url: https://files.eric.ed.gov/fulltext/ED320143.pdf
+      license: Public Domain (ERIC)
+      section_types:
+        - Statement # Five research clusters: writers, readers, text design, evaluation, technology
+        - Evidence # Literature review across all five clusters
+        - Diagram # Conceptual framework of interacting research areas
+        - Implications # Challenges for the 1990s: integrate theory/research with practice
+      notes: >
+        Defines the field of document design as a research discipline.
+        Establishes the principle that documentation quality is measurable,
+        not subjective.
+
+    - id: schriver-info-design-2013
+      author: Karen A. Schriver
+      title: "What Do Technical Communicators Need to Know about Information Design?"
+      date: 2013
+      type: book-chapter
+      primary_dimension: Schriver
+      secondary_dimensions: [Lovelace]
+      source_url: https://redish.net/wp-content/uploads/Schriver_2013_TechCom_Need_to_Know_InfoDesign.pdf
+      license: Academic (freely available)
+      section_types:
+        - Statement # Three-phase heuristic: group content, organize visually, signal structure
+        - Evidence # Practical examples for each phase
+        - Diagram # Figure 16.2: information-design heuristic
+        - Implications # "Every information-design decision can impact every other"
+      notes: >
+        The three-phase heuristic (grouping, organizing, signaling) is the
+        operational foundation for the Schriver findability dimension:
+        can a reader find the answer within 30 seconds?
+
+    - id: gentle-openstack-contrib-guide
+      author: Anne Gentle (OpenStack Documentation Team)
+      title: "OpenStack Documentation Contributor Guide"
+      date: 2024
+      type: contributor-guide
+      primary_dimension: Gentle
+      secondary_dimensions: [Hopper, Schriver]
+      source_url: https://docs.openstack.org/doc-contrib-guide/
+      license: Creative Commons Attribution 3.0
+      section_types:
+        - Statement # "This guide provides detailed instructions on the contribution workflow"
+        - Evidence # Specific commands, file paths, configuration examples
+        - Diagram # Workflow diagrams, repository structure
+        - Implications # "Follow these guidelines to keep documentation structure consistent"
+      notes: >
+        The canonical Gentle test in production: documentation shares code's
+        lifecycle, CI, review, and contributor workflows. Over 300 repositories
+        using docs-as-code at scale.
+
+    - id: gentle-openstack-api-guidelines
+      author: Anne Gentle (OpenStack API Working Group)
+      title: "OpenStack API Documentation Guidelines"
+      date: 2024
+      type: api-documentation-guide
+      primary_dimension: Gentle
+      secondary_dimensions: [Lovelace, Schriver]
+      source_url: https://docs.openstack.org/doc-contrib-guide/api-guides.html
+      license: Creative Commons Attribution 3.0
+      section_types:
+        - Statement # "API documentation guidelines that all teams providing REST APIs follow"
+        - Evidence # Specific file structures, RST formats, parameter.yaml conventions
+        - Diagram # API reference structure diagrams
+        - Implications # "Inline text descriptions convey release information to consumers"
+      notes: >
+        Operationalizes docs-as-code for API documentation: version control,
+        automated builds, CI/CD publishing, parameter validation.
+
+    - id: gentle-openstack-writing-style
+      author: Anne Gentle (OpenStack Documentation Team)
+      title: "OpenStack General Writing Guidelines"
+      date: 2024
+      type: style-guide
+      primary_dimension: Gentle
+      secondary_dimensions: [Hopper]
+      source_url: https://docs.openstack.org/doc-contrib-guide/writing-style/general-writing-guidelines.html
+      license: Creative Commons Attribution 3.0
+      section_types:
+        - Statement # Each guideline is a one-sentence rule
+        - Evidence # Examples of correct vs. incorrect usage
+        - Diagram # N/A (style guide is inherently textual)
+        - Implications # "Users read documentation to perform tasks — write for their present"
+      notes: >
+        Concise, actionable style rules: active voice, present tense, second
+        person, short sentences, minimalism. Each rule is independently
+        verifiable — the Gentle test for style guides.
+
+section_type_taxonomy:
+  description: >
+    Per WRITING_EXCELLENCE.md §2.3, every section follows:
+    Statement → Evidence → Diagram → Implications.
+    This taxonomy tags each excerpt in the corpus by its section type,
+    enabling structural gap detection in hKask documents.
+  types:
+    - Statement:
+        definition: "What is true, in one sentence"
+        detection: "Opening sentence of a section; declarative, definite"
+    - Evidence:
+        definition: "Code path, command, or external citation"
+        detection: "Contains code blocks, file paths, commands, or footnoted citations"
+    - Diagram:
+        definition: "Visual rendering (Mermaid, table, figure)"
+        detection: "Contains mermaid blocks, ASCII art, data tables, or figure references"
+    - Implications:
+        definition: "What the reader should do with this knowledge"
+        detection: "Contains actionable directives, consequences, or 'therefore' statements"
+
+dimension_mapping:
+  description: >
+    Each exemplar maps primarily to one WRITING_EXCELLENCE dimension.
+    This mapping is used by replica_compare to build per-dimension
+    centroids for stylistic comparison.
+  Hopper:
+    exemplars: [hopper-mark1-manual-1946]
+    centroid_description: "Accessibility — write for the reader's vocabulary"
+  Lovelace:
+    exemplars: [lovelace-notes-1843]
+    centroid_description: "Precision — specification independently verifiable"
+  Schriver:
+    exemplars:
+      [
+        schriver-protocol-aided-revision-1991,
+        schriver-document-design-1990,
+        schriver-info-design-2013,
+      ]
+    centroid_description: "Findability — answer findable in 30 seconds"
+  Gentle:
+    exemplars:
+      [
+        gentle-openstack-contrib-guide,
+        gentle-openstack-api-guidelines,
+        gentle-openstack-writing-style,
+      ]
+    centroid_description: "Agent-correctness — agent consuming doc behaves correctly"

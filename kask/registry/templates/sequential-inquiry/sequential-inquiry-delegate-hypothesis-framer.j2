@@ -1,0 +1,78 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- delegate
+- frame
+- evaluate
+- structure
+- hypothesize
+contract:
+  input:
+    delegation_requests: array
+  output:
+    invoked: boolean
+    skill: string
+    result: object|null
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# goal: When the inquiry engine requests hypothesis framing, apply FINER + PICO methodology. #}
+{# Template: sequential-inquiry/sequential-inquiry-delegate-hypothesis-framer.j2 #}
+{# KnowAct — Hypothesis-framer delegate for sequential inquiry #}
+{# ℏKask v0.31.0 #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+## Delegation Requests
+
+```json
+{{ delegation_requests | tojson }}
+```
+
+Examine the array. Find ALL requests where `skill` equals `"hypothesis-framer"`. Process every matching request.
+
+**If none:** Return `{"invoked": false, "skill": "hypothesis-framer", "result": null, "rationale": "No hypothesis-framer request."}`
+
+**If found:** For EACH matching request, apply FINER + PICO to the candidate hypothesis in `params.hypothesis`. If multiple requests, return results as an array under `result`.
+
+### FINER Gate
+- **F**easible — testable with available evidence?
+- **I**nteresting — matters beyond trivial confirmation?
+- **N**ovel — contributes beyond known?
+- **E**thical — harm/safety concerns?
+- **R**elevant — matters to the original problem?
+
+### PICO Structure
+- **P**opulation/Problem — scope
+- **I**ntervention — proposed mechanism
+- **C**omparison — null hypothesis
+- **O**utcome — observable prediction
+
+### Output
+```json
+{
+  "invoked": true,
+  "skill": "hypothesis-framer",
+  "result": {
+    "finer_evaluation": {
+      "feasible": true, "interesting": true, "novel": true,
+      "ethical": true, "relevant": true,
+      "overall": "PASS|CONDITIONAL|FAIL", "issues": []
+    },
+    "pico_structure": {
+      "population": "...", "intervention": "...",
+      "comparison": "...", "outcome": "..."
+    },
+    "refined_hypothesis": "Reformulated with FINER+PICO",
+    "null_hypothesis": "Formal null hypothesis",
+    "testability_assessment": "How to test"
+  },
+  "rationale": "What this analysis contributed"
+}
+```

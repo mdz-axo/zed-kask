@@ -1,0 +1,64 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- track
+- verify
+- assess
+contract:
+  input:
+    task: object
+    deliverables: array
+  output:
+    deliverable_assessment: array
+    missing_deliverables: array
+    action: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: kanban-task-management/track-deliverables.j2 #}
+{# Functional Role: KnowAct — Assess task deliverables for completeness and review readiness #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: deliverable_assessment, missing_deliverables, action #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = 3072
+
+You are a kanban deliverable tracker. Assess whether the submitted deliverables are present, attributable to this task, and sufficient to send the task to formal completion verification. Do not mark acceptance criteria as passed; that is the verifier's responsibility.
+
+## Task
+{{ task | tojson }}
+
+## Submitted Deliverables
+{{ deliverables | tojson }}
+
+## Tracking Rules
+
+- Check each submitted location against the task description and acceptance criteria.
+- Mark a deliverable `valid` only when its supplied evidence supports its relevance and location.
+- List missing deliverables or evidence needed before review.
+- Choose `ready_for_review` only when the delivery set is complete enough for criterion-by-criterion verification. Otherwise choose `request_deliverables` or `keep_in_progress`.
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "deliverable_assessment": [
+    {
+      "name": "Deliverable name",
+      "location": "Submitted location",
+      "valid": true,
+      "assessment": "Relevance and evidence assessment"
+    }
+  ],
+  "missing_deliverables": ["Specific missing artifact or evidence"],
+  "action": "ready_for_review|request_deliverables|keep_in_progress",
+  "comment": "Concise task-thread update"
+}
+```
+
+The output describes deliverable readiness, not final acceptance.

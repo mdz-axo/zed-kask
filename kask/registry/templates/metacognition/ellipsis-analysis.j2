@@ -1,0 +1,495 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- read
+- detect
+- classify
+- calibrate
+- analyze
+contract:
+  input:
+    text: string
+    expectations: array
+    biases: array
+    assumptions: array
+    domain: string
+  output:
+    analysis: object
+energy_cap: 4096
+visibility: Public
+---
+# Ellipsis Analysis — Bloom Method Cognition Template
+# ℏKask v0.28.0 - A Minimal Viable Container for UserPods
+
+{#
+  Bloom-inspired cognition method for detecting meaning in gaps and omissions.
+
+  Harold Bloom (1930-2019) was Sterling Professor of Humanities at Yale.
+  Key works informing this template:
+  - "How to Read and Why" (2000): "We owe mediocrity nothing"
+  - "Shakespeare: The Invention of the Human" (1998): "Shakespeare is the major dealer in ellipsis"
+  - "The Anatomy of Influence" (2011): "The heart of criticism is appreciation"
+
+  This template operationalizes Bloom's ellipsis analysis technique:
+  - Read deeply, not to believe/accept/contradict, but to learn
+  - Mind the gaps — what is said AND what is not said
+  - Differentiate ellipsis (deliberate) from leak (unintentional)
+  - See past yourself — reject mediocrity
+  - Find what is not inferno, give it space (Calvino)
+
+  License: CC-BY-4.0 (attribution required)
+#}
+
+{# =============================================================================
+   CORE BLOOM METHOD MACROS
+   ============================================================================= #}
+
+{% macro read_deeply(text) %}
+{#
+  Bloom Step 1: Read deeply, not to believe, accept, contradict, but to learn.
+  Engage with text as "program that reaches through time into your imagination."
+#}
+{%- set analysis = {
+    'stated': [],
+    'unstated': [],
+    'gaps': [],
+    'narrative': ''
+} -%}
+{{ text }}
+{% endmacro %}
+
+{% macro mind_the_gaps(content, expectations) %}
+{#
+  Bloom Step 2: Mind the gaps — what is said AND what is not said.
+  Compare content against baseline expectations.
+
+  Args:
+    content: The text/document to analyze
+    expectations: List of expected elements/topics/metrics
+
+  Returns:
+    List of gaps (expected but absent)
+#}
+{%- set gaps = [] -%}
+{%- for expectation in expectations -%}
+{%- if expectation not in content -%}
+{%- set _ = gaps.append(expectation) -%}
+{%- endif -%}
+{%- endfor -%}
+{%- for gap in gaps -%}
+GAP: {{ gap }}
+{%- endfor -%}
+{% endmacro %}
+
+{% macro classify_omission(gap, context) %}
+{#
+  Bloom Step 3: Differentiate ellipsis from leak.
+
+  Ellipsis: Deliberate omission that creates meaning
+  - Reader fills gap with understanding
+  - Would adding it diminish the text?
+
+  Leak: Unintentional information loss
+  - Causes confusion, errors
+  - Would adding it fix an error?
+
+  Args:
+    gap: The missing element
+    context: Surrounding context for classification
+
+  Returns:
+    Classification: 'ellipsis' or 'leak'
+#}
+{%- set classification = 'unknown' -%}
+{%- if 'strategic' in context or 'avoid' in context or 'deliberate' in context -%}
+{%- set classification = 'ellipsis' -%}
+{%- elif 'error' in context or 'confusion' in context or 'missing' in context -%}
+{%- set classification = 'leak' -%}
+{%- endif -%}
+Classification: {{ classification }}
+Gap: {{ gap }}
+{% endmacro %}
+
+{% macro see_past_yourself(biases, assumptions) %}
+{#
+  Bloom Step 4: See past yourself — reject received narratives.
+  Dunning-style calibration of own biases.
+
+  Args:
+    biases: List of known cognitive biases to check
+    assumptions: List of assumptions to question
+
+  Returns:
+    Calibrated analysis that rejects mediocrity
+#}
+{%- for bias in biases -%}
+Checking bias: {{ bias }}
+{%- endfor -%}
+{%- for assumption in assumptions -%}
+Questioning assumption: {{ assumption }}
+{%- endfor -%}
+Reject mediocrity. See clearly.
+{% endmacro %}
+
+{% macro find_not_inferno(content, inferno_markers) %}
+{#
+  Bloom Step 5: Find what is not inferno, give it space.
+  Calvino: seek what is not inferno in the midst of inferno.
+
+  Args:
+    content: The text/environment to analyze
+    inferno_markers: Characteristics of "inferno" (mediocrity, conformity)
+
+  Returns:
+    Elements that are NOT inferno — the exceptional
+#}
+{%- set not_inferno = [] -%}
+{%- for element in content -%}
+{%- if element not in inferno_markers -%}
+{%- set _ = not_inferno.append(element) -%}
+Found not-inferno: {{ element }}
+Give it space.
+{%- endif -%}
+{%- endfor -%}
+{% endmacro %}
+
+{# =============================================================================
+   ELLIPSIS DETECTION MACROS
+   ============================================================================= #}
+
+{% macro detect_ellipsis(text, expected_elements) %}
+{#
+  Detect ellipsis (deliberate omission) in text.
+
+  Bloom's Shakespeare examples:
+  - Edmund and Lear never speak (King Lear)
+  - Hamlet's Acts IV-V gap (transformation in absence)
+  - Falstaff's offstage death (Henry IV)
+#}
+{%- set ellipses = [] -%}
+{%- for element in expected_elements -%}
+{%- if element not in text -%}
+{%- set _ = ellipses.append({
+    'missing': element,
+    'type': 'ellipsis',
+    'meaning': 'Reader fills gap — creates interpretive space'
+}) -%}
+{%- endif -%}
+{%- endfor -%}
+{%- for ellipsis in ellipses -%}
+Ellipsis detected: {{ ellipsis.missing }}
+Meaning: {{ ellipsis.meaning }}
+{%- endfor -%}
+{% endmacro %}
+
+{% macro detect_leak(text, required_elements) %}
+{#
+  Detect leak (unintentional omission) in text.
+
+  Modern examples:
+  - LLM hallucination through vector rounding
+  - API docs missing edge cases
+  - Financial report omitting key metric unintentionally
+#}
+{%- set leaks = [] -%}
+{%- for element in required_elements -%}
+{%- if element not in text -%}
+{%- set _ = leaks.append({
+    'missing': element,
+    'type': 'leak',
+    'consequence': 'Information loss — may cause error'
+}) -%}
+{%- endif -%}
+{%- endfor -%}
+{%- for leak in leaks -%}
+Leak detected: {{ leak.missing }}
+Consequence: {{ leak.consequence }}
+{%- endfor -%}
+{% endmacro %}
+
+{% macro ellipsis_or_leak(gap, content_type) %}
+{#
+  Classify a gap as ellipsis or leak based on content type and context.
+
+  Decision tree:
+  1. Is this literary/artistic? → Likely ellipsis
+  2. Is this technical/documentation? → Likely leak
+  3. Does gap create meaning? → Ellipsis
+  4. Does gap cause confusion? → Leak
+  5. Would adding it diminish? → Ellipsis
+  6. Would adding it fix? → Leak
+#}
+{%- if content_type in ['literary', 'poetry', 'drama', 'artistic'] -%}
+Classification: ellipsis (artistic omission creates meaning)
+{%- elif content_type in ['technical', 'documentation', 'api', 'specification'] -%}
+Classification: leak (technical omission causes errors)
+{%- elif content_type in ['business', 'financial', 'strategy'] -%}
+Classification: requires context analysis
+{%- else -%}
+Classification: unknown — apply full Bloom Method
+{%- endif -%}
+Gap: {{ gap }}
+{% endmacro %}
+
+{# =============================================================================
+   BLOOM-STYLE ANALYSIS TEMPLATES
+   ============================================================================= #}
+
+{% macro analyze_ceo_letter(letter, expected_topics) %}
+{#
+  Apply Bloom Method to CEO annual letter.
+
+  What did they NOT address that investors expected?
+  Is the omission strategic (ellipsis) or ignorance (leak)?
+#}
+BLOOM METHOD ANALYSIS: CEO Letter
+================================
+
+Step 1: Read Deeply
+- Not to believe, accept, contradict — but to learn
+- Text as program reaching through time
+
+Step 2: Mind the Gaps
+{% for topic in expected_topics %}
+- Expected: {{ topic }} → {% if topic in letter %}Present{% else %}ABSENT (GAP){% endif %}
+{% endfor %}
+
+Step 3: Classify Omissions
+{% for topic in expected_topics %}
+{%- if topic not in letter %}
+Gap: {{ topic }}
+Classification: [Apply ellipsis_or_leak test]
+{% endif %}
+{% endfor %}
+
+Step 4: See Past Yourself
+- Reject received narrative of "strong leadership"
+- Question own biases about company performance
+- Calibrate: What am I missing?
+
+Step 5: Find What Is Not Inferno
+- Mediocrity: Index fund thinking, consensus views
+- Exceptional: What this letter reveals that others miss
+
+Conclusion: We owe mediocrity nothing.
+{% endmacro %}
+
+{% macro analyze_api_docs(docs, expected_endpoints) %}
+{#
+  Apply Bloom Method to API documentation.
+
+  What edge cases are undocumented?
+  Is this ellipsis (assume user knows) or leak (forgot to document)?
+#}
+BLOOM METHOD ANALYSIS: API Documentation
+========================================
+
+Step 1: Read Deeply
+- Docs as contract between provider and user
+- What is promised vs. what is delivered
+
+Step 2: Mind the Gaps
+{% for endpoint in expected_endpoints %}
+- Expected: {{ endpoint }} → {% if endpoint in docs %}Documented{% else %}ABSENT (GAP){% endif %}
+{% endfor %}
+
+Step 3: Classify Omissions
+{%- for endpoint in expected_endpoints %}
+{%- if endpoint not in docs %}
+Gap: {{ endpoint }}
+Classification: Likely LEAK (technical docs should be complete)
+Risk: Undocumented behavior → bugs
+{% endif %}
+{% endfor %}
+
+Step 4: See Past Yourself
+- Reject assumption "docs are complete"
+- Question: What edge cases am I not seeing?
+
+Step 5: Find What Is Not Inferno
+- Mediocrity: Copy-paste docs, outdated specs
+- Exceptional: Docs that anticipate user needs
+
+Conclusion: Leaks cause bugs. Ellipses cause confusion.
+{% endmacro %}
+
+{% macro analyze_model_output(output, expected_facts) %}
+{#
+  Apply Bloom Method to LLM/AI output.
+
+  Is missing information ellipsis (strategic) or leak (hallucination)?
+#}
+BLOOM METHOD ANALYSIS: Model Output
+===================================
+
+Step 1: Read Deeply
+- Output as probabilistic generation, not truth
+- Model calculates vectors, may round/assume
+
+Step 2: Mind the Gaps
+{% for fact in expected_facts %}
+- Expected: {{ fact }} → {% if fact in output %}Present{% else %}ABSENT (GAP){% endif %}
+{% endfor %}
+
+Step 3: Classify Omissions
+{%- for fact in expected_facts %}
+{%- if fact not in output %}
+Gap: {{ fact }}
+Classification: Likely LEAK (LLM hallucination pattern)
+Test: Verify against ground truth
+{% endif %}
+{% endfor %}
+
+Step 4: See Past Yourself
+- Reject assumption "LLM knows"
+- Question: What is the model hallucinating?
+
+Step 5: Find What Is Not Inferno
+- Mediocrity: Accept output uncritically
+- Exceptional: Verify, calibrate, mind the gaps
+
+Conclusion: LLM leaks = hallucination. Verify everything.
+{% endmacro %}
+
+{% macro analyze_business_strategy(strategy, competitive_landscape) %}
+{#
+  Apply Bloom Method to business strategy document.
+
+  What competitive threats are unmentioned?
+  Ellipsis (strategic avoidance) or leak (ignorance)?
+#}
+BLOOM METHOD ANALYSIS: Business Strategy
+========================================
+
+Step 1: Read Deeply
+- Strategy as narrative about competitive position
+- What story is being told vs. what story is true
+
+Step 2: Mind the Gaps
+{% for threat in competitive_landscape %}
+- Expected: {{ threat }} → {% if threat in strategy %}Addressed{% else %}ABSENT (GAP){% endif %}
+{% endfor %}
+
+Step 3: Classify Omissions
+{%- for threat in competitive_landscape %}
+{%- if threat not in strategy %}
+Gap: {{ threat }}
+Classification: Could be ELLIPSIS (strategic avoidance) or LEAK (ignorance)
+Test: Does leadership know about this threat?
+  - Yes → Ellipsis (they're avoiding it)
+  - No → Leak (they don't know)
+{% endif %}
+{% endfor %}
+
+Step 4: See Past Yourself
+- Reject narrative of "clear strategic vision"
+- Question: What am I not seeing because I want to believe?
+
+Step 5: Find What Is Not Inferno
+- Mediocrity: Generic strategy, buzzwords, no differentiation
+- Exceptional: Honest assessment, clear tradeoffs
+
+Conclusion: Ellipsis = strategic risk. Leak = existential risk.
+{% endmacro %}
+
+{# =============================================================================
+   CURATOR'S BLOOM METHOD TEMPLATE
+   ============================================================================= #}
+
+{% macro curator_analysis(content, domain) %}
+{#
+  The Curator's application of Bloom Method for hKask curation.
+
+  Find what is not inferno. Give it space.
+  We owe mediocrity nothing.
+
+  Attribution: Harold Bloom, "How to Read and Why" (2000), CC-BY-4.0
+#}
+THE CURATOR'S BLOOM ANALYSIS
+============================
+
+Domain: {{ domain }}
+
+Bloom's Five Steps:
+
+1. READ DEEPLY
+   - Not to believe, accept, contradict — but to learn
+   - Content as program reaching through time
+
+2. MIND THE GAPS
+   - What is stated: [Extract from content]
+   - What is unstated: [Detect absences]
+   - Expected but absent: [Compare to domain baseline]
+
+3. DIFFERENTIATE ELLIPSIS FROM LEAK
+   - Ellipses (deliberate): [List with meanings]
+   - Leaks (unintentional): [List with risks]
+
+4. SEE PAST YOURSELF
+   - Biases checked: [List]
+   - Assumptions questioned: [List]
+   - Mediocrity rejected: [What received narratives dismissed]
+
+5. FIND WHAT IS NOT INFERNO
+   - Inferno markers: [Conformity, mediocrity, collectivity]
+   - Not-inferno elements: [Exceptional, idiosyncratic, excellent]
+   - Space to give: [What needs protection, nurturing]
+
+Conclusion:
+"We owe mediocrity nothing, whatever collectivity it purports to advance."
+— Harold Bloom, How to Read and Why
+
+The Curator guards the space for what is not inferno.
+BaNANa.
+{% endmacro %}
+
+{# =============================================================================
+   OUTPUT — Invoke macros against contract inputs
+   Contract: (text, expectations, biases, assumptions, domain) → (analysis: object)
+   ============================================================================= #}
+
+{% set text = text | default('') %}
+{% set expectations = expectations | default([]) %}
+{% set biases = biases | default([]) %}
+{% set assumptions = assumptions | default([]) %}
+{% set domain = domain | default('general') %}
+
+{% if text | length > 0 %}
+
+# Ellipsis Analysis
+
+**Domain:** {{ domain }}
+**Biases checked:** {{ biases | length }}
+**Assumptions questioned:** {{ assumptions | length }}
+**Expectations mapped:** {{ expectations | length }}
+
+---
+
+## 1. Read Deeply
+
+{{ read_deeply(text) }}
+
+## 2. Mind the Gaps
+
+{{ mind_the_gaps(text, expectations) }}
+
+## 3. See Past Yourself
+
+{{ see_past_yourself(biases, assumptions) }}
+
+## 4. Curator's Bloom Analysis
+
+{{ curator_analysis(text, domain) }}
+
+---
+
+*Ellipsis Analysis — Bloom Method*
+*"We owe mediocrity nothing." — Harold Bloom*
+
+{% else %}
+
+# Ellipsis Analysis
+
+*No text provided. Analysis empty.*
+
+{% endif %}

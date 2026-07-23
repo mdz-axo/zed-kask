@@ -1,0 +1,274 @@
+# RAG Pipeline Manifest
+# ℏKask v0.21.0 — A Minimal Viable Container for UserPods
+# Retrieval-Augmented Generation — query reformulation, multi-source retrieval, grounded synthesis, citation verification
+
+manifest:
+  id: rag-pipeline
+  category: pipeline
+  name: RAG Pipeline
+  description: >
+    Multi-stage RAG pipeline. Reformulates queries for better retrieval,
+    retrieves from semantic memory and web sources, synthesizes a grounded
+    answer with inline citations, and verifies citation fidelity.
+  functional_role: flowdef
+  version: 0.21.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+gas:
+  cap: 25000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: query
+    type: string
+    description: "The user query to answer"
+    required: true
+  - name: retrieval_strategy
+    type: string
+    description: "Retrieval strategy (default: hybrid)"
+    required: false
+    default: "hybrid"
+  - name: max_sources
+    type: integer
+    description: "Maximum number of sources to retrieve (default: 10)"
+    required: false
+    default: 10
+
+steps:
+  - ordinal: 1
+    action: populate
+    description: >
+      Reformulate the user query for better retrieval. Decompose compound
+      queries into sub-queries, expand with synonyms, and identify intent.
+    renderer: minijinja
+    template_ref: rag/reformulate-query
+    gas_cap: 2000
+    timeout_seconds: 15
+    input_mapping:
+      query: "{{ query }}"
+      retrieval_strategy: "{{ retrieval_strategy | default('hybrid') }}"
+    output_schema:
+      type: object
+      properties:
+        original_query: { type: string }
+        reformulated_queries: { type: array }
+        sub_queries: { type: array }
+        query_intent: { type: string }
+        expansion_terms: { type: array }
+
+  - ordinal: 2
+    action: execute
+    description: >
+      Retrieve from semantic memory using the reformulated queries.
+      Uses recall_semantic to find relevant episodic and semantic chunks.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory
+    tool: recall_semantic
+    arguments:
+      query: "${step1.reformulated_queries[0]}"
+      sub_queries: "${step1.sub_queries}"
+      strategy: "${input.retrieval_strategy | default('hybrid')}"
+      max_results: "${input.max_sources | default(10)}"
+    gas_cap: 3000
+    timeout_seconds: 30
+    output_schema:
+      type: object
+      properties:
+        memory_context:
+          type: array
+          items:
+            type: object
+            properties:
+              content: { type: string }
+              source: { type: string }
+              relevance: { type: number }
+              timestamp: { type: string }
+
+  - ordinal: 3
+    action: execute
+    description: >
+      Retrieve from web sources. Performs web search and content extraction
+      to supplement memory context with fresh external information.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${step1.reformulated_queries[0]}"
+      strategy: "quick"
+      num_results: "${input.max_sources | default(10)}"
+    gas_cap: 4000
+    timeout_seconds: 30
+    output_schema:
+      type: object
+      properties:
+        web_context:
+          type: array
+          items:
+            type: object
+            properties:
+              content: { type: string }
+              url: { type: string }
+              title: { type: string }
+              relevance: { type: number }
+
+  - ordinal: 4
+    action: populate
+    description: >
+      Synthesize a grounded answer from retrieved memory and web context.
+      Use ONLY provided context — do not generate from parametric memory.
+      Include inline citations and flag unsupported claims.
+    renderer: minijinja
+    template_ref: rag/synthesize-grounded
+    gas_cap: 6000
+    timeout_seconds: 90
+    input_mapping:
+      query: "{{ query }}"
+      memory_context: "{{ ordinal_2.memory_context | default([]) }}"
+      web_context: "{{ ordinal_3.web_context | default([]) }}"
+      query_intent: "{{ ordinal_1.query_intent }}"
+    output_schema:
+      type: object
+      properties:
+        answer:
+          type: string
+        citations:
+          type: array
+          items:
+            type: object
+            properties:
+              claim: { type: string }
+              source: { type: string }
+              source_type: { type: string }
+              relevance: { type: number }
+        unsupported_claims:
+          type: array
+          items: { type: string }
+        confidence:
+          type: number
+
+  - ordinal: 5
+    action: populate
+    description: >
+      Verify each citation in the synthesized answer. Check that claims
+      are actually supported by cited sources. Flag hallucinations and
+      compute citation coverage.
+    renderer: minijinja
+    template_ref: rag/verify-citations
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      answer: "{{ ordinal_4.answer }}"
+      citations: "{{ ordinal_4.citations }}"
+      memory_context: "{{ ordinal_2.memory_context | default([]) }}"
+      web_context: "{{ ordinal_3.web_context | default([]) }}"
+    output_schema:
+      type: object
+      properties:
+        verified_citations:
+          type: array
+          items:
+            type: object
+            properties:
+              claim: { type: string }
+              source: { type: string }
+              verification: { type: string }
+        hallucination_flags:
+          type: array
+          items: { type: string }
+        citation_coverage:
+          type: number
+        overall_reliability:
+          type: string
+
+  - ordinal: 6
+    action: feedback
+    description: >
+      Emit Regulation feedback for variety monitoring and retrieval quality tracking.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory # Regulation feedback now via memory server
+    gas_cap: 500
+    timeout_seconds: 5
+    feedback:
+      sources_retrieved: integer
+      citation_coverage: number
+      hallucination_flags: integer
+    output_schema:
+      type: object
+      properties:
+        variety_counter: { type: integer }
+        reg_event_id: { type: string }
+
+# Error Handling
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 2
+  retry_backoff_seconds: 2
+  on_validation_failure: abort
+  on_capability_denied: escalate
+  on_retrieval_failure: fallback
+
+# OCAP Configuration
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: rag/reformulate-query
+      gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: rag/synthesize-grounded
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: rag/verify-citations
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: rag-pipeline
+      gas_budget: 500
+    - resource: regulation
+      action: emit
+      template_id: rag-pipeline
+      gas_budget: 500
+    - resource: memory
+      action: recall
+      gas_budget: 3000
+    - resource: web
+      action: search
+      gas_budget: 4000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+# Regulation Monitoring
+ledger:
+  emit_spans: true
+  span_namespace: hkask.template.rag-pipeline
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+  variety_counters:
+    - sources_retrieved
+    - citation_coverage
+    - hallucination_flags
+
+# Audit Trail
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

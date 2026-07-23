@@ -1,0 +1,71 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- evaluate
+- regulate
+- orient
+contract:
+  input:
+    topic: string
+    current_level: integer
+    solid_ratio: float
+    total_questions: integer
+  output:
+    new_level: integer
+    action: string
+    reason: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: grill-me/grill-me-escalate.j2 #}
+{# Functional Role: KnowAct — Difficulty escalation decision #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: new_level, action, reason #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 1024
+thinking_budget = "minimal"
+
+Determine the next difficulty action for grilling on **{{ topic }}**.
+
+## Current State
+
+- Current level: {{ current_level }}
+- Solid answer ratio: {{ solid_ratio }}
+- Total questions answered: {{ total_questions }}
+
+## Decision Rules
+
+- Solid ratio ≥ 0.8 → **escalate** to next level (max 5)
+- Solid ratio 0.4–0.8 → **hold** at current level, probe deeper
+- Solid ratio < 0.4 → **reprobe** at current level with different angles
+
+## Output
+
+```json
+{
+  "new_level": 1,
+  "action": "escalate|hold|reprobe",
+  "reason": "brief explanation"
+}
+```
+
+## Constraints
+
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

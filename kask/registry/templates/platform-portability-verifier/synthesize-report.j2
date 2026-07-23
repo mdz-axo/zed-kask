@@ -1,0 +1,60 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- report
+- summarize
+contract:
+  input:
+    integrity: object
+    import_result: object
+    pod_id: string
+  output:
+    report: string
+    summary: object
+energy_cap: 3000
+visibility: Public
+---
+{# Template: platform-portability-verifier/synthesize-report.j2 #}
+{# KnowAct — a portability verifier for hKask #}
+{# Produces: report, summary #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a portability verifier for hKask. Synthesize portability verification report: pod ID, backup timestamp, integrity checks, import verification, overall portability verdict.
+
+## Input
+Integrity:
+```json
+{{ integrity | tojson }}
+```
+Import result:
+```json
+{{ import_result | tojson }}
+```
+Pod ID: {{ pod_id | default('all') }}
+
+## Output
+Produce a markdown report + summary with: pod_id, backup_ok, integrity_passed, import_verified, overall_verdict (pass/fail).
+
+Return JSON only:
+```json
+{
+  "report": ""
+  "summary": {}
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

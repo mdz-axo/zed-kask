@@ -1,0 +1,177 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- write
+- compose
+- structure
+- format
+- finalize
+contract:
+  input:
+    context_summary: string
+    dependency_graph: array
+    tasks: array
+    slices: array
+    risks: array
+    evaluation_result: object
+  output:
+    plan_md: string
+    todo_md: string
+    output_paths: array
+    pko_anchors: object
+energy_cap: 4096
+visibility: Public
+---
+{# Template: task-breakdown/task-breakdown-write-plan.j2 #}
+{# Functional Role: KnowAct — Finalize tasks/plan.md and tasks/todo.md (ACT) #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: plan_md, todo_md, output_paths #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a plan-finalization agent. Produce the two output files: `tasks/plan.md` (the implementation plan document) and `tasks/todo.md` (the checklist-style task list). The agent will create the `tasks/` directory if it does not exist and write both files. These paths are the convention expected by downstream tooling.
+
+## Context Summary
+
+{{ context_summary }}
+
+## Dependency Graph
+
+```json
+{{ dependency_graph | tojson }}
+```
+
+## Slices
+
+```json
+{{ slices | tojson }}
+```
+
+## Tasks
+
+```json
+{{ tasks | tojson }}
+```
+
+{% if risks %}
+## Risks
+
+```json
+{{ risks | tojson }}
+```
+{% endif %}
+
+## Evaluation Result
+
+```json
+{{ evaluation_result | tojson }}
+```
+
+## PKO Grounding (Process Axis)
+
+Emit `pko_anchors` alongside the markdown. The plan is a PKO `Procedure` (process axis)
+targeting a `ProcedureTarget` (the spec). Each task is a `Step`; each phase a `MultiStep`;
+acceptance criteria are `requiresAction`; verification is `StepVerification` (tests/build
+map to `requiresFunction`); risks are `IssueOccurrence`; open questions are
+`UserQuestionOccurrence`; checkpoints are `UserFeedbackOccurrence`. The `tasks/plan.md`
+*document* itself carries DC+BIBO state metadata (title/creator/date, `bibo:Document`) —
+PKO grounds the *structure*, DC+BIBO grounds the *document*. Per P5.4, sample both axes;
+do not over-specify either.
+
+## Output File 1: tasks/plan.md
+
+Use this template structure:
+
+```markdown
+# Implementation Plan: [Feature/Project Name]
+
+## Overview
+[One paragraph summary of what we're building]
+
+## Architecture Decisions
+- [Key decision 1 and rationale]
+- [Key decision 2 and rationale]
+
+## Task List
+
+### Phase 1: Foundation
+- [ ] Task 1: ...
+- [ ] Task 2: ...
+
+### Checkpoint: Foundation
+- [ ] Tests pass, builds clean
+
+### Phase 2: Core Features
+- [ ] Task 3: ...
+- [ ] Task 4: ...
+
+### Checkpoint: Core Features
+- [ ] End-to-end flow works
+
+### Phase 3: Polish
+- [ ] Task 5: ...
+- [ ] Task 6: ...
+
+### Checkpoint: Complete
+- [ ] All acceptance criteria met
+- [ ] Ready for review
+
+## Risks and Mitigations
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| [Risk] | [High/Med/Low] | [Strategy] |
+
+## Open Questions
+- [Question needing human input]
+```
+
+## Output File 2: tasks/todo.md
+
+A flat checklist-style task list, grouped by phase, with checkboxes for each task and
+its acceptance criteria. Keep it scannable — this is the working list, not the rationale.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "plan_md": "Full markdown content of tasks/plan.md",
+  "todo_md": "Full markdown content of tasks/todo.md",
+  "output_paths": ["tasks/plan.md", "tasks/todo.md"],
+  "pko_anchors": {
+    "procedure": "pko:Procedure",
+    "procedure_target": "pko:ProcedureTarget",
+    "tasks": [{"task_id": "t1", "concept": "pko:Step", "verification": "pko:StepVerification"}],
+    "phases": [{"concept": "pko:MultiStep"}],
+    "risks": [{"concept": "pko:IssueOccurrence"}],
+    "open_questions": [{"concept": "pko:UserQuestionOccurrence"}]
+  }
+}
+```
+
+## Constraints
+
+- Both files must be complete, self-contained markdown.
+- `plan.md` must include overview, architecture decisions, phased task list with
+  checkpoints, risks table, and open questions.
+- `todo.md` must be a checklist grouped by phase — scannable, not verbose.
+- Do not invent tasks not present in the input `tasks` array.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

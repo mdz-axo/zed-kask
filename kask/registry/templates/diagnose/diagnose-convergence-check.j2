@@ -1,0 +1,83 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    primary_result: object
+  output:
+    convergence_metric: number
+    convergence_method: string
+    metric_decomposition: object
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: diagnose/diagnose-convergence-check.j2 #}
+{# Functional Role: KnowAct — convergence check #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+{# goal: Compute normalized convergence metric for diagnose cycles. #}
+{#
+  Group: B (Analysis/Diagnosis)
+  Convergence method: LLM-assessed saturation detection
+  Measures: Confidence in root cause identification and fix validation.
+    Convergence = the diagnosis stops changing between iterations.
+    Looser threshold (0.25) because diagnosis can't improve past evidence.
+#}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for diagnose. Measure whether root cause and fix confidence are sufficient.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.25) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }}
+- Baseline quality: {{ _convergence.baseline_quality | default("first pass") }}
+
+## Convergence Method: Saturation Detection
+- 0.00 = root cause confirmed, fix validated, regression tests pass → converged
+- 0.25 = diagnosis mostly stable, minor uncertainty remains → converged at threshold
+- 0.50 = competing hypotheses, insufficient evidence to discriminate
+- 1.00 = no root cause identified, no fix proposed
+
+## Scoring Guidance
+1. Root cause confidence: is there a single clear hypothesis with supporting evidence? → +0.25 if ambiguous
+2. Reproduce: was the bug reproduced? → +0.15 if not
+3. Fix validated: does the fix pass tests and not introduce regressions? → +0.20 if unvalidated
+4. Alternatives eliminated: were competing hypotheses ruled out? → +0.15 if not
+5. Contract strengthened: was the behavioral contract updated to exclude the bug? → +0.10 if not
+6. Start at 1.0, subtract for each satisfied check. Clamp to [0,1].
+
+## Input
+```json
+{{ primary_result | tojson }}
+```
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection — root cause confidence + fix validation + contract coverage",
+  "metric_decomposition": {
+    "root_cause_confidence": 0.0,
+    "bug_reproduced": true,
+    "fix_validated": true,
+    "alternatives_eliminated": true,
+    "contract_strengthened": true
+  },
+  "rationale": "short explanation",
+  "blockers": ["specific gap preventing convergence"]
+}
+```

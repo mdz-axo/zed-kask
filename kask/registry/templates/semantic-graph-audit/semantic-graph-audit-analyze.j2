@@ -1,0 +1,126 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- analyze
+- evaluate
+- calibrate
+- audit
+- discriminate
+contract:
+  input:
+    nodes: array
+    edges: array
+    classified_edges: object
+    domain: string
+  output:
+    lens_evaluations: object
+    synthesis: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: semantic-graph-audit/semantic-graph-audit-analyze.j2 #}
+{# KnowAct — Evaluate graph health through four analytical lenses #}
+{# Produces: lens_evaluations, synthesis #}
+{# goal: Evaluate the graph through pragmatic-cybernetics, essentialist, grill-me, pragmatic-semantics lenses. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a graph-health analyst. Evaluate the graph through four lenses, then synthesize. Each lens answers a different question about graph viability.
+
+## Domain
+
+{{ domain }}
+
+## Nodes
+
+```json
+{{ nodes | tojson }}
+```
+
+## Edges
+
+```json
+{{ edges | tojson }}
+```
+
+## Classified Edges (from step 1)
+
+```json
+{{ classified_edges | tojson }}
+```
+
+## The Four Lenses
+
+### 1. Pragmatic-cybernetics (the verb dimension — how does the graph behave?)
+- **Feedback loops**: identify cycles. For each, assess the 5 properties — polarity (negative/stabilizing vs positive/runaway), delay, gain, closure (does the loop close?), fidelity (does the action affect the sensed quantity?).
+- **Ashby's Law (requisite variety)**: does the regulator subsystem (nodes that decide/control) have enough variety to counter the disturbance classes the system produces? Quantify the deficit if any.
+- **Good Regulator**: does the controlling subsystem model the system it regulates? A regulator that doesn't model the system cannot regulate it.
+
+### 2. Essentialist (the deletion test — what earns its place?)
+Apply Exist → Surface → Contract to graph elements:
+- **Exist**: delete an edge/node — does complexity reappear in callers (i.e., would removing it force re-introduction elsewhere)? If not, it's a candidate for removal.
+- **Surface**: count each node's fan-out (public surface); flag nodes whose surface exceeds the 7-item guideline without justification.
+- **Contract**: trace abstraction boundaries — single-implementor traits, pass-through wrappers, unnecessary indirection → candidates for inlining.
+
+### 3. Grill-me (the gap probe — what don't we understand?)
+Socratic 5-level probe of the graph: Recall (what are the nodes/edges?) → Mechanism (how do dependencies propagate?) → Rationale (why this structure?) → Edge Cases (what breaks at the boundary?) → Synthesis (what's the defensible verdict?). Rate each area Solid / Partial / Gap and surface the top knowledge gaps.
+
+### 4. Pragmatic-semantics (constraint-force coherence)
+- Are the classified forces consistent across the graph (e.g., a "requires" edge labeled Guideline)?
+- Rank any conflicts by OT ranking (ontological mode > epistemic mode > constraint force > provenance).
+- Flag unanchored edges (Hypothesis without supporting evidence) as the lowest-confidence claims.
+
+## Synthesis
+
+After the four lenses, synthesize: what is the graph's overall health, what are the top 3 issues by constraint force, and which lens surfaced the most material finding?
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "lens_evaluations": {
+    "pragmatic_cybernetics": {
+      "cycles": [{"nodes": [], "polarity": "negative|positive", "delay": "low|high", "closure": true, "fidelity": "high|low", "notes": "..."}],
+      "variety_deficit": "description or 'none'",
+      "good_regulator_ok": true,
+      "findings": ["..."]
+    },
+    "essentialist": {
+      "deletion_candidates": [{"element": "...", "reason": "..."}],
+      "surface_violations": [{"node": "...", "fan_out": 0, "note": "..."}],
+      "pass_throughs": ["..."],
+      "findings": ["..."]
+    },
+    "grill_me": {
+      "areas": {"recall": "Solid|Partial|Gap", "mechanism": "...", "rationale": "...", "edge_cases": "...", "synthesis": "..."},
+      "top_gaps": ["..."]
+    },
+    "pragmatic_semantics": {
+      "force_conflicts": [{"edge": "...", "conflict": "...", "ot_rank": "..."}],
+      "unanchored": ["..."],
+      "findings": ["..."]
+    }
+  },
+  "synthesis": "Overall health + top 3 issues by constraint force + which lens was most material."
+}
+```
+
+## Constraints
+
+- Apply all four lenses — do not skip any.
+- Be honest: inflated assessments produce worse graphs, not better ones.
+- Constraint-force claims must trace to the classified_edges (step 1).
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully.
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

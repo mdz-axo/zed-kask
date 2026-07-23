@@ -1,0 +1,28 @@
+# Media Derivation — Background Removal FlowDef
+# Routes to DeepInfra Bria RMBG 2.0 or fal.ai Birefnet.
+
+template_type: FlowDef
+name: media_remove_background
+version: "1.0.0"
+description: "Remove background from an image"
+primary_model: "DI/Bria/remove_background"
+fallback_model: "fal-ai/birefnet"
+parameters:
+  - name: image_url
+    type: string
+    required: true
+    description: "URL or base64 data URI of the source image"
+  - name: new_bg_color
+    type: string
+    required: false
+    description: "Replacement background color hex (e.g. #FFFFFF) or 'transparent'"
+input_type: image_url
+output_type: image_blob
+latency: sync
+cost_tier: low
+---
+# Background Removal Pipeline
+# Step 1: Validate image_url
+# Step 2: POST to primary model endpoint
+# Step 3: If primary fails, fallback to secondary
+# Step 4: Return image blob (PNG with transparency or colored background)

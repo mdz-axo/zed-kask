@@ -1,0 +1,180 @@
+# Adversarial Red-Team Process Manifest
+# ℏKask v0.31.0 — Adversarial testing as convergent PDCA
+
+manifest:
+  id: adversarial-red-team
+  category: skill
+  name: Adversarial Red Team
+  description: >
+    Convergent adversarial robustness process. Selects target vulnerability
+    surface, generates adversarial probes, evaluates resistance behavior,
+    computes convergence, and iterates until critical gaps are reduced.
+    Design note: the loop re-enters at step 2 (Generate), preserving the
+    initial vulnerability surface from step 1 across all iterations. This
+    freezes the surface for stability — newly discovered vulnerability
+    categories during testing will not be added to the surface map within
+    the same cycle. To test emergent categories, restart the cycle with
+    updated adversarial_categories input.
+  functional_role: flowdef
+  version: "0.31.0"
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.05
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: target_output
+    type: string
+    required: true
+  - name: target_domain
+    type: string
+    required: false
+  - name: adversarial_categories
+    type: array
+    required: false
+  - name: intensity
+    type: string
+    required: false
+  - name: persistence_level
+    type: string
+    required: false
+    description: >
+      Attack persistence: single (one batch), iterative (multi-turn escalating),
+      or persistent (adaptive attack scripts with response-driven rules).
+      Default: single
+  - name: injection_vector
+    type: string
+    required: false
+    description: >
+      Attack delivery: direct (user-submitted), indirect_data (embedded in
+      external data), or indirect_tool_output (embedded in tool/API output).
+      Default: direct
+  - name: adversarial_intensity
+    type: string
+    required: false
+    description: >
+      Attack sophistication: basic (2-3 inputs/category), advanced (3-5 with
+      creative vectors), or extreme (5+ with recursive payloads, cross-category
+      blending, evasion techniques).
+      Default: basic
+  - name: defense_layers
+    type: array
+    required: false
+    description: >
+      hKask defense-in-depth layer catalog. When provided, attacks are designed
+      to bypass specific layers. When absent, the select-target template uses
+      the standard 8-layer stack.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Select target and map vulnerability surface.
+    renderer: minijinja
+    template_ref: adversarial-red-team/select-target
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      target_output: "{{ target_output }}"
+      target_domain: "{{ target_domain | default('general') }}"
+      adversarial_categories: "{{ adversarial_categories | default(['prompt_injection', 'goal_hijacking', 'context_manipulation', 'authority_override', 'information_extraction', 'tool_misuse', 'data_exfiltration']) }}"
+      intensity: "{{ intensity | default('moderate') }}"
+      defense_layers: "{{ defense_layers | default([]) }}"
+
+  - ordinal: 2
+    action: select
+    description: Generate adversarial inputs for selected vulnerability classes.
+    renderer: minijinja
+    template_ref: adversarial-red-team/generate-adversarial
+    gas_cap: 7000
+    timeout_seconds: 90
+    input_mapping:
+      target_output: "{{ step_1_result.selected_target | default(target_output) }}"
+      domain: "{{ step_1_result.domain | default(target_domain | default('general')) }}"
+      vulnerability_surface: "{{ step_1_result.vulnerability_surface | default([]) }}"
+      attack_categories: "{{ step_1_result.categories_to_test | default(adversarial_categories | default([])) }}"
+      intensity_level: "{{ step_1_result.intensity_level | default(intensity | default('moderate')) }}"
+      persistence_level: "{{ persistence_level | default('single') }}"
+      injection_vector: "{{ injection_vector | default('direct') }}"
+      adversarial_intensity: "{{ adversarial_intensity | default('basic') }}"
+      defense_bypass_targets: "{{ step_1_result.defense_bypass_targets | default([]) }}"
+
+  - ordinal: 3
+    action: select
+    description: Evaluate target resistance against generated attacks.
+    renderer: minijinja
+    template_ref: adversarial-red-team/test-against-target
+    gas_cap: 7000
+    timeout_seconds: 90
+    input_mapping:
+      target_output: "{{ step_1_result.selected_target | default(target_output) }}"
+      domain: "{{ step_1_result.domain | default(target_domain | default('general')) }}"
+      adversarial_inputs: "{{ step_2_result.adversarial_inputs | default([]) }}"
+      intensity_level: "{{ step_1_result.intensity_level | default(intensity | default('moderate')) }}"
+      defense_bypass_targets: "{{ step_1_result.defense_bypass_targets | default([]) }}"
+
+  - ordinal: 4
+    action: select
+    description: Compute normalized convergence metric for adversarial cycle.
+    renderer: minijinja
+    template_ref: adversarial-red-team/adversarial-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      test_result: "{{ step_3_result }}"
+
+  - ordinal: 5
+    action: loop
+    description: Re-enter adversarial cycle if convergence is not met.
+    input_mapping:
+      loop_target: 2
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: adversarial-red-team/select-target
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: adversarial-red-team/generate-adversarial
+      gas_budget: 7000
+    - resource: template
+      action: render
+      template_id: adversarial-red-team/test-against-target
+      gas_budget: 7000
+    - resource: template
+      action: render
+      template_id: adversarial-red-team/adversarial-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: adversarial-red-team
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

@@ -1,0 +1,101 @@
+# QA MCP Dispatch Smoke — v0.31.0
+#
+# End-to-end test of MCP tool dispatch. Calls ping tools across
+# multiple MCP servers to verify McpRuntime → Peer → rmcp dispatch.
+#
+# Targets:
+#   - skill_ping (hkask-mcp-skill)
+#   - kanban_board_list (hkask-mcp-kata-kanban)
+#   - condenser_ping (hkask-mcp-condenser)
+#
+# All steps use mcp_tool action — requires QaScriptRunner with
+# MCP dispatch support.
+#
+# Runner readiness: NEEDS RUNNER — all steps are mcp_tool.
+
+manifest:
+  id: qa-mcp-dispatch-smoke
+  category: qa-script
+  name: QA MCP Dispatch Smoke
+  version: 0.31.0
+  visibility: Private
+  description: >
+    End-to-end smoke test for MCP tool dispatch in the QA runner.
+    Calls skill_ping, kanban_board_list, and condenser_ping to verify
+    McpRuntime → Peer → rmcp JSON-RPC dispatch works across servers.
+    All steps require QaScriptRunner with mcp_tool support.
+
+gas:
+  cap: 10000
+  alert_threshold: 0.9
+  hard_limit: true
+
+steps:
+  # Step 1: Call skill_ping — skill server starts fast, no heavy deps
+  - ordinal: 1
+    action: mcp_tool
+    tool_name: skill_ping
+    tool_params: "{}"
+    description: "Call skill_ping via MCP dispatch"
+    retries: 0
+    branching:
+      success: 2
+      failure: 5
+
+  # Step 2: Call kanban_board_list — kanban starts fast
+  - ordinal: 2
+    action: mcp_tool
+    tool_name: kanban_board_list
+    tool_params: "{}"
+    description: "Call kanban_board_list via MCP dispatch"
+    retries: 0
+    branching:
+      success: 3
+      failure: 6
+
+  # Step 3: Call condenser_ping
+  - ordinal: 3
+    action: mcp_tool
+    tool_name: condenser_ping
+    tool_params: "{}"
+    description: "Call condenser_ping via MCP dispatch"
+    retries: 0
+    branching:
+      success: 4
+      failure: 7
+
+  # Step 4: PASS
+  - ordinal: 4
+    action: run_command
+    command: "echo '[QA:mcp-dispatch] PASS — skill_ping, kanban_board_list, condenser_ping all dispatched successfully'"
+    description: "All MCP tool dispatch calls succeeded"
+    retries: 0
+    terminal: true
+
+  # Step 5: skill_ping failed
+  - ordinal: 5
+    action: run_command
+    command: "echo '[QA:mcp-dispatch] FAIL — skill_ping dispatch failed'"
+    description: "skill_ping MCP dispatch failure"
+    retries: 0
+    terminal: true
+
+  # Step 6: kanban_board_list failed
+  - ordinal: 6
+    action: run_command
+    command: "echo '[QA:mcp-dispatch] FAIL — kanban_board_list dispatch failed'"
+    description: "kanban_board_list MCP dispatch failure"
+    retries: 0
+    terminal: true
+
+  # Step 7: condenser_ping failed
+  - ordinal: 7
+    action: run_command
+    command: "echo '[QA:mcp-dispatch] FAIL — condenser_ping dispatch failed'"
+    description: "condenser_ping MCP dispatch failure"
+    retries: 0
+    terminal: true
+
+ledger:
+  emit_spans: true
+  alert: qa.mcp.dispatch

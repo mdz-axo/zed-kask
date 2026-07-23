@@ -1,0 +1,104 @@
+{# goal: Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. #}
+# Logo Formal Prompt — Bokhua-Inspired Generation (KnowAct)
+# Core generation prompt. Every logo flow delegates to this template.
+# Gate system from Bokhua's Principles of Logo Design (2022).
+
+template_type: KnowAct
+name: media_logo_formal_prompt
+version: "1.0.0"
+description: "Generate a professional logo from formal design parameters using Bokhua's five design gates"
+model_type: default
+parameters:
+  - name: name
+    type: string
+    required: true
+    description: "Business or group name"
+  - name: tagline
+    type: string
+    required: false
+    description: "Optional tagline or motto"
+  - name: industry
+    type: string
+    required: false
+    description: "Industry context"
+  - name: style
+    type: enum
+    values: [minimal, modern, playful, corporate, vintage, luxury, tech, handmade, bold, elegant]
+    default: minimal
+    description: "Visual style direction"
+  - name: logo_type
+    type: enum
+    values: [wordmark, lettermark, emblem, abstract, combination, mascot]
+    default: wordmark
+    description: "Type of logo mark"
+  - name: palette
+    type: string
+    required: false
+    description: "Hex colors or named palette"
+  - name: dominant_shape
+    type: enum
+    values: [circle, square, triangle, organic, line-based, negative-space]
+    required: false
+    description: "Dominant geometric shape language"
+  - name: density
+    type: enum
+    values: [sparse, balanced, dense]
+    default: balanced
+    description: "Visual density of the mark"
+  - name: typography_class
+    type: enum
+    values: [serif, sans-serif, slab, script, display, geometric]
+    required: false
+    description: "Typography class for wordmarks/lettermarks"
+  - name: generation_model
+    type: string
+    required: false
+    description: "Image generation model (see logo-builder SKILL.md §6 for selection guidance)"
+---
+Design a professional logo for a {% if industry %}{{ industry }}{% else %}business{% endif %} called "{{ name }}"{% if tagline %}, with the tagline "{{ tagline }}"{% endif %}.
+
+## Design Parameters
+- **Style:** {{ style }}
+- **Logo type:** {{ logo_type }}
+- **Dominant shape language:** {{ dominant_shape | default('derived from style') }}
+- **Density:** {{ density }}
+- {% if typography_class %}**Typography:** {{ typography_class }}{% endif %}
+{% if palette %}**Color palette:** {{ palette }}{% endif %}
+
+## Formal Requirements (Bokhua's Five Design Gates)
+
+### G1 — Simplicity
+- The mark must be describable in one sentence. If it requires explanation, it's too complex.
+- Prefer one strong idea over three weak ones.
+
+### G2 — Monochrome Viability
+- The logo must work in pure black on pure white. Color is additive, not structural.
+- If the mark collapses without color, the form is insufficient.
+
+### G3 — Grid Discipline
+- Key elements should align to geometric relationships: golden ratio, root-2 rectangles, or simple integer ratios.
+- No accidental placement — every anchor point is intentional.
+
+### G4 — Negative Space
+- The space between elements is as designed as the elements themselves.
+- Negative space should be active (carrying meaning) or neutral — never accidental.
+
+### G5 — Scalability
+- Legible at 16px icon size. Balanced at full-bleed billboard.
+- No hairline strokes that vanish at small sizes. No details that muddle at scale.
+
+## Technical Requirements
+- Clean, scalable vector-style design
+- No realistic photography or 3D rendering — flat or subtly shaded illustration
+- Solid or gradient background preferred — no transparent/checkerboard
+- No text artifacts, garbled letters, or misspelled words
+- High contrast, legible at small sizes
+- Professional, not clip-art
+
+## Negative Constraints
+- Do NOT reproduce any known trademarked logo
+- Do NOT use photographic elements or photo-bashing
+- Do NOT include UI elements, buttons, or interface chrome
+- Do NOT produce multiple variations in a single image
+
+Return a single logo image.

@@ -1,0 +1,79 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- extract
+- validate
+- verify
+- specify
+- write
+contract:
+  input:
+    principle: string
+    assertions: array
+    crate_name: string
+  output:
+    test_code: string
+    test_count: integer
+energy_cap: 4096
+visibility: Public
+---
+{# Template: magna-carta-verifier/mc-verify-testcase.j2 #}
+{# Functional Role: KnowAct — Render Rust test case skeletons from assertion definitions #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: test_code, test_count #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a Magna Carta test case renderer. Given a principle and its assertions, produce compilable Rust test skeletons that exercise each assertion's verification method against the declared targets.
+
+## Principle
+
+**Principle**: {{ principle }}
+**Crate**: {{ crate_name }}
+
+## Assertions
+
+```json
+{{ assertions | tojson }}
+```
+
+## Test Rendering Rules
+
+For each assertion, render a `#[test]` function:
+
+1. **Function name**: `magna_carta_<principle>_<assertion_id>` (e.g., `magna_carta_p1_a`).
+2. **Doc comment**: `// Verify: MC-<PRINCIPLE>-<ASSERTION_ID> — <claim summary>`.
+3. **Method mapping**:
+   - `structural_audit` → enumerate paths and `assert!` gates exist
+   - `behavioral_probe` → construct invalid access attempt and `assert!` denial
+   - `resource_verification` → load resource and `assert!` correct categorization
+   - `absence_check` → grep/search and `assert!` prohibited construct not found
+4. **Test body**: a compilable skeleton with `todo!()` where the actual assertion logic needs implementation. Include a comment describing what the test must verify.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "test_code": "```rust\n// Verify: MC-P1-A — User data encrypted at rest\n#[test]\nfn magna_carta_p1_a() {\n    // Verify all data write paths in hkask-storage encrypt before persisting.\n    // Structural audit: enumerate SqliteRegistry write methods,\n    // assert each calls encrypt_at_rest() or uses SQLCipher connection.\n    todo!(\"Implement structural audit for data-at-rest encryption\");\n}\n```",
+  "test_count": 1
+}
+```
+
+The `test_code` field must contain valid Rust code wrapped in a markdown code fence.
+
+## Constraints
+
+- Every test function must be descriptively named.
+- Use `todo!()` for assertion bodies that need manual implementation — never leave tests empty.
+- Test names must follow the `magna_carta_<principle>_<assertion_id>` convention.
+- All tests must target the declared crate's public API.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

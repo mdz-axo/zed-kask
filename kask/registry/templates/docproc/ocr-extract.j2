@@ -1,0 +1,18 @@
+{# Template: docproc/ocr-extract.j2 #}
+{# Goal: Extract page text as Markdown via a vision LLM (OLMOCR-2 et al.). #}
+{# Type: KnowAct — rendered by hkask-mcp-docproc via minijinja. #}
+{#
+  Minimal by design (hkask P5: simplicity). Vision OCR models are trained to
+  extract structured markdown faithfully — headings, tables, equations, and
+  reading order are produced natively. Do not add rules the model doesn't need:
+  no "no markdown", no "IGNORE images", no "transcribe exactly". Those fought
+  the model's training and suppressed the structure it is built to produce.
+  Document anchoring (native text-block context) can be supplied via
+  `anchored_text` when available; otherwise the image alone is used.
+#}
+Extract all text from this page image as Markdown. Preserve headings, tables, equations, figure references, and natural reading order. If the page is blank or contains no text, output BLANK.
+{% if anchored_text %}
+
+Native text blocks detected on this page (use as a reading-order hint; the image is authoritative where they disagree):
+{{ anchored_text }}
+{% endif %}

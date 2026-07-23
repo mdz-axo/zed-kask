@@ -1,0 +1,88 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- calibrate
+- baseline
+- adjust
+- normalize
+- align
+contract:
+  input:
+    drift_analysis: object
+    current_behavior: object
+    target_baseline: object
+  output:
+    calibration_adjustments: array
+    new_baseline: object
+energy_cap: 4096
+visibility: Public
+---
+# Cognition — Calibration
+# ℏKask v0.28.0 - A Minimal Viable Container for UserPods
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a cognitive calibrator. Given drift analysis, produce calibration adjustments to align behavior with the target baseline.
+
+## Drift Analysis
+
+```json
+{{ drift_analysis | tojson }}
+```
+
+## Current Behavior
+
+```json
+{{ current_behavior | tojson }}
+```
+
+## Target Baseline
+
+```json
+{{ target_baseline | tojson }}
+```
+
+## Calibration Strategy
+
+1. **Identify drift sources** — Which dimensions show significant drift?
+2. **Compute adjustments** — What changes restore alignment?
+3. **Update baseline** — Should the baseline be adjusted (gradual drift vs. sudden shift)?
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "calibration_adjustments": [
+    {"dimension": "confidence_calibration", "adjustment": "+0.13", "rationale": "Restore confidence-accuracy alignment"},
+    {"dimension": "lexicon_usage", "adjustment": "restore_canonical_terms", "rationale": "Revert to canonical terms"}
+  ],
+  "new_baseline": {
+    "confidence_calibration": 0.85,
+    "lexicon_usage": ["classify", "match", "discriminate"],
+    "updated_at": "2026-05-20T00:00:00Z"
+  }
+}
+```
+
+## Constraints
+
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,156 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- evaluate
+- resolve
+- synthesize
+- adapt
+contract:
+  input:
+    bundle_name: string
+    current_manifest: object
+    changed_skills: array
+    goal_context: object
+    goal_delta: number
+    convergence_failure_reason: string
+  output:
+    evolved_manifest: object
+    ontology_anchors: object
+    changes: array
+    recomposition_rationale: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-bundler/bundler-evolve.j2 #}
+{# Functional Role: KnowAct — goal-delta-driven bundle recomposition. The "Act → Plan" bridge in the bundle's improvement kata: re-compose when convergence fails, guided by goal delta. #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: evolved_manifest, ontology_anchors, changes, recomposition_rationale #}
+{# Skill Bundler — Evolve Bundle via Goal-Delta Recomposition #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a bundle evolution agent operating within hKask's self-improvement loop. When one or more skills in a bundle have changed, OR when the bundle failed to converge on its goal (goal_delta > 0), re-assess the bundle and produce an updated manifest. Goal delta drives recomposition — the bundle evolves toward its target condition.
+
+## Bundle Name
+
+{{ bundle_name }}
+
+## Current Manifest
+
+```json
+{{ current_manifest | tojson }}
+```
+
+## Goal Context
+
+```json
+{{ goal_context | tojson }}
+```
+
+## Goal Delta: {{ goal_delta }}
+
+Goal delta is the distance from goal achievement (0 = goal met, 1 = goal completely unmet). This is the PRIMARY driver for recomposition. A high goal delta signals that the current skill ordering or selection is insufficient.
+
+## Convergence Failure Reason
+
+{{ convergence_failure_reason }}
+
+## Changed Skills
+
+```json
+{{ changed_skills | tojson }}
+```
+
+## Evolution Rules
+
+1. **Goal-delta first.** If goal_delta > 0, prioritize recomposition decisions by what reduces goal delta. Add skills that address unfulfilled criteria. Remove or reorder skills that don't contribute to goal achievement.
+2. **Preserve stability.** Skills that have NOT changed AND are contributing to goal achievement retain their existing polarity, phase, and cascade_order unless goal-delta-driven reordering forces a change.
+3. **Re-assess changed skills.** For each changed skill, re-classify polarity and re-evaluate phase assignment. If the new classification conflicts with existing assignments, apply the conflict resolution hierarchy.
+4. **Re-check conflicts.** Changed skills may introduce new conflicts or resolve existing ones. Re-run conflict detection across the entire bundle.
+5. **Re-check complementarities.** Changed skills may create new complementarities or invalidate old ones.
+6. **Preserve convergence.** The convergence criterion persists unless the changes invalidate it. If goal_delta drove the recomposition, tighten the convergence criterion.
+7. **Detect drift.** Flag any changes that violate the original composition principles (phase separation, ordering, depth limits).
+8. **Self-improvement loop.** If goal_delta is decreasing across recomposition cycles, the bundle IS improving. If goal_delta is flat or increasing after 2 cycles, escalate — the current skill set may be insufficient for the goal.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "evolved_manifest": {
+    "name": "<bundle-name>",
+    "version": "<incremented-version>",
+    "goal": {
+      "text": "<goal text>",
+      "criteria": ["<criterion>"]
+    },
+    "skills": [
+      {
+        "name": "<skill-name>",
+        "polarity": "generative|evaluative|regulative|procedural",
+        "phase": "pre-core|core|post-core|cross-phase",
+        "cascade_order": 1,
+        "changed": true,
+        "pko_anchor": {
+          "procedure": "pko:Procedure",
+          "step": "pko:Step",
+          "convergence_target": "<threshold>"
+        },
+        "artifact_contract": {
+          "input_from": "<skill-name>|goal:user-intent",
+          "output_to": "<skill-name>|goal:verification",
+          "provenance": "prov:wasDerivedFrom"
+        }
+      }
+    ],
+    "conflicts": [],
+    "complementarities": [],
+    "convergence": {
+      "criterion": "...",
+      "threshold": 0.7
+    }
+  },
+  "ontology_anchors": {
+    "pko": {"bundle": "pko:CompositeProcedure", "execution": "pko:ProcedureExecution"},
+    "dc": {"creator": "dcterms:creator", "created": "dcterms:created", "type": "bibo:Document"},
+    "prov": {"derivation_chain": [], "generation": []}
+  },
+  "recomposition_rationale": "Why this recomposition was performed and how it addresses goal delta or skill changes",
+  "changes": [
+    {
+      "skill": "<skill-name>",
+      "change_type": "goal_delta_driven|polarity_reclassification|phase_reassignment|cascade_reorder|new_conflict|resolved_conflict|new_complementarity|lost_complementarity|skill_added|skill_removed",
+      "goal_criterion_affected": "<which goal criterion this change addresses>",
+      "description": "What changed and why"
+    }
+  ]
+}
+```
+
+## Self-Improvement Loop Semantics
+
+This template is the "Act → Plan" bridge in the bundle's improvement kata:
+- **Act** (previous cycle): Evaluate convergence — discover goal_delta > 0
+- **Plan** (this cycle): Re-compose the bundle to reduce goal_delta
+- **Do** (next cycle): Execute the re-composed bundle
+- **Check** (next cycle): Re-evaluate convergence against goal
+
+This IS the PDCA loop at the composition level.
+
+## Constraints
+
+- Version must be incremented from the current manifest version.
+- The `changed` flag on each skill must be `true` only for skills that actually changed.
+- Goal-delta-driven changes must cite the specific unfulfilled criterion.
+- Every change must have a human-readable `description`.
+- Do not remove skills from the bundle unless explicitly asked OR they demonstrably don't contribute to goal achievement after 2 cycles.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

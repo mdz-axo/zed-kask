@@ -1,0 +1,60 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    plan_result: object
+    execute_result: object
+    verify_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: strangler-fig/strangler-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for strangler-fig migration cycles. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+Compute convergence for the migration cycle where 0 means migration step integrity is verified and no critical rollback blockers remain.
+
+Inputs:
+```json
+{
+  "plan_result": {{ plan_result | tojson }},
+  "execute_result": {{ execute_result | tojson }},
+  "verify_result": {{ verify_result | tojson }}
+}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means migration step integrity is verified and no critical rollback blockers remain.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (migration step integrity is verified and no critical rollback blockers remain). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

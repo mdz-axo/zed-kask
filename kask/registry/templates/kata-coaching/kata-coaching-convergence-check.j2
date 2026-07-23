@@ -1,0 +1,65 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    q1_result: object
+    q2_result: object
+    q3_result: object
+    q4_result: object
+    q5_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: kata-coaching/kata-coaching-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for kata-coaching cycles. #}
+{# learner_bot: {{ learner_bot }} #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1000
+thinking_budget = "off"
+
+Compute convergence where 0 means the coaching cycle has clear target/current gap framing, prioritized obstacle, concrete next experiment, and feedback timing.
+
+Input:
+```json
+{
+  "q1_result": {{ q1_result | tojson }},
+  "q2_result": {{ q2_result | tojson }},
+  "q3_result": {{ q3_result | tojson }},
+  "q4_result": {{ q4_result | tojson }},
+  "q5_result": {{ q5_result | tojson }}
+}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means the coaching cycle has clear target/current gap framing, prioritized obstacle, concrete next experiment, and feedback timing.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.10) }}
+
+## Convergence Method
+0 = fully converged (the coaching cycle has clear target/current gap framing, prioritized obstacle, concrete next experiment, and feedback timing). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed saturation detection",
+  "rationale": "short explanation",
+  "blockers": []
+}
+```

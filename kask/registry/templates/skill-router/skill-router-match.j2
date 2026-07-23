@@ -1,0 +1,174 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- match
+- rank
+- recommend
+- route
+- classify
+contract:
+  input:
+    task_description: string
+    task_context: string
+    skill_catalog: array
+    max_recommendations: number
+    epistemic_state: object
+  output:
+    recommendations: array
+    uncovered_capabilities: array
+    coverage_assessment: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: skill-router/skill-router-match.j2 #}
+{# goal: Match a task against the installed skill catalog and return ranked skill recommendations with fit scores. #}
+{# KnowAct — Skill routing: task → ranked existing skills #}
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill routing analyst. Given a task description and the installed skill catalog, rank skills by semantic fit and identify uncovered capabilities. You route tasks to EXISTING skills — you do not search for or create new skills (that is skill-discovery's job).
+
+## Task Description
+
+{{ task_description }}
+
+## Task Context
+
+{{ task_context }}
+
+{% if epistemic_state %}
+## Epistemic State (Optional)
+
+The calling agent has reported its epistemic state. Use this to boost trigger-alignment for certainty-finding skills.
+
+- **Confidence**: {{ epistemic_state.confidence }} (0.0–1.0)
+- **Uncertainty type**: {{ epistemic_state.uncertainty_type }}
+
+When confidence < 0.5, apply a **+0.20 boost** to the trigger-alignment dimension for any skill whose `when_to_use` mentions: uncertainty, confidence, low-certainty, perspective, non-obvious paths, ellipsis, gaps, calibration, or divergent exploration. This reflects that the agent is in an epistemic state where certainty-finding skills (metacognition, improv, zoom-out, falsifiability) are more relevant than task lexicon alone suggests. Clamp the boosted trigger-alignment to [0.0, 1.0].
+
+Map uncertainty_type to likely skill families:
+- `knowledge_gap` → falsifiability, diagnose, sequential-inquiry
+- `perspective_blind` → metacognition (Falstaffian rotation), improv (Riffing)
+- `context_loss` → zoom-out, codegraph
+- `conflict` → pragmatic-semantics, falsifiability, mcda
+{% endif %}
+
+## Skill Catalog
+
+These are the skills currently installed in the corpus:
+
+```json
+{{ skill_catalog | tojson }}
+```
+
+Each catalog entry has:
+- `name` — skill identifier
+- `description` — what the skill does
+- `template_type` — KnowAct / WordAct / RenderAct
+- `lexicon_terms` — vocabulary that signals skill relevance
+- `when_to_use` — trigger conditions for the skill
+
+## Matching Method
+
+For each candidate skill, compute a **fit_score** in [0.0, 1.0] across three dimensions:
+
+| Dimension | Weight | What to evaluate |
+|-----------|--------|------------------|
+| **Capability overlap** | 0.50 | Does the skill's description cover the task's core capability need? Full overlap = 1.0, partial = 0.5, none = 0.0. |
+| **Lexicon alignment** | 0.25 | Do the task description's key verbs/nouns overlap with the skill's `lexicon_terms`? Strong overlap = 1.0, moderate = 0.5, none = 0.0. |
+| **Trigger alignment** | 0.25 | Does the task match the skill's `when_to_use` trigger conditions? Direct match = 1.0, tangential = 0.5, no match = 0.0. |
+
+**Composite fit_score** = (capability × 0.50) + (lexicon × 0.25) + (trigger × 0.25).
+
+## Coverage Assessment
+
+Classify the overall coverage:
+
+| Assessment | Condition | Meaning |
+|------------|-----------|---------|
+| **full** | At least one skill has fit_score ≥ 0.80 | A well-matched skill exists |
+| **partial** | Best fit_score in [0.40, 0.79] | A skill partially covers the task; may need complement or extension |
+| **none** | Best fit_score < 0.40 | No installed skill covers this task — emit gap signal to skill-discovery |
+
+## Uncovered Capabilities
+
+If coverage is partial or none, identify specific capabilities the task requires that no installed skill provides. These are **gap signals** — format them for consumption by skill-discovery's detect-gap phase:
+
+```json
+[
+  {
+    "capability": "What the task needs that no skill provides",
+    "task_pattern": "The task pattern that exposes this gap",
+    "closest_skill": "name of the highest-fit skill, or null",
+    "gap_type": "coverage|feature|epistemic"
+  }
+]
+```
+
+- Use `coverage` when no skill addresses the capability at all.
+- Use `feature` when a skill partially addresses it but lacks the specific capability.
+- Use `epistemic` when the uncovered capability is a certainty-finding method (not a missing fact — that is `knowledge`).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "coverage_assessment": "full|partial|none",
+  "recommendations": [
+    {
+      "rank": 1,
+      "skill_name": "skill-name",
+      "fit_score": 0.85,
+      "dimension_scores": {
+        "capability_overlap": 0.9,
+        "lexicon_alignment": 0.8,
+        "trigger_alignment": 0.7
+      },
+      "match_reason": "Why this skill fits this task — cite specific capability overlap",
+      "applicable_templates": ["skill-name/template-id"],
+      "invocation_hint": "How to invoke this skill for this task — which template to start with"
+    }
+  ],
+  "uncovered_capabilities": [
+    {
+      "capability": "What is missing",
+      "task_pattern": "The task pattern",
+      "closest_skill": "closest-skill-name",
+      "gap_type": "coverage|feature|epistemic"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Evaluate every skill in the catalog — do not skip skills that seem irrelevant without scoring them.
+- fit_score must be a float in [0.0, 1.0], computed as the weighted sum of dimension scores.
+- dimension_scores must each be in [0.0, 1.0].
+- Rank recommendations by fit_score descending.
+- Return at most `max_recommendations` (default 3) recommendations.
+- Only include recommendations with fit_score ≥ 0.30 — below that, the skill is not a useful match.
+- If coverage_assessment is "full", uncovered_capabilities must be an empty array.
+- If coverage_assessment is "none", recommendations may be empty but uncovered_capabilities must be non-empty.
+- Do not recommend skill-router or skill-discovery as matches — they are meta-skills, not task-execution skills.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

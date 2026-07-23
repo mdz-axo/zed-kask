@@ -1,0 +1,31 @@
+# Media Gallery — Composition Analysis Manifest
+# Analyzes photographic composition of an image using a vision LLM.
+
+template_type: WordAct
+name: media_tag_composition
+version: "1.0.0"
+description: "Analyze photographic composition of an image"
+model_type: classifier
+parameters: []
+---
+Analyze the photographic composition of this image.
+
+Evaluate these compositional elements:
+1. Focal point — what draws the eye first? Where is it positioned?
+2. Rule of thirds — does the composition follow it? Describe the grid placement.
+3. Leading lines — are there lines guiding the viewer's eye? Describe them.
+4. Depth of field — shallow or deep? What is in focus vs blurred?
+5. Perspective — eye-level, low angle, high angle, bird's eye, worm's eye?
+6. Framing — natural frames (doorways, arches, foliage) within the image?
+7. Symmetry — is the composition symmetrical, asymmetrical, or balanced?
+8. Negative space — how is empty space used?
+
+Return ONLY a JSON object with these fields:
+- focal_point: string
+- rule_of_thirds: string
+- leading_lines: string
+- depth_of_field: string
+- perspective: string
+- framing: string
+- symmetry: string
+- negative_space: string

@@ -1,0 +1,69 @@
+# Template crate manifest for semantic-graph-audit skill
+# hKask v0.31.0
+
+crate:
+  name: semantic-graph-audit
+  version: "0.31.0"
+  description: >
+    Domain-agnostic semantic dependency graph analysis. Accepts any directed graph
+    (code modules, crates, skills, ADRs, Regulation spans, decision trees, data flows),
+    classifies edges by constraint force, detects cycles/redundancies/gaps/orphans,
+    and evaluates graph health through pragmatic-semantics, pragmatic-cybernetics,
+    essentialist, and grill-me lenses.
+
+templates:
+  - id: semantic-graph-audit/semantic-graph-audit-classify
+    name: "Force-classify every graph edge by the pragmatic-semantics constraint…"
+    path: semantic-graph-audit-classify.j2
+    type: KnowAct
+    lexicon_terms:
+      [classify, discriminate, map, anchor, trace]
+    description: >
+      Force-classify every graph edge by the pragmatic-semantics constraint hierarchy
+      (Prohibition > Guardrail > Guideline > Evidence > Hypothesis) with provenance
+      and a per-edge rationale. Produces classified_edges + a summary flagging
+      over-constraint (Prohibition used where Guideline would do).
+    generates_spans:
+      - hkask.template.semantic-graph-audit.classify
+
+  - id: semantic-graph-audit/semantic-graph-audit-analyze
+    name: "Evaluate graph health through four lenses: pragmatic-cybernetics…"
+    path: semantic-graph-audit-analyze.j2
+    type: KnowAct
+    lexicon_terms:
+      [analyze, evaluate, calibrate, audit, discriminate]
+    description: >
+      Evaluate graph health through four lenses: pragmatic-cybernetics (cycle 5-properties,
+      Ashby requisite variety, Good Regulator), essentialist (deletion test on
+      elements, surface count, pass-through trace), grill-me (5-level gap probe),
+      pragmatic-semantics (force coherence + OT conflict ranking). Produces
+      lens_evaluations + a synthesis.
+    generates_spans:
+      - hkask.template.semantic-graph-audit.analyze
+
+  - id: semantic-graph-audit/semantic-graph-audit-detect
+    name: "Detect structural pathologies from graph topology: cycles,…"
+    path: semantic-graph-audit-detect.j2
+    type: KnowAct
+    lexicon_terms:
+      [detect, audit, classify, isolate, verify]
+    description: >
+      Detect structural pathologies from graph topology: cycles, redundancies, gaps,
+      orphans, fan-in/out anomalies, and force/structure mismatches. Severity reflects
+      constraint force (a Prohibition cycle is critical). Produces structural_issues +
+      an issue_summary.
+    generates_spans:
+      - hkask.template.semantic-graph-audit.detect
+
+  - id: semantic-graph-audit/semantic-graph-audit-report
+    name: "Synthesize the classification, four-lens analysis, and structural…"
+    path: semantic-graph-audit-report.j2
+    type: KnowAct
+    lexicon_terms:
+      [evaluate, converge, calibrate, synthesize, verify]
+    description: >
+      Synthesize the classification, four-lens analysis, and structural detection into a
+      normalized graph-health convergence metric + a readable markdown report. The
+      convergence step (convergence_field points here). Threshold 0.15.
+    generates_spans:
+      - hkask.template.semantic-graph-audit.report

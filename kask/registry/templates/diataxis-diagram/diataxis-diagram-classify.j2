@@ -1,0 +1,76 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [classify, evaluate, orient, map, select]
+contract:
+  input:
+    target: string
+    hint: string
+  output:
+    diagram_type: string
+    diataxis_quadrant: string
+    source_files: array
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: diataxis-diagram/diataxis-diagram-classify.j2 #}
+{# KnowAct — Classify target for diagram generation #}
+{# hKask v0.31.0 #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "focused"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a diagram classification engine. You determine the correct Mermaid diagram type and Diataxis quadrant for a given target.
+
+## Target
+
+{{ target }}
+
+{% if hint %}
+## User Hint
+{{ hint }}
+{% endif %}
+
+## Diagram Type Selection
+
+Choose the single most appropriate diagram type. Not everything is a flowchart.
+
+| If the target is... | Use | Because |
+|---|---|---|
+| SQL schema files, CREATE TABLE statements, database entities | **erd** | Crow's Foot shows cardinality directly |
+| A function's control flow, decision tree, template cascade, pipeline | **flowchart** | Branches and paths are first-class |
+| An enum with lifecycle variants, state machine, status transitions | **state** | States and transitions are the domain, not an overlay |
+| Message passing, request/response chains, event propagation across services | **sequence** | Participants and message ordering are explicit |
+| Traits, structs, impl blocks — type hierarchies and composition | **class** | Inheritance and composition have dedicated UML syntax |
+
+**Heuristic:** If you see states named like Pending/Active/Completed → use state. If you see arrows between services with messages → use sequence. If you see boxes with true/false branches → use flowchart. If you see CREATE TABLE → use erd.
+
+## Diataxis Quadrant
+
+Classify which quadrant the diagram will serve:
+
+| Quadrant | Reader is... | Diagram should... |
+|---|---|---|
+| **reference** | Consulting facts | Be austere, complete, mirror code structure |
+| **explanation** | Reflecting on design | Show relationships, context, trade-offs |
+| **how-to** | Executing a task | Show the path, stay focused on the goal |
+| **tutorial** | Following a lesson | Be minimal, point out what to notice |
+
+Default to **reference** unless the user's intent suggests otherwise.
+
+## Output
+
+Return a JSON object:
+
+```json
+{
+  "diagram_type": "erd | flowchart | state | sequence | class",
+  "diataxis_quadrant": "reference | explanation | how-to | tutorial",
+  "source_files": ["path/to/schema.sql", ...],
+  "rationale": "One sentence explaining why this type and quadrant were chosen."
+}
+```

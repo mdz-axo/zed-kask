@@ -1,0 +1,133 @@
+# Structured Extraction Process Manifest
+# ℏKask v0.30.0 — Structured extraction as convergent PDCA
+
+manifest:
+  id: structured-extraction
+  category: skill
+  name: Structured Extraction
+  description: >
+    Convergent structured extraction process. Identifies entities, extracts
+    relations, maps data to schema, computes extraction convergence, and
+    iterates until coverage and unresolved-field risk are acceptable.
+  functional_role: flowdef
+  version: 0.30.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: source_text
+    type: string
+    required: true
+  - name: target_schema
+    type: object
+    required: true
+  - name: extraction_hints
+    type: array
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Identify entities in source text against target schema.
+    renderer: minijinja
+    template_ref: structured-extraction/identify-entities
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      source_text: "{{ source_text }}"
+      target_schema: "{{ target_schema }}"
+      extraction_hints: "{{ extraction_hints | default([]) }}"
+
+  - ordinal: 2
+    action: select
+    description: Extract semantic relations between identified entities.
+    renderer: minijinja
+    template_ref: structured-extraction/extract-relations
+    gas_cap: 4500
+    timeout_seconds: 60
+    input_mapping:
+      source_text: "{{ source_text }}"
+      entities: "{{ step_1_result.entities | default([]) }}"
+
+  - ordinal: 3
+    action: select
+    description: Map entities and relations to target schema.
+    renderer: minijinja
+    template_ref: structured-extraction/map-to-schema
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      source_text: "{{ source_text }}"
+      target_schema: "{{ target_schema }}"
+      entities: "{{ step_1_result.entities | default([]) }}"
+      relations: "{{ step_2_result.relations | default([]) }}"
+      unmapped_text: "{{ step_1_result.unmapped_text | default([]) }}"
+
+  - ordinal: 4
+    action: select
+    description: Compute normalized convergence metric for extraction cycle.
+    renderer: minijinja
+    template_ref: structured-extraction/structured-extraction-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      mapping_result: "{{ step_3_result }}"
+
+  - ordinal: 5
+    action: loop
+    description: Re-enter extraction cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: structured-extraction/identify-entities
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: structured-extraction/extract-relations
+      gas_budget: 4500
+    - resource: template
+      action: render
+      template_id: structured-extraction/map-to-schema
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: structured-extraction/structured-extraction-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: structured-extraction
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

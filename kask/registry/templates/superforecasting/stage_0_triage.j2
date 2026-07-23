@@ -1,0 +1,62 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- triage
+- classify
+- difficulty
+- goldilocks
+- predictable
+- unpredictable
+contract:
+  input:
+    forecasting_question: string
+    domain: string|null
+    time_horizon: string|null
+  output:
+    difficulty_level: string
+    goldilocks_zone: boolean
+    proceed_recommendation: boolean
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# goal: Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. #}
+You are a forecasting triage analyst. Your task is to evaluate whether a forecasting question is worth investing significant effort in.
+
+## Question to Evaluate
+{{ forecasting_question }}
+
+{% if domain %}
+Domain: {{ domain }}
+{% endif %}
+
+{% if time_horizon %}
+Time Horizon: {{ time_horizon }}
+{% endif %}
+
+## Triage Criteria
+
+Classify this question into one of three categories:
+
+1. **Clocklike** (Easy): Questions where simple rules of thumb or basic research can get you close to the correct answer. Low effort required.
+
+2. **Goldilocks Zone** (Just Right): Questions where deliberate effort and research will meaningfully improve accuracy, but the outcome is not dominated by pure chance. This is where forecasting effort pays off.
+
+3. **Cloudlike** (Unpredictable): Questions dominated by chaos, insufficient information, or inherent unpredictability. Even sophisticated models cannot beat random guessing.
+
+## Analysis
+
+Evaluate the question against these criteria:
+- Is there sufficient publicly available information to make an informed estimate?
+- Is the outcome determined by factors that can be analyzed and modeled?
+- Would additional research and decomposition likely improve accuracy?
+- Is the time horizon appropriate for meaningful analysis?
+
+## Output
+
+Respond with a JSON object containing:
+- difficulty_level: One of "clocklike", "goldilocks", or "cloudlike"
+- goldilocks_zone: boolean (true if difficulty_level is "goldilocks")
+- proceed_recommendation: boolean (recommend proceeding if in goldilocks zone)
+- rationale: Brief explanation of the classification decision

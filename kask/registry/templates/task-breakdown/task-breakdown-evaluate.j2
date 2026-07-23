@@ -1,0 +1,130 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- score
+- audit
+- calibrate
+- classify
+contract:
+  input:
+    tasks: array
+    dependency_graph: array
+    slices: array
+  output:
+    scores: object
+    weighted_total: number
+    refinement_directives: array
+    red_flags: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: task-breakdown/task-breakdown-evaluate.j2 #}
+{# Functional Role: KnowAct — Score the plan against six weighted criteria (CHECK) #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: scores, weighted_total, refinement_directives, red_flags #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a plan-quality evaluator. Score the task breakdown against six weighted criteria. Be honest — inflated scores produce worse plans, not better ones. Score each criterion from 0 (perfect) to 1 (severely deficient).
+
+## Tasks
+
+```json
+{{ tasks | tojson }}
+```
+
+## Slices
+
+```json
+{{ slices | tojson }}
+```
+
+{% if dependency_graph %}
+## Dependency Graph
+
+```json
+{{ dependency_graph | tojson }}
+```
+{% endif %}
+
+## Six Weighted Criteria
+
+| Criterion | Weight | 0 (perfect) | 1 (severely deficient) |
+|-----------|--------|-------------|------------------------|
+| Task sizing | 0.25 | All tasks XS–M; none L+; none touches >5 files | XL tasks present or L tasks un-decomposed |
+| Vertical-slice integrity | 0.20 | Every task is a vertical feature path | Horizontal layers present (build all X, then all Y) |
+| Acceptance-criteria specificity | 0.20 | Every AC is specific and testable | Vague ACs; "implement the feature"; >3 bullets or untestable |
+| Dependency ordering | 0.15 | Every task follows its dependencies; foundations first | A task precedes a task it depends on |
+| Checkpoint presence | 0.10 | Checkpoints between every major phase | No checkpoints between tasks |
+| Red-flag absence | 0.10 | No red flags (see below) | One or more red flags present |
+
+The weighted_total is the sum of (score x weight) across all six criteria, in [0,1].
+
+## Red Flags
+
+A plan has red flags if any of the following are true:
+- Implementation begins without a written task list.
+- A task says "implement the feature" without acceptance criteria.
+- A plan has no verification steps.
+- All tasks are XL-sized.
+- No checkpoints between tasks.
+- The dependency order is not considered.
+- A task title contains "and" (a sign it is two tasks).
+- A task touches more than ~5 files.
+
+## Refinement Directives
+
+For each criterion scored above 0.00, emit a specific, actionable refinement directive.
+Each directive must: name the criterion, state what is wrong, and describe the expected
+fix. Do not emit directives for criteria scored at 0.00.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "scores": {
+    "task_sizing": 0.0,
+    "vertical_slice_integrity": 0.0,
+    "ac_specificity": 0.0,
+    "dependency_ordering": 0.0,
+    "checkpoint_presence": 0.0,
+    "red_flag_absence": 0.0
+  },
+  "weighted_total": 0.0,
+  "refinement_directives": [
+    {
+      "criterion": "task_sizing",
+      "what_is_wrong": "Task t4 is XL and touches 9 files",
+      "expected_fix": "Split t4 into t4a (schema + migration) and t4b (API + tests)"
+    }
+  ],
+  "red_flags": ["specific red flag observed, or empty array if none"]
+}
+```
+
+## Constraints
+
+- Score each criterion independently from 0 to 1. Do not inflate scores.
+- The weighted_total is the sum of (score x weight); it must lie in [0,1].
+- Only emit refinement directives for criteria scored above 0.00.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

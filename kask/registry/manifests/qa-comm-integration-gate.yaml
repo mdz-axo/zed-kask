@@ -1,0 +1,100 @@
+# QA Communication Integration Gate — v0.31.0
+#
+# Verifies hkask-mcp-communication agent registry invariants through
+# the communication_contract.rs integration test suite.
+#
+# Open questions addressed:
+#   8.3  — hkask-communication now has 5 contract tests (resolved);
+#          this script provides regression protection
+#   ζ.1  — Cross-pod A2A protocol (future); current tests verify
+#          same-process agent registration/resolution
+#
+# Cybernetic feedback loop:
+#   Sensor → cargo test output for communication_contract
+#   Comparator → classify step evaluates registry integrity
+#   Actuator → terminal step reports PASS/FAIL
+#
+# Communication invariants (from communication_contract.rs):
+#   1. record_mapping stores WebID → UserID
+#   2. lookup_unregistered returns None
+#   3. deregister removes mapping
+#   4. deregister_nonexistent is idempotent
+#   5. record_mapping is idempotent
+#
+# Runner readiness: PARTIAL — run_command steps executable today;
+#   classify step requires QaScriptRunner.
+
+manifest:
+  id: qa-comm-integration-gate
+  category: qa-script
+  name: QA Comm Integration Gate
+  version: 0.31.0
+  visibility: Private
+  description: >
+    Verifies hkask-mcp-communication agent registry invariants through
+    the communication_contract.rs integration tests. Ensures agent
+    registration→resolution→deregistration cycle integrity.
+
+gas:
+  cap: 20000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
+steps:
+  # Step 1: Run communication contract tests
+  - ordinal: 1
+    action: run_command
+    command: "cargo test -p hkask-mcp-communication --test communication_contract -- --nocapture 2>&1 | tail -20"
+    description: "Run communication contract tests: agent registry record→resolve→deregister cycle"
+    retries: 0
+    branching:
+      success: 2
+      failure: 4
+
+  # Step 2: Classify the test output
+  # Requires QaScriptRunner — passes step 1 stdout + this description to the classifier.
+  - ordinal: 2
+    action: classify
+    classifier: qa-triage
+    description: "Test suite: hkask-mcp-communication contract tests. Verify agent registry integrity: record_mapping stores WebID→UserID, lookup_unregistered returns None, deregister removes mappings, both deregister_nonexistent and record_mapping are idempotent. All 5 contract tests passing indicates communication layer is functional for same-process agent coordination."
+    retries: 0
+    branching:
+      high_confidence: 3
+      medium_confidence: 3
+      low_confidence: 5
+      flake: 2
+      unparseable: 5
+      classifier_unavailable: 5
+
+  # Step 3: PASS — communication layer intact
+  - ordinal: 3
+    action: run_command
+    command: "echo '[QA:communication] PASS — agent registry contract tests verified (5/5)'"
+    description: "All communication contract tests pass: registry lifecycle verified"
+    retries: 0
+    terminal: true
+
+  # Step 4: Contract test failure
+  - ordinal: 4
+    action: run_command
+    command: "echo '[QA:communication] FAIL — contract tests failed. Agent registry or messaging types may be broken.'"
+    description: "Communication contract test failure — agent coordination may be compromised"
+    retries: 0
+    terminal: true
+
+  # Step 5: Classification low confidence / unparseable
+  - ordinal: 5
+    action: run_command
+    command: "echo '[QA:communication] WARN — classifier low confidence on test output. Manual review recommended.'"
+    description: "Classifier returned low confidence — manual review needed"
+    retries: 0
+    terminal: true
+
+ledger:
+  emit_spans: true
+  alert: qa.comm.integration

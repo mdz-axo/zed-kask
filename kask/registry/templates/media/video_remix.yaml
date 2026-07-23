@@ -1,0 +1,35 @@
+# Media Video — Remix FlowDef
+# Composite: clip + caption + GIF conversion.
+
+template_type: FlowDef
+name: media_video_remix
+version: "1.0.0"
+description: "Generate a remix: clip, add caption, convert to GIF"
+primary_model: "local/ffmpeg"
+parameters:
+  - name: video_url
+    type: string
+    required: true
+    description: "URL or path to the source video"
+  - name: start_sec
+    type: float
+    required: true
+    description: "Start time in seconds"
+  - name: end_sec
+    type: float
+    required: true
+    description: "End time in seconds"
+  - name: caption_text
+    type: string
+    required: false
+    description: "Caption text to overlay"
+input_type: video_url
+output_type: gif_url
+latency: sync
+cost_tier: free
+---
+# Video Remix Pipeline
+# Step 1: video_clip(start_sec, end_sec)
+# Step 2: video_add_caption(caption_text) [if caption_text provided]
+# Step 3: video_to_gif(clipped_output)
+# Step 4: Return GIF URL

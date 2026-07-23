@@ -1,0 +1,79 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- inventory
+- classify
+- map
+- assess
+- strategize
+contract:
+  input:
+    component_inventory: string
+    components: array
+  output:
+    components: array
+    evolution_distribution: object
+energy_cap: 5120
+visibility: Public
+---
+{# Template: platform-wardley-mapper/classify-evolution.j2 #}
+{# Functional Role: KnowAct — Classify components on the Wardley evolution axis #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: classified components with evolution stage and value chain position #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2500
+thinking_budget = "off"
+
+You are a Wardley mapper for hKask. Classify each component on the evolution axis and value chain.
+
+## Evolution Axis (Wardley)
+- **Genesis**: novel, uncertain, rapidly changing, unique to hKask
+- **Custom**: built for specific need, differentiated, emerging patterns
+- **Product**: stable, well-understood, rentable, documented
+- **Commodity**: utility, undifferentiated, should be bought not built
+
+## Value Chain (bottom → top)
+- **Infrastructure**: SQLite/SQLCipher, Caddy, Conduit
+- **Protocol**: MCP protocol, OCAP enforcement
+- **Platform Core**: Regulation, energy budgets, capability membranes
+- **Platform Services**: skill registry, curator, backup
+- **User-Facing**: REPL, agent pods, skills, templates
+- **Meta**: Platform Engineer userpod, kata coaching
+
+## Input
+```json
+{{ component_inventory | tojson }}
+```
+
+## Classification Rules
+- Components using industry standards (MCP, Ed25519) → Product/Commodity
+- Components unique to hKask's loyalty contract (Magna Carta, Regulation algedonic) → Product (strategic differentiator)
+- Components that are utilities with open-source equivalents → Commodity
+- Components still being designed (Platform Engineer userpod) → Genesis
+- Components that are stable but not yet standardized → Custom
+
+Return JSON only:
+```json
+{
+  "components": [
+    {
+      "name": "Regulation Algedonic Pathway",
+      "type": "platform_core",
+      "evolution": "Product",
+      "value_chain_level": "Platform Core",
+      "rationale": "Strategic differentiator — loyalty-anchored self-regulation. No commodity equivalent.",
+      "should_commoditize": false
+    }
+  ],
+  "evolution_distribution": {
+    "Genesis": 0,
+    "Custom": 0,
+    "Product": 0,
+    "Commodity": 0
+  }
+}
+```

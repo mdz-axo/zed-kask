@@ -1,0 +1,189 @@
+# Wardley Mapper — Generalized strategic mapping skill
+# ℏKask v0.31.0 — Strategy: component evolution mapping for any system
+# Functional Role: FlowDef (process orchestration)
+# Steps: inventory_components, classify_evolution, map_value_chain, identify_movement, synthesize_recommendations, convergence_check
+
+manifest:
+  id: wardley-mapper
+  category: skill
+  name: Wardley Mapper
+  description: >
+    Generic Wardley mapping methodology. Given a set of components and their
+    relationships, inventories them, classifies each on the evolution axis
+    (Genesis → Custom → Product → Commodity), maps them on the value chain
+    (visibility vs evolution), identifies strategic movement (what to
+    commoditize, invest in, divest, or build), and produces a Wardley map
+    with recommendations. Applicable to any system — software platforms,
+    business capabilities, technology stacks.
+
+    Per Simon Wardley's methodology: poor situational awareness kills
+    platforms. This skill builds the map that prevents strategic blindness.
+
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_5_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 75000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: target_system
+    type: string
+    required: true
+    description: Description of the system to map (software platform, business capability, technology stack, etc.).
+  - name: component_inventory
+    type: string
+    required: false
+    description: Pre-computed component inventory (JSON). If not provided, the skill enumerates from the target_system description.
+  - name: previous_map
+    type: string
+    required: false
+    description: Previous Wardley Map for movement/drift detection.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Inventory all components in the target system. For each: name, type,
+      dependencies, and description. Categories: infrastructure, platform
+      services, user-facing capabilities, conceptual components.
+    renderer: minijinja
+    template_ref: wardley-mapper/inventory-components
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      target_system: "{{ target_system }}"
+      component_inventory: "{{ component_inventory | default('') }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Classify each component on the Wardley evolution axis:
+      Genesis (novel), Custom (bespoke), Product (rentable), Commodity
+      (utility). Criteria: maturity, adoption, standardization, differentiation.
+    renderer: minijinja
+    template_ref: wardley-mapper/classify-evolution
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      components: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Map components on the value chain. Y-axis: visibility to user
+      (top = user-facing, bottom = infrastructure). X-axis: evolution stage.
+      Each component gets (x, y) coordinates and dependency links.
+    renderer: minijinja
+    template_ref: wardley-mapper/map-value-chain
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      classified_components: "{{ step_2_result }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Identify movement and strategic implications: what to commoditize,
+      what to keep at Product, what's over-commoditized, what's missing,
+      and drift from a previous map.
+    renderer: minijinja
+    template_ref: wardley-mapper/identify-movement
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      current_map: "{{ step_3_result }}"
+      previous_map: "{{ previous_map | default('') }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Synthesize strategic recommendations: commoditization targets,
+      investment priorities, divestment candidates, ecosystem plays,
+      and alignment check. Prioritized by impact, specific, traceable.
+    renderer: minijinja
+    template_ref: wardley-mapper/synthesize-recommendations
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      movement_analysis: "{{ step_4_result }}"
+      current_map: "{{ step_3_result }}"
+
+  - ordinal: 6
+    action: select
+    description: >
+      Compute convergence metric. Checks all components classified,
+      map generated, movement identified, recommendations actionable.
+    renderer: minijinja
+    template_ref: wardley-mapper/convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      recommendations: "{{ step_5_result }}"
+
+  - ordinal: 7
+    action: loop
+    gas_cap: 200
+    timeout_seconds: 10
+    description: Re-enter cycle if convergence not met.
+    input_mapping:
+      loop_target: 1
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 2
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: wardley-mapper/inventory-components
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: wardley-mapper/classify-evolution
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: wardley-mapper/map-value-chain
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: wardley-mapper/identify-movement
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: wardley-mapper/synthesize-recommendations
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: wardley-mapper/convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: wardley-mapper
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

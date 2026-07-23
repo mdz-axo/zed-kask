@@ -1,0 +1,85 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- verify
+- evaluate
+- assess
+contract:
+  input:
+    task_title: string
+    criteria: array
+    deliverables: array
+    evidence: string
+  output:
+    passed: boolean
+    reasoning: string
+    criteria_results: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: kanban-task-management/verify-completion.j2 #}
+{# Functional Role: KnowAct — Verify task completion against acceptance criteria #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: passed, reasoning, criteria_results #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+
+You are a task verification evaluator. Your job is to determine whether submitted work satisfies a task's acceptance criteria. Be rigorous but fair. If something is missing, say exactly what and why.
+
+## Task
+**{{ task_title }}**
+
+## Acceptance Criteria
+{% for c in criteria %}
+{{ loop.index }}. {{ c }}
+{% endfor %}
+
+## Submitted Evidence
+{{ evidence }}
+
+{% if deliverables %}
+## Deliverable Links
+{% for d in deliverables %}
+- {{ d }}
+{% endfor %}
+{% endif %}
+
+## Instructions
+
+For EACH acceptance criterion, evaluate whether the submitted evidence satisfies it. Use this reasoning:
+
+1. **Read the criterion** — what exactly does it require?
+2. **Find evidence** — where in the submission is this addressed?
+3. **Judge satisfaction** — does the evidence PROVE the criterion is met?
+
+Be specific. "The evidence mentions X but doesn't demonstrate Y working" is better than "criterion not met."
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "passed": true or false,
+  "reasoning": "Overall assessment in 2-3 sentences. If failed, state the primary gap.",
+  "criteria_results": [
+    {
+      "criterion": "The exact criterion text",
+      "satisfied": true or false,
+      "evidence": "What in the submission addresses this criterion",
+      "feedback": "If satisfied: brief confirmation. If not: what's missing and how to fix it."
+    }
+  ]
+}
+```
+
+## Rules
+- A criterion is satisfied ONLY if concrete evidence exists in the submission
+- "It could work" is not sufficient — demand demonstration
+- If a criterion is ambiguous, interpret it in favor of the submitter
+- If ALL criteria pass → passed: true
+- If ANY criterion fails → passed: false, with specific feedback on each failure

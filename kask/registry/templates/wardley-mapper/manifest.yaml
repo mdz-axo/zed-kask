@@ -1,0 +1,75 @@
+# Template crate manifest for wardley-mapper skill
+# hKask v0.31.0 — Generalized Wardley mapping for any system
+
+crate:
+  name: wardley-mapper
+  version: "0.31.0"
+  description: >
+    Generic Wardley mapping methodology. Given a set of components and their
+    relationships, inventories them, classifies each on the evolution axis
+    (Genesis → Custom → Product → Commodity), maps them on the value chain
+    (visibility vs evolution), identifies strategic movement (what to
+    commoditize, invest in, divest, or build), and produces a Wardley map
+    with recommendations. Applicable to any system — software platforms,
+    business capabilities, technology stacks.
+
+templates:
+  - id: wardley-mapper/inventory-components
+    name: "Inventory all components in a target system"
+    path: inventory-components.j2
+    type: KnowAct
+    lexicon_terms: [inventory, enumerate, discover, component, dependency]
+    description: >
+      Inventory all components in a target system. Enumerates every component
+      with name, type, dependencies, and description. Exhaustive — missing
+      components create map blind spots.
+
+  - id: wardley-mapper/classify-evolution
+    name: "Classify each component on the Wardley evolution axis (Genesis,…"
+    path: classify-evolution.j2
+    type: KnowAct
+    lexicon_terms: [classify, assess, evolution, maturity, standardize]
+    description: >
+      Classify each component on the Wardley evolution axis (Genesis, Custom,
+      Product, Commodity) using maturity, adoption, standardization, and
+      differentiation criteria.
+
+  - id: wardley-mapper/map-value-chain
+    name: "Place each classified component on the value chain map (Y:…"
+    path: map-value-chain.j2
+    type: KnowAct
+    lexicon_terms: [map, position, value_chain, coordinate, link]
+    description: >
+      Place each classified component on the value chain map (Y: visibility,
+      X: evolution) with coordinates and dependency links. Generates a Mermaid
+      quadrant chart.
+
+  - id: wardley-mapper/identify-movement
+    name: "Identify strategic movement: what to commoditize, what to keep at…"
+    path: identify-movement.j2
+    type: KnowAct
+    lexicon_terms: [movement, commoditize, invest, divest, drift]
+    description: >
+      Identify strategic movement: what to commoditize, what to keep at
+      Product, what's over-commoditized, what's missing, and drift from a
+      previous map.
+
+  - id: wardley-mapper/synthesize-recommendations
+    name: "Synthesize actionable strategic recommendations (commoditize, invest,…"
+    path: synthesize-recommendations.j2
+    type: KnowAct
+    lexicon_terms: [recommend, prioritize, strategize, align, act]
+    description: >
+      Synthesize actionable strategic recommendations (commoditize, invest,
+      divest, ecosystem, alignment) from the movement analysis and map.
+      Prioritized by impact, specific, traceable to components.
+
+  - id: wardley-mapper/convergence-check
+    name: "Compute convergence metric for the Wardley mapping PDCA cycle"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, verify, calibrate, complete]
+    description: >
+      Compute convergence metric for the Wardley mapping PDCA cycle. Checks
+      all components classified, map complete, movement identified, and
+      recommendations actionable.

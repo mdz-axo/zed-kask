@@ -1,0 +1,14 @@
+# Infrastructure config manifest for registry
+# hKask v0.28.0
+# This directory contains registry selector configuration.
+# Not a skill template crate — no [inference] .j2 templates.
+
+infrastructure:
+  name: registry
+  version: "0.28.0"
+  description: >
+    Template registry selector configuration. Maps template lookup requests
+    to registry crate paths and version resolution.
+  role: config
+  contains:
+    - selectors/

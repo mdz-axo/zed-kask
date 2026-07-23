@@ -1,0 +1,103 @@
+# QA Media Server Contract Gate — v0.31.0
+#
+# Verifies hkask-mcp-media: unit tests (26 tests) + gallery roundtrip
+# (gallery_status → gallery_organize → gallery_status verify).
+#
+# Test surface:
+#   - 26 unit tests via cargo test (run_command)
+#   - gallery_status + gallery_organize MCP dispatch (mcp_tool)
+#   - classify step triages failures via Gemma 4 26B
+#
+# Runner readiness: EXECUTABLE — mcp_tool dispatch is wired.
+
+manifest:
+  id: qa-media-contract-gate
+  category: qa-script
+  name: QA Media Server Contract Gate
+  version: 0.31.0
+  visibility: Public
+  description: >
+    Verifies hkask-mcp-media integrity: 26 unit tests plus gallery
+    roundtrip (gallery_status → gallery_organize → gallery_status)
+    via MCP dispatch. Media server has the largest tool surface (36 tools).
+
+gas:
+  cap: 25000
+  hard_limit: true
+
+steps:
+  # Step 1: Unit tests
+  - ordinal: 1
+    action: run_command
+    command: "cargo test -p hkask-mcp-media 2>&1 | tail -20"
+    branching:
+      success: 2
+      failure: 9
+
+  # Step 2: gallery_status — verify server is alive, gallery path exists
+  - ordinal: 2
+    action: mcp_tool
+    tool_name: gallery_status
+    tool_params: "{}"
+    branching:
+      success: 3
+      failure: 8
+
+  # Step 3: gallery_organize — index the gallery directory
+  - ordinal: 3
+    action: mcp_tool
+    tool_name: gallery_organize
+    tool_params: '{"path":"/tmp/hkask-qa-media-gallery","mode":"read-only","recursive":false,"auto_analyze":false}'
+    branching:
+      success: 4
+      failure: 8
+
+  # Step 4: gallery_status again — verify gallery was populated
+  - ordinal: 4
+    action: mcp_tool
+    tool_name: gallery_status
+    tool_params: "{}"
+    branching:
+      success: 5
+      failure: 8
+
+  # Step 5: Classify results
+  - ordinal: 5
+    action: classify
+    classifier: qa-triage
+    description: "Test suite: hkask-mcp-media gallery contract. Verified: (1) 26 unit tests pass, (2) gallery_status returns liveness info, (3) gallery_organize indexes directory, (4) gallery_status after organize confirms gallery is populated. Media server is the largest MCP surface (36 tools)."
+    branching:
+      high_confidence: 6
+      medium_confidence: 6
+      low_confidence: 7
+      flake: 5
+      unparseable: 7
+      classifier_unavailable: 7
+
+  # Step 6: PASS
+  - ordinal: 6
+    action: run_command
+    command: "echo '[QA:media] PASS — unit tests (26/26) + gallery roundtrip verified'"
+    terminal: true
+
+  # Step 7: WARN — classifier uncertain
+  - ordinal: 7
+    action: run_command
+    command: "echo '[QA:media] WARN — classifier uncertain. Manual review recommended.'"
+    terminal: true
+
+  # Step 8: MCP dispatch failure
+  - ordinal: 8
+    action: run_command
+    command: "echo '[QA:media] FAIL — gallery MCP dispatch failed. Media server may not be running.'"
+    terminal: true
+
+  # Step 9: Unit test failure
+  - ordinal: 9
+    action: run_command
+    command: "echo '[QA:media] FAIL — unit tests failed. Media server crate has regressions.'"
+    terminal: true
+
+ledger:
+  emit_spans: true
+  alert: qa.media.contract

@@ -1,0 +1,67 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- delegate
+- configure
+- assess
+contract:
+  input:
+    task: object
+    available_skills: array
+    available_tool_servers: array
+  output:
+    delegation_level: string
+    delegated_skills: array
+    memory_scope: string
+    tool_servers: array
+    gas_budget: integer
+    timeout_seconds: integer
+energy_cap: 3072
+visibility: Public
+---
+{# Template: kanban-task-delegation/configure-spawn.j2 #}
+{# Functional Role: KnowAct — Configure a consent-mediated agent spawn for one kanban task #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: delegation_level, delegated_skills, memory_scope, tool_servers, gas_budget, timeout_seconds #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = 3072
+
+You are a kanban task delegation planner. Configure the minimum capable sub-userpod for this single task. Delegation is consent-mediated: recommend a configuration; do not claim that an agent has been spawned.
+
+## Task
+{{ task | tojson }}
+
+## Available Skills
+{{ available_skills | tojson }}
+
+## Available Tool Servers
+{{ available_tool_servers | tojson }}
+
+## Configuration Rules
+
+- Choose `minimal` for focused, low-risk work with few dependencies; `standard` for normal implementation or analysis; `maximal` only when the task genuinely requires broad context or multiple coordinated capabilities.
+- Delegate only skills and tool servers necessary to satisfy the task's acceptance criteria.
+- Use `none`, `episodic`, or `full` memory scope. Prefer the narrowest scope that provides the task's needed context.
+- Set a bounded gas budget and timeout appropriate to the estimated work. Do not exceed the task's needs.
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "delegation_level": "minimal|standard|maximal",
+  "delegated_skills": ["available skill name"],
+  "memory_scope": "none|episodic|full",
+  "tool_servers": ["available tool server name"],
+  "gas_budget": 0,
+  "timeout_seconds": 0,
+  "rationale": "Brief explanation tying every selected capability to a task requirement"
+}
+```
+
+This output is a proposed spawn configuration. It must contain no hidden capabilities, credentials, or parameters.

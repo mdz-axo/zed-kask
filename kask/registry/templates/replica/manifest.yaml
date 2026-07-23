@@ -1,0 +1,41 @@
+# Template crate manifest for replica skill
+# hKask v0.28.0
+
+crate:
+  name: replica
+  version: "0.28.0"
+  description: >
+    Academic author replica pipeline. Discovers an author's works across
+    search databases, extracts recurring concepts and entities, and infers
+    methodological patterns from representative passages.
+
+templates:
+  - id: replica/discovery-corpus
+    name: "Generate a corpus configuration YAML from discovered academic works…"
+    path: discovery-corpus.j2
+    type: KnowAct
+    lexicon_terms: [catalog, document, synthesize]
+    description: >
+      Generate a corpus configuration YAML from discovered academic works
+      for an author, organizing works by source with optional foundational
+      rules, entities, and inferred methods.
+
+  - id: replica/extract-concepts
+    name: "Extract key concepts, places, and events from academic paper metadata…"
+    path: extract-concepts.j2
+    type: KnowAct
+    lexicon_terms: [extract, classify, distill]
+    description: >
+      Extract key concepts, places, and events from academic paper metadata
+      with semantic deduplication. Identifies recurring themes across
+      an author's body of work.
+
+  - id: replica/infer-methods
+    name: "Infer methodological and stylistic patterns from representative…"
+    path: infer-methods.j2
+    type: KnowAct
+    lexicon_terms: [infer, recognize, analyze]
+    description: >
+      Infer methodological and stylistic patterns from representative
+      passages of an author's work. Produces method descriptions with
+      optional stylometric signal thresholds.

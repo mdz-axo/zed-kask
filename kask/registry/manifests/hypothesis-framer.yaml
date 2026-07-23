@@ -1,0 +1,179 @@
+# Hypothesis Framer Process Manifest
+# ℏKask v0.30.0 — FINER + PICO research framing as convergent PDCA
+
+manifest:
+  id: hypothesis-framer
+  category: skill
+  name: Hypothesis Framer
+  description: >
+    Convergent research framing process. Evaluates broad topics against FINER
+    criteria (Feasible, Interesting, Novel, Ethical, Relevant), structures
+    questions via PICO (Population, Intervention, Comparison, Outcome),
+    formulates testable hypotheses with null hypothesis derivation, operationalizes
+    into aims and objectives with alignment verification, computes convergence,
+    and iterates until the question-hypothesis-aims chain is coherent and
+    decision-ready.
+  functional_role: flowdef
+  version: 0.30.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  # 0.05 — "decision-ready" band: research framing must be near-zero-defect (FINER
+  # compliant, PICO-complete, testable, aims aligned) before committing to a study.
+  # Tighter than the 0.15 "maximally correct" band used by generative skills, because
+  # a flawed framing invalidates everything downstream of it.
+  threshold: 0.05
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: broad_topic
+    type: string
+    required: true
+  - name: domain
+    type: string
+    required: true
+  - name: research_context
+    type: string
+    required: false
+  - name: question_hint
+    type: string
+    required: false
+  - name: population_hints
+    type: string
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Apply FINER criteria to evaluate and refine the broad research topic
+      into a well-formed research question. Assess feasibility, interest,
+      novelty, ethics, and relevance. Produce per-dimension scores with
+      rationale and refinement suggestions.
+    renderer: minijinja
+    template_ref: hypothesis-framer/finer-evaluate
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      broad_topic: "{{ broad_topic }}"
+      domain: "{{ domain }}"
+      research_context: "{{ research_context | default('') }}"
+      question_hint: "{{ question_hint | default('') }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Apply PICO framework to structure the refined research question.
+      Identify Population characteristics, Intervention/exposure,
+      Comparison/control, and Outcome measures. Produce a structured
+      question and completeness assessment.
+    renderer: minijinja
+    template_ref: hypothesis-framer/pico-structure
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      research_question: "{{ step_1_result.research_question | default('') }}"
+      domain: "{{ domain }}"
+      finer_result: "{{ step_1_result | default({}) }}"
+      population_hints: "{{ population_hints | default('') }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Single cognitive act: derive a testable hypothesis, formulate the null
+      hypothesis, classify type, operationalize into research aims and
+      objectives, assess testability against the specified objectives, verify
+      five-link alignment, and recheck feasibility. Merged step — because you
+      cannot assess testability without knowing the objectives.
+    renderer: minijinja
+    template_ref: hypothesis-framer/hypothesis-operationalize
+    gas_cap: 8000
+    timeout_seconds: 90
+    input_mapping:
+      structured_question: "{{ step_2_result.structured_question | default('') }}"
+      pico_elements: "{{ step_2_result | default({}) }}"
+      domain: "{{ domain }}"
+      finer_result: "{{ step_1_result | default({}) }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Compute normalized convergence metric for hypothesis-framer cycle.
+      Evaluates FINER compliance, PICO completeness, hypothesis coherence,
+      and aims alignment. Hypothesis coherence and aims alignment are
+      both evaluated from the merged operationalize step result. Returns
+      convergence_metric plus blockers.
+    renderer: minijinja
+    template_ref: hypothesis-framer/hypothesis-framer-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      finer_result: "{{ step_1_result }}"
+      pico_result: "{{ step_2_result }}"
+      operationalize_result: "{{ step_3_result }}"
+      prior_metric: "{{ prior_metric | default(null) }}"
+
+  - ordinal: 5
+    action: loop
+    description: >
+      Re-enter hypothesis-framer cycle if convergence is not met. NOTE: FINER (step 1)
+      is skipped on re-entry — the topic has already been evaluated as FINER-viable on
+      the first pass; re-running it every iteration is wasteful (mirrors superforecasting's
+      triage-skip). PICO (step 2) and operationalize (step 3) are where blockers live, and
+      finer_result persists in context for operationalize to read. If FINER itself is the
+      blocker (a dimension < 4), the loop cannot fix it -> escalate to human. The prior
+      iteration's convergence_metric is carried forward so the convergence check's
+      materiality guard can detect a stable-but-unconverged framing.
+    input_mapping:
+      loop_target: 2
+      prior_metric: "{{ step_4_result.convergence_metric }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: hypothesis-framer/finer-evaluate
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: hypothesis-framer/pico-structure
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: hypothesis-framer/hypothesis-operationalize
+      gas_budget: 8000
+    - resource: template
+      action: render
+      template_id: hypothesis-framer/hypothesis-framer-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: hypothesis-framer
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

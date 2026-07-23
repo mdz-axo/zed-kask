@@ -1,0 +1,88 @@
+# Triple Extractor — defers to the canonical classifier model for semantic triple generation
+# Used by: kask embed-corpus (triple extraction pass, after section_type)
+# Prompting: Few-Shot (3-shot) with hKask-domain examples.
+#   Martin et al. (arXiv:2603.29878): Few-Shot is the dominant strategy,
+#   lifting F1 from <30% (Zero-Shot) to 99%+ across all tested models.
+# Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
+#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   The `model:` field below is intentionally empty; ClassifierConfig::from_def
+#   fills it from the canonical path and strips the DI/ router prefix.
+# Provider: DeepInfra (cloud API, OpenAI-compatible)
+#
+# Rationale: Martin et al. (arXiv:2603.29878) evaluated LLMs for RDF triple
+# extraction and found Few-Shot learning is the dominant strategy:
+#   Llama 99.35% | Qwen 99.22% | NuExtract 98.47% | Gemma 94.81%
+# Qwen3-235B-A22B-Instruct pricing on DeepInfra: ~$0.07/$0.10 per 1M tokens.
+#
+# Extracts structured semantic data from each passage:
+#   topic, concepts, entities, relationships, primary_dimension, quality_flags
+# These become metadata triples in the embedding store, enabling semantic
+# queries beyond string-matching.
+#
+# diverging fields annotated [A:... B:...]). No Jaccard scoring or drift detection.
+classifier:
+  name: triple-extractor
+  model: ""
+  provider: deepinfra
+  concurrency: 150
+  timeout_secs: 30
+
+  system_prompt: >
+    Extract structured information from this technical documentation passage.
+    Return ONLY valid JSON, no commentary. Use consistent terminology and
+    prefer specific over generic labels.
+
+    Examples:
+
+    Passage: "The Regulation uses algedonic signals to detect variety deficits
+    and escalate to the Curator when thresholds are breached. Each signal
+    carries a severity level and a target agent ID."
+    {"topic":"Regulation algedonic signaling for variety deficit detection",
+    "concepts":["algedonic signals","variety deficit","escalation threshold"],
+    "entities":["Regulation","Curator"],
+    "relationships":["Regulation produces algedonic signals for variety deficits",
+    "signals escalate to Curator on threshold breach"],
+    "primary_dimension":"Gentle",
+    "quality_flags":["precise","clear","actionable"]}
+
+    Passage: "OCAP delegation tokens enforce Principle 4: every capability
+    access requires an explicit, attenuating, unforgeable token. Tokens are
+    created by capability grants and verified at each use boundary."
+    {"topic":"OCAP delegation tokens for capability access control",
+    "concepts":["OCAP","delegation token","capability grant",
+    "attenuation"],
+    "entities":["Principle 4"],
+    "relationships":["OCAP tokens enforce P4 clear boundaries",
+    "tokens are attenuating and unforgeable",
+    "capability grants create delegation tokens"],
+    "primary_dimension":"Lovelace",
+    "quality_flags":["precise","authoritative"]}
+
+    Passage: "Templates follow a KnowAct contract pattern: input types,
+    output types, and an energy cap are declared in a frontmatter block.
+    The contract is verified at render time against the provided context."
+    {"topic":"KnowAct template contract pattern with energy caps",
+    "concepts":["KnowAct","template contract","energy cap",
+    "frontmatter"],
+    "entities":[],
+    "relationships":["contract declares input/output types and energy cap",
+    "contract is verified at render time against context"],
+    "primary_dimension":"Hopper",
+    "quality_flags":["clear","well_structured"]}
+
+    Primary dimension meanings:
+    - Gentle: agent-correctness, actionable, unambiguous
+    - Schriver: findability, scannable, well-structured
+    - Hopper: accessibility, comprehensible, plain language
+    - Lovelace: precision, verifiable, rigorous
+
+    Quality flags: clear, actionable, verbose, vague, well_structured,
+    needs_example, precise, accessible, authoritative, outdated.
+
+  base_url: https://api.deepinfra.com/v1/openai/chat/completions
+  api_key_env: DI_API_KEY
+
+  temperature: 0.0
+  max_tokens: 300
+
+  fallback_category: Statement

@@ -1,0 +1,55 @@
+# Template crate manifest for platform-portability-verifier skill
+# hKask v0.31.0
+
+crate:
+  name: platform-portability-verifier
+  version: "0.31.0"
+  description: >
+    Portability verification. Executes backup export, verifies backup integrity,
+    validates importability, and produces a structured verification report.
+    Operationalizes P1 (User Sovereignty): data is proven portable, not claimed.
+
+templates:
+  - id: platform-portability-verifier/execute-backup
+    name: "Execute backup export for a target pod"
+    path: execute-backup.j2
+    type: KnowAct
+    lexicon_terms: [execute, backup, export, retrieve, verify]
+    description: >
+      Execute backup export for a target pod. Produces encrypted SQLCipher
+      archive. Provides guidance for the agent to run backup commands.
+
+  - id: platform-portability-verifier/verify-integrity
+    name: "Verify backup integrity: file existence, SQLCipher header, record…"
+    path: verify-integrity.j2
+    type: KnowAct
+    lexicon_terms: [verify, validate, check, compare, audit]
+    description: >
+      Verify backup integrity: file existence, SQLCipher header, record counts,
+      checksums, encryption validity. Classifies each check as pass/fail.
+
+  - id: platform-portability-verifier/simulate-import
+    name: "Simulate or execute import verification on a disposable hKask instance"
+    path: simulate-import.j2
+    type: KnowAct
+    lexicon_terms: [import, simulate, test, validate, restore]
+    description: >
+      Simulate or execute import verification on a disposable hKask instance.
+      Validates full portability: all records preserved, no corruption.
+
+  - id: platform-portability-verifier/synthesize-report
+    name: "Synthesize portability verification into a structured report with…"
+    path: synthesize-report.j2
+    type: KnowAct
+    lexicon_terms: [synthesize, summarize, structure, report, assess]
+    description: >
+      Synthesize portability verification into a structured report with
+      per-check status, overall verdict, and recommendations.
+
+  - id: platform-portability-verifier/convergence-check
+    name: "Compute normalized convergence metric for portability verification…"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for portability verification PDCA cycles.

@@ -1,0 +1,173 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [generate, compose, render, structure, format]
+contract:
+  input:
+    diagram_type: string
+    entities: array
+    relationships: array
+    refinement_directives: array
+    extraction_notes: string
+  output:
+    mermaid_source: string
+    entity_count: integer
+    relationship_count: integer
+    conventions_applied: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: diataxis-diagram/diataxis-diagram-generate.j2 #}
+{# KnowAct — GENERATE: render extracted entities into Mermaid syntax #}
+{# hKask v0.31.0 #}
+{# Anchored in https://mermaid.js.org/ syntax reference #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a Mermaid diagram renderer. Convert extracted entities and relationships into valid, well-formatted Mermaid syntax. Apply type-specific conventions. Respect Zed's rendering constraints.
+
+## Diagram Type: {{ diagram_type }}
+
+## Extracted Data
+
+**Entities:**
+{{ entities | tojson(indent=2) }}
+
+**Relationships:**
+{{ relationships | tojson(indent=2) }}
+
+{% if refinement_directives %}
+## Refinement Directives (from previous evaluation)
+{% for directive in refinement_directives %}
+- {{ directive }}
+{% endfor %}
+{% endif %}
+
+{% if extraction_notes %}
+## Extraction Notes
+{{ extraction_notes }}
+{% endif %}
+
+---
+
+{% if diagram_type == "erd" %}
+## ERD Syntax Rules
+
+Mermaid erDiagram reference: https://mermaid.js.org/syntax/entityRelationshipDiagram.html
+
+1. Open with `erDiagram`
+2. Define each table with its columns:
+   ```
+   table_name {
+     TYPE column_name PK|FK|UK "comment"
+     TYPE column_name
+   }
+   ```
+3. Declare relationships using Crow's Foot notation after all table definitions:
+   - `||--||` one to one
+   - `||--o{` one to many
+   - `}o--o{` many to many
+   - `||--o|` one to zero or one
+4. Relationship syntax: `TableA ||--o{ TableB : "label"`
+5. Column types should match SQL source (TEXT, INTEGER, REAL, BLOB)
+6. Label PK, FK, UK annotations on key columns
+7. Relationship labels should use column names (e.g., `"wallet_id"`, not `"has"`)
+
+{% elif diagram_type == "flowchart" %}
+## Flowchart Syntax Rules
+
+Mermaid flowchart reference: https://mermaid.js.org/syntax/flowchart.html
+
+1. Open with `flowchart TD` (top-down) or `flowchart LR` (left-right for pipelines)
+2. Node shapes:
+   - `A[rectangle]` — action or process
+   - `B{rhombus}` — decision or branch point
+   - `C([rounded])` — start or end
+   - `D[(cylinder)]` — data or database
+   - `E[[subroutine]]` — external call or predefined process
+3. Edge labels: `A -->|Yes| B`, `A -->|No| C`
+4. Use `subgraph Name ... end` to group related nodes
+5. Node IDs must be unique alphanumeric identifiers
+6. Labels ≤ 40 characters — use short, descriptive names
+7. `flowchart TD` is preferred over LR for Zed's narrow sidebar renderer
+
+{% elif diagram_type == "state" %}
+## State Diagram Syntax Rules
+
+Mermaid stateDiagram reference: https://mermaid.js.org/syntax/stateDiagram.html
+
+1. Open with `stateDiagram-v2`
+2. `[*]` for start and end states
+3. Transition syntax: `StateA --> StateB : trigger_or_label`
+4. Composite states: `state CompositeName { ... }`
+5. Fork: `state fork_name <<fork>>` followed by multiple outgoing transitions
+6. Join: `state join_name <<join>>` preceded by multiple incoming transitions
+7. Notes: `note left of StateName : annotation text`
+8. State names should be short (≤ 30 chars) — camelCase or PascalCase from source
+9. Transition labels should name the trigger function or condition
+
+{% elif diagram_type == "sequence" %}
+## Sequence Diagram Syntax Rules
+
+Mermaid sequenceDiagram reference: https://mermaid.js.org/syntax/sequenceDiagram.html
+
+1. Open with `sequenceDiagram`
+2. Declare participants: `participant ID as Display Name`
+3. Message arrows:
+   - `->>` synchronous call
+   - `-->>` asynchronous/return
+   - `->>+` activate target, `-->>-` deactivate source
+4. Block constructs:
+   - `loop description ... end` — repeating
+   - `alt case ... else other ... end` — branching
+   - `opt condition ... end` — optional
+   - `par ... and ... end` — parallel
+5. Notes: `Note over A,B: description` or `Note right of A: description`
+6. Use `autonumber` for step tracking if the flow has >5 messages
+7. Participant names should be short service/module names
+
+{% elif diagram_type == "class" %}
+## Class Diagram Syntax Rules
+
+Mermaid classDiagram reference: https://mermaid.js.org/syntax/classDiagram.html
+
+1. Open with `classDiagram`
+2. Class annotation markers:
+   - `<<interface>>` for traits
+   - `<<enumeration>>` for enums
+3. Visibility: `+` public, `-` private for methods and fields
+4. Relationships:
+   - `Trait <|-- Struct : implements` (trait implementation)
+   - `SuperTrait <|-- SubTrait : extends` (supertrait)
+   - `Container o-- Contained : has` (composition)
+   - `Caller ..> Callee : uses` (dependency)
+5. Multiplicity: `A "1" o-- "0..*" B`
+6. Group related types: `namespace Name { ... }`
+7. Method syntax: `+methodName(param Type) ReturnType`
+8. Field syntax: `+Type fieldName`
+{% endif %}
+
+## Constraints
+
+1. **Zed auto-themes** — do not use `%%{init}%%`, `classDef`, or inline color styles
+2. **Narrow sidebar** — prefer taller diagrams over wider ones; use TD over LR
+3. **Valid syntax** — the output must parse without errors in Mermaid.js
+4. **No markdown wrapping** — output only the Mermaid source, no markdown fences (the write step handles wrapping)
+5. **Entity IDs**: use alphanumeric identifiers with underscores; no spaces, dashes, or special chars
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "mermaid_source": "erDiagram\n  ...",
+  "entity_count": 15,
+  "relationship_count": 12,
+  "conventions_applied": ["Crow's Foot cardinality", "FK annotation on key columns", "Short labels ≤ 40 chars"]
+}
+```

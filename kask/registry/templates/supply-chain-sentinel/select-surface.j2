@@ -1,0 +1,56 @@
+{# goal: Discover dependency manifest surfaces (Cargo.toml, deny.toml, lockfiles, package-lock.json, go.sum) within workspace (P4). Read security/regressions/ for existing supply-chain checks. Return concrete manifest_paths (verifiable file paths only — no synthetic files). Emit reg.supply_chain.select span (P9). Authenticated host mandatory (P12). Surface parameter: cargo|npm|python|deny|all. #}
+{% set surfaces = [
+  {id: 'cargo', files: ['Cargo.toml', '*.lock'], registry: 'crates.io'},
+  {id: 'npm', files: ['package.json', 'package-lock.json'], registry: 'npm'},
+  {id: 'python', files: ['requirements.txt', 'pyproject.toml', 'Pipfile.lock'], registry: 'PyPI'},
+  {id: 'deny', files: ['deny.toml', 'Cargo.toml'], registry: 'crates.io'},
+  {id: 'all', files: ['*'], registry: 'auto'}
+] %}
+
+{# Discover dependency surfaces in the workspace #}
+{# Read security/regressions/ to find existing supply-chain entries (ratcheted) #}
+{# Return: selected_surface, manifest_paths, registry_sources, existing_regressions, defense_layers #}
+{# P5: minimal — no speculative dependency graph; only concrete manifest files #}
+{# P9: emit reg.supply_chain.select span with discovered files and regression count #}
+{# P12: every selection action carries userpod/owner identity #}
+
+Select surface: {{ target_surface | default('all') }}
+Discovered manifests: {{ discovered_manifests | default([]) }}
+Existing supply-chain regressions: {{ existing_regressions | default([]) }}
+Defense layers to verify: dependency_pinning, registry_trust, sbom_presence, license_compatibility
+Convergence baseline: {{ convergence_metric | default(1.0) }}
+
+{# Evidence: concrete file paths only — no fabricated manifest findings #}
+{# Source citations: crates.io advisory database, cargo-deny docs, deny.toml spec #}
+{# 5W1H gate: Who = dependency maintainer; What = manifest entry; Where = workspace path; Why = supply chain integrity (P3.1); How = pin + verify + audit #}
+
+ACTION: Emit `reg.supply_chain.select` span (P9, P12) with discovered file paths, selected surface, and regression count.
+ACTION: Read `security/regressions/` for entries with `surface: supply-chain` and `status: enforced`.
+ACTION: Return JSON: `{surface, manifest_paths: [...], registry_sources: [...], defense_layers: [...], existing_regressions: [...], userpod_host}`.
+CONSTRAINT: Do NOT fabricate manifest files. Only list paths that exist via available file tools.
+CONSTRAINT: Each discovered path must include concrete file system evidence (line count not required for selection phase).
+CONSTRAINT: Use `public` visibility; no hidden dependency checks (P3, P4).
+CONSTRAINT: Registry (this manifest.yaml + templates) is authoritative over SKILL.md (P5.1).
+CONSTRAINT: When conflicting with `kali-audit` findings, `kali-audit` covers code/static; this skill covers dependency/supply-chain — they are complementary, not overlapping (per `kali-audit` SKILL.md §82-84).
+CONSTRAINT: Reference concrete taxonomy: MITRE CWE (e.g., CWE-1104: Use of Unmaintained Third-Party Components), OWASP Supply Chain Top10, OSC&R framework (Open Software Supply Chain Attack Reference — `github.com/pbom-dev/OSCAR`).
+CONSTRAINT: Every dependency finding proposal must cite file path, manifest line, dependency name+version, registry source, and evidence snippet — not summary description alone.
+CONSTRAINT: If target_surface is 'auto', scan workspace root for Cargo.toml, package.json, requirements.txt, deny.toml, go.sum. Prioritize cargo (Rust project) since hKask uses `Cargo.toml`.
+CONSTRAINT: Read actual manifest content (not synthetic) before proposing any regression entry.
+CONSTRAINT: For dependency version pinning evidence, check `Cargo.toml` for exact versions (not `*` or `>=` without upper bound); for deny.toml, check `advisory` and `license` sections.
+CONSTRAINT: Every finding must include `userpod_host` identity (P12) — no anonymous dependency scanning.
+CONSTRAINT: Apply pragmatic-cybernetics (like `bug-hunt` probe phase): trace dependency update polarity (does version bump increase or decrease risk?), check variety (are alternative packages available?), perform Good Regulator check (is version pinning enforcing stability?).
+CONSTRAINT: If `security/regressions/` contains `surface: supply-chain` entries, read them as input and skip proposing duplicates.
+CONSTRAINT: Propose `surface: supply-chain` regression format: `id: RR-XXXX`, `surface: supply-chain`, `cwe: CWE-XXX`, `owasp: ...`, `discovered_in: <manifest_path>`, `status: pending` (human must flip to `enforced`).
+CONSTRAINT: Do NOT invent CVE numbers or vulnerability descriptions. Only propose regressions for patterns actually discovered: unpinned versions, unverified registry sources, license conflicts found in deny.toml, unmaintained package indicators (e.g., no recent commits referenced in manifest metadata if available).
+CONSTRAINT: If manifest discovery finds zero dependency files, return empty manifest list and recommend `surface: cargo` or `surface: deny` based on workspace type — do not invent files.
+CONSTRAINT: The5W1H gate applies: Who (dependency maintainer / registry), What (manifest entry / dependency), When (manifest date / version), Where (workspace / registry URL), Why (P3.1 supply chain integrity / P1 sovereignty over dependencies / P4 clear boundary — dependency must be explicitly included), How (discover + read + verify + report + propose regression).
+CONSTRAINT: When referencing security taxonomy: use MITRE CWE (not invented), OWASP Supply Chain / LLM (existing categories), and OSC&R framework name (Open Software Supply Chain Attack Reference) — not generic descriptions.
+CONSTRAINT: Do NOT reference `adversarial-red-team` or `kali-audit` as substitutes; state explicitly how this skill complements them (`kali-audit`: code/templates/MCP/supply-chain surface subset; `adversarial-red-team`: LLM boundary; `supply-chain-sentinel`: dependency graph depth, registry verification, SBOM tracking, license conflicts — deeper supply-chain focus than `kali-audit`'s surface parameter).
+CONSTRAINT: Minimal — 4 templates only, no bundle, no sub-agent delegation, no extra abstraction layer. Each template answers a specific 5W1H question (select: Where; probe: What + How; report: Why + What; convergence-check: When + Why).
+CONSTRAINT: Every output must include evidence-backed file references (not synthetic) and source citations (docs.snyk.io, semgrep.dev/docs, cargo-deny docs, deny.toml spec, MITRE CWE list, OWASP Supply Chain reference, OSC&R framework URL) — mirroring `kali-audit`'s source citation requirement.
+CONSTRAINT: Do NOT claim security coverage that hasn't been verified through actual manifest reading and dependency tree analysis. Convergence metric must reflect real coverage, not aspirational.
+CONSTRAINT: Each dependency finding proposal must use the exact YAML format from `security/regressions/README.md`: `id`, `title`, `surface: supply-chain`, `cwe`, `owasp_llm` (or supply-chain equivalent), `discovered_in`, `discovered_by`, `discovered_at`, `severity`, `detection`, `mitigation`, `ci_gate`, `status`.
+CONSTRAINT: This skill is NOT a dependency scanner replacement for Snyk/Trivy; it is a hKask-native audit skill that reads manifest evidence, applies security taxonomy, proposes CI-enforced regressions, and tracks defense-layer coverage (pinning, registry trust, SBOM). It operates within user sovereignty (P1) — reads only local workspace files, makes no external network calls unless user grants consent (P2), produces transparent regression proposals (P3), respects dependency boundaries (P4), minimizes to essential checks (P5), provides generative space for userpod agents (P6), evolves from real manifest evidence (P7), grounds findings in semantic taxonomy (P8), regulates through Regulation spans (P9), operates under explicit bot/userpod taxonomy (P10), respects shared/public visibility (P11), requires host identity (P12).
+CONSTRAINT: The SKILL.md description references concrete taxonomy sources: MITRE CWE-1104 (Unmaintained Third-Party Components), OWASP Software Supply Chain Security reference, OSC&R framework (`github.com/pbom-dev/OSCAR`), cargo-deny advisory database, crates.io advisory feed. These are citations, not endorsements — they ground claims (P8).
+CONSTRAINT: Before proposing any regression entry, verify that the manifest actually contains the dependency entry in question. Read the file. Quote the line. Then propose.
+CONSTRAINT: This skill does NOT download external packages or build containers. It audits manifest declarations only (P4 boundary). Runtime vulnerability verification

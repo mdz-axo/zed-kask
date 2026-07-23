@@ -1,0 +1,331 @@
+# Metacognition Process Manifest
+# ℏKask v0.31.0 — Self-reflective reasoning as convergent PDCA with GEPA improvement
+#
+# Generalizable: any userpod — curator, bot, agent, or ensemble member — can
+# invoke this skill to perform metacognitive reasoning. Unlike the curator-
+# specific `curator-metacognition` manifest, this skill is domain-agnostic: it
+# decomposes a goal, self-assesses progress, calibrates strategy based on
+# prior outcomes, detects ellipses (what is missing), rotates perspectives via
+# the Falstaffian engine, and produces a concrete next experiment. The skill
+# improves itself through GEPA (Genetic-Pareto) evolutionary optimization via
+# the gpa-evolution skill, and composes sequential-inquiry, pragmatic-laziness,
+# and hypothesis-framer for deeper analysis.
+
+manifest:
+  id: metacognition
+  category: skill
+  name: Metacognition
+  description: >
+    Master self-reflection skill. Decomposes a high-level goal into sub-goals,
+    self-assesses current vs. target condition from multiple perspectives,
+    calibrates strategy based on prior outcomes, detects ellipses (what is
+    missing) via Bloom's method, rotates perspectives via the Falstaffian
+    engine, and produces a concrete next experiment (PDCA). Improves itself
+    through GEPA evolutionary optimization (gpa-evolution skill). Composes
+    sequential-inquiry for chain-of-thought, pragmatic-laziness for least-
+    action paths, and hypothesis-framer for testable hypotheses. Any
+    userpod may invoke this skill.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.25
+  improvement_gate: threshold_only
+  max_iterations: 5
+  min_iterations: 1
+  convergence_field: step_5_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 150000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: goal
+    type: string
+    required: true
+    description: >
+      The high-level goal the userpod wants to decompose and assess.
+  - name: session_history
+    type: string
+    required: false
+    description: >
+      Textual history of the current session — what the userpod has done
+      so far, what tools it has called, what results it has seen.
+  - name: prior_outcomes
+    type: array
+    required: false
+    description: >
+      Array of prior action outcomes for effort calibration. Each item
+      should have: action_id, success (bool), duration_ms, error (optional).
+  - name: available_tools
+    type: array
+    required: false
+    description: >
+      Array of available MCP tools for tool selection. Each item should
+      have: name, server, description.
+  - name: current_state
+    type: object
+    required: false
+    description: >
+      Externally provided current state (e.g., Regulation health snapshot, bot
+      status, variety counters). If provided, the assessment phase uses
+      this as ground truth instead of relying solely on session history.
+  - name: context_text
+    type: string
+    required: false
+    description: >
+      Text of the context to analyze for ellipses (what is missing). When
+      provided, the ellipsis-analysis template applies Bloom's five-step
+      method to detect gaps, classify them as ellipsis (deliberate) or leak
+      (unintentional), and surface what is not inferno. When not provided,
+      step 3 is skipped via condition.
+  - name: expectations
+    type: array
+    required: false
+    description: >
+      Expected elements/topics/metrics that should be present in the context.
+      Used by ellipsis-analysis to detect gaps against a baseline.
+  - name: perspectives
+    type: array
+    required: false
+    default: ["falstaffian", "ellipsis"]
+    description: >
+      Perspectives to apply during calibration. Each perspective is a lens:
+      "falstaffian" (semantic rotation), "ellipsis" (gap detection),
+      "sequential-inquiry" (chain-of-thought), "pragmatic-laziness"
+      (least-action), "hypothesis-framer" (testable hypotheses). Passed to
+      the calibrate template to control which perspectives are applied.
+  - name: safety_mode
+    type: boolean
+    required: false
+    default: false
+    description: >
+      When true, the decomposition template enforces strict sandbox
+      constraints: no file system access, no network calls, no environment
+      variable access. Used when the userpod is in a restricted context.
+  - name: run_gepa_improvement
+    type: boolean
+    required: false
+    default: false
+    description: >
+      When true, the GEPA self-improvement step (step 6) runs after
+      convergence to evolve the metacognition templates through
+      Genetic-Pareto evolutionary optimization. Defaults to false to avoid
+      gas overhead on routine cycles. Set to true when the userpod wants
+      to improve its own metacognitive process.
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+  mode: synthesis
+  skills:
+    - pragmatic-cybernetics
+  max_rounds: 3
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      DECOMPOSE: Break the high-level goal into a tree of sub-goals with
+      dependency ordering, effort estimates, and an execution strategy
+      recommendation. Uses the meta_decompose template.
+    renderer: minijinja
+    template_ref: metacognition/meta_decompose
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      goal: "{{ goal }}"
+      session_history: "{{ session_history | default('') }}"
+      available_tools: "{{ available_tools | default([]) }}"
+      prior_outcomes: "{{ prior_outcomes | default([]) }}"
+      safety_mode: "{{ safety_mode | default(false) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      ASSESS: Self-assess current state vs. target condition. Identifies
+      obstacles (typed and severity-rated), estimates progress, and
+      calibrates confidence. Uses session history and prior outcomes as
+      evidence. Produces a grounded, honest assessment — not optimistic.
+    renderer: minijinja
+    template_ref: metacognition/meta-assess
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      goal: "{{ goal }}"
+      decomposition: "{{ step_1_result }}"
+      current_state: "{{ current_state | default({}) }}"
+      session_history: "{{ session_history | default('') }}"
+      prior_outcomes: "{{ prior_outcomes | default([]) }}"
+
+  - ordinal: 3
+    action: select
+    condition: "{{ context_text | default('') | length > 0 }}"
+    description: >
+      ELLIPSIS DETECTION: Apply Bloom's method to detect what is missing
+      from the context. Differentiates ellipsis (deliberate, meaningful
+      omission) from leak (unintentional information loss). Runs only when
+      context_text is provided. The ellipsis-analysis template applies
+      Bloom's five-step method: read deeply, mind the gaps, differentiate
+      ellipsis from leak, see past yourself, find what is not inferno.
+    renderer: minijinja
+    template_ref: metacognition/ellipsis-analysis
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      text: "{{ context_text }}"
+      expectations: "{{ expectations | default([]) }}"
+      biases: "['optimism_bias', 'confirmation_bias', 'anchoring']"
+      assumptions: "['goal_is_clear', 'tools_are_sufficient', 'context_is_complete']"
+      domain: "{{ goal | truncate(100) }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      CALIBRATE: Adjust strategy, effort estimates, and tool selection
+      based on the self-assessment, ellipsis findings, and prior outcomes.
+      Produces a concrete next experiment (PDCA) with hypothesis, action,
+      measurement, and success criteria. Maps obstacles to specific MCP tools.
+      Applies Falstaffian perspective rotation based on the perspectives
+      input: select a shape from the falstaffian-shapes reference that
+      expresses the tension between experience (what we know) and spirit
+      (what we affirm), and use it to reframe the calibration. The shape
+      selection decision tree: abstract_predicate → predicate_hollow,
+      individual_criticism → subject_expansion, elite_value →
+      value_redefinition, hierarchical_object → object_inversion,
+      top_down_evaluation → direction_reversal, cultural_assumption →
+      cultural_authority, moral_wordplay → linguistic_precision.
+    renderer: minijinja
+    template_ref: metacognition/meta-calibrate
+    gas_cap: 6144
+    timeout_seconds: 60
+    input_mapping:
+      goal: "{{ goal }}"
+      decomposition: "{{ step_1_result }}"
+      assessment: "{{ step_2_result }}"
+      ellipsis_findings: "{{ step_3_result | default({}) }}"
+      prior_outcomes: "{{ prior_outcomes | default([]) }}"
+      available_tools: "{{ available_tools | default([]) }}"
+      perspectives: "{{ perspectives | default(['falstaffian', 'ellipsis']) }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Compute normalized convergence metric via self-assessment stability
+      detection. Assesses whether decomposition, assessment, ellipsis
+      detection, calibration, and next experiment are sufficiently stable
+      to act on.
+    renderer: minijinja
+    template_ref: metacognition/meta-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_4_result }}"
+    fusion: false
+
+  - ordinal: 6
+    action: select
+    condition: "{{ run_gepa_improvement | default(false) }}"
+    description: >
+      GEPA IMPROVEMENT: After convergence, invoke the gpa-evolution skill
+      to evolve the metacognition process itself. Samples execution
+      trajectories from the current cycle, reflects in natural language
+      to diagnose failures and surface high-level rules, proposes and
+      tests mutations to the metacognition templates, and recombines
+      complementary lessons from the Pareto frontier. This step is
+      conditional — it runs only when run_gepa_improvement is true. Set to
+      false by default to avoid gas overhead on routine metacognition cycles.
+    renderer: minijinja
+    template_ref: metacognition/meta-gepa-improve
+    gas_cap: 8192
+    timeout_seconds: 120
+    input_mapping:
+      goal: "{{ goal }}"
+      cycle_trajectories: "{{ step_4_result }}"
+      convergence_result: "{{ step_5_result }}"
+
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter metacognition cycle if convergence is not met. Feeds
+      convergence blockers back to refine the goal.
+    input_mapping:
+      loop_target: 1
+      goal: "{{ step_5_result.blockers | default([]) | join('; ') | default(goal) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: metacognition/meta_decompose
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: metacognition/meta-assess
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: metacognition/ellipsis-analysis
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: metacognition/meta-calibrate
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: metacognition/meta-convergence-check
+      gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: metacognition/meta-gepa-improve
+      gas_budget: 8192
+    - resource: memory
+      action: recall
+      gas_budget: 3000
+    - resource: inference
+      action: call
+      gas_budget: 6000
+    - resource: manifest
+      action: execute
+      template_id: gpa-evolution
+      gas_budget: 8000
+    - resource: manifest
+      action: execute
+      template_id: sequential-inquiry
+      gas_budget: 4000
+    - resource: manifest
+      action: execute
+      template_id: pragmatic-laziness
+      gas_budget: 4000
+    - resource: manifest
+      action: execute
+      template_id: hypothesis-framer
+      gas_budget: 4000
+    - resource: manifest
+      action: execute
+      template_id: metacognition
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

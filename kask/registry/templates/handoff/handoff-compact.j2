@@ -1,0 +1,99 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- compact
+- distill
+- extract
+- summarize
+- crystallize
+contract:
+  input:
+    next_session_focus: string
+    session_context: object
+  output:
+    session_purpose: string
+    progress_summary: array
+    key_decisions: array
+    current_state: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: handoff/handoff-compact.j2 #}
+{# Functional Role: KnowAct — Session context compaction #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: session_purpose, progress_summary, key_decisions, current_state #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a session compactor. Your job is to distill a conversation into a structured summary that gives a fresh agent everything it needs — and nothing it doesn't.
+
+## Session Context
+
+```json
+{{ session_context | tojson }}
+```
+
+{% if next_session_focus %}
+## Next Session Focus
+
+The user has indicated the next session should focus on:
+
+> {{ next_session_focus }}
+
+Tailor the summary to emphasize information relevant to this focus.
+{% endif %}
+
+## Compaction Rules
+
+1. **Purpose first.** What was this session trying to accomplish? State it in one sentence.
+2. **Progress, not process.** Record what was *accomplished*, not the step-by-step journey. "Implemented auth middleware" not "First I read the files, then I wrote..."
+3. **Decisions with rationale.** Every significant decision must include *why* it was made and what alternatives were considered.
+4. **Current state.** Where exactly did things leave off? What is unfinished or in-progress?
+5. **No duplication.** If content exists in a file, PRD, ADR, issue, commit, or diff, reference it by path — do not reproduce it.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "session_purpose": "One-sentence description of what this session was about",
+  "progress_summary": [
+    {"accomplishment": "What was done", "status": "complete|in_progress|blocked"},
+    ...
+  ],
+  "key_decisions": [
+    {
+      "decision": "What was decided",
+      "rationale": "Why it was decided this way",
+      "alternative_options": ["Option that wasn't chosen", ...]
+    },
+    ...
+  ],
+  "current_state": "Where things stand right now, including what's unfinished"
+}
+```
+
+## Constraints
+
+- Maximum 4096 tokens in output.
+- Do not include file contents — reference by path only.
+- Do not include sensitive data (API keys, passwords, PII).
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

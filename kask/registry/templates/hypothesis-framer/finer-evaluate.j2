@@ -1,0 +1,172 @@
+{# goal: Apply FINER criteria to evaluate and refine a broad research topic into a well-formed, valid research question. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- classify
+- assess
+- critique
+- rank
+contract:
+  input:
+    broad_topic: string
+    domain: string
+    research_context: string
+    question_hint: string
+  output:
+    research_question: string
+    finer_scores: object
+    refinement_suggestions: array
+    overall_finer_rating: string
+    most_concerning_dimension: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: hypothesis-framer/finer-evaluate.j2 #}
+{# Functional Role: KnowAct — FINER criteria evaluation and research question refinement #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: research_question, finer_scores, refinement_suggestions, overall_finer_rating, most_concerning_dimension #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a research methodology specialist. Your task is to evaluate a broad research topic against the FINER criteria and produce a refined, testable research question.
+
+## Broad Research Topic
+{{ broad_topic }}
+
+## Domain
+{{ domain }}
+
+{% if research_context %}
+## Research Context
+{{ research_context }}
+{% endif %}
+
+{% if question_hint %}
+## Initial Question Hint
+The researcher has an initial framing: "{{ question_hint }}"
+Use this as a starting point for refinement, but do not be constrained by it
+if FINER evaluation suggests a different direction.
+{% endif %}
+
+## FINER Criteria Evaluation
+
+Evaluate the topic against each of the five FINER dimensions. For each dimension,
+assign a score (0–10 where 0 = fatal flaw, 10 = no concerns) and provide detailed
+rationale.
+
+### F — Feasible
+Consider:
+- **Subjects**: Adequate sample size achievable? Population accessible?
+- **Technical expertise**: Required skills and equipment available?
+- **Resources**: Funding, time, personnel sufficient?
+- **Institutional support**: Departmental and organizational backing?
+
+Score 0–10: ____
+Rationale:
+
+### I — Interesting
+Consider:
+- **Audience**: Would other researchers/clinicians in this domain care?
+- **Applicability**: Does the question address a problem people want solved?
+- **Engagement**: Is the question compelling enough to sustain a full study?
+
+Score 0–10: ____
+Rationale:
+
+### N — Novel
+Consider:
+- **Knowledge gap**: Does this fill a genuine gap in the literature?
+- **Methodology**: Does this improve upon flawed prior methods or apply a new approach?
+- **Confirmation**: If confirmatory, is the prior finding important enough to merit replication?
+
+Score 0–10: ____
+Rationale:
+
+### E — Ethical
+Consider:
+- **Regulatory compliance**: IRB/ethics committee requirements identifiable?
+- **Risk**: Minimal risk to subjects? Risk-benefit ratio acceptable?
+- **Informed consent**: Feasible? Special populations require additional safeguards?
+- **Animal welfare**: If applicable, guidelines followed?
+
+Score 0–10: ____
+Rationale:
+
+### R — Relevant
+Consider:
+- **Clinical impact**: Would results change practice or policy?
+- **Knowledge contribution**: Does this advance the field?
+- **Generalizability**: Would findings apply beyond the specific study context?
+- **Timeliness**: Is this question important now?
+
+Score 0–10: ____
+Rationale:
+
+## Refinement Process
+
+After scoring all five dimensions:
+1. Identify the dimension with the **lowest score** — this is the most concerning dimension
+2. Formulate a **refined research question** that addresses the weaknesses
+3. Provide **specific refinement suggestions** for each dimension scoring below 7
+4. The refined question should be narrow enough to be testable but broad enough to matter
+
+**Important constraints:**
+- The research question is a QUESTION, not a declarative statement
+- The research question should be hypothesis-driven (guides what to test), not data-driven
+- Questions answerable with a simple "yes" or "no" are generally not researchable — the question should open inquiry, not close it
+- The question may be refined further by the PICO structuring step that follows
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "research_question": "The refined, FINER-validated research question",
+  "finer_scores": {
+    "feasible": { "score": 0, "rationale": "..." },
+    "interesting": { "score": 0, "rationale": "..." },
+    "novel": { "score": 0, "rationale": "..." },
+    "ethical": { "score": 0, "rationale": "..." },
+    "relevant": { "score": 0, "rationale": "..." }
+  },
+  "overall_finer_rating": "strong|adequate|weak|critical_flaw",
+  "most_concerning_dimension": "feasible|interesting|novel|ethical|relevant",
+  "refinement_suggestions": [
+    { "dimension": "feasible", "issue": "...", "suggestion": "..." }
+  ]
+}
+```
+
+Rating scale:
+- **strong**: All dimensions ≥ 8
+- **adequate**: All dimensions ≥ 6, no dimension below 5
+- **weak**: One or more dimensions 3–5
+- **critical_flaw**: Any dimension below 3 — the question needs fundamental rethinking
+
+## Constraints
+
+- Every score must be justified with specific reasoning, not generic statements
+- Refinement suggestions must be actionable — say what to change, not just what's wrong
+- If a dimension scores below 5, the refinement suggestion must propose a concrete fix
+- The research question is a question, not a statement — verify the form
+- Do not narrow the question so far that it becomes trivial
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

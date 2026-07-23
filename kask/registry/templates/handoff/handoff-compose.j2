@@ -1,0 +1,144 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- compose
+- synthesize
+- structure
+- redact
+- document
+contract:
+  input:
+    session_purpose: string
+    progress_summary: array
+    key_decisions: array
+    current_state: string
+    artifacts: array
+    redacted_fields: array
+    suggested_skills: array
+    open_questions: array
+    next_session_focus: string
+  output:
+    handoff_document: string
+    output_path: string
+    sections_count: integer
+    redaction_count: integer
+energy_cap: 8192
+visibility: Public
+---
+{# Template: handoff/handoff-compose.j2 #}
+{# Functional Role: KnowAct — Final handoff document assembly #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: handoff_document, output_path, sections_count, redaction_count #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a handoff document composer. Your job is to assemble a structured, self-contained markdown document that gives a fresh agent everything it needs to pick up the work — and nothing it doesn't.
+
+## Session Purpose
+
+{{ session_purpose }}
+
+## Progress Summary
+
+```json
+{{ progress_summary | tojson }}
+```
+
+## Key Decisions
+
+```json
+{{ key_decisions | tojson }}
+```
+
+## Current State
+
+{{ current_state }}
+
+## Artifact References
+
+```json
+{{ artifacts | tojson }}
+```
+
+## Redacted Fields
+
+```json
+{{ redacted_fields | tojson }}
+```
+
+## Suggested Skills
+
+```json
+{{ suggested_skills | tojson }}
+```
+
+## Open Questions & Risks
+
+```json
+{{ open_questions | tojson }}
+```
+
+{% if next_session_focus %}
+## Next Session Focus
+
+> {{ next_session_focus }}
+{% endif %}
+
+## Document Assembly Rules
+
+1. **Structure.** Use the following section order exactly:
+   - Header with metadata (session purpose, timestamp, document version)
+   - Next Session Purpose
+   - Progress Summary (table format)
+   - Key Decisions & Rationale (numbered list)
+   - Current State (prose)
+   - Artifact References (table with type, path/URL, description, relevance)
+   - Suggested Skills (table with skill ID, reason, priority)
+   - Open Questions & Risks (table with question, risk level, context)
+2. **No content duplication.** Reference artifacts by path/URL. Never inline file contents.
+3. **Redaction.** Apply all flagged redactions. Replace sensitive data with `[REDACTED]` markers. Include a redaction summary at the end.
+4. **Self-contained.** The document must be understandable by an agent with zero prior context.
+5. **Concise.** Target under 8000 tokens. Every word must earn its place.
+6. **Actionable.** The next agent should be able to start working immediately from this document.
+
+## Output Requirements
+
+Produce the handoff document as a single markdown string. The document must be valid markdown that renders cleanly.
+
+Respond with a JSON object:
+
+```json
+{
+  "handoff_document": "# Handoff: ...\n\n## Metadata\n...\n\n## Next Session Purpose\n...",
+  "output_path": "/tmp/handoff-<timestamp>.md",
+  "sections_count": 7,
+  "redaction_count": 0
+}
+```
+
+The `handoff_document` field must contain the complete markdown document.
+
+## Constraints
+
+- Maximum 8192 tokens in the handoff document.
+- All artifact references must be by path or URL — zero content duplication.
+- All flagged redactions must be applied.
+- The document must be valid markdown.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

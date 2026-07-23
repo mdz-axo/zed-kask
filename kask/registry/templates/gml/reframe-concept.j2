@@ -1,0 +1,75 @@
+{# gml/reframe-concept.j2 - KnowAct: abduct, generate, synthesize #}
+{# Purpose: Generate alternative interpretation frames #}
+
+{% from 'gml/reg-instrument.j2' import start_span, end_span, record_error %}
+
+{% set coherence = inputs.coherence_analysis %}
+{% set shift = inputs.shift %}
+
+{{ start_span('reframe', shift.before.id | default('unknown')) }}
+
+{% if not coherence or not shift %}
+{{ record_error('reframe', 'GML_MISSING_INPUT', 'coherence_analysis and shift required') }}
+{% include 'gml/error-missing-input.j2' %}
+{{ end_span('reframe', 'error', {'reason': 'missing_input'}) }}
+{% else %}
+
+## Concept Reframing
+
+### Generated Interpretation Frames
+
+Based on the equilibrium shift analysis, here are alternative framings:
+
+{% if shift.after.current_r_bar > shift.before.current_r_bar %}
+**Progressive Reframe:**
+The concept can now be understood through a more open, generative lens:
+
+> {{ shift.after.r_state.description }}
+
+This framing emphasizes:
+- Flexibility over rigidity
+- Potential over constraint
+- Emergence over pre-definition
+
+{% elif shift.after.current_r_bar < shift.before.current_r_bar %}
+**Conservative Reframe:**
+The concept can now be understood through a more constrained, stable lens:
+
+> {{ shift.after.t_state.description }}
+
+This framing emphasizes:
+- Stability over change
+- Constraint over possibility
+- Pre-definition over emergence
+
+{% else %}
+**Balanced Reframe:**
+The concept maintains interpretive flexibility:
+
+> Both {{ shift.after.t_state.description }} and {{ shift.after.r_state.description }} remain viable.
+
+This framing emphasizes:
+- Contextual sensitivity
+- Interpretive choice
+- Meta-awareness of framing itself
+{% endif %}
+
+### Abductive Inferences
+
+{% if coherence.score > 0.8 %}
+The high coherence suggests this reframing is **internally consistent** and **self-reinforcing**.
+{% elif coherence.score > 0.5 %}
+The moderate coherence suggests this reframing is **partially consistent** but may require adjustment.
+{% else %}
+The low coherence suggests this reframing is **in tension** with existing conceptual commitments.
+{% endif %}
+
+### Suggested Actions
+
+1. **Test the reframe:** Apply to concrete cases and observe interpretive fit
+2. **Identify boundary conditions:** When does this frame break down?
+3. **Seek disconfirming evidence:** What would shift equilibrium back?
+4. **Map to related concepts:** How does this reframe cascade through the network?
+
+{{ end_span('reframe', 'success', {'coherence_score': coherence.score}) }}
+{% endif %}

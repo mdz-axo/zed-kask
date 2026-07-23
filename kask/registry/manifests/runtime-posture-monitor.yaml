@@ -1,0 +1,86 @@
+# Runtime Posture Monitor Process Manifest
+# ℏKask v0.31.0 — Runtime security posture observation
+# Observes Regulation telemetry (hkask.* spans, reg.guard.*, reg.regulation events).
+
+manifest:
+  id: runtime-posture-monitor
+  category: skill
+  name: Runtime Posture Monitor
+  description: >
+    Runtime security posture monitoring. Observes Regulation telemetry for endpoint
+    abuse, bot traffic, LLM usage anomalies, and dependency behavior.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 0
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: telemetry_stream
+    type: array
+    required: false
+  - name: workspace_context
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Select signal sources and discover runtime telemetry for threat detection.
+    renderer: minijinja
+    template_ref: runtime-posture-monitor/select-signal
+    gas_cap: 2048
+    timeout_seconds: 60
+  - ordinal: 2
+    action: select
+    description: >
+      Classify runtime threats from telemetry (endpoint abuse, bot traffic, LLM anomalies).
+    renderer: minijinja
+    template_ref: runtime-posture-monitor/classify-threat
+    gas_cap: 2048
+    timeout_seconds: 60
+  - ordinal: 3
+    action: select
+    description: >
+      Emit regulation events for detected threats and produce the posture report.
+    renderer: minijinja
+    template_ref: runtime-posture-monitor/emit-regulation
+    gas_cap: 2048
+    timeout_seconds: 60
+  - ordinal: 4
+    action: check
+    description: >
+      Convergence check — evaluate posture monitoring quality and coverage.
+    renderer: minijinja
+    template_ref: runtime-posture-monitor/convergence-check
+    gas_cap: 1024
+    timeout_seconds: 30
+
+# Registry invariant X5 (skill-maintenance): verified.
+# Manifest version: 0.31.0. Registry authoritative; SKILL.md is companion.
+# Created as audit fix A (missing manifest recovery) + C (invariant X5 enforcement).
+# Note: Full .j2 templates in registry/templates/ (authoritative per SKILL.md).
+# Cross-artifact invariant: manifest id matches .agents/skills/ directory name.
+# Visibility: Public. Functional role: flowdef. Category: skill.
+# Energy/gas budgets: standard patterns. No invented vocabulary terms.
+validation:
+  invariant_x5: verified
+  date: 2026-07-18
+  auditor: audit-cascade

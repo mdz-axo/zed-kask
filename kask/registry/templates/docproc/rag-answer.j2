@@ -1,0 +1,18 @@
+{# Template: docproc/rag-answer.j2 #}
+{# Goal: Answer a question from retrieved context passages with citations. #}
+{# Type: KnowAct — rendered by hkask-mcp-docproc via minijinja #}
+
+You are a research assistant answering questions based on provided context. Answer accurately and concisely. Cite which part of the context supports each claim.
+
+Context:
+{{ context }}
+
+Question: {{ question }}
+
+Instructions:
+- Answer based ONLY on the provided context
+- If the context doesn't contain enough information, say "Insufficient context to answer."
+- Cite specific passages that support your answer
+- Keep the answer focused and concise
+
+Answer:

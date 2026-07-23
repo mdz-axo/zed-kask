@@ -1,0 +1,111 @@
+{# goal: Compute convergence metric for kali-audit PDCA cycle, including defense-layer coverage. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    findings_count: integer
+    critical_count: integer
+    high_count: integer
+    medium_count: integer
+    low_count: integer
+    defense_layers_present: array
+    defense_layers_total: integer
+    cwe_classes_checked: array
+    cwe_classes_total: integer
+    regression_library_size: integer
+    previous_metric: number
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: kali-audit/convergence-check.j2 #}
+{# Functional Role: KnowAct — Convergence metric with defense-layer coverage #}
+{# Produces: convergence_metric, rationale, blockers #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+Compute the convergence metric for the kali-audit PDCA cycle.
+
+## Current State
+
+- **Findings:** {{ findings_count }} total ({{ critical_count }} critical, {{ high_count }} high, {{ medium_count }} medium, {{ low_count }} low)
+- **Defense layers present:** {{ defense_layers_present | default([]) | length }} / {{ defense_layers_total | default(8) }}
+- **CWE coverage:** {{ cwe_classes_checked | default([]) | length }} / {{ cwe_classes_total | default(0) }} classes checked
+- **Regression library:** {{ regression_library_size }} entries
+- **Previous metric:** {{ previous_metric | default(1.0) }}
+
+## Convergence Formula
+
+Score on [0, 1] where 0 = converged (no residual risk, full defense coverage) and 1 = fully compromised.
+
+Start at 0.00, add each dimension's contribution, clamp to [0, 1]:
+
+1. **Critical + high findings (weight 0.40):**
+   - +0.20 per critical finding (max 0.30)
+   - +0.08 per high finding (max 0.10)
+   - +0.00 if no critical/high findings
+
+2. **Medium findings (weight 0.15):**
+   - +0.04 per medium finding (max 0.15)
+   - +0.00 if no medium findings
+
+3. **Defense-layer coverage (weight 0.25):**
+   - 8/8 layers present → +0.00
+   - 6-7 layers → +0.05
+   - 4-5 layers → +0.12
+   - 2-3 layers → +0.18
+   - 0-1 layers → +0.25
+
+4. **CWE coverage (weight 0.10):**
+   - 100% coverage → +0.00
+   - 80–99% → +0.02
+   - 50–79% → +0.05
+   - <50% → +0.10
+
+5. **Regression library growth (weight 0.10):**
+   - If library grew since last cycle → +0.00 (adapting)
+   - If library stagnant and findings > 0 → +0.07 (not capturing lessons)
+   - If library stagnant and findings = 0 → +0.00 (stable)
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "convergence_metric": 0.15,
+  "rationale": "2 medium findings, 5/8 defense layers, 80% CWE coverage, library growing",
+  "blockers": ["Layer 2 (spotlighting) not implemented — Microsoft Research arXiv:2403.14720"],
+  "metric_decomposition": {
+    "critical_high": 0.00,
+    "medium": 0.08,
+    "defense_layers": 0.12,
+    "cwe_coverage": 0.02,
+    "regression_growth": 0.00
+  }
+}
+```
+
+## Constraints
+
+- Converged when metric ≤ 0.05 with minimum 5% relative improvement from previous_metric.
+- Identify specific blockers preventing convergence (missing defense layers, unfixed findings).
+- Defense-layer gaps are blockers — name the layer and its source.
+- Be honest — do not understate risk to achieve convergence.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

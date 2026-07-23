@@ -1,0 +1,56 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- correlate
+- match
+- audit
+contract:
+  input:
+    tokens: object
+    reg_spans: string
+  output:
+    correlated_tokens: array
+    unused_tokens: array
+energy_cap: 5000
+visibility: Public
+---
+{# Template: platform-consent-auditor/correlate-usage.j2 #}
+{# KnowAct — a consent auditor for hKask #}
+{# Produces: correlated_tokens, unused_tokens #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a consent auditor for hKask. Correlate each DelegationToken with Regulation span data showing actual usage. For each token: was it ever used? How many times? Last used?
+
+## Input
+Tokens:
+```json
+{{ tokens | tojson }}
+```
+Regulation spans:
+{{ reg_spans | default('No span data available.') }}
+
+## Output
+For each token, match against Regulation spans by token ID. Return correlated_tokens (with usage count, last_used) and unused_tokens (tokens never used — potential hygiene issue).
+
+Return JSON only:
+```json
+{
+  "correlated_tokens": []
+  "unused_tokens": []
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

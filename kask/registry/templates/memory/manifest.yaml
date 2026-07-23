@@ -1,0 +1,14 @@
+# Infrastructure config manifest for memory
+# hKask v0.31.0
+# Memory operations are handled programmatically by the MemoryServer.
+# Template-based selectors have been removed.
+
+infrastructure:
+  name: memory
+  version: "0.31.0"
+  description: >
+    Memory operation templates (remember.j2, recall.j2).
+    Operation routing is programmatic.
+  role: config
+  contains:
+    - templates/

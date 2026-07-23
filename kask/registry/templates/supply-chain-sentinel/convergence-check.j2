@@ -1,0 +1,123 @@
+{# goal: Compute normalized convergence metric [0,1] from evidence counts only: critical/high findings (0.40), defense-layer coverage verified by manifest (0.25), CWE/taxonomy coverage (0.15), regression library growth (0.10), residual dependency risk (0.10). Emit reg.supply_chain.convergence span (P9) — namespace registered in CANONICAL_NAMESPACES (event.rs). UserPod_host mandatory (P12). Minimal: evidence-based computation, no synthetic metrics (P5, P8). #}
+{# Computes normalized metric [0, 1] where 0 = fully converged #}
+{# Emits reg.supply_chain.convergence Regulation span (P9) — namespace registered #}
+
+INPUT: unresolved_findings = {{ unresolved_findings }} (from previous cycle or current)
+INPUT: defense_layers_present = {{ defense_layers_present }} (from report/probe)
+INPUT: defense_layers_missing = {{ defense_layers_missing }}
+INPUT: existing_regressions = {{ existing_regressions }} (count of surface: supply-chain entries)
+INPUT: proposed_regressions = {{ proposed_regressions }} (count from current cycle)
+INPUT: previous_metric = {{ previous_metric | default(1.0) }}
+INPUT: userpod_host = {{ userpod_host }} (P12)
+
+COMPUTE METRIC (weighted — evidence-based only, P8, P5):
+- Critical + high unresolved findings weight: 0.40
+  Score = 0.00 if zero critical/high; +0.40 if any critical/high remains.
+  Partial = (count_critical * 1.0 + count_high * 0.5) / max(1, previous_critical + previous_high) — only if evidence-backed.
+- Defense-layer coverage weight: 0.25
+  4 layers present (pinning, registry_trust, license_compat, sbom) = +0.00
+  3 present = +0.06; 2 = +0.12; 1 = +0.19; 0 = +0.25
+  Each layer only counts as present when manifest evidence confirms it (P8 — concrete evidence only, no aspirational coverage).
+- CWE / taxonomy coverage weight: 0.15
+  CWE-1104, CWE-829, CWE-1357 all covered by at least one finding/proposed regression = +0.00
+  2 covered = +0.08; 1 = +0.12; 0 = +0.15
+- Regression library growth weight: 0.10
+  New `surface: supply-chain` regression proposed this cycle = +0.00
+  No new proposal despite evidence = +0.10 (stagnation)
+  Existing `enforced` regressions remain enforced (no regression removal in metric).
+- Residual dependency risk weight: 0.10
+  Zero unpinned/unverified/untracked dependencies in workspace = +0.00
+  Any remaining critical/high risk dependency = +0.10
+
+SUM = sum of contributions, clamp [0, 1].
+
+CONVERGENCE CHECK (P9 — homeostatic regulation):
+- Metric ≤ 0.10: near converged.
+- Metric ≤ 0.10 AND relative improvement ≥ 5% from previous_metric: converged.
+- If metric > 0.10 OR improvement < 5%: not converged — identify blockers.
+- Blockers = specific defense-layer gaps (from `defense_layers_missing`),
+  unresolved critical/high findings (with file evidence), stagnation
+  (no new regression proposed despite finding evidence), taxonomy gaps
+  (CWE categories uncovered by findings/proposals).
+
+Regulation SPAN (P9):
+- `reg.supply_chain.convergence` is registered in `CANONICAL_NAMESPACES`
+  (`crates/hkask-types/src/event.rs`). Emit span unconditionally:
+  (`target: "reg.supply_chain.convergence"`, message: `"Regulation"`,
+  operation: `"convergence_check"`, metric, previous_metric, improvement_pct,
+  blockers: [...], userpod_host, latency_ms).
+
+OUTPUT FORMAT (JSON):
+`{convergence_metric, previous_metric, improvement_pct, converged: bool,
+blockers: [...], defense_layers_present, defense_layers_missing,
+existing_regressions_count, proposed_regressions_count, unresolved_critical,
+unresolved_high, taxonomy_coverage, residual_dependency_risk, userpod_host,
+reg_span_emitted: true}`.
+
+5W1H GATE (P5 — minimal): Who = userpod host; What = convergence metric;
+Where = audit cycle / workspace; When = scan cycle; Why = P9 observable
+self-correction / P7 evolutionary progress; How = compute metric + check
+improvement + emit Regulation span (or note gap) + identify blockers.
+All 6 present.
+
+MINIMAL: One template (`KnowAct`); no extra computation; uses evidence from
+previous phases only; no synthetic metrics.
+EVIDENCE-BACKED ONLY (P8): Metric dimensions use concrete counts from
+`findings`, `defense_layers_present` (verified by manifest evidence),
+`existing_regressions` (actual YAML file count), `proposed_regressions`
+(actual proposal count from current cycle). No fabricated numbers.
+EVOLUTIONARY (P7): Blockers propose concrete next steps (e.g., "add deny.toml
+license entry for dependency X", "verify registry URL for dependency Y")
+based on real manifest evidence — not speculative.
+OCAP BOUNDARY (P4): Metric computed from workspace manifest evidence only;
+no external dependency download; no ambient dependency scanning.
+Regulation REGULATION (P9): Span emitted unconditionally — namespace registered
+in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`).
+USERPOD HOST (P12): `userpod_host` mandatory.
+VISIBILITY (P11): Metric output public; no hidden security posture.
+SAFETY FLOOR (P3.1): Supply chain convergence protects Generative Space —
+unconverged metric indicates container risk.
+SEMANTIC GROUNDING (P8): Every blocker references concrete evidence
+(manifest path, dependency, defense-layer gap source, regression file or
+missing proposal reason).
+SOURCE REFERENCES (P8 — concrete):
+- MITRE CWE definitions (mitre.org/data/definitions/)
+- deny.toml spec (embarkstudios/deny docs)
+- crates.io advisory format (crates.io advisory-db docs)
+- `security/regressions/README.md` (regression format and ratchet lifecycle)
+- `security/regressions/` (actual regression library — read as input)
+- `kali-audit` SKILL.md (§Defense-in-Depth Layer Catalog, §Relationship to
+  adversarial-red-team, §Constraints — complements this skill)
+- `bug-hunt` SKILL.md (§bug-hunt-convergence-check — convergence metric
+  computation pattern adopted)
+- `principles.md` (§P5 Essentialism, §P7 Evolutionary, §P8 Semantic Grounding,
+  §P9 Homeostatic Self-Regulation, §P12 Authenticated Host Mandate)
+- OSC&R framework (`github.com/pbom-dev/OSCAR`) — supply chain attack taxonomy reference
+- OWASP Supply Chain reference (taxonomy for supply chain findings)
+- Snyk Supply Chain docs (`docs.snyk.io/`) — context reference for dependency
+  reachability and SBOM concepts (not replacement)
+- Semgrep SSC (`semgrep.dev/docs/semgrep-supply-chain`) — dependency
+  reachability concept reference
+- OX Security Active ASPM (`ox.security`) — PBOM (Pipeline Bill of Materials)
+  and real-time vulnerability monitoring concept (context — this skill
+  provides native hKask audit mechanism for similar supply chain posture)
+- Aikido Security (`aikido.dev`) — ASPM, auto-triage, dependency deduplication
+  concepts (context — not replacement)
+- Huntress (`huntress.com`) — Managed EDR / MDR concepts (endpoint threat
+  detection — distinct from dependency audit; zero overlap)
+
+REGISTRY AUTHORITATIVE (P5.1): Registry manifest + `.j2` templates are
+canonical. SKILL.md derived. If conflict, registry wins.
+PUBLIC VISIBILITY: `visibility: public` — no hidden audit controls.
+NO FABRICATION: Metric computed from evidence counts only. Blockers derived
+from actual `findings`, `defense_layers_missing`, `proposed_regressions`.
+No synthetic dependency references. No synthetic regression counts.
+CONVERGENCE INDEPENDENT: Separate `.j2` template; does not duplicate
+`report` phase logic. Uses `findings` from `probe` (or from previous audit
+cycle if persistence is enabled by user). If no previous cycle, assumes
+`previous_metric = 1.0` (initial state) — explicit assumption, not hidden.
+Regulation SPAN EMITTED: `reg.supply_chain.convergence` is registered, so the
+span is always emitted. Output states `reg_span_emitted: true`.
+MINIMAL ARTIFACT: This template produces exactly the metric, verdict
+OUTPUT FORMAT (JSON): {convergence_metric, previous_metric, improvement_pct, converged: bool, blockers: [...], defense_layers_present, defense_layers_missing, existing_regressions_count, proposed_regressions_count, unresolved_critical, unresolved_high, taxonomy_coverage, residual_dependency_risk, userpod_host, reg_span_emitted: true}
+

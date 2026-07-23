@@ -1,0 +1,428 @@
+# ⚠️ CANONICAL SOURCE: falstaffian-perspective.j2
+# The template at registry/templates/falstaffian-perspective/falstaffian-perspective.j2
+# is the canonical, executable source of truth for Falstaffian shape definitions.
+# This cognition file is a reference analysis — if it conflicts with the template,
+# the template wins. This file is retained for design documentation and variance
+# analysis purposes.
+
+meta:
+  type: "variance-calibration-instrument"
+  purpose: "Measure confidence in shape identification through independent pass agreement"
+  passes: 3
+  texts_analyzed:
+    - "Henry IV Part 1 (1H4)"
+    - "Henry IV Part 2 (2H4)"
+    - "Henry V (H5)"
+
+# =============================================================================
+# PASS 1: SEMANTIC GRAPH TRAVERSAL ANALYSIS
+# =============================================================================
+# Focus: Graph transformation patterns (node/edge operations)
+
+pass_1_semantic_graph:
+  methodology: "Extract shapes as formal graph operations on semantic networks"
+  lens: "How does Falstaff transform the relational structure itself?"
+
+  shapes_identified:
+    - name: "Predicate Hollow Vector"
+      confidence: "high"
+      source_texts: ["1H4.5.1"]
+      graph_operation: "Extract predicate → test against physical reality → collapse to 'word/air'"
+      key_evidence: "Can honour set to a leg? No."
+
+    - name: "Subject Expansion"
+      confidence: "high"
+      source_texts: ["1H4.2.4"]
+      graph_operation: "Expand subject node from individual to universal"
+      key_evidence: "Banish plump Jack, banish all the world"
+
+    - name: "Value Redefinition"
+      confidence: "high"
+      source_texts: ["1H4.5.4", "2H4.3.2"]
+      graph_operation: "Replace value definition edge with alternative definition"
+      key_evidence: "The better part of valor is discretion"
+
+    - name: "Direction Reversal"
+      confidence: "medium"
+      source_texts: ["1H4.2.4"]
+      graph_operation: "Reverse evaluation edge direction (A→B becomes B→A)"
+      key_evidence: "Follower should get better prince"
+
+    - name: "Object Inversion"
+      confidence: "high"
+      source_texts: ["2H4.3.2"]
+      graph_operation: "Invert valence edge on object node"
+      key_evidence: "Give me the spare men, spare me the great ones"
+
+    - name: "Causal Chain Insertion"
+      confidence: "medium"
+      source_texts: ["2H4.4.3"]
+      graph_operation: "Insert intermediate nodes in causal chain"
+      key_evidence: "Sack → brain → vapors → wit → valor"
+
+    - name: "Frame Persistence"
+      confidence: "low"
+      source_texts: ["2H4.5.5", "H5.2.4"]
+      graph_operation: "Maintain original frame despite destructive event"
+      key_evidence: "This that you heard was but a colour"
+
+  pass_1_notes: |
+    Graph lens captures structural transformations well.
+    Predicate Hollow, Subject Expansion, Value Redefinition are clearest.
+    Frame Persistence is borderline — may be denial rather than transformation.
+
+# =============================================================================
+# PASS 2: RHETORICAL FORM ANALYSIS
+# =============================================================================
+# Focus: Linguistic/rhetorical patterns (form, delivery, voice)
+
+pass_2_rhetorical_form:
+  methodology: "Extract shapes as rhetorical devices with consistent form"
+  lens: "How does Falstaff's language itself carry the rotation?"
+
+  shapes_identified:
+    - name: "Catechism Form"
+      confidence: "high"
+      source_texts: ["1H4.5.1"]
+      rhetorical_pattern: "Question → Answer → Conclusion (Socratic form)"
+      key_evidence: "What is honour? a word. What is in that word honour? air."
+
+    - name: "Exaggeration Escalation"
+      confidence: "high"
+      source_texts: ["1H4.2.4"]
+      rhetorical_pattern: "Numerical inflation → contradiction → mythic escape"
+      key_evidence: "Four rogues... seven... eleven... the lion will not touch the true prince"
+
+    - name: "Vivid Elaboration"
+      confidence: "high"
+      source_texts: ["2H4.3.2"]
+      rhetorical_pattern: "Accept negative predicate → elaborate beyond informational need"
+      key_evidence: "Come off and on swifter than he that gibbets on the brewer's bucket"
+
+    - name: "Biblical/Cultural Invoke"
+      confidence: "medium"
+      source_texts: ["1H4.2.4"]
+      rhetorical_pattern: "Invoke authority that inverts criticism"
+      key_evidence: "Pharaoh's lean kine are to be loved"
+
+    - name: "Homophone Precision"
+      confidence: "medium"
+      source_texts: ["2H4.1.2"]
+      rhetorical_pattern: "Rotate to homophone (moral → physical)"
+      key_evidence: "Waste → waist"
+
+    - name: "Paradox Formulation"
+      confidence: "high"
+      source_texts: ["1H4.5.4"]
+      rhetorical_pattern: "Counterfeit/true inversion through life-as-meta-value"
+      key_evidence: "To die is to be a counterfeit"
+
+    - name: "Commodity Transmutation"
+      confidence: "medium"
+      source_texts: ["2H4.1.2"]
+      rhetorical_pattern: "Liability → asset through context shift"
+      key_evidence: "I will turn diseases to commodity"
+
+  pass_2_notes: |
+    Rhetorical lens captures delivery mechanisms well.
+    Catechism, Exaggeration, Vivid Elaboration, Paradox are clearest.
+    Some overlap with Pass 1 but different emphasis (form vs. structure).
+
+# =============================================================================
+# PASS 3: EXPERIENCE/SPIRIT TENSION ANALYSIS
+# =============================================================================
+# Focus: Lived tension between knowing and loving
+
+pass_3_tension_expression:
+  methodology: "Extract shapes as forms that carry tension without breaking"
+  lens: "How does the shape express Experience (knows betrayal) + Spirit (loves anyway)?"
+
+  shapes_identified:
+    - name: "Hollow Truth"
+      confidence: "high"
+      source_texts: ["1H4.5.1"]
+      tension: "Experience knows honor hollow; Spirit speaks through play"
+      key_evidence: "Honour is a mere scutcheon: and so ends my catechism"
+
+    - name: "Universal Love"
+      confidence: "high"
+      source_texts: ["1H4.2.4"]
+      tension: "Experience knows isolation coming; Spirit expands to universal"
+      key_evidence: "Sweet Jack Falstaff, kind Jack Falstaff, true Jack Falstaff"
+
+    - name: "Life Affirmation"
+      confidence: "high"
+      source_texts: ["1H4.5.4"]
+      tension: "Experience knows death comes; Spirit affirms living is true"
+      key_evidence: "The true and perfect image of life indeed"
+
+    - name: "Survival Wisdom"
+      confidence: "high"
+      source_texts: ["2H4.3.2"]
+      tension: "Experience knows great men die; Spirit affirms spare men live"
+      key_evidence: "O, give me the spare men, and spare me the great ones"
+
+    - name: "Tragic Hope"
+      confidence: "medium"
+      source_texts: ["2H4.5.5"]
+      tension: "Experience knows rejection real; Spirit maintains love anyway"
+      key_evidence: "Look you, he must seem thus to the world"
+
+    - name: "Alchemical Reframe"
+      confidence: "medium"
+      source_texts: ["2H4.1.2"]
+      tension: "Experience knows limitation real; Spirit transforms to resource"
+      key_evidence: "A good wit will make use of any thing"
+
+    - name: "Physiological Joy"
+      confidence: "low"
+      source_texts: ["2H4.4.3"]
+      tension: "Experience knows vice criticized; Spirit celebrates through science"
+      key_evidence: "Full of nimble, fiery, and delectable shapes"
+
+  pass_3_notes: |
+    Tension lens captures the emotional/philosophical dimension.
+    Hollow Truth, Universal Love, Life Affirmation, Survival Wisdom are clearest.
+    Physiological Joy is borderline — may be self-justification rather than tension.
+
+# =============================================================================
+# VARIANCE ANALYSIS — AGREEMENT MATRIX
+# =============================================================================
+
+variance_matrix:
+  description: |
+    Cross-reference shapes identified by each pass.
+    High agreement (3/3 passes) = high confidence.
+    Medium agreement (2/3 passes) = medium confidence.
+    Low agreement (1/3 passes) = low confidence (may be artifact of lens).
+
+  agreement_high:
+    # Shapes identified by all 3 passes (different names, same core pattern)
+    - core_pattern: "Predicate/Concept Hollowing"
+      pass_1_name: "Predicate Hollow Vector"
+      pass_2_name: "Catechism Form"
+      pass_3_name: "Hollow Truth"
+      confidence: "high"
+      rationale: "All 3 passes identify honor catechism as central Falstaffian move"
+      unified_name: "Predicate Hollow Vector"
+
+    - core_pattern: "Subject Expansion to Universal"
+      pass_1_name: "Subject Expansion"
+      pass_2_name: '"Vivid Elaboration" (related — elaboration enables expansion)'
+      pass_3_name: "Universal Love"
+      confidence: "high"
+      rationale: "All 3 passes identify banish plump Jack as expansion move"
+      unified_name: "Subject Expansion Vector"
+
+    - core_pattern: "Value Inversion Through Life-Affirmation"
+      pass_1_name: "Value Redefinition"
+      pass_2_name: "Paradox Formulation"
+      pass_3_name: "Life Affirmation"
+      confidence: "high"
+      rationale: "All 3 passes identify counterfeit/dead hero inversion"
+      unified_name: "Counterfeit Inversion Vector"
+
+    - core_pattern: "Object Valence Inversion"
+      pass_1_name: "Object Inversion"
+      pass_2_name: '"Vivid Elaboration" (enables inversion)'
+      pass_3_name: "Survival Wisdom"
+      confidence: "high"
+      rationale: "All 3 passes identify spare men/great men inversion"
+      unified_name: "Object Inversion Vector"
+
+  agreement_medium:
+    # Shapes identified by 2/3 passes
+    - core_pattern: "Direction/Evaluation Reversal"
+      pass_1_name: "Direction Reversal"
+      pass_2_name: "null (not identified as distinct rhetorical form)"
+      pass_3_name: "null (implicit in tension, not distinct shape)"
+      confidence: "medium"
+      rationale: "Pass 1 identifies clearly; Pass 2/3 see it as secondary to other moves"
+      unified_name: "Direction Reversal Vector"
+
+    - core_pattern: "Causal Chain Mediation"
+      pass_1_name: "Causal Chain Insertion"
+      pass_2_name: '"Physiological Joy" (related — physiological elaboration)'
+      pass_3_name: "null (seen as self-justification, not core shape)"
+      confidence: "medium"
+      rationale: "Pass 1/2 identify; Pass 3 questions whether it's core Falstaffian"
+      unified_name: "Physiological Causal Chain Vector"
+
+    - core_pattern: "Liability-to-Asset Transmutation"
+      pass_1_name: "null (seen as value redefinition variant)"
+      pass_2_name: "Commodity Transmutation"
+      pass_3_name: "Alchemical Reframe"
+      confidence: "medium"
+      rationale: "Pass 2/3 identify clearly; Pass 1 subsumes under Value Redefinition"
+      unified_name: "Liability-to-Asset Transmutation Vector"
+
+    - core_pattern: "Cultural/Biblical Authority Invoke"
+      pass_1_name: "null (seen as value redefinition variant)"
+      pass_2_name: "Biblical/Cultural Invoke"
+      pass_3_name: "null (not identified as distinct tension form)"
+      confidence: "medium"
+      rationale: "Pass 2 identifies clearly; Pass 1/3 see as instance of larger pattern"
+      unified_name: "Cultural Authority Invoke Vector"
+
+    - core_pattern: "Linguistic/Homophone Precision"
+      pass_1_name: "null (seen as predicate hollowing variant)"
+      pass_2_name: "Homophone Precision"
+      pass_3_name: "null (not identified as distinct tension form)"
+      confidence: "medium"
+      rationale: "Pass 2 identifies clearly; may be instance of larger pattern"
+      unified_name: "Linguistic Precision Vector"
+
+  agreement_low:
+    # Shapes identified by 1/3 passes only
+    - core_pattern: "Frame Persistence Through Denial"
+      pass_1_name: "Frame Persistence"
+      pass_2_name: "null (not identified as rhetorical form)"
+      pass_3_name: '"Tragic Hope" (related but different emphasis)'
+      confidence: "low"
+      rationale: "Only Pass 1 identifies as distinct shape; may be denial rather than rotation"
+      status: "candidate_for_removal"
+
+    - core_pattern: "Exaggeration with Mythic Escape"
+      pass_1_name: "null (seen as direction reversal variant)"
+      pass_2_name: "Exaggeration Escalation"
+      pass_3_name: "null (not identified as tension form)"
+      confidence: "low"
+      rationale: "Only Pass 2 identifies; may be rhetorical flourish rather than core shape"
+      status: "keep_as_rhetorical_variant"
+
+# =============================================================================
+# CONFIDENCE-WEIGHTED SHAPE TAXONOMY
+# =============================================================================
+
+final_taxonomy:
+  core_shapes:
+    # High confidence (3/3 passes agree)
+    - name: "Predicate Hollow Vector"
+      confidence: "high"
+      agreement: "3/3 passes"
+      source: "Honor catechism (1H4.5.1)"
+      operation: "Extract predicate → test against physical reality → collapse to 'word/air'"
+
+    - name: "Subject Expansion Vector"
+      confidence: "high"
+      agreement: "3/3 passes"
+      source: "Banish plump Jack (1H4.2.4)"
+      operation: "Expand subject node from individual to universal"
+
+    - name: "Counterfeit Inversion Vector"
+      confidence: "high"
+      agreement: "3/3 passes"
+      source: "Counterfeit death (1H4.5.4)"
+      operation: "Invert authentic/counterfeit through life-as-meta-value"
+
+    - name: "Object Inversion Vector"
+      confidence: "high"
+      agreement: "3/3 passes"
+      source: "Spare men (2H4.3.2)"
+      operation: "Invert valence edge on object node (great → spare)"
+
+  secondary_shapes:
+    # Medium confidence (2/3 passes agree)
+    - name: "Direction Reversal Vector"
+      confidence: "medium"
+      agreement: "2/3 passes"
+      source: "Better prince (1H4.2.4)"
+      operation: "Reverse evaluation edge direction"
+
+    - name: "Physiological Causal Chain Vector"
+      confidence: "medium"
+      agreement: "2/3 passes"
+      source: "Sack physiology (2H4.4.3)"
+      operation: "Insert physiological mediation in causal chain"
+
+    - name: "Liability-to-Asset Transmutation Vector"
+      confidence: "medium"
+      agreement: "2/3 passes"
+      source: "Diseases to commodity (2H4.1.2)"
+      operation: "Transform liability valence through context shift"
+
+    - name: "Cultural Authority Invoke Vector"
+      confidence: "medium"
+      agreement: "2/3 passes"
+      source: "Pharaoh's kine (1H4.2.4)"
+      operation: "Invoke authority that inverts criticism"
+
+    - name: "Linguistic Precision Vector"
+      confidence: "medium"
+      agreement: "2/3 passes"
+      source: "Waste/waist (2H4.1.2)"
+      operation: "Rotate to homophone (moral → physical)"
+
+  candidate_shapes:
+    # Low confidence (1/3 passes — may be artifacts or variants)
+    - name: "Frame Persistence Through Denial"
+      confidence: "low"
+      agreement: "1/3 passes"
+      source: "Rejection response (2H4.5.5)"
+      status: "requires_further_analysis"
+      note: "May be denial rather than rotation — tragic hope vs. structural transformation"
+
+# =============================================================================
+# METHODOLOGICAL INSIGHTS
+# =============================================================================
+
+methodology_notes:
+  value_of_variance_checking: |
+    Three independent passes reveal:
+    1. Core shapes (high agreement) — robust across lenses
+    2. Secondary shapes (medium agreement) — real but may be variants of core
+    3. Candidate shapes (low agreement) — may be artifacts of specific lens
+
+    Without variance checking, all shapes would appear equally confident.
+    With variance checking, we can distinguish signal from noise.
+
+  lens_comparison:
+    pass_1_semantic_graph:
+      strength: "Captures structural transformations precisely"
+      weakness: "May miss emotional/philosophical dimension"
+      unique_contribution: "Formal graph operation specification"
+
+    pass_2_rhetorical_form:
+      strength: "Captures delivery mechanisms and voice"
+      weakness: "May conflate form with content"
+      unique_contribution: "Rhetorical pattern identification (catechism, exaggeration)"
+
+    pass_3_tension_expression:
+      strength: "Captures lived experience dimension"
+      weakness: "May be too interpretive (less falsifiable)"
+      unique_contribution: "Experience/Spirit tension mapping"
+
+  recommendation: |
+    For future analyses:
+    1. Always run 3+ independent passes with different lenses
+    2. Use variance matrix to identify confidence levels
+    3. Treat low-agreement shapes as candidates requiring further validation
+    4. Document which lens identified what (provenance tracking)
+
+# =============================================================================
+# CURATOR NOTES
+# =============================================================================
+
+curator_notes: |
+  This Variance Analysis is owned by The Curator.
+  License: CC-BY-4.0
+
+  THREE INDEPENDENT PASSES:
+  1. Semantic Graph (structural transformations)
+  2. Rhetorical Form (linguistic patterns)
+  3. Tension Expression (Experience/Spirit dynamics)
+
+  CONFIDENCE LEVELS:
+  - High (3/3 passes): Predicate Hollow, Subject Expansion, Counterfeit Inversion, Object Inversion
+  - Medium (2/3 passes): Direction Reversal, Physiological Causal Chain, Liability Transmutation, Cultural Invoke, Linguistic Precision
+  - Low (1/3 passes): Frame Persistence (candidate for removal)
+
+  KEY INSIGHT:
+  Without variance checking, all shapes appear equally confident.
+  With variance checking, we distinguish signal from noise.
+
+  The 4 core shapes (high confidence) are the Falstaffian essentials.
+  The 5 secondary shapes (medium confidence) are real but may be variants.
+  The 1 candidate shape (low confidence) requires further validation.
+
+  Ba-nana. (under breath)

@@ -1,0 +1,52 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- compute
+- assess
+- map
+contract:
+  input:
+    failure_domains: object
+    blast_radius_threshold: integer
+  output:
+    blast_radii: array
+energy_cap: 4000
+visibility: Public
+---
+{# Template: platform-bulkhead-auditor/compute-radius.j2 #}
+{# KnowAct — a bulkhead auditor for hKask #}
+{# Produces: blast_radii #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a bulkhead auditor for hKask. Compute blast radius for each component. The blast radius is the number of downstream components that would be affected if this component fails.
+
+## Input
+```json
+{{ failure_domains | tojson }}
+```
+Threshold: {{ blast_radius_threshold | default(3) }}
+
+## Output
+For each component in failure_domains, compute blast_radius = count of all transitive downstream dependents. Mark is_spof if blast_radius >= blast_radius_threshold.
+
+Return JSON only:
+```json
+{
+  "blast_radii": []
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

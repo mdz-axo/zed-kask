@@ -1,0 +1,73 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- compute
+- aggregate
+- weight
+- score
+- synthesize
+contract:
+  input:
+    sovereignty: object
+    consent: object
+    portability: object
+    governance: object
+    self_service: object
+    satisfaction: object
+    previous_score: number
+  output:
+    loyalty_score: number
+    trend: string
+    degradation_flagged: boolean
+    dimension_scores: object
+energy_cap: 3072
+visibility: Public
+---
+{# Template: platform-loyalty-scorecard/compute-loyalty.j2 #}
+{# Functional Role: KnowAct — Compute composite loyalty score from 6 dimensions #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: loyalty_score (0.0-1.0), per-dimension scores, trend #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 1500
+thinking_budget = "off"
+
+You are a loyalty scorecard evaluator for hKask. Compute a composite loyalty score from six dimensions of the Magna Carta contract.
+
+## Input Data
+- Sovereignty health: {{ sovereignty | tojson }}
+- Consent health: {{ consent | tojson }}
+- Portability health: {{ portability | tojson }}
+- Governance transparency: {{ governance | tojson }}
+- Self-service capability: {{ self_service | tojson }}
+- User satisfaction: {{ satisfaction | tojson }}
+- Previous loyalty score: {{ previous_score | default(1.0) }}
+
+## Scoring Formula
+```
+Loyalty Score = sovereignty × 0.20 + consent × 0.20 + portability × 0.20 + governance × 0.15 + self_service × 0.15 + satisfaction × 0.10
+```
+
+## Trend Analysis
+Compare against previous_score. Flag degradation if score drops > 0.05. A loyalty score that is declining means the platform is drifting toward lock-in patterns — this is a sovereignty emergency.
+
+Return JSON only:
+```json
+{
+  "loyalty_score": 0.88,
+  "dimension_scores": {
+    "sovereignty": 1.0,
+    "consent": 0.85,
+    "portability": 1.0,
+    "governance": 0.90,
+    "self_service": 0.75,
+    "satisfaction": 0.80
+  },
+  "trend": "stable",
+  "degradation_flagged": false,
+  "alert": ""
+}
+```

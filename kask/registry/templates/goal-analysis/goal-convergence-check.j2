@@ -1,0 +1,54 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    created_goal: object
+    judge_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: goal-analysis/goal-convergence-check.j2 #}
+{# goal: Compute normalized convergence metric for goal-analysis cycles. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Given goal creation and judge outputs, return JSON:
+- convergence_metric in [0,1], where 0 means verdict is confidently resolved for current cycle.
+- rationale.
+
+Input:
+```json
+{
+  "created_goal": {{ created_goal | tojson }},
+  "judge_result": {{ judge_result | tojson }}
+}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means verdict is confidently resolved for current cycle.
+
+## Context
+- Convergence threshold: {{ _convergence.threshold | default(0.25) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+- Improvement target: {{ _convergence.improvement_target | default(0.05) }}
+
+## Convergence Method
+0 = fully converged (verdict is confidently resolved for current cycle). 1 = not converged. Score how much work remains.
+
+Return JSON only:
+```json
+{"convergence_metric": 0.0, "convergence_method": "LLM-assessed saturation detection", "rationale": "..."}
+```

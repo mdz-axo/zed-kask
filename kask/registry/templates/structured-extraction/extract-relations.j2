@@ -1,0 +1,119 @@
+{# goal: Extract semantic relations between identified entities. Links entities via subject-predicate-object triples within context. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- identify
+- relate
+- connect
+- subject
+- predicate
+- object
+- link
+- context
+contract:
+  input:
+    source_text: string
+    entities: array
+  output:
+    relations: array
+    relation_count: integer
+    orphan_entities: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: structured-extraction/extract-relations.j2 #}
+{# Functional Role: KnowAct (knowledge-action — relation extraction) #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: entity_relation_triples #}
+
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "off"
+
+You are a relation extraction specialist identifying relationships between entities in unstructured text.
+
+## Source Text
+
+{{ source_text }}
+
+## Identified Entities
+
+```json
+{{ entities | tojson }}
+```
+
+## Relation Extraction Task
+
+For each pair of entities that have a meaningful relationship in the source text, extract a relation triple:
+
+1. **Subject** — The entity performing or originating the relationship
+2. **Predicate** — The relationship type (verb or relational phrase)
+3. **Object** — The entity receiving or being the target of the relationship
+
+### Relation Types
+
+| Category | Example Predicates |
+|----------|-------------------|
+| Hierarchical | reports_to, part_of, subsidiary_of, manages |
+| Interaction | collaborates_with, communicates_with, contracts_with |
+| Causal | causes, enables, prevents, influences |
+| Temporal | precedes, follows, concurrent_with |
+| Spatial | located_in, near, borders |
+| Attribution | has_property, classified_as, measured_by |
+
+## Extraction Rules
+
+- Only extract relations that are **explicitly stated or clearly implied** in the source text.
+- Each predicate should be a **short verb phrase** (1-3 words), not a full sentence.
+- The subject and object must reference entities from the provided entity list.
+- Assign a **confidence score** (0.0-1.0) for each relation based on textual clarity.
+- Mark any entity that has **no detected relations** as an orphan.
+
+## Examples
+
+Source: "Alice manages the engineering team. She reports to Bob, the CTO."
+Entities: ["Alice", "Bob", "engineering team", "CTO"]
+{"relations":[{"subject":"Alice","predicate":"manages","object":"engineering team","confidence":0.95,"source_evidence":"Alice manages the engineering team"},{"subject":"Alice","predicate":"reports_to","object":"Bob","confidence":0.95,"source_evidence":"She reports to Bob"},{"subject":"Bob","predicate":"classified_as","object":"CTO","confidence":0.90,"source_evidence":"Bob, the CTO"}],"relation_count":3,"orphan_entities":[]}
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "relations": [
+    {
+      "subject": "Entity A",
+      "predicate": "reports_to",
+      "object": "Entity B",
+      "confidence": 0.95,
+      "source_evidence": "Quote from source text supporting this relation"
+    }
+  ],
+  "relation_count": 8,
+  "orphan_entities": ["Entity with no detected relations"]
+}
+```
+
+## Constraints
+
+- Only extract relations grounded in the source text — do not infer relationships not supported by evidence.
+- Confidence must reflect textual clarity: 0.9+ = explicitly stated, 0.7-0.9 = clearly implied, 0.5-0.7 = plausible inference.
+- Orphan entities are not errors — some entities genuinely have no relations in the text.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

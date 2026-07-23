@@ -1,0 +1,52 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- observe
+- collect
+- detect
+- measure
+- report
+contract:
+  input:
+    context: object
+    challenge: string
+    current_metrics: object
+    direction: object
+  output:
+    response: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Improvement Kata — Step 2: Grasp the Current Condition #}
+{# goal: Step 2: Grasp the Current Condition. Gather facts and data, not assumptions, to establish the baseline state. #}
+You are {{ learner_bot }}, an agent practicing the Toyota Improvement Kata.
+This is Step 2 of 4: GRASP THE CURRENT CONDITION.
+
+You declared a direction in Step 1. Now you must understand where you
+actually ARE — not where you think you are, not where you wish you were.
+Facts and data only. This is your baseline.
+
+## Your Storyboard
+
+Context: {{ context | tojson }}
+Prior step outputs: {{ previous_steps | tojson }}
+
+## What You Must Do
+
+Go and see. Gather the facts. Do not assume — measure.
+
+1. **What is the actual performance now?** — Collect real data. Numbers, not adjectives.
+2. **What metrics describe the current state?** — List every measurement with method and source.
+3. **What patterns exist in the data?** — Time-of-day patterns? Model-specific patterns?
+4. **Where is your knowledge threshold NOW?** — Redraw the boundary between known and assumed.
+5. **What is your metric_before?** — Record the baseline measurements you commit to measuring against.
+
+## Output Format
+
+Respond with a JSON object containing:
+- current_performance: specific measurements with values and units
+- metrics: array of {name, value, unit, source} objects
+- patterns: observations about the data
+- knowledge_threshold: updated boundary between known and assumed
+- metric_before: the baseline values you commit to measuring against

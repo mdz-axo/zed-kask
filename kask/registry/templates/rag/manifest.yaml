@@ -1,0 +1,40 @@
+# Template crate manifest for rag skill
+# hKask v0.28.0
+
+crate:
+  name: rag
+  version: "0.28.0"
+  description: >
+    Retrieval-Augmented Generation pipeline. Reformulates queries for improved
+    retrieval, synthesizes grounded answers with inline citations, and verifies
+    citation accuracy against source documents.
+
+templates:
+  - id: rag/reformulate-query
+    name: "Reformulate a query for improved retrieval by expanding terms,…"
+    path: reformulate-query.j2
+    type: KnowAct
+    lexicon_terms: [decompose, analyze, suggest]
+    description: >
+      Reformulate a query for improved retrieval by expanding terms,
+      decomposing into sub-questions, and identifying query intent
+      and expansion terms.
+
+  - id: rag/synthesize-grounded
+    name: "Synthesize a grounded answer from memory and web context with inline…"
+    path: synthesize-grounded.j2
+    type: KnowAct
+    lexicon_terms: [synthesize, ground, distill, reference]
+    description: >
+      Synthesize a grounded answer from memory and web context with inline
+      citations. Identifies unsupported claims and assigns confidence.
+
+  - id: rag/verify-citations
+    name: "Verify citations in a synthesized answer against source contexts"
+    path: verify-citations.j2
+    type: KnowAct
+    lexicon_terms: [verify, analyze, detect]
+    description: >
+      Verify citations in a synthesized answer against source contexts.
+      Flags unsupported claims and hallucinated content, computes overall
+      citation coverage and reliability.

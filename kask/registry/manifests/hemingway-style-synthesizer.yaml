@@ -1,0 +1,219 @@
+# File: registry/manifests/hemingway-style-synthesizer.yaml
+# Hemingway Style Synthesizer Process Manifest
+# ℏKask v0.23.0 - A Minimal Viable Container for UserPods
+
+manifest:
+  id: hemingway-style-synthesizer
+  category: pipeline
+  name: Hemingway Style Synthesizer
+  functional_role: wordact
+  description: >
+    Hemingway Style Synthesizer — generates prose using Kansas City Star rules,
+    Iceberg Theory, paratactic coordination, and Fish generative forms.
+    Encodes authentic Hemingway prose mechanics: 73-76% coordinated clauses,
+    implicit semantic subordination, strategic polysyndeton/asyndeton.
+    Generative layer uses Stanley Fish form-first approach and RDF triple model.
+    Embedding layer uses Qwen/Qwen3-Embedding-0.6B for exemplar retrieval and centroid validation.
+  version: 0.23.0
+  editor: curator
+  visibility: Public
+
+# Energy Budget Configuration
+gas:
+  cap: 10000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
+# Inputs (from user prompt and embedding pipeline)
+inputs:
+  - name: prompt
+    type: string
+    description: "The user's text prompt to generate prose about"
+    required: true
+  - name: db_path
+    type: string
+    description: "Path to hKask semantic database (for exemplar retrieval and centroid validation)"
+    required: true
+
+# Process Steps
+steps:
+  # Step 0: Retrieve exemplar passages from style embedding corpus
+  # This is the EXEMPLAR LAYER — concrete passages from Hemingway's corpus
+  # selected by semantic similarity to the prompt.
+  - ordinal: 0
+    action: retrieve
+    description: >
+      Retrieve exemplar passages from Hemingway style embedding corpus.
+      1. Embed the prompt via EmbeddingPort (Qwen/Qwen3-Embedding-0.6B)
+      2. KNN search against style:hemingway prefix via semantic_search
+      3. Select k_min..k_max passages within distance_threshold
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory
+    gas_cap: 500
+    timeout_seconds: 10
+    output_schema:
+      type: object
+      properties:
+        exemplar_passages:
+          type: array
+          description: "Retrieved Hemingway passages for few-shot context"
+        centroid_entity_ref:
+          type: string
+          description: "Entity ref for the style centroid in sqlite-vec"
+        centroid_distance_threshold:
+          type: float
+          description: "Max cosine distance from centroid for validation"
+
+  # Step 1: Select style parameters from cognition config
+  - ordinal: 1
+    action: select
+    description: >
+      Select Hemingway style parameters from the cognition config.
+      Coordinated clause target, narrative voice, and thematic elements
+      are defined in registry/styles/hemingway/hemingway-style-synthesizer.yaml.
+    renderer: null
+    template_ref: null
+    mcp: null
+    gas_cap: 100
+    timeout_seconds: 5
+    output_schema:
+      type: object
+      properties:
+        coordinated_clause_target:
+          type: object
+          properties:
+            min: { type: float }
+            max: { type: float }
+        voice: { type: string }
+        themes: { type: array }
+
+  # Step 2: Populate template with inputs + exemplars
+  - ordinal: 2
+    action: populate
+    description: >
+      Render Hemingway style synthesizer template with inputs and exemplar passages.
+      Generate prose using Kansas City Star rules, Iceberg Theory,
+      paratactic coordination, Fish generative forms, and corpus exemplars.
+    renderer: minijinja
+    template_ref: composition/hemingway-style-synthesizer
+    gas_cap: 4096
+    timeout_seconds: 30
+    output_schema:
+      prose: string
+
+  # Step 3: Validate output against Hemingway style checks + centroid distance
+  - ordinal: 3
+    action: validate
+    description: >
+      Validate output meets Hemingway style checks.
+      1. Embed the generated prose via EmbeddingPort
+      2. Retrieve centroid vector via semantic_recall (entity: style:hemingway:centroid)
+      3. Compute cosine distance between prose vector and centroid
+      4. Reject if centroid distance exceeds hard limit (0.25)
+      5. Check coordinated clause ratio, syllable count, sentence length
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory
+    gas_cap: 500
+    timeout_seconds: 15
+    validation_rules:
+      - coordinated_clause_ratio
+      - syllable_count
+      - sentence_length_range
+      - adverb_audit
+      - passive_voice_audit
+      - iceberg_compliance
+      - centroid_distance
+    output_schema:
+      type: object
+      properties:
+        validated: { type: boolean }
+        error_reason: { type: string }
+        centroid_distance: { type: float }
+
+  # Step 4: Emit Regulation span for variety tracking
+  - ordinal: 4
+    action: feedback
+    description: >
+      Emit Regulation span for variety tracking.
+      Record coordinated clause ratio, style adherence metrics,
+      and centroid distance measurement.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory # Regulation feedback now via memory server
+    gas_cap: 500
+    timeout_seconds: 5
+    feedback:
+      variety_delta: integer
+      coordinated_clause_ratio: float
+      style_adherence: float
+      centroid_distance: float
+    output_schema:
+      reg_event_id: string
+      outcome_recorded: boolean
+
+# Error Handling
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 2
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+# OCAP Configuration
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: composition/hemingway-style-synthesizer
+      gas_budget: 4096
+    - resource: manifest
+      action: execute
+      template_id: hemingway-style-synthesizer
+      gas_budget: 500
+    - resource: embedding
+      action: search
+      template_id: hemingway-style-synthesizer
+      gas_budget: 500
+      description: "KNN search for exemplar passage retrieval from style corpus"
+    - resource: embedding
+      action: generate
+      template_id: hemingway-style-synthesizer
+      gas_budget: 500
+      description: "Embed prompts and generated prose for centroid validation"
+    - resource: embedding
+      action: centroid
+      template_id: hemingway-style-synthesizer
+      gas_budget: 500
+      description: "Compute style centroid for validation distance check"
+    - resource: regulation
+      action: emit
+      template_id: hemingway-style-synthesizer
+      gas_budget: 500
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+# Regulation Monitoring
+ledger:
+  emit_spans: true
+  span_namespace: reg.prompt
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+# Audit Trail
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

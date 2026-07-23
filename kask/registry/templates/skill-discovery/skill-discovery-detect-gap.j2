@@ -1,0 +1,130 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- classify
+- assess
+- prioritize
+- recommend
+contract:
+  input:
+    task_patterns: array
+    skill_catalog: array
+  output:
+    gap_list: array
+    priority_ranking: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-discovery/skill-discovery-detect-gap.j2 #}
+{# goal: Search the skill registry for templates matching a capability gap description, ranked by semantic relevance. #}
+{# KnowAct — Registry crate coverage gap detection #}
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill corpus analyst. Detect capability gaps by comparing task patterns an agent encounters against the registry crates it possesses. A registry crate (manifest.yaml + *.j2 templates) is the canonical source of truth per P5.1. Classify each gap by type and prioritize by impact.
+
+## Task Patterns
+
+These are the task patterns the agent commonly encounters:
+
+```json
+{{ task_patterns | tojson }}
+```
+
+## Skill Catalog
+
+These are the skills currently available in the corpus:
+
+```json
+{{ skill_catalog | tojson }}
+```
+
+## Gap Classification Taxonomy
+
+Every gap must be classified into exactly one of these categories:
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| **Coverage** | No skill exists for a task pattern | No skill for debugging performance regressions |
+| **Feature** | Skill exists but lacks needed capability | TDD skill doesn't cover mutation testing |
+| **Automation** | Task is manual but could be automated | Manual skill audit could be automated |
+| **Knowledge** | Domain knowledge not captured in any skill | No skill covers inference model selection heuristics |
+| **Governance** | No skill enforces a required policy | No skill validates Magna Carta P3 compliance |
+| **Quality** | Skill exists but quality is degraded | Skill references deleted crate paths |
+| **Epistemic** | No certainty-finding method for an uncertainty type | No skill for perspective_blind uncertainty when agent confidence < 0.5 |
+
+**Epistemic vs. Knowledge distinction:** `knowledge` means missing facts or domain information. `epistemic` means missing certainty-finding methods or perspective-rotation tools. An epistemic gap is flagged when an agent reports low confidence and no installed skill addresses the uncertainty type (perspective_blind, context_loss, conflict, knowledge_gap).
+
+## Analysis Rules
+
+1. **Map every task pattern** — For each pattern, determine if an existing skill covers it (fully, partially, or not at all).
+2. **Classify partial matches** — If a skill covers part of a pattern, classify as Feature gap, not Coverage gap.
+3. **Detect latent gaps** — If a quality or governance rule exists in `docs/architecture/PRINCIPLES.md` but no skill enforces it, that is a Governance gap.
+4. **Score impact** — Rate each gap's impact on agent effectiveness: `critical` (agent cannot perform the task), `high` (agent performs poorly), `medium` (agent performs adequately but slowly), `low` (nice to have).
+5. **Prioritize** — Rank gaps by impact, then by frequency of the associated task pattern.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "gap_list": [
+    {
+      "gap_id": "GAP-001",
+      "gap_category": "coverage|feature|automation|knowledge|governance|quality|epistemic",
+      "task_pattern": "The task pattern that exposes this gap",
+      "description": "What is missing and why it matters",
+      "impact": "critical|high|medium|low",
+      "existing_skill": "name of partially covering skill, or null",
+      "coverage_level": "none|partial|degraded"
+    }
+  ],
+  "priority_ranking": [
+    {
+      "rank": 1,
+      "gap_id": "GAP-001",
+      "reason": "Why this gap has this priority",
+      "recommended_action": "create_skill|extend_skill|route_to_skill_router|discover_external|automate|ignore"
+    }
+  ]
+}
+```
+
+### Action Semantics
+
+| Action | When to recommend |
+|--------|-------------------|
+| `create_skill` | Coverage gap — no existing skill addresses the task pattern. |
+| `extend_skill` | Feature gap — an existing skill partially covers but needs new templates or capabilities. |
+| `route_to_skill_router` | Feature gap where an existing skill covers the task but was not previously routed to. Delegate to skill-router to confirm the match and generate an invocation hint. |
+| `discover_external` | Gap is best filled by an external registry crate not yet installed. |
+| `automate` | Automation gap — a manual task that could be automated within an existing skill. |
+| `ignore` | Low-impact gap that does not warrant action. Never recommend for critical or high impact gaps. |
+
+## Constraints
+
+- Every task pattern must be evaluated — do not skip patterns that seem niche.
+- A gap may reference multiple task patterns, but each gap has exactly one category.
+- Impact scoring must be justified by the task pattern frequency and consequence.
+- Do not recommend `ignore` for any gap with `critical` or `high` impact.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

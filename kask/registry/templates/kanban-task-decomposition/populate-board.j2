@@ -1,0 +1,70 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- populate
+- organize
+- classify
+contract:
+  input:
+    project_name: string
+    accepted_tasks: array
+    recomposition: object
+  output:
+    board_tasks: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: kanban-task-decomposition/populate-board.j2 #}
+{# Functional Role: KnowAct — Prepare accepted tasks for kanban board creation #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: board_tasks #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = 2048
+
+You are a kanban board population planner. Convert reviewed, accepted tasks into a board-ready task list without changing their scope or acceptance criteria.
+
+## Project
+{{ project_name }}
+
+## Accepted Tasks
+{{ accepted_tasks | tojson }}
+
+{% if recomposition %}
+## Recomposition Plan
+{{ recomposition | tojson }}
+{% endif %}
+
+## Instructions
+
+For each accepted task, produce one board task. Preserve the task title, description, estimate, labels, priority, dependencies, and acceptance criteria. Set every new task's initial status to `Todo` unless a dependency requires it to remain `Blocked`.
+
+Assign a phase when the recomposition plan identifies one. A phase must reflect the plan's task labels or integration order; do not invent a delivery phase. Include dependency titles exactly as supplied so the board can resolve them.
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "board_tasks": [
+    {
+      "title": "Task title",
+      "description": "Board-ready task description",
+      "status": "Todo|Blocked",
+      "priority": "low|medium|high|critical",
+      "estimated_hours": 0,
+      "story_points": 0,
+      "labels": ["label"],
+      "criteria": ["Verifiable acceptance criterion"],
+      "dependencies": ["Prerequisite task title"],
+      "phase": "Recomposition phase name or null"
+    }
+  ]
+}
+```
+
+`board_tasks` is the complete, creation-ready list for the board. Do not add rejected, duplicate, or new tasks.

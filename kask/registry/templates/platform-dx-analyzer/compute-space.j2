@@ -1,0 +1,53 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- compute
+- assess
+- score
+contract:
+  input:
+    window_days: integer
+    dora_results: object
+  output:
+    space_scores: array
+energy_cap: 5000
+visibility: Public
+---
+{# Template: platform-dx-analyzer/compute-space.j2 #}
+{# KnowAct — a developer experience analyzer for hKask #}
+{# Produces: space_scores #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a developer experience analyzer for hKask. Compute SPACE dimensions for each skill author. Satisfaction (NPS), Performance (speed), Activity (commits), Communication (reviews), Efficiency (flow).
+
+## Input
+Window: {{ window_days | default(30) }} days
+DORA results:
+```json
+{{ dora_results | tojson }}
+```
+
+## Output
+For each author, compute 5 SPACE dimensions (0-10 scale) with per-dimension rationale.
+
+Return JSON only:
+```json
+{
+  "space_scores": []
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

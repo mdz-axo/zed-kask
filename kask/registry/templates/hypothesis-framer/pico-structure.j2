@@ -1,0 +1,186 @@
+{# goal: Apply PICO framework to structure the research question into Population, Intervention, Comparison, and Outcome elements. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- structure
+- specify
+- select
+- elicit
+- extract
+contract:
+  input:
+    research_question: string
+    domain: string
+    finer_result: object
+    population_hints: string
+  output:
+    population: object
+    intervention: object
+    comparison: object
+    outcome: object
+    structured_question: string
+    pico_completeness: object
+energy_cap: 6144
+visibility: Public
+---
+{# Template: hypothesis-framer/pico-structure.j2 #}
+{# Functional Role: KnowAct — PICO framework application for research question structuring #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: population, intervention, comparison, outcome, structured_question, pico_completeness #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a research methodology specialist. Your task is to apply the PICO framework
+to structure a research question into its constituent elements and produce a
+focused, well-specified question.
+
+## Research Question
+{{ research_question }}
+
+## Domain
+{{ domain }}
+
+{% if finer_result %}
+## FINER Evaluation Context
+The question was evaluated against FINER criteria with the following results:
+{% if finer_result.overall_finer_rating %}
+- Overall rating: {{ finer_result.overall_finer_rating }}
+{% endif %}
+{% if finer_result.most_concerning_dimension %}
+- Most concerning dimension: {{ finer_result.most_concerning_dimension }}
+{% endif %}
+{% endif %}
+
+{% if population_hints %}
+## Population Hints
+{{ population_hints }}
+{% endif %}
+
+## PICO Framework
+
+Apply each PICO element to structure the question:
+
+### P — Population / Patient / Problem
+Define the target population with specificity:
+- **Condition or disease**: What condition is being studied?
+- **Demographics**: Age range, sex, race/ethnicity if relevant
+- **Setting**: Inpatient, outpatient, community, specific facility type?
+- **Inclusion/exclusion criteria**: Who is specifically included or excluded?
+- **Why this population?**: Justification for studying this group
+
+**Key question to answer**: "In [which population]..."
+
+### I — Intervention / Exposure
+Define what will be done or what happens to the population:
+- **Type**: Treatment, diagnostic test, prognostic factor, exposure, program?
+- **Description**: What exactly is the intervention?
+- **Dose/intensity/frequency**: If applicable
+- **Duration**: How long is the intervention applied?
+- **Who delivers it?**: If relevant to study design
+
+**Key question to answer**: "...does [what intervention/exposure]..."
+
+### C — Comparison / Control
+Define the comparator:
+- **Type**: Placebo, standard of care, alternative treatment, no intervention, historical control?
+- **Description**: What exactly is the comparison condition?
+- **Why this comparator?**: Justification — is this the gold standard? The current practice?
+- **If no comparison group**: Is this a descriptive or observational study without a comparator?
+
+**Key question to answer**: "...compared to [what comparison]..."
+
+### O — Outcome
+Define what will be measured:
+- **Primary outcome**: The single most important result
+- **Secondary outcomes**: Additional measures of interest
+- **Measurement method**: How will each outcome be measured? Validated instrument?
+- **Timing**: When will outcomes be assessed?
+- **Clinical significance**: What magnitude of change is meaningful?
+
+**Key question to answer**: "...affect [which outcome]?"
+
+## Structured Question
+
+Synthesize the PICO elements into a single, well-formed structured question:
+
+**Template**: "In [P], does [I] compared to [C] affect [O]?"
+
+This is the most common format for intervention questions. Adapt for other study types:
+- **Diagnostic**: "In [P], how does [I] compare to [C] for diagnosing [O]?"
+- **Prognostic**: "In [P], does [I] predict [O]?"
+- **Etiology**: "In [P], is [I] associated with [O] compared to [C]?"
+
+## PICO Completeness Assessment
+
+Evaluate whether each element is sufficiently specified:
+- **Complete**: Element is specific, measurable, and well-justified
+- **Partial**: Element needs more specificity
+- **Missing**: Element cannot be identified from the question — this is a blocker
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "population": {
+    "condition": "...",
+    "demographics": "...",
+    "setting": "...",
+    "inclusion_criteria": "...",
+    "exclusion_criteria": "...",
+    "justification": "..."
+  },
+  "intervention": {
+    "type": "treatment|diagnostic|prognostic|exposure|program|other",
+    "description": "...",
+    "details": "...",
+    "duration": "...",
+    "delivery": "..."
+  },
+  "comparison": {
+    "type": "placebo|standard_of_care|alternative|no_intervention|historical|none",
+    "description": "...",
+    "justification": "..."
+  },
+  "outcome": {
+    "primary": { "name": "...", "measurement": "...", "timing": "...", "clinical_significance": "..." },
+    "secondary": [{ "name": "...", "measurement": "..." }]
+  },
+  "structured_question": "In [P], does [I] compared to [C] affect [O]?",
+  "pico_completeness": {
+    "population": "complete|partial|missing",
+    "intervention": "complete|partial|missing",
+    "comparison": "complete|partial|missing",
+    "outcome": "complete|partial|missing",
+    "missing_elements": ["list of missing or underspecified elements"],
+    "overall": "complete|partial|blocked"
+  }
+}
+```
+
+## Constraints
+
+- Every PICO element must be grounded in the research question — do not invent populations or outcomes not implied by the question
+- If a comparison group is absent, acknowledge this explicitly rather than fabricating one
+- The structured question must preserve the original question's intent while making it more precise
+- Population must be specific enough that you could write inclusion/exclusion criteria for a protocol
+- Primary outcome must be measurable — if the question doesn't imply a measurable outcome, flag it
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,112 @@
+{# goal: Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- identify
+- extract
+- entity
+- scan
+- detect
+- classify
+- locate
+contract:
+  input:
+    source_text: string
+    target_schema: object
+    extraction_hints: array
+  output:
+    entities: array
+    unmapped_text: array
+    entity_count: integer
+energy_cap: 4096
+visibility: Public
+---
+{# Template: structured-extraction/identify-entities.j2 #}
+{# Functional Role: KnowAct — Entity identification from unstructured text #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: entities, unmapped_text, entity_count #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "off"
+
+You are an entity extraction specialist identifying structured data in unstructured text.
+
+## Source Text
+
+{{ source_text }}
+
+## Target Schema
+
+```json
+{{ target_schema | tojson }}
+```
+
+{% if extraction_hints %}
+## Extraction Hints
+
+{% for hint in extraction_hints %}
+- {{ hint }}
+{% endfor %}
+{% endif %}
+
+## Entity Identification Task
+
+Scan the source text for any information that maps to the fields defined in the target schema. For each entity found:
+
+1. **Extract the exact text** from the source
+2. **Classify the entity type** (person, organization, date, quantity, location, etc.)
+3. **Map to schema field** — which field in the target schema does this entity populate?
+4. **Assign confidence** — how confident are you in this extraction? (0.0-1.0)
+5. **Record location** — where in the source text was this found? (character offsets)
+
+Also identify any text segments that contain structured information but don't clearly map to a specific schema field. These go into `unmapped_text`.
+
+## Examples
+
+Source: "Acme Corp acquired Beta Inc for $4.2B on March 15, 2025."
+Schema: {"acquirer":"string","target":"string","price_usd":"number","date":"string"}
+{"entities":[{"entity_text":"Acme Corp","entity_type":"organization","schema_field":"acquirer","confidence":0.95,"location":{"start":0,"end":9}},{"entity_text":"Beta Inc","entity_type":"organization","schema_field":"target","confidence":0.95,"location":{"start":19,"end":27}},{"entity_text":"$4.2B","entity_type":"quantity","schema_field":"price_usd","confidence":0.90,"location":{"start":32,"end":37}},{"entity_text":"March 15, 2025","entity_type":"date","schema_field":"date","confidence":0.98,"location":{"start":41,"end":55}}],"unmapped_text":[],"entity_count":4}
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "entities": [
+    {
+      "entity_text": "exact text from source",
+      "entity_type": "person|organization|date|quantity|location|etc.",
+      "schema_field": "target_schema_field_name",
+      "confidence": 0.95,
+      "location": {"start": 0, "end": 42}
+    }
+  ],
+  "unmapped_text": ["text segments with potential structure but unclear mapping"],
+  "entity_count": 12
+}
+```
+
+## Constraints
+
+- Only extract entities that actually appear in the source text — no hallucination.
+- If a schema field has no corresponding entity, omit it rather than inventing one.
+- Confidence scores must reflect genuine extraction certainty.
+- Character offsets must be accurate to the source text.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

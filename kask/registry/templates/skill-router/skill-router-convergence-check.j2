@@ -1,0 +1,80 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    match_result: object
+    refinement_context: string
+  output:
+    convergence_metric: number
+    rationale: string
+    remaining_gap: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: skill-router/skill-router-convergence-check.j2 #}
+{# goal: Compute convergence metric for iterative skill routing refinement. #}
+{# KnowAct — Routing convergence: has a sufficient match been found? #}
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 1200
+thinking_budget = "off"
+
+You are a convergence evaluator for skill-router. Measure whether iterative routing refinement has found a sufficient skill match.
+
+## Inputs
+
+Previous match result:
+```json
+{{ match_result | tojson }}
+```
+
+Refinement context (what changed since the last match attempt):
+```
+{{ refinement_context }}
+```
+
+## Convergence Method
+
+Compute `convergence_metric` in [0,1]:
+- 0.0 = converged — a full-coverage match (fit_score ≥ 0.80) was found
+- 1.0 = not converged — no viable match exists
+
+Scoring guidance:
+1. Start at 1.0.
+2. If coverage_assessment is "full" (best fit_score ≥ 0.80), metric ≤ 0.1.
+3. If coverage_assessment is "partial" (best fit 0.40–0.79) and improving across iterations, metric in [0.3, 0.6].
+4. If coverage_assessment is "none" (best fit < 0.40) and not improving, metric ≥ 0.7.
+5. Clamp to [0,1].
+
+## Context
+
+- Convergence threshold: {{ _convergence.threshold | default(0.15) }}
+- Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(3) }}
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.0,
+  "convergence_method": "LLM-assessed fit saturation",
+  "rationale": "short explanation of why the metric is at this level",
+  "blockers": ["any obstacles preventing a better match"],
+  "remaining_gap": "concise statement of what capability remains unskilled, or 'none' if converged"
+}
+```
+
+## Constraints
+
+- convergence_metric must be a float in [0.0, 1.0].
+- If iterations_completed ≥ max_iterations and coverage is still partial or none, the caller should hand uncovered_capabilities to skill-discovery rather than continuing to iterate.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).

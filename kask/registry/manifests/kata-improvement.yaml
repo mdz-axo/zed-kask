@@ -1,0 +1,170 @@
+# Improvement Kata Process Manifest
+# ℏKask v0.31.0 — Improvement cycle as convergent PDCA
+
+manifest:
+  id: kata-improvement
+  category: skill
+  name: Kata Improvement
+  description: >
+    Convergent four-step improvement kata. Establishes direction, assesses
+    current condition, sets target condition, defines next experiment, then
+    computes convergence and iterates.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_5_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: challenge
+    type: string
+    required: true
+  - name: current_metrics
+    type: object
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Step 1 — understand direction/challenge.
+    renderer: minijinja
+    template_ref: kata-improvement/improvement-step1-direction.j2
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+
+  - ordinal: 2
+    action: select
+    description: Step 2 — grasp current condition with data.
+    renderer: minijinja
+    template_ref: kata-improvement/improvement-step2-current.j2
+    gas_cap: 3500
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_metrics: "{{ current_metrics | default({}) }}"
+      direction: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: Step 3 — establish target condition.
+    renderer: minijinja
+    template_ref: kata-improvement/improvement-step3-target.j2
+    gas_cap: 3500
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_condition: "{{ step_2_result }}"
+
+  - ordinal: 4
+    action: select
+    description: Step 4 — define next experiment.
+    renderer: minijinja
+    template_ref: kata-improvement/improvement-step4-experiment.j2
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_condition: "{{ step_2_result }}"
+      target_condition: "{{ step_3_result }}"
+
+  - ordinal: 5
+    action: select
+    description: Compute normalized convergence metric for improvement cycle.
+    renderer: minijinja
+    template_ref: kata-improvement/kata-improvement-convergence-check.j2
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      step2_result: "{{ step_2_result }}"
+      step3_result: "{{ step_3_result }}"
+      step4_result: "{{ step_4_result }}"
+
+  - ordinal: 6
+    action: loop
+    description: Re-enter improvement cycle if convergence is not met.
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: 2  # By Toyota Kata design: after experiment (step 4), reassess current condition (step 2) — direction (step 1) only revisited if challenge fundamentally changes (see SKILL.md step 4: 'next obstacle if correct'). This preserves direction stability while allowing current-state correction.
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: kata-improvement/improvement-step1-direction
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: kata-improvement/improvement-step2-current
+      gas_budget: 3500
+    - resource: template
+      action: render
+      template_id: kata-improvement/improvement-step3-target
+      gas_budget: 3500
+    - resource: template
+      action: render
+      template_id: kata-improvement/improvement-step4-experiment
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: kata-improvement/kata-improvement-convergence-check
+      gas_budget: 2000
+    - resource: manifest
+      action: execute
+      template_id: kata-improvement
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+# Recommends: improv skill for self-directed coaching posture during Step 4.
+# - Plan (design experiment) → Yes But
+# - Check (compare prediction to actual) → Plussing
+
+ledger:
+  emit_spans: true
+  span_namespace: hkask.template.kata.improvement
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+  spans:
+    - reg.kata.improvement.direction
+    - reg.kata.improvement.current_condition
+    - reg.kata.improvement.target_set
+    - reg.kata.improvement.experiment_run
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

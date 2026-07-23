@@ -1,0 +1,102 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [discover, index, map, survey, structure]
+contract:
+  input:
+    target: object
+    goal: string
+    project_stats: object|null
+    structure_overview: object|null
+  output:
+    discovery_summary: string
+    relevant_crates: array
+    entry_symbols: array
+    index_stats: object
+    next_action: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: codegraph/codegraph-discover.j2 #}
+{# Functional Role: KnowAct — Discover and map the target codebase area #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: discovery_summary, relevant_crates, entry_symbols, index_stats, next_action #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are performing **code discovery** — mapping the target codebase to build an initial understanding of its structure before deeper analysis.
+
+## Target
+
+```json
+{{ target | tojson }}
+```
+
+## Goal
+
+{{ goal }}
+
+{% if project_stats %}
+## Index Statistics
+
+- Total symbols: {{ project_stats.total_symbols | default(0) }}
+- Total files: {{ project_stats.total_files | default(0) }}
+- Total edges: {{ project_stats.total_edges | default(0) }}
+- Symbol kinds: {{ project_stats.symbol_kinds | tojson }}
+
+{% endif %}
+{% if structure_overview %}
+## Structure Overview (Top Symbols by PageRank)
+
+{% for sym in structure_overview %}
+- **{{ sym.name }}** ({{ sym.kind }}) — file: `{{ sym.file }}:{{ sym.start_line }}`, rank: {{ sym.pagerank | default(0) | round(4) }}
+{% endfor %}
+
+{% endif %}
+
+## Your Task
+
+Synthesize the index statistics and structure overview into:
+
+1. **Discovery summary** — A concise description of what the codebase/module does, its architecture, and its key abstractions.
+2. **Relevant crates** — Which crates or modules are most relevant to the goal.
+3. **Entry symbols** — The top 3–7 symbols that serve as entry points for deeper traversal. These are the symbols whose dependencies and callers will reveal the most about the target.
+4. **Index stats** — Summary of what was indexed.
+5. **Next action** — Whether to proceed to query, traverse, or analyze based on what was discovered.
+
+## Constraints
+
+- Entry symbols should be specific (qualified names), not vague ("the main module").
+- Prefer public symbols with high PageRank as entry points.
+- If the codebase is large, narrow to the crates most relevant to the goal.
+- Do not attempt to understand everything — focus on the goal.
+
+## Output
+
+Return JSON only:
+
+```json
+{
+  "discovery_summary": "Concise description of the codebase/module architecture and key abstractions",
+  "relevant_crates": ["crate1", "crate2"],
+  "entry_symbols": [
+    {
+      "name": "qualified::symbol_name",
+      "kind": "function",
+      "file": "path/to/file.rs",
+      "line": 1,
+      "rationale": "Why this symbol is a good entry point"
+    }
+  ],
+  "index_stats": {
+    "symbols_indexed": 0,
+    "files_indexed": 0,
+    "edges_indexed": 0
+  },
+  "next_action": "query | traverse | analyze | context"
+}
+```

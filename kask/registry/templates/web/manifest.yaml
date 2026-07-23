@@ -1,0 +1,58 @@
+# Template crate manifest for web skill
+# hKask v0.28.0
+
+crate:
+  name: web
+  version: "0.28.0"
+  description: >
+    Web search and research templates. Performs quick, news, and deep
+    multi-provider searches with RRF fusion, extracts and synthesizes URL
+    content, and executes full research cascades with domain filtering.
+
+templates:
+  - id: web/extract-synthesize
+    name: "Extract content from specific URLs and synthesize findings into a…"
+    path: extract-synthesize.j2
+    type: KnowAct
+    lexicon_terms: [extract, synthesize, distill]
+    description: >
+      Extract content from specific URLs and synthesize findings into a
+      unified document. Fills gaps with targeted web search when needed.
+
+  - id: web/research-cascade
+    name: "Full research cascade: broad search, find similar results, extract…"
+    path: research-cascade.j2
+    type: KnowAct
+    lexicon_terms: [search, explore, synthesize, distill]
+    description: >
+      Full research cascade: broad search, find similar results, extract
+      content, iterate to fill gaps, and synthesize comprehensive findings
+      with domain filtering.
+
+  - id: web/search-deep
+    name: "Deep multi-provider search with Reciprocal Rank Fusion (k=60),…"
+    path: search-deep.j2
+    type: KnowAct
+    lexicon_terms: [search, analyze, synthesize]
+    description: >
+      Deep multi-provider search with Reciprocal Rank Fusion (k=60),
+      reranked by recency, semantic score, and content quality. Optionally
+      expands via find-similar.
+
+  - id: web/search-news
+    name: "News-oriented search organized into timeline buckets (today, this…"
+    path: search-news.j2
+    type: KnowAct
+    lexicon_terms: [search, query, classify]
+    description: >
+      News-oriented search organized into timeline buckets (today, this
+      week, this month) with configurable freshness and source filtering.
+
+  - id: web/search-quick
+    name: "Quick single-provider web search for fast results"
+    path: search-quick.j2
+    type: KnowAct
+    lexicon_terms: [search, query, summarize]
+    description: >
+      Quick single-provider web search for fast results. Returns top
+      results as a concise list with title, URL, and description.

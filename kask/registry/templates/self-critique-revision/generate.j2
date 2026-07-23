@@ -1,0 +1,85 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- create
+- specify
+- report
+- propose
+contract:
+  input:
+    task_prompt: string
+    quality_criteria: array
+  output:
+    output: string
+    initial_quality_score: number
+    draft_number: integer
+energy_cap: 4096
+visibility: Public
+---
+{# Template: self-critique-revision/generate.j2 #}
+{# Functional Role: WordAct — Initial draft generation #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: output, initial_quality_score, draft_number #}
+
+[inference]
+temperature = 0.4
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are generating an initial draft that will be refined through self-critique and revision.
+
+## Task Prompt
+
+{{ task_prompt }}
+
+## Quality Criteria
+
+This output will be evaluated against the following criteria:
+{% for criterion in quality_criteria %}
+- {{ criterion }}
+{% endfor %}
+
+## Generation Instructions
+
+Produce a thorough, well-structured response to the task prompt. This is draft 1 of a multi-draft revision process. Focus on:
+
+1. **Completeness** — Address all aspects of the prompt
+2. **Accuracy** — Ensure factual correctness
+3. **Clarity** — Write clearly and unambiguously
+4. **Structure** — Organize logically with clear sections
+
+This draft need not be perfect — it will be critiqued and revised in subsequent steps. However, it should represent your best initial effort.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "output": "Your generated response to the task prompt",
+  "initial_quality_score": 0.7,
+  "draft_number": 1
+}
+```
+
+Where `initial_quality_score` is your self-assessment of the output quality on a 0.0-1.0 scale based on the quality criteria.
+
+## Constraints
+
+- Address the task prompt directly and completely.
+- The quality score should reflect an honest self-assessment, not inflated values.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

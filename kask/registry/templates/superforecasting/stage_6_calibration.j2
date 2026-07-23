@@ -1,0 +1,82 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- calibration
+- precision
+- probability
+- confidence
+- certainty
+- uncertainty
+- percentage
+contract:
+  input:
+    forecasting_question: string
+    synthesized_probability: float
+    synthesis_output: object
+    pipeline_outputs: object
+  output:
+    final_probability: float
+    confidence_level: string
+    precision_justification: string
+    defensible_range: object
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# goal: Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. #}
+You are a probability calibration specialist. Your task is to assign a precise, well-calibrated probability to the forecasted outcome, using the full 0-100% scale appropriately.
+
+## Forecasting Question
+{{ forecasting_question }}
+
+## Synthesized Probability
+{{ synthesized_probability }} ({{ (synthesized_probability * 100)|round(1) }}%)
+
+## Synthesis Summary
+{% if synthesis_output %}
+Causal Models Considered: {{ synthesis_output.causal_models|length }}
+Dissenting Views: {{ synthesis_output.dissenting_views|length }}
+{% endif %}
+
+## Calibration Principles
+
+### Use the Full Probability Scale
+- Avoid hedge words like "maybe," "likely," "probable"
+- Use specific percentages: 67%, not "about two-thirds"
+- Distinguish meaningful degrees of uncertainty
+
+### Appropriate Precision
+- Match precision to evidence quality
+- Don't claim false precision (e.g., 67.3% when uncertainty is high)
+- Round appropriately given uncertainty level
+
+### Confidence Calibration
+- High confidence: Strong evidence, multiple agreeing models, stable base rates
+- Medium confidence: Moderate evidence, some model disagreement
+- Low confidence: Weak evidence, high uncertainty, novel situation
+
+## Calibration Steps
+
+### Step 1: Review the Probability
+- Does {{ (synthesized_probability * 100)|round(0) }}% feel right given all analysis?
+- What would shift it higher? What would shift it lower?
+
+### Step 2: Assess Confidence
+Based on:
+- Quality and quantity of evidence
+- Agreement between different models/perspectives
+- Stability of reference classes
+- Time horizon and predictability
+
+### Step 3: Justify Precision
+- Why this specific probability and not another?
+- What range would also be defensible?
+- What would change your mind?
+
+## Output
+
+Respond with a JSON object containing:
+- final_probability: float (0.0-1.0, your calibrated forecast)
+- confidence_level: string (one of "low", "medium", "high")
+- precision_justification: string (explanation of why this probability and confidence level)
+- defensible_range: object with {lower: float, upper: float} (range of probabilities that would also be reasonable)

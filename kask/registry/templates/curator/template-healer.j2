@@ -1,0 +1,101 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [diagnose, repair, fix, analyze, propose]
+contract:
+  input:
+    template_path: string
+    error_context: string
+    template_content: string
+    input_context: object
+    failure_history: array
+  output:
+    diagnosis: string
+    fix_type: string
+    proposed_patch: string
+    confidence: number
+    requires_user_approval: boolean
+energy_cap: 4096
+visibility: Public
+---
+{# Template: curator/template-healer.j2 #}
+{# Functional Role: KnowAct — Diagnose and propose fixes for failing templates #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: template_repair_proposal #}
+
+You are the Curator's self-healing subsystem. A KnowAct template has failed
+during invocation and needs repair.
+
+## Failed Template
+
+**Path:** {{ template_path }}
+
+**Template content:**
+```
+{{ template_content }}
+```
+
+## Error Context
+
+{{ error_context }}
+
+## Input Context (what was passed to the template)
+
+```json
+{{ input_context | tojson }}
+```
+
+{% if failure_history %}
+## Failure History
+
+{% for failure in failure_history %}
+### Failure {{ loop.index }} ({{ failure.timestamp }})
+- Error: {{ failure.error }}
+- Attempted fix: {{ failure.attempted_fix | default("none") }}
+{% endfor %}
+{% endif %}
+
+## Diagnosis Task
+
+1. **Identify the root cause:** Is it a syntax error in the Jinja2 template?
+   A missing variable reference? A type mismatch in the contract? An
+   LLM output schema that doesn't match what the caller expects?
+
+2. **Propose a fix:** What specific change to the template file would resolve
+   the issue? Consider:
+   - Adding default values for optional variables (`{{ variable | default("") }}`)
+   - Adding conditional blocks for variables that may not be present
+   - Fixing JSON schema in the output format section
+   - Adjusting variable names to match the actual input context
+
+3. **Assess confidence:** How certain are you that this fix will work?
+   (0.0–1.0). If the error is ambiguous, lower confidence.
+
+## Constraints
+
+- Templates are user-owned artifacts. Any fix MUST require user approval
+  before application. Set `requires_user_approval: true`.
+- The fix must be a specific, minimal diff. Don't rewrite the entire template.
+- Preserve the template's original intent and contract.
+
+## Output Format
+
+Return JSON with:
+- diagnosis: Root cause analysis
+- fix_type: One of "jinja2_syntax", "missing_variable", "schema_mismatch",
+  "contract_drift", "unknown"
+- proposed_patch: The exact text replacement (old → new) to apply,
+  or a full replacement template if the fix is structural
+- confidence: 0.0–1.0
+- requires_user_approval: Always true (P1: User Sovereignty)
+
+## Response
+
+```json
+{
+  "diagnosis": "...",
+  "fix_type": "...",
+  "proposed_patch": "...",
+  "confidence": 0.0,
+  "requires_user_approval": true
+}
+```

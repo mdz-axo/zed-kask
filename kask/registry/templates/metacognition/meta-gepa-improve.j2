@@ -1,0 +1,135 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [evolve, improve, sample, reflect, mutate]
+contract:
+  input:
+    goal: string
+    cycle_trajectories: object|null
+    convergence_result: object|null
+  output:
+    improvement_invoked: boolean
+    evolved_artifacts: array
+    pareto_frontier: array
+    improvement_summary: string
+    next_cycle_recommendation: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: metacognition/meta-gepa-improve.j2 #}
+{# Functional Role: KnowAct — GEPA self-improvement via gpa-evolution delegation #}
+{# Implementation: Jinja2 prompt (agent-driven delegation to gpa-evolution skill) #}
+{# Produces: improvement_invoked, evolved_artifacts, pareto_frontier, improvement_summary, next_cycle_recommendation #}
+
+[inference]
+temperature = 0.4
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are performing **GEPA self-improvement** — evolving the metacognition process itself through Genetic-Pareto evolutionary optimization.
+
+This step delegates to the `gpa-evolution` skill. The agent should invoke the gpa-evolution manifest with the current cycle's trajectories as the target artifact's eval set.
+
+## Goal (from the metacognition cycle)
+
+{{ goal }}
+
+{% if cycle_trajectories %}
+## Cycle Trajectories (from the current metacognition cycle)
+
+```json
+{{ cycle_trajectories | tojson }}
+```
+
+{% endif %}
+{% if convergence_result %}
+## Convergence Result (from step 5)
+
+```json
+{{ convergence_result | tojson }}
+```
+
+{% endif %}
+
+## Your Task
+
+Invoke the `gpa-evolution` skill to evolve the metacognition templates. Follow the GEPA process:
+
+### 1. Sample Trajectories
+Capture execution trajectories from the current metacognition cycle:
+- **Input**: the goal and session_history from step 1
+- **Decomposition**: the sub-goal tree from step 1
+- **Assessment**: the self-assessment from step 2
+- **Ellipsis findings**: the gap analysis from step 3 (if context_text was provided)
+- **Calibration**: the strategy adjustment and next experiment from step 4
+- **Outcome**: the convergence metric and blockers from step 5
+
+### 2. Reflect in Natural Language
+Diagnose the current cycle:
+- Was the decomposition accurate? Did sub-goals map to the goal?
+- Was the assessment grounded in evidence? Was confidence calibrated?
+- Did the ellipsis detection surface useful gaps? (if run)
+- Did the calibration address the identified obstacles?
+- What would make the next cycle better?
+
+Extract transferable rules:
+- "When [condition], the metacognition template should [change] because [reason]"
+
+### 3. Propose Mutations
+Generate 3–7 variants of the metacognition templates (meta_decompose, meta-assess, meta-calibrate):
+- Each variant tests ONE hypothesis: "if I change X, then Y will improve because Z"
+- Use mutation (targeted edit based on a single reflected lesson) and crossover (recombine complementary lessons from frontier members)
+
+### 4. Test Variants
+Execute each mutated template against the cycle's eval set and collect per-objective scores:
+- **Accuracy**: did the decomposition/assessment match ground truth?
+- **Calibration**: was confidence aligned with actual outcomes?
+- **Actionability**: was the next experiment specific and testable?
+- **Cost**: gas consumed, time taken
+
+### 5. Update Pareto Frontier
+Merge the current frontier with newly tested variants, keep non-dominated members, prune by crowding distance.
+
+### 6. Check Convergence
+Compute Pareto-frontier stability (hypervolume delta + new non-dominated members).
+
+## Agent Delegation
+
+**Invoke the `gpa-evolution` skill** with:
+- `artifact_type: "prompt"`
+- `target_artifact`: the current metacognition template content
+- `eval_set`: the cycle trajectories from this metacognition cycle
+- `objectives: ["accuracy", "calibration", "actionability"]`
+
+The gpa-evolution skill handles its own internal PDCA cycle (sample → reflect → propose → test → frontier → converge).
+
+## Output
+
+Return JSON only:
+
+```json
+{
+  "improvement_invoked": true,
+  "evolved_artifacts": [
+    {
+      "template_id": "metacognition/meta-calibrate",
+      "variant_id": "v1",
+      "hypothesis": "if I add obstacle-to-shape mapping, then calibration accuracy improves because the Falstaffian shape selection is grounded",
+      "parent": "original",
+      "operator": "mutation",
+      "scores": {
+        "accuracy": 0.8,
+        "calibration": 0.7,
+        "actionability": 0.9
+      }
+    }
+  ],
+  "pareto_frontier": [
+    "v1",
+    "v3"
+  ],
+  "improvement_summary": "What was learned from this GEPA cycle about the metacognition process",
+  "next_cycle_recommendation": "Specific recommendation for the next metacognition invocation"
+}
+```

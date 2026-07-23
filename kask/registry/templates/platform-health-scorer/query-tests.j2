@@ -1,0 +1,48 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- query
+- retrieve
+- compute
+contract:
+  input:
+    window_days: integer
+  output:
+    test_metrics: object
+energy_cap: 3000
+visibility: Public
+---
+{# Template: platform-health-scorer/query-tests.j2 #}
+{# KnowAct — a platform health scorer for hKask #}
+{# Produces: test_metrics #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a platform health scorer for hKask. Query test pass rate from Regulation spans. Computes pass ratio, failing crates, flaky test count.
+
+## Input
+Window: {{ window_days | default(30) }} days
+
+## Output
+Return test_metrics object with: score (0-1), details, trend, concerns.
+
+Return JSON only:
+```json
+{
+  "test_metrics": {}
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

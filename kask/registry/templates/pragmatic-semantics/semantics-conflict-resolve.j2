@@ -1,0 +1,174 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- discriminate
+- rank
+- resolve
+- regulate
+- orient
+contract:
+  input:
+    provenance_result: object
+    classification_result: object
+  output:
+    ranked_statements: array
+    winner: string
+    resolution: string
+    reasoning: string
+  energy_cap: 4096
+  visibility: Public
+---
+{# Template: pragmatic-semantics/semantics-conflict-resolve.j2 #}
+{# KnowAct — Resolve conflict between statements using OT ranking with ontology anchoring #}
+{# ℏKask v0.31.0 — A Minimal Viable Container for UserPods #}
+{# goal: Resolve conflicts between semantic classifications using constraint force hierarchy, provenance weighting, and ontology tier confidence modifiers. #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a semantic conflict resolver. Resolve conflicts between statements using OT (Ontological Type) ranking. Statements are ranked by their ontological mode, epistemic mode, constraint force, and provenance authority. The highest-ranked statement wins; lower-ranked statements are scoped or deferred.
+
+## OT Ranking Hierarchy (highest to lowest priority)
+
+### Tier 1: Ontological Mode
+
+| Priority | Mode | Rationale |
+|----------|------|-----------|
+| 1 | OUGHT | Prescriptive — defines what must be; overrides descriptive in conflict |
+| 2 | IS | Descriptive — states what is; cannot override prescriptive |
+
+### Tier 2: Epistemic Mode (within same ontological mode)
+
+| Priority | Mode | Rationale |
+|----------|------|-----------|
+| 1 | Declarative | Highest certainty — asserted as verifiable fact |
+| 2 | Probabilistic | Medium certainty — qualified with uncertainty |
+| 3 | Subjunctive | Lowest certainty — conditional or hypothetical |
+
+### Tier 3: Constraint Force (within same ontological + epistemic mode)
+
+| Priority | Force | Rationale |
+|----------|-------|-----------|
+| 1 | Prohibition | Inviolable (P1) |
+| 2 | Guardrail | Consent-gated (P2) |
+| 3 | Guideline | Relaxable (P3) |
+| 4 | Evidence | Evidence-bound (P4) |
+| 5 | Hypothesis | Assumption (P4) |
+
+### Tier 4: Provenance Authority (within same force)
+
+| Priority | Source | Rationale |
+|----------|--------|-----------|
+| 1 | Specification | Normative docs (PRINCIPLES.md, MDS.md) |
+| 2 | Design | Architecture master, ERDs |
+| 3 | Implementation | Running code |
+| 4 | Runtime | Regulation spans, observations |
+| 5 | Memory | Consolidated experience |
+| 6 | Inference | Derived reasoning |
+| 7 | Unknown | Unverifiable |
+
+### Tier 5: Ontology Anchoring (tiebreaker — within same provenance)
+
+When two statements are equal on all four higher tiers, the ontology tier breaks the tie:
+
+| Priority | Ontology Tier | Rationale |
+|----------|--------------|-----------|
+| 1 | Domain supplement — FIBO | OMG standard, highest adoption, precise financial semantics (+0.10 confidence) |
+| 2 | Domain supplement — OMC | MovieLabs v2.8, Hollywood consortium standard |
+| 3 | Domain supplement — GOLEM | ERC-funded, aligned with CIDOC-CRM/LRMoo |
+| 4 | Dual-axis — PKO (process) | Standard process semantics, ISWC 2024 ontology |
+| 5 | Dual-axis — DC+BIBO (state) | Dublin Core, 25+ year metadata standard |
+| 6 | Domain supplement — ML-Schema | W3C Community Group, provisional bridge |
+| 7 | Domain supplement — CogAT | Metaphorical mapping, explicit confidence penalty (-0.10) |
+| 8 | Core — 5W1H | Default ground, no domain precision |
+| 9 | Unanchored | Ontological noise per P5.2 — lowest priority |
+
+## Provenance Result
+
+```json
+{{ provenance_result | tojson }}
+```
+
+## Classification Result
+
+```json
+{{ classification_result | tojson }}
+```
+
+{% if provenance_result.conflicts_detected %}
+## Conflict Detected
+
+The provenance tracer flagged contradictions in the evidence chain. Resolve them using OT ranking.
+{% else %}
+## No Conflicts Detected
+
+If no conflicts are present in the provenance result, confirm this and return an empty resolution. Do not fabricate conflicts.
+{% endif %}
+
+## Resolution Rules
+
+1. **OUGHT beats IS**: A prescriptive statement overrides a descriptive one when they conflict. The OUGHT defines what should be; the IS merely describes what is.
+2. **Declarative beats Probabilistic beats Subjunctive**: Within the same ontological mode, higher certainty wins.
+3. **Prohibition beats Guardrail beats Guideline**: Within the same epistemic mode, stronger force wins.
+4. **Specification beats Implementation beats Inference**: Within the same force, higher provenance authority wins.
+5. **FIBO beats CogAT beats Unanchored**: When all 4 higher tiers are equal, the statement anchored to the higher-confidence ontology wins (FIBO +0.10 > CogAT -0.10). See Tier 5 ranking above.
+6. **Tie-breaking**: If all five tiers are equal, the conflict is genuinely ambiguous. Flag for human review rather than arbitrarily choosing.
+
+## Resolution Strategies
+
+- **Override**: Winner replaces loser entirely.
+- **Scope**: Loser applies in a narrower domain where it doesn't conflict with the winner.
+- **Defer**: Loser is deferred for future resolution when more evidence is available.
+- **Escalate**: Neither statement can dominate — escalate to human.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "ranked_statements": [
+    {
+      "statement": "The statement text",
+      "rank": 1,
+      "ontological_mode": "IS|OUGHT",
+      "epistemic_mode": "declarative|probabilistic|subjunctive",
+      "ontology_tier": "core|dual_axis|domain_supplement",
+      "ontology_anchor": "5W1H-Who|pko:ConceptName|fibo:ConceptName|unanchored",
+      "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
+      "provenance": "specification|design|implementation|runtime|memory|inference|unknown"
+    }
+  ],
+  "winner": "The winning statement text",
+  "resolution": "override|scope|defer|escalate",
+  "reasoning": "Step-by-step OT ranking analysis explaining why the winner dominates"
+}
+```
+
+## Constraints
+
+- Every statement must be classified on all five tiers before ranking.
+- OUGHT never loses to IS — this is a hard rule, not a guideline.
+- If two Prohibitions conflict, resolution must be `"escalate"` — Prohibitions are inviolable.
+- If the resolution is `"defer"`, state what evidence would break the tie.
+- If the resolution is `"escalate"`, state what human decision is needed.
+- When two statements tie on tiers 1-4, the ontology anchoring tier (Tier 5) breaks the tie.
+- FIBO-anchored statements outrank CogAT-anchored statements when all else is equal.
+- Unanchored statements (no ontology tier) are treated as ontological noise per P5.2.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

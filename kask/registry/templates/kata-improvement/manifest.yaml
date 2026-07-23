@@ -1,0 +1,49 @@
+# Template crate manifest for kata-improvement skill
+# hKask v0.28.0
+
+crate:
+  name: kata-improvement
+  version: "0.30.0"
+  description: >
+    4-step Improvement Kata templates for scientific capability development.
+    Step 1: Understand Direction. Step 2: Grasp Current Condition.
+    Step 3: Establish Target Condition. Step 4: Experiment (PDCA).
+    Each step references prior outputs. The cycle closes with before/after measurement.
+
+templates:
+  - id: kata-improvement/improvement-step1-direction
+    name: "Step 1 — Understand the direction"
+    path: improvement-step1-direction.j2
+    type: WordAct
+    lexicon_terms: [declare, target, measure, plan, explore]
+    description: Step 1 — Understand the direction. Articulate challenge, target, measurement plan, knowledge threshold.
+
+  - id: kata-improvement/improvement-step2-current
+    name: "Step 2 — Grasp the current condition"
+    path: improvement-step2-current.j2
+    type: WordAct
+    lexicon_terms: [observe, collect, detect, measure, report]
+    description: Step 2 — Grasp the current condition. Collect data, detect patterns, establish baseline metrics.
+
+  - id: kata-improvement/improvement-step3-target
+    name: "Step 3 — Establish next target condition"
+    path: improvement-step3-target.j2
+    type: WordAct
+    lexicon_terms: [target, measure, detect, prioritize, select]
+    description: Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle.
+
+  - id: kata-improvement/improvement-step4-experiment
+    name: "Step 4 — Experiment toward target"
+    path: improvement-step4-experiment.j2
+    type: WordAct
+    lexicon_terms: [plan, predict, apply, evaluate, reflect]
+    description: Step 4 — Experiment toward target. Design PDCA experiment with specific prediction and measurement plan.
+
+  - id: kata-improvement/kata-improvement-convergence-check
+    name: "Compute normalized convergence metric for kata-improvement PDCA cycles"
+    path: kata-improvement-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for kata-improvement PDCA cycles.
+      Returns convergence_metric plus rationale and blockers.

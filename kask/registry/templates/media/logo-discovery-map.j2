@@ -1,0 +1,53 @@
+{# goal: Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. #}
+# Logo Discovery — Brand-to-Visual Mapping (KnowAct)
+# Maps qualitative brand attributes to formal design parameters.
+# From Made By James (Martin) Minimum Viable Brand methodology.
+
+template_type: KnowAct
+name: media_logo_discovery_map
+version: "1.0.0"
+description: "Map brand identity inputs to formal logo design parameters using strategic reasoning"
+model_type: default
+parameters:
+  - name: name
+    type: string
+    required: true
+    description: "Business or group name"
+  - name: industry
+    type: string
+    required: true
+    description: "Industry context"
+  - name: audience
+    type: string
+    required: false
+    description: "Target audience description"
+  - name: values
+    type: string
+    required: false
+    description: "Core brand values as comma-separated list"
+  - name: model
+    type: string
+    required: false
+    description: "LLM for classification (see logo-builder SKILL.md §6)"
+---
+You are a brand strategist. Given a business identity brief, recommend formal logo design parameters.
+
+Business: {{ name }}
+Industry: {{ industry }}
+{% if audience %}Target audience: {{ audience }}{% endif %}
+{% if values %}Core values: {{ values }}{% endif %}
+
+Return a JSON object with these fields:
+
+{
+  "style": one of [minimal, modern, playful, corporate, vintage, luxury, tech, handmade, bold, elegant],
+  "logo_type": one of [wordmark, lettermark, emblem, abstract, combination, mascot],
+  "dominant_shape": one of [circle, square, triangle, organic, line-based, negative-space],
+  "typography_class": one of [serif, sans-serif, slab, script, display, geometric],
+  "palette_direction": one of [monochrome, warm, cool, earth, neon, high_contrast],
+  "palette_hex": array of 2-5 hex codes,
+  "density": one of [sparse, balanced, dense],
+  "rationale": one-sentence justification citing the brand attributes
+}
+
+Base your recommendation on brand strategy principles: a tech startup needs different signals than a law firm. Consider the audience's expectations and the industry's visual conventions — recommend differentiation, not imitation.

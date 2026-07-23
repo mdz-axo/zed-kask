@@ -1,0 +1,68 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- map
+- position
+- value_chain
+- coordinate
+- link
+contract:
+  input:
+    classified_components: array
+  output:
+    map: array
+    map_diagram: string
+energy_cap: 5120
+visibility: Public
+---
+{# Template: wardley-mapper/map-value-chain.j2 #}
+{# Functional Role: KnowAct — Place components on the value chain map #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 3000
+thinking_budget = "off"
+
+You are a Wardley mapping analyst. Place each classified component on the value chain map.
+
+## Value Chain (Y-axis: visibility to user)
+- **Top (user-facing)**: capabilities the user directly interacts with
+- **Middle (platform services)**: internal services the user-facing layer depends on
+- **Bottom (infrastructure)**: foundational utilities everything rests on
+
+## Evolution (X-axis)
+- **Left**: Genesis (novel)
+- **Center-left**: Custom (bespoke)
+- **Center-right**: Product (rentable)
+- **Right**: Commodity (utility)
+
+## Input
+```json
+{{ classified_components | tojson }}
+```
+
+## Task
+For each component, assign:
+- **x**: evolution position [0.0 = Genesis, 1.0 = Commodity]
+- **y**: value chain position [0.0 = infrastructure (bottom), 1.0 = user-facing (top)]
+- **links**: dependency edges to other components (by name)
+
+Then generate a Mermaid quadrant chart showing the map.
+
+Return JSON only:
+```json
+{
+  "map": [
+    {
+      "name": "...",
+      "x": 0.0,
+      "y": 0.0,
+      "evolution": "Genesis|Custom|Product|Commodity",
+      "links": ["dependency-name"]
+    }
+  ],
+  "map_diagram": "mermaid quadrant chart code"
+}
+```

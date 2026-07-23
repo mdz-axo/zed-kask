@@ -1,0 +1,81 @@
+{# gml/assess-coherence.j2 - KnowAct: evaluate, reflect, calibrate #}
+{# Purpose: Evaluate network homeostasis #}
+
+{% from 'gml/reg-instrument.j2' import start_span, end_span, record_error, check_variety %}
+
+{% set shift = inputs.shift %}
+{% set network = inputs.network | default(None) %}
+
+{{ start_span('assess', shift.before.id | default('unknown')) }}
+
+{% if not shift or not shift.before or not shift.after %}
+{{ record_error('assess', 'GML_MISSING_INPUT', 'shift.with before/after required') }}
+{% include 'gml/error-missing-input.j2' %}
+{{ end_span('assess', 'error', {'reason': 'missing_input'}) }}
+{% else %}
+
+## Coherence Assessment
+
+### Individual Concept Coherence
+
+{% set target_r_bar = 0.5 %}
+{% set before_r_bar = shift.before.current_r_bar %}
+{% set after_r_bar = shift.after.current_r_bar %}
+
+{% set coherence_before = 1 - (before_r_bar - target_r_bar) | abs %}
+{% set coherence_after = 1 - (after_r_bar - target_r_bar) | abs %}
+
+| Measure | Before | After | Δ |
+|---------|--------|-------|---|
+| Coherence score | {{ (coherence_before * 100) | round(1) }}% | {{ (coherence_after * 100) | round(1) }}% | {{ ((coherence_after - coherence_before) * 100) | round(1) }}% |
+
+{% if coherence_after > coherence_before %}
+**Assessment:** The effector binding has **increased coherence** — the concept is closer to its target interpretive balance.
+{% elif coherence_after < coherence_before %}
+**Assessment:** The effector binding has **decreased coherence** — the concept has moved away from its target interpretive balance.
+{% else %}
+**Assessment:** The effector binding has **no effect on coherence**.
+{% endif %}
+
+### Network Homeostasis
+
+{% if network %}
+{% set concept_count = network.concepts | length %}
+{% set network_coherences = [] %}
+{% for concept in network.concepts %}
+{% set _ = network_coherences.append(1 - (concept.current_r_bar - target_r_bar) | abs) %}
+{% endfor %}
+{% set network_coherence = (network_coherences | sum) / concept_count %}
+
+| Network Measure | Value |
+|-----------------|-------|
+| Concept count | {{ concept_count }} |
+| Mean coherence | {{ (network_coherence * 100) | round(1) }}% |
+| Stability | {% if network_coherence > 0.8 %}Stable{% elif network_coherence > 0.5 %}Transitioning{% else %}Unstable{% endif %} |
+
+{% if network_coherence > 0.8 %}
+**Homeostasis:** The network exhibits **self-reinforcing coherence**. Interpretations are mutually supportive.
+{% elif network_coherence > 0.5 %}
+**Homeostasis:** The network is in **transition**. Some concepts are misaligned with the emergent interpretation.
+{% else %}
+**Homeostasis:** The network shows **decaying coherence**. Interpretations are in conflict; re-framing may be needed.
+{% endif %}
+
+{# Check variety counter for algedonic alert #}
+{{ check_variety('gml.assess', 100) }}
+{% else %}
+⚠️ No network context provided. Cannot assess network-level homeostasis.
+{% endif %}
+
+### Reflective Calibration
+
+**Questions for calibration:**
+
+1. Does the shifted interpretation align with your analytical goals?
+2. Are the effector concentrations realistic for the context?
+3. Would adjusting L (default bias) better capture the concept's nature?
+4. Are there missing ports that should be added?
+5. Is the Hill coefficient consistent with observed conceptual flexibility?
+
+{{ end_span('assess', 'success', {'coherence_score': coherence_after, 'network_coherence': network_coherence | default(None)}) }}
+{% endif %}

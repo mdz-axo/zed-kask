@@ -1,0 +1,48 @@
+{# gml/error-validation.j2 - Validation error template #}
+{# Purpose: Display field validation errors #}
+
+## Error: Validation Failed
+
+{% if field_errors and field_errors | length > 0 %}
+**{{ field_errors | length }} validation error(s) found:**
+
+{% for error in field_errors %}
+{{ loop.index }}. **{{ error.field | default('Unknown field') }}** — {{ error.message }}
+{% endfor %}
+
+{% else %}
+**Validation failed with unknown errors.**
+{% endif %}
+
+### Valid Parameter Ranges
+
+| Parameter | Valid Range | Description |
+|-----------|-------------|-------------|
+| **L** | L > 0 | Allosteric constant (default T/R bias) |
+| **c** | c > 0 | Affinity ratio (selectivity) |
+| **n** | n ≥ 1 | Number of binding sites |
+| **α** | α ≥ 0 | Normalized contextual pressure |
+| **R̄** | 0 ≤ R̄ ≤ 1 | State probability |
+
+### Interpretation Guide
+
+| Condition | Meaning |
+|-----------|---------|
+| L > 10 | Strong T-state (conservative) bias |
+| L < 0.1 | Strong R-state (progressive) bias |
+| c < 1 | Activator (favors R-state) |
+| c > 1 | Inhibitor (favors T-state) |
+| n_H > 1 | Switch-like cooperativity |
+| n_H < 1 | Graded response |
+
+### Suggested Actions
+
+1. **Review parameter values** against valid ranges above
+2. **Check for typos** in numeric values
+3. **Verify effector concentrations** are non-negative
+4. **Ensure port count** matches cooperativity dimensionality
+
+---
+
+*Error code: `GML_VALIDATION_FAILED`*
+*Timestamp: {{ timestamp | default('unknown') }}*

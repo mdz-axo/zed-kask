@@ -1,0 +1,20 @@
+{# gml/error-missing-input.j2 - Missing input error template #}
+{# Purpose: Display missing-input errors with corrective guidance #}
+
+## Error: Missing Required Input
+
+{% if message %}
+**What's missing:** {{ message }}
+{% endif %}
+
+### Suggested Actions
+
+1. **Provide all required fields** as shown in the operation schema
+2. **Check field names** for typos (case-sensitive)
+3. **Verify nested structure** — ensure sub-objects (t_state, r_state, ports, before/after) are present
+4. **Chain templates correctly** — prerequisite operations may need to complete first
+
+---
+
+*Error code: `GML_MISSING_INPUT`*
+*Timestamp: {{ timestamp | default('unknown') }}*

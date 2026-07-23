@@ -1,0 +1,1348 @@
+What Do Technical Communicators Need to
+Know about Information Design?
+
+Karen Schriver, PhD
+KSA Communication Design & Research
+
+
+
+
+© 2013 University of Chicago Press
+
+Citation
+Schriver, K. (2013). What do technical communicators need to know
+about information design? In J. Johnson-Eilola & S. Selber (Eds.),
+Solving problems in technical communication (pp. 386-427). Chicago,
+IL: University of Chicago Press.
+
+Author’s note
+This chapter is from a book aimed at college students taking courses in
+technical, scientific, or professional communication. The editors requested
+that each chapter follow a prescribed structure: (1) the posing of a practical
+problem of communication, (2) a brief literature review, (3) a heuristic
+exploring how to solve the problem, (4) an extended practical example that
+shows the heuristic in action, and (5) a set of discussion questions for
+classroom use.
+
+Point of contact
+Karen Schriver
+KSA Communication Design & Research
+33 Potomac Street
+Oakmont, Pennsylvania 15139 USA
+kschriver@earthlink.net
+                 karen schriver
+
+
+
+
+16               What Do Technical Communicators Need
+                 to Know about Information Design?
+
+
+
+
+summary
+As a technical communicator, you will need to develop your expertise not
+only in writing, but also in information design. Whether you are design-
+ing reports about the environment or manuals for smartphones, you will
+need to be concerned with how to present your messages visually and ver-
+bally. As organizations around the globe expand the audiences for whom
+they create products and services, the demand for well-designed text and
+graphics has become increasingly important. Although most technical
+communicators have honed their skills in verbal expression, they often
+lack knowledge of information design and have few strategies for integrat-
+ing visual and verbal content. They may not be familiar with the grow-
+ing research on information design that could help them make decisions
+about designing content spatially and typographically. This chapter oﬀers
+a heuristic for structuring content visually and for making the structure
+salient through grouping, organizing, and signaling.
+
+introduction
+Miguel recently acquired a new job with a government agency within the
+U.S. Department of Agriculture. His department’s mission is to spread
+the word about healthy eating habits to families across the United States.
+Miguel’s supervisor started him oﬀ in his new position with two tasks.
+The ﬁrst task is to revise a ﬂyer for parents about healthy foods and their
+beneﬁts. The ﬂyer consists of a list of foods that research has shown to
+be nutritious, and gives reasons why they are nutritious. Miguel’s second
+task is more demanding. His supervisor asked him to create the ﬁrst in a
+new series of documents to inform parents about issues related to nutri-
+tion—issues such as obesity, nutritional supplements, weight gain, natu-
+ral cures, and myths about healthy eating. The supervisor expects that
+Miguel’s document will serve as a template for the series. He told Miguel
+that the research on healthy eating has changed substantially since the
+department last printed its information, rendering the previous content
+386
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+obsolete. Miguel must begin with a careful review of the current research
+on nutrition. He recognizes that to do the task well, he must synthesize the
+most recent nutritional research and then design the content from scratch.
+   Miguel’s overall goal for these tasks is to create easy-to-understand texts
+that can be presented on paper or on the department’s website. He begins
+by searching many nutrition-related databases with an eye toward compil-
+ing the available data that could be used to make recommendations for
+healthy eating. Initially, he thinks the task is obvious and straightforward,
+but he begins to feel a bit overwhelmed when he ﬁnds that the amount
+of available research is enormous, and that it is scattered across profes-
+sional and popular literature in print and on the web. Moreover, much of
+the information he ﬁnds is contradictory, making it hard to understand
+and to draw conclusions from.
+   What approach could Miguel take to meet these rhetorical challenges?
+How should he proceed in making decisions about the content? Once he
+gathers the appropriate content, how can he design the information so
+that it will be easy for any parent to understand? What are the alternatives
+for organizing the material visually and verbally? What are the options
+for displaying the content spatially? What sorts of graphics could he use?
+Could his choice of typography encourage reading?
+   This chapter presents a heuristic that Miguel could use for addressing
+these rhetorical challenges or other complex problems in technical com-
+munication. In particular, the heuristic explores three information-design
+principles for making one’s thinking visible to readers: (1) grouping con-
+tent rhetorically, (2) organizing content visually, and (3) signaling struc-
+tural relationships. Each of these principles will be explored through
+practical examples that illustrate how they can guide technical commu-
+nication. Taken together, the ideas presented in this chapter can help you
+place more emphasis on designing visually—attending carefully to issues
+of graphics, spatial display, or typography—and focus more attention on
+making the structure of your content visible to readers. When techni-
+cal communication skills are combined with sophistication in informa-
+tion design, it can lead not only to more eﬀective professional commu-
+nications, but also to the development of the communicator’s expertise
+(Schriver 2012). This chapter will help you expand your repertory of strate-
+gies for solving communication problems by drawing on evidence-based
+principles of information design.
+
+why research on information design is useful
+As the above scenario from the Department of Agriculture shows, technical
+communicators could beneﬁt from research about strategies for visual de-
+                                                            Information Design | 387
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+sign. In this way, they could both manage their own creative process and do
+a good job in persuading supervisors that their design choices are sound.
+Research on information design helps technical communicators under-
+stand how diﬀerent people typically engage with visual and verbal content.
+It provides insight into the kinds of textual or graphic “moves” that tend
+to make content clear and understandable—promoting comprehension,
+satisfaction, and usability. Moreover, information-design research shows
+us how visual design may inﬂuence the persona projected by the content
+and how design can inﬂuence whether readers believe in the credibility
+of the content and the trustworthiness of the authors (Schriver 1997).
+
+what is information design?
+Information design is the art and science of integrating writing and de-
+sign so that people can use content in ways that suit their personal goals.
+Information design involves making communication artifacts by shaping
+verbal language and visual language (and increasingly, in many technical
+and scientiﬁc contexts, mathematical language). A fundamental goal for
+information design is to enable and enhance relationships among stake-
+holders for an artifact—that is, among the variety of audiences, clients,
+critics, readers, listeners, users, and viewers who have a stake in the con-
+tent. The ﬁeld of information design focuses on devising novel ways to en-
+able relationships among people through the eﬀective design of content
+(Frascara 2010). By drawing on principles of information design, technical
+communicators can design more rhetorically eﬀective communications.
+   As technical communicators shape their communications for stake-
+holders, they need to orchestrate word and image in order to achieve the
+optimal selection of content, the most appropriate organization, the best
+level of detail, and the best mix of media. Of course, achieving the opti-
+mum is not easy. Research tells us that technical communicators need to
+acquire sophisticated skills in modeling stakeholders’ processes of inter-
+pretation (Schriver 1989, 1997). When research is available that can help
+them make better choices, experienced technical communicators opt for
+writing and design strategies that have been evaluated for their eﬀective-
+ness with readers.
+   Experienced technical communicators recognize that they may per-
+ceive content diﬀerently than their audiences, who typically bring diﬀer-
+ent knowledge, background, experience, or culture to bear during inter-
+pretation. Experts pay close attention to the ﬁndings of empirical research
+in order to understand the kinds of writing or design choices that may
+help or hinder readers as they attempt to make sense of text and graphics.
+
+
+388 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+The stakes are high because bad information design can leave stakehold-
+ers with a lasting negative impression, inviting them to ignore a message,
+misunderstand it, poke fun at it, or simply give up and stop reading. Tech-
+nical communicators need to worry about people’s cognitive and emo-
+tional responses to their content.
+
+information design emphasizes the visual
+The emphasis on designing content visually stems from information de-
+signers’ long-standing belief that the appearance of a communication in-
+ﬂuences whether people will want to read it. Studies of reading show that
+people who are confronted with content begin to interpret that content
+immediately (Anderson 2009), and that the visual display of that content
+can help or hinder people’s interpretation. Research suggests that people
+may form immediate opinions of the visual display of content. For ex-
+ample, website users found it easy to rate a website as attractive or unat-
+tractive, and surprisingly, they could make such judgments reliably and
+consistently based on their looking at a webpage for only one-twentieth of
+a second (Lindgaard et al. 2006).
+   Moreover, researchers have shown that people remember content pre-
+sented visually more easily than content presented verbally (Paivio 1969).
+Importantly, research ﬁnds that a careful integration of both words and
+pictures engages people more eﬀectively than either alone (Sadoski and
+Paivio 2001). When designers provide access to their content through both
+visual and verbal means—what psychologists call “dual coding”—read-
+ers will have two ways of understanding the content and are more likely
+to remember it (Paivio 1990). Studies show that people tend to remember
+more when they acquire new content visually and verbally, rather than just
+visually or just verbally.
+   Because the human eye is hardwired to interpret and organize what
+we see, people tend to make immediate inferences about what they see in
+their ﬁeld of vision. This aspect of human interpretative processes has im-
+plications for information design. On one hand, if the visual display meets
+the readers’ expectations, readers will recognize the structural cues, be
+able to navigate the content, and be more likely to sustain their reading.
+On the other hand, it also means that if the visual display of the text does
+not attract viewers or confuses them, reading may never begin or will stop
+before much of the content is considered.
+   While research on information design is broad and diverse, technical
+communicators can most productively start with three areas central to
+displaying content visually:
+
+
+                                                            Information Design | 389
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+  • grouping content rhetorically,
+  • organizing content visually to show contrasts, and
+  • signaling structural relationships.
+
+grouping content rhetorically
+Technical communicators already know how important it is to shape their
+writing with a reader or viewer in mind. Taking an audience-centered per-
+spective applies to grouping content as well. Information designers are
+concerned with making sure the visual display of the content is rhetori-
+cally eﬀective. This means formatting the content into meaningful groups
+that readers will notice, expect, and appreciate.
+   Research suggests that visual grouping gives readers a sense of the
+overall structure (Tullis 1997). When text and graphics are organized into
+meaningful semantic clusters, it makes it easier for readers to chunk the
+content (Kahn, Tan, and Beaton 1990). Grouping can also reduce cogni-
+tive load by helping readers remember content, which can make the con-
+tent seem less complex, leading to fewer errors and increased satisfaction
+(Niemela and Saarinen 2000).
+
+   Grouping Can Be Visual or Verbal
+   Technical communicators are highly adept at grouping verbal content
+according to its purpose. For example, in authoring user assistance, writ-
+ers separate overview information from procedural information. In con-
+structing a report about a scientiﬁc research study, the writer purposely
+separates information relevant to the literature review from material about
+the study proper. In fact, a good part of technical communicators’ work in-
+volves grouping content strategically, striving to make implicit structures
+explicit for readers.
+   Technical communicators can make verbal groups more evident by
+employing visual devices such as sidebars, itemized lists, boxes, shading,
+color, and white space. When content is formatted consistently (e.g., all
+procedures use enumerated lists with a short line length while all over-
+view text is formatted with a longer line length), readers can readily per-
+ceive intended relationships among the content elements.
+   In addition to technical communicators’ developing skills in visually
+structuring verbal content, it is also important for them to develop strate-
+gies for grouping visual content spatially; for examples, see Brumberger
+and Northcut 2012. Structuring visual content involves grouping visual
+materials to make an argument or to tell a story, creating purpose-driven
+groups from source materials such as photos, technical illustrations, digi-
+tal art, tables, charts, diagrams, and data displays.
+390 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+   Grouping Can Have Cognitive and Aﬀective Beneﬁts for Readers
+   When content is grouped in ways that allow readers to form mean-
+ingful relationships among the elements, readers can often make con-
+nections across the content that they might miss otherwise. Grouping
+content spatially makes the content more coherent, allowing readers to
+recognize how the pieces of the message ﬁt together. In this way, grouping
+helps make what otherwise might be invisible structures apparent to the
+reader. Grouping not only organizes the content, it also renders it visually
+conspicuous—quite important for busy readers, impatient readers, less-
+able readers, and people who are reading in a second language.
+   How the content is grouped may also inﬂuence readers’ ﬁrst impres-
+sions of the message (Lindgaard et al. 2006), setting in motion positive
+or negative attitudes about the content (Schriver 1997). This makes it im-
+portant to catch the reader’s attention and to make a good impression at
+ﬁrst glance.
+
+   Grouping Can Simplify Complex Content
+   Technical communicators are often faced with the task of reorganizing
+lengthy content into meaningful groups, particularly as they help their
+clients move content from paper to the web. Breaking the text into short
+paragraphs (e.g., one to three sentences) promotes faster reading, and im-
+portantly, the shorter length inﬂuences readers’ sense of how much eﬀort
+it will take to read. Researchers at the Poynter Institute for Media Studies
+used eye tracking to investigate how people read print and online news-
+papers. They found that readers skim and scan the content, following the
+modular clusters of the newspaper’s layout (Stark Adam, Quinn, and Ed-
+monds 2007). In a related study, readers tended to give stories with short
+paragraphs twice as much attention as those with longer paragraphs (Out-
+ing and Ruel 2004).
+
+   Grouping Can Show Semantic Relationships
+   By clustering content in ways that make the text simple and inviting,
+technical communicators can make reading less eﬀortful. We can also use
+grouping to show how the content is logically and semantically related.
+For example, we can use white space to group semantically related con-
+tent. When groups of content are positioned in close proximity, whether
+on a page or screen, readers can easily infer their relatedness. In this way,
+proximity is a powerful grouping tool.
+   Grids (discussed later in this chapter) are ways to structure space. They
+are modular visual design systems for organizing pages, screens, and three-
+dimensional spaces. They can be powerful tools for showing semantic
+                                                            Information Design | 391
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+relationships among elements of information spaces. Technical commu-
+nicators can beneﬁt from gaining familiarity with concepts related to the
+design of typographic grid systems—concepts such as layering, grouping,
+separating, zoning, and highlighting (Müller-Brockmann 1985; Keyes 1993;
+Samara 2002). Some of these concepts, mainly developed by design practi-
+tioners, have been tested; for example, research ﬁnds that by aligning con-
+tent elements and by consistently positioning them, designers can help
+viewers ﬁnd information more quickly (Parush, Nadir, and Schtub 1998).
+   The overall visual look, including the layout, signiﬁcantly shapes users’
+perceptions of consistency and their satisfaction in browsing tasks (Ozok
+and Salvendy 2000). When readers can form judgments about the nature
+of the content quickly and see how elements are related, they are more
+likely to continue reading. Studies of how people read on the web suggest
+that getting people to sustain their reading represents one of the biggest
+challenges for authors of websites, and that people expect content that is
+organized to ﬁt their unique reasons for coming to the content (Schriver
+2010). Getting people to read and keep reading is an important beneﬁt of
+grouping content rhetorically.
+
+organizing content visually to show contrasts
+In the early part of the twentieth century, Gestalt psychologists systemati-
+cally studied how the properties of the visual world shape our perceptions
+(Wertheimer 1922; Köhler 1947). One of the earliest discoveries of Gestalt
+psychology was that the way things look depends not just on the proper-
+ties of their elementary parts, but also, and more importantly, on their
+organization. They pointed out that contrast is fundamental to human per-
+ception and that the human eye is attracted to areas of high contrast (dark-
+light, large-small, thick-thin, saturated color–unsaturated color).1 In de-
+signing content, contrast can be rendered graphically or typographically.
+
+   Enhancing Contrast
+   Technical communicators can create graphic contrast by juxtaposing
+changes in size, shape, color, weight, saturation, and position (Mullet and
+Sano 1995; Tufte 1983). When used purposefully, contrast can reveal the ar-
+chitecture of the content, making the hierarchy visually present and help-
+ing readers see relationships among the parts (Ivory, Sinha, and Hearst
+2001). Contrast also helps people as they search for content. It highlights
+key information on a page, segregating main points from minor ones (Jen-
+kins and Cole 1982; Scharﬀ, Hill, and Ahumada 2000). Contrast can be
+achieved in many ways: for example, through integrating pictures within
+pictures, text within text, and pictures in relation to texts. When the eye
+392 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+is confronted with contrast, it provokes curiosity and invites the reader to
+look closer to see what is going on.
+    The best typographic contrast is achieved by using black type on a
+white background. In every study in which this aspect of the text has been
+studied, the same result was obtained: the darker the type and the whiter
+the background, the better the legibility of the text (Scharﬀ, Hill, and Ahu-
+mada 2000; Muter and Marrutto 1991). Moreover, studies of low-vision
+readers suggest that contrast is a fundamental perceptual aid to their see-
+ing the text at all. Reece (2002) found that low-vision readers rely heavily
+on typographic contrast to see the text, adding extra reason for technical
+communicators to concentrate on building eﬀective typographic contrast
+into the overall design of their content.
+    Researchers have studied the role of typographic features in text design
+since the 1800s. Consequently, most of what we know about typographic
+design has been derived from the way people read on paper. In the past
+decade or so, researchers in journalism, information design, usability,
+and human factors have conducted studies of online typography. Some
+ﬁndings of the typographic research apply to both print and online in-
+formation design, while other ﬁndings apply particularly to print or to
+electronic displays (computer screens, tablet displays, smartphones).
+
+   Typeface: Serif or Sans Serif?
+   Research that applies to both print and online applications tells us that
+typographic contrast is a critical feature of good design. Good typography
+clearly signals the hierarchy and structure of content. When the contrast
+is working well, readers or viewers can easily make discriminations about
+how the content is organized. Moreover, good contrast facilitates search
+and rapid retrieval of information. Typographic contrast can be signaled
+in many ways, including contrasts of light to dark, thick to thin, roman
+type to italic, uppercase to lowercase, serif to sans serif. Figure 16.1 shows
+the diﬀerence between a serif typeface (16-point Palatino) and a sans serif
+typeface (16-point Myriad Pro).
+   In the research on typography, one ﬁnding appears repeatedly in the lit-
+erature. Studies comparing serif and sans serif faces ﬁnd that readers pay
+more attention to the amount of contrast among styles within a typeface
+(e.g., light, medium, bold, extrabold, black) than they do to the distinc-
+tion between serif and sans serif (Schriver 1997; Spencer, Reynolds, and
+Coe 1974).
+   Research shows that when the typographic resolution is excellent,
+serif or sans serif typefaces are equally legible and equally fast to read.
+Thus, when text is printed on paper at high resolution, the text will be
+                                                            Information Design | 393
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+   In a number of studies, low-vision readers (that is, severe loss of vision
+even with glasses) and readers with “normal” vision (that is, 20 / 20 with or
+without glasses), were found to prefer sans serif to serif type in computer
+displays 87–95% of the time (Reece 2002). Readers also preferred roman
+(nonitalic) type to italic type (67–82% of the time). Overall, Reece’s study
+underscores the importance of typographic contrast for low-vision read-
+ers and suggests that both reduced-vision readers and normal readers
+show strong preferences for sans serif typefaces online. Theofanos and
+Redish (2005) remind us that it is important to think about low-vision us-
+ers when we design text for online displays because vision impairments
+are more prevalent than we think and the number is growing as the baby
+boomer generation ages.
+
+   Type Size
+   Generally speaking, research on type size has investigated the impact
+of point size on reading speed, reading accuracy, and reader preference.
+Most studies have concentrated on the point sizes that are most legible for
+body text: 10-point, 12-point, and 14-point type (Bernard and Mills 2000;
+Bernard, Liao, and Mills 2001; Dyson 2004). The results of these studies are
+fairly consistent, leading researchers to draw these conclusions.
+
+  • Ten-point type is read more slowly, but more accurately, than
+    12-point.
+  • Twelve-point is read faster, but less accurately, than 10-point.
+  • Smaller typography slows reading, but tends to be read with better
+    accuracy (perhaps because more concentration is required to
+    see it).
+  • Most readers prefer larger type (12-point to 14-point) rather than
+    smaller type (10-point).
+  • Children (ages nine to eleven) prefer 14-point sans serif.
+  • Older readers (ages seventy and above) prefer 14-point sans serif.
+  • Partially sighted or visually impaired readers prefer 14-point to
+    16-point sans serif.
+
+   Uppercase versus Lowercase Type
+   When sentences and paragraphs are displayed using upper-case type
+(all capital letters), they can be hard to read (Vartabedian 1971). When text
+is set in all uppercase, the text is rendered a uniform rectangle, without
+the distinctive word shapes that allow for rapid reading. In fact, when the
+body text is displayed in all capital letters, reading speed can be slowed
+about 13 to 20% (Breland and Breland 1944).
+                                                            Information Design | 395
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+   Recent discussions of typographic case remind us that there is noth-
+ing inherently unreadable about uppercase (Weinschenk 2009). Rather,
+readers’ familiarity with upper- and lowercase may underlie the superior
+reading speed associated with mixed case. In short, we read typographic
+displays more quickly when the text is formatted in ways that are more fa-
+miliar, which for readers in Western cultures means type set using upper-
+and lowercase letters. Vartabedian’s research also shows that when up-
+percase is employed sparingly, it can make it easy to locate those items
+because they stand out due to the contrast.
+   Reading speed is optimal when uppercase and lowercase letters are
+used together (Rickards and August 1975). The variation in character height
+among upper- and lowercase letters allows rapid discrimination of letters
+and facilitates word recognition (Paterson and Tinker 1946). Thus, a com-
+bination of upper- and lowercase makes the reading process more smooth
+and eﬃcient, enabling the eye to track the text more easily. When extra em-
+phasis is needed, bold has been found to be a better cue than uppercase
+(Coles and Foster 1975).
+
+signaling structural relationships
+Technical communicators signal the content’s structure in two primary
+ways: visually (through layout and typography) and verbally (through cues
+such as topic sentences, logical connectives, and overviews).
+
+   Signaling Visually
+   To signal the structure visually, we can use a variety of graphic and
+typographic techniques—size, position, weight, style, repetition, and
+alignment. For instance, suppose a technical communicator wanted to
+show that three textual elements were of equal importance in the hierar-
+chy of a communication. It would be appropriate to signal the elements
+by (1) aligning them vertically as columns of equal size, and (2) giving each
+column a heading using the same typographic styles. These visual signals
+would show the parallel nature of the elements within the structure.
+   Size and position are primary visual cues to signal importance. When
+a message is dominated by a few large elements (e.g., photos), their size
+tells the reader they have priority in the message structure. Alternatively,
+when textual content is placed in a focal position for the reader (such as
+on the ﬁrst page of a website), that position indicates the element’s sig-
+niﬁcance within the context.
+   Signaling the various levels of the text’s structure can be accomplished
+through choices in typography. When well chosen, the typographic treat-
+ments allow readers to distinguish among, for example, ﬁrst-level, second-
+396 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+level, and third-level headings. By signaling the structure conspicuously,
+readers are more likely to notice important relationships in the content
+and to recognize thematic continuities.
+   In cases in which encouraging the reader to notice is critical, such as a
+warning label on a medicine bottle, designers often employ double signal-
+ing—that is, using more than one cue to draw attention to the message.
+For example, signals could involve size, weight (e.g., boldface), color, or
+position. However, it is important to be judicious in signaling with typog-
+raphy, as too many signals (e.g., too much boldface) or too much repeti-
+tion of a particular cue (e.g., too many itemized lists in a row) can ﬂat-
+ten the visual hierarchy, making it hard to tell what is important because
+nearly everything is signaled.
+   Designers strive to make their layouts show at a glance the rhetorical
+relationships among message elements. They do so by using features such
+as grids, colors, shapes, backgrounds, orientation, and size; for a case
+study of forms redesign, see Schriver 2011. Research suggests that these
+dominant features are perceived immediately, making it important that
+they are well designed and that they cue the structure eﬀectively (Mal-
+amed 2009).
+
+   Signaling Verbally
+   Lengthy or complex content may be signaled by layering the content
+into levels, with more abstract or general content at the top level and more
+speciﬁc content at lower levels of the hierarchy. Technical communica-
+tors aim to make the structure explicit through careful composition of
+verbal cues, including previews, summaries, sidebars, headings, subhead-
+ings, topic sentences, advance questions, logical connectives (e.g., and, or,
+consequently, next), structural cues (e.g., ﬁrst, second; on one hand, on the
+other), metadiscursive cues (recall my ﬁrst point, imagine the opposite inter-
+pretation), pull quotes, legends, and captions (Spyridakis 1989a, 1989b).
+   Many print and online documents have a hierarchical structure, sig-
+naled by making broader topics (or more important topics) more promi-
+nent than speciﬁc topics (or less important topics). Subtopics are typically
+cued by subordination (Farkas 2005). For example, a website’s home page
+is at the top of the hierarchy, its links provide branches to content at a
+more speciﬁc level, and these branches are split again at each level of the
+hierarchy. While simple content often has a structure only two levels deep,
+more complex content often requires a four-level or ﬁve-level structure.
+   Designers can improve the quality of their content by (1) organizing it
+into logical and semantically related rhetorical groups, (2) thinking care-
+fully about how many levels of content are needed, (3) determining how
+                                                            Information Design | 397
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+story might be composed of text, a few levels of headings, a photograph,
+and a caption. Readers who examine a newspaper might be attracted ﬁrst
+to the photograph. Many readers would then inspect the caption in order
+to interpret the photograph. This coupling during interpretation makes
+the photograph and the caption work in concert as a rhetorical cluster.
+The idea is to guide interpretation and to arouse the reader’s curiosity.
+
+   Rhetorical Clustering versus Chunking
+   A rhetorical cluster is not a chunk, a commonly used term in techni-
+cal communication to describe written text that has been segmented into
+short self-contained topics suitable for presentation on a screen. Chunks
+described by technical communicators do not correspond to those dis-
+cussed by psychologists who study human memory. For psychologists, a
+chunk represents a package of related information in long-term memory
+(Miller 1956). When technical communicators characterize chunking, they
+mean introducing white space to break up large sections of text, or design-
+ing itemized lists or tables in lieu of lengthy paragraphs. Chunking can
+help busy readers see a lengthy text as more manageable. It can also facili-
+tate readers’ scanning, particularly when each chunk has a clear heading
+or caption.
+   Chunking is usually considered an editing strategy for tightening the
+writing in order to make the chunks of content stand on their own while
+ﬁtting them into a larger text structure. In contrast, rhetorical clustering
+is an invention and planning strategy for writing or design, encouraging
+audience-centric groupings of content for maximum rhetorical impact.
+While chunking focuses on breaking up an existing text into smaller top-
+ics, rhetorical clustering organizes visual and verbal content in ways that
+allow readers to see important relationships among textual and graphic
+elements, for example, hierarchical relationships, logical connections,
+semantic or temporal relations. It is a good idea to consider these rela-
+tionships prior to considerations of chunking, but certainly they interact.
+
+   Devising Preliminary Groupings for the Content
+   Before choosing a scheme for grouping the content into rhetorical
+clusters, consider readers’ likely purposes and goals for using the infor-
+mation. Draw on what you know about their knowledge, beliefs, expecta-
+tions, culture, and reading level as you devise a preliminary grouping.
+Make use of familiar genre patterns (such as problem-solution, if-then, or
+cause-eﬀect) as you think about optional designs. Sketch a few structures
+for the content, exploring diﬀerent ways of grouping the key ideas.
+
+
+                                                            Information Design | 399
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+   Figure 16.3 shows how a technical communicator’s goals for the con-
+tent can be paired with familiar patterns for organizing ideas. It presents
+a few typical goals for content and some attendant grouping techniques.
+   •   Explain: ﬂowcharts and hierarchy maps
+   •   Unfold in layers: pyramids—iceberg and inverted pyramids
+   •   Narrate: temporal sequencing
+   •   Instruct: topical progressions or action / step sequences
+   •   Compare: itemized lists, matrixes, tables
+   •   Illustrate part-to-whole: picture-in-picture, hierarchical ﬂow
+   •   Detail cause and eﬀect: node networks (or concept maps) and ﬂow
+       diagrams
+   These grouping techniques oﬀer ideas for organizing an overall struc-
+ture or for nesting diﬀerent structures. Using multiple types of rhetorical
+clusters in the same artifact adds visual contrast and interest to the con-
+tent, especially to those typically text-heavy genres such as letters, instruc-
+tions, reports, and proposals. Figure 16.3 shows only a few of the many
+grouping techniques available to technical communicators.
+   Good communicators know that the same content can usually be pre-
+sented in many ways. But even skilled technical communicators may fall
+short of planning innovative designs because they ignore the generative
+power of “trial balloons” en route to a good prototype. Because they work
+under the pressure of tight deadlines, technical communicators may rely
+on the ﬁrst organizational pattern they think of, or merely dump their
+content into predetermined slots of a template.
+   Rhetorical clustering is a practical way to try out diﬀerent structures
+early in the writing and design process before too many commitments
+are made. By exploring alternative organizational patterns, technical com-
+municators are more likely to generate a better structure for their content.
+   Rhetorical clustering allows communicators to form a visual roadmap,
+helpful in planning an artifact’s big picture as well as its little picture.
+For example, a technical communicator may organize a website using the
+iceberg approach, also called progressive disclosure or staged disclosure
+(Lidwell, Holden, and Butler 2003; Nielson 2006). In using the iceberg ap-
+proach, the technical communicator strives to simplify complex content
+by organizing it as layers, deferring details or advanced topics to lower in
+the structure (see ﬁgure 16.3, “unfold in layers”). Layer 1 is the top level, or
+tip of the iceberg. For websites, this is the home page, and here technical
+communicators must integrate a number of key rhetorical clusters—such
+as one devoted to organizational identity (logo, name, taglines), another to
+products or services, and others to navigation and structure. When these
+400 | Chapter 16
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+means supplementary information (e.g., audio, video, PDFs) and links to
+related content.
+   In contrast to the iceberg approach is the inverted pyramid, another
+technique for layering content, typically used by journalists (see ﬁg-
+ure 16.3). With this method of structuring content, the most important
+or newsworthy information is presented ﬁrst (represented by the widest
+part of the pyramid). The key rhetorical cluster for the beginning of a news
+story—the lead—concisely capsules who, what, when, where, why, and
+how. Level 2 of the news story provides the details, often with rhetorical
+clusters of text, photos, charts, and graphs. And the third level oﬀers more
+background information that completes the story. As we can see, the ice-
+berg approach and the inverted pyramid can make it easier to organize
+the text at the global level and to construct reader-oriented goals for each
+rhetorical cluster.
+
+phase 2: organize clusters visually to show contrasts
+The second phase of the heuristic (shown in ﬁgure 16.2) points to the need
+to organize rhetorical clusters visually, with the goal of making visible the
+intended contrasts among elements. Research reminds us that readers
+tend to form ﬁrst impressions of content quickly, cuing on the structure
+and the tone. It is important to organize the visual display of the text and
+graphics by considering the order in which readers (or viewers) may look
+at them. This means striving to guide the reader’s eye through the content
+by making the structure visibly clear. The reader’s priorities for using the
+content should dictate the overall spatial display and the need for predict-
+ability in the content’s positioning.
+    Some of the time, it will be useful to visually organize the layout by using
+a grid—a modular system for spatially displaying the content in columns
+and rows. Grids allow consistent positioning of textual and graphic genre
+elements (e.g., all ﬁrst-level headings of a report will ﬁt on one line span-
+ning columns 1 and 2; if the headings need more horizontal space, the de-
+signer will shorten them to ﬁt the grid). At other times, the content needs to
+stand out from the rest of the text or graphics (the surround), and the grid
+will need to be broken. Providing contrast sometimes means interrupting
+the rhythm of a sequence. For example, we can break the ﬂow of well-
+organized but heavily textual content with dramatic changes in size and
+proportion by interspersing occasional full-page graphics. Sometimes no
+grid is preferable. Space limitations for this chapter prohibit an extended
+discussion of layout and grid design, but technical communicators can
+proﬁt from exploring the graphic possibilities aﬀorded by designing grid
+systems. Technical communicators need practice in trying out alternative
+402 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+grids for their projects, in learning when to make purposeful deviations
+from a grid, and in realizing when to abandon a grid entirely; for a discus-
+sion of making and breaking of grid systems, see Müller-Brockmann 1985
+and Samara 2002.
+   In organizing rhetorical clusters visually to show desired contrasts (e.g.,
+diﬀerences in hierarchy, function, logic, semantics, time), it is important
+to try out diﬀerent spatial displays and gauge their relative impact. Once a
+few alternative displays have been ﬂeshed out, it is a good time in the de-
+sign process to assess people’s interpretations of the prototypes. Obtain-
+ing early feedback oﬀers a crucial sense of how people (outside of the de-
+sign team) may construct the persona projected by the information design
+(e.g., serious, playful, manipulative, corporate, condescending). Feedback
+from stakeholders can help technical communicators reconsider issues
+such as the shape, size, position, and proximity of clusters, as well as
+about how diﬀerent clusters interact when juxtaposed (Schriver 1997).
+
+phase 3: signal structural relations
+Once the content has been grouped and meaningful contrasts have been
+established, technical communicators need to ensure that readers will
+readily grasp the structure of the message. This requires revisiting stake-
+holders’ likely purposes for engaging with the content, to determine which
+content elements should be signaled explicitly. The third phase of the
+information-design heuristic (shown in ﬁgure 16.2) asks technical com-
+municators to signal structural relations. The signaling phase operates
+recursively with the processes of grouping and organizing—each set of
+decisions dynamically inﬂuences the others. For example, the choices a
+technical communicator makes in designing the page or screen using ty-
+pographic cues may lead to a reconsideration of proportions for the grid
+design. A change in the shape of a text element might suggest a change
+of color to make that shape recede or become more prominent. Indeed,
+every information-design decision can have an impact on every other.
+   The technical communicator’s goal in carrying out the third phase of
+the heuristic is to guide the reader’s eye through the content by carefully
+choosing signals that establish the structure and tone. This can be accom-
+plished, for example, through strategic use of white space, color, shading,
+typography, line length, or other signals. As we saw in the research reviewed
+earlier, signaling can be visual or verbal—carried out graphically, typo-
+graphically, or linguistically. Above all, choose graphic and typographic
+cues that reveal meaningful relationships in the hierarchy of the content.
+   If the message is primarily textual, strive for typographic cues that
+emphasize contrasts that bring the structure to the fore. Let us take an
+                                                            Information Design | 403
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+right and putting a gray box behind all laptops that are $500 or less). The
+idea is to use graphic cues such as size, position, alignment, background,
+and color to make relationships salient for readers. In this way, readers
+can glance over the content and quickly determine how items are related,
+which ones look interesting, and which items to skip.
+   Readers of such catalogs would expect that similar products would
+have descriptive blurbs of about the same length. Having text that is visu-
+ally parallel shows readers that they are scanning a family of competing
+products. By drawing on both textual and graphic cues, the technical com-
+municator could call attention to particular products that have special
+features, such as smartphones that have GPS tracking. The technical com-
+municator might decide to use a large table format with images on the
+top row and blurbs on the second row, enabling readers to compare each
+product picture by picture and feature by feature.
+   As we can see, the writing and design processes interact recursively.
+While sometimes technical communicators start their work with mainly
+images, at other times they start with mainly text. As they execute their
+plan for a communication artifact, the writing may inﬂuence the design or
+vice versa. It is important to allow for this healthy symbiosis between writ-
+ing and design by thinking about the integration of the visual and verbal
+during the invention and planning phase of technical communication.
+
+   Consider Preferences for and Familiarity with Cues
+   Most people prefer sans serif typefaces as they read online—whether
+they are children, college students, senior citizens, or people with low
+or corrected vision. A sans serif face for electronic communication will
+likely satisfy the preferences of most online readers (Schriver 2009). Chil-
+dren, older adults (average age seventy), and readers who are dyslexic have
+been found to beneﬁt from reading typefaces (either serif or sans serif)
+set between 12 points and 14 points, with most people preferring 14-point
+type over 12-point type (Bernard, Liao, and Mills 2001; Wilkins et al. 2009;
+O’Brien, Masﬁeld, and Legge 2005). However, as we consider people’s
+preferences for typographic cues, it is important not only to consider the
+point size of a typeface, but also its x-height, a key factor in typeface iden-
+tiﬁcation and legibility (see ﬁgure 16.8).
+   The x-height refers to the height of a lowercase x in the alphabet of
+a given typeface; it is the distance between the baseline of a letterform
+(bottom of lowercase x) and the mean line of a letterform (top of lower-
+case x). Figure 16.9 illustrates how x-heights may vary from typeface to
+typeface. X-heights vary not only in the amount of vertical space they oc-
+cupy, but also in the amount of horizontal space they require. In choosing
+408 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+   One thing we can say with certainty is that people from every culture
+appreciate good contrast between the headings and the body copy. This
+can be achieved by using one of the following: (1) sans serif type for head-
+ings and serif type for body text, (2) a serif type for both headings and body
+text, as long as it has good contrast within the face, or (3) a sans serif face
+for both headings and body text, again, as long as it has good contrast
+within the face.
+
+   Assess the Quality of the Design and the Intelligibility of the Cues
+   Even when one has a good idea of the reader’s likely strategies for using
+the content, technical communicators must evaluate the goodness of their
+predictions by evaluating the content with readers. For example, it may
+be that people read typefaces set at smaller point sizes (such as 10-point
+type) more slowly because they are less legible, but readers may also re-
+member more about what they have read and construct a more accurate
+understanding of the text because they are spending more time interpret-
+ing it (Dyson 2004). Usability testing can alert us to such speed-accuracy
+trade-oﬀs, forcing us to make decisions about which is more important
+for the situation. Moreover, usability testing can guide technical commu-
+nicators in revising their overall design as well as their visual and verbal
+systems for signaling the structure. The ﬁndings of usability testing can
+alert us to visual or verbal cues that are missing, incomplete, inconsis-
+tently executed, or just plain unclear (Schriver 1991, 1992). As it turns out,
+unclear content and omissions make people shut down and stop reading.
+When technical communicators combine the use of evidence-based de-
+sign heuristics with user-experience testing, they increase the likelihood
+that their designs will be read.
+
+extended example
+To illustrate the heuristic above, I return to my introduction, in which
+Miguel was assigned two tasks: designing the ﬁrst in a series of documents
+about healthy eating, and revising the visual design of a ﬂyer that Miguel’s
+supervisor thought could be used in the series. Let’s look at how Miguel
+was able to draw on information-design research and the three-phase heu-
+ristic in his redesign of the ﬂyer and design of the prototype.
+
+task 1: redesign a flyer
+Miguel began his revision task with the original ﬂyer, shown in ﬁg-
+ure 16.10. The supervisor felt the design looked a little dull, but thought
+the content was good. The original ﬂyer extended over two pages and was
+intended to function as a summary of the foods that research had found
+410 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+Figure 16.10. The original document listing healthy foods
+
+to be the most nutritious. The ﬁrst thing Miguel noticed was that the ﬂyer
+was worse than dull; it was ugly. He doubted whether members of the in-
+tended audience would read it. He diagnosed the problem as one of lack
+of contrast, noticing that it did not signal the content very well. Miguel
+wanted to employ a less routine typeface than Times Roman. He felt that
+he could come up with a better layout that would cue the relationship be-
+tween the names of the food and the explanation about why those foods
+were healthy choices. Miguel also questioned whether the alphabetical
+                                                              Information Design | 411
+
+
+          (© University of Chicago Press. All rights reserved.
+          Posting, copying, or distributing in print or electronic form without
+          permission of UCP would be easy, but it's illegal. We're trusting you.)
+structure made it boring, but decided to keep that organization and focus
+mainly on revising the visual display of the content.
+   Figure 16.11 shows Miguel’s revision. He employed the same content,
+but gave it a more explicit structure. First, he changed the visual format
+from a list to a table. In so doing, he removed the gray background to
+increase the contrast and thereby improve the legibility. Miguel suspects
+that shifting the display to a tabular format will promote quicker access of
+the content, but he decides to wait until he pilot tests the redesign before
+he makes this claim to his supervisor.
+   Second, he changed the typography from a serif face (Times Roman)
+to a sans serif face (Frutiger), employing mixed styles and weights within
+the Frutiger family for the side heads and the body copy. He used Frutiger
+bold condensed for the side heads “healthy foods,” Frutiger light con-
+densed for the elaboration of the foods, and Frutiger light for the expla-
+nations—the part that he felt needed typography with a larger x-height.
+Miguel also revised the typography for displaying the major heading
+“healthy foods,” from 12-point Times Roman set in all capital letters to
+24-point Apple Chancery using title capitalization. These typographic up-
+dates improve the attractiveness of the ﬂyer and increase the contrast be-
+tween the major heading and the list of foods, their elaboration, and the
+explanations. Third, Miguel altered the verbal structure by shifting from
+the topic-based title “healthy foods” to the question “healthy eating?”
+   In addition, Miguel paired the heading “healthy foods” with the sce-
+nario heading “why they’re good for you.” Scenario headings orient the
+content from the reader’s perspective (Flower, Hayes, and Swarts 1983).
+Miguel highlighted these linguistic cues by reversing the type for the col-
+umn heads (white type on gray background). Miguel’s tabular format for
+the body copy makes referencing why a given food is nutritious easier than
+the original format, which made the blurbs appear as miniparagraphs.
+Although Miguel’s revision is clearly better than the original, we can see
+that the text needs further modiﬁcation if it is to be understood by par-
+ents. Miguel reassures his supervisor that in his next iteration, he will
+replace words such as monounsaturated and bioﬂavonoids.
+
+task 2: design a prototype
+Miguel’s second task was to design a paper prototype for the series on nu-
+trition. His supervisor recommended that he start with a one-page hand-
+out, suggesting that after it met with his approval, he would assign Miguel
+more complex tasks. His supervisor was interested in seeing whether
+Miguel could draw on his original research to design the content for the
+prototype.
+412 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+   Phase 1: Group Content into Rhetorical Clusters
+   Miguel began by thinking about his audience as he sorted through the
+information he had collected in his research. He had identiﬁed what he
+thought were the top ﬁfty empirical ﬁndings about nutrition. Miguel was
+surprised that so many things he had heard about healthy eating were ei-
+ther only partly true or completely wrong. He felt that many people might
+be mystiﬁed about the science of nutrition and that his goal would be to
+help to set the record straight.
+   Miguel had also collected many photographs, drawings, and cartoons
+in order to illustrate healthy choices. For example, he had assembled
+drawings of people eating, photos of fruits and vegetables, close-ups of
+whole grains, cartoons of people overeating, photos of lean meat, draw-
+ings of the U.S. Department of Agriculture’s food pyramid (and its revi-
+sion, the food plate). This abundance of material proved a bit overwhelm-
+ing, and Miguel needed a strategy for organizing the ﬁrst piece in the
+series.
+   Figure 16.12 presents a progression of pencil sketches Miguel created
+in coming up with ideas for the prototype. He began by grouping the ﬁnd-
+ings about nutrition according to topic (left side of top row), starting with
+types of foods: fruits, grains, vegetables, protein, and so on. He consid-
+ered what the topics might look like if arrayed as a list or as links with
+nested content (right side of top row).
+   Next he organized his photos and visuals by sorting them according to
+size, kind of image, and color (left side of middle row). This led him to
+draft a few additional structures (right side of middle row). He considered
+a paragraph-photograph sequence arranged vertically, which he thought
+might serve to associate key photos with the text. Then he entertained a
+picture-in-picture format, with a collage of foods as a background image
+and several small photos that highlighted the immediate topic. He also
+thought about using a line chart (showing how the average American’s
+weight had increased over the years) with a pop-out textual blurb about
+the problem of obesity.
+   Still not convinced he had a workable structure, Miguel then explored
+designing rhetorical clusters for the goals of (1) narrating and explaining
+and (2) showing comparisons and explaining (third row of ﬁgure 16.12). He
+ﬁrst sketched a time line that integrated text and graphics to show how
+ideas about healthy eating had evolved (left side of third row). Then he
+considered using a few matrix formats to show key comparisons among
+pieces of the content, such as ideas about healthy eating in the 1980s ver-
+sus 2010s, or things that people believe to be true about healthy eating, but
+that are actually false (right side of third row).
+414 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+to set the tone and to attract the eye to inspect the content. He sorted
+through the many visuals he had collected, looking for photos that had
+a similar look and color value, especially for realistic soft-edge photos of
+nutritious food. Once he made his selections, he resized the photos and
+cropped them to ﬁt the grid. He wrote and edited the text for the set of
+“myths and facts,” so that each item was roughly the same length.
+
+    Phase 3: Signal Structural Relations
+    Miguel then worked through the ﬁnal phase of the heuristic, “signal
+structural relations,” to produce a draft of the prototype. He attempted to
+integrate the overall appearance of the layout with a major heading that
+spans columns 2 and 3, “Healthy Eating?” (He purposefully employed the
+same major heading and displayed it using the same typeface as the ﬁrst
+ﬂyer. Miguel’s intent with these repetitions was to start a document fam-
+ily, one with a uniﬁed visual and thematic identity.) Miguel then format-
+ted the body text to ﬁt columns 2 and 3 and gave each a heading, “Myths”
+and “Facts.” He stacked the photos of fruits and vegetables in the ﬁrst
+column and removed any white space between them. Once he completed
+the draft, he asked his information-design colleague Louise to look it over
+and oﬀer some feedback. Miguel’s initial draft and the comments from
+his colleague are displayed in ﬁgure 16.15.
+    As Louise’s comments show, there were several problems with the infor-
+mation design of Miguel’s prototype. The headings “Myths” and “Facts”
+that were to preview the itemized content did not function very well be-
+cause their spatial position violated the Gestalt principle of proximity,
+which suggests that “elements that are close together are perceived to be
+more related than elements that are farther apart” (Lidwell, Holden, and
+Butler 2003, 160). The headings “Myths” and “Facts” needed to be closer
+to the actual content. As Louise pointed out, the “headers ﬂoat within
+the gray bar.” Similarly, a Gestalt problem of proximity was created by the
+horizontal position of the itemized “myths” (in column 2); the text was
+too close to the photos, and there was too much white space between
+columns 2 and 3.
+    Louise noticed that the heading “Facts” (column 3) was touching the
+major heading “Healthy Eating?,” a typographic oversight on Miguel’s
+part. Louise also mentioned that the heading “Facts” was not centered
+over the column, but shifted slightly to the right.
+    Louise’s biggest problem by far with the prototype was the spatial po-
+sitioning of the itemized content. The horizontal positioning of the items
+was unhelpful in guiding readers to make quick and appropriate compari-
+sons between the myths and facts. That there were six clusters of myths
+418 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+mended that Miguel think of a clear way to make it obvious that there
+were six clusters, each with two items, a myth and a fact.
+    Miguel considered each of Louise’s constructive criticisms. He began
+his revisions with the easier ones to execute. First he worked on improving
+the proximity relations between the headings and the itemized content.
+He did so by moving the headings to align with the bottom of the gray bar
+(at the top of the layout) and by making sure the headings were indeed
+centered over columns 2 and 3. Next he standardized the line length of
+the items, so that each had a similar visual shape and occupied no more
+and no less than three lines of type. This move allowed him to achieve the
+horizontal alignment he sought, displaying each myth on the same line
+as each fact. Miguel realized that while he had worked hard to make the
+writing for the “myths and facts” parallel, editing each item for length
+and syntax (e.g., see item 6), he had neglected to use clear visual signals
+to make those parallels evident. Miguel agreed with Louise about the need
+for a diﬀerent strategy for signaling the itemized content. After a few more
+drafts, Miguel made the six clusters more visible with two additional re-
+visions. Initially he moved the columns closer together (creating better
+proximal relations). Then he inserted a thin gray rule between each clus-
+ter, making the format resemble that of a table. Miguel’s ﬁnal version is
+shown in ﬁgure 16.16.
+    Miguel was pleased with his ﬁnal result, but wanted the opportunity to
+test his draft before he considered it ﬁnished. He was curious to know if
+the design encouraged reading and whether the main points were clear. As
+he looked over the six clusters of myths and facts, he questioned whether
+it was a wise idea to include messages about only two foods—potatoes and
+cheese—in the context of more general points about nutrition (see items 3
+and 4). He considered moving those items to another text he would create
+later, but ran out of time before he needed to meet with his supervisor.
+    Miguel’s supervisor was very satisﬁed with his work and believed it was
+an excellent prototype on which they could base other short pieces. He felt
+it would make a good ﬁrst impression with readers—that it was clear and
+conveyed a positive persona—and would show that the Department of Agri-
+culture cared about helping citizens understand healthy eating. Of course,
+he noticed the advice about potatoes and cheese. He said that including
+these items made the content’s level of abstraction inconsistent across
+the list. But he thought the advice was good and that these foods had been
+connected to obesity. His ﬁnal call was to keep the spotlight on potatoes
+and cheese. He also approved Miguel’s request to test the prototype and
+suggested that Miguel create a plan to assess the quality of the entire series.
+
+
+420 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+order to improve the visual display of their content. Rather, they need to
+be willing to devote the time it takes to excel in three key activities:
+  • grouping content rhetorically,
+  • organizing content visually, and
+  • signaling structural relationships.
+   The research presented in this chapter provides very strong evidence
+that each of these activities can help improve readers’ engagement with
+content. These activities are especially powerful when they are employed
+iteratively and when they are combined with usability testing. Content
+that has been shaped by these activities and followed up with usability
+testing is likely to be easier to understand, more used, better liked, and
+better remembered. Moreover, each component of the information-design
+heuristic is supported by empirical evidence.
+   As the case study of Miguel’s design process shows, using the heuris-
+tic helped him consider diﬀerent visual structures for his content. His
+pencil sketches were a valuable catalyst to his design thinking. Seeing the
+options, even in very rough form, allowed him to imagine the resulting
+documents more fully and eliminate those designs that would likely be in-
+eﬀective. And the feedback from his information-design colleague helped
+him recognize that he needed to worry about the consistency of visual
+cues just as much as consistency in writing and editing.
+   Taken as a whole, the research tells us that information design is nei-
+ther decoration nor artiﬁce. Rather, good information design supports
+readers’ cognitive and emotional interactions with content. In this way,
+information design is about enabling communication. My research on
+expertise in information design suggests that as technical communica-
+tors become more sensitive to the graphic, spatial, and typographic pos-
+sibilities for their content, they become more ﬂexible and more skilled in
+designing messages (Schriver 2012).
+   The expansion of technical communicators’ concern from focusing
+mainly on verbal aspects of messages to both visual and verbal aspects is
+important because many messages are never read. At ﬁrst glance, people
+judge them to be too complicated, boring, or ugly. As technical commu-
+nicators develop their expertise in information design, they will be better
+able meet their readers’ cognitive and emotional needs for content. They
+will also ﬁnd that information design is not about the details, such as
+choosing between serif and sans serif typefaces (although the details are
+important), but rather about the big picture—that is, building bridges to
+make sure people engage with the message. That means understanding
+
+
+422 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+the content people need, structuring it in ways that invite engagement,
+and envisioning novel ways to shape the message. The hardest part of the
+work lies in building those rhetorical bridges.
+
+   discussion questions
+1. Take another look at ﬁgure 16.2, the heuristic for structuring content
+   visually. In your opinion, which of the three phases will be the most
+   diﬃcult for students whose educational background has focused
+   mainly on writing? What aspects of visual design do you think will be
+   most challenging for you? What aspects interest you most?
+2. People may respond emotionally as well as cognitively to the commu-
+   nications they read. Think about the last time you reacted emotionally
+   to a document or a website. How did you respond? Excited? Enthusi-
+   astic? Annoyed? Frustrated? What was it that made you react as you
+   did? What were the characteristics of the message or its presentation
+   that triggered your response? What role did good or bad information
+   design play in how you felt?
+3. Look at the seven grouping techniques presented in ﬁgure 16.3. Think
+   of a topic in technical communication that could be organized in vari-
+   ous ways. Choose two of the grouping techniques and describe how
+   the topic could be organized using each technique. In your opinion,
+   which one provides the best structure for the content? Why?
+4. Find a short example of poor information design (two pages or two
+   screen captures). Make an electronic version of the example so you can
+   display it for the class. Prepare a short presentation in which you ﬁrst
+   analyze the stakeholders for the example and their likely purposes for
+   using the communication. Then draw on information-design research
+   and the heuristic in ﬁgure 16.2 as a framework for evaluating why the
+   information design is inadequate. As you discuss the example, identify
+   the speciﬁc visual or verbal features that make the design poor.
+5. Collect a set of four articles written on a single scientiﬁc or technical
+   topic (e.g., nanotechnology, sleep disorders, cloud technology, electric
+   cars). Two of the articles should be written for a lay audience (e.g., from
+   Science News) and the other two for professionals in the ﬁeld (e.g., Sci-
+   ence). Analyze the articles for the ways they organize the content. Are
+   similar structures employed for expert and novice audiences? What
+   are the key diﬀerences among the visuals included? Are they eﬀective?
+   What can we learn from these practices?
+6. Choose a local nonproﬁt agency and collect a sample of their paper
+   and electronic documents. Create screen captures of their website and
+
+
+                                                            Information Design | 423
+
+
+         (© University of Chicago Press. All rights reserved.
+         Posting, copying, or distributing in print or electronic form without
+         permission of UCP would be easy, but it's illegal. We're trusting you.)
+    print out representative pages that typify the agency’s design moves.
+    Analyze the documents for their writing and visual display of the con-
+    tent. What tone and persona do the designs project? Do paper and
+    online versions give similar impressions?
+ 7. Gather the paper documents and the printouts of the website you col-
+    lected from the nonproﬁt agency. Lay out the document set on a large
+    table, side by side: paper and online documents. Assess the impres-
+    sion the document set creates “as a family.” Is it easy to tell that all of
+    the documents are designed by the same agency? Are there elements
+    that make the organizational voice inconsistent? Create a class presen-
+    tation in which you detail your analysis, pointing out recommenda-
+    tions that you would make to the agency for improving the coherence
+    and consistency of their communications.
+ 8. Collect an example of the front page of your favorite electronic news-
+    paper or service. Capture the image electronically and then import it
+    to a design program, such as Adobe Illustrator. “Select the entire page”
+    and use the software to “gray out the transparency of the page” so you
+    can still see the shapes of the textual and graphic elements, but not
+    read them. Then, use the software’s tools to trace the grid of the page
+    and make a grid overlay. Pay attention to the underlying structure of
+    the body copy and graphics. Save the original page in full color and the
+    page with your grid overlay. Bring the ﬁles to class and be prepared to
+    describe how the content is displayed. How many columns and rows
+    are employed in the design? What are they used for? Why is the infor-
+    mation grouped as it is?
+ 9. Choose a commercial organization with an online presence that has
+    online competitors (e.g., banks, software manufacturers, airlines,
+    rental car agencies, hotel chains, consumer product makers). Iden-
+    tify three websites that represent the competition (e.g., three diﬀerent
+    airlines). Collect screen captures from their websites. Then select two
+    key features that are relatively similar across the websites that can be
+    compared. For example, for airlines you could assess the booking in-
+    formation or trip-planning tools. Compare and contrast the three sites
+    by making a series of tables that highlight the similarities and diﬀer-
+    ences in their design strategy. Prepare a short report that discusses
+    your ﬁndings.
+10. Look for a document that presents an information design you admire.
+    “Reverse engineer” the document—that is, try to identify the visual
+    and verbal strategies that make it tick. Drawing on the research in in-
+    formation design, discuss why you think the document is eﬀective.
+
+
+424 | Chapter 16
+
+
+        (© University of Chicago Press. All rights reserved.
+        Posting, copying, or distributing in print or electronic form without
+        permission of UCP would be easy, but it's illegal. We're trusting you.)
+   note
+   1. For a discussion of Gestalt principles applied to information design, see Schriver 1997,
+303–326.
+
+
+
+works cited
+Anderson, John R. 2009. Cognitive psychology and its implications. 7th ed. New York: Worth
+   Publishers.
+Bernard, Michael L., C. H. Liao, and M. Mills. 2001. The eﬀects of font type and size on the
+   legibility and reading time of online text by older adults. In Proceedings of the Special
+   Interest Group on Computer-Human Interaction Extended Abstracts ’01, 175–176. New York:
+   Association of Computing Machinery. http: // psychology.wichita.edu / hci / projects /
+   elderly.pdf.
+Bernard, Michael L., and M. Mills. 2000. So, what size and type of font should I use on my
+   website? Usability News 2 (2). http: // www.wsupsy.psy.twsu.edu / surl / usabilitynews / 2S /
+   font.htm.
+Bernard, Michael L., M. Mills, M. Peterson, and K. Storrer. 2001. A comparison of popular
+   online fonts: Which is best and when? Usability News 3 (2). http: // psychology.wichita
+   .edu / surl / usabilitynews / 3s / font.htm.
+Breland, K., and M. K. Breland. 1944. Legibility of newspaper headlines printed in capitals
+   and in lower case. Journal of Applied Psychology 28:117–120.
+Brumberger, Eva, and Kathryn Northcut. 2012. Designing texts: Teaching visual
+   communication. Amityville, NY: Baywood.
+Coles, P., and J. J. Foster. 1975. Typographic cuing as an aid to learning from typewritten
+   text. Programmed Learning and Educational Technology 12:102–108.
+Dyson, Mary C. 2004. How physical text layout aﬀects reading from screen. Behaviour and
+   Information Technology 23 (6): 377–393.
+Farkas, David K. 2005. Explicit structure in print and on-screen documents. Technical
+   Communication Quarterly 14 (1): 9–30.
+Flower, Linda, John R. Hayes, and H. Swarts. 1983. Revising functional documents: The
+   scenario principle. In New essays in technical and scientiﬁc communication, edited by
+   P. V. Anderson, R. J. Brockmann, and C. R. Miller, 41–58. New York: Baywood Press.
+Frascara, Jorge. 2010. Data, information, design and traﬃc injuries. VideoLectures.net,
+   March. http: // videolectures.net / aml2010_frascara_diti /.
+Ivory, Melody Y., Rashmi R. Sinha, and Marti A. Hearst. 2001. Empirically validated web
+   page design metrics. In Proceedings of the 2001 Human Factors in Computing Systems
+   Conference, edited by Michel Beaudouin-Lafon and Robert J. K. Jacob, 53–60. New
+   York: ACM.
+Jenkins, S. E., and B. L. Cole. 1982. The eﬀect of the density of background elements on
+   the conspicuity of objects. Vision Research 22:1241–1252.
+Kahn, M., K. C. Tan, and R. J. Beaton. 1990. Reduction of cognitive workload through
+   information chunking. In Proceedings of the Human Factors and Ergonomics Society 34th
+   Annual Meeting, edited by D. Woods and E. Roth, 1509–1513. Santa Monica, CA: Human
+   Factors and Ergonomics Society.
+Keyes, E. 1993. Typography, color, and information structure. Technical Communication 40
+   (4): 638–654.
+Köhler, W. 1947. Gestalt psychology. New York: Liveright.
+
+
+                                                                 Information Design | 425
+
+
+            (© University of Chicago Press. All rights reserved.
+            Posting, copying, or distributing in print or electronic form without
+            permission of UCP would be easy, but it's illegal. We're trusting you.)
+Lidwell, William, Kritina Holden, and Jill Butler. 2003. Universal principles of design.
+   Beverly, MA: Rockport Publishers.
+Lindgaard, Gitte, Gary Fernandes, Cathy Dudek, and J. Brown. 2006. Attention web
+   designers: You have 50 milliseconds to make a good ﬁrst impression! Behaviour and
+   Information Technology 25 (2): 115–126.
+Malamed, Connie. 2009. Visual language for designers: Principles for creating graphics that
+   people understand. Beverly, MA: Rockport Publishers.
+Miller, G. A. 1956. The magic number seven, plus or minus two: Some limits on our
+   capacity for processing information. Psychological Review 63:81–97.
+Müller-Brockmann, J. 1985. Grid systems in graphic design. Revised ed. New York: Hastings
+   House.
+Mullet, Kevin, and Darrell Sano. 1995. Designing visual interfaces: Communication oriented
+   techniques. Mountain View, CA: SunSoft Press.
+Muter, P., and P. Marrutto. 1991. Reading and skimming from computer screens and
+   books: The paperless oﬃce revisited? Behaviour and Information Technology 10:257–266.
+Nielson, Jakob. 2006. Progressive disclosure. Alertbox: useit.com, December 4. http: // www
+   .useit.com / alertbox / progressive-disclosure.html.
+Niemela, M., and J. Saarinen. 2000. Visual search for grouped versus ungrouped icons in a
+   computer interface. Human Factors 42 (4): 630–635.
+O’Brien, Beth A., Stephen J. Masﬁeld, and Gordon E. Legge. 2005. The eﬀect of print size
+   on reading speed in dyslexia. Journal of Research in Reading 28 (3): 332–349.
+Outing, Steve, and Laura Ruel. 2004. Eyetrack III: Online news consumer behavior in the
+   age of multimedia. http: // poynterextra.org / eyetrack2004 / index.htm.
+Ozok, A. A., and G. Salvendy. 2000. Measuring consistency of web page design and its
+   eﬀects on performance and satisfaction. Ergonomics 43 (4): 443–460.
+Paivio, A. 1969. Mental imagery in associative learning and memory. Psychological Review
+   76:241–263.
+———. 1990. Mental representations: A dual coding approach. New York: Oxford University
+   Press.
+Parush, A., R. Nadir, and A. Schtub. 1998. Evaluating the layout of graphical user interface
+   screens: Validation of a numerical computerized model. International Journal of
+   Human- Computer Interaction 10 (4): 343–360.
+Paterson, D. G., and M. A. Tinker. 1946. Readability of newspaper headlines printed in
+   capitals and lower case. Journal of Applied Psychology 30 (April): 161–168.
+Pirolli, Peter, and Stuart K. Card. 1999. Information foraging. Psychological Review 106 (4):
+   643–675.
+Reece, Gloria Ann. 2002. Text legibility for web documents and low vision. PhD
+   dissertation, University of Memphis.
+Rickards, E. C., and G. J. August. 1975. Generative underlining strategies in prose recall.
+   Journal of Educational Psychology 67:860–865.
+Sadoski, Mark, and Allan Paivio. 2001. Imagery and text: A dual coding theory of reading and
+   writing. Mahwah, NJ: Erlbaum.
+Samara, Timothy. 2002. Making and breaking the grid. Beverly, MA: Rockport Publishers.
+Scharﬀ, Lauren, Alyson Hill, and Albert Ahumada. 2000. Discriminability measures for
+   predicting readability of text on textured backgrounds. Optics Express 6 (4): 81–91.
+Schriver, K. A. 1989. Evaluating text quality: The continuum from text-focused to reader-
+   focused methods. IEEE Transactions on Professional Communication 32 (4): 238–255.
+———. 1991. Plain language through protocol-aided revision. In Plain language: Principles
+
+426 | Chapter 16
+
+
+          (© University of Chicago Press. All rights reserved.
+          Posting, copying, or distributing in print or electronic form without
+          permission of UCP would be easy, but it's illegal. We're trusting you.)
+   and practice, edited by E. R. Steinberg, 148–172. Detroit, MI: Wayne State University
+   Press.
+———. 1992. Teaching writers to anticipate readers’ needs: A classroom-evaluated
+   pedagogy. Written Communication 9 (2): 179–208.
+———. 1997. Dynamics in document design: Creating texts for readers. New York: John Wiley
+   and Sons.
+———. 2009. Using design to get people to read and keep reading. Health Literacy Out
+   Loud Podcast (HLOL), December 12. http: // www.healthliteracyoutloud.com / ?s=schriver.
+———. 2010. Reading on the web: Implications for online information design. Ljubljana
+   Museum of Architecture and Design Lecture Series on Visual Communications
+   Theory: On Information Design. http: // videolectures.net / aml2010_schriver_rotw /.
+———. 2011. La retórica del rediseño en contextos burocráticos (The rhetoric of redesign
+   in bureaucratic settings). In Information design, edited by Jorge Frascara, 156–165.
+   Buenos Aires: Ediciones Inﬁnito.
+———. 2012. What we know about expertise in professional communication. In Past,
+   present, and future contributions of cognitive writing research to cognitive psychology,
+   edited by Virginia W. Berninger, 275–312. New York: Psychology Press.
+Spencer, H., L. Reynolds, and B. Coe. 1974. Typographic coding in lists and bibliographies.
+   Applied Ergonomics 5:136–141.
+Spyridakis, J. H. 1989a. Signalling eﬀects: Part I. Journal of Technical Writing and
+   Communication 19 (1): 227–239.
+———. 1989b. Signalling eﬀects: Part II. Journal of Technical Writing and Communication 19
+   (4): 395–415.
+Stark Adam, Pegie, Sara Quinn, and Rick Edmonds. 2007. Eyetracking the news: A study of
+   print and online reading. St. Petersburg, FL: Poynter Institute for Media Studies.
+Theofanos, Mary Frances, and Janice Redish. 2005. Helping low-vision and other
+   users with web sites that meet their needs: Is one site for all feasible? Technical
+   Communication 52 (1): 9–20.
+Tufte, E. R. 1983. The visual display of quantitative information. Cheshire, CT: Graphics
+   Press.
+Tullis, T. S. 1997. Screen design. In Handbook of human-computer interaction, edited by
+   M. Helander, T. K. Landauer, and P. Prabhu, 503–531. New York: Elsevier Science.
+Vartabedian, A. G. 1971. The eﬀects of letter size, case, and generation method on CRT
+   display search time. Human Factors 13 (4): 363–368.
+Weinschenk, Susan. 2009. It’s a myth that all capital letters are inherently harder to read.
+   What Makes Them Click: Applied Psychology to Understand How People Think, Work, and
+   Relate, December 23. http: // www.whatmakesthemclick.net / 2009 / 12 / 23 / 100-things-you
+   -should-know-about-people-19-its-a-myth-that-all-capital-letters-are-inherently-harder
+   -to-read /.
+Wertheimer, M. 1922. Untersuchungen zur Lehre von der Gestalt: 1. Prinzipielle
+   Bemerkungen. Psychologische Forschung 1:47–58.
+Wilkins, Arnold, Roanna Cleave, Nicola Grayson, and Louise Wilson. 2009. Typography
+   for children may be inappropriately designed. Journal of Research in Reading 32 (4):
+   402–412.
+
+
+
+
+                                                               Information Design | 427
+
+
+           (© University of Chicago Press. All rights reserved.
+           Posting, copying, or distributing in print or electronic form without
+           permission of UCP would be easy, but it's illegal. We're trusting you.)
+

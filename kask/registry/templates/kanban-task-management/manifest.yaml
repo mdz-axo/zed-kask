@@ -1,0 +1,67 @@
+# Template crate manifest for kanban-task-management skill
+# hKask v0.28.0
+
+crate:
+  name: kanban-task-management
+  version: "0.28.0"
+  description: >
+    Kanban board monitoring and task verification. Monitors board state with
+    summary statistics and verifies individual task completion against
+    acceptance criteria.
+
+templates:
+  - id: kanban-task-management/monitor-board
+    name: "Monitor kanban board state across all columns"
+    path: monitor-board.j2
+    type: KnowAct
+    lexicon_terms: [monitor, assess, detect]
+    description: >
+      Monitor kanban board state across all columns. Produces summary counts,
+      identifies stuck or blocked tasks, and flags issues requiring attention.
+
+  - id: kanban-task-management/verify-completion
+    name: "Verify a task's completion by evaluating each acceptance criterion…"
+    path: verify-completion.j2
+    type: KnowAct
+    lexicon_terms: [verify, evaluate, assess]
+    description: >
+      Verify a task's completion by evaluating each acceptance criterion
+      against deliverables and evidence. Produces pass/fail with
+      per-criterion results and detailed reasoning.
+
+  - id: kanban-task-management/coordinate-agents
+    name: "Prepare task-thread replies, grounded blocker resolutions, and human…"
+    path: coordinate-agents.j2
+    type: KnowAct
+    lexicon_terms: [coordinate, respond, resolve]
+    description: >
+      Prepare task-thread replies, grounded blocker resolutions, and human
+      escalation candidates from active agents' updates.
+
+  - id: kanban-task-management/track-deliverables
+    name: "Assess submitted deliverables for relevance and evidence, identify…"
+    path: track-deliverables.j2
+    type: KnowAct
+    lexicon_terms: [track, verify, assess]
+    description: >
+      Assess submitted deliverables for relevance and evidence, identify
+      missing artifacts, and recommend whether a task is ready for review.
+
+  - id: kanban-task-management/move-tasks
+    name: "Produce valid, evidence-based kanban status transitions while…"
+    path: move-tasks.j2
+    type: KnowAct
+    lexicon_terms: [transition, prioritize, enforce]
+    description: >
+      Produce valid, evidence-based kanban status transitions while enforcing
+      WIP limits and documenting moves deferred by capacity or prerequisites.
+
+  - id: kanban-task-management/escalate
+    name: "Convert unresolved, authority-exceeding task issues into concise,…"
+    path: escalate.j2
+    type: KnowAct
+    lexicon_terms: [escalate, report, request]
+    description: >
+      Convert unresolved, authority-exceeding task issues into concise,
+      human-operator-ready escalation records with the required decision and
+      delivery impact.

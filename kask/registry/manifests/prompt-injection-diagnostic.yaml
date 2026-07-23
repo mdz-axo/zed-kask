@@ -1,0 +1,274 @@
+# Prompt Injection Diagnostic Process Manifest
+# ℏKask v0.21.0 — On-demand prompt injection analysis (NOT a membrane filter)
+# Template type: Process (FlowDef) — diagnostic skill for prompt injection threats
+
+manifest:
+  id: prompt-injection-diagnostic
+  category: daemon-process
+  name: Prompt Injection Diagnostic
+  description: >
+    On-demand diagnostic skill for analyzing prompt injection threats.
+    Classifies input text across 6 attack categories (direct_injection,
+    indirect_injection, jailbreak, data_exfiltration, tool_misuse,
+    multimodal_injection), analyzes the specific attack surface given
+    agent context, and recommends defenses from a 6-layer pipeline.
+    This is NOT a membrane filter — it is an on-demand diagnostic invoked
+    when injection is suspected or as a proactive security assessment.
+  functional_role: knowact
+  version: 0.21.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+# Energy Budget Configuration
+gas:
+  cap: 18000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: input_text
+    type: string
+    description: "The input text to analyze for prompt injection threats"
+    required: true
+  - name: agent_context
+    type: object
+    description: "Agent capabilities, tools, persona (for attack surface analysis)"
+    required: false
+  - name: defense_level
+    type: string
+    description: "Defense thoroughness: standard, thorough, maximum (default: standard)"
+    required: false
+
+# Process Steps
+steps:
+  - ordinal: 1
+    action: populate
+    description: >
+      Classify the input text across 6 attack categories: direct_injection,
+      indirect_injection, jailbreak, data_exfiltration, tool_misuse,
+      multimodal_injection. Assess threat level, confidence, and evidence
+      for each. Provide a benign explanation if the text might be legitimate.
+    renderer: minijinja
+    template_ref: prompt-defense/classify-threat
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      input_text: "{{ input_text }}"
+      defense_level: "{{ defense_level | default('standard') }}"
+    output_schema:
+      type: object
+      properties:
+        threat_classification:
+          type: array
+          items:
+            type: object
+            properties:
+              category: { type: string }
+              threat_level: { type: string }
+              confidence: { type: number }
+              evidence: { type: string }
+        overall_threat_level:
+          type: string
+        attack_vectors:
+          type: array
+        benign_explanation:
+          type: string
+
+  - ordinal: 2
+    action: populate
+    description: >
+      Given the threat classification and agent context, analyze the specific
+      attack surface. Map what tools could be misused, what data could be
+      exfiltrated, what trust boundaries could be crossed. Estimate blast
+      radius for each exploitation path.
+    renderer: minijinja
+    template_ref: prompt-defense/analyze-attack-surface
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      input_text: "{{ input_text }}"
+      agent_context: "{{ agent_context | default({}) }}"
+      threat_classification: "{{ ordinal_1.threat_classification }}"
+    output_schema:
+      type: object
+      properties:
+        attack_surface:
+          type: object
+          properties:
+            tools_exposed: { type: array }
+            data_flows: { type: array }
+            trust_boundaries: { type: array }
+            persistence_mechanisms: { type: array }
+        exploitation_paths:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              steps: { type: array }
+              outcome: { type: string }
+              severity: { type: string }
+        blast_radius:
+          type: object
+          properties:
+            data_at_risk: { type: array }
+            actions_at_risk: { type: array }
+            escalation_possible: { type: boolean }
+
+  - ordinal: 3
+    action: populate
+    description: >
+      Recommend specific defenses from the 6-layer pipeline: sanitize,
+      isolate, canary, restrict, monitor, audit. For each critical threat,
+      recommend at least one defense. Note tradeoffs. Flag Rust-level
+      changes (InferenceFilter, CanaryManager, OutputMonitor) separately
+      from YAML-level changes.
+    renderer: minijinja
+    template_ref: prompt-defense/recommend-defenses
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      input_text: "{{ input_text }}"
+      threat_classification: "{{ ordinal_1.threat_classification }}"
+      exploitation_paths: "{{ ordinal_2.exploitation_paths }}"
+    output_schema:
+      type: object
+      properties:
+        defense_recommendations:
+          type: array
+          items:
+            type: object
+            properties:
+              defense_layer: { type: string }
+              recommendation: { type: string }
+              implementation: { type: string }
+              effectiveness: { type: string }
+              tradeoffs: { type: string }
+              priority: { type: integer }
+        critical_gaps:
+          type: array
+        rust_level_changes:
+          type: array
+          items:
+            type: object
+            properties:
+              component: { type: string }
+              change: { type: string }
+              rationale: { type: string }
+        summary:
+          type: string
+
+  - ordinal: 4
+    action: validate
+    description: >
+      Validate the diagnostic output. Verify all threat categories were
+      assessed, defense recommendations are consistent with threat levels,
+      and no contradictions exist between classification and recommendations.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory # was hkask-mcp-storage
+    gas_cap: 1000
+    timeout_seconds: 15
+    validation_rules:
+      - all_categories_assessed
+      - defense_recommendations_consistent
+      - no_contradictions
+      - critical_gaps_flagged
+    output_schema:
+      type: object
+      properties:
+        validated:
+          type: boolean
+        validation_errors:
+          type: array
+        diagnostic_summary:
+          type: string
+        error_reason:
+          type: string
+
+  - ordinal: 5
+    action: feedback
+    description: >
+      Emit Regulation feedback for variety monitoring and prompt injection
+      diagnostic tracking. Report threat categories detected, defense
+      layers recommended, and critical threats for Regulation algedonic monitoring.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-memory # Regulation feedback now via memory server
+    gas_cap: 500
+    timeout_seconds: 5
+    feedback:
+      variety_delta: integer
+      threat_categories_detected: integer
+      defense_layers_recommended: integer
+      critical_threats: integer
+    output_schema:
+      type: object
+      properties:
+        variety_counter:
+          type: integer
+        reg_event_id:
+          type: string
+
+# Error Handling
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 2
+  retry_backoff_seconds: 2
+  on_validation_failure: abort
+  on_capability_denied: escalate
+
+# OCAP Configuration
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: prompt-defense/classify-threat
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: prompt-defense/analyze-attack-surface
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: prompt-defense/recommend-defenses
+      gas_budget: 4000
+    - resource: manifest
+      action: execute
+      template_id: prompt-injection-diagnostic
+      gas_budget: 500
+    - resource: regulation
+      action: emit
+      template_id: prompt-injection-diagnostic
+      gas_budget: 500
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+# Regulation Monitoring
+ledger:
+  emit_spans: true
+  span_namespace: hkask.template.prompt-injection-diagnostic
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+  variety_counters:
+    - threat_categories_detected
+    - defense_layers_recommended
+    - critical_threats
+
+# Audit Trail
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

@@ -1,0 +1,52 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    report: object
+    total_tokens_audited: integer
+  output:
+    convergence_metric: number
+    rationale: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: platform-consent-auditor/convergence-check.j2 #}
+{# Functional Role: KnowAct — Compute normalized convergence metric for consent audit PDCA cycles #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: convergence_metric, rationale #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 900
+thinking_budget = "off"
+
+Given a consent audit report, compute convergence where 0 means all tokens in the window have been audited, anomalies are classified by category with severity, and recommendations are actionable.
+
+Input:
+```json
+{{ report | tojson }}
+```
+
+You are a convergence evaluator. Measure convergence on [0,1] where 0 means the audit is fully converged (all tokens covered, all anomaly categories classified, recommendations actionable).
+
+## Convergence Criteria
+Score 0 (fully converged) when:
+- All tokens in the window are accounted for ({{ total_tokens_audited }} expected)
+- Each anomaly is classified into exactly one category
+- Severity is assigned (Critical / Warning / Info)
+- Recommendations are specific and actionable
+
+Score closer to 1 when tokens are missing, anomalies are unclassified, or recommendations are vague.
+
+Return JSON only:
+```json
+{"convergence_metric": 0.0, "convergence_method": "LLM-assessed coverage detection", "rationale": "..."}
+```

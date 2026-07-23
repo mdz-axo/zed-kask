@@ -1,0 +1,178 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- classify
+- analyze
+- rank
+- resolve
+- synthesize
+contract:
+  input:
+    skill_names: array
+    existing_bundles: array
+    goal: object
+    previous_manifest: object
+  output:
+    bundle_manifest: object
+    conflicts: array
+    complementarities: array
+    ontology_anchors: object
+energy_cap: 6144
+visibility: Public
+---
+{# Template: skill-bundler/bundler-compose.j2 #}
+{# Functional Role: KnowAct — classify skills by polarity, detect conflicts/complementarities, produce PKO-anchored bundle manifest with DC provenance and PROV-O artifact linkage. #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: bundle_manifest, conflicts, complementarities, ontology_anchors #}
+{# Skill Bundler — Compose Candidate Skill Set #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a skill composition orchestrator operating within hKask's dual-axis ontological framework (P5.4). Given a set of skills AND an explicit goal context, analyze them for conflicts, complementarities, and optimal ordering, then produce a PKO-anchored bundle manifest with DC provenance and PROV-O artifact linkage.
+
+## Goal Context
+
+```json
+{{ goal | tojson }}
+```
+
+The goal defines WHAT the bundle must achieve. Every skill in the bundle is a pko:Procedure whose convergence target contributes to this goal. Skills are linked via prov:wasDerivedFrom (output of skill N → input of skill N+1) and pko:precedes (sequential dependency).
+
+## Skills to Compose
+
+```json
+{{ skill_names | tojson }}
+```
+
+{% if existing_bundles %}
+## Existing Bundles (for smart match)
+
+```json
+{{ existing_bundles | tojson }}
+```
+{% endif %}
+
+## Composition Principles
+
+1. **Phase Separation**: Never place divergent and convergent skills in the same cascade phase.
+2. **Ordering Principle**: Default cascade order is Recognize → Act → Reflect.
+3. **Domain Complementarity**: Skills from different domains compose more safely than same-domain skills.
+4. **Conflict Resolution Hierarchy**: Domain separation → Phase separation → Specificity wins → Manifest override → User intent wins.
+5. **Convergence Criteria**: Every iterative composition must declare a convergence criterion. Default: coherence ≥ 0.7, drift < 0.5.
+6. **Depth and Term Limits**: Cascade depth ≤ 7, each skill ≤ 10 key terms, bundles ≤ ~30 unique terms.
+
+## Skill Polarity Classification
+
+| Polarity | Characteristic | Cascade Phase |
+|----------|---------------|---------------|
+| **Generative** | Explores possibilities, proposes alternatives | Pre-core |
+| **Evaluative** | Tests, critiques, validates | Post-core |
+| **Regulative** | Constrains, requires, monitors | Cross-phase |
+| **Procedural** | Sequences, synchronizes, routes | Backbone |
+
+## Anti-Patterns to Detect
+
+| Anti-Pattern | Detection | Resolution |
+|-------------|-----------|------------|
+| **Cancel-out** | Divergent + convergent in same phase | Move divergent to pre, convergent to post |
+| **Contradictory directives** | Multiple constraints for same target | Specificity wins; add reconciliation step |
+| **Ordering collision** | Same domain, same phase, same specificity | Explicit cascade order in manifest |
+| **Runaway feedback** | Skill A triggers Skill B triggers Skill A | Convergence criterion + depth limit |
+| **Scope creep** | Too many terms or skills | Decompose into sub-bundles |
+| **Dead letter** | No productive skill in the bundle | Require at least one productive skill |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "bundle_manifest": {
+    "name": "<descriptive-name>",
+    "version": "1.0.0",
+    "goal": {
+      "text": "<goal text from goal context>",
+      "criteria": ["<completion criterion>"]
+    },
+    "skills": [
+      {
+        "name": "<skill-name>",
+        "polarity": "generative|evaluative|regulative|procedural",
+        "phase": "pre-core|core|post-core|cross-phase",
+        "cascade_order": 1,
+        "pko_anchor": {
+          "procedure": "pko:Procedure",
+          "step": "pko:Step",
+          "convergence_target": "<skill convergence threshold mapped to pko:StepVerification>"
+        },
+        "artifact_contract": {
+          "input_from": "<skill-name>|goal:user-intent",
+          "output_to": "<skill-name>|goal:verification",
+          "provenance": "prov:wasDerivedFrom"
+        }
+      }
+    ],
+    "conflicts": [
+      {
+        "skills": ["<skill-a>", "<skill-b>"],
+        "resolution": "domain-separation|phase-separation|specificity-wins|manifest-override",
+        "rationale": "Why this resolution was chosen"
+      }
+    ],
+    "complementarities": [
+      {
+        "skills": ["<skill-a>", "<skill-b>"],
+        "leveraged": "How the complementarity is exploited"
+      }
+    ],
+    "convergence": {
+      "criterion": "Description of convergence condition",
+      "threshold": 0.7
+    }
+  },
+  "conflicts": [],
+  "complementarities": [],
+  "ontology_anchors": {
+    "pko": {
+      "bundle": "pko:CompositeProcedure",
+      "skill_procedures": ["pko:Procedure <skill-name>", "..."],
+      "step_sequence": ["pko:Step <skill-name>:Plan", "pko:Step <skill-name>:Do", "pko:Step <skill-name>:Check", "pko:Step <skill-name>:Act"],
+      "execution": "pko:ProcedureExecution"
+    },
+    "dc": {
+      "creator": "dcterms:creator",
+      "created": "dcterms:created",
+      "type": "bibo:Document"
+    },
+    "prov": {
+      "derivation_chain": ["prov:wasDerivedFrom <skill-A output> → <skill-B input>", "..."],
+      "generation": "prov:wasGeneratedBy <output-artifact> → <skill-name>"
+    }
+  }
+}
+```
+
+## Ontological Anchoring Requirements (P5.4 dual-axis mandate)
+
+Every bundle must carry both PKO (process/verb) and DC (state/noun) anchors:
+- **PKO axis:** The bundle IS a `pko:CompositeProcedure`. Each composed skill IS a `pko:Procedure` with `pko:Step` substeps (Plan, Do, Check, Act). The execution IS a `pko:ProcedureExecution`.
+- **DC axis:** The bundle manifest IS a `bibo:Document` with `dcterms:creator` and `dcterms:created`.
+- **PROV-O axis:** Skill-to-skill edges carry `prov:wasDerivedFrom` provenance. Each output artifact carries `prov:wasGeneratedBy`.
+
+Failure to anchor a bundle in both axes is a P5.4 violation.
+
+## Constraints
+
+- Every skill must appear exactly once in the manifest.
+- Every detected conflict must have a resolution.
+- At least one productive (core-phase) skill must be present.
+- Cascade depth must not exceed 7.
+- No contradictory directives in the same cascade phase.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

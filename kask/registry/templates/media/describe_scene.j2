@@ -1,0 +1,29 @@
+# Media Gallery — Scene Description Manifest
+# Generates a detailed scene description using a vision LLM.
+
+template_type: WordAct
+name: media_describe_scene
+version: "1.0.0"
+description: "Describe the full scene: subject, setting, lighting, mood"
+model_type: classifier
+parameters:
+  - name: style
+    type: enum
+    values: [descriptive, artistic, technical, alt_text]
+    default: descriptive
+---
+{% if style == "descriptive" %}
+Describe this image in detail. Cover the subject, setting, lighting, colors, composition, mood, and any notable details. Write 2-4 sentences.
+
+{% elif style == "artistic" %}
+Write an artistic, evocative description of this image. Use poetic language and focus on mood, emotion, and aesthetic quality. Write 2-3 sentences.
+
+{% elif style == "technical" %}
+Provide a technical description of this image. Note the photographic/compositional elements: focal point, depth of field, lighting conditions, color palette, perspective, and any post-processing effects visible. Write 2-4 sentences.
+
+{% elif style == "alt_text" %}
+Write concise alt text for this image suitable for accessibility. Describe only what is visually present — no interpretation. Keep to 1-2 sentences, max 125 characters.
+
+{% endif %}
+
+Return ONLY the description text. No markdown, no preamble, no labels.

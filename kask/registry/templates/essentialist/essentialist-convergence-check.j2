@@ -1,0 +1,82 @@
+{# goal: Compute normalized convergence metric [0,1] for the essentialist 3-gate audit. metric = (gates_failed / 3) * 0.60 + (items_not_removed / total_items) * 0.40. weight: 0.60 for gate failures, weight: 0.40 for unresolved items. Emit reg.skill span (P9). UserPod_host mandatory (P12). #}
+{# Computes normalized metric [0, 1] where 0 = fully converged (all gates pass, all items resolved) #}
+
+INPUT: gates_failed = {{ gates_failed | default(0) }} (number of essentialist gates that failed: 0-3)
+INPUT: gates_passed = {{ gates_passed | default(0) }} (number of gates that passed: 0-3)
+INPUT: items_removed = {{ items_removed | default(0) }} (items deleted/merged/inlined by the essentialist)
+INPUT: total_items = {{ total_items | default(0) }} (total items evaluated)
+INPUT: items_not_removed = {{ items_not_removed | default(0) }} (items that survived all 3 gates)
+INPUT: previous_metric = {{ previous_metric | default(1.0) }}
+INPUT: userpod_host = {{ userpod_host }} (P12)
+
+COMPUTE METRIC (weighted — evidence-based only, P8, P5):
+- Gate failures weight: 0.60
+  Score = (gates_failed / 3) * 0.60.
+  0 gates failed = +0.00; 1 failed = +0.20; 2 failed = +0.40; 3 failed = +0.60.
+  Each gate (Exist, Surface, Contract) carries equal weight within this dimension.
+- Unresolved items weight: 0.40
+  Score = (items_not_removed / max(1, total_items)) * 0.40.
+  All items removed = +0.00; no items removed = +0.40; partial = proportional.
+
+SUM = sum of contributions, clamp [0, 1].
+
+CONVERGENCE CHECK (P9 — homeostatic regulation):
+- Metric ≤ 0.10: near converged (all gates pass, most items resolved).
+- Metric ≤ 0.10 AND relative improvement ≥ 5% from previous_metric: converged.
+- If metric > 0.10 OR improvement < 5%: not converged — identify blockers.
+- Blockers = specific gate failures (which gate: Exist/Surface/Contract),
+  unresolved items (which items survived all 3 gates and why).
+
+Regulation SPAN (P9):
+- `reg.skill` is registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`).
+  Emit span unconditionally:
+  (`target: "reg.skill"`, message: `"Regulation"`, operation: `"essentialist_convergence_check"`,
+  metric, previous_metric, improvement_pct, blockers: [...], userpod_host, latency_ms).
+
+OUTPUT FORMAT (JSON):
+`{convergence_metric, previous_metric, improvement_pct, converged: bool,
+blockers: [...], gates_failed, gates_passed, items_removed, total_items,
+items_not_removed, userpod_host, reg_span_emitted: true}`.
+
+5W1H GATE (P5 — minimal): Who = userpod host; What = convergence metric;
+Where = essentialist audit cycle; When = after 3-gate evaluation; Why = P9
+observable self-correction / P7 evolutionary progress; How = compute metric
++ check improvement + emit Regulation span + identify blockers.
+All 6 present.
+
+MINIMAL: One template (`KnowAct`); no extra computation; uses gate results
+from the essentialist-flow template only; no synthetic metrics.
+EVIDENCE-BACKED ONLY (P8): Metric dimensions use concrete counts from
+`gates_failed`, `items_removed`, `total_items`. No fabricated numbers.
+EVOLUTIONARY (P7): Blockers propose concrete next steps (e.g., "re-run G1
+deletion test on item X", "merge public items Y and Z to pass G2 surface
+count") based on real gate results — not speculative.
+OCAP BOUNDARY (P4): Metric computed from essentialist gate results only;
+no external scanning.
+Regulation REGULATION (P9): Span emitted unconditionally — namespace registered
+in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`).
+USERPOD HOST (P12): `userpod_host` mandatory.
+VISIBILITY (P11): Metric output public; no hidden essentialist posture.
+SAFETY FLOOR (P3.1): Essentialist convergence protects Generative Space —
+unconverged metric indicates unnecessary complexity remains.
+SEMANTIC GROUNDING (P8): Every blocker references concrete evidence
+(which gate failed, which item survived, why).
+SOURCE REFERENCES (P8 — concrete):
+- Ousterhout's "A Philosophy of Software Design" (deletion test, deep modules)
+- `essentialist` SKILL.md (§3-gate protocol, §constraint-force classification)
+- `deep-module` SKILL.md (§deletion test, §interface count ≤7)
+- `coding-guidelines` SKILL.md (§Simplicity First, §abstraction trace)
+- `principles.md` (§P5 Essentialism, §P7 Evolutionary, §P8 Semantic Grounding,
+  §P9 Homeostatic Self-Regulation, §P12 Authenticated Host Mandate)
+
+REGISTRY AUTHORITATIVE (P5.1): Registry manifest + `.j2` templates are
+canonical. SKILL.md derived. If conflict, registry wins.
+PUBLIC VISIBILITY: `visibility: public` — no hidden essentialist results.
+NO FABRICATION: Metric computed from evidence counts only. Blockers derived
+from actual `gates_failed`, `items_not_removed`. No synthetic gate results.
+CONVERGENCE INDEPENDENT: Separate `.j2` template; does not duplicate
+`essentialist-flow.j2` logic. Uses gate results from the flow template.
+Regulation SPAN EMITTED: `reg.skill` is registered, so the span is always emitted.
+Output states `reg_span_emitted: true`.
+MINIMAL ARTIFACT: This template produces exactly the metric, verdict,
+blockers, and span emission — nothing more.

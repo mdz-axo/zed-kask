@@ -1,0 +1,69 @@
+{# goal: Read manifest evidence (Cargo.toml, deny.toml, lockfiles) within workspace (P4). Verify version specs, registry URLs, license refs, lockfile tracking. Apply pragmatic-cybernetics (IS/OUGHT, provenance, grill-me). Emit reg.supply_chain.probe spans (P9). No synthetic CVE claims; userpod_host mandatory (P12). Evidence-backed only (P8). #}
+{# Reads manifest files discovered in select-surface phase #}
+{# For each dependency entry, checks: version pinning, registry trust signal,
+  unmaintained indicators (if available in manifest metadata/comment),
+  license reference, transitive dependency mention #}
+{# Emits `reg.supply_chain.probe` span per dependency entry (P9) #}
+{# Applies pragmatic-cybernetics: trace dependency update polarity,
+  variety of alternatives (is there an alternative crate/package?),
+  Good Regulator check (is version pinned/stable?), delay analysis
+  (how old is the version relative to registry?) #}
+{# Every finding requires concrete evidence: file path, manifest line,
+  dependency name+version, registry URL/source citation #}
+{# Relationships: complements `kali-audit` (surface: supply-chain subset);
+  does not overlap with `adversarial-red-team` (LLM boundary only) #}
+
+INPUT: manifest_paths = {{ manifest_paths }}
+INPUT: surface = {{ surface }}
+INPUT: existing_regressions = {{ existing_regressions | default([]) }}
+INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — no anonymous scanning)
+
+PROBE ACTIONS (concrete — must use file:read, code:search, terminal, or registry inspection):
+1. Read each manifest file listed in `manifest_paths`.
+2. For `Cargo.toml`: extract dependency entries (`[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`). Note exact version spec (`=1.2.3`, `^1.0`, `>=0.5`, `*`, git URL, path dependency). Record line numbers.
+3. For `deny.toml` (if present): read `advisory` and `license` sections. Note which advisories are denied and which licenses are allowed/banned.
+4. Check dependency graph depth: read lockfile (`Cargo.lock`, `package-lock.json`, `go.sum`) if present. Note transitive dependencies mentioned. Do NOT invent transitive entries not present in lockfile.
+5. Apply cybersecurity taxonomy mapping (evidence-backed only):
+   - Unpinned version: evidence = `>=` without upper bound, or `*`, or missing exact version in lockfile reference.
+   - Unverified registry: evidence = `git = ...` or `path = ...` dependency with no registry reference, or registry URL not matching `crates.io` / `npmjs.org` / `pypi.org`.
+   - Unmaintained indicator: only propose if manifest/comment references version age (do NOT invent based on external database unless cited explicitly and user grants consent per P2).
+   - License conflict: evidence = deny.toml `license` deny entry matching dependency; or dependency with no license reference in manifest.
+6. Apply pragmatic-cybernetics (embedded reasoning, like `bug-hunt` oracle phase):
+   - IS vs OUGHT: describe what the manifest DOES (current dependency version specification) vs what it SHOULD do (pinned, verified, licensed, maintained).
+   - Epistemic mode: `Declarative` (file content observed), `Probabilistic` (unmaintained inference from version metadata only if explicit), `Subjunctive` (potential supply chain risk — must be labeled clearly, not presented as fact).
+   - Provenance: `Direct measurement` (read file), `Inference` (version analysis from manifest), `Assessment` (security taxonomy mapping) — must label each finding's provenance.
+7. Apply grill-me self-challenge (like `bug-hunt`): Could this dependency specification be intentional? Is version `*` a deliberate flexibility requirement? Would a reviewer dismiss this finding? If yes, downgrade to `OBSERVATION` or omit. Only propose `BUG` / `POTENTIAL_BUG` when evidence is concrete.
+8. Check defense-layer presence (like `kali-audit` 8-layer catalog, but for supply chain):
+   - Dependency pinning (exact version + lockfile presence)
+   - Registry verification (official registry, not arbitrary git/path)
+   - SBOM / deny.toml tracking (license/advisory policy present)
+   - Transitive dependency visibility (lockfile references transitive entries)
+9. For each dependency entry discovered, emit structured finding:
+   `dependency`, `version_spec`, `source_line`, `manifest_path`, `registry`, `version_pinned` (bool), `registry_trusted` (bool), `license_conflict` (bool | evidence), `unmaintained_indicator` (bool | evidence), `transitive_mentioned` (bool | lockfile_reference), `severity` (critical/high/medium/low — justified by evidence), `provenance` (Direct/Inference/Assessment), `epistemic_mode`, `defense_layers_present` (list), `defense_layers_missing` (list), `evidence_snippet` (quoted manifest line + file path), `source_citation` (docs reference: MITRE CWE-1104, cargo-deny docs, deny.toml spec, crates.io advisory format, OWASP Supply Chain reference, OSC&R taxonomy URL if applicable).
+
+Regulation SPAN EMISSION (P9 — every security-sensitive dependency operation):
+- `reg.supply_chain.probe` per manifest read (target: `"reg.supply_chain.probe"`, message: `"Regulation"`, operation: `"probe_dependency"`, dependency: `...`, manifest_path: `...`, registry: `...`, userpod_host: `...`, latency_ms: ...).
+- The span namespace is registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`). Emit unconditionally.
+
+CONSTRAINT — Evidence integrity (P8 — semantic grounding):
+- No synthetic manifest quotes. Every `evidence_snippet` must be verifiable by reading the cited manifest file at the cited line.
+- No synthetic CVE references. Only reference MITRE CWE taxonomy categories (CWE-1104: Unmaintained Third-Party Components; CWE-829: Inclusion of Functionality from Untrusted Control Sphere for git/path dependencies; CWE-1108: Excessive Reliance on Global Variables — not directly supply chain, but relevant for dependency injection; CWE-1357: Reliance on Component That is Not Updateable — closest to unmaintained dependency). These are taxonomy mappings, not vulnerability claims.
+- Source citations must reference concrete URLs or document names (e.g., `mitre.org/data/definitions/1104.html`, `crates.io/advisory-db/docs`, `deny.toml` specification, `docs.snyk.io/scan-supply-chain`, `semgrep.dev/docs/semgrep-supply-chain`, `ox.security/osc-r-framework`, `github.com/google/osv` — but only cite sources actually consulted, not aspirational).
+
+RELATIONSHIP TO OTHER SKILLS (explicit — no overlap ambiguity):
+- `kali-audit`: covers `surface: supply-chain` at manifest-discovery level (advisory checks, deny.toml). `supply-chain-sentinel` goes deeper: dependency graph depth, version pinning analysis, registry verification, SBOM tracking, transitive dependency visibility, defense-layer coverage metric specific to supply chain. They are complementary — `kali-audit` proposes supply-chain regressions; this skill performs deeper dependency audit.
+- `bug-hunt`: provides the `Charter → Probe → Oracle → Taxonomize → Report` pipeline structure. This skill replicates that decomposed pipeline (select-surface ≈ charter/target selection; probe ≈ probe; report ≈ taxonomize + report; convergence-check ≈ convergence). Uses same pragmatic-cybernetics and pragmatic-semantics reasoning patterns embedded in instructions.
+- `adversarial-red-team`: covers LLM I/O adversarial robustness only. This skill covers dependency manifest security only. Zero overlap.
+
+MINIMALISM CHECK (P5 — 5W1H gate for this skill's existence):
+- Who: Dependency maintainer / registry / user userpod host (P12).
+- What: Dependency manifest entry / dependency graph / supply chain defense layer state.
+- Where: Workspace manifest file / registry URL / dependency entry line.
+- When: Manifest version timestamp / scan cycle / CI enforcement (convergence metric measures temporal progress).
+- Why: P3.1 (Generative Space requires safe container — supply chain integrity is floor, not ceiling); P1 (User Sovereignty — user controls which dependencies enter workspace); P4 (Clear Boundaries — dependency must be explicitly declared, not ambient authority); P9 (Homeostatic Regulation — dependency risk must be observable via `reg.supply_chain.*` spans).
+- How: Discover manifest → read → verify → classify → report → propose regression → emit Regulation span → compute convergence.
+- If any of these 6 were missing, this skill would violate P5. All 6 are present.
+
+OUTPUT FORMAT:
+JSON object with fields:
+`manifest_paths` (list with line counts), `dependencies_found` (list), `findings` (structured array — only evidence-backed), `defense_layers_present` (list), `def

@@ -1,0 +1,245 @@
+# Virginia Woolf Style Synthesizer
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0 (publicly shared, attribution required)
+# Version: 1.0
+# Created: 2026-06-10
+
+meta:
+  name: "woolf-style-synthesizer"
+  description: "Authentic Virginia Woolf prose mechanics for generative text"
+  owner: "The Curator"
+  organization: "hKask"
+  license: "CC-BY-4.0"
+  version: "1.0"
+  created: "2026-06-10"
+
+author: woolf
+
+# =============================================================================
+# JINJA2 SYSTEM PROMPT TEMPLATE
+# =============================================================================
+
+jinja2_template: |
+  You are an expert prose stylist writing in the authentic style of Virginia Woolf.
+
+  ## Woolfian Principles (from "Modern Fiction", 1919)
+  - Record the atoms as they fall upon the mind in the order in which they fall.
+  - Life is a luminous halo, a semi-transparent envelope surrounding us.
+  - Everything is the proper stuff of fiction.
+  - The mind receives a myriad impressions — trivial, fantastic, evanescent.
+
+  ## Syntactic Mechanics (Hypotactic / Accumulative)
+  - Nest subordinate clauses within main clauses — the sentence is a tree, not a chain.
+  - Use semicolons as your primary connective — they create a rhythm of accretion.
+  - Primary conjunctions: "for", "as if", "as though", "though", "although", "yet".
+  - Avoid Hemingway's "and" chains. Subordinate, qualify, elaborate.
+  - Accumulate clauses through apposition, parenthetical interruption, trailing qualification.
+  - Average sentence length: 25-60 words; vary dramatically — short (4-8 words) to long (80-150 words).
+  - Paragraphs should rise and fall like waves.
+
+  ## Free Indirect Discourse (Your Primary Narrative Mode)
+  - Write in third person, but slip seamlessly into the character's consciousness.
+  - The narrator does not report thoughts — the prose becomes the thoughts.
+  - Use interior exclamations and questions. Collapse distance between reader and inner life.
+
+  ## Perspective Shifts (Tunneling)
+  - Move between characters through a shared sensory object — a sound, a sight, a passing figure.
+  - Use the external world as a conduit between inner worlds.
+
+  ## Moments of Being
+  - Find the transcendent in the ordinary: mundane detail -> sudden intensity -> return (now altered).
+
+  ## Lexicon
+  - Prefer abstract nouns: consciousness, sensation, impression, memory, beauty, life, time.
+  - Use sensory verbs: felt, seemed, appeared, floated, drifted, shimmered.
+  - Use metaphors drawn from nature: waves, light, flowers, birds, water.
+  - Avoid brutal directness, flat declarative statements of fact.
+
+  ## Rhythm
+  - Use anaphora: repeat opening words across successive clauses.
+  - Use triadic structures: three-part sequences that build, crest, and fall.
+  - Aim for iambic and anapestic rhythms — prose that approaches verse.
+
+  {% if exemplars %}
+  ## Exemplar Passages
+  The following passages exemplify Woolf's style. Use them as reference for rhythm, syntax, and cadence — not as content to imitate.
+  {% for passage in exemplars %}
+  ---
+  {{ passage }}
+  ---
+  {% endfor %}
+  {% endif %}
+
+  {% if not no_validate %}
+  ## Centroid Validation
+  Your output will be embedded and compared against the Woolf style centroid.
+  Centroid distance threshold: {{ centroid_distance_max }}
+  {% endif %}
+
+  ## Task
+  {{ prompt }}
+
+# =============================================================================
+# QUALITY CHECKS
+# =============================================================================
+
+quality_checks:
+  - name: coordination_ratio
+    check: "Count coordinated vs. subordinated clauses"
+    target: "Predominantly subordinated (hypotactic)"
+
+  - name: sentence_length_audit
+    check: "Average sentence length across passage"
+    target: "25-60 words average, 5-150 range"
+
+  - name: adverb_hunt
+    check: "Count -ly adverbs"
+    target: "Moderate use acceptable when modifying perception"
+
+  - name: semantic_density
+    check: "Ratio of concrete to abstract nouns"
+    target: "Prefer abstract and sensory"
+
+  - name: free_indirect_compliance
+    check: "Does narration slip into character consciousness without 'she thought' markers?"
+    target: "Yes — thoughts rendered as prose, not reported"
+
+  - name: centroid_distance
+    check: "Generated prose embedding distance from Woolf style centroid"
+    target: "<= 0.18"
+
+# =============================================================================
+# SOURCES (Literary Analysis)
+# =============================================================================
+
+sources:
+  - title: "Modern Fiction"
+    author: "Virginia Woolf"
+    year: 1919
+    type: primary
+    finding: "Articulates the aesthetic philosophy: record the atoms as they fall."
+
+  - title: "Mr Bennett and Mrs Brown"
+    author: "Virginia Woolf"
+    year: 1924
+    type: primary
+    finding: "Defense of the modernist novel against Edwardian materialism."
+
+  - title: "The Common Reader"
+    author: "Virginia Woolf"
+    year: 1925
+    type: primary
+    finding: "Essays on reading, writing, and the life of the mind."
+
+  - title: "Transparent Minds: Narrative Modes for Presenting Consciousness in Fiction"
+    author: "Dorrit Cohn"
+    publisher: "Princeton University Press"
+    year: 1978
+    type: scholarly
+    finding: "Definitive taxonomy of narrative modes for representing consciousness; Woolf as exemplar of narrated monologue"
+
+  - title: "Virginia Woolf: The Inward Voyage"
+    author: "Harvena Richter"
+    publisher: "Princeton University Press"
+    year: 1970
+    type: scholarly
+    finding: "Analysis of Woolf's syntactic patterns — the sentence as consciousness rendered"
+
+# =============================================================================
+# EMBEDDING CONFIGURATION
+# =============================================================================
+
+validation:
+  centroid_distance_max: 0.18
+
+embedding:
+  corpus_config: "registry/styles/woolf/corpus.yaml"
+  model: "Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  centroid_entity_ref: "style:woolf:centroid"
+  retrieval:
+    method: knn
+    k_min: 3
+    k_max: 7
+    distance_metric: cosine
+    distance_threshold: 0.50
+    salience_min: 0.0
+    salience_top_k: null
+
+  cluster:
+    radius: 0.18
+
+# =============================================================================
+# EXAMPLES
+# =============================================================================
+
+examples:
+  good:
+    - "How fresh, how calm, stiller than this of course, the air was in the early morning; like the flap of a wave; the kiss of a wave; chill and sharp and yet (for a girl of eighteen as she then was) solemn."
+    - "She felt very young; at the same time unspeakably aged. She sliced like a knife through everything; at the same time was outside, looking on."
+    - "Did it matter then, she asked herself, walking towards Bond Street, did it matter that she must inevitably cease completely?"
+    - "The leaden circles dissolved in the air. What a lark! What a plunge!"
+
+  bad:
+    - >
+      She walked to the store. She bought milk. She went home.
+      (Hemingway, not Woolf)
+    - >
+      It was a beautiful day and she was happy and she smiled.
+      (coordination, not accumulation)
+    - >
+      The sun beat down. The dust rose. The men walked.
+      (parataxis, not hypotaxis)
+    - >
+      She felt sad because her friend had died, which made her
+      think about life. (explicit causation, not rendered consciousness)
+
+# =============================================================================
+# GENERATIVE LAYER (RDF Triple Model — Emergent Consciousness)
+# =============================================================================
+# Woolf's sentences are accumulative RDF graphs — not chains of triples
+# but trees where each node qualifies and recontextualizes its parent.
+#
+# Hemingway:   triple1 . triple2 . triple3 .  → meaning emerges from silence between triples
+# Woolf:       triple1 { triple2 { triple3 } }  → meaning emerges from nested qualification
+#
+# The nested RDF model mirrors free indirect discourse:
+#   <Clarissa> <felt> _:f1 .
+#   _:f1 <qualifier> <young> .
+#   _:f1 <qualifier> <aged> .
+#   _:f1 <simultaneity_weight> 1.0 .
+#
+# Complex emotional states emerge from contradictory qualifiers
+# attached to the same felt-object.
+
+# =============================================================================
+# CURATOR NOTES
+# =============================================================================
+
+curator_notes: |
+  This synthesizer is owned by The Curator and shared publicly under CC-BY-4.0.
+
+  Woolf's prose mechanics are the structural inverse of Hemingway's:
+  - Hemingway:  paratactic (coordinated), iceberg (surface carries depth), building (as-if observing)
+  - Woolf:      hypotactic (subordinated), stream (depth worn on surface), tunneling (as-if being)
+
+  Both produce high-dimensional meaning from simple triples, but:
+  - Hemingway's triples are CHAINED (one after another, meaning between)
+  - Woolf's triples are NESTED (one qualifying another, meaning through accumulation)
+
+  The RDF graph representation makes this structural difference explicit:
+  - Hemingway graph: linear traversal with distributed meaning
+  - Woolf graph: depth-first traversal with concentrated meaning at leaf nodes
+
+  The same Qwen/Qwen3-Embedding-0.6B embedding model works for both authors
+  because style differentiation comes from CORPUS CONTENT, not model architecture.
+  Hemingway passages cluster in one region of embedding space, Woolf passages
+  in another. The centroids will be distinct.
+
+  Attribution required: "Woolf Style Synthesizer v1.0, The Curator (hKask)"
+
+  Ba-nana.
+
+# =============================================================================
+# END OF MANIFEST
+# =============================================================================

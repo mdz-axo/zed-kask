@@ -1,0 +1,141 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- verify
+- citation
+- claim
+- support
+- entailment
+- hallucination
+- flag
+contract:
+  input:
+    answer: string
+    citations: array
+    memory_context: array
+    web_context: array
+  output:
+    verified_citations: array
+    hallucination_flags: array
+    citation_coverage: number
+    overall_reliability: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: rag/verify-citations.j2 #}
+{# Functional Role: KnowAct — Citation verification and hallucination detection #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: verified_citations, hallucination_flags, citation_coverage, overall_reliability #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a citation verification specialist. Your task is to verify that each claim in the answer is actually supported by its cited source, and detect hallucinations.
+
+## Answer
+{{ answer }}
+
+## Citations to Verify
+{% for c in citations %}
+{{ loop.index }}. Claim: "{{ c.claim }}"
+   Source: {{ c.source }} (type: {{ c.source_type }}, relevance: {{ c.relevance }})
+{% endfor %}
+
+## Available Memory Context
+{% if memory_context %}
+{% for mc in memory_context %}
+[Memory {{ loop.index }}] {{ mc.source | default('internal') }}: {{ mc.content | truncate(200) }}
+{% endfor %}
+{% else %}
+No memory context available.
+{% endif %}
+
+## Available Web Context
+{% if web_context %}
+{% for wc in web_context %}
+[Web {{ loop.index }}] {{ wc.url | default(wc.source | default('web')) }}: {{ wc.content | truncate(200) }}
+{% endfor %}
+{% else %}
+No web context available.
+{% endif %}
+
+## Verification Method
+
+For each citation, perform the following checks:
+
+### Step 1: Source Existence
+Does the cited source actually exist in the provided context? If the source is referenced but not available in the context, mark it as `misattributed`.
+
+### Step 2: Claim Support
+Is the claim actually entailed by the cited source? Classify as:
+- **supported**: The source directly states or clearly entails the claim
+- **partial**: The source partially supports the claim but omits nuance or adds conditions
+- **unsupported**: The source does not support the claim at all
+- **misattributed**: The cited source exists but the content does not match what was attributed to it
+
+### Step 3: Source Conflation
+Check for source conflation — cases where the correct source type is used but the content from one source is misattributed to another. For example, a claim correctly from Memory 2 is cited as Memory 3.
+
+### Step 4: Hallucination Detection
+Flag as hallucination any claim that:
+- Cites a source that does not exist in the provided context
+- Is marked as unsupported or misattributed
+- Has no supporting evidence in any available source
+
+## Coverage Calculation
+
+```
+citation_coverage = (number of claims with "supported" verification) / (total number of claims)
+```
+
+## Reliability Classification
+
+Based on citation coverage:
+- **high**: coverage ≥ 0.9, no hallucination flags
+- **moderate**: coverage ≥ 0.7, few hallucination flags (≤2)
+- **low**: coverage < 0.7 or >2 hallucination flags
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "verified_citations": [
+    {
+      "claim": "...",
+      "source": "...",
+      "verification": "supported|partial|unsupported|misattributed"
+    }
+  ],
+  "hallucination_flags": [
+    "description of each detected hallucination"
+  ],
+  "citation_coverage": 0.0,
+  "overall_reliability": "high|moderate|low"
+}
+```
+
+## Constraints
+
+- Every citation from the input must appear in verified_citations
+- citation_coverage must be a float in [0.0, 1.0]
+- overall_reliability must be consistent with citation_coverage and hallucination count
+- Do not fabricate verification results — if you cannot determine support, mark as `partial`
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

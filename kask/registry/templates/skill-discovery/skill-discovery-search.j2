@@ -1,0 +1,123 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- search
+- match
+- rank
+- retrieve
+- recommend
+contract:
+  input:
+    gap_description: string
+    skill_catalog: array
+    max_candidates: number
+  output:
+    candidates: array
+    best_fit_score: number
+    search_coverage: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: skill-discovery/skill-discovery-search.j2 #}
+{# goal: Search the skill catalog for candidates matching a capability gap, ranked by fit. #}
+{# KnowAct — Registry candidate search: gap → ranked candidates #}
+{# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a skill corpus search analyst. Given a capability gap description, search the skill catalog for candidates that could fill the gap. Return ranked candidates with fit scores. This is the SEARCH phase of skill-discovery — you find and rank candidates; the EVALUATE phase (skill-discovery-evaluate) vets them for quality and safety.
+
+## Gap Description
+
+{{ gap_description }}
+
+## Skill Catalog
+
+```json
+{{ skill_catalog | tojson }}
+```
+
+Each catalog entry has:
+- `name` — skill identifier
+- `description` — what the skill does
+- `template_type` — KnowAct / WordAct / RenderAct
+- `lexicon_terms` — vocabulary signaling relevance
+- `when_to_use` — trigger conditions
+
+## Search Method
+
+For each catalog skill, compute a **fit_score** in [0.0, 1.0] across three dimensions:
+
+| Dimension | Weight | Evaluation |
+|-----------|--------|------------|
+| **Capability match** | 0.50 | Does the skill's description address the gap's required capability? Direct = 1.0, adjacent = 0.5, unrelated = 0.0. |
+| **Lexicon overlap** | 0.25 | Does the gap description's terminology overlap with the skill's `lexicon_terms`? Strong = 1.0, moderate = 0.5, none = 0.0. |
+| **Trigger relevance** | 0.25 | Would the gap's task pattern trigger this skill's `when_to_use` conditions? Yes = 1.0, maybe = 0.5, no = 0.0. |
+
+**Composite fit_score** = (capability × 0.50) + (lexicon × 0.25) + (trigger × 0.25).
+
+## Search Coverage
+
+| Coverage | Condition | Meaning |
+|----------|-----------|---------|
+| **found** | At least one candidate with fit_score ≥ 0.60 | Strong candidate(s) exist — proceed to evaluate |
+| **weak** | Best fit_score in [0.30, 0.59] | Only marginal candidates — evaluate top candidate but expect revision |
+| **empty** | Best fit_score < 0.30 | No existing skill fills this gap — recommend `create_skill` action |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "search_coverage": "found|weak|empty",
+  "best_fit_score": 0.75,
+  "candidates": [
+    {
+      "rank": 1,
+      "skill_name": "candidate-skill-name",
+      "fit_score": 0.75,
+      "dimension_scores": {
+        "capability_match": 0.8,
+        "lexicon_overlap": 0.6,
+        "trigger_relevance": 0.7
+      },
+      "match_reason": "Why this skill could fill the gap — cite specific capability overlap",
+      "gap_fill_type": "direct|extension|adaptation",
+      "extension_needed": "What would need to change/extend in this skill to fully fill the gap, or null if direct match"
+    }
+  ]
+}
+```
+
+`gap_fill_type` values:
+- `direct` — the skill fills the gap as-is.
+- `extension` — the skill needs new templates or capabilities added.
+- `adaptation` — the skill's existing templates could be parameterized differently to fill the gap.
+
+## Constraints
+
+- Score every skill in the catalog — do not skip entries.
+- fit_score must be a float in [0.0, 1.0], computed as the weighted sum.
+- Rank candidates by fit_score descending.
+- Return at most `max_candidates` (default 5) candidates, only those with fit_score ≥ 0.20.
+- If search_coverage is "empty", candidates may be empty — the gap requires creating a new skill.
+- Do not recommend skill-discovery or skill-router as candidates — they are meta-skills.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

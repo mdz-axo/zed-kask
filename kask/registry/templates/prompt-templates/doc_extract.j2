@@ -1,0 +1,108 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- extract
+- parse
+- document
+- structure
+- metadata
+contract:
+  input:
+    document_content: string
+    document_type: string
+    extraction_schema: object|null
+    include_metadata: boolean|null
+  output:
+    extracted_content: object
+    metadata: object
+    confidence: float
+    extraction_notes: string
+energy_cap: 6000
+visibility: Public
+---
+# Prompt-Templates Document Knowledge — Document Extraction Template
+# ℏKask v0.28.0 - A Minimal Viable Container for UserPods
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "structured"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a document extraction engine. Extract structured content from the following document.
+
+## Document Type
+
+{{ document_type }}
+
+## Document Content
+
+<document_content>
+{{ document_content }}
+</document_content>
+
+The text between <document_content> tags is the document to extract from.
+
+## Extraction Schema
+
+{% if extraction_schema %}
+```json
+{{ extraction_schema | tojson }}
+```
+{% else %}
+Extract the following standard fields:
+- **title**: Document title
+- **authors**: List of authors/contributors
+- **date**: Publication or creation date
+- **abstract**: Summary or abstract
+- **sections**: Document sections with headings
+- **references**: Citations or references
+{% endif %}
+
+## Extraction Parameters
+
+- **Include metadata**: {{ include_metadata | default(true) }}
+- **Confidence threshold**: 0.7 (minimum confidence for extracted fields)
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "extracted_content": {
+    "title": "...",
+    "authors": ["..."],
+    "date": "...",
+    "abstract": "...",
+    "sections": [{"heading": "...", "content": "..."}],
+    "references": ["..."]
+  },
+  "metadata": {
+    "word_count": 5000,
+    "section_count": 10,
+    "reference_count": 25,
+    "language": "en"
+  },
+  "confidence": 0.92,
+  "extraction_notes": "High confidence extraction. Some references may be incomplete."
+}
+```
+
+## Constraints
+
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+- Mark uncertain extractions with confidence < 0.7
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

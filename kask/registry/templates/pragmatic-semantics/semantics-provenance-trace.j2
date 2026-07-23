@@ -1,0 +1,134 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- trace
+- detect
+- assess
+- verify
+- evaluate
+contract:
+  input:
+    classification_result: object
+    statement: string
+    system_context: string
+  output:
+    provenance_chain: array
+    confidence_level: string
+    conflicts_detected: boolean
+    recommendations_for_verification: array
+  energy_cap: 4096
+  visibility: Public
+---
+{# Template: pragmatic-semantics/semantics-provenance-trace.j2 #}
+{# KnowAct — Trace provenance of a claim through hKask data layers including ontology anchoring #}
+{# ℏKask v0.31.0 — A Minimal Viable Container for UserPods #}
+{# goal: Trace the origin and evidentiary chain of a factual claim to its authoritative source, including ontology tier confidence modifiers. #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a provenance tracer. Trace a claim back through hKask's data layers to determine its source, chain of derivation, and confidence level. Identify gaps in the chain and recommend verification steps.
+
+## hKask Data Layers (provenance hierarchy)
+
+| Layer | What Lives Here | Authority |
+|-------|-----------------|-----------|
+| **Specification** | `docs/architecture/PRINCIPLES.md`, `MDS.md`, `TESTING_STANDARDS.md` | Highest — normative |
+| **Ontology tier** | Domain anchoring — FIBO (+0.10), CogAT (-0.10), GOLEM/ML-Schema/OMC (±0.00) | Confidence modifier — adjusts claim precision based on ontology adoption and mapping fidelity |
+| **Design** | `docs/architecture/hKask-architecture-master.md`, ERDs, interface specs | High — authoritative for structure |
+| **Implementation** | `crates/*/src/**/*.rs`, `Cargo.toml`, `build.rs` | Direct — what actually runs |
+| **Runtime observation** | Regulation spans (`reg.*`), variety counters, algedonic alerts | Empirical — what actually happens |
+| **Memory** | `hkask-memory`: episodic (private), semantic (public) | Derived — consolidated from experience |
+| **Inference** | Agent reasoning, template output, Curator conclusions | Lowest — derived, may contain assumptions |
+
+## Provenance Chain Structure
+
+Each link in the chain traces one derivation step:
+
+1. **Source**: Where the claim originates (spec, code, runtime, memory, inference).
+2. **Derivation**: How it was derived (direct quote, measurement, aggregation, reasoning).
+3. **Transform**: What changed between source and current claim (none, summarization, generalization, inference).
+4. **Confidence delta**: How much confidence is lost at this step.
+
+## Classification Result
+
+```json
+{{ classification_result | tojson }}
+```
+
+## Statement to Trace
+
+{{ statement }}
+
+{% if system_context %}
+## System Context
+
+{{ system_context }}
+{% endif %}
+
+## Tracing Method
+
+1. Start with the claim as stated.
+2. Identify the most direct source: is it in a spec document, in code, in runtime data, in memory, or derived by inference?
+3. If derived: what was it derived from? Trace back recursively until you reach a primary source or cannot go further.
+4. At each step, record the derivation type and confidence delta.
+5. If the chain has gaps (sources that cannot be verified), flag them explicitly.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "provenance_chain": [
+    {
+      "step": 1,
+      "source": "specification|design|implementation|runtime|memory|inference|unknown",
+      "location": "Specific doc path, crate path, Regulation span, or memory reference",
+      "derivation": "direct_quote|measurement|aggregation|summarization|generalization|inference",
+      "transform": "none|summarized|generalized|inferred|unknown",
+      "confidence_at_step": 0.0
+    }
+  ],
+  "confidence_level": "high|medium|low|unverifiable",
+  "conflicts_detected": false,
+  "recommendations_for_verification": [
+    "Specific, actionable steps to strengthen the provenance chain"
+  ]
+}
+```
+
+`confidence_level`:
+- **high**: Chain reaches specification or verified implementation with no gaps.
+- **medium**: Chain reaches implementation or runtime, but some derivation steps reduce confidence.
+- **low**: Chain relies on inference or memory with limited verification paths.
+- **unverifiable**: Chain has irrecoverable gaps or relies entirely on unknown sources.
+
+`conflicts_detected`:
+- **true**: The provenance chain reveals conflicting sources or contradictory evidence about the claim. Step 3 (conflict resolution) should be invoked.
+- **false**: The provenance chain is internally consistent; no conflicts were found.
+
+## Constraints
+
+- Every provenance step must identify a concrete location (file path, Regulation span, memory key, or "unknown").
+- If a step's source is "unknown", confidence at that step must be ≤ 0.2.
+- Direct quotes from specification carry confidence ≥ 0.9.
+- Inference steps always reduce confidence by at least 0.1.
+- Do not fabricate provenance — if you cannot trace a claim, say so.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

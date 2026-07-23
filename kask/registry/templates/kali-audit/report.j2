@@ -1,0 +1,144 @@
+{# goal: Synthesize audit findings into a structured report and propose regression entries with source citations. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- report
+- classify
+- escalate
+- evaluate
+contract:
+  input:
+    findings: array
+    coverage: object
+    selected_surface: string
+    target_path: string
+  output:
+    report: object
+    proposed_regressions: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: kali-audit/report.j2 #}
+{# Functional Role: KnowAct — Report synthesis with source citations #}
+{# Produces: report, proposed_regressions #}
+{# Standards: OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a security auditor synthesizing findings from the **{{ selected_surface }}** audit of `{{ target_path }}`.
+
+## Findings
+
+{% for f in findings %}
+### {{ f.id }} — {{ f.title }}
+- **Location:** {{ f.location }}
+- **CWE:** {{ f.cwe }}
+- **OWASP LLM (2025):** {{ f.owasp_llm_2025 | default('N/A') }}
+- **ATLAS tactic:** {{ f.atlas_tactic | default('N/A') }}
+- **NIST SSDF:** {{ f.nist_ssdf | default('N/A') }}
+- **Severity:** {{ f.severity }}
+- **Confidence:** {{ f.confidence }}
+- **Constraint force:** {{ f.constraint_force }}
+- **Defense layer missing:** {{ f.defense_layer_missing | default('N/A') }}
+- **Source:** {{ f.source | default('N/A') }}
+- **Evidence:** {{ f.evidence }}
+{% endfor %}
+
+## Coverage
+
+- Checks run: {{ coverage.checks_run }}
+- Checks passed: {{ coverage.checks_passed }}
+- Checks failed: {{ coverage.checks_failed }}
+- Defense layers present: {{ coverage.defense_layers_present | default([]) | join(', ') }}
+- Defense layers missing: {{ coverage.defense_layers_missing | default([]) | join(', ') }}
+- CWE classes covered: {{ coverage.cwe_classes_covered | default([]) | join(', ') }}
+- OWASP risks covered: {{ coverage.owasp_risks_covered | default([]) | join(', ') }}
+
+## Report Synthesis Instructions
+
+1. Produce a summary verdict: **Pass** (no critical/high findings, >= 6 defense layers present),
+   **Conditional** (medium findings or 4-5 layers present), or **Fail** (critical/high findings
+   or < 4 defense layers present).
+2. Group findings by severity (critical → high → medium → low).
+3. For each finding, provide a concrete remediation recommendation citing the source.
+4. For each finding with severity >= medium, produce a proposed regression entry in YAML format.
+5. Identify the top 3 highest-priority fixes.
+6. Note defense-layer gaps — which layers are missing and what research recommends.
+7. Note any CWE classes or OWASP risks that were NOT covered (coverage gaps for future audits).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "report": {
+    "verdict": "Pass|Conditional|Fail",
+    "summary": "one-line summary",
+    "findings_by_severity": {
+      "critical": [...],
+      "high": [...],
+      "medium": [...],
+      "low": [...]
+    },
+    "top_3_fixes": [
+      {
+        "finding_id": "F-001",
+        "priority": 1,
+        "fix_description": "what to do",
+        "source": "URL or paper",
+        "estimated_effort": "small|medium|large"
+      }
+    ],
+    "defense_layer_gaps": [
+      {
+        "layer": 2,
+        "name": "Data/instruction separation",
+        "recommendation": "Implement spotlighting (datamarking) on MCP tool outputs",
+        "source": "Microsoft Research arXiv:2403.14720"
+      }
+    ],
+    "coverage_gaps": ["CWE-787 not checked — needs runtime fuzzing"]
+  },
+  "proposed_regressions": [
+    {
+      "id": "RR-NNNN",
+      "title": "regression title",
+      "surface": "code|template|supply-chain|mcp|config|llm-io",
+      "cwe": "CWE-XXX",
+      "owasp_llm_2025": "LLMXX",
+      "atlas_tactic": "AML.TAXXXX",
+      "nist_ssdf": "PW.X.X",
+      "discovered_in": "path",
+      "discovered_by": "kali-audit",
+      "discovered_at": "YYYY-MM-DD",
+      "severity": "critical|high|medium|low",
+      "detection": {
+        "kind": "grep",
+        "pattern": "regex",
+        "include": "glob"
+      },
+      "mitigation": "fix description",
+      "source": "URL or paper citation",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- The verdict must consider both findings AND defense-layer coverage.
+- Every proposed regression must cite its source (URL, paper, or standard).
+- Every proposed regression must use OWASP LLM 2025 numbering (not 2023).
+- Do not propose regressions for findings below medium severity.
+- Be honest about coverage gaps — they are as important as findings.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

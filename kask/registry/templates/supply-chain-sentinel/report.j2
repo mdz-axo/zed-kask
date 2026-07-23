@@ -1,0 +1,115 @@
+{# goal: Synthesize findings with MITRE CWE (CWE-1104/CWE-829/CWE-1357), OWASP Supply Chain, OSC&R taxonomy (P8). Propose RR-NNNN.yaml entries (surface: supply-chain, status: pending, concrete grep pattern against manifest content). Identify defense-layer gaps. Emit reg.supply_chain.report span (P9). UserPod_host mandatory (P12). No synthetic findings or CVE claims (P8). Registry authoritative (P5.1). #}
+{# Synthesizes probe findings with COW taxonomy (CWE / OWASP / OSC&R) #}
+{# Proposes RR-NNNN.yaml entries with surface: supply-chain #}
+{# Emits reg.supply_chain.report Regulation span (P9) #}
+
+INPUT: findings = {{ findings }} (structured array from probe phase)
+INPUT: defense_layers = {{ defense_layers }}
+INPUT: existing_regressions = {{ existing_regressions }}
+INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory)
+
+SYNTHESIS ACTIONS:
+1. Group findings by severity: critical, high, medium, low.
+2. For severity >= medium findings with concrete evidence (quoted manifest
+   snippet + file path + dependency name/version), propose regression entry.
+3. Each regression proposal must use exact format from
+   `security/regressions/README.md`: `id: RR-XXXX` (human assigns final
+   number — this skill proposes the entry for review), `title`, `surface:
+   supply-chain`, `cwe: CWE-1104` or `CWE-829` or `CWE-1357` (taxonomy
+   mapping, not vulnerability claim), `owasp_llm: ...` (or supply chain
+   equivalent), `discovered_in: <manifest_path>`, `discovered_by: supply-chain-sentinel`,
+   `discovered_at`, `severity`, `detection` (`kind: grep` with `pattern`
+   referencing manifest content — concrete regex, not vague description),
+   `mitigation` (concrete fix: pin exact version, verify registry, add deny
+   entry), `status: pending` (human-curated ratchet — P11 visibility),
+   `ci_gate: scripts/check-kali-regressions.sh` (existing CI gate — this
+   skill extends it with `surface: supply-chain` patterns).
+4. Identify top 3 defense-layer gaps from `defense_layers_missing`.
+5. Produce verdict (Pass / Conditional / Fail) based on critical/high count
+   and defense-layer presence.
+6. Every finding entry must include `evidence_snippet` (quoted manifest line),
+   `manifest_path`, `line`, `dependency`, `version_spec`, `cwe_reference`,
+   `taxonomy_mapping`, `remediation_recommendation`, `userpod_host`.
+
+Regulation SPAN (P9): Emit `reg.supply_chain.report` with findings count by
+severity, defense layers present/missing, proposed regression count,
+verdict, userpod_host, latency.
+
+CONSTRAINTS (same as probe — P5 minimalism, P8 evidence integrity, P12 host):
+- No synthetic manifest quotes — every snippet verifiable from manifest_path.
+- No synthetic CVE references — only CWE taxonomy mappings.
+- Propose `status: pending` only — never `enforced` (human-curated ratchet).
+- Source citations: concrete URLs or document names actually referenced.
+- Do NOT propose regression for findings without concrete evidence.
+- Registry (`manifest.yaml` + `.j2`) authoritative.
+
+OUTPUT FORMAT:
+JSON object with fields:
+`findings` (grouped array with evidence, severity, taxonomy mapping, fix
+recommendation), `defense_layers_present`, `defense_layers_missing`,
+`proposed_regressions` (YAML-format array for human review), `verdict`,
+`userpod_host`, `source_citations`, `reg_span_reference`.
+
+5W1H GATE CHECK (P5): Who = dependency maintainer / userpod host; What =
+findings synthesis; Where = workspace manifest paths; When = scan cycle;
+Why = P3.1 safe container integrity / P9 observable regulation; How =
+synthesize + classify + propose regression + emit Regulation span + compute verdict.
+All 6 present — passes gate.
+
+RELATIONSHIP (explicit): Complements `kali-audit` (deeper dependency audit
+vs surface-level check) and `adversarial-red-team` (LLM boundary — zero
+overlap). References `security/regressions/README.md` format directly.
+MINIMAL: This is one template (`KnowAct`) — no bundle, no sub-agent.
+EVIDENCE-BACKED ONLY: Every proposed regression includes concrete `pattern`
+(regex against manifest content) and `evidence_snippet` (quoted file content).
+SEMANTIC GROUNDING (P8): Every claim has file path, line, dependency
+name/version, concrete snippet, taxonomy reference, source citation.
+EVOLUTIONARY (P7): New defense-layer gaps proposed only from real manifest
+evidence (e.g., missing lockfile tracking observed in workspace, not
+speculative).
+OCAP BOUNDARY (P4): Audit reads only declared workspace manifest paths;
+no external dependency download; dependency must be explicitly declared.
+Regulation REGULATION (P9): `reg.supply_chain.report` emitted; notes gap if not
+registered in `CANONICAL_NAMESPACES`.
+USERPOD HOST (P12): `userpod_host` mandatory in all outputs.
+VISIBILITY (P11): Regression proposals `status: pending` — public
+transparency, not hidden control.
+SAFETY FLOOR (P3.1): Supply chain findings protect Generative Space
+container — dependency compromise is destructive to the space itself.
+
+SOURCE REFERENCES (concrete — P8):
+- MITRE CWE-1104, CWE-829, CWE-1357 (mitre.org/data/definitions/)
+- deny.toml spec (embarkstudios/deny docs)
+- crates.io advisory format (crates.io/advisory-db/docs)
+- cargo-deny / cargo-audit docs (EmbarkStudios)
+- OWASP Supply Chain reference
+- OSC&R framework (`github.com/pbom-dev/OSCAR` / open-source supply chain attack reference)
+- `security/regressions/README.md` (local project standard — authoritative)
+- Snyk Supply Chain / SCA docs (context reference — not replacement)
+- Semgrep Supply Chain (SSC) docs (context reference)
+- `kali-audit` SKILL.md (complementary relationship — surface-level
+  supply chain coverage vs deeper dependency audit)
+- `adversarial-red-team` SKILL.md (zero overlap — LLM boundary only)
+- `bug-hunt` SKILL.md (decomposed pipeline pattern adopted: Charter→Probe→
+  Report ≈ this skill's select→probe→report)
+- `principles.md` (P1–P12 grounding — this skill explicitly references
+  P3.1 Social Generativity / P5 Essentialism / P9 Homeostatic Regulation /
+  P12 Authenticated Host Mandate in its design and outputs)
+
+REGISTRY AUTHORITATIVE (P5.1): When SKILL.md and registry templates
+(`manifest.yaml` + `.j2`) conflict, registry wins. This template is the
+canonical `report` phase definition.
+PUBLIC VISIBILITY: `visibility: public` — no hidden dependency audit
+controls (P3, P4).
+NO FABRICATION: Only findings with quoted manifest evidence are reported.
+Only regressions with concrete `pattern` (regex against manifest content)
+are proposed. Only defense layers with manifest evidence (exact version +
+lockfile = pinning; registry URL = trust; deny.toml license = compatibility;
+lockfile transitive refs = SBOM) are counted as present.
+NO SYNTHETIC DATA: `evidence_snippet` must be verifiable by reading the
+cited `manifest_path`. `dependency` and `version_spec` must exist in that
+file. `line` must reference an actual line number.
+CONVERGENCE INDEPENDENT: Convergence-check is a separate phase; this
+report phase does not compute metric (that is `convergence-check.j2`
+responsibility). This maintains pipeline decomposition (P5 minimalism — each
+phase answers one 5W1H dimension clearly

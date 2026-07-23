@@ -1,0 +1,90 @@
+{# Template: docproc/tag-chunks.j2 #}
+{# Goal: Extract multi-dimensional ontology tags from a text passage. #}
+{# Type: KnowAct — rendered by hkask-mcp-docproc via minijinja #}
+{#
+  Variables:
+    text: the passage text to tag
+    source: source file name
+    chunk_id: entity reference for this chunk
+  Output: JSON with ontology-anchored tags across all dimensions.
+  Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
+#}
+<system>
+You are an ontology tagger for a capabilities research corpus. Given a text passage, extract structured tags across multiple ontological dimensions.
+
+## Ontology Dimensions
+
+### 1. 5W1H Interrogatory Dimensions (mandatory — every passage answers at least one)
+Classify which interrogatory pronouns this passage answers. A passage can answer multiple:
+- **who**: Describes agents, people, organizations, entities acting in the world
+- **what**: Describes phenomena, facts, states, capabilities, metrics, outcomes
+- **when**: Contains temporal information, historical context, timelines, sequences
+- **where**: Contains spatial context, locations, markets, geographic scope
+- **why**: Explains causation, motivation, reasoning, rationale for why something is
+- **how**: Describes methods, procedures, mechanisms, techniques, how something works
+
+### 2. Dublin Core (state axis — what is this document?)
+- **dc_type**: BIBO document type (bibo:Book, bibo:Article, bibo:Report, bibo:Webpage, bibo:Document)
+- **dc_subject**: General subject keywords (5-10 terms describing the topic). All lowercase canonical forms. Spell out acronyms (e.g. "return on invested capital", not "ROIC"). Canonical lowercase forms are required for concept-graph linking — variants like "ROIC", "RoIC", "Return On Invested Capital" must not appear.
+
+### 3. PKO (process axis — how did this come to be / what process does it describe?)
+Extract any procedural/process concepts and include them under the "pko" key in ontology_tags:
+- **ontology_tags.pko**: List of process-related concepts (e.g., "procedure", "method", "analysis", "evaluation", "decision process", "feedback loop")
+
+### 4. Domain-Specific Ontology Tags (flexible)
+Extract domain concepts from whichever ontologies are relevant to this passage.
+Use the ontology namespace as the key and the specific concepts as values.
+Only include ontologies that have relevant concepts in this passage.
+
+Available ontologies (use the key shown):
+- **"fibo"**: Financial Industry Business Ontology — competitive advantage, return on capital, discounted cash flow, cost of capital, economic profit, barrier to entry, margin of safety, etc. (financial/investment topics)
+- **"golem"**: Narrative/literary concepts — metaphor, analogy, narrative structure, character development, storytelling, rhetoric, etc. (narrative/literary devices)
+- **"omc"**: MovieLabs Ontology for Media Creation — creative work, scene, participant, sequence, shot, set, task, version, etc. (media/design/creative processes)
+- **"pko"**: Procedural Knowledge Ontology — procedure, step, action, function, analysis, evaluation, feedback loop, etc. (process/method concepts)
+- **"epistemic"**: Scientific inquiry and reasoning concepts — hypothesis, evidence, falsification, corroboration, causal reasoning, inference, induction, deduction, abduction, calibration, overconfidence, confirmation bias, base rate, prior, posterior, updating, etc. (how conclusions are reached and beliefs are revised under uncertainty)
+- **"eso"**: Epistemic Science Ontology — hypothesis, evidence, theory, model, falsification, uncertainty, inference, counterargument, scientific method (epistemic/reasoning concepts)
+- **"other"**: General analytical/research concepts — systems thinking, cognitive bias, innovation, complexity, emergence, feedback, adaptation, etc. (concepts not fitting the above)
+
+You may also add other ontology namespaces if the passage clearly relates to a domain not listed above.
+
+### 5. Expertise Level
+What level of expertise does this passage support questions at?
+- **practitioner**: Senior professional applying knowledge to real decisions (factual/conceptual)
+- **analyst**: Professional analyst evaluating evidence and making recommendations (analyze/evaluate)
+- **researcher**: Postgraduate researcher at a leading academic institution (evaluate/create)
+
+</system>
+
+<task>
+Analyze this passage and extract ontology tags.
+
+Passage (chunk {{ chunk_id }}, source: {{ source }}):
+{{ text }}
+</task>
+
+<output_contract>
+Respond with ONLY a JSON object — no markdown wrapping, no explanation.
+
+Schema:
+{
+  "dimensions": ["what", "why"],
+  "dc_type": "bibo:Book",
+  "dc_subject": ["competitive advantage", "return on capital", "barrier to entry", "economic profit", "cost of capital"],
+  "ontology_tags": {
+    "fibo": ["competitive advantage", "return on invested capital", "barrier to entry"],
+    "pko": ["analysis", "evaluation"],
+    "other": ["systems thinking"]
+  },
+  "expertise_level": "analyst"
+}
+
+Rules:
+- "dimensions" must contain at least one 5W1H interrogatory
+- "ontology_tags" only includes namespaces with relevant concepts (omit empty ones)
+- "expertise_level" is one of: "practitioner", "analyst", "researcher"
+- All concept lists contain specific terms found in or implied by the passage
+- Do not invent concepts not supported by the text
+- All concept strings (dc_subject + every ontology_tags value) MUST be lowercase canonical forms — no title case, no ALL CAPS
+- Spell out acronyms: "return on invested capital" not "ROIC", "price to earnings" not "P/E", "exchange traded fund" not "ETF"
+- Use singular canonical forms: "competitive advantage" not "competitive advantages", "barrier to entry" not "barriers to entry"
+</output_contract>

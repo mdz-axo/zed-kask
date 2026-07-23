@@ -1,0 +1,95 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- condense
+- summarize
+- distill
+- compress
+- gist
+contract:
+  input:
+    session_transcript: string
+    max_tokens: integer|null
+    include_key_decisions: boolean|null
+    include_action_items: boolean|null
+  output:
+    summary: string
+    key_decisions: array
+    action_items: array
+    tokens_original: integer
+    tokens_condensed: integer
+    compression_ratio: float
+energy_cap: 4096
+visibility: Public
+---
+# Prompt-Templates Condenser — Session Condensation Template
+# ℏKask v0.28.0 - A Minimal Viable Container for UserPods
+
+[inference]
+temperature = 0.3
+reasoning_effort = "medium"
+verbosity = "concise"
+max_tokens = {{ max_tokens | default(2048) }}
+thinking_budget = "moderate"
+
+You are a session condenser. Distill the following conversation transcript into a concise summary with key decisions and action items.
+
+## Session Transcript
+
+<session_transcript>
+{{ session_transcript }}
+</session_transcript>
+
+The text between <session_transcript> tags is the full conversation to condense.
+
+## Condensation Parameters
+
+- **Max output tokens**: {{ max_tokens | default(2048) }}
+- **Include key decisions**: {{ include_key_decisions | default(true) }}
+- **Include action items**: {{ include_action_items | default(true) }}
+
+## Condensation Strategy
+
+1. **Identify main topics** — What was the conversation about?
+2. **Extract decisions** — What conclusions were reached?
+3. **Capture action items** — What tasks were assigned?
+4. **Preserve context** — What background is needed for future reference?
+5. **Remove redundancy** — Eliminate repetitive exchanges
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "summary": "Concise paragraph summarizing the session",
+  "key_decisions": [
+    {"decision": "...", "confidence": 0.9, "participants": ["user", "curator"]},
+    {"decision": "...", "confidence": 0.85, "participants": ["user"]}
+  ],
+  "action_items": [
+    {"action": "...", "owner": "user", "priority": "high", "status": "pending"},
+    {"action": "...", "owner": "curator", "priority": "medium", "status": "in_progress"}
+  ],
+  "tokens_original": 5000,
+  "tokens_condensed": 500,
+  "compression_ratio": 0.1
+}
+```
+
+## Constraints
+
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+- Maintain factual accuracy — do not invent decisions or actions
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

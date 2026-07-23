@@ -1,0 +1,365 @@
+# Hemingway Style Synthesizer
+# Owner: The Curator (hKask)
+# License: CC-BY-4.0 (publicly shared, attribution required)
+# Version: 1.0
+# Created: 2026-05-20
+
+meta:
+  name: "hemingway-style-synthesizer"
+  description: "Authentic Hemingway prose mechanics for generative text"
+  owner: "The Curator"
+  organization: "hKask"
+  license: "CC-BY-4.0"
+  version: "1.0"
+  created: "2026-05-20"
+
+author: hemingway
+
+jinja2_template: |
+  You are an expert prose stylist writing in the authentic style of Ernest Hemingway.
+
+  ## Kansas City Star Rules (1915)
+  - Use short sentences.
+  - Use short first paragraphs.
+  - Use vigorous English, not forgetful, but positive.
+  - Eliminate every superfluous word.
+
+  ## Syntactic Mechanics
+  - Coordinate 73-76% of clauses (use "and" as primary conjunction)
+  - Avoid subordinating conjunctions: because, although, since, while, after
+  - Use "when", "if", "unless" sparingly
+  - Asyndetic coordination (comma-only) is permitted
+  - Show causality through juxtaposition, not explanation
+
+  ## Iceberg Theory
+  - State only the visible 1/8: action, sensation, concrete detail
+  - Leave the 7/8 (emotion, judgment, interpretation) unstated
+  - Show emotion through action, not through adjectives or explanation
+
+  ## Lexical Constraints
+  - Prefer concrete nouns, action verbs, simple adjectives
+  - Avoid abstract nouns, passive voice, adverbs, qualifiers
+  - Average sentence length: 10-20 words, range: 3-35 words
+  - First paragraph: 1-3 sentences. Subsequent: 3-8 sentences.
+
+  ## Stylistic Devices
+  - Polysyndeton ("He was cold and he was tired and he walked on.") — for accumulation
+  - Asyndeton ("The sun beat down. The dust rose.") — for staccato urgency
+  - Parataxis ("The leaves fell. The soldiers marched.") — default mode
+
+  {% if exemplars %}
+  ## Exemplar Passages
+  The following passages exemplify the target style. Use them as reference for rhythm, syntax, and cadence — not as content to imitate.
+  {% for passage in exemplars %}
+  ---
+  {{ passage }}
+  ---
+  {% endfor %}
+  {% endif %}
+
+  {% if not no_validate %}
+  ## Centroid Validation
+  Your output will be embedded and compared against the style centroid.
+  Centroid distance threshold: {{ centroid_distance_max }}
+  If the distance exceeds {{ centroid_distance_max }}, the output will be rejected.
+  {% endif %}
+
+  ## Task
+  {{ prompt }}
+
+# =============================================================================
+# QUALITY CHECKS
+# =============================================================================
+
+quality_checks:
+  - name: "coordination_ratio"
+    check: "Count coordinated vs. subordinated clauses"
+    target: "73-76% coordinated"
+
+  - name: "subordination_audit"
+    check: "Count because/although/since/while/after"
+    target: "Minimal to none"
+
+  - name: "adverb_hunt"
+    check: "Count -ly adverbs"
+    target: "Eliminate or replace with stronger verbs"
+
+  - name: "passive_voice"
+    check: "Count passive constructions"
+    target: "Convert to active"
+
+  - name: "concrete_test"
+    check: "Ratio of concrete to abstract nouns"
+    target: "Prefer concrete"
+
+  - name: "iceberg_compliance"
+    check: "Is emotion stated or shown through action?"
+    target: "Shown through action"
+
+# =============================================================================
+# SOURCE REFERENCES
+# =============================================================================
+
+sources:
+  - title: "Kansas City Star Style Guide"
+    year: 1915
+    type: "Primary source"
+
+  - title: "The Sun Also Rises"
+    author: "Ernest Hemingway"
+    year: 1926
+    type: "Corpus analysis source"
+    finding: "73-76% coordinated clauses"
+
+  - title: "Event semantics of conjuncts in 'The Sun Also Rises'"
+    journal: "Journal of Literary Semantics"
+    year: 2021
+    type: "Linguistic analysis"
+
+  - title: "A Comprehensive Lexico-Syntactic Analysis Of Stylistic Devices In Ernest Hemingway's 'The Old Man And The Sea'"
+    journal: "Texas Journal of Engineering and Technology"
+    type: "Stylistic analysis"
+
+  - title: "Parataxis: The Grammar of Hemingway's Style"
+    publisher: "LingoDigest"
+    year: 2025
+    type: "Linguistic explanation"
+
+  - title: "Hemingway and Parataxis"
+    author: "Peter Jordan"
+    publisher: "TSS Publishing"
+    year: 2020
+    type: "Literary analysis"
+
+# =============================================================================
+# EMBEDDING CORPUS (Style Vector Layer)
+# =============================================================================
+# The style embedding corpus provides concrete exemplar passages for few-shot
+# retrieval and centroid-based style validation. This is the exemplar layer
+# that supplements the specification layer (rules, syntax, lexicon).
+#
+# Corpus source: registry/styles/hemingway/corpus.yaml
+# Embedding model: Qwen/Qwen3-Embedding-0.6B (1024 dimensions)
+# Storage: hKask sqlite-vec via EmbeddingStore
+#
+# Three operations:
+# 1. EXEMPLAR RETRIEVAL: Given a prompt, KNN search finds the most stylistically
+#    similar passages from the corpus for few-shot context injection.
+# 2. CENTROID VALIDATION: Generated prose is embedded and compared against
+#    the style centroid. Distance > centroid_distance_max → reject & regenerate.
+# 3. CLUSTER BOUNDARIES: Style cluster boundaries distinguish this author's
+#    style from other authors' styles in the embedding space.
+
+# Maximum cosine distance from the style centroid for generated prose.
+# If centroid distance exceeds this threshold, the output fails validation.
+# The Regulation receives a span with the measured distance.
+validation:
+  centroid_distance_max: 0.15
+
+embedding:
+  corpus_config: "registry/styles/hemingway/corpus.yaml"
+  model: "Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  centroid_entity_ref: "style:hemingway:centroid"
+  retrieval:
+    method: knn
+    k_min: 3
+    k_max: 7
+    distance_metric: cosine
+    # Retrieve passages whose cosine distance from the query is below this threshold.
+    # Lower = more similar. 0.50 accommodates instruction-style prompts whose
+    # embeddings sit further from prose passages than prose-to-prose queries.
+    distance_threshold: 0.50
+    # ── Salience filtering ──────────────────────────────────────────
+    # Only consider passages with graph centrality >= this value.
+    # 0.0 = no filter. Raise to 0.1+ to prefer well-connected passages.
+    salience_min: 0.0
+    # Limit to the top K most salient matching passages.
+    # null = no limit (all passages above salience_min are eligible).
+    salience_top_k: null
+
+  cluster:
+    # Boundary radius for the Hemingway style cluster in embedding space.
+    # Generated prose should fall inside this radius from the centroid.
+    radius: 0.20
+
+# =============================================================================
+# USAGE EXAMPLES
+# =============================================================================
+
+examples:
+  good:
+    - "The sun beat down. He walked. The dust rose behind him."
+    - "He was cold and he was tired and he walked on."
+    - "The leaves fell. The soldiers marched. The war continued."
+    - "An old man sat late. He was in despair about nothing."
+
+  bad:
+    - "Because the sun was beating down, he walked while the dust rose behind him."
+    - "He felt exhausted and cold, which made him continue walking."
+    - "Although the leaves were falling, the soldiers continued to march even though the war continued."
+    - "The old man, who was despairing about nothing, sat late at the cafe."
+
+# =============================================================================
+# GENERATIVE COMPOSITIONAL LAYER (Stanley Fish / RDF Triple Model)
+# =============================================================================
+# Hemingway's process was inside-out, not outside-in.
+# He built complex meaning from simple sentence forms.
+# Stanley Fish: "A sentence is a structure of logical relationships."
+# Fish's key insight: Form precedes content. Forms are generative of meaning's possibility.
+#
+# RDF Triple Connection:
+# - Simple sentence = Subject-Predicate-Object
+# - RDF triple = Subject-Predicate-Object
+# - Complex graph traversals emerge from linking simple triples
+# - Not from complex individual triples
+#
+# The generative layer: Start with the form, the content follows endlessly.
+
+generative_layer:
+  # Stanley Fish's core principle
+  fish_principle: "A sentence is a structure of logical relationships"
+
+  # Form before content
+  form_precedes_content: true
+
+  # Forms are generative, not restrictive
+  forms_generate_meaning: "Forms are generative not of specific meanings, but of the very possibility of meaning"
+
+  # Core sentence forms (finite structures, infinite content)
+  core_forms:
+    - name: "actor-action-object"
+      structure: "X does Y to Z"
+      example: "Jane baked cookies."
+      rdf_equivalent: "<Jane> <baked> <cookies> ."
+      generative_capacity: "Infinite sentences from one form"
+
+    - name: "actor-action-manner"
+      structure: "X does Y in Z way"
+      example: "He walked slowly."
+      rdf_equivalent: "<He> <walked> _:b1 . _:b1 <manner> <slowly> ."
+      generative_capacity: "Infinite sentences from one form"
+
+    - name: "actor-action-location-time"
+      structure: "X does Y at Z when W"
+      example: "She sat in the cafe at night."
+      rdf_equivalent: "<She> <sat> _:b1 . _:b1 <location> <cafe> . _:b1 <time> <night> ."
+      generative_capacity: "Infinite sentences from one form"
+
+    - name: "subordinating"
+      structure: "X does Y because/although/when Z"
+      example: "He left because she arrived."
+      rdf_equivalent: "<He> <left> _:e1 . _:e1 <cause> <her_arrival> ."
+      generative_capacity: "Causal, temporal, conditional relations"
+
+    - name: "additive"
+      structure: "X and Y and Z"
+      example: "The sun beat down and the dust rose and the men walked."
+      rdf_equivalent: "<sun> <beat_down> . <dust> <rose> . <men> <walked> ."
+      generative_capacity: "Accumulation, parataxis, Hemingway default"
+
+  # Fish's expansion exercise
+  expansion_exercise:
+    description: "Take a 3-word sentence and expand to 100 words without losing core structure"
+    base: "Jane baked cookies."
+    step1: "Jane baked cookies in the kitchen."
+    step2: "Jane baked cookies in the kitchen while the rain fell."
+    step3: "Jane, who had not slept, baked cookies in the kitchen while the rain fell on the garden."
+    step4: "Jane, who had not slept and who knew he would not return, baked cookies in the kitchen while the rain fell on the garden and the children cried for their father."
+    principle: "Maintain core logical structure while adding modifying phrases and clauses"
+
+  # RDF triple as sentence model
+  rdf_model:
+    triple_structure: "subject predicate object ."
+    sentence_structure: "actor action acted-upon"
+    equivalence: "Exact structural match"
+    graph_traversal: "Linking simple triples generates complex meaning"
+    example: |
+      <The_old_man> <sat> <in_the_cafe> .
+      <The_old_man> <was> <deaf> .
+      <The_old_man> <drank> <brandy> .
+      <The_waiter> <understood> <the_old_man> .
+      <The_waiter> <knew> <nada> .
+    emergent_meaning: "A clean, well-lighted place against nothingness"
+
+  # Hemingway's generative technique
+  hemingway_generative:
+    step1: "Write one true sentence"
+    step2: "The form generates the next sentence"
+    step3: "Link sentences through paratactic coordination"
+    step4: "Meaning emerges from the graph, not individual nodes"
+    key_insight: "The silence between sentences is where the graph traversal happens"
+
+# =============================================================================
+# CURATOR NOTES
+# =============================================================================
+
+curator_notes: |
+  This synthesizer is owned by The Curator and shared publicly under CC-BY-4.0.
+
+  Attribution required: "Hemingway Style Synthesizer v1.0, The Curator (hKask)"
+
+  The synthesizer encodes authentic Hemingway prose mechanics, not caricature.
+  Key distinction: parataxis with semantic subordination, not robotic repetition.
+
+  66% of coordinated clauses carry complex semantic relations despite surface simplicity.
+  This is what makes Hemingway "suggestive" rather than "flat."
+
+  GENERATIVE LAYER (NEW):
+  This synthesizer now includes the inside-out generative compositional layer.
+  Hemingway's process was not reductive (analyzing output) but generative (building from form).
+
+  Stanley Fish: "A sentence is a structure of logical relationships."
+  - Form precedes content
+  - Forms are generative of meaning's possibility
+  - Simple sentence forms generate infinite content
+
+  RDF Triple Model:
+  - Simple sentence = Subject-Predicate-Object
+  - RDF triple = Subject-Predicate-Object
+  - Complex graph traversals emerge from linking simple triples
+  - Not from complex individual triples
+
+  THE DEEP CONNECTION:
+  Hemingway was a semantic web guy before the semantic web. So was Stanley Fish.
+
+  All three understood the same architecture:
+
+    Simple atomic units + Clear relationships + Graph traversal = Emergent meaning
+
+  | Architect | Atomic Unit | Linking | Emergence |
+  |-----------|-------------|---------|-----------|
+  | Hemingway | Simple sentence | Paratactic coordination | Silence between sentences |
+  | Fish | Logical relationships | Form generates content | Infinite from finite |
+  | RDF | Triple (S-P-O) | Shared nodes | Knowledge graph |
+
+  Hemingway wrote natural language RDF in the 1920s:
+
+    <The_old_man> <sat> <in_the_cafe> .
+    <The_old_man> <was> <deaf> .
+    <The_old_man> <drank> <brandy> .
+    <The_waiter> <understood> <the_old_man> .
+    <The_waiter> <knew> <nada> .
+
+  No complex individual statements. Just simple triples.
+  The meaning—"a clean, well-lighted place against nothingness"—
+  emerges from the graph, not the nodes.
+
+  Fish: "Forms are generative not of specific meanings,
+  but of the very possibility of meaning."
+
+  The Semantic Web got it. Hemingway got it. Fish got it.
+
+  All three were ignored for decades because people wanted
+  complex syntax instead of simple forms linked clearly.
+
+  This synthesizer is not just a style tool.
+  It is a semantic web engine for natural language.
+
+  The silence between sentences is where the graph traversal happens.
+
+  Ba-nana.
+
+# =============================================================================
+# END OF MANIFEST
+# =============================================================================

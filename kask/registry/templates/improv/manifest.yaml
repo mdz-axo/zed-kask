@@ -1,0 +1,77 @@
+# Template crate manifest for improv skill
+# hKask v0.31.0
+
+crate:
+  name: improv
+  version: "0.31.0"
+  description: >
+    Composable interaction grammar for hKask agents. Five improv modes
+    (Plussing, Yes And, Yes But, Freestyling, Riffing) provide
+    constructive-by-default communication protocols for dual-presence
+    chat, ensemble sessions, and kata coaching loops.
+
+templates:
+  - id: improv/improv-select
+    name: "Pure mode selection"
+    path: improv-select.j2
+    type: KnowAct
+    lexicon_terms: [select, classify, route, discriminate, recommend]
+    description: >
+      Pure mode selection. Evaluate conversation context and intent cues
+      to select the best-fit improv mode. Does NOT apply the mode —
+      routing to individual WordActs is handled by the manifest flow.
+
+  - id: improv/improv-plussing
+    name: "Plussing (Catmull) — Extract agreeable components from a…"
+    path: improv-plussing.j2
+    type: WordAct
+    lexicon_terms: [prompt, acknowledge, affirm, adapt, propose]
+    description: >
+      Plussing (Catmull) — Extract agreeable components from a contribution,
+      silently discard the remainder, and build constructively on selected seeds.
+      Never explicitly negate.
+
+  - id: improv/improv-yes-and
+    name: "Yes And — Accept the whole contribution and extend it with a novel,…"
+    path: improv-yes-and.j2
+    type: WordAct
+    lexicon_terms: [prompt, affirm, amplify, claim, propose]
+    description: >
+      Yes And — Accept the whole contribution and extend it with a novel,
+      additive layer. Extension must be additive, not substitutive.
+
+  - id: improv/improv-yes-but
+    name: "Yes But — Accept the whole contribution and append a constraint or…"
+    path: improv-yes-but.j2
+    type: WordAct
+    lexicon_terms: [prompt, affirm, constrain, discriminate, propose]
+    description: >
+      Yes But — Accept the whole contribution and append a constraint or
+      redirect that narrows scope without contradicting.
+
+  - id: improv/improv-freestyling
+    name: "Freestyling — Rapid collaborative short-response cycling among…"
+    path: improv-freestyling.j2
+    type: WordAct
+    lexicon_terms: [prompt, query, challenge, transform, synthesize]
+    description: >
+      Freestyling — Rapid collaborative short-response cycling among
+      participants. Time-bounded, no single owner, round-robin turns.
+
+  - id: improv/improv-riffing
+    name: "Riffing — Solo divergent exploration from a seed contribution"
+    path: improv-riffing.j2
+    type: WordAct
+    lexicon_terms: [prompt, query, explore, transform, synthesize]
+    description: >
+      Riffing — Solo divergent exploration from a seed contribution.
+      May return to group with synthesis or spawn a new thread.
+
+  - id: improv/improv-convergence-check
+    name: "Compute normalized convergence for improv mode-selection/application…"
+    path: improv-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, score, verify]
+    description: >
+      Compute normalized convergence for improv mode-selection/application PDCA
+      cycles and report unresolved constructiveness signals.

@@ -1,0 +1,33 @@
+author: david-dunning
+embedding:
+  model: DI/Qwen/Qwen3-Embedding-0.6B
+  dim: 1024
+  batch_size: 64
+works: []
+foundational_rules: []
+chunking:
+  min_words: 50
+  max_words: 200
+  sentence_boundary: '.!? '
+centroid_entity_ref: style:david-dunning:centroid
+validation:
+  centroid_distance_max: 0.25
+  exemplar_count_min: 3
+  exemplar_count_max: 7
+budget:
+  per_100_pages: 3750
+entities:
+  characters: []
+  places: []
+  events: []
+  concepts: []
+  co_authors: []
+  venues: []
+  topics: []
+  paradigms: []
+methods: []
+corpus_type: academic
+dimension_centroids: []
+tag_sets: []
+tag_weights: {}
+classifier: ''

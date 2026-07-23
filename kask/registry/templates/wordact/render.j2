@@ -1,0 +1,61 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- render
+- compose
+- format
+- bind
+contract:
+  input:
+    template_source: string
+    bindings: object
+  output:
+    rendered: string
+energy_cap: 2048
+visibility: Public
+---
+# Prompt — Template Renderer
+# ℏKask v0.28.0 - A Minimal Viable Container for UserPods
+
+[inference]
+temperature = 0.0
+reasoning_effort = "low"
+verbosity = "terse"
+max_tokens = 1024
+thinking_budget = "off"
+
+You are a template renderer. Render the following Jinja2 template with the provided bindings.
+
+## Template Source
+
+```jinja2
+{{ template_source }}
+```
+
+## Bindings
+
+```json
+{{ bindings | tojson }}
+```
+
+## Output Requirements
+
+Produce the rendered template output with all variables substituted.
+
+**Produce ONLY the rendered output. No explanatory text.**
+
+## Constraints
+
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Handle missing variables gracefully (leave as-is or use default if specified)
+- Preserve the original template structure and formatting
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

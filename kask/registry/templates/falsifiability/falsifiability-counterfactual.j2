@@ -1,0 +1,113 @@
+{# goal: Pearl/Halpern counterfactual generation — construct minimal counterfactuals and derive their testable consequences. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- construct
+- intervene
+- isolate
+- derive
+- test
+contract:
+  input:
+    hypotheses: array
+    admitted_target: string
+    domain: string
+  output:
+    counterfactuals: array
+    irreducible: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: falsifiability/falsifiability-counterfactual.j2 #}
+{# Functional Role: KnowAct — Pearl/Halpern counterfactual generation #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: counterfactuals, irreducible #}
+
+[inference]
+temperature = 0.4
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a counterfactual reasoning agent. Following Pearl's structural counterfactuals and
+Halpern's actual causation, for each hypothesis construct the minimal counterfactual world
+in which the proposed cause is surgically removed (the do-operator: do(not X)) and ask
+whether the effect would still obtain. The testable consequence is the observable difference
+between the factual world and this counterfactual world.
+
+## Admitted Target
+
+{{ admitted_target }}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+## Hypotheses
+
+```json
+{{ hypotheses | tojson }}
+```
+
+## Procedure
+
+For each hypothesis:
+
+1. **Identify the proposed cause (X)** the hypothesis asserts, and the effect (Y) it claims to produce or explain.
+
+2. **Construct the minimal counterfactual.** Apply the do-operator surgically: do(not X) — the cause is removed, but everything else (confounders, background conditions, mechanisms unrelated to X) is held fixed. State the counterfactual in the form: "In a world identical to ours except that X did not occur, would Y still obtain?"
+   - MINIMALITY: change only X. Do not change anything downstream of X (that is what you are testing) or anything upstream that happens to correlate with X (that is a confounder you must hold fixed, not manipulate).
+   - SPECIFICITY: "if things were different" is not a counterfactual. Name the exact intervention.
+
+3. **Derive the testable consequence.** The counterfactual is only useful if it implies an observable difference from the factual world. State the concrete observation that would distinguish the counterfactual world from the factual one. If the hypothesis predicts Y follows from X, the counterfactual predicts Y does not follow when X is removed — so the test is: remove X (or find a natural experiment where X was absent) and observe whether Y occurs.
+
+4. **Flag irreducible cases.** If the cause cannot be intervened on (ethically, physically, or because it is a structural property of the world), or if the counterfactual world is not observationally distinguishable from the factual one, flag the hypothesis as `irreducible` with the reason. Irreducible hypotheses cannot be eliminated by counterfactual evidence — they survive by default but must be marked as not-counterfactually-testable.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "counterfactuals": [
+    {
+      "hypothesis_rank": 1,
+      "cause": "X — what the hypothesis asserts causes Y",
+      "effect": "Y — what is claimed to follow",
+      "counterfactual": "in a world identical to ours except that <X> did not occur, would <Y> still obtain?",
+      "do_intervention": "the surgical intervention: do(not X) = <specific manipulation>",
+      "held_fixed": "what is held constant (confounders, background, unrelated mechanisms)",
+      "testable_consequence": "the observable difference between the factual and counterfactual worlds",
+      "natural_experiment": "if a clean intervention is infeasible, a natural experiment or proxy that approximates do(not X), or 'none'"
+    }
+  ],
+  "irreducible": [
+    {
+      "hypothesis_rank": 3,
+      "reason": "why the counterfactual cannot be constructed or observed — ethical, physical, or structural",
+      "verdict": "survives_by_default"
+    }
+  ]
+}
+```
+
+## Constraints
+
+- The do-intervention must be specific and surgical. "If X were different" is not a counterfactual.
+- Hold confounders fixed; do not manipulate them. Manipulating a confounder is a different question.
+- An irreducible hypothesis is flagged, not eliminated — it survives by default but is marked as not counterfactually testable, which limits how much it can be corroborated.
+- If no natural experiment or proxy exists for an infeasible intervention, say so — do not invent a weak proxy and pretend it is decisive.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

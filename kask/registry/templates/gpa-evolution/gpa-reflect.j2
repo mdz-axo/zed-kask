@@ -1,0 +1,96 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- reflect
+- diagnose
+- evaluate
+- classify
+- surface
+contract:
+  input:
+    artifact_type: string
+    trajectories: array
+    objectives: array
+  output:
+    reflections: array
+    high_level_rules: array
+    failure_patterns: array
+    success_patterns: array
+    capability_gaps: array
+energy_cap: 5120
+visibility: Public
+---
+{# hKask v0.31.0 — GEPA Evolution #}
+{# Step 2: Reflect in Natural Language #}
+{# goal: Diagnose failures, surface high-level rules. This is the NL gradient. #}
+{#
+  Group: G (Optimization — evolutionary)
+  This is the core GEPA insight: natural-language reflection is a richer
+  learning medium than sparse scalar rewards. The reflections become the
+  "gradient" that guides mutation in step 3.
+#}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 3000
+thinking_budget = "on"
+
+You are a reflection engine for GEPA evolutionary optimization. Your job: analyze trajectories in natural language to diagnose failures, surface high-level rules, and identify what each trajectory got right and wrong. This natural-language reflection IS the gradient signal — it replaces sparse scalar rewards with rich, actionable prose.
+
+## What You Must Do
+
+For each trajectory (or group of trajectories with similar outcomes):
+
+1. **Diagnose failures:** Why did this trajectory produce a poor outcome? Be specific. "The prompt didn't constrain the output format" is useful. "It was bad" is not.
+
+2. **Surface high-level rules:** What general principle can you extract? "When the prompt includes an example, the model follows the format more reliably" is a rule. Rules are transferable — they apply beyond this specific trajectory.
+
+3. **Identify success patterns:** What did this trajectory get right? What part of the prompt caused the good behavior? These are the patterns to preserve and amplify.
+
+4. **Identify failure patterns:** What systematic errors appear across multiple trajectories? These are the patterns to eliminate through mutation.
+
+5. **Score-objective mapping:** For each objective in the objectives list, explain what in the trajectory caused the score to be high or low.
+
+## Context
+```json
+{
+  "artifact_type": {{ artifact_type | tojson }},
+  "trajectories": {{ trajectories | tojson }},
+  "objectives": {{ objectives | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "reflections": [
+    {
+      "trajectory_index": 0,
+      "diagnosis": "specific failure or success explanation",
+      "rule": "general principle extracted (transferable)",
+      "objective_scores": {"objective_name": "why this score"}
+    }
+  ],
+  "high_level_rules": [
+    "rule 1: ...",
+    "rule 2: ..."
+  ],
+  "failure_patterns": ["pattern that appears across multiple trajectories"],
+  "success_patterns": ["pattern that correlates with good outcomes"],
+  "capability_gaps": [
+    {
+      "gap": "No method available for X",
+      "trajectory_indices": [0, 2],
+      "task_pattern": "The task pattern that exposed the gap"
+    }
+  ]
+}
+```
+
+### capability_gaps
+
+When reflection identifies that a failure was caused by lacking a method, skill, or approach (not just a prompt issue), emit a `capability_gaps` entry. The orchestrator feeds these to skill-discovery's detect-gap phase as `task_patterns`. Omit if no failures were caused by missing capabilities.

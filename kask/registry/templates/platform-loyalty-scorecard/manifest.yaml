@@ -1,0 +1,60 @@
+# Template crate manifest for platform-loyalty-scorecard skill
+# hKask v0.31.0
+
+crate:
+  name: platform-loyalty-scorecard
+  version: "0.31.0"
+  description: >
+    The ultimate loyalty metric. Aggregates six dimensions of the loyalty
+    contract into a single score (0.0-1.0): sovereignty, consent, portability,
+    governance, self-service, and satisfaction. Operationalizes the Magna Carta.
+
+templates:
+  - id: platform-loyalty-scorecard/query-sovereignty
+    name: "Query sovereignty health: pod integrity, backup functioning,…"
+    path: query-sovereignty.j2
+    type: KnowAct
+    lexicon_terms: [query, assess, score]
+    description: "Query sovereignty health: pod integrity, backup functioning, portability verification. Weight 0.20."
+  - id: platform-loyalty-scorecard/query-consent
+    name: "Query consent health: audit results, anomaly count, token hygiene…"
+    path: query-consent.j2
+    type: KnowAct
+    lexicon_terms: [query, assess, score]
+    description: "Query consent health: audit results, anomaly count, token hygiene score. Weight 0.15."
+  - id: platform-loyalty-scorecard/query-portability
+    name: "Query portability health: backup verification, integrity checks,…"
+    path: query-portability.j2
+    type: KnowAct
+    lexicon_terms: [query, assess, score]
+    description: "Query portability health: backup verification, integrity checks, import verified. Weight 0.20."
+  - id: platform-loyalty-scorecard/query-governance
+    name: "Query governance transparency: report coverage, percentage of events…"
+    path: query-governance.j2
+    type: KnowAct
+    lexicon_terms: [query, assess, score]
+    description: "Query governance transparency: report coverage, percentage of events documented. Weight 0.15."
+  - id: platform-loyalty-scorecard/query-self-service
+    name: "Query self-service capability: skill creation frequency, FlowDef…"
+    path: query-self-service.j2
+    type: KnowAct
+    lexicon_terms: [query, assess, score]
+    description: "Query self-service capability: skill creation frequency, FlowDef success rate, time-to-first-agent. Weight 0.20."
+  - id: platform-loyalty-scorecard/query-satisfaction
+    name: "Query user satisfaction: platform NPS, developer confidence, session…"
+    path: query-satisfaction.j2
+    type: KnowAct
+    lexicon_terms: [query, assess, score]
+    description: "Query user satisfaction: platform NPS, developer confidence, session engagement. Weight 0.10."
+  - id: platform-loyalty-scorecard/compute-loyalty
+    name: "Aggregate six dimension scores into a single loyalty score (0.0-1.0)…"
+    path: compute-loyalty.j2
+    type: KnowAct
+    lexicon_terms: [compute, aggregate, score]
+    description: Aggregate six dimension scores into a single loyalty score (0.0-1.0) using the specified weights.
+  - id: platform-loyalty-scorecard/convergence-check
+    name: "Compute normalized convergence metric for loyalty scorecard PDCA…"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: Compute normalized convergence metric for loyalty scorecard PDCA cycles.

@@ -1,0 +1,56 @@
+# Template crate manifest for kata-coaching skill
+# hKask v0.28.0
+
+crate:
+  name: kata-coaching
+  version: "0.30.0"
+  description: >
+    5-question Coaching Kata templates for teaching scientific thinking.
+    Grounded in the learner's actual Improvement Kata storyboard data.
+    Q1: Target Condition. Q2: Actual Condition. Q3: Obstacles.
+    Q4: Next Step/Experiment. Q5: Feedback loop closure.
+
+templates:
+  - id: kata-coaching/coaching-q1-target
+    name: "Q1 — What is the Target Condition"
+    path: coaching-q1-target.j2
+    type: WordAct
+    lexicon_terms: [query, orient, clarify, plan, target]
+    description: Q1 — What is the Target Condition? Ground learner in their goal.
+
+  - id: kata-coaching/coaching-q2-actual
+    name: "Q2 — What is the Actual Condition now"
+    path: coaching-q2-actual.j2
+    type: WordAct
+    lexicon_terms: [query, observe, report, ground, discriminate]
+    description: Q2 — What is the Actual Condition now? Ground learner in reality with data.
+
+  - id: kata-coaching/coaching-q3-obstacles
+    name: "Q3 — What obstacles"
+    path: coaching-q3-obstacles.j2
+    type: WordAct
+    lexicon_terms: [query, detect, prioritize, discriminate, select]
+    description: Q3 — What obstacles? Which ONE now? Force prioritization.
+
+  - id: kata-coaching/coaching-q4-experiment
+    name: "Q4 — What is your Next Step"
+    path: coaching-q4-experiment.j2
+    type: WordAct
+    lexicon_terms: [query, plan, predict, propose, commit]
+    description: Q4 — What is your Next Step? What do you expect? Drive action with prediction.
+
+  - id: kata-coaching/coaching-q5-learn
+    name: "Q5 — How quickly can we go and see"
+    path: coaching-q5-learn.j2
+    type: WordAct
+    lexicon_terms: [query, observe, verify, reflect, iterate]
+    description: Q5 — How quickly can we go and see? Close the feedback loop.
+
+  - id: kata-coaching/kata-coaching-convergence-check
+    name: "Compute normalized convergence metric for kata-coaching PDCA cycles"
+    path: kata-coaching-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for kata-coaching PDCA cycles.
+      Returns convergence_metric plus rationale and blockers.

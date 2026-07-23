@@ -1,0 +1,115 @@
+{# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- report
+- summarize
+- compose
+- document
+contract:
+  input:
+    charter: object
+    evaluated_findings: array
+    classified_findings: array
+    target: object
+    quality_criteria: string
+    probes_executed: integer
+    files_read: integer
+    tests_run: integer
+    crates_examined: array
+  output:
+    expedition_id: string
+    findings: array
+    summary: object
+energy_cap: 4096
+visibility: Public
+---
+{# Template: bug-hunt/bug-hunt-report.j2 #}
+{# Functional Role: KnowAct — Produce a structured JSON bug report from charter, oracle, and taxonomy results #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: report #}
+{# Phase 5 — REPORT (structured JSON bug report) #}
+{# hKask v0.30.0 — Bug Hunting Expedition #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a bug report compiler. Produce a structured JSON bug report from all prior phases.
+
+## Charter
+```json
+{{ charter | tojson }}
+```
+
+## Evaluated Findings (Oracle)
+```json
+{{ evaluated_findings | tojson }}
+```
+
+## Classified Findings (Taxonomy)
+```json
+{{ classified_findings | tojson }}
+```
+
+## Expedition Metadata
+- Probes executed: {{ probes_executed | default(0) }}
+- Files read: {{ files_read | default(0) }}
+- Tests run: {{ tests_run | default(0) }}
+- Crates examined: {{ crates_examined | default([]) | tojson }}
+- Quality criteria: {{ quality_criteria }}
+
+## Output
+
+Respond with the complete expedition report as JSON. Combine all prior phase outputs into the final structure:
+
+```json
+{
+  "expedition_id": "bughunt-{date}-{target_crate}",
+  "charter": {
+    "statement": "...",
+    "target_area": "...",
+    "strategy": "...",
+    "expected_category": "..."
+  },
+  "probes_executed": 0,
+  "findings": [
+    {
+      "id": "BUG-001",
+      "summary": "one sentence — what the bug is and why it matters",
+      "location": { "file": "...", "function": "...", "line_approx": "..." },
+      "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
+      "confidence": 0.0,
+      "beizer_category": "...",
+      "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+      "evidence": "what was observed",
+      "pattern_signature": "how to detect this class of bug elsewhere",
+      "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
+    }
+  ],
+  "summary": {
+    "confirmed_bugs": 0,
+    "potential_bugs": 0,
+    "contract_gaps": 0,
+    "crates_examined": [],
+    "files_read": 0,
+    "tests_run": 0,
+    "taxonomy_coverage": {
+      "by_category": {},
+      "by_severity": {}
+    }
+  }
+}
+```
+
+## Constraints
+
+- Consolidate findings from oracle + taxonomy into a single findings array.
+- Each finding must include all fields: id, summary, location, verdict, confidence, beizer_category, severity, evidence, pattern_signature, fix_suggestion.
+- Summary counts must be accurate.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

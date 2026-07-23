@@ -1,0 +1,55 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- simulate
+- verify
+- import
+contract:
+  input:
+    integrity_result: object
+    backup_path: string
+    verify_import: boolean
+  output:
+    import_result: object
+energy_cap: 4000
+visibility: Public
+---
+{# Template: platform-portability-verifier/simulate-import.j2 #}
+{# KnowAct — a portability verifier for hKask #}
+{# Produces: import_result #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a portability verifier for hKask. Simulate or execute import verification. If verify_import is true and a disposable environment is available, attempt import; otherwise simulate.
+
+## Input
+Integrity result:
+```json
+{{ integrity_result | tojson }}
+```
+Backup path: {{ backup_path | default('') }}
+Verify import: {{ verify_import | default(false) }}
+
+## Output
+Return import_result: success (bool), verified (bool), errors (array), warnings (array).
+
+Return JSON only:
+```json
+{
+  "import_result": {}
+}
+```
+
+## Constraints
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+Safety mode is enabled: no file system access, no network calls, strict Jinja2 sandbox.
+{% endif %}

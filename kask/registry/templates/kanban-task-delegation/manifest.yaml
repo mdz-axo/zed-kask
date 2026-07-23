@@ -1,0 +1,31 @@
+# Template crate manifest for kanban-task-delegation skill
+# hKask v0.28.0
+
+crate:
+  name: kanban-task-delegation
+  version: "0.28.0"
+  description: >
+    Task delegation completion verification. Evaluates delivered artifacts
+    and evidence against acceptance criteria to determine pass/fail with
+    detailed reasoning per criterion.
+
+templates:
+  - id: kanban-task-delegation/configure-spawn
+    name: "Propose the minimum capable, consent-mediated sub-userpod…"
+    path: configure-spawn.j2
+    type: KnowAct
+    lexicon_terms: [delegate, configure, assess]
+    description: >
+      Propose the minimum capable, consent-mediated sub-userpod configuration
+      for one kanban task: delegation level, skills, memory scope, tool servers,
+      gas budget, and timeout.
+
+  - id: kanban-task-delegation/execute-task
+    name: "Execute a delegated kanban task within its approved configuration and…"
+    path: execute-task.j2
+    type: KnowAct
+    lexicon_terms: [execute, produce, report]
+    description: >
+      Execute a delegated kanban task within its approved configuration and
+      report its status, concrete deliverables, comment-thread progress note,
+      and any blockers requiring coordination.

@@ -1,0 +1,158 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- converge
+- classify
+- evaluate
+- verify
+- discriminate
+contract:
+  input:
+    current_config:
+      type: object
+      description: The current reduced configuration from the latest iteration
+    previous_config:
+      type: object
+      description: The configuration from the previous iteration (empty on first iteration)
+    iteration:
+      type: integer
+      description: Current iteration number
+    max_iterations:
+      type: integer
+      default: 3
+      description: Maximum allowed iterations
+  output:
+    stationary:
+      type: boolean
+      description: Whether δS = 0 — no further action reduction is possible
+    action_delta:
+      type: string
+      enum:
+      - negative
+      - zero
+      - positive
+      description: negative = action decreased (progress); zero = stationary; positive
+        = action increased (regression)
+    should_continue:
+      type: boolean
+      description: Whether another iteration is warranted
+    escalate:
+      type: boolean
+      description: Whether to escalate to human (max iterations reached without convergence)
+    summary:
+      type: string
+      description: What changed between iterations and why
+  energy_cap: 4096
+  visibility: Public
+---
+{# Template: pragmatic-laziness/pragmatic-laziness-converge.j2 #}
+{# Functional Role: KnowAct — δS = 0 convergence check for the lazy loop #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: stationary, action_delta, should_continue, escalate, summary #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a convergence checker for the pragmatic laziness loop. Your sole job: determine whether the system has reached stationary action (δS = 0) — the point where no further reduction in total system action is possible.
+
+## Current Configuration (Iteration {{ iteration }})
+
+```json
+{{ current_config | tojson }}
+```
+
+## Previous Configuration (Iteration {{ iteration - 1 if iteration > 1 else "N/A (first iteration)" }})
+
+{% if previous_config %}
+```json
+{{ previous_config | tojson }}
+```
+{% else %}
+*No previous configuration — this is the first iteration.*
+{% endif %}
+
+## Configuration
+
+- **Current iteration**: {{ iteration }} / {{ max_iterations | default(3) }}
+- **Max iterations**: {{ max_iterations | default(3) }}
+
+## Convergence Criteria (δS = 0)
+
+Stationary action means: **small variations around the current configuration do not change total system action to first order.** The action landscape is flat at this point.
+
+Check the following:
+
+1. **Element count**: Has the number of elements (functions, types, abstractions, steps) changed?
+2. **Structure**: Has the arrangement of elements changed (dependencies, call graph, module boundaries)?
+3. **Behavior**: Has any behavior been lost or gained?
+4. **Effort distribution**: Have effort hotspots moved or changed in magnitude?
+
+### Decision Rules
+
+| Condition | Verdict |
+|-----------|---------|
+| No elements eliminated AND no structure changed AND no behavior changed | **δS = 0 — STATIONARY.** Done. |
+| Elements eliminated OR structure simplified OR behavior consolidated | **δS < 0 — PROGRESS.** Continue if iterations remain. |
+| Elements added OR structure complicated OR behavior fragmented | **δS > 0 — REGRESSION.** Revert to previous. Escalate. |
+| First iteration (no previous config) | **δS unknown.** Always continue (at least one more iteration needed for comparison). |
+| Max iterations reached without δS = 0 | **ESCALATE.** Report best configuration found and contested items. |
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "stationary": true,
+  "action_delta": "zero",
+  "should_continue": false,
+  "escalate": false,
+  "summary": "No elements eliminated, no structure changed, no behavior changed. The configuration has reached stationary action. The lazy path is found."
+}
+```
+
+Example for progress:
+
+```json
+{
+  "stationary": false,
+  "action_delta": "negative",
+  "should_continue": true,
+  "escalate": false,
+  "summary": "3 pass-through wrappers eliminated, 2 public functions merged into 1. Total public surface reduced from 8 to 5. Action decreased — continue to next iteration."
+}
+```
+
+Example for escalation:
+
+```json
+{
+  "stationary": false,
+  "action_delta": "negative",
+  "should_continue": false,
+  "escalate": true,
+  "summary": "Iteration 3 of 3 complete. 2 elements remain contested: the Storage trait (1 implementor but distinct backend behavior) and the Config struct (passed through but provides validation). Escalating to human for judgment."
+}
+```
+
+## Constraints
+
+- Be precise: "no change" means exactly no change — not "minor change" or "cosmetic change."
+- First iteration always returns `should_continue: true` — there's nothing to compare against.
+- Regression (action_delta = positive) always escalates — the loop should not undo progress.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

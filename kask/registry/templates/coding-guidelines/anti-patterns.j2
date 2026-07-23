@@ -1,0 +1,13 @@
+{# Shared fragment: canonical seven anti-patterns for Karpathy coding discipline #}
+{# Include this in any coding-guidelines template that needs the anti-pattern reference #}
+{# hKask v0.30.0 #}
+
+Canonical Anti-Patterns (all are violations of Surgical Changes + Simplicity First):
+
+1. **Unsolicited docstring/formatting changes** — Adding docstrings, type hints, or formatting to code you weren't asked to change
+2. **Single-use abstractions** — Creating traits, interfaces, or generic functions for code used in exactly one place
+3. **Unrequested flexibility** — Adding config parameters, feature flags, or pluggable strategies that nobody asked for
+4. **Adjacent-code refactoring** — Refactoring unrelated code "while you're in the area"
+5. **Impossible-scenario error handling** — Writing error handling for scenarios that can't happen
+6. **Unrequested logging/telemetry** — Adding logging, metrics, or telemetry that wasn't requested
+7. **Style changes outside task scope** — Changing variable names or code style that isn't related to the task's purpose

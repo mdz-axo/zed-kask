@@ -1,0 +1,108 @@
+{# goal: Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- identify
+- criteria
+- classify
+- benefit
+- cost
+- independent
+- dimension
+contract:
+  input:
+    decision_question: string
+    alternatives: array
+    criteria_hints: array
+  output:
+    criteria: array
+    criteria_independence_check: object
+    criteria_count: integer
+energy_cap: 4096
+visibility: Public
+---
+{# Template: mcda/identify-criteria.j2 #}
+{# Functional Role: KnowAct — Decision criteria identification and classification #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: criteria, criteria_independence_check, criteria_count #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a decision analysis specialist. Your task is to enumerate and classify decision criteria for the given decision question.
+
+## Decision Question
+{{ decision_question }}
+
+## Alternatives Under Consideration
+{% for alt in alternatives %}
+{{ loop.index }}. {{ alt }}
+{% endfor %}
+
+{% if criteria_hints %}
+## Criteria Hints
+The following hints may guide criteria identification:
+{% for hint in criteria_hints %}
+- {{ hint }}
+{% endfor %}
+{% endif %}
+
+## Criteria Identification Method
+
+1. **Enumerate**: Identify all relevant decision dimensions that differentiate the alternatives. Consider functional, economic, social, environmental, and strategic factors.
+
+2. **Classify**: For each criterion, determine:
+   - **Benefit** criterion: Higher values are better (e.g., quality, reliability, user satisfaction)
+   - **Cost** criterion: Lower values are better (e.g., price, risk, maintenance burden)
+
+3. **Independence Check**: Evaluate pairwise correlations between criteria. Flag any pair with estimated correlation >0.7 as potentially dependent. Dependent criteria inflate weight on the shared dimension and distort composite scores.
+
+4. **Describe**: For each criterion, provide a clear description and note the measurement type (quantitative/qualitative/ordinal).
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "criteria": [
+    {
+      "name": "criterion_name",
+      "type": "benefit|cost",
+      "description": "What this criterion measures and why it matters",
+      "measurement_type": "quantitative|qualitative|ordinal"
+    }
+  ],
+  "criteria_independence_check": {
+    "dependent_pairs": [
+      {"criterion_a": "...", "criterion_b": "...", "estimated_correlation": 0.0, "recommendation": "merge|keep|monitor"}
+    ],
+    "independent_criteria_count": 0,
+    "assessment_notes": "..."
+  },
+  "criteria_count": 0
+}
+```
+
+## Constraints
+
+- Produce at least 3 and at most 12 criteria — too few collapses dimensions, too many dilutes discrimination
+- Every criterion must clearly differentiate at least two alternatives
+- Flag dependent pairs but do not automatically merge — leave that decision to the weight-and-score stage
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
+- Preserve the original prompt structure and formatting
+- Handle missing variables gracefully (leave as-is or use default if specified)
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

@@ -1,0 +1,141 @@
+# Logo Builder — Improvement Kata Process Manifest
+# hKask v0.31.0
+# Convergent PDCA loop: Martin discovery → Bokhua formal generation → Peters iterative refinement
+# Converges when logo passes all five Bokhua gates (critique scores ≥ 7/10 per dimension).
+
+manifest:
+  id: logo-builder
+  category: skill
+  name: Logo Builder
+  description: >
+    Convergent logo design Improvement Kata. Maps brand identity to formal
+    design parameters (Martin's MVB), generates logos against Bokhua's five
+    formal gates, and iteratively refines through Peters' case study method
+    until critique scores converge. Produces background-removed transparent
+    PNG deliverables.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: 0.30
+  improvement_gate: threshold_only
+  max_iterations: 5
+  min_iterations: 1
+  convergence_field: step_4_result.normalized_critique_score
+  on_not_reached: escalate
+
+gas:
+  cap: 150000
+  cost_per_iteration: 500
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: name
+    type: string
+    required: true
+    description: "Business or brand name"
+  - name: industry
+    type: string
+    required: false
+    description: "Industry context"
+  - name: audience
+    type: string
+    required: false
+    description: "Target audience"
+  - name: values
+    type: string
+    required: false
+    description: "Brand values"
+  - name: tagline
+    type: string
+    required: false
+    description: "Optional tagline"
+  - name: style_preference
+    type: string
+    required: false
+    description: "User style preference (if any) — overrides discovery"
+
+steps:
+  # ── Step 1: Understand the Direction ──
+  - ordinal: 1
+    action: render
+    description: >
+      Map brand identity to formal design parameters using Martin's
+      Minimum Viable Brand methodology. Outputs style, logo_type,
+      dominant_shape, typography_class, palette, density.
+    renderer: minijinja
+    template_ref: media/logo-discovery-map
+    gas_cap: 5000
+    timeout_seconds: 60
+    input_mapping:
+      name: "{{ name }}"
+      industry: "{{ industry | default('') }}"
+      audience: "{{ audience | default('') }}"
+      values: "{{ values | default('') }}"
+      tagline: "{{ tagline | default('') }}"
+
+  # ── Step 2: Grasp the Current Condition ──
+  - ordinal: 2
+    action: evaluate
+    description: >
+      Confirm the design brief is complete and select generation strategy.
+      Single-shot for simple briefs, iterative-refine for complex ones.
+    renderer: minijinja
+    template_ref: media/logo-discovery
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      design_params: "{{ step_1_result }}"
+      style_preference: "{{ style_preference | default('') }}"
+
+  # ── Step 3: Establish the Target Condition ──
+  - ordinal: 3
+    action: render
+    description: >
+      Encode Bokhua's five formal gates (simplicity, monochrome viability,
+      grid discipline, negative space, scalability) into the generation
+      prompt. This is the quality target for convergence.
+    renderer: minijinja
+    template_ref: media/logo-formal-prompt
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      name: "{{ name }}"
+      tagline: "{{ tagline | default('') }}"
+      industry: "{{ industry | default('') }}"
+      style: "{{ step_1_result.style | default(step_2_result.strategy.selected_style) }}"
+      logo_type: "{{ step_1_result.logo_type | default('wordmark') }}"
+      palette: "{{ step_1_result.palette | default('') }}"
+      dominant_shape: "{{ step_1_result.dominant_shape | default('') }}"
+      density: "{{ step_1_result.density | default('medium') }}"
+
+  # ── Step 4: Iterate via PDCA ──
+  - ordinal: 4
+    action: flowdef
+    description: >
+      Peters-inspired iterative pipeline. Generates N candidates, critiques
+      each via vision LLM against quality criteria, selects best, refines
+      addressing critique weaknesses, removes background. Repeats until
+      convergence or max iterations.
+    renderer: minijinja
+    template_ref: media/logo-iterative-refine
+    gas_cap: 100000
+    timeout_seconds: 300
+    input_mapping:
+      name: "{{ name }}"
+      tagline: "{{ tagline | default('') }}"
+      industry: "{{ industry | default('') }}"
+      style: "{{ step_1_result.style | default('minimal') }}"
+      palette: "{{ step_1_result.palette | default('') }}"
+      logo_type: "{{ step_1_result.logo_type | default('wordmark') }}"
+      variants: "{{ variants | default(3) }}"
+      refine_rounds: "{{ refine_rounds | default(2) }}"
+      formal_prompt: "{{ step_3_result }}"

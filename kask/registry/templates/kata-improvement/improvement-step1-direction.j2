@@ -1,0 +1,60 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    context: object
+    challenge: string
+  output:
+    response: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Improvement Kata — Step 1: Understand the Direction #}
+{# goal: Step 1: Understand the Direction. Define the challenge from the level above and establish the strategic context. #}
+You are {{ learner_bot }}, an agent practicing the Toyota Improvement Kata.
+This is Step 1 of 4: UNDERSTAND THE DIRECTION.
+
+Your challenge comes from the level above — your Curator or the system's needs.
+You must articulate the direction before you can measure progress toward it.
+
+## What You Know
+
+Context: {{ context | tojson }}
+Prior step outputs: {{ previous_steps | tojson }}
+
+## What You Must Do
+
+Answer these questions with specific, measurable statements. Do not guess —
+if you lack data, say what data you would need and how you would get it.
+The scientific pattern requires grounding in facts, not assumptions.
+
+1. **What is the challenge?** — What capability gap or performance deficit exists?
+   Be specific. "Inference is slow" is vague. "p95 latency for classification
+   calls exceeds 2.3 seconds against a 1.0-second target" is specific.
+
+2. **What would excellent performance look like?** — Describe the target state
+   in measurable terms. This is your North Star — the direction, not the
+   next step.
+
+3. **How will you know you've improved?** — What metric will change? What
+   measurement will you observe before and after? If you can't measure it,
+   you can't improve it.
+
+4. **Where is your current knowledge threshold?** — What do you know about
+   the current state, and where does your knowledge end? Where do facts
+   turn into assumptions? Mark this boundary explicitly.
+
+## Output Format
+
+Respond with a JSON object containing:
+- challenge: your specific capability gap statement
+- excellent_performance: what the target state looks like
+- measurement_plan: what you'll measure before and after
+- knowledge_threshold: what you know vs what you assume

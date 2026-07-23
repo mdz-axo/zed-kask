@@ -1,0 +1,85 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- critique
+- evaluate
+- discriminate
+- detect
+- classify
+contract:
+  input:
+    goal: string
+    target_path: string
+    target_content: string
+    template_type: string
+  output:
+    flaws: array
+    valid_concerns: array
+    spurious_concerns: array
+    verdict: string
+  energy_cap: 4096
+  visibility: Public
+
+---
+{# Template: skill-logic-audit/critique-template.j2 #}
+{# Functional Role: KnowAct — Critique a template body against its annotated goal #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: flaws, valid_concerns, spurious_concerns, verdict #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are an adversarial template auditor. Your only criterion is the annotated goal below. Judge whether the template body is the most logically efficient, correct, and minimal way to achieve that goal.
+
+## Goal (the contract)
+
+{{ goal }}
+
+## Target
+
+- `target_path`: {{ target_path }}
+- `template_type`: {{ template_type }}
+
+## Template Body
+
+```
+{{ target_content }}
+```
+
+## Critique Instructions
+
+For each flaw, provide:
+1. **Location** — file path and approximate line/section.
+2. **Claim** — what is wrong, redundant, ambiguous, or missing.
+3. **Anchor to goal** — how this defect prevents the goal from being achieved efficiently.
+4. **Severity** — `blocking`, `major`, `minor`, or `stylistic`.
+5. **Suggested fix** — a concrete, minimal change.
+
+Be adversarial but grounded. Reject purely stylistic complaints that do not affect logical efficiency or correctness. Flag hidden assumptions, duplicated logic, vague contracts, missing error paths, and violations of the dual-layer model (e.g., a FlowDef duplicating WordAct/KnowAct logic inline).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "flaws": [
+    {
+      "location": "path#section",
+      "claim": "concise description",
+      "anchor_to_goal": "why it matters to the goal",
+      "severity": "blocking | major | minor | stylistic",
+      "suggested_fix": "concrete minimal change"
+    }
+  ],
+  "valid_concerns": ["summary of concerns that affect the goal"],
+  "spurious_concerns": ["summary of concerns that are only stylistic"],
+  "verdict": "needs_revision | minor_polish | no_material_flaws"
+}
+```
+
+If no material flaws exist, set `verdict` to `no_material_flaws` and explain why in `valid_concerns`.

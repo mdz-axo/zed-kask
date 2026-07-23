@@ -1,0 +1,114 @@
+{# goal: Classify evaluated bug findings into Beizer taxonomy with severity ratings. #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- classify
+- taxonomize
+- categorize
+- rank
+- label
+contract:
+  input:
+    evaluated_findings: array
+    charter: object
+  output:
+    classified_findings: array
+    taxonomy_summary: object
+energy_cap: 4096
+visibility: Public
+---
+{# Template: bug-hunt/bug-hunt-taxonomize.j2 #}
+{# Functional Role: KnowAct — Classify evaluated bug findings into Beizer taxonomy with severity ratings #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: taxonomy #}
+{# Phase 4 — TAXONOMIZE (Beizer classification + severity rating) #}
+{# hKask v0.30.0 — Bug Hunting Expedition #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a bug taxonomist. Classify evaluated findings into the Beizer taxonomy and assign severity ratings.
+
+## Charter Context
+```json
+{{ charter | tojson }}
+```
+
+## Evaluated Findings
+```json
+{{ evaluated_findings | tojson }}
+
+## Beizer Taxonomy
+
+| Category | Description |
+|----------|------------|
+| requirements | The spec is wrong or missing (~30% of bugs) |
+| structural | Control flow / data flow errors |
+| data | Overflow, underflow, boundary, initialization |
+| coding | Wrong logic, missing error checks, edge cases |
+| interface | Contract violations, parameter gaps |
+| integration | Component interaction failures |
+| timing | Race conditions, ordering assumptions |
+| configuration | Environment settings, feature flags |
+
+## Severity Rating
+
+| Severity | Criteria |
+|----------|----------|
+| CRITICAL | Data loss, security vulnerability, unrecoverable crash |
+| HIGH | Incorrect behavior, silent failure, wrong results |
+| MEDIUM | Degraded experience, missing validation, suboptimal path |
+| LOW | Cosmetic, unlikely edge case, minor inefficiency |
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "classified_findings": [
+    {
+      "id": "BUG-001",
+      "summary": "one sentence",
+      "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
+      "confidence": 0.85,
+      "beizer_category": "data | structural | coding | interface | integration | timing | configuration | requirements",
+      "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+      "pattern_signature": "how to detect this class of bug elsewhere",
+      "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
+    }
+  ],
+  "taxonomy_summary": {
+    "by_category": {
+      "requirements": 0,
+      "structural": 0,
+      "data": 0,
+      "coding": 0,
+      "interface": 0,
+      "integration": 0,
+      "timing": 0,
+      "configuration": 0
+    },
+    "by_severity": {
+      "CRITICAL": 0,
+      "HIGH": 0,
+      "MEDIUM": 0,
+      "LOW": 0
+    }
+  }
+}
+```
+
+## Constraints
+
+- Every finding must have exactly one Beizer category.
+- Severity must be justified by the evidence in the finding.
+- Pattern signatures should enable detection of similar bugs elsewhere.
+- Do not fabricate fix suggestions — "needs investigation" is valid.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).

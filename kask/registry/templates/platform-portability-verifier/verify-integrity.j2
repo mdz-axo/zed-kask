@@ -1,0 +1,75 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- verify
+- validate
+- check
+- compare
+- audit
+contract:
+  input:
+    backup_path: string
+    pod_id: string
+  output:
+    checks: array
+    overall_status: string
+    recommendations: array
+energy_cap: 3072
+visibility: Public
+---
+{# Template: platform-portability-verifier/verify-integrity.j2 #}
+{# Functional Role: KnowAct — Verify backup file integrity #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: per-check pass/fail results with overall status #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "normal"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are a portability verifier for the hKask platform. Your task is to verify the integrity of a backup file and produce a structured verification report.
+
+## Context
+- Backup path: {{ backup_path }}
+- Pod ID: {{ pod_id | default('unknown') }}
+
+## Integrity Checks
+
+For the backup file at the specified path, verify:
+
+1. **file_exists** — The backup file exists at the path and is non-empty (> 0 bytes).
+2. **sqlcipher_header** — The file begins with the SQLite magic bytes "SQLite format 3\0" indicating a valid database file.
+3. **record_counts** — Compare record counts against the source pod database. Expected counts are obtained from pod.db metadata.
+4. **checksum_valid** — Compute SHA-256 of the backup file and compare against stored checksum (if available).
+5. **encryption_active** — Verify that SQLCipher encryption is active (key derivation parameters match expected).
+
+## Instructions for the Agent
+
+To perform these checks, the agent should:
+1. Use filesystem tools to stat the backup file (check existence and size)
+2. Read the first 16 bytes to verify SQLite magic header
+3. Query the source pod.db for record counts (compare with backup)
+4. Compute SHA-256 checksum of the backup file
+5. Check SQLCipher configuration
+
+Return a structured JSON report:
+```json
+{
+  "checks": [
+    {"name": "file_exists", "status": "PASS", "detail": "File exists, 2457600 bytes"},
+    {"name": "sqlcipher_header", "status": "PASS", "detail": "Valid SQLite header"},
+    {"name": "record_counts", "status": "PASS", "detail": "1427 records match source"},
+    {"name": "checksum_valid", "status": "PASS", "detail": "SHA-256 matches"},
+    {"name": "encryption_active", "status": "PASS", "detail": "SQLCipher encryption verified"}
+  ],
+  "overall_status": "PASS",
+  "recommendations": [],
+  "backup_size_bytes": 0,
+  "record_count": 0,
+  "checksum": ""
+}
+```
+
+Status is PASS if all checks pass. PARTIAL if some checks fail but data is likely recoverable. FAIL if critical checks fail (file missing, invalid header, checksum mismatch).

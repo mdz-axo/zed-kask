@@ -1,0 +1,169 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [evaluate, score, critique, verify, calibrate]
+contract:
+  input:
+    diagram_type: string
+    diataxis_quadrant: string
+    mermaid_source: string
+    entities: array
+    relationships: array
+    extraction_notes: string
+  output:
+    scores: object
+    weighted_total: float
+    refinement_directives: array
+    evaluation_notes: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: diataxis-diagram/diataxis-diagram-evaluate.j2 #}
+{# KnowAct — EVALUATE: score diagram against Diataxis quality criteria #}
+{# hKask v0.31.0 #}
+{# Anchored in https://diataxis.fr/quality/ — functional vs deep quality #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "focused"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a Diataxis quality evaluator. Score a generated Mermaid diagram against six weighted criteria. Be honest — inflated scores produce worse diagrams, not better ones. A perfect score means the diagram is indistinguishable from a human-crafted one.
+
+## Context
+
+- Diagram type: **{{ diagram_type }}**
+- Diataxis quadrant: **{{ diataxis_quadrant }}**
+- Entities extracted: {{ entities | length }}
+- Relationships extracted: {{ relationships | length }}
+
+## Diagram Source
+
+```mermaid
+{{ mermaid_source }}
+```
+
+## Extracted Data
+
+**Entities:**
+{{ entities | tojson(indent=2) }}
+
+**Relationships:**
+{{ relationships | tojson(indent=2) }}
+
+{% if extraction_notes %}
+**Extraction notes:** {{ extraction_notes }}
+{% endif %}
+
+---
+
+## Evaluation Criteria
+
+Score each criterion from 0 (perfect) to 1 (severely deficient). Multiply by weight to get weighted contribution. Total = sum of weighted contributions (0 = perfect diagram).
+
+### C1: Entity Completeness (weight: 0.30)
+
+Are ALL entities from the source present in the diagram? No omissions.
+
+- 0.00: Every table/state/class/participant from source appears in the diagram
+- 0.15: One or two minor entities missing (e.g., a utility table, an edge-case state)
+- 0.30: Key entities missing that would mislead the reader
+- 0.50: More than half the entities are missing
+
+**Score:** ___ (0.00–1.00)
+**Evidence:** [One sentence citing what's missing or confirming completeness.]
+
+### C2: Relationship Accuracy (weight: 0.25)
+
+Are all relationships correct in type and direction? Cardinality, inheritance, transition direction all match source.
+
+- 0.00: All relationships match source — correct cardinality, direction, and labels
+- 0.12: One or two minor errors (e.g., wrong Crow's Foot, missing transition label)
+- 0.25: Significant errors (e.g., reversed FK direction, missing key relationship)
+- 0.50: Most relationships are wrong or missing
+
+**Score:** ___ (0.00–1.00)
+**Evidence:** [One sentence citing what's incorrect or confirming accuracy.]
+
+### C3: Label Readability (weight: 0.15)
+
+Are node/state/column labels ≤ 40 characters? Plain English (not raw identifiers)? Would a reader unfamiliar with the code understand them?
+
+- 0.00: All labels are short (≤ 40 chars), descriptive, and would make sense to a new reader
+- 0.08: A few labels are too long or use raw identifiers
+- 0.15: Most labels are long, cryptic, or use code identifiers directly
+- 0.30: Labels are essentially unreadable
+
+**Score:** ___ (0.00–1.00)
+**Evidence:** [One sentence citing problematic labels or confirming readability.]
+
+### C4: Type Appropriateness (weight: 0.15)
+
+Is the correct Mermaid diagram type used for what's being shown? Would a different type serve the reader better?
+
+- 0.00: The chosen type is clearly the best fit for the data
+- 0.08: The chosen type works but another type might be slightly better
+- 0.15: The chosen type is a poor fit (e.g., flowchart instead of state diagram for a lifecycle)
+- 0.30: The chosen type actively misleads the reader
+
+**Score:** ___ (0.00–1.00)
+**Evidence:** [One sentence on why this type is or isn't appropriate.]
+
+### C5: Diataxis Voice (weight: 0.10)
+
+Would the diagram fit naturally in its target quadrant? Reference-grade diagrams should be austere and complete. How-to diagrams should show the focused path. Explanation diagrams should reveal structure.
+
+- 0.00: Diagram perfectly matches the quadrant's voice and reader need
+- 0.05: Minor voice mismatch (e.g., slightly too detailed for a tutorial, slightly too sparse for reference)
+- 0.10: Clear voice mismatch (e.g., flow annotations in a reference ERD)
+- 0.20: Diagram serves the wrong quadrant entirely
+
+**Score:** ___ (0.00–1.00)
+**Evidence:** [One sentence on voice alignment.]
+
+### C6: Cross-Linking (weight: 0.05)
+
+Will the diagram file link to at least one related document? (This is a binary check — does the plan include a link, not does the current source include one.)
+
+- 0.00: At least one related document identified
+- 0.05: No related documents identified
+
+**Score:** ___ (0.00 or 0.05)
+
+---
+
+## Computation
+
+```
+Weighted Total = (C1 × 0.30) + (C2 × 0.25) + (C3 × 0.15) + (C4 × 0.15) + (C5 × 0.10) + (C6 × 0.05)
+```
+
+## Refinement Directives
+
+If the weighted total exceeds the 0.15 convergence threshold, produce specific, actionable directives for the generate step to fix. Each directive must:
+1. Name the criterion it addresses (C1–C6)
+2. State exactly what's wrong
+3. Describe the expected fix
+
+**Do not emit directives for criteria scored at 0.00.** Only score unmet criteria.
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "scores": {
+    "entity_completeness": { "score": 0.00, "weight": 0.30, "weighted": 0.000, "evidence": "..." },
+    "relationship_accuracy": { "score": 0.00, "weight": 0.25, "weighted": 0.000, "evidence": "..." },
+    "label_readability": { "score": 0.00, "weight": 0.15, "weighted": 0.000, "evidence": "..." },
+    "type_appropriateness": { "score": 0.00, "weight": 0.15, "weighted": 0.000, "evidence": "..." },
+    "diataxis_voice": { "score": 0.00, "weight": 0.10, "weighted": 0.000, "evidence": "..." },
+    "cross_linking": { "score": 0.00, "weight": 0.05, "weighted": 0.000, "evidence": "..." }
+  },
+  "weighted_total": 0.000,
+  "refinement_directives": [],
+  "evaluation_notes": "One sentence summary of overall quality."
+}
+```

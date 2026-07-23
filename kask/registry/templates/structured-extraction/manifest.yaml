@@ -1,0 +1,48 @@
+# Template crate manifest for structured-extraction skill
+# hKask v0.30.0
+
+crate:
+  name: structured-extraction
+  version: "0.30.0"
+  description: >
+    Structured data extraction from unstructured text. Identifies entities,
+    extracts inter-entity relations, and maps extracted data to target
+    schemas with field-level coverage and inferred field population.
+
+templates:
+  - id: structured-extraction/extract-relations
+    name: "Extract semantic relations between identified entities"
+    path: extract-relations.j2
+    type: KnowAct
+    lexicon_terms: [analyze, parse, structure]
+    description: >
+      Extract semantic relations between identified entities. Links
+      entities via subject-predicate-object triples within context.
+
+  - id: structured-extraction/identify-entities
+    name: "Identify entities in unstructured text against a target schema with…"
+    path: identify-entities.j2
+    type: KnowAct
+    lexicon_terms: [detect, classify, recognize, extract]
+    description: >
+      Identify entities in unstructured text against a target schema
+      with extraction hints. Tracks unmapped text and entity count.
+
+  - id: structured-extraction/map-to-schema
+    name: "Map extracted entities and relations to a target schema"
+    path: map-to-schema.j2
+    type: KnowAct
+    lexicon_terms: [map, transform, translate, resolve, infer]
+    description: >
+      Map extracted entities and relations to a target schema. Resolves
+      field mappings, infers missing fields from context, and reports
+      field-level coverage and unresolved fields.
+
+  - id: structured-extraction/structured-extraction-convergence-check
+    name: "Compute normalized convergence metric for structured-extraction PDCA…"
+    path: structured-extraction-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for structured-extraction PDCA cycles.
+      Returns convergence_metric plus rationale and blockers.

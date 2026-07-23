@@ -1,0 +1,70 @@
+# Template crate manifest for skill-discovery skill
+# hKask v0.31.0
+
+crate:
+  name: skill-discovery
+  version: "0.31.0"
+  description: >
+    Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the
+    skill corpus, search the catalog for candidates that could fill each gap,
+    evaluate candidates against format/quality/safety criteria, and guide
+    installation. Registry crate (manifest.yaml + *.j2) is the canonical source
+    of truth. Distinct from skill-router (which matches tasks to EXISTING
+    skills): skill-discovery acquires NEW skills. skill-router feeds uncovered
+    capabilities to skill-discovery as gap signals; skill-discovery installs
+    new skills → the catalog grows → skill-router has better coverage.
+
+templates:
+  - id: skill-discovery/skill-discovery-detect-gap
+    name: "Detect capability gaps in the registry corpus"
+    path: skill-discovery-detect-gap.j2
+    type: KnowAct
+    lexicon_terms: [detect, classify, assess, prioritize, recommend]
+    description: >
+      Detect capability gaps in the registry corpus. Analyze task patterns against
+      existing registry crate descriptions and template_type coverage. Classify gaps
+      (coverage, feature, automation, knowledge, governance, quality, epistemic) and
+      prioritize by impact. Recommends actions including route_to_skill_router
+      for feature gaps where an existing skill was not previously routed. Epistemic
+      gaps are distinct from knowledge gaps: epistemic means missing certainty-finding
+      methods, knowledge means missing facts.
+    generates_spans:
+      - reg.skill.discovery.gap_detected
+
+  - id: skill-discovery/skill-discovery-search
+    name: "Search the skill catalog for candidates matching a capability gap"
+    path: skill-discovery-search.j2
+    type: KnowAct
+    lexicon_terms: [search, match, rank, retrieve, recommend]
+    description: >
+      Search the skill catalog for candidates that could fill a capability gap.
+      Scores each skill 0.0–1.0 on capability match (0.50), lexicon overlap
+      (0.25), and trigger relevance (0.25). Returns ranked candidates with fit
+      scores and gap_fill_type (direct/extension/adaptation). Classifies search
+      coverage as found (fit ≥0.60), weak (0.30–0.59), or empty (<0.30 →
+      create_skill action). This is the SEARCH phase — the EVALUATE phase vets
+      candidates for quality and safety.
+    generates_spans:
+      - reg.skill.discovery.searched
+
+  - id: skill-discovery/skill-discovery-evaluate
+    name: "Evaluate a candidate registry crate against format, quality, and…"
+    path: skill-discovery-evaluate.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, validate, verify, classify, discriminate]
+    description: >
+      Evaluate a candidate registry crate against format, quality, and safety criteria.
+      Check manifest structure, .j2 frontmatter validity, Magna Carta
+      compliance, and Regulation span validity. Produce scored recommendation.
+    generates_spans:
+      - reg.skill.discovery.evaluated
+
+  - id: skill-discovery/skill-discovery-convergence-check
+    name: "Compute a normalized convergence metric for discovery iterations"
+    path: skill-discovery-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, prioritize, verify]
+    description: >
+      Compute a normalized convergence metric for discovery iterations.
+      Synthesizes gap detection + candidate evaluation into `convergence_metric`
+      in [0,1], where 0 means the capability gap is sufficiently resolved.
