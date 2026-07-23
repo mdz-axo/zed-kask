@@ -468,8 +468,8 @@ impl BundleRegistryIndex for SqliteRegistry {
                     DbValue::Text(bundle.id.clone()),
                     DbValue::Text(skill.id.clone()),
                     DbValue::Text(skill.polarity.as_str().to_string()),
-                    skill.manifest_ref.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
-                    skill.content_hash.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
+                    DbValue::Text(skill.manifest_ref.clone()),
+                    DbValue::Text(skill.content_hash.clone()),
                     DbValue::Integer(position as i64),
                 ],
             ) {
@@ -607,8 +607,8 @@ impl SqliteRegistry {
                 ))
             },
         )
-        .ok()?
-        .flatten()?;
+        .ok()
+        .and_then(std::convert::identity)?;
         let (id, ds, wa, fd, ka, ps, ch, vs, zs, ns) = row;
         Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, vs, zs, ns)
     }

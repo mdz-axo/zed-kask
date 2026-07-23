@@ -19,6 +19,7 @@
 //! TODO (T2.0): ToolPort-over-tool-registry adapter.
 //! TODO (T1.6): SecretsPort-over-CredentialsProvider adapter.
 //! TODO (D2):  CuratorTurnPort adapter.
-//! TODO (D6):  MemoryPort adapter.
+//! TODO (D6):  MemoryPort adapter (EmbeddingPort via pure-Rust cosine similarity
+//!             over StorageDriver; HMemStorePort via SQL over StorageDriver).
 
 // Stub — modules will be added as the adapters are implemented.

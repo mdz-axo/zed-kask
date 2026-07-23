@@ -1,33 +1,65 @@
-# Zed
+# Zed-Kask
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
 [![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Welcome to **Zed-Kask** — a fork of [Zed](https://zed.dev), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter), with [hKask](#what-hkask-is) — a minimal viable container for users and AI tools — fully merged in.
+
+Zed-Kask is one clone, one build, one CI. Everything hKask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the small set of seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md).
 
 ---
 
-### Installation
+## What hKask Is
+
+hKask is a **minimal viable container for users and AI tools**. It is not an agent framework — there is no autonomous agent loop by default; the human is in the loop and skills escalate *to the user*, not away from them. The Curator is the system's cybernetic regulator, not an autonomous agent.
+
+Three things sit between the user and a model:
+
+1. **Skills** — PDCA loops that compose Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation. Where other systems give you a prompt, hKask gives you a *process*.
+2. **MCP servers** — built-in Model Context Protocol servers (research, memory, codegraph, media, filesystem, regulation, …) exposed as tools through `rmcp`.
+3. **Inference routing** — one router across multiple providers, with fusion, circuit breakers, and per-call gas accounting.
+
+Everything else in hKask — pods, federation, wallet, ledger, regulation, keystore — exists to keep each user's session **sovereign** within the shared install: per-userpod SQLCipher, OCAP dual gate, visibility gating.
+
+### What hKask Is Not
+
+- Not an agent framework. No autonomous agent loop by default; skills escalate *to the user*.
+- Not a public multi-tenant SaaS. An install serves a defined group via OAuth + invite, not arbitrary public sign-up. Per-userpod sovereignty is structural, not row-level.
+- Not a single-user local-only tool. Local `kask tui` is supported, but the reference deployment is a cloud server accessed via browser or Matrix.
+
+The full hKask README (architecture diagrams, the four essential patterns, crate structure, current metrics, design philosophy) lives at [`kask/README.md`](./kask/README.md). The fork's divergence manifest and upstream-sync procedure live at [`DIVERGENCE.md`](./DIVERGENCE.md).
+
+---
+
+## How the Two Fit Together
+
+Zed-Kask keeps hKask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that hKask crates never depend on Zed crates — Zed-Kask depends on hKask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
+
+The seam between the two sides is small and documented: ten divergence points (D1–D10) cover every edit to Zed's tree outside `kask/` — skill execution, the Curator agent, in-process MCP tools, the guard layer, sovereignty keys, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, and the Kask panel. See [`DIVERGENCE.md`](./DIVERGENCE.md) for the table and [`kask/docs/specs/`](./kask/docs/specs/) for the per-seam specifications.
+
+---
+
+## Installation
 
 On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)).
 
-Other platforms are not yet available:
+> Zed-Kask is a fork under active development and does not yet publish its own installers. Build from source using the instructions below.
 
-- Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
-
-### Developing Zed
+### Developing Zed-Kask
 
 - [Building Zed for macOS](./docs/src/development/macos.md)
 - [Building Zed for Linux](./docs/src/development/linux.md)
 - [Building Zed for Windows](./docs/src/development/windows.md)
 
+The hKask side builds as part of the same workspace — the `kask/` crates are workspace members. hKask conforms to Zed's dependency versions where there are package conflicts; do not bump Zed's workspace deps to accommodate hKask.
+
 ### Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For hKask-specific contribution (skills, MCP servers, the architecture), start at [`kask/README.md`](./kask/README.md) and [`kask/docs/`](./kask/docs/).
 
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+---
 
-### Licensing
+## Licensing
 
 Zed source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked.
 
@@ -46,4 +78,3 @@ Zed is developed by **Zed Industries, Inc.**, a for-profit company.
 If you’d like to financially support the project, you can do so via GitHub Sponsors.
 Sponsorships go directly to Zed Industries and are used as general company revenue.
 There are no perks or entitlements associated with sponsorship.
-
