@@ -22,7 +22,6 @@ blake3 = "1"
 sha2.workspace = true
 tracing.workspace = true
 
-rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 # hKask dev-deps (hkask-capability, hkask-goal, hkask-test-harness) will be
@@ -34,7 +33,8 @@ tempfile = "3"
 
 [features]
 default = []
-sql = ["dep:rusqlite"]
+# sql feature + rusqlite will be re-added when the libsqlite3-sys conflict
+# with zed's sqlez is resolved (during hkask-storage migration, T0.6).
 
 # The types_contract test will be re-enabled when hkask-capability/hkask-goal
 # are migrated. See T0.6.
