@@ -28,6 +28,7 @@ pub mod template_type;
 pub mod ports;
 pub mod time;
 pub mod tool_taint;
+pub mod storage;
 pub mod transcript;
 pub mod visibility;
 pub mod wallet_types;

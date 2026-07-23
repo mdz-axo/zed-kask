@@ -267,6 +267,10 @@ members = [
     "kask/crates/kask_panel",
     "kask/crates/hkask-types",
     "kask/crates/hkask-capability",
+    "kask/crates/hkask-identity",
+    "kask/crates/hkask-goal",
+    "kask/crates/hkask-keystore",
+    "kask/crates/hkask-regulation",
 ]
 default-members = ["crates/zed"]
 
@@ -809,7 +813,15 @@ sha2 = "0.10"
 blake3 = "1"
 hkask-types = { path = "kask/crates/hkask-types" }
 hkask-capability = { path = "kask/crates/hkask-capability" }
+hkask-identity = { path = "kask/crates/hkask-identity" }
+hkask-goal = { path = "kask/crates/hkask-goal" }
+hkask-keystore = { path = "kask/crates/hkask-keystore" }
+hkask-regulation = { path = "kask/crates/hkask-regulation" }
 ed25519-dalek = "2"
+keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
 shellexpand = "3.1"
 shlex = "1.3.0"
 simplelog = "0.12.2"

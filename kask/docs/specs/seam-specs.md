@@ -223,3 +223,36 @@ Each seam is a named, isolated change in zed-kask. Every seam has a **port contr
 - Uses `ui::prelude::*` + `cx.theme()` (inherits zed's light/dark themes).
 
 **Dependencies:** D8 (bridge — ToolPort + InferencePort), D3 (in-process tool registry), D9 (panel dock setting).
+
+---
+
+## T0.6-storage — hkask-storage rewrite (CRITICAL PATH)
+
+**Blocked by:** the `libsqlite3-sys` conflict (zed pins 0.30.1 via `sqlez` + `sqlx-sqlite`; no `rusqlite` version is compatible).
+
+**Change:** rewrite `hkask-storage` to use zed's `sqlez` (or `sqlx`) instead of `rusqlite`. This is the **conform-to-zed dependency policy** (DIVERGENCE.md): refactor hKask to use zed's stack, not the reverse.
+
+**SQLCipher → application-layer encryption:** `sqlez` uses plain SQLite (no SQLCipher). hKask's per-pod encryption (P11.1) becomes an **application-layer encryption** (encrypt h_mems before storing, decrypt after reading) rather than SQLCipher at the SQLite level. The sovereign private sphere is preserved (data is encrypted at rest) without requiring SQLCipher in zed's `libsqlite3-sys` build.
+
+**Scope:**
+- Rewrite `agent_wallet_store.rs` to use `sqlez` instead of `rusqlite` + `define_driver_store!` macro.
+- Rewrite `hkask-storage`'s `database::driver` / `database::sqlite` modules to use `sqlez` connections.
+- The `WalletStore`, `RegulationArchive`, etc. — reimplement on `sqlez`.
+- The regulation crate's wallet modules (`agent_wallet_store`, `wallet_manager`, `wallet_budget`, `well`, `wallet_gas_calibrator`, `wallet_energy_estimator`) then compile (they depend on the storage types).
+- `cybernetics_loop` and `energy_budget_management` unblock (they use wallet types as struct fields).
+
+**Unblocks:** `hkask-regulation` → `hkask-guard` → `hkask-templates` → `hkask-pods` → MCP servers.
+
+**AC:**
+- `cargo check -p hkask-storage` compiles with zed's `libsqlite3-sys 0.30.1` (no `links` conflict).
+- `cargo check -p hkask-regulation` compiles (all wallet modules present).
+- The §13.1 invariant holds (no hKask crate depends on a zed crate — `hkask-storage` uses `sqlez` which is a zed crate... wait, that's an inversion!).
+
+**⚠ Dependency-direction note:** `sqlez` IS a zed crate. If `hkask-storage` depends on `sqlez`, that's hKask→zed-kask (inversion of §13.1). Resolution: define a `StoragePort` trait in `hkask-types`; the `kask_bridge` implements it over `sqlez`. `hkask-storage` depends on `StoragePort` (not `sqlez` directly). This keeps hKask↛zed-kask. BUT — `hkask-storage`'s CURRENT code uses `rusqlite` directly (concrete types, not a port). So the rewrite is actually a **port-ification**: `hkask-storage` moves from concrete `rusqlite` to a `StoragePort` trait (defined in `hkask-types`), and the `kask_bridge` provides the `sqlez` adapter. This is the ports-and-adapters pattern applied to the storage layer.
+
+**Revised scope (port-ification):**
+- Define `StoragePort` trait in `hkask-types` (the storage port — `query`, `execute`, etc.).
+- Rewrite `hkask-storage` to use `StoragePort` instead of `rusqlite` directly.
+- `kask_bridge` implements `StoragePort` over `sqlez`.
+- The wallet modules use `StoragePort` (not concrete storage types).
+- `hkask-regulation` depends on `hkask-storage` (which now depends only on `hkask-types::StoragePort`, not on `rusqlite` or `sqlez`).

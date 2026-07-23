@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 277c3a3d3f41fc9e7d12a8005f018d34181172df87a23c7a22ab0e8b06c17568 # shrinks to mut budget = EnergyBudget { cap: EnergyCost(166), remaining: EnergyCost(166), replenish_rate: EnergyCost(16), alert_threshold: 0.8, hard_limit: true, reserved: EnergyCost(0), priority: 1.0 }, operations = [(EnergyCost(1), EnergyCost(1))]
+cc edfd6b058a5edd46e039b3bc4bcc32a352bf57792619f7cef9747c07ba25b0d0 # shrinks to mut budget = EnergyBudget { cap: EnergyCost(18), remaining: EnergyCost(18), replenish_rate: EnergyCost(1), alert_threshold: 0.8, hard_limit: true, reserved: EnergyCost(0), priority: 1.0 }, operations = [EnergyCost(1)]

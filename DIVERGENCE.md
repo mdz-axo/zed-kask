@@ -52,3 +52,12 @@ All Kask docs live in `kask/docs/`: `architecture/` (the plan, four-pattern arch
 
 ## Reference
 Full design + reasoning + tasks + open questions: `kask/docs/architecture/zed-host-architecture-plan.md` (§3 divergence map, §2.4 MCP load set, §11 settings/credentials, §12 kask panel + §12.6 GPUI reuse map, §13 composition & connection surfaces, §14 repository consolidation).
+
+## Dependency policy — conform to zed's versions
+**hKask conforms to zed's dependency versions where there are package conflicts.** Do not bump zed's workspace deps to accommodate hKask — refactor hKask to use zed's stack instead.
+
+### The libsqlite3-sys conflict (resolved by conforming)
+- zed pins `libsqlite3-sys = "0.30.1"` (via `sqlez` AND `sqlx-sqlite` → `sea-orm` → `collab`). Both use `links = "sqlite3"`.
+- hKask's `rusqlite 0.39` requires `libsqlite3-sys ^0.37.0` — incompatible. No `rusqlite` version uses `^0.30` (the range that includes 0.30.1).
+- **Resolution:** hKask's `hkask-storage` will be **rewritten to use zed's `sqlez`** (or `sqlx`) instead of `rusqlite`. This is a deferred task (T0.6-storage). Until then, `hkask-storage` is NOT a workspace member, and `hkask-regulation`'s storage-backed modules are feature-gated behind `#[cfg(feature = "storage")]`.
+- SQLCipher: `sqlez` uses plain SQLite (no SQLCipher). hKask's per-pod encryption (P11.1) will be implemented as an **application-layer encryption** (encrypt before store, decrypt after read) rather than SQLCipher at the SQLite level. This preserves the sovereign private sphere without requiring SQLCipher in zed's libsqlite3-sys build.
