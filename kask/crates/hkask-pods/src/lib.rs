@@ -27,6 +27,7 @@ pub mod loop_system;
 pub mod pod; // Loop 5 (agent pod lifecycle is Curation)
 pub mod ports;
 pub mod sovereignty; // Loop 6 (sovereignty enforcement)
+pub mod test_stubs;
 pub mod types;
 
 // Re-export rich agent domain types from types/ (these are the canonical versions

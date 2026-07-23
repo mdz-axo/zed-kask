@@ -14,7 +14,6 @@ pub mod fusion;
 pub mod goal;
 pub mod hmem;
 pub mod id;
-pub mod identity;
 pub mod keychain_keys;
 pub mod loops;
 pub mod macros;
@@ -27,9 +26,9 @@ pub mod template;
 pub mod template_type;
 
 pub mod ports;
+pub mod storage;
 pub mod time;
 pub mod tool_taint;
-pub mod storage;
 pub mod transcript;
 pub mod visibility;
 pub mod wallet_types;
@@ -71,9 +70,7 @@ pub use transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 pub use visibility::{Confidence, Dimension, Visibility};
 
 pub use hmem::{HMem, HMemError};
-pub use ports::embedding_port::{
-    EmbeddingError, EmbeddingPort, SimilarityResult, StoredEmbedding,
-};
+pub use ports::embedding_port::{EmbeddingError, EmbeddingPort, SimilarityResult, StoredEmbedding};
 
 pub use ports::*;
 pub use wallet_types::{

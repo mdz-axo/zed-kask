@@ -12,6 +12,8 @@ use crate::curation::SemanticIndex;
 use hkask_capability::CapabilityChecker;
 use hkask_mcp::McpRuntime;
 use hkask_types::InferencePort;
+use hkask_types::storage::StorageDriver;
+use hkask_types::EmbeddingPort;
 use hkask_types::WebID;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +26,10 @@ pub struct ActivePods {
     mcp_runtime: Arc<McpRuntime>,
     capability_checker: Arc<CapabilityChecker>,
     inference_port: Option<Arc<dyn InferencePort>>,
+    /// Storage driver (provided by kask_bridge over sqlez)
+    driver: Arc<dyn StorageDriver>,
+    /// Embedding port (provided by kask_bridge, pure-Rust cosine similarity)
+    embedding: Arc<dyn EmbeddingPort>,
     /// CuratorPod's SemanticIndex — shared with all pod contexts for
     /// merged-lens semantic recall (Step 5).
     curator_index: RwLock<Option<Arc<std::sync::RwLock<SemanticIndex>>>>,
@@ -35,6 +41,8 @@ impl ActivePods {
         a2a_runtime: Arc<A2ARuntime>,
         mcp_runtime: Arc<McpRuntime>,
         capability_checker: Arc<CapabilityChecker>,
+        driver: Arc<dyn StorageDriver>,
+        embedding: Arc<dyn EmbeddingPort>,
     ) -> Self {
         Self {
             deployments: RwLock::new(HashMap::new()),
@@ -43,6 +51,8 @@ impl ActivePods {
             mcp_runtime,
             capability_checker,
             inference_port: None,
+            driver,
+            embedding,
             curator_index: RwLock::new(None),
         }
     }
@@ -80,7 +90,6 @@ impl ActivePods {
         use crate::AllowAllConsent;
         use crate::a2a::A2ARuntime;
         use crate::pod::{PodFactory, system_capability_checker};
-        use hkask_storage::database::types::DbProvider;
 
         // A deterministic master key so token issuance and the capability checker
         // derive the SAME system OCAP key. SAFETY: test-only, single-threaded setup.
@@ -106,9 +115,9 @@ impl ActivePods {
             )),
             Arc::new(AllowAllConsent),
             data_dir.to_path_buf(),
-            DbProvider::Sqlite,
         ));
-        Self::new(factory, a2a, Arc::new(McpRuntime::new()), checker)
+        let (driver, embedding) = crate::test_stubs::stub_storage_pair();
+        Self::new(factory, a2a, Arc::new(McpRuntime::new()), checker, driver, embedding)
     }
 
     /// Set the inference port for pods to use.
@@ -240,6 +249,8 @@ impl ActivePods {
                 mcp,
                 Arc::clone(&self.capability_checker),
                 self.inference_port.clone(),
+                Arc::clone(&self.driver),
+                Arc::clone(&self.embedding),
             )
             .await
             .map_err(|e| AgentPodError::DeployError(e.to_string()))?;
@@ -281,7 +292,9 @@ impl ActivePods {
         }
 
         let (index, registry) = self.create_curator_pod(&data_dir).await?;
-        let sync = crate::curation::CuratorSync::new(Arc::clone(&index), registry);
+        let driver_factory: Arc<dyn Fn(&std::path::Path) -> Result<Arc<dyn hkask_types::storage::StorageDriver>, String> + Send + Sync> =
+            Arc::new(|_path| Err("driver factory not yet wired — kask_bridge T1.4".to_string()));
+        let sync = crate::curation::CuratorSync::new(Arc::clone(&index), registry, driver_factory);
         tokio::spawn(async move {
             sync.run().await;
         });
@@ -304,7 +317,9 @@ impl ActivePods {
         AgentPodError,
     > {
         let (index, registry) = self.create_curator_pod(&data_dir).await?;
-        let sync = crate::curation::CuratorSync::new(Arc::clone(&index), registry);
+        let driver_factory: Arc<dyn Fn(&std::path::Path) -> Result<Arc<dyn hkask_types::storage::StorageDriver>, String> + Send + Sync> =
+            Arc::new(|_path| Err("driver factory not yet wired — kask_bridge T1.4".to_string()));
+        let sync = crate::curation::CuratorSync::new(Arc::clone(&index), registry, driver_factory);
         Ok((index, sync))
     }
 

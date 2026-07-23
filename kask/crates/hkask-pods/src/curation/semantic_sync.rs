@@ -27,9 +27,9 @@ use crate::PodID;
 use crate::PodKind;
 use crate::PodRegistry;
 use crate::curation::SemanticIndex;
-use hkask_storage::Database;
+use hkask_types::storage::{DbValue, StorageDriver};
+use hkask_types::HMem;
 use hkask_types::Visibility;
-use r2d2_sqlite::rusqlite;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -87,19 +87,27 @@ pub struct CuratorSync {
     consecutive_failures: std::sync::atomic::AtomicU64,
     /// Cross-agent artifact index — agent_name → published artifacts
     artifact_index: Arc<std::sync::RwLock<ArtifactIndex>>,
+    /// Factory that opens a StorageDriver for a pod's database path.
+    /// The kask_bridge provides the real implementation (over sqlez).
+    driver_factory: Arc<dyn Fn(&std::path::Path) -> Result<Arc<dyn StorageDriver>, String> + Send + Sync>,
 }
 
 impl CuratorSync {
     /// Create a new CuratorSync.
     ///
     /// `index` must be the same Arc that ActivePods.curator_index points to.
-    pub fn new(index: Arc<std::sync::RwLock<SemanticIndex>>, registry: Arc<PodRegistry>) -> Self {
+    pub fn new(
+        index: Arc<std::sync::RwLock<SemanticIndex>>,
+        registry: Arc<PodRegistry>,
+        driver_factory: Arc<dyn Fn(&std::path::Path) -> Result<Arc<dyn StorageDriver>, String> + Send + Sync>,
+    ) -> Self {
         Self {
             index,
             registry,
             interval: Duration::from_secs(1),
             consecutive_failures: AtomicU64::new(0),
             artifact_index: Arc::new(std::sync::RwLock::new(ArtifactIndex::default())),
+            driver_factory,
         }
     }
 
@@ -298,7 +306,6 @@ impl CuratorSync {
     /// since last cursor, insert into SemanticIndex, advance cursor.
     /// Uses spawn_blocking for database I/O to avoid blocking the tokio worker.
     async fn sync_pod(&self, pod_id: PodID, db_path: &Path) -> Result<usize, SyncError> {
-        // Get current cursor for this pod
         let cursor = {
             let index = self.index.read().unwrap();
             index.cursor_for(&pod_id)
@@ -306,21 +313,14 @@ impl CuratorSync {
 
         let db_path = db_path.to_path_buf();
         let index = Arc::clone(&self.index);
+        let driver_factory = Arc::clone(&self.driver_factory);
         tokio::task::spawn_blocking(move || {
-            let db = open_source_db(&db_path)?;
+            let driver = (driver_factory)(&db_path)
+                .map_err(SyncError::Database)?;
 
             let query = "SELECT rowid, entity, attribute, value, confidence FROM hmems WHERE rowid > ?1 AND visibility IN ('shared','public') ORDER BY rowid ASC";
-            let rows: Vec<(i64, String, String, String, f64)> = {
-                let pool = db.sqlite_pool().map_err(|e| SyncError::Database(format!("Failed to create pool: {e}")))?;
-                let conn = pool.get().map_err(|e| SyncError::Database(format!("Failed to get pool connection: {e}")))?;
-                let mut stmt = conn.prepare(query).map_err(|e| SyncError::Database(format!("Failed to prepare query: {e}")))?;
-                stmt.query_map(rusqlite::params![cursor as i64], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-                })
-                .map_err(|e| SyncError::Database(format!("Failed to query h_mems: {e}")))?
-                .filter_map(|r| r.ok())
-                .collect::<Vec<_>>()
-            };
+            let rows = driver.query(query, &[DbValue::Integer(cursor as i64)])
+                .map_err(|e| SyncError::Database(format!("Failed to query h_mems: {e}")))?;
 
             if rows.is_empty() {
                 return Ok(0);
@@ -330,15 +330,20 @@ impl CuratorSync {
             let mut count = 0;
             let mut idx = index.write().unwrap();
 
-            for (rowid, entity, attribute, value_str, confidence) in &rows {
-                let value: serde_json::Value = serde_json::from_str(value_str)
-                    .unwrap_or(serde_json::Value::String(value_str.to_string()));
-                let conf: hkask_types::Confidence = (*confidence).into();
-                let h_mem = hkask_storage::HMem::new(entity, attribute, value, hkask_types::WebID::default())
+            for row in &rows {
+                let rowid = row.get_int(0).unwrap_or(0);
+                let entity = row.get_str(1).unwrap_or("").to_string();
+                let attribute = row.get_str(2).unwrap_or("").to_string();
+                let value_str = row.get_str(3).unwrap_or("").to_string();
+                let confidence = row.get_real(4).unwrap_or(1.0);
+                let value: serde_json::Value = serde_json::from_str(&value_str)
+                    .unwrap_or(serde_json::Value::String(value_str));
+                let conf: hkask_types::Confidence = confidence.into();
+                let h_mem = HMem::new(&entity, &attribute, value, hkask_types::WebID::default())
                     .with_confidence(conf)
-                                        .with_visibility(Visibility::Shared);
+                    .with_visibility(Visibility::Shared);
                 idx.insert(&h_mem, pod_id).map_err(|e| SyncError::IndexInsert(format!("Failed to insert h_mem: {e}")))?;
-                new_cursor = (*rowid) as u64;
+                new_cursor = rowid as u64;
                 count += 1;
             }
 
@@ -359,12 +364,4 @@ impl CuratorSync {
         .await
         .map_err(SyncError::SpawnBlocking)?
     }
-}
-
-/// Open a pod's SQLCipher database. Free function so it can be called from spawn_blocking.
-fn open_source_db(db_path: &Path) -> Result<Database, SyncError> {
-    let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()?;
-    let path_str = db_path.to_string_lossy().to_string();
-    Database::open(&path_str, &passphrase)
-        .map_err(|e| SyncError::Database(format!("Failed to open pod DB: {e}")))
 }

@@ -9,7 +9,8 @@
 
 pub(crate) mod bayesian; // Loop 2b (semantic confidence combination)
 pub mod chat_turn;
-pub mod hmem_store; // Typed projection of chat episode content
+pub mod hmem_store;
+pub use hmem_store::HMemStore; // Typed projection of chat episode content
 pub mod consolidation; // Episodic → Semantic bridge
 pub mod consolidation_service;
 pub mod episodic; // Loop 2a
