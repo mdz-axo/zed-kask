@@ -25,7 +25,7 @@
 
 ## Phase 2 — Conditional rules
 
-- [ ] **T3 (S5): Frontmatter parsing in `prompt_store`**
+- [x] **T3 (S5): Frontmatter parsing in `prompt_store`**
   - Add `RuleFrontmatter { globs: Vec<String>, always_apply: bool }` + `Option<RuleFrontmatter>` on `RulesFileContext`
   - Parse YAML frontmatter in `load_worktree_rules_file`; strip from `text`
   - AC: frontmattered file parses into correct `globs` + `always_apply`; `text` excludes frontmatter
@@ -51,7 +51,7 @@
 
 ## Phase 4 — Context-aware tool router
 
-- [ ] **T6 (S7): `ToolRouter` trait + heuristic scorer**
+- [x] **T6 (S7): `ToolRouter` trait + heuristic scorer**
   - Create `crates/agent/src/tool_router.rs`: `ToolRouter` trait, `ToolSelectionContext`, `HeuristicToolRouter`
   - Heuristic scores: `.rs`/`.ts` open ⇒ `grep`/`read_file`/`edit_file`/`diagnostics` ≥ 0.5; URL in msg ⇒ `fetch`/`web_search` ≥ 0.5; baseline 0.1
   - Return tools scoring ≥ 0.30

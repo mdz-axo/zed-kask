@@ -10,6 +10,7 @@ mod tests;
 mod thread;
 mod thread_store;
 mod tool_permissions;
+mod tool_router;
 mod tools;
 
 use context_server::ContextServerId;
@@ -4325,6 +4326,42 @@ mod internal_tests {
     }
 
     #[test]
+    fn test_parse_rules_frontmatter_parses_globs_and_always_apply() {
+        let input = "---\nglobs:\n  - \"**/*.rs\"\n  - \"src/**/*.ts\"\nalwaysApply: false\n---\nUse TypeScript strict mode.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("should parse frontmatter");
+        assert_eq!(frontmatter.globs, vec!["**/*.rs", "src/**/*.ts"]);
+        assert!(!frontmatter.always_apply);
+        assert_eq!(text, "Use TypeScript strict mode.");
+    }
+
+    #[test]
+    fn test_parse_rules_frontmatter_defaults_always_apply_true_when_absent() {
+        let input = "Just some rules without frontmatter.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        assert!(frontmatter.is_none(), "no frontmatter should be None");
+        assert_eq!(text, "Just some rules without frontmatter.");
+    }
+
+    #[test]
+    fn test_parse_rules_frontmatter_handles_always_apply_true() {
+        let input = "---\nalwaysApply: true\n---\nAlways apply these rules.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("should parse frontmatter");
+        assert!(frontmatter.always_apply);
+        assert!(frontmatter.globs.is_empty());
+        assert_eq!(text, "Always apply these rules.");
+    }
+
+    #[test]
+    fn test_parse_rules_frontmatter_handles_no_closing_fence() {
+        let input = "---\nglobs: [\"**/*.rs\"]\nThis is not valid frontmatter.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        assert!(frontmatter.is_none(), "invalid frontmatter should be None");
+        assert!(!text.is_empty());
+    }
+
+    #[test]
     fn test_qualified_compact_commands_are_not_native_compact() {
         let unqualified_blocks = [acp::ContentBlock::from("/compact")];
         let unqualified = Command::parse(&unqualified_blocks).unwrap();
@@ -4799,6 +4836,7 @@ mod internal_tests {
                 rules_file: Some(RulesFileContext {
                     path_in_worktree: rel_path(".rules").into(),
                     text: "".into(),
+                    frontmatter: None,
                     project_entry_id: rules_entry.id.to_usize(),
                 }),
             }];

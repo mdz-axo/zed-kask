@@ -124,6 +124,7 @@ mod tests {
             rules_file: Some(RulesFileContext {
                 path_in_worktree: RelPath::from_unix_str("AGENTS.md").unwrap().into(),
                 text: "project-specific guidance".to_string(),
+                frontmatter: None,
                 project_entry_id: 1,
             }),
         }];

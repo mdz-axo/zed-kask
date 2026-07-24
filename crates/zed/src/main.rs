@@ -729,12 +729,11 @@ fn main() {
             } else {
                 Vec::new()
             };
+            // Build the MCP server environment from kask settings.
+            // This forwards all kask.* settings to MCP server child processes
+            // as the env vars they read at startup.
+            let mcp_env = kask_settings.mcp_env();
             cx.background_spawn(async move {
-                // Build the MCP server environment from kask settings.
-                // This forwards all kask.* settings to MCP server child processes
-                // as the env vars they read at startup.
-                let mcp_env = kask_settings.mcp_env();
-
                 for server_id in &servers_to_start {
                     let binary = format!("hkask-mcp-{server_id}");
                     mcp_runtime_for_spawn
