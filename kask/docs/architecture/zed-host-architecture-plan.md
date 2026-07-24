@@ -31,7 +31,7 @@ mds_categories: [composition, trust, lifecycle]
 >
 > **Composition root** (`crates/zed/src/main.rs`, after `gpui_tokio::init`):
 > 1. Constructs `CredentialsSecretsPort` (from `kask_bridge`) over zed's `CredentialsProvider` and injects it into `hkask_keystore::set_secrets_port()` (D5)
-> 2. Resolves `a2a_secret` from `hkask_keystore::resolve_a2a_secret()` (now routes through `SecretsPort`)
+> 2. Resolves `a2a_secret` from `hkask_keystore::keychain::resolve_a2a_secret()` (now routes through `SecretsPort`)
 > 3. Constructs `McpRuntime` + `BridgeToolPort` (ToolPort over MCP servers)
 > 4. Gets default `LanguageModel` from `LanguageModelRegistry::read_global(cx)`
 > 5. Constructs `LanguageModelInferencePort` (InferencePort over zed's LanguageModel)
@@ -39,7 +39,7 @@ mds_categories: [composition, trust, lifecycle]
 > 7. Constructs `BridgeManifestExecutor` with guarded inference + tools + secret + registry paths
 > 8. Calls `agent::set_manifest_executor(Some(executor))`
 > 9. Constructs `RealMemoryPort::from_env()` (or `LoggingMemoryPort` fallback) + `BridgeMemoryPort` and calls `agent::set_memory_port()` (D6)
-> 10. Constructs `PanelToolInvoker` + `PanelScopedInference` and calls `kask_panel::set_tool_invoker()` / `set_scoped_inference()` (D10)
+> 10. Constructs `PanelToolInvoker` + `PanelScopedInference` (each holding a `gpui::BackgroundExecutor` for spawning trait-method tasks without a `cx` in scope) and calls `kask_panel::set_tool_invoker()` / `set_scoped_inference()` (D10)
 > 11. After `settings::init(cx)`: reads `KaskSettings` and auto-launches enabled MCP servers via `McpRuntime::start_server()`
 >
 > **Revised approach for `hkask-inference`:** Kept (MCP servers use it directly). Reads API keys via `SecretsPort` (D9b). Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.

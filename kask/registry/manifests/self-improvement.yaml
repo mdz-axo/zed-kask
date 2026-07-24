@@ -241,6 +241,34 @@ ocap:
     - resource: template
       action: render
       template_id: self-improvement/si-execute-improvement
+      gas_budget: 1000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-fm-demos
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-fm-feedback
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-fm-experience
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-prompt
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-memory
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-tool
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-full
       gas_budget: 8000
     - resource: template
       action: render

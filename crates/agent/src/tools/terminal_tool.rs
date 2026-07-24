@@ -929,7 +929,26 @@ async fn run_terminal_tool(
 
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
-    let result = process_content(output, &input.command, timed_out, user_stopped, selection);
+    // When the terminal output was truncated by the COMMAND_OUTPUT_LIMIT, write
+    // the full output to a spillover file so the model can re-read it with the
+    // `read_file` tool. This follows Kilocode's ToolOutputStore pattern: the
+    // in-message content is a bounded preview, and the full content is
+    // recoverable by path. Without this, large command outputs (build logs,
+    // test runs) are silently lost.
+    let spillover_path = if output.truncated && !output.output.is_empty() {
+        write_output_spillover(&output.output, &project, cx).ok()
+    } else {
+        None
+    };
+
+    let result = process_content(
+        output,
+        &input.command,
+        timed_out,
+        user_stopped,
+        selection,
+        spillover_path.as_deref(),
+    );
     let notes = sandbox_note.into_iter().collect::<Vec<_>>();
     Ok(if notes.is_empty() {
         result
@@ -1094,6 +1113,34 @@ impl TerminalOutputSelection {
     }
 }
 
+/// Write the full terminal output to a spillover file so the model can re-read
+/// it with the `read_file` tool after the in-message preview was truncated.
+///
+/// The file is created in the system temp dir with a `zed-agent-output-` prefix
+/// and a unique suffix. The path is returned as a string for inclusion in the
+/// tool result message. The file is not cleaned up automatically — it lives
+/// until the OS cleans the temp dir, which is acceptable for a developer tool.
+/// A future iteration could tie cleanup to thread lifetime.
+fn write_output_spillover(
+    output: &str,
+    _project: &Entity<Project>,
+    _cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let mut file = tempfile::Builder::new()
+        .prefix("zed-agent-output-")
+        .suffix(".txt")
+        .tempfile()
+        .map_err(|e| format!("failed to create spillover file: {e}"))?;
+    use std::io::Write;
+    file.write_all(output.as_bytes())
+        .map_err(|e| format!("failed to write spillover file: {e}"))?;
+    // Keep the file on disk (don't drop the tempfile handle which would delete it).
+    let (_file, path) = file
+        .keep()
+        .map_err(|e| format!("failed to persist spillover file: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection) -> String {
     match (selection.head_lines, selection.tail_lines) {
         (None, None) => output.to_string(),
@@ -1146,6 +1193,7 @@ fn process_content(
     timed_out: bool,
     user_stopped: bool,
     selection: TerminalOutputSelection,
+    spillover_path: Option<&str>,
 ) -> String {
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
@@ -1162,10 +1210,19 @@ fn process_content(
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
-        format!(
-            "Command output too long. The first {} bytes:\n\n{content}",
-            content.len(),
-        )
+        if let Some(path) = spillover_path {
+            format!(
+                "Command output too long. The first {} bytes are shown below. \
+                 \nThe full output was saved to: {path} \
+                 \nYou can re-read it with the `read_file` tool if you need more.\n\n{content}",
+                content.len(),
+            )
+        } else {
+            format!(
+                "Command output too long. The first {} bytes:\n\n{content}",
+                content.len(),
+            )
+        }
     } else {
         content
     };
@@ -1310,6 +1367,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1651,6 +1709,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1675,6 +1734,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1699,6 +1759,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1724,6 +1785,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1749,6 +1811,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1769,6 +1832,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1794,6 +1858,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1813,6 +1878,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1837,6 +1903,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(

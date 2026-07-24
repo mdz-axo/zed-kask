@@ -1284,6 +1284,12 @@ pub struct Thread {
     /// changes, the new render is stored and a telemetry event is emitted so
     /// cache-bust events are observable.
     cached_system_prompt: Option<CachedSystemPrompt>,
+    /// Tool results that are delivered asynchronously, after the immediate
+    /// tool-result slot has been flushed. The outer turn loop drains completed
+    /// entries at the top of each iteration and injects them as a synthetic
+    /// user message before `build_completion_request`. See
+    /// `DeferredToolResult`.
+    deferred_tool_results: Vec<DeferredToolResult>,
 }
 
 /// A rendered system prompt cached alongside a digest of its inputs. The
@@ -1429,6 +1435,7 @@ impl Thread {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             cached_system_prompt: None,
+            deferred_tool_results: Vec::new(),
         }
     }
 
@@ -2859,6 +2866,20 @@ impl Thread {
                 }
             }
 
+            // Drain completed deferred tool results and inject them as a
+            // synthetic user message before building the request. This must
+            // happen after compaction (so compaction never sees pending
+            // deferred results) and before `build_completion_request` (so the
+            // model sees them in the next request).
+            let injected_deferred = this.update(cx, |this, cx| {
+                this.inject_completed_deferred_results(event_stream, cx)
+            })?;
+            if injected_deferred {
+                // If we injected deferred results, the intent is ToolResults
+                // (we're delivering tool outputs to the model).
+                intent = CompletionIntent::ToolResults;
+            }
+
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
@@ -3331,6 +3352,122 @@ impl Thread {
         })?;
 
         Ok(ControlFlow::Continue(()))
+    }
+
+    /// Enqueue a tool result that will be delivered asynchronously. The task
+    /// is polled on each outer-loop iteration; once it completes, the result is
+    /// injected as a synthetic user message containing the tool result.
+    ///
+    /// This is used by non-blocking tools (e.g. `spawn_agent`) that return an
+    /// immediate placeholder result and deliver the real output later.
+    pub(crate) fn enqueue_deferred_tool_result(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        task: Task<Result<LanguageModelToolResult>>,
+    ) {
+        log::debug!("Enqueued deferred tool result for {}", tool_use_id.as_ref());
+        self.deferred_tool_results
+            .push(DeferredToolResult { task, tool_use_id });
+    }
+
+    /// Poll all deferred tool results and return those that have completed.
+    /// Completed entries are removed from `deferred_tool_results`. Uses
+    /// `now_or_never` so this is non-blocking — incomplete tasks stay in the
+    /// queue for the next iteration.
+    fn drain_completed_deferred_results(&mut self) -> Vec<CompletedDeferredResult> {
+        if self.deferred_tool_results.is_empty() {
+            return Vec::new();
+        }
+        let mut completed = Vec::new();
+        let mut remaining = Vec::with_capacity(self.deferred_tool_results.len());
+        for deferred in self.deferred_tool_results.drain(..) {
+            match deferred.task.now_or_never() {
+                Some(result) => {
+                    let result = result.map_err(|err| anyhow!(err));
+                    completed.push(CompletedDeferredResult {
+                        tool_use_id: deferred.tool_use_id,
+                        result,
+                    });
+                }
+                None => {
+                    remaining.push(deferred);
+                }
+            }
+        }
+        self.deferred_tool_results = remaining;
+        completed
+    }
+
+    /// Inject completed deferred tool results as a synthetic user message
+    /// containing the tool results. Returns true if any results were injected
+    /// (which means the model should be called again to see them).
+    fn inject_completed_deferred_results(
+        &mut self,
+        event_stream: &ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let completed = self.drain_completed_deferred_results();
+        if completed.is_empty() {
+            return false;
+        }
+
+        let mut tool_results = IndexMap::new();
+        for result in completed {
+            match result.result {
+                Ok(tool_result) => {
+                    log::debug!(
+                        "Deferred tool result completed for {}",
+                        result.tool_use_id.as_ref()
+                    );
+                    // Emit a tool-call update so the UI reflects completion.
+                    event_stream.update_tool_call_fields(
+                        &scoped_tool_call_id(self.messages.len(), &result.tool_use_id),
+                        acp::ToolCallUpdateFields::new()
+                            .status(if tool_result.is_error {
+                                acp::ToolCallStatus::Failed
+                            } else {
+                                acp::ToolCallStatus::Completed
+                            })
+                            .raw_output(tool_result.output.clone()),
+                        None,
+                    );
+                    tool_results.insert(result.tool_use_id, tool_result);
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Deferred tool result failed for {}: {error}",
+                        result.tool_use_id.as_ref()
+                    );
+                    let error_result = LanguageModelToolResult {
+                        tool_use_id: result.tool_use_id.clone(),
+                        tool_name: Arc::from("spawn_agent"),
+                        is_error: true,
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                            error.to_string(),
+                        ))],
+                        output: None,
+                    };
+                    tool_results.insert(result.tool_use_id, error_result);
+                }
+            }
+        }
+
+        if tool_results.is_empty() {
+            return false;
+        }
+
+        // Inject as a synthetic agent message (empty content, just tool results)
+        // followed by the tool results as a user message. This mirrors how
+        // `AgentMessage::to_request` produces an assistant message with
+        // tool_use blocks followed by a user message with tool_result blocks.
+        // Here we only need the user message since the tool_use was already
+        // delivered in the original agent message.
+        let mut agent_message = AgentMessage::default();
+        agent_message.tool_results = tool_results;
+        self.messages.push(Arc::new(Message::Agent(agent_message)));
+        self.updated_at = Utc::now();
+        cx.notify();
+        true
     }
 
     fn process_tool_result(
@@ -5042,6 +5179,32 @@ fn take_text_within_byte_budget(text: String, remaining_bytes: &mut usize) -> Op
     let text = text[..end].to_string();
 
     if text.is_empty() { None } else { Some(text) }
+}
+
+/// A tool result that will be delivered asynchronously, after the current
+/// tool-result slot has been flushed. Used by non-blocking tools (e.g.
+/// `spawn_agent`) that return an immediate placeholder and deliver the real
+/// result later.
+///
+/// The outer turn loop drains completed deferred results at the top of each
+/// iteration (after compaction, before `build_completion_request`) and injects
+/// them as a synthetic user message containing the tool results. This keeps the
+/// inner loop's `FuturesUnordered` drain semantics unchanged while allowing
+/// tools to defer their real output beyond the current batch.
+pub(crate) struct DeferredToolResult {
+    /// The task producing the final tool result. Once it completes, the result
+    /// is drained into a synthetic user message.
+    pub task: Task<Result<LanguageModelToolResult>>,
+    /// The tool use ID this result corresponds to. Used for logging and
+    /// telemetry; the `LanguageModelToolResult` itself also carries the ID.
+    pub tool_use_id: LanguageModelToolUseId,
+}
+
+/// A deferred tool result that has completed and is ready to be injected into
+/// the conversation as a synthetic user message.
+struct CompletedDeferredResult {
+    tool_use_id: LanguageModelToolUseId,
+    result: Result<LanguageModelToolResult, anyhow::Error>,
 }
 
 /// Describes where a streamed compaction summary should land in the thread

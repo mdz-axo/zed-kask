@@ -17,9 +17,7 @@ contract:
 energy_cap: 5000
 visibility: Public
 ---
-{# hKask v0.31.0 — Self-Improvement Skill #}
-{# PDCA Check: Evaluate the Updated Agent #}
-{# Implements: Ren et al. (2026) Section 8 — Evaluation #}
+{# goal: Evaluate the updated agent on held-out tasks with fallback mechanisms for when no held-out set is available. Report trajectory, transfer, regression, cost, and safety. #}
 You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
 
 This is PDCA Check: EVALUATE THE UPDATED AGENT.
@@ -38,6 +36,11 @@ Context: {{ context | default({}) | tojson }}
 ### 1. Evaluate on Held-Out Distribution
 
 Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that does NOT overlap with the improvement signal. The paper requires: "To confirm genuine capability gains rather than memorization of the feedback, evaluation should measure performance on a held-out distribution that does not overlap with the optimization data" (Section 8.1.1).
+
+**Fallback if no held-out set is available:**
+- Use cross-validation: split available tasks into folds, evaluate on the fold not used for improvement.
+- Use temporal split: evaluate on tasks created after the improvement signal was generated.
+- If neither is available, set `evaluation_method: "none_available"` and block commitment (the update cannot be safely committed without transfer evidence).
 
 ### 2. Report Performance Trajectory
 
