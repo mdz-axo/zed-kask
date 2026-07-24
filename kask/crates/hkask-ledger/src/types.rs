@@ -1,6 +1,6 @@
 //! Ledger domain types — errors, postings, transactions, balances, query filters.
 
-use hkask_storage::database::types::DbError;
+use hkask_types::DbError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

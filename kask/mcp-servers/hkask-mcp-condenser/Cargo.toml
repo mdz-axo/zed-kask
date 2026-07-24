@@ -1,26 +1,10 @@
 [package]
 name = "hkask-mcp-condenser"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
 description = "Context condensation MCP server — thin wrapper around hkask-condenser domain crate"
-
-[dependencies]
-hkask-condenser = { path = "../../crates/hkask-condenser" }
-hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
-hkask-types = { path = "../../crates/hkask-types" }
-hkask-memory = { path = "../../crates/hkask-memory" }
-hkask-storage = { path = "../../crates/hkask-storage" }
-hkask-inference = { path = "../../crates/hkask-inference" }
-rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
-tokio.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-schemars.workspace = true
-tracing.workspace = true
-anyhow.workspace = true
-
-
+publish = false
 
 [lib]
 name = "hkask_mcp_condenser"
@@ -30,7 +14,17 @@ path = "src/lib.rs"
 name = "hkask-mcp-condenser"
 path = "src/main.rs"
 
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-memory = { path = "../../crates/hkask-memory" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+
 [dev-dependencies]
-
-
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,16 +1,20 @@
 [package]
 name = "hkask-ledger"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
 description = "Double-entry accounting ledger — immutable transactions for cost, crypto, and securities tracking"
+publish = false
+
+[lib]
+name = "hkask_ledger"
+path = "src/lib.rs"
 
 [dependencies]
-hkask-storage = { path = "../hkask-storage" }
-uuid.workspace = true
-chrono.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-
+hkask-types = { path = "../hkask-types" }
+uuid = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

@@ -1,9 +1,10 @@
 [package]
 name = "hkask-mcp-companies"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
 description = "Company financial data MCP server — FMP + EODHD dual-provider integration for global fundamental analysis"
+publish = false
 
 [lib]
 name = "hkask_mcp_companies"
@@ -14,29 +15,26 @@ name = "hkask-mcp-companies"
 path = "src/main.rs"
 
 [dependencies]
-hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
 hkask-types = { path = "../../crates/hkask-types" }
-rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
-reqwest.workspace = true
-tokio.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-schemars.workspace = true
-anyhow.workspace = true
-tracing.workspace = true
-chrono.workspace = true
-
-	rusqlite.workspace = true
-	uuid.workspace = true
-	rand.workspace = true
-base64.workspace = true
-regex.workspace = true
-dirs = "6"
 hkask-ledger = { path = "../../crates/hkask-ledger" }
 hkask-forecast = { path = "../../crates/hkask-forecast" }
-thiserror.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+dirs = "6"
+thiserror = { workspace = true }
 
 [dev-dependencies]
-tempfile.workspace = true
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
