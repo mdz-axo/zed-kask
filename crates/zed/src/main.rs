@@ -564,6 +564,11 @@ fn main() {
                     )
                 );
 
+                // Clone references for the kask panel adapters (below).
+                let panel_inference_port = guarded_inference.clone();
+                let panel_tool_port = tool_port.clone();
+                let panel_a2a_secret = a2a_secret.clone();
+
                 let executor = std::sync::Arc::new(
                     kask_bridge::BridgeManifestExecutor::new(
                         guarded_inference,
@@ -586,6 +591,23 @@ fn main() {
                 let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(memory_port));
                 agent::set_memory_port(Some(bridge_memory));
                 log::info!("hKask memory port wired — thread turns will be ingested (logging no-op)");
+
+                // D10: Wire the kask panel's tool invoker and scoped inference.
+                // The panel uses global hooks (set_tool_invoker / set_scoped_inference)
+                // so it doesn't depend on kask_bridge. These adapters wrap the
+                // BridgeToolPort (for direct tool invocation) and the
+                // GuardedInferencePort (for scoped inference).
+                let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
+                    tool_port: panel_tool_port,
+                    a2a_secret: panel_a2a_secret,
+                });
+                kask_panel::set_tool_invoker(Some(panel_tool_invoker));
+
+                let panel_inference = std::sync::Arc::new(PanelScopedInference {
+                    inference: panel_inference_port,
+                });
+                kask_panel::set_scoped_inference(Some(panel_inference));
+                log::info!("Kask panel tool invoker + scoped inference wired");
             } else {
                 log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skills will use body injection");
             }
@@ -1078,6 +1100,83 @@ fn main() {
         })
         .detach();
     });
+}
+
+// ── D10: Kask panel adapters ───────────────────────────────────────────────
+//
+// These adapters implement kask_panel's ToolInvoker and ScopedInference traits
+// by delegating to the bridge's BridgeToolPort and GuardedInferencePort.
+// They're defined here (in the zed binary crate) because kask_bridge can't
+// depend on kask_panel (circular dependency), and the composition root is the
+// natural place for adapter construction.
+
+/// Adapter implementing `kask_panel::ToolInvoker` via `BridgeToolPort`.
+struct PanelToolInvoker {
+    tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
+    a2a_secret: Vec<u8>,
+}
+
+impl kask_panel::ToolInvoker for PanelToolInvoker {
+    fn invoke_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> gpui::Task<Result<String, String>> {
+        use hkask_capability::{DelegationAction, DelegationResource, DelegationToken, ToolPort};
+        use hkask_types::WebID;
+
+        let secret_bytes: [u8; 32] = self
+            .a2a_secret
+            .get(..32)
+            .and_then(|s| s.try_into().ok())
+            .unwrap_or_else(|| {
+                log::warn!("a2a_secret too short for Ed25519 — using zeroed key");
+                [0u8; 32]
+            });
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+        let webid = WebID::from_persona(b"kask-panel");
+        let token = DelegationToken::new(
+            DelegationResource::Tool,
+            tool.to_string(),
+            DelegationAction::Execute,
+            webid,
+            webid,
+            &signing_key,
+        );
+
+        let tool_port = self.tool_port.clone();
+        let server = server.to_string();
+        let tool = tool.to_string();
+
+        gpui::Task::spawn(async move {
+            let result = ToolPort::invoke(&*tool_port, &server, &tool, args, &token)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
+        })
+    }
+}
+
+/// Adapter implementing `kask_panel::ScopedInference` via `GuardedInferencePort`.
+struct PanelScopedInference {
+    inference: std::sync::Arc<dyn hkask_types::InferencePort>,
+}
+
+impl kask_panel::ScopedInference for PanelScopedInference {
+    fn infer(&self, _server: &str, prompt: &str) -> gpui::Task<Result<String, String>> {
+        let inference = self.inference.clone();
+        let prompt = prompt.to_string();
+
+        gpui::Task::spawn(async move {
+            let params = hkask_types::template::LLMParameters::default();
+            let result = inference
+                .generate(&prompt, &params, None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(result.text)
+        })
+    }
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {

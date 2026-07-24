@@ -216,8 +216,8 @@ mod tests {
         assert!(training_params.get("config_file").is_none());
         assert!(training_params.get("host").is_none());
         assert!(
-            manifest.steps.iter().any(|s| s.tool.contains("docproc")),
-            "pipeline must have a document processing step"
+            manifest.steps.iter().any(|s| s.tool.contains("corpus")),
+            "pipeline must have a corpus processing step"
         );
     }
 

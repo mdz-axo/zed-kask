@@ -709,8 +709,19 @@ pub fn derive_ontology_anchor(tool_name: &str) -> OntologyAnchor {
             concept: hkask_bridge_dublincore::DATASET.to_string(),
         };
     }
-    // GOLEM: narrative
-    if lower.starts_with("replica") || lower.starts_with("author") {
+    // GOLEM: narrative / persona
+    if lower.starts_with("corpus_build_persona")
+        || lower.starts_with("corpus_compose")
+        || lower.starts_with("corpus_rewrite")
+        || lower.starts_with("corpus_mashup")
+        || lower.starts_with("corpus_compare")
+        || lower.starts_with("corpus_discover")
+        || lower.starts_with("corpus_registry")
+        || lower.starts_with("corpus_explain")
+        || lower.starts_with("corpus_cache_work")
+        || lower.starts_with("replica")
+        || lower.starts_with("author")
+    {
         return OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Golem,
             concept: hkask_bridge_dublincore::TEXT.to_string(),
@@ -908,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_ontology_golem_for_replica_tools() {
+    fn derive_ontology_golem_for_corpus_persona_tools() {
         assert_eq!(
             derive_ontology_anchor("corpus_build_persona"),
             OntologyAnchor::DomainSupplement {

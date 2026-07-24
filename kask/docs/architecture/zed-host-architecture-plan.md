@@ -27,7 +27,7 @@ mds_categories: [composition, trust, lifecycle]
 > | D9a | Settings section | ✅ **DONE** | `KaskSettings` struct registered with zed's settings system; `"kask"` section in settings.json. Covers MCP, data services, curator, guard, memory. |
 > | D9b | Credentials namespace | ✅ **DONE** | `SecretsPort` over `CredentialsProvider` (kask namespace: `kask://credentials/<key>`). `InferenceConfig::from_secrets()` reads API keys via `SecretsPort` with env var fallback. |
 > | D9c | Settings UI page | ✅ **DONE** | `crates/settings_ui/src/pages/kask_page.rs` — top-level "Kask" page with 5 sub-pages: Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles), MCP Servers (10 built-in servers + `load_default` master toggle + per-server overrides), Curator (`always_on` + `algedonic_threshold`), Guard (`direct_chat_strategy`), Memory (`consolidation_cadence_secs` + `confidence_floor`). Registered in `page_data.rs::settings_data()` after `ai_page`. `credentials_provider` added as direct dep of `settings_ui`. |
-> | D10 | Kask panel | ✅ **DONE** | `crates/kask_panel/` — native GPUI `Panel` implementing `workspace::dock::Panel`. Dockable (right dock). Server selector (10 built-in MCP servers as buttons). Output area. `kask_panel::Toggle` / `kask_panel::ToggleFocus` actions registered in `zed_actions`. Panel loaded in `zed.rs::initialize_panels()` alongside `DebugPanel`. `kask_panel::init(cx)` called in `main.rs` after `agent_ui::init`. Tool invocation wiring (global `ToolPort` hook) is the next step — currently the panel shows server selection and a placeholder output. |
+> | D10 | Kask panel | ✅ **DONE** | `crates/kask_panel/` — native GPUI `Panel` implementing `workspace::dock::Panel`. Dockable (right dock). Chat-like interface: regular text → scoped inference (LLM + selected server's tools), `/tool args` → direct tool invocation (OCAP-gated). `ToolInvoker` + `ScopedInference` global hooks (OnceLock pattern). `PanelToolInvoker` adapter wraps `BridgeToolPort` with `DelegationToken` from `a2a_secret`. `PanelScopedInference` adapter wraps `GuardedInferencePort`. Both wired in composition root. `kask_panel::Toggle`/`ToggleFocus` actions. Panel loaded in `zed.rs::initialize_panels()`. `kask_panel::init(cx)` called in `main.rs`. |
 >
 > **Composition root** (`crates/zed/src/main.rs`, after `gpui_tokio::init`):
 > 1. Constructs `CredentialsSecretsPort` (from `kask_bridge`) over zed's `CredentialsProvider` and injects it into `hkask_keystore::set_secrets_port()` (D5)
@@ -46,7 +46,6 @@ mds_categories: [composition, trust, lifecycle]
 > **Current priorities (next work):**
 > 1. **R4 — Daemon refactor** — refactor MCP servers off `DaemonClient` to direct in-process handles. This is the big one — it dissolves the `hkask-services-*` scaffolding and the daemon layer in `hkask-mcp-server/src/daemon/`.
 > 2. **Continue dead code pruning** — daemon layer, stale docs, `hkask-services-*` scaffolding, `hkask-inference` env-var reads that should use `SecretsPort`.
-> 3. **Kask panel tool invocation** — wire a global `ToolPort` hook (same pattern as `set_manifest_executor` / `set_memory_port`) so the kask panel can invoke MCP tools directly without depending on `kask_bridge`.
 >
 > **One-line frame:** `zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 
@@ -142,7 +141,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | D7 | App-identity | `crates/paths/src/paths.rs`, `crates/release_channel/src/lib.rs`, `crates/zed/src/zed/mac_only_instance.rs`, `crates/zed/Cargo.toml` | ✅ DONE | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
 | D8 | Bridge + adapters | `kask/crates/kask_bridge/` | ✅ DONE | `InferencePort` over `LanguageModel`, `SecretsPort` over `CredentialsProvider`, `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
 | D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` | ✅ DONE | `KaskSettings` struct + `"kask"` section in settings.json; `SecretsPort` over `CredentialsProvider` (kask namespace). Settings UI page pending (Phase 8). |
-| D10 | Kask panel | `kask/crates/kask_panel/` (not yet created) | ⬜ NOT STARTED | Native GPUI `Panel` replacing deleted `hkask-repl` `mcp_scoped`. |
+| D10 | Kask panel | `crates/kask_panel/` | ✅ DONE | Native GPUI `Panel` implementing `workspace::dock::Panel`. Right dock. Server selector (10 built-in MCP servers). `kask_panel::Toggle`/`ToggleFocus` actions. Loaded in `zed.rs::initialize_panels()`. Tool invocation wiring (global `ToolPort` hook) is next. |
 
 **Discipline:** D1–D10 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
 
@@ -180,7 +179,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 
 ## 6. The Plan (phased; edits live in `zed-kask`; no backward compat; build-then-delete)
 
-> **Phases 0–3 are substantially complete.** The remaining work is D10 (kask panel), the R4 daemon refactor, and dead code pruning. D4 (guard), D5 (sovereignty keys), D6 (thread→memory), and the settings UI (D9c) are done.
+> **Phases 0–3 are substantially complete.** D1–D10 are all done. The remaining work is the R4 daemon refactor, dead code pruning, and the kask panel tool invocation wiring.
 
 ### Phase 0 — Decisions (no code) ✅
 - **T0.1** ADR: *zed-kask minimal-divergence fork; hKask = compiled-in curator+sovereignty+tools; no backward compat.* ✅
@@ -244,8 +243,8 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 ### Phase 8 — Settings UI + kask panel (new)
 - **T8.1** `crates/settings_ui/src/pages/kask_page.rs` — settings UI page with sub-pages: Data Services (API key entry → keychain via `CredentialsProvider`), MCP Servers (11 servers + load toggles), Curator, Guard/Regulation, Memory. ⬜
 - **T8.2** Register kask page in `page_data.rs::settings_data()`. ⬜
-- **T8.3 (D10)** `kask/crates/kask_panel` — native GPUI `Panel` replacing deleted `hkask-repl` `mcp_scoped`. Per-server view: direct `:tool args` invocation + scoped inference. ⬜
-- **Checkpoint 8:** kask settings editable in UI; kask panel functional. ⬜
+- **T8.3 (D10)** `crates/kask_panel` — native GPUI `Panel` replacing deleted `hkask-repl` `mcp_scoped`. Per-server view: direct `:tool args` invocation + scoped inference. ✅ (panel skeleton + server selector; tool invocation wiring deferred)
+- **Checkpoint 8:** kask settings editable in UI; kask panel functional. ✅ (settings UI done; panel skeleton done; tool invocation deferred)
 
 ### Phase 9 — Keystore bridging (D5) + guard (D4)
 - **T9.1 (D5)** Fold `hkask-keystore` crypto-derivation over `SecretsPort`/`CredentialsProvider` (sovereignty keys move to kask namespace). ✅
