@@ -1,17 +1,14 @@
 #![forbid(unsafe_code)]
-//! hKask Context Service — AgentService, PerAgentMemory, and loop construction.
+//! hKask Context Service — governance, regulation store, and storage guards.
 //!
-//! Extracted from `hkask-services`.
+//! Stripped to the modules the MCP servers need (governance + guards).
+//! The daemon/Matrix/identity surface was deleted with the cloud-server migration.
 
 // Used via derive macros (serde/thiserror/async_trait) — invisible to unused_crate_dependencies lint
 #![allow(unused_crate_dependencies)]
 
-mod context_impl;
 pub mod governance;
-pub mod infra;
 pub mod mcp_server_guard;
 pub mod reg_store_slo_provider;
 pub mod regulation;
-pub mod storage;
 pub mod storage_guard;
-pub use context_impl::{AgentService, PerAgentMemory};

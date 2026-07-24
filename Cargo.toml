@@ -276,6 +276,20 @@ members = [
     "kask/crates/hkask-pods",
     "kask/crates/hkask-mcp-server",
     "kask/crates/hkask-ledger",
+    "kask/crates/hkask-storage",
+    "kask/crates/hkask-wallet",
+    "kask/crates/hkask-inference",
+    "kask/crates/hkask-condenser",
+    "kask/crates/hkask-git-cas",
+    "kask/crates/hkask-bridge-dublincore",
+    "kask/crates/hkask-test-harness",
+    "kask/crates/hkask-services-core",
+    "kask/crates/hkask-services-self-heal",
+    "kask/crates/hkask-services-inference",
+    "kask/crates/hkask-services-kata-kanban",
+    "kask/crates/hkask-services-corpus",
+    "kask/crates/hkask-services-context",
+    "kask/crates/hkask-services-compose",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
