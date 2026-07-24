@@ -3,6 +3,7 @@ mod audio_test_window;
 mod edit_prediction_provider_setup;
 mod external_agents_page;
 mod feature_flags;
+mod kask_page;
 mod llm_providers_page;
 mod mcp_servers_page;
 mod sandbox_settings;
@@ -19,6 +20,7 @@ pub(crate) use external_agents_page::{
     CustomAgentForm, render_add_agent_popover, render_external_agents_page,
 };
 pub(crate) use feature_flags::render_feature_flags_page;
+pub(crate) use kask_page::kask_page;
 pub(crate) use llm_providers_page::{
     LlmProviderForm, render_add_llm_provider_popover, render_llm_providers_page,
 };

@@ -10879,7 +10879,6 @@ dependencies = [
  "proptest 1.11.0",
  "prost 0.13.5",
  "rand 0.9.4",
- "reqwest 0.12.24",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -10887,6 +10886,7 @@ dependencies = [
  "tonic",
  "tracing",
  "wiremock",
+ "zed-reqwest",
  "zeroize",
 ]
 
@@ -11198,7 +11198,6 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
- "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -18705,7 +18704,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.8",
 ]
 
 [[package]]

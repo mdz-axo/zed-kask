@@ -23,7 +23,7 @@ hkask-types = { path = "../../crates/hkask-types" }
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

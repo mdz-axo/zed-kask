@@ -57,102 +57,64 @@ license = "MIT"
 repository = "https://github.com/mdz-axo/hKask"
 
 [workspace.dependencies]
-# Async runtime
-tokio = { version = "1.51", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+# ── Dependencies that differ from or are not in the root workspace ──────────
+# All shared deps are inherited from the root Cargo.toml [workspace.dependencies].
+# Only kask-specific deps that the root doesn't define, or that need different
+# features, live here.
 
-# HTTP / API
-axum = { version = "0.8", features = ["ws"] }
-utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-axum = "0.2"
+# Async runtime — kask needs "full" (rt-multi-thread for #[tokio::main],
+# sync, time, etc.) while zed's root workspace has bare tokio = "1".
+tokio = { version = "1", features = ["full"] }
 
-# MCP protocol (tool protocol)
-# Feature sets vary per crate — see individual Cargo.toml docs.
-#  server                    — core MCP types and tool registration
-#  macros                    — #[tool] derive macro
-#  transport-io              — stdio/SSE transport for standalone servers
-#  client                    — MCP client (runtime only)
-#  transport-child-process   — spawn + communicate with child MCP servers (runtime only)
+# Storage — aligned to zed's rusqlite 0.32 to avoid libsqlite3-sys links conflict.
+# zed's sqlez pulls libsqlite3-sys 0.30.1 via rusqlite 0.32; kask must match.
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob", "backup"] }
+r2d2_sqlite = "0.25"
+
+# MCP protocol (not in root workspace)
 rmcp = "1"
 
-# Storage
-rusqlite = { version = "0.39", features = ["bundled-sqlcipher", "blob", "backup"] }
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
-r2d2 = "0.8"
-r2d2_sqlite = "0.34"
-
-# Cryptography / Hashing
-blake3 = "1"
-aes-gcm = "0.10"
-argon2 = "0.5"
-sha2 = "0.10"
-hmac = "0.12"
-ed25519-dalek = "2"
-zeroize = { version = "1", features = ["zeroize_derive"] }
-hex = { version = "0.4", features = ["serde"] }
-subtle = "2"
-
-# Templating
+# Templating (root uses minijinja but with different feature set)
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 
-# Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Serialization — kask-specific YAML variant
 serde_yaml_neo = "0.11"
-schemars = "1"
 
-# Error handling
-thiserror = "2"
-anyhow = "1"
-
-# Logging / Tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# CLI
+# CLI (not in root workspace with these features)
 clap = { version = "4", features = ["derive", "env"] }
 
-# Utilities
-uuid = { version = "1", features = ["v4", "v5", "serde", "fast-rng"] }
+# Utilities not in root workspace or with different features
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.9"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 imageproc = { version = "0.27", default-features = false, features = ["rayon", "text"] }
-walkdir = "2"
 
-# Keychain / Secrets
+# Keychain / Secrets (not in root workspace)
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
 
-# HTTP client (for MCP servers)
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-
-tempfile = "3"
-async-trait = "0.1"
-
-# TUI
+# TUI (not in root workspace)
 ratatui = "0.28"
 crossterm = "0.28"
 
-# Pattern matching (for migration)
-regex = "1"
-
-# Futures utilities
-futures-util = "0.3"
-async-stream = "0.3"
-
-# URL parsing
-url = "2"
-
-# Environment file loading
-dotenvy = "0.15"
-
-# Matrix protocol
+# Matrix protocol (not in root workspace)
 matrix-sdk = { version = "0.16", default-features = false, features = ["rustls-tls"] }
 
-# Tree-sitter (codegraph indexing)
-tree-sitter = "0.26"
-tree-sitter-rust = "0.24"
+# SQL (not in root workspace)
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+
+# LLM guard (not in root workspace)
+llm-guard = "0.2"
+
+# ── Dependencies inherited from root workspace ──────────────────────────────
+# These are defined in the root Cargo.toml [workspace.dependencies] and
+# kask crates reference them via { workspace = true }. They are listed here
+# only for documentation — do not re-declare them.
+#
+# reqwest, r2d2, blake3, aes-gcm, argon2, sha2, hmac, ed25519-dalek,
+# zeroize, hex, subtle, serde, serde_json, schemars, thiserror, anyhow,
+# tracing, tracing-subscriber, uuid, rand, walkdir, tempfile, async-trait,
+# regex, futures-util, async-stream, url, dotenvy, tree-sitter, tree-sitter-rust,
+# tokio-util, axum, utoipa, utoipa-axum
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("hedera"))', 'cfg(kani)'] }

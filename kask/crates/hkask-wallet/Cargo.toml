@@ -25,7 +25,7 @@ tracing.workspace = true
 # Chain SDKs — feature-gated to keep default build lightweight
 # Hedera: hiero-sdk-proto + tonic + prost for mirror node REST + gRPC
 # HTTP client — required for live price feeds (EODHD, CoinGecko) and chain RPC
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest.workspace = true
 hiero-sdk-proto = { version = "0.22", optional = true }
 tonic = { version = "0.12", optional = true, default-features = false, features = ["transport", "codegen", "prost"] }
 prost = { version = "0.13", optional = true }
