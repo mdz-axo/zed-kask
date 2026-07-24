@@ -1,14 +1,22 @@
 ---
 title: "hKask Documentation Portal"
 audience: [project maintainers, contributors, architects, agents]
-last_updated: 2026-07-21
+last_updated: 2026-07-24
 version: "0.31.0"
-status: "Active"
+status: "Active — see zed-kask integration note below"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
 
 # hKask Documentation Portal
+
+> **⚠️ zed-kask integration** — hKask is now compiled into the `zed-kask` fork.
+> The current architecture is documented in
+> [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md).
+> Documents marked `status: "Historical"` describe the pre-fork standalone
+> architecture and reference deleted crates (`hkask-repl`, `hkask-api`).
+> The architectural concepts (Regulation, OCAP, Magna Carta, memory) are still
+> valid — only the hosting surface changed.
 
 **Purpose:** Single entry point indexing every active document in `docs/`, tagged by [MDS](architecture/core/MDS.md) category. hKask v0.31.0 - a minimal viable container for users and AI tools: one install serves a group of users, each with a sovereign userpod, AI skills, MCP servers, and LLM access.
 

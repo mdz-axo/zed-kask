@@ -3,7 +3,7 @@ title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
 last_updated: 2026-07-21
 version: "0.31.0"
-status: "Active"
+status: "Historical — TUI diagrams reference deleted hkask-repl crate"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
 ---

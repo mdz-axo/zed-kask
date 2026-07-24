@@ -3,7 +3,7 @@ title: "Getting Started with hKask — End-to-End Tutorial"
 audience: [developers, new users]
 last_updated: 2026-07-21
 version: "0.31.0"
-status: "Active"
+status: "Historical — superseded by zed-kask integration"
 domain: "Core"
 mds_categories: [domain, lifecycle]
 last-verified-against: "crates/hkask-cli/src/cli/mod.rs (Commands enum); crates/hkask-cli/src/cli/actions.rs (subcommand actions); crates/hkask-repl/src/commands.rs (slash commands); crates/hkask-cli/src/onboarding.rs (first-run flow)"

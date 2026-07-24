@@ -2842,7 +2842,7 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
-            let (model, request) = this.update(cx, |this, cx| {
+            let (model, mut request) = this.update(cx, |this, cx| {
                 let model = refusal_fallback_model
                     .clone()
                     .or_else(|| this.model().cloned())
@@ -2852,6 +2852,42 @@ impl Thread {
                 this.current_request_token_usage = TokenUsage::default();
                 anyhow::Ok((model, request))
             })??;
+
+            // D11: Context injection — retrieve salient memories and inject
+            // them into the prompt after the system prompt, before the
+            // conversation history. Only for UserPrompt and Subagent intents
+            // (not for ThreadSummarization — would cause infinite recursion).
+            if matches!(
+                intent,
+                CompletionIntent::UserPrompt | CompletionIntent::Subagent
+            ) {
+                if let Some(injector) = crate::context_injector() {
+                    let thread_id = this
+                        .read_with(cx, |this, _| this.id.to_string())
+                        .ok()
+                        .unwrap_or_default();
+                    let user_prompt = request
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.role == Role::User)
+                        .and_then(|m| {
+                            m.content.iter().find_map(|c| match c {
+                                MessageContent::Text(text) => Some(text.clone()),
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or_default();
+                    if !user_prompt.is_empty() {
+                        let injected = injector.inject_context(&thread_id, &user_prompt).await;
+                        if !injected.is_empty() {
+                            // Insert after the system prompt (index 0)
+                            request.messages.splice(1..1, injected);
+                            log::debug!("Injected {} context messages", request.messages.len() - 1);
+                        }
+                    }
+                }
+            }
 
             telemetry::event!(
                 "Agent Thread Completion",

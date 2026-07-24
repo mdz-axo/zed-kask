@@ -1,12 +1,19 @@
 ---
 title: "API Reference"
 audience: [developers]
-last_updated: 2026-07-20
+last_updated: 2026-07-24
 version: "0.31.0"
-status: "Active"
+status: "Historical — superseded by zed-kask integration"
 domain: "Cross-cutting"
 mds_categories: [domain, composition]
 ---
+
+> **⚠️ HISTORICAL DOCUMENT** — This file references `hkask-repl` (deleted — TUI
+> reimplemented natively as `crates/kask_panel`) and `hkask-api` (deleted — REST
+> API dissolved into in-process paths). The architectural concepts are still
+> valid, but the specific crate paths, module structures, and APIs described
+> here describe the pre-fork standalone hKask architecture. For the current
+> zed-kask architecture, see `zed-host-architecture-plan.md`.
 
 # API Reference
 

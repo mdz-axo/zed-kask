@@ -7,6 +7,7 @@
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask depends on
 //! hKask. This bridge is the only crate that depends on both sides.
 
+mod context_injector;
 mod inference;
 mod memory;
 mod secrets;
@@ -14,6 +15,7 @@ mod settings;
 mod skill_executor;
 mod tool_port;
 
+pub use context_injector::BridgeContextInjector;
 pub use inference::LanguageModelInferencePort;
 pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
 pub use secrets::{CredentialsSecretsPort, KASK_CREDENTIAL_NAMESPACE};

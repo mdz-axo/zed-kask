@@ -2651,6 +2651,49 @@ pub(crate) fn memory_port() -> Option<&'static Arc<dyn ThreadMemoryPort>> {
     MEMORY_PORT.get().and_then(|opt| opt.as_ref())
 }
 
+/// Context injector — enriches prompts with retrieved context (D11).
+///
+/// Called from `build_request_messages_until` after the system prompt and
+/// before the conversation history. Returns additional messages to insert
+/// (e.g., retrieved memories, enriched context).
+///
+/// Only called for `UserPrompt` and `Subagent` intents — never for
+/// `ThreadSummarization` or `ThreadContextSummarization` (would cause
+/// infinite recursion).
+pub trait ContextInjector: Send + Sync {
+    /// Retrieve context relevant to the user's prompt and return it as
+    /// additional request messages to insert into the prompt.
+    fn inject_context(
+        &self,
+        thread_id: &str,
+        user_prompt: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                + Send
+                + '_,
+        >,
+    >;
+}
+
+/// Global hook for the context injector (D11).
+///
+/// Set by the zed-kask composition root at startup. When set, prompts are
+/// enriched with retrieved memories before inference. When `None`
+/// (upstream zed, or before the composition root runs), no context injection.
+static CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global context injector (D11 composition root).
+pub fn set_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
+    let _ = CONTEXT_INJECTOR.set(injector);
+}
+
+/// Get the global context injector, if set.
+pub(crate) fn context_injector() -> Option<&'static Arc<dyn ContextInjector>> {
+    CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
+}
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
         ZED_AGENT_ID.clone()

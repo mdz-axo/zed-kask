@@ -3,7 +3,7 @@ title: "hKask Functional Specification"
 audience: "hKask developers and architects"
 last_updated: 2026-07-12
 version: "0.31.0"
-status: "Active"
+status: "Historical — superseded by zed-kask integration"
 domain: "architecture"
 mds_categories: ["domain", "composition", "trust", "lifecycle", "curation"]
 anchored_on: ["PRINCIPLES.md §0", "P1-P12", "magna-carta.md"]
