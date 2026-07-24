@@ -153,8 +153,8 @@ The `docs/architecture/core/FUNCTIONAL_SPECIFICATION.md` contains 14 inline Merm
 | Diagram ID | Type | Description | Now Inline In | Verified Against | Status |
 |------------|------|-------------|---------------|------------------|--------|
 | DIAG-TRAIN-001 | flowchart | Unsloth Qwen3.6-27B training pipeline | `how-to/training-and-adapters.md` | HF: `Axolotl-Partners/rust-adapter-scripts` | ✅ VERIFIED 2026-07-10 |
-| DIAG-TRAIN-002 | flowchart | Replica, corpus, and training readiness boundary | `how-to/training-and-adapters.md` | `hkask-mcp-replica`, `hkask-mcp-docproc`, `hkask-mcp-training` | ✅ VERIFIED 2026-07-10 |
-| DIAG-TRAIN-003 | flowchart | Replica pipeline dispatch and unsupported-step boundary | `how-to/training-and-adapters.md` | `hkask-mcp-replica`, `hkask-types`, `hkask-mcp` | ✅ VERIFIED 2026-07-10 |
+| DIAG-TRAIN-002 | flowchart | Corpus, replica, and training readiness boundary | `how-to/training-and-adapters.md` | `hkask-mcp-corpus`, `hkask-mcp-training` | ✅ VERIFIED 2026-07-10 |
+| DIAG-TRAIN-003 | flowchart | Corpus pipeline dispatch and unsupported-step boundary | `how-to/training-and-adapters.md` | `hkask-mcp-corpus`, `hkask-types`, `hkask-mcp` | ✅ VERIFIED 2026-07-10 |
 | DIAG-TRAIN-004 | flowchart | Full training pipeline (reasoning + Rust adapters + eval) | `how-to/training-and-adapters.md` | HF: `Axolotl-Partners/rust-adapter-scripts` | ✅ VERIFIED 2026-07-11 |
 | DIAG-TRAIN-005 | state | Training job lifecycle: Queued → Running → Completed → Terminated | `how-to/training-and-adapters.md` | `hkask-mcp-training/src/providers/types.rs`, HF: `Axolotl-Partners/rust-adapter-scripts` | ✅ VERIFIED 2026-07-11 |
 | DIAG-TRAIN-006 | class | Training server type hierarchy: TrainingHost, HarnessAdapter, PodStatus, params | `how-to/training-and-adapters.md` | `hkask-mcp-training/src/providers/{types,runpod,deepinfra,nebius,harness,trl_harness}.rs` | ✅ VERIFIED 2026-07-23 |

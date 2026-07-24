@@ -30,7 +30,7 @@ pub(crate) fn default_gas_table() -> HashMap<&'static str, u64> {
 
     // Moderate — compute + local I/O
     table.insert("hkask-mcp-condenser", 10);
-    table.insert("hkask-mcp-docproc", 15);
+    table.insert("hkask-mcp-corpus", 15);
     table.insert("hkask-mcp-training", 10);
 
     // External API tools — expensive
@@ -38,8 +38,6 @@ pub(crate) fn default_gas_table() -> HashMap<&'static str, u64> {
     table.insert("hkask-mcp-companies", 40);
     table.insert("hkask-mcp-communication", 50);
     table.insert("hkask-mcp-media", 100);
-
-    table.insert("hkask-mcp-replica", 30);
 
     // Inference is routed through InferenceEnergyEstimator directly.
     table.insert("inference", 0); // Overridden by InferenceEnergyEstimator

@@ -296,6 +296,11 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// hKask-specific settings (D9a). Non-secret config for kask features:
+    /// MCP server load set, data-service toggles, curator/guard/memory settings.
+    /// API keys are stored in the keychain via CredentialsProvider (D9b).
+    pub kask: Option<KaskSettingsContent>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect
@@ -1473,4 +1478,64 @@ impl std::fmt::Display for DelayMs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}ms", self.0)
     }
+}
+
+/// hKask settings content (the `"kask"` section in settings.json).
+///
+/// This is the settings-content representation (deserialized from JSON).
+/// The actual settings struct is `kask_bridge::KaskSettings` (D9a).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskSettingsContent {
+    /// MCP server configuration.
+    #[serde(default)]
+    pub mcp: Option<KaskMcpSettingsContent>,
+
+    /// Data service toggles (non-secret).
+    #[serde(default)]
+    pub data_services: Option<KaskDataServiceSettingsContent>,
+
+    /// Curator configuration.
+    #[serde(default)]
+    pub curator: Option<KaskCuratorSettingsContent>,
+
+    /// Guard / regulation configuration.
+    #[serde(default)]
+    pub guard: Option<KaskGuardSettingsContent>,
+
+    /// Memory consolidation configuration.
+    #[serde(default)]
+    pub memory: Option<KaskMemorySettingsContent>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMcpSettingsContent {
+    pub load_default: Option<bool>,
+    #[serde(default)]
+    pub overrides: HashMap<String, bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskDataServiceSettingsContent {
+    pub eodhd_enabled: Option<bool>,
+    pub fmp_enabled: Option<bool>,
+    pub exa_enabled: Option<bool>,
+    pub tavily_enabled: Option<bool>,
+    pub brave_enabled: Option<bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCuratorSettingsContent {
+    pub always_on: Option<bool>,
+    pub algedonic_threshold: Option<f64>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskGuardSettingsContent {
+    pub direct_chat_strategy: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMemorySettingsContent {
+    pub consolidation_cadence_secs: Option<u64>,
+    pub confidence_floor: Option<f64>,
 }

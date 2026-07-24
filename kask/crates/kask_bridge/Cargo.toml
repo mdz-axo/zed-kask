@@ -19,6 +19,7 @@ language_model_core = { path = "../../../crates/language_model_core" }
 gpui = { path = "../../../crates/gpui" }
 agent = { path = "../../../crates/agent" }
 settings = { path = "../../../crates/settings" }
+settings_content = { path = "../../../crates/settings_content" }
 schemars = { workspace = true }
 
 # Shared

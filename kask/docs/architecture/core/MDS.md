@@ -179,13 +179,13 @@ Spec validation, coherence checking, and quality assessment will move into the Q
 
 ### 4.4 Replica Integration (`replica_rewrite`)
 
-The Gentle-Lovelace prose rewriting capability moved to `hkask-mcp-replica` as the `replica_rewrite` tool. It takes a passage/code snippet + quality dimension (gentle/schriver/hopper/lovelace/composite) and delegates to `ComposeService::compose()` with dimension-specific prompts.
+The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as the `replica_rewrite` tool. It takes a passage/code snippet + quality dimension (gentle/schriver/hopper/lovelace/composite) and delegates to `ComposeService::compose()` with dimension-specific prompts.
 
 | Tool | Server | Description |
 |------|--------|-------------|
-| `replica_rewrite` | `hkask-mcp-replica` | Rewrite prose optimized for a Gentle Lovelace quality dimension |
-| `replica_compose` | `hkask-mcp-replica` | Generate prose in any author's style (underlying engine) |
-| `replica_compare` | `hkask-mcp-replica` | Evaluate document against persona centroids (per-dimension scoring) |
+| `replica_rewrite` | `hkask-mcp-corpus` | Rewrite prose optimized for a Gentle Lovelace quality dimension |
+| `replica_compose` | `hkask-mcp-corpus` | Generate prose in any author's style (underlying engine) |
+| `replica_compare` | `hkask-mcp-corpus` | Evaluate document against persona centroids (per-dimension scoring) |
 
 ### 4.5 The Spec Store
 
@@ -206,7 +206,7 @@ The replica server provides 9 tools for style corpus management, prose generatio
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-replica` | `replica_build`, `replica_compose`, `replica_rewrite`, `replica_mashup`, `replica_compare`, `replica_registry`, `replica_explain`, `replica_discover`, `replica_cache_work` | Style replication + prose rewriting | ✅ Implemented |
+| `hkask-mcp-corpus` | `replica_build`, `replica_compose`, `replica_rewrite`, `replica_mashup`, `replica_compare`, `replica_registry`, `replica_explain`, `replica_discover`, `replica_cache_work`, `docproc_convert`, `docproc_ocr`, `docproc_chunk`, `docproc_tag_chunks`, `docproc_embed`, `docproc_extract_triples`, `docproc_dedup_chunks`, `docproc_consolidate_chunks`, `docproc_build_prompts`, `docproc_generate_qa`, `docproc_generate_qa_batch`, `docproc_ingest_qa`, `docproc_prepare_training_dataset`, `docproc_cache`, `docproc_query`, `docproc_clear_index`, `docproc_purge_qa` | Corpus gathering + processing + QA generation + style replication | ✅ Implemented |
 
 ### 4.7 Replica Exemplar Architecture
 

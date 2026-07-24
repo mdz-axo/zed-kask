@@ -149,7 +149,7 @@ pub enum ToolSubsystem {
     WebSearch,
     Condenser,
     Training,
-    Replica,
+    Corpus,
     Research,
     Communication,
     Registry,
@@ -158,7 +158,6 @@ pub enum ToolSubsystem {
     Kanban,
     Memory,
     Companies,
-    Docproc,
     Filesystem,
     Curator,
     /// Catch-all for unknown or future MCP servers.
@@ -166,7 +165,7 @@ pub enum ToolSubsystem {
 }
 
 impl ToolSubsystem {
-    /// Map an MCP server name (e.g., "memory", "hkask-mcp-replica") to a ToolSubsystem.
+    /// Map an MCP server name (e.g., "memory", "hkask-mcp-corpus") to a ToolSubsystem.
     ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  server_name is a non-empty string
@@ -182,9 +181,8 @@ impl ToolSubsystem {
             "companies" => ToolSubsystem::Companies,
             "communication" => ToolSubsystem::Communication,
             "fal" | "media" => ToolSubsystem::Media,
-            "docproc" => ToolSubsystem::Docproc,
+            "corpus" => ToolSubsystem::Corpus,
             "training" => ToolSubsystem::Training,
-            "replica" => ToolSubsystem::Replica,
             "kanban" => ToolSubsystem::Kanban,
             "curator" => ToolSubsystem::Curator,
             _ => ToolSubsystem::Other,
@@ -197,7 +195,7 @@ impl ToolSubsystem {
             ToolSubsystem::WebSearch => "web_search",
             ToolSubsystem::Condenser => "condenser",
             ToolSubsystem::Training => "training",
-            ToolSubsystem::Replica => "replica",
+            ToolSubsystem::Corpus => "corpus",
             ToolSubsystem::Research => "research",
             ToolSubsystem::Communication => "communication",
             ToolSubsystem::Registry => "registry",
@@ -206,7 +204,6 @@ impl ToolSubsystem {
             ToolSubsystem::Kanban => "kanban",
             ToolSubsystem::Memory => "memory",
             ToolSubsystem::Companies => "companies",
-            ToolSubsystem::Docproc => "docproc",
             ToolSubsystem::Filesystem => "filesystem",
             ToolSubsystem::Curator => "curator",
             ToolSubsystem::Other => "other",
@@ -255,7 +252,7 @@ impl RegulationSpan {
                 ToolSubsystem::WebSearch => "reg.tool.web_search",
                 ToolSubsystem::Condenser => "reg.tool.condenser",
                 ToolSubsystem::Training => "reg.tool.training",
-                ToolSubsystem::Replica => "reg.tool.replica",
+                ToolSubsystem::Corpus => "reg.tool.corpus",
                 ToolSubsystem::Research => "reg.tool.research",
                 ToolSubsystem::Communication => "reg.tool.communication",
                 ToolSubsystem::Registry => "reg.tool.registry",
@@ -264,7 +261,6 @@ impl RegulationSpan {
                 ToolSubsystem::Kanban => "reg.tool.kanban",
                 ToolSubsystem::Memory => "reg.tool.memory",
                 ToolSubsystem::Companies => "reg.tool.companies",
-                ToolSubsystem::Docproc => "reg.tool.docproc",
                 ToolSubsystem::Filesystem => "reg.tool.filesystem",
                 ToolSubsystem::Curator => "reg.tool.curator",
                 ToolSubsystem::Other => "reg.tool",
@@ -319,8 +315,8 @@ impl std::str::FromStr for RegulationSpan {
             "reg.tool.training" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Training,
             }),
-            "reg.tool.replica" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Replica,
+            "reg.tool.corpus" => Ok(RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Corpus,
             }),
             "reg.tool.research" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Research,
@@ -345,9 +341,6 @@ impl std::str::FromStr for RegulationSpan {
             }),
             "reg.tool.companies" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Companies,
-            }),
-            "reg.tool.docproc" => Ok(RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Docproc,
             }),
             "reg.tool.filesystem" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Filesystem,
@@ -407,7 +400,7 @@ mod reg_span_tests {
             "reg.tool.web_search",
             "reg.tool.condenser",
             "reg.tool.training",
-            "reg.tool.replica",
+            "reg.tool.corpus",
             "reg.tool.research",
             "reg.tool.communication",
             "reg.tool.registry",
@@ -416,7 +409,6 @@ mod reg_span_tests {
             "reg.tool.kanban",
             "reg.tool.memory",
             "reg.tool.companies",
-            "reg.tool.docproc",
             "reg.tool.filesystem",
             "reg.tool.curator",
             "reg.inference",
@@ -466,7 +458,7 @@ mod reg_span_tests {
                 subsystem: ToolSubsystem::Training,
             },
             RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Replica,
+                subsystem: ToolSubsystem::Corpus,
             },
             RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Research,
@@ -491,9 +483,6 @@ mod reg_span_tests {
             },
             RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Companies,
-            },
-            RegulationSpan::Tool {
-                subsystem: ToolSubsystem::Docproc,
             },
             RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Filesystem,

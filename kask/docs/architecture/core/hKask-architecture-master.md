@@ -952,7 +952,7 @@ Domain crates **never** depend on service layer subcrates. MCP servers **never**
 
 ### Key Constraints
 
-1. **MCP servers should not depend on service layer subcrates for orchestration** — P1 Prohibition (out-of-process isolation). Exceptions: servers that are direct surfaces for a service (CLI/API/MCP tri-surface pattern). `hkask-mcp-replica` is a tri-surface for `ComposeService` + `EmbedService`. Pure business logic lives in `hkask-storage::spec_types` (shared kernel). Neither server orchestrates — they delegate.
+1. **MCP servers should not depend on service layer subcrates for orchestration** — P1 Prohibition (out-of-process isolation). Exceptions: servers that are direct surfaces for a service (CLI/API/MCP tri-surface pattern). `hkask-mcp-corpus` is a tri-surface for `ComposeService` + `EmbedService`. Pure business logic lives in `hkask-storage::spec_types` (shared kernel). The server delegates — it does not orchestrate.
 2. **Domain crates do NOT depend on service layer subcrates** — dependency direction is strictly surface → service → domain.
 
 

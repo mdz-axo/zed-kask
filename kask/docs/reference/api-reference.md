@@ -493,9 +493,8 @@ MCP runtime and dispatch for hKask.
 | `communication` | `hkask-mcp-communication` |
 | `curator` | `hkask-mcp-curator` |
 | `media` | `hkask-mcp-media` |
-| `docproc` | `hkask-mcp-docproc` |
+| `docproc` | `hkask-mcp-corpus` |
 | `training` | `hkask-mcp-training` |
-| `replica` | `hkask-mcp-replica` |
 | `kanban` | `hkask-mcp-kata-kanban` |
 | `skill` | `hkask-mcp-skill` |
 | `filesystem` | `hkask-mcp-filesystem` |

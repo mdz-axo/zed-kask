@@ -152,7 +152,7 @@ verified_against: crates/hkask-types/src/lib.rs, crates/hkask-regulation/src/lib
 status: VERIFIED
 -->
 
-Domain crates **never** depend on service layer subcrates. MCP servers **never** depend on service layer subcrates for orchestration (P1 Prohibition — out-of-process isolation). Tri-surface exception: `hkask-mcp-replica` imports for delegation only.
+Domain crates **never** depend on service layer subcrates. MCP servers **never** depend on service layer subcrates for orchestration (P1 Prohibition — out-of-process isolation). Tri-surface exception: `hkask-mcp-corpus` imports for delegation only.
 
 ### 1.5.3 Loop Architecture Membrane
 

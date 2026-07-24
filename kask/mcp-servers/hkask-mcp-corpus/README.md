@@ -1,8 +1,8 @@
-# hkask-mcp-docproc
+# hkask-mcp-corpus
 
-Unified document processing MCP server — format conversion, OCR, chunking, triple extraction,
-embedding, QA generation, caching, and semantic query. Supersedes the former
-`hkask-mcp-markitdown` and `hkask-mcp-doc-knowledge` servers.
+Unified corpus MCP server — gather, process, and output. Combines the former
+`hkask-mcp-docproc` and `hkask-mcp-replica` servers into a single server
+organized by corpus flow stage.
 
 ## Architecture
 
@@ -13,15 +13,16 @@ helpers.rs        — Math/text helpers (cosine_similarity, tokens_to_words, chu
                    serialize_passages)
 json_extract.rs   — Brace-balanced JSON extraction from LLM responses (RR-0017)
 tools/
-  document.rs    — docproc_convert, docproc_ocr, docproc_chunk
-  semantic/      — docproc_generate_qa, docproc_generate_qa_batch, docproc_extract_triples,
-                   docproc_embed (tool methods in mod.rs; helpers in qa.rs, triples.rs,
-                   ontology_io.rs)
-  corpus/        — docproc_dedup_chunks, docproc_consolidate_chunks, docproc_build_prompts,
-                   docproc_ingest_qa, docproc_prepare_training_dataset (tool methods in
-                   mod.rs; helpers in clustering.rs, qa_types.rs, qa_parsing.rs)
-  storage.rs     — docproc_cache, docproc_query, docproc_clear_index, docproc_purge_qa
-  tagging/       — docproc_tag_chunks (ontology tagging with validate_ontology_tags)
+  gather/         — replica_discover, replica_cache_work (corpus gathering)
+  document.rs     — docproc_convert, docproc_ocr, docproc_chunk (text extraction)
+  semantic/       — docproc_generate_qa, docproc_generate_qa_batch, docproc_extract_triples,
+                   docproc_embed (process + QA output)
+  corpus/         — docproc_dedup_chunks, docproc_consolidate_chunks, docproc_build_prompts,
+                   docproc_ingest_qa, docproc_prepare_training_dataset (QA output)
+  tagging/        — docproc_tag_chunks (ontology tagging with validate_ontology_tags)
+  persona/        — replica_build, replica_compose, replica_rewrite, replica_mashup,
+                   replica_compare, replica_registry, replica_explain (persona/style output)
+  storage.rs      — docproc_cache, docproc_query, docproc_clear_index, docproc_purge_qa
 ocr/ (11 modules)
   pipeline.rs    — OcrExecutor trait, run_pipeline orchestrator, cross-validation,
                    semantic enrichment, Levenshtein distance
@@ -37,9 +38,20 @@ ocr/ (11 modules)
   mod.rs         — Re-exports
 convert.rs        — Format detection, HTML stripping, markdown frontmatter removal
 template.rs       — Cached minijinja environment for docproc prompt templates
+bridge/           — Ontology bridges (golem, fibo, eso) — consolidated from former
+                   duplicated golem.rs in replica + docproc
 ```
 
-## Tools (17)
+## Tools (24)
+
+### Gather (2)
+
+| Tool | Description |
+|------|-------------|
+| `replica_discover` | Discover an academic author's body of work and generate a corpus.yaml for replica_build. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes. |
+| `replica_cache_work` | Cache an extracted work's content to disk for reuse by replica_build. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading. |
+
+### Process (8)
 
 | Tool | Description |
 |------|-------------|
@@ -47,19 +59,41 @@ template.rs       — Cached minijinja environment for docproc prompt templates
 | `docproc_ocr` | OCR a document using a local vision model. Requires `HKASK_OCR_MODEL` or explicit `model` parameter. |
 | `docproc_chunk` | Chunk text into passages at configurable token granularity. Accepts raw text or file path. Supports single-tier and multi-tier (coarse/medium/fine). Auto-indexing into in-memory vector store. |
 | `docproc_tag_chunks` | Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO/FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template with `validate_ontology_tags` schema enforcement. Computes graph-centrality salience. Input guard is always-on (non-disableable). |
+| `docproc_embed` | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate. |
+| `docproc_extract_triples` | Extract RDF triples with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags (M4 fix). |
 | `docproc_dedup_chunks` | Deduplicate chunks by semantic embedding similarity (cosine > 0.85 default). Clusters within each source file, keeps highest-salience chunk per cluster. |
 | `docproc_consolidate_chunks` | Consolidate semantically related chunks via LLM synthesis. Clusters by cosine > 0.75, synthesizes each multi-chunk cluster into a single passage, re-embeds. Merges ontology tags with normalization. |
+
+### QA Output (5)
+
+| Tool | Description |
+|------|-------------|
 | `docproc_build_prompts` | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. Outputs prompts JSONL consumed by `docproc_generate_qa_batch`. |
 | `docproc_generate_qa` | Generate validated QA pairs from one source chunk or a cited cross-reference set. Accepts an optional provider-prefixed `model`; every accepted response includes model, parameters, template, and source provenance. |
 | `docproc_generate_qa_batch` | Generate validated QA pairs for a batch under one optional provider-prefixed model. Concurrent processing with 3-attempt retry and `degraded` outcome classification on >10% failure rate. |
 | `docproc_ingest_qa` | Parse, quality-filter, dedup, and store generated QAs as training-ready JSONL. Stores h_mems with ontology provenance. |
 | `docproc_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
-| `docproc_extract_triples` | Extract RDF triples with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags (M4 fix). |
-| `docproc_embed` | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate. |
+| `docproc_purge_qa` | Purge QA h_mems from the memory DB by dataset name. |
+
+### Persona/Style Output (7)
+
+| Tool | Description |
+|------|-------------|
+| `replica_build` | Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid. |
+| `replica_compose` | Generate prose in an author's style |
+| `replica_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific Gentle Lovelace quality dimension (gentle/schriver/hopper/lovelace/composite) |
+| `replica_compare` | Compare all built author replicas, or evaluate a document against a persona's centroids |
+| `replica_mashup` | Generate prose blending two authors' styles |
+| `replica_registry` | Manage the registry of built author replicas |
+| `replica_explain` | Explain what style centroids are and how the metadata layer works |
+
+### Manage (3)
+
+| Tool | Description |
+|------|-------------|
 | `docproc_cache` | Cache processed document text keyed by label in `~/.config/hkask/docproc-cache/`. |
 | `docproc_query` | Semantic search over indexed passages. Embeds query, computes cosine similarity, returns top-k. Optional LLM-augmented answer via `docproc/rag-answer.j2` template. |
 | `docproc_clear_index` | Clear the in-memory vector index between document sets. |
-| `docproc_purge_qa` | Purge QA h_mems from the memory DB by dataset name. |
 
 ## OCR Pipeline
 
@@ -84,6 +118,7 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 | `HKASK_EMBEDDING_MODEL` | Embedding model for vectorization and semantic search. Fallback: `~/.config/hkask/settings.json` → `embedding_model`. |
 | `HKASK_TEMPLATE_ROOT` | Root containing `templates/docproc/`. Default: `registry` (relative to CWD). |
 | `HKASK_QA_MODEL` | Default provider-prefixed QA model. A request-level `model` wins; otherwise the router uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`. |
+| `HKASK_DEFAULT_MODEL` | Default generation model for all inference (also used for prose composition). |
 | `HKASK_USE_FAL_DOCRES` | Set to `true` to enable fal.ai docres binarization enhancement (opt-in, ~40s latency). Requires `FA_API_KEY`. |
 | `HKASK_MCP_HOST` | UserPod identity for Regulation narrative memory. |
 
@@ -124,13 +159,15 @@ The server emits Regulation spans under these targets for cybernetic feedback:
 
 ## Shared Infrastructure
 
-Docproc integrates with hkask's shared service layer:
+Corpus server integrates with hkask's shared service layer:
 
 - **Settings:** Model defaults from `~/.config/hkask/settings.json` via `hkask-services-core::HkaskSettings`
 - **Template rendering:** Minijinja-based (same pattern as `self_heal.rs` and `ManifestExecutor`)
 - **Templates:** `registry/templates/docproc/{generate-qa,extract-hmems,rag-answer}.j2`
 - **Regulation:** Daemon-backed event persistence for Curator consumption
 - **Inference:** `hkask-inference` router with provider-prefixed model names
+- **Compose:** `hkask-services-compose` for prose generation (persona tools)
+- **Corpus:** `hkask-services-corpus` for `EmbedService::embed_corpus` (replica_build)
 
 ## QA Model and Output Contract
 
@@ -153,5 +190,5 @@ DocProc rejects malformed JSON, empty questions or answers, unsupported Bloom le
 # The server starts automatically with kask
 kask chat
 # Or standalone:
-hkask-mcp-docproc
+hkask-mcp-corpus
 ```

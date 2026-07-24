@@ -90,9 +90,9 @@ Three ontology bridge crates provide canonical predicate constants:
 
 | Crate | Ontology | Constants |
 |-------|----------|-----------|
-| `hkask-mcp-docproc::bridge::golem` | Narrative/literary | 16 predicates (hasCharacter, illustrates, metaphorFor, ...) |
-| `hkask-mcp-docproc::bridge::fibo` | Financial/business | 12 concepts (competitiveAdvantage, returnOnCapital, ...) |
-| `hkask-mcp-docproc::bridge::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
+| `hkask-mcp-corpus::bridge::golem` | Narrative/literary | 16 predicates (hasCharacter, illustrates, metaphorFor, ...) |
+| `hkask-mcp-corpus::bridge::fibo` | Financial/business | 12 concepts (competitiveAdvantage, returnOnCapital, ...) |
+| `hkask-mcp-corpus::bridge::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
 
 These follow the pattern of `hkask-bridge-dublincore` and `hkask-bridge-dublincore`:
 type alias + const strings, no dependencies, no reasoners.

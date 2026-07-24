@@ -9,6 +9,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
+use settings_content::KaskSettingsContent;
 
 /// Kask-specific settings (the `"kask"` section in settings.json).
 ///
@@ -126,4 +127,39 @@ fn default_consolidation_cadence() -> u64 {
 
 fn default_confidence_floor() -> f64 {
     0.3
+}
+
+impl Settings for KaskSettings {
+    fn from_settings(s: &settings_content::SettingsContent) -> Self {
+        s.kask.clone().map(|c| c.into()).unwrap_or_default()
+    }
+}
+
+impl From<KaskSettingsContent> for KaskSettings {
+    fn from(c: KaskSettingsContent) -> Self {
+        Self {
+            mcp: c.mcp.map(|m| KaskMcpSettings {
+                load_default: m.load_default.unwrap_or(true),
+                overrides: m.overrides,
+            }).unwrap_or_default(),
+            data_services: c.data_services.map(|d| KaskDataServiceSettings {
+                eodhd_enabled: d.eodhd_enabled.unwrap_or(false),
+                fmp_enabled: d.fmp_enabled.unwrap_or(false),
+                exa_enabled: d.exa_enabled.unwrap_or(false),
+                tavily_enabled: d.tavily_enabled.unwrap_or(false),
+                brave_enabled: d.brave_enabled.unwrap_or(false),
+            }).unwrap_or_default(),
+            curator: c.curator.map(|c| KaskCuratorSettings {
+                always_on: c.always_on.unwrap_or(true),
+                algedonic_threshold: c.algedonic_threshold.unwrap_or(0.8),
+            }).unwrap_or_default(),
+            guard: c.guard.map(|g| KaskGuardSettings {
+                direct_chat_strategy: g.direct_chat_strategy.unwrap_or_else(|| "cascade_only".to_string()),
+            }).unwrap_or_default(),
+            memory: c.memory.map(|m| KaskMemorySettings {
+                consolidation_cadence_secs: m.consolidation_cadence_secs.unwrap_or(300),
+                confidence_floor: m.confidence_floor.unwrap_or(0.3),
+            }).unwrap_or_default(),
+        }
+    }
 }

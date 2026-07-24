@@ -252,7 +252,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-002
 verified_date: 2026-07-10
-verified_against: corpus/chunks/chunks.jsonl; corpus/chunks/tagged_chunks.jsonl; corpus/qa_pairs/prompts_bloom.jsonl; corpus/qa_pairs/gen_bloom_all.jsonl; mcp-servers/hkask-mcp-docproc/src/tools/storage.rs; mcp-servers/hkask-mcp-replica/src/lib.rs:1061-1324; crates/hkask-types/src/pipeline_runner.rs; mcp-servers/hkask-mcp-training/src/providers/runpod.rs
+verified_against: corpus/chunks/chunks.jsonl; corpus/chunks/tagged_chunks.jsonl; corpus/qa_pairs/prompts_bloom.jsonl; corpus/qa_pairs/gen_bloom_all.jsonl; mcp-servers/hkask-mcp-corpus/src/tools/storage.rs; mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; crates/hkask-types/src/pipeline_runner.rs; mcp-servers/hkask-mcp-training/src/providers/runpod.rs
 status: VERIFIED
 -->
 
@@ -297,7 +297,7 @@ The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-003
 verified_date: 2026-07-10
-verified_against: mcp-servers/hkask-mcp-replica/src/lib.rs:1061-1324; crates/hkask-types/src/pipeline_runner.rs:37-142; crates/hkask-types/src/pipeline_manifest.rs:49-91; crates/hkask-mcp/src/server/tool_span.rs:247-261
+verified_against: mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; crates/hkask-types/src/pipeline_runner.rs:37-142; crates/hkask-types/src/pipeline_manifest.rs:49-91; crates/hkask-mcp/src/server/tool_span.rs:247-261
 status: VERIFIED
 -->
 

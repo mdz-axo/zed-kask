@@ -14,11 +14,10 @@ Built-in MCP servers shipped with hKask. Each server is a thin surface over doma
 | CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 10 | `hkask-mcp-codegraph` |
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | — | — |
 | Memory | `mcp-servers/hkask-mcp-memory` | Episodic and semantic memory | — | — |
-| DocProc | `mcp-servers/hkask-mcp-docproc` | Document processing and QA generation | — | — |
+| DocProc/Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 24 | — |
 | Filesystem | `mcp-servers/hkask-mcp-filesystem` | File access and shell operations (OCAP-sandboxed) | 7 | — |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 14 | `hkask-services-kata-kanban` |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | — | — |
-| Replica | `mcp-servers/hkask-mcp-replica` | UserPod lifecycle | — | — |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `hkask-mcp-research` |
 | [Skill](skill-server.md) | `mcp-servers/hkask-mcp-skill` | Skill registry access (list, execute) | 3 | — |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | — | — |
