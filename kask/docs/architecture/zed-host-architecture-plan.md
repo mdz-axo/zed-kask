@@ -10,9 +10,18 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **Build status (2026-07-23):** The full kask workspace (38 crates: 27 keep + 11 MCP servers) builds clean inside the zed-kask workspace. The dependency invariant holds (no hKask crate depends on a zed crate). The `kask_bridge` and `kask_panel` crates (D8/D10) are planned but not yet created — they'll be added when the integration work begins.
+> **Build status (2026-07-23):** The full kask workspace (38 crates: 27 keep + 11 MCP servers) + `kask_bridge` + the zed integration crates (`agent`, `agent_ui`, `paths`, `release_channel`) all build clean. The dependency invariant holds (no hKask crate depends on a zed crate).
 >
-> **Revised approach for `hkask-inference`:** Kept for now (MCP servers use it directly). Will read API keys from zed's `CredentialsProvider` (D9b) instead of env vars. Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.
+> **Integration progress:**
+> - **D8 (bridge):** `kask_bridge` crate created — `InferencePort` over zed's `LanguageModel`, `SecretsPort` over `CredentialsProvider`, `BridgeManifestExecutor` for D1.
+> - **D9b (API keys):** `InferenceConfig::from_secrets()` reads API keys via `SecretsPort` (zed's `CredentialsProvider`) with env var fallback.
+> - **D1 (skill execution):** `SkillTool` has optional `SkillManifestExecutor`; when present, runs the hKask cascade instead of body injection. `kask_bridge::BridgeManifestExecutor` implements it. KnowAct skills work now; FlowDef gates on D3.
+> - **D2 (Curator agent):** `Curator` variant added to `agent_ui::Agent` enum; `CURATOR_AGENT_ID` added to `agent` crate. Selectable in the Agent Panel. Reuses `NativeAgentServer` infrastructure.
+> - **D7 (app-identity):** `APP_NAME` → `Zed-Kask`, `app_identifier`/`app_id`/`display_name` renamed, macOS single-instance port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`/`.zed-kask_wsl_server`, bundle identifiers `dev.zed-kask.*`.
+>
+> **Revised approach for `hkask-inference`:** Kept (MCP servers use it directly). Reads API keys via `SecretsPort` (D9b). Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.
+>
+> **Remaining:** D3 (in-process tool hosting — replace `NoOpToolPort`), D4 (guard layer), D5 (sovereignty keys), D6 (thread→memory), D9a (kask settings section), D10 (kask_panel GPUI panel).
 >
 > **One-line frame:** `Clones/zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask (`Clones/hKask`) is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 

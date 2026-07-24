@@ -30,7 +30,9 @@ pub use hkask_types::Skill;
 pub use hkask_types::SkillPolarity;
 pub use hkask_types::SkillZone;
 
-pub use manifest_loader::{ManifestLoadError, load_manifest_from_yaml, resolve_manifest};
+pub use manifest_loader::{
+    ManifestLoadError, load_manifest_from_file, load_manifest_from_yaml, resolve_manifest,
+};
 pub use ports::{
     FsSkillReader, ManifestResolveError, Result, SkillFinding, SkillReader, TemplateError,
 };

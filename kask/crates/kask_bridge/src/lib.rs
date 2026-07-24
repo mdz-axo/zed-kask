@@ -9,6 +9,8 @@
 
 mod inference;
 mod secrets;
+mod skill_executor;
 
 pub use inference::LanguageModelInferencePort;
 pub use secrets::{CredentialsSecretsPort, KASK_CREDENTIAL_NAMESPACE};
+pub use skill_executor::BridgeManifestExecutor;

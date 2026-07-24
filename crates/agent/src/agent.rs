@@ -2561,6 +2561,10 @@ fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSele
 
 pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
 
+/// The hKask Curator agent ID (D2). The Curator is a native in-process agent
+/// backed by hKask's regulation + metacognition loops.
+pub static CURATOR_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Curator"));
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
         ZED_AGENT_ID.clone()

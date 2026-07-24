@@ -120,7 +120,7 @@ where
 ///
 /// Reads the file, parses it using the `ManifestFile` wrapper, and
 /// flattens the structure into a canonical `BundleManifest`.
-pub(crate) fn load_manifest_from_file(
+pub fn load_manifest_from_file(
     path: &std::path::Path,
 ) -> Result<BundleManifest, ManifestLoadError> {
     let content = std::fs::read_to_string(path).map_err(|e| ManifestLoadError::Io {

@@ -37,5 +37,5 @@ pub use regulation::{
     BackpressureSignal, CircuitBreakerPort, ConsolidationOutcome, ConsolidationRequest,
     DecayConfig, DepletionSignal, LedgerObserver, LedgerStoragePort, WeightedEvent,
 };
-pub use secrets_port::{SecretsError, SecretsPort};
+pub use secrets_port::{SecretsError, SecretsFuture, SecretsPort};
 pub use wallet_budget_port::{WalletBudgetError, WalletBudgetPort};

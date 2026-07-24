@@ -120,6 +120,42 @@ pub type SkillBodyResolver =
 pub struct SkillTool {
     skills: SkillsResolver,
     body_resolver: SkillBodyResolver,
+    /// Optional hKask ManifestExecutor for cascade-based skill execution (D1).
+    /// When present, skill activation runs the manifest cascade instead of
+    /// injecting the SKILL.md body. When absent, falls back to body injection.
+    manifest_executor: Option<Arc<dyn SkillManifestExecutor>>,
+}
+
+/// Trait for executing hKask skill manifests (D1 seam).
+///
+/// Implemented by `kask_bridge` over the compiled-in `ManifestExecutor`.
+/// This keeps zed's `agent` crate from depending on hKask crates directly —
+/// the bridge provides the implementation.
+#[async_trait::async_trait]
+pub trait SkillManifestExecutor: Send + Sync {
+    /// Execute an hKask skill manifest by name and return the result as text.
+    ///
+    /// The implementation resolves the skill name to its `manifest.yaml` in the
+    /// hKask registry (`kask/registry/manifests/<name>.yaml`), loads it as a
+    /// `BundleManifest`, and runs the `ManifestExecutor` cascade (KnowAct/FlowDef/
+    /// RenderAct + PDCA + gas/rjoule + OCAP).
+    ///
+    /// `skill_name` is the hKask skill ID (e.g., "grill-me", "essentialist").
+    /// `context` is the initial context for the cascade (user input, etc.).
+    ///
+    /// Returns the cascade's final output as text, or an error message.
+    async fn execute_skill(
+        &self,
+        skill_name: &str,
+        context: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<String, String>;
+
+    /// Check whether a skill has an hKask manifest in the registry.
+    ///
+    /// Returns `true` if `kask/registry/manifests/<skill_name>.yaml` exists.
+    /// Used by the `SkillTool` to decide whether to run the cascade or fall
+    /// back to body injection.
+    fn has_manifest(&self, skill_name: &str) -> bool;
 }
 
 impl SkillTool {
@@ -131,6 +167,29 @@ impl SkillTool {
         Self {
             skills: Arc::new(skills),
             body_resolver: Arc::new(body_resolver),
+            manifest_executor: None,
+        }
+    }
+
+    /// Construct with an hKask ManifestExecutor for cascade-based skill execution (D1).
+    ///
+    /// When a manifest executor is present, skill activation runs the hKask
+    /// cascade (KnowAct/FlowDef/RenderAct + PDCA + gas/rjoule + OCAP) instead
+    /// of injecting the SKILL.md body. The `SKILL.md` frontmatter stays the
+    /// discovery-only catalog entry.
+    pub fn with_manifest_executor<F, R>(
+        skills: F,
+        body_resolver: R,
+        manifest_executor: Arc<dyn SkillManifestExecutor>,
+    ) -> Self
+    where
+        F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
+        R: Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static,
+    {
+        Self {
+            skills: Arc::new(skills),
+            body_resolver: Arc::new(body_resolver),
+            manifest_executor: Some(manifest_executor),
         }
     }
 }
@@ -205,20 +264,11 @@ impl AgentTool for SkillTool {
 
             // For built-in skills the body is already in memory (compiled
             // into the binary). For user skills, read on demand from disk.
-            let body = if let Some(embedded) = skill.embedded_body {
-                embedded.to_string()
-            } else {
-                (self.body_resolver)(skill.clone(), cx).await.map_err(|e| {
-                    SkillToolOutput::Error {
-                        error: e.to_string(),
-                    }
-                })?
-            };
-            let rendered = render_skill_envelope(&skill, &body);
-
-            // Built-in skills ship with Zed and are trusted by default,
-            // so they skip the authorization prompt. User-installed skills
-            // go through the standard Allow-Once / Always-Allow UX.
+            //
+            // When a ManifestExecutor is present (D1), the skill's manifest
+            // cascade is executed instead of body injection. The SKILL.md
+            // frontmatter stays the discovery-only catalog entry.
+            let skill_name = input.name.clone();
             let is_builtin = skill.source == agent_skills::SkillSource::BuiltIn;
             if !is_builtin {
                 let authorize = cx.update(|cx| {
@@ -230,6 +280,51 @@ impl AgentTool for SkillTool {
                     error: e.to_string(),
                 })?;
             }
+
+            let rendered = if let Some(executor) = &self.manifest_executor {
+                // D1: run the hKask manifest cascade (KnowAct/FlowDef/RenderAct + PDCA).
+                // Check if this skill has an hKask manifest in the registry.
+                // If it does, run the cascade; if not, fall back to body injection.
+                let skill_name = skill.name.as_ref();
+                if executor.has_manifest(skill_name) {
+                    let context = std::collections::HashMap::new();
+                    match executor.execute_skill(skill_name, context).await {
+                        Ok(result_text) => render_skill_envelope(&skill, &result_text),
+                        Err(e) => {
+                            return Err(SkillToolOutput::Error {
+                                error: format!(
+                                    "Skill '{}' manifest execution failed: {}",
+                                    skill_name, e
+                                ),
+                            });
+                        }
+                    }
+                } else {
+                    // No hKask manifest — fall back to body injection
+                    let body = if let Some(embedded) = skill.embedded_body {
+                        embedded.to_string()
+                    } else {
+                        (self.body_resolver)(skill.clone(), cx).await.map_err(|e| {
+                            SkillToolOutput::Error {
+                                error: e.to_string(),
+                            }
+                        })?
+                    };
+                    render_skill_envelope(&skill, &body)
+                }
+            } else {
+                // No manifest executor configured — body injection (original behavior)
+                let body = if let Some(embedded) = skill.embedded_body {
+                    embedded.to_string()
+                } else {
+                    (self.body_resolver)(skill.clone(), cx).await.map_err(|e| {
+                        SkillToolOutput::Error {
+                            error: e.to_string(),
+                        }
+                    })?
+                };
+                render_skill_envelope(&skill, &body)
+            };
 
             Ok(SkillToolOutput::Found { rendered })
         })

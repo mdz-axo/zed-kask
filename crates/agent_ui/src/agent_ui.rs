@@ -407,6 +407,7 @@ where
         AgentIdOrLegacyAgent::AgentId(agent_id) => Ok(agent_id),
         AgentIdOrLegacyAgent::LegacyAgent(Agent::Custom { id }) => Ok(id),
         AgentIdOrLegacyAgent::LegacyAgent(Agent::NativeAgent) => Ok(Agent::NativeAgent.id()),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Curator) => Ok(Agent::Curator.id()),
         #[cfg(any(test, feature = "test-support"))]
         AgentIdOrLegacyAgent::LegacyAgent(Agent::Stub) => Ok(Agent::Stub.id()),
     }
@@ -426,6 +427,9 @@ pub enum Agent {
     #[default]
     #[serde(alias = "NativeAgent", alias = "TextThread")]
     NativeAgent,
+    /// hKask Curator — the cybernetic regulator agent (D2).
+    /// A native in-process agent backed by hKask's Curator + guarded inference.
+    Curator,
     #[serde(alias = "Custom")]
     Custom {
         #[serde(rename = "name")]
@@ -440,6 +444,9 @@ impl From<AgentId> for Agent {
         if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
             return Self::NativeAgent;
         }
+        if id.as_ref() == agent::CURATOR_AGENT_ID.as_ref() {
+            return Self::Curator;
+        }
         #[cfg(any(test, feature = "test-support"))]
         if id.as_ref() == "stub" {
             return Self::Stub;
@@ -452,6 +459,7 @@ impl Agent {
     pub fn id(&self) -> AgentId {
         match self {
             Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
+            Self::Curator => agent::CURATOR_AGENT_ID.clone(),
             Self::Custom { id } => id.clone(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => "stub".into(),
@@ -459,12 +467,13 @@ impl Agent {
     }
 
     pub fn is_native(&self) -> bool {
-        matches!(self, Self::NativeAgent)
+        matches!(self, Self::NativeAgent | Self::Curator)
     }
 
     pub fn label(&self) -> SharedString {
         match self {
             Self::NativeAgent => "Zed Agent".into(),
+            Self::Curator => "Curator".into(),
             Self::Custom { id, .. } => id.0.clone(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => "Stub Agent".into(),
@@ -474,6 +483,7 @@ impl Agent {
     pub fn icon(&self) -> Option<IconName> {
         match self {
             Self::NativeAgent => None,
+            Self::Curator => Some(IconName::ZedAssistant),
             Self::Custom { .. } => Some(IconName::Sparkle),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => None,
@@ -487,6 +497,11 @@ impl Agent {
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
+            // The Curator reuses the NativeAgentServer infrastructure (D2).
+            // It's a native in-process agent with a Curator-specific system prompt
+            // and guarded inference. The regulation/metacognition loops run as
+            // background tasks wired at startup.
+            Self::Curator => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
             Self::Custom { id: name } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }

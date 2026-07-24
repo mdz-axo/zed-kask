@@ -299,6 +299,7 @@ dependencies = [
  "assets",
  "async-channel 2.5.0",
  "async-io",
+ "async-trait",
  "chrono",
  "client",
  "clock",
@@ -12191,15 +12192,19 @@ dependencies = [
 name = "kask_bridge"
 version = "0.31.0"
 dependencies = [
+ "agent",
  "anyhow",
+ "async-trait",
  "credentials_provider",
  "futures-util",
  "gpui",
  "hkask-capability",
+ "hkask-templates",
  "hkask-types",
  "language_model",
  "language_model_core",
  "serde_json",
+ "tokio",
  "tracing",
 ]
 
