@@ -23,7 +23,6 @@ hkask-mcp-server = { path = "../hkask-mcp-server" }
 tempfile.workspace = true
 proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }
-hkask-mcp-cloud-gateway = { path = "../hkask-mcp-cloud-gateway" }
 rcgen = "0.13"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

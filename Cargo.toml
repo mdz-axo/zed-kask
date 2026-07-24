@@ -261,10 +261,8 @@ members = [
 
     #
     # kask/ — hKask integration (additive; upstream never touches here)
-    # See DIVERGENCE.md and kask/docs/architecture/zed-host-architecture-plan.md
+    # See kask/docs/architecture/zed-host-architecture-plan.md
     #
-    "kask/crates/kask_bridge",
-    "kask/crates/kask_panel",
     "kask/crates/hkask-types",
     "kask/crates/hkask-capability",
     "kask/crates/hkask-goal",
@@ -277,16 +275,14 @@ members = [
     "kask/crates/hkask-mcp",
     "kask/crates/hkask-pods",
     "kask/crates/hkask-mcp-server",
+    "kask/crates/hkask-ledger",
 
     #
-    # kask/mcp-servers/ — MCP server source crates (T0.6)
+    # kask/mcp-servers/ — MCP server source crates (on-disk set)
     #
     "kask/mcp-servers/hkask-mcp-scenarios",
-    "kask/mcp-servers/hkask-mcp-regulation",
-    "kask/mcp-servers/hkask-mcp-skill",
     "kask/mcp-servers/hkask-mcp-research",
     "kask/mcp-servers/hkask-mcp-codegraph",
-    "kask/mcp-servers/hkask-mcp-memory",
     "kask/mcp-servers/hkask-mcp-condenser",
     "kask/mcp-servers/hkask-mcp-curator",
     "kask/mcp-servers/hkask-mcp-kata-kanban",
@@ -295,17 +291,16 @@ members = [
     "kask/mcp-servers/hkask-mcp-companies",
     "kask/mcp-servers/hkask-mcp-replica",
     "kask/mcp-servers/hkask-mcp-docproc",
-
-    #
-    # kask/crates/ — keep-crates migrated late (T0.6)
-    #
-    "kask/crates/hkask-ledger",
 ]
 default-members = ["crates/zed"]
 
 [workspace.package]
 publish = false
 edition = "2024"
+# hKask crates inherit these; zed crates set their own.
+version = "0.31.0"
+license = "MIT"
+repository = "https://github.com/mdz-axo/zed-kask"
 
 [workspace.dependencies]
 
@@ -956,6 +951,21 @@ yaml-rust2 = "0.8"
 yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
 zeroize = "1.8"
 zstd = "0.11"
+
+# hKask workspace dependencies (kask/ crates inherit these)
+async-stream = "0.3"
+axum = { version = "0.8", features = ["ws"] }
+crossterm = "0.28"
+imageproc = { version = "0.27", default-features = false, features = ["rayon", "text"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.34"
+ratatui = "0.28"
+rusqlite = { version = "0.39", features = ["bundled-sqlcipher", "blob", "backup"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+subtle = "2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
 
 [workspace.dependencies.windows]
 version = "0.61"

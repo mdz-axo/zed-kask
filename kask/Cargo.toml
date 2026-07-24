@@ -2,11 +2,9 @@
 resolver = "2"
 members = [
     # Core crates
-
     "crates/hkask-services-core",
     "crates/hkask-services-self-heal",
     "crates/hkask-goal",
-    "crates/hkask-identity",
     "crates/hkask-services-inference",
 
     # Ontology bridge crates (v0.31.0)
@@ -42,27 +40,20 @@ members = [
     "crates/hkask-repl",
     "crates/hkask-cli",
     "crates/hkask-api",
-    "crates/hkask-communication",
     "crates/hkask-test-harness",
     "crates/hkask-acp",
-    "crates/hkask-mcp-cloud-gateway",
     # MCP servers
     "mcp-servers/hkask-mcp-condenser",
     "mcp-servers/hkask-mcp-research",
     "mcp-servers/hkask-mcp-companies",
-    "mcp-servers/hkask-mcp-communication",
     "mcp-servers/hkask-mcp-media",
-    "mcp-servers/hkask-mcp-memory",
     "mcp-servers/hkask-mcp-docproc",
     "mcp-servers/hkask-mcp-training",
     "mcp-servers/hkask-mcp-replica",
     "mcp-servers/hkask-mcp-kata-kanban",
-    "mcp-servers/hkask-mcp-skill",
     "mcp-servers/hkask-mcp-curator",
-    "mcp-servers/hkask-mcp-filesystem",
     "mcp-servers/hkask-mcp-codegraph",
     "mcp-servers/hkask-mcp-scenarios",
-    "mcp-servers/hkask-mcp-regulation",
 ]
 
 exclude = ["fuzz"]
