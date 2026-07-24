@@ -542,9 +542,31 @@ fn main() {
                     );
                 inference_task.detach();
 
+                // D4: Wrap the InferencePort with GuardedInferencePort so every
+                // skill cascade invocation is scanned for prompt injection (input)
+                // and secret leakage (output). The guard is mandatory (P3.1) —
+                // core scanners (injection, role override, token limit, secrets)
+                // are always active. GuardConfig::from_env() picks up
+                // HKASK_GUARD_TOKEN_LIMIT if set.
+                //
+                // This guards the skill cascade path (ManifestExecutor). Direct
+                // chat uses zed's LanguageModel::stream_completion directly and
+                // relies on provider-side safety + zed's refusal fallback.
+                // The kask.guard.direct_chat_strategy setting controls future
+                // direct-chat guard integration (cascade_only = no guard on
+                // direct chat, only the cascade is guarded — the default).
+                let guard_config = hkask_guard::GuardConfig::from_env();
+                let content_guard = hkask_guard::ContentGuard::mandatory(&guard_config);
+                let guarded_inference = std::sync::Arc::new(
+                    hkask_guard::GuardedInferencePort::new(
+                        std::sync::Arc::new(inference_port),
+                        content_guard,
+                    )
+                );
+
                 let executor = std::sync::Arc::new(
                     kask_bridge::BridgeManifestExecutor::new(
-                        std::sync::Arc::new(inference_port),
+                        guarded_inference,
                         tool_port,
                         a2a_secret,
                         registry_manifests_dir,
@@ -552,7 +574,7 @@ fn main() {
                     ),
                 );
                 agent::set_manifest_executor(Some(executor));
-                log::info!("hKask manifest executor wired — skills will run the cascade");
+                log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
             } else {
                 log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skills will use body injection");
             }

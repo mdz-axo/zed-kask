@@ -27221,6 +27221,7 @@ dependencies = [
  "gpui_platform",
  "gpui_tokio",
  "hdrhistogram",
+ "hkask-guard",
  "hkask-keystore",
  "hkask-mcp",
  "http_client",

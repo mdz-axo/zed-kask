@@ -70,6 +70,7 @@ agent-client-protocol.workspace = true
 kask_bridge = { path = "../../kask/crates/kask_bridge" }
 hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
 hkask-mcp = { path = "../../kask/crates/hkask-mcp" }
+hkask-guard = { path = "../../kask/crates/hkask-guard" }
 agent_settings.workspace = true
 agent_skills.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }

@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **Build status (2026-07-24):** The full kask workspace (38 crates: 27 keep + 11 MCP servers) + `kask_bridge` + the zed integration crates (`agent`, `agent_ui`, `paths`, `release_channel`, `settings`, `settings`, `settings_ui`) all build clean. The dependency invariant holds (no hKask crate depends on a zed crate; `kask_bridge` is the sole bidirectional seam). The `zed` binary crate parses correctly but can't fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue).
+> **Build status (2026-07-24):** The full kask workspace (38 crates: 27 keep + 11 MCP servers) + `kask_bridge` + the zed integration crates (`agent`, `agent_ui`, `paths`, `release_channel`, `settings`, `settings_content`, `settings_ui`) all build clean. The dependency invariant holds (no hKask crate depends on a zed crate; `kask_bridge` is the sole bidirectional seam). The `zed` binary crate parses correctly but can't fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue).
 >
 > **Integration progress (D1–D10):**
 >
@@ -20,7 +20,7 @@ mds_categories: [composition, trust, lifecycle]
 > | D2 | Curator agent | ✅ **DONE** | `Curator` variant in `agent_ui::Agent` enum; `CURATOR_AGENT_ID` in `agent` crate; selectable in Agent Panel. |
 > | D3 | Tools in-process | ✅ **DONE** | `BridgeToolPort` wraps `McpRuntime` (implements `ToolPort` with OCAP/gas/spans). MCP servers run as child processes (stdio). Full R4 refactor (direct handles, no daemon) is deferred. |
 > | D4 | Guard layer | ⬜ **NOT STARTED** | `GuardedInferencePort` wrapping the inference path. `hkask-guard` crate exists and compiles. |
-> | D5 | Sovereignty keys | ⬜ **NOT STARTED** | Fold trimmed `hkask-keystore` over `SecretsPort`/`CredentialsProvider`. Currently `hkask-keystore` uses its own keychain access. |
+> | D5 | Sovereignty keys | ✅ **DONE** | `hkask-keystore` crypto-derivation folded over `SecretsPort`/`CredentialsProvider`. Global `SecretsPort` injection via `hkask_keystore::set_secrets_port()` (OnceLock pattern, same as D1's `set_manifest_executor`). Composition root constructs `CredentialsSecretsPort` (from `kask_bridge`) and injects it before `resolve_a2a_secret()`. Keychain reads/writes route through `SecretsPort` when injected (kask namespace), fall back to `keyring` crate when not (standalone MCP server child processes). `tokio` added to `hkask-keystore` deps for `block_in_place` + `Handle::current().block_on()`. All 15 keystore tests pass. |
 > | D6 | Thread → memory | ⬜ **NOT STARTED** | Hook thread completion → hKask memory ingestion. |
 > | D7 | App-identity | ✅ **DONE** | `APP_NAME`→`Zed-Kask`, `app_identifier`/`app_id`/`display_name` renamed, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
 > | D8 | Bridge + adapters | ✅ **DONE** | `kask_bridge` crate: `InferencePort` over `LanguageModel`, `SecretsPort` over `CredentialsProvider`, `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. Channel pattern solves GPUI/tokio `Send`+`Sync` boundary. |
@@ -30,22 +30,22 @@ mds_categories: [composition, trust, lifecycle]
 > | D10 | Kask panel | ⬜ **NOT STARTED** | Native GPUI panel replacing deleted `hkask-repl` `mcp_scoped`. |
 >
 > **Composition root** (`crates/zed/src/main.rs`, after `gpui_tokio::init`):
-> 1. Resolves `a2a_secret` from `hkask_keystore::resolve_a2a_secret()`
-> 2. Gets default `LanguageModel` from `LanguageModelRegistry::read_global(cx)`
-> 3. Constructs `LanguageModelInferencePort` (InferencePort over zed's LanguageModel)
-> 4. Constructs `McpRuntime` + `BridgeToolPort` (ToolPort over MCP servers)
-> 5. Constructs `BridgeManifestExecutor` with inference + tools + secret + registry paths
-> 6. Calls `agent::set_manifest_executor(Some(executor))`
+> 1. Constructs `CredentialsSecretsPort` (from `kask_bridge`) over zed's `CredentialsProvider` and injects it into `hkask_keystore::set_secrets_port()` (D5)
+> 2. Resolves `a2a_secret` from `hkask_keystore::resolve_a2a_secret()` (now routes through `SecretsPort`)
+> 3. Gets default `LanguageModel` from `LanguageModelRegistry::read_global(cx)`
+> 4. Constructs `LanguageModelInferencePort` (InferencePort over zed's LanguageModel)
+> 5. Constructs `McpRuntime` + `BridgeToolPort` (ToolPort over MCP servers)
+> 6. Constructs `BridgeManifestExecutor` with inference + tools + secret + registry paths
+> 7. Calls `agent::set_manifest_executor(Some(executor))`
 >
 > **Revised approach for `hkask-inference`:** Kept (MCP servers use it directly). Reads API keys via `SecretsPort` (D9b). Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.
 >
 > **Current priorities (next work):**
-> 1. **D5 — Sovereignty keys** — fold `hkask-keystore` over `SecretsPort`/`CredentialsProvider` (sovereignty keys move to kask namespace). Currently `hkask-keystore` uses its own keychain access.
-> 2. **D4 — Guard layer** — `GuardedInferencePort` wrapping the inference path. `hkask-guard` crate exists and compiles. Guard cascade+Curator fully; direct-chat streaming strategy (buffer/incremental/cascade-only per R3 in the plan).
-> 3. **D6 — Thread → memory** — hook thread completion to hKask memory ingestion (episodic + semantic). `MemoryPort` trait needs to be defined in `hkask-types` and implemented in the bridge.
-> 4. **D10 — `kask_panel`** — native GPUI `Panel` replacing deleted `hkask-repl` `mcp_scoped`. Per-server view: direct `:tool args` invocation + scoped inference. Copy-template: `agent_ui/src/agent_panel.rs`.
-> 5. **R4 — Daemon refactor** — refactor MCP servers off `DaemonClient` to direct in-process handles. This is the big one — it dissolves the `hkask-services-*` scaffolding and the daemon layer in `hkask-mcp-server/src/daemon/`.
-> 6. **Continue dead code pruning** — daemon layer, stale docs, `hkask-services-*` scaffolding, `hkask-inference` env-var reads that should use `SecretsPort`.
+> 1. **D4 — Guard layer** — `GuardedInferencePort` wrapping the inference path. `hkask-guard` crate exists and compiles. Guard cascade+Curator fully; direct-chat streaming strategy (buffer/incremental/cascade-only per R3 in the plan).
+> 2. **D6 — Thread → memory** — hook thread completion to hKask memory ingestion (episodic + semantic). `MemoryPort` trait needs to be defined in `hkask-types` and implemented in the bridge.
+> 3. **D10 — `kask_panel`** — native GPUI `Panel` replacing deleted `hkask-repl` `mcp_scoped`. Per-server view: direct `:tool args` invocation + scoped inference. Copy-template: `agent_ui/src/agent_panel.rs`.
+> 4. **R4 — Daemon refactor** — refactor MCP servers off `DaemonClient` to direct in-process handles. This is the big one — it dissolves the `hkask-services-*` scaffolding and the daemon layer in `hkask-mcp-server/src/daemon/`.
+> 5. **Continue dead code pruning** — daemon layer, stale docs, `hkask-services-*` scaffolding, `hkask-inference` env-var reads that should use `SecretsPort`.
 >
 > **One-line frame:** `zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 
@@ -136,7 +136,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | D2 | Curator agent | `crates/agent_ui/src/agent_ui.rs` + `crates/agent/src/agent.rs` | ✅ DONE | `Agent::Curator` variant; `CURATOR_AGENT_ID`; selectable in Agent Panel. |
 | D3 | hKask tools in-process | `kask/crates/kask_bridge/src/tool_port.rs` + `crates/zed/src/main.rs` | ✅ DONE | `BridgeToolPort` wraps `McpRuntime` (implements `ToolPort`). MCP servers run as child processes. Full R4 refactor (direct handles) deferred. |
 | D4 | Guard layer | `crates/language_model_core`/`language_model` | ⬜ NOT STARTED | `GuardedInferencePort` wrapping the inference path. `hkask-guard` crate exists. |
-| D5 | Sovereignty keys | `crates/credentials_provider` + `kask/crates/hkask-keystore` | ⬜ NOT STARTED | Fold `hkask-keystore` over `SecretsPort`/`CredentialsProvider`. |
+| D5 | Sovereignty keys | `crates/credentials_provider` + `kask/crates/hkask-keystore` | ✅ DONE | `hkask-keystore` folded over `SecretsPort`/`CredentialsProvider`. Global `SecretsPort` injection via `set_secrets_port()`. Composition root injects `CredentialsSecretsPort` before `resolve_a2a_secret()`. Keychain reads/writes route through `SecretsPort` when injected, fall back to `keyring` when not. |
 | D6 | Thread → memory | `crates/agent/src/thread.rs` / `thread_store.rs` | ⬜ NOT STARTED | Hook thread completion → hKask memory ingestion. |
 | D7 | App-identity | `crates/paths/src/paths.rs`, `crates/release_channel/src/lib.rs`, `crates/zed/src/zed/mac_only_instance.rs`, `crates/zed/Cargo.toml` | ✅ DONE | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
 | D8 | Bridge + adapters | `kask/crates/kask_bridge/` | ✅ DONE | `InferencePort` over `LanguageModel`, `SecretsPort` over `CredentialsProvider`, `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
@@ -193,7 +193,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 ### Phase 1 — The crate boundary + guarded inference seam (in zed-kask) ✅
 - **T1.1** hKask keep-crates added as workspace members; compiling against zed-kask types at the seams. ✅
 - **T1.2 (D4)** Guard layer — `GuardedInferencePort` wrapping the inference path. ⬜ **NOT STARTED** (D4)
-- **T1.3 (D5)** Trim `hkask-keystore` to sovereignty crypto; store keys via `SecretsPort`/`CredentialsProvider`. ⬜ **NOT STARTED** (D5)
+- **T1.3 (D5)** Trim `hkask-keystore` to sovereignty crypto; store keys via `SecretsPort`/`CredentialsProvider`. ✅
 - **T1.4 (D8)** Bridge crate `kask_bridge` created — `InferencePort` over `LanguageModel`, `SecretsPort` over `CredentialsProvider`, `BridgeToolPort` over `McpRuntime`, `BridgeManifestExecutor`, `KaskSettings`. ✅
 - **T1.5 (D9a)** `KaskSettings` struct registered with zed's settings system; `"kask"` section in settings.json. ✅
 - **T1.6 (D9b)** `SecretsPort` over `CredentialsProvider` (kask namespace); `InferenceConfig::from_secrets()`. ✅
@@ -247,7 +247,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 - **Checkpoint 8:** kask settings editable in UI; kask panel functional. ⬜
 
 ### Phase 9 — Keystore bridging (D5) + guard (D4)
-- **T9.1 (D5)** Fold `hkask-keystore` crypto-derivation over `SecretsPort`/`CredentialsProvider` (sovereignty keys move to kask namespace). ⬜
+- **T9.1 (D5)** Fold `hkask-keystore` crypto-derivation over `SecretsPort`/`CredentialsProvider` (sovereignty keys move to kask namespace). ✅
 - **T9.2 (D4)** `GuardedInferencePort` wrapping the inference path — guard cascade+Curator fully; direct-chat streaming strategy (buffer/incremental/cascade-only per R3). ⬜
 - **T9.3** Wire guard into composition root so all inference (chat+cascade+Curator) is guarded. ⬜
 - **Checkpoint 9:** sovereignty keys in keychain; all inference guarded. ⬜

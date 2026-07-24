@@ -520,11 +520,11 @@ mod reg_span_tests {
                 variant, s, parsed
             );
         }
-        // Assert count matches enum variant count (8 core + 15 specific ToolSubsystem = 23).
+        // Assert count matches enum variant count (8 core + 14 specific ToolSubsystem = 22).
         // If this fails, a new RegulationSpan variant was added without updating this test.
         assert!(
-            all_variants.len() == 23,
-            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 23)",
+            all_variants.len() == 22,
+            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 22)",
             all_variants.len()
         );
     }
