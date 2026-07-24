@@ -8697,6 +8697,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp-scenarios"
+version = "0.31.0"
+dependencies = [
+ "chrono",
+ "hkask-forecast",
+ "hkask-mcp-server",
+ "hkask-types",
+ "rmcp",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "zed-reqwest",
+]
+
+[[package]]
 name = "hkask-mcp-server"
 version = "0.31.0"
 dependencies = [

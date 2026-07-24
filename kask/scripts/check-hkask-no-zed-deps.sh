@@ -6,9 +6,14 @@
 #
 # This gate scans ONLY hkask-* Cargo.toml files (by name prefix) for two signals:
 #   1. a dependency-section key matching a zed-only crate denylist; and
-#   2. a path-dep that escapes the kask/ namespace (../.. → zed's tree).
+#   2. a path-dep that escapes the kask/ namespace (resolves outside kask/).
 #
 # Run from the zed-kask repo root: bash kask/scripts/check-hkask-no-zed-deps.sh
+#
+# NOTE on path resolution: a manifest at kask/mcp-servers/X/Cargo.toml may
+# legitimately use path = "../../crates/Y" to reach kask/crates/Y, which is
+# still inside kask/. The check resolves each path-dep against the manifest's
+# directory and rejects only those that escape kask/.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.." # → zed-kask repo root
@@ -45,13 +50,32 @@ while IFS= read -r manifest; do
     fi
 done <<< "$hkask_manifests"
 
-echo "Checking hKask Cargo.toml for path-deps that escape kask/ (../..)..."
+echo "Checking hKask Cargo.toml for path-deps that escape kask/..."
 while IFS= read -r manifest; do
-    if grep -Eq 'path[[:space:]]*=[[:space:]]*"[^"]*\.\./\.\.' "$manifest"; then
-        echo "VIOLATION: $manifest has a path-dep escaping kask/ (../..):" >&2
-        grep -En 'path[[:space:]]*=[[:space:]]*"[^"]*\.\./\.\.' "$manifest" >&2
-        FAIL=1
-    fi
+    # For each path-dep, resolve it against the manifest's directory and
+    # reject only if the resolved real path escapes the kask/ namespace.
+    manifest_dir=$(dirname "$manifest")
+    while IFS= read -r dep_path; do
+        # Strip surrounding quotes from the captured path value.
+        dep_path=${dep_path#\"}
+        dep_path=${dep_path%\"}
+        resolved=$(realpath --relative-to="$PWD/kask" "$manifest_dir/$dep_path" 2>/dev/null || true)
+        # realpath --relative-to prints "../..." when the target is outside kask/.
+        # An empty result means the target doesn't exist yet (e.g. a not-yet-
+# migrated crate) — flag it so we notice, but don't hard-fail on missing
+# paths alone; the denylist check above catches zed-name deps.
+        if [ -z "$resolved" ]; then
+            echo "WARN: $manifest path-dep '$dep_path' did not resolve (target missing?) — not a §13.1 violation by itself."
+            continue
+        fi
+        case "$resolved" in
+            ../*)
+                echo "VIOLATION: $manifest has a path-dep escaping kask/ ($dep_path → $resolved):" >&2
+                echo "  $dep_path" >&2
+                FAIL=1
+                ;;
+        esac
+    done < <(grep -Eo 'path[[:space:]]*=[[:space:]]*"[^"]*"' "$manifest" | sed -E 's/.*=[[:space:]]*//')
 done <<< "$hkask_manifests"
 
 if [ "$FAIL" -ne 0 ]; then
