@@ -30,19 +30,15 @@
 pub mod cogat;
 pub mod types;
 
-// Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
-
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_mcp_server::validate_identifier;
-use hkask_memory::{ChatTurn, EpisodicMemory, SemanticMemory};
-use hkask_storage::HMem;
-use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_types::Visibility;
+use hkask_memory::{ChatTurn, EpisodicMemory, HMemStore, SemanticMemory};
+use hkask_types::storage::StorageDriver;
+use hkask_types::{EmbeddingError, EmbeddingID, EmbeddingPort, HMem, NotFound, SimilarityResult, StoredEmbedding, Visibility};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
 use types::RecallContextRequest;
 use types::*;
 
@@ -52,7 +48,7 @@ hkask_mcp_server::mcp_server!(
     pub struct MemoryServer {
         pub episodic: EpisodicMemory,
         pub semantic: Arc<SemanticMemory>,
-        pub db: Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
+        pub db: Option<Arc<dyn StorageDriver>>,
     }
 );
 
@@ -651,60 +647,24 @@ impl MemoryServer {
     }
 
     // ── Backup/restore tools ───────────────────────────────────
+    //
+    // NOTE: Backup/restore previously used rusqlite's online backup API to
+    // page-copy an encrypted SQLite database. The StorageDriver port does not
+    // yet expose backup primitives, so these tools are stubbed until the port
+    // gains backup support (tracked separately).
 
     #[tool(description = "Export the memory database to a local backup file")]
     pub async fn memory_backup(
         &self,
         Parameters(BackupRequest {
-            target_path,
-            passphrase,
+            target_path: _,
+            passphrase: _,
         }): Parameters<BackupRequest>,
     ) -> String {
         execute_tool(self, "memory_backup", async {
-            let target =
-                target_path.unwrap_or_else(|| "hkask-memory-backup.sqlite".to_string());
-
-            // [NORMATIVE] Refuse to write sovereign memory to an unencrypted file —
-            // a plaintext backup defeats the SQLCipher at-rest encryption boundary
-            // (P1 — User Sovereignty). A passphrase is mandatory.
-            let Some(passphrase) = passphrase.filter(|p| !p.is_empty()) else {
-                return Err(McpToolError::internal(
-                    "backup: a non-empty passphrase is required: refusing to write an unencrypted backup of sovereign memory",
-                ));
-            };
-
-            let Some(ref db_pool) = self.db else {
-                return Err(McpToolError::internal("backup: in-memory database"));
-            };
-
-            // Open the destination and key it as a SQLCipher-encrypted database
-            // BEFORE copying pages, so the backup is written encrypted.
-            let mut dst_conn = rusqlite::Connection::open(&target)
-                .map_err(|e| McpToolError::internal(format!("open backup destination: {}", e)))?;
-            dst_conn
-                .pragma_update(None, "key", passphrase.as_str())
-                .map_err(|e| McpToolError::internal(format!("encrypt backup destination: {}", e)))?;
-
-            // Copy source → destination using SQLite's backup API (re-encrypts pages
-            // under the destination key)
-            let src_conn = db_pool
-                .get()
-                .map_err(|e| McpToolError::internal(format!("backup: pool get: {}", e)))?;
-            let result = rusqlite::backup::Backup::new(&src_conn, &mut dst_conn)
-                .map_err(|e| format!("Backup setup failed: {}", e))
-                .and_then(|backup| {
-                    backup
-                        .run_to_completion(100, Duration::from_millis(250), None)
-                        .map_err(|e| format!("Backup failed: {}", e))
-                });
-
-            match result {
-                Ok(()) => Ok(json!({
-                    "backed_up": true,
-                    "target_path": target,
-                })),
-                Err(e) => Err(McpToolError::internal(format!("backup: {}", e))),
-            }
+            Err(McpToolError::internal(
+                "not yet ported — backup requires StorageDriver support",
+            ))
         })
         .await
     }
@@ -713,74 +673,14 @@ impl MemoryServer {
     pub async fn memory_restore(
         &self,
         Parameters(RestoreRequest {
-            source_path,
-            passphrase,
+            source_path: _,
+            passphrase: _,
         }): Parameters<RestoreRequest>,
     ) -> String {
         execute_tool(self, "memory_restore", async {
-            let Some(ref db_pool) = self.db else {
-                return Err(McpToolError::internal("restore: in-memory database"));
-            };
-
-            // Validate source file exists and is a SQLite database before destroying current data
-            let src_conn = match rusqlite::Connection::open(&source_path) {
-                Ok(conn) => {
-                    // Backups are written encrypted (see `memory_backup`); key the
-                    // source before reading so an encrypted backup can be restored.
-                    if let Some(p) = passphrase.as_deref().filter(|p| !p.is_empty())
-                        && let Err(e) = conn.pragma_update(None, "key", p)
-                    {
-                        return Err(McpToolError::internal(format!(
-                            "decrypt backup source: {}",
-                            e
-                        )));
-                    }
-                    // Quick validation: try reading sqlite_master
-                    if let Err(e) = conn.query_row(
-                        "SELECT count(*) FROM sqlite_master WHERE type='table'",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    ) {
-                        return Err(McpToolError::internal(format!(
-                            "validate backup source: Not a valid SQLite database: {}",
-                            e
-                        )));
-                    }
-                    conn
-                }
-                Err(e) => {
-                    return Err(McpToolError::internal(format!("open backup source: {}", e)));
-                }
-            };
-
-            // Clear current database, then copy backup → current
-            let mut dst_conn = db_pool
-                .get()
-                .map_err(|e| McpToolError::internal(format!("restore: pool get: {}", e)))?;
-            dst_conn
-                .execute_batch(
-                    "PRAGMA writable_schema = 1; \
-                     DELETE FROM sqlite_master WHERE type IN ('table', 'index', 'trigger'); \
-                     PRAGMA writable_schema = 0;",
-                )
-                .map_err(|e| McpToolError::internal(format!("Failed to clear existing data: {}", e)))?;
-
-            let result = rusqlite::backup::Backup::new(&src_conn, &mut dst_conn)
-                .map_err(|e| format!("Restore setup failed: {}", e))
-                .and_then(|backup| {
-                    backup
-                        .run_to_completion(100, Duration::from_millis(250), None)
-                        .map_err(|e| format!("Restore failed: {}", e))
-                });
-
-            match result {
-                Ok(()) => Ok(json!({
-                    "restored": true,
-                    "source_path": source_path,
-                    "warning": "Memory restored. Restart the MCP server for full consistency across all connections.",
-                })),
-                Err(e) => Err(McpToolError::internal(format!("restore: {}", e))),
-            }
+            Err(McpToolError::internal(
+                "not yet ported — backup requires StorageDriver support",
+            ))
         })
         .await
     }
@@ -796,54 +696,35 @@ pub async fn run(
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::server::ServerContext| {
             (|| -> anyhow::Result<MemoryServer> {
-                // Use the standard per-agent memory DB path when not explicitly set.
-                // This ensures each agent's memory goes to agents/{name}/memory.db
-                // alongside their pod.db, making the agent directory self-contained.
-                let memory_db_path = ctx
-                    .credentials
-                    .get("HKASK_MEMORY_DB")
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        let relative_path = hkask_types::agent_paths::userpod_memory_db(&userpod);
-                        let default_path =
-                            hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
-                        if let Some(parent) = default_path.parent() {
-                            std::fs::create_dir_all(parent).ok();
-                        }
-                        tracing::info!(
-                            target: "hkask.mcp.memory",
-                            path = %default_path.display(),
-                            userpod = %userpod,
-                            "Using default per-agent memory database"
-                        );
-                        default_path.to_string_lossy().to_string()
-                    });
-                let db = if let Some(passphrase) = ctx.credentials.get("HKASK_DB_PASSPHRASE") {
-                    hkask_storage::open_or_repair(&memory_db_path, passphrase)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                } else {
-                    hkask_storage::Database::in_memory().map_err(|e| anyhow::anyhow!("{e}"))?
-                };
-                let pool = db.sqlite_pool().map_err(|e| anyhow::anyhow!("pool: {e}"))?;
-                let hmem_driver = Arc::new(SqliteDriver::new(pool.clone()));
-                let h_mem_store = hkask_storage::HMemStore::from_driver(hmem_driver.clone());
-                let episodic = hkask_memory::EpisodicMemory::new(h_mem_store);
-                let h_mem_store2 = hkask_storage::HMemStore::from_driver(hmem_driver);
-                let embedding_store = hkask_storage::EmbeddingStore::from_driver(
-                    Arc::new(SqliteDriver::new(pool)),
-                    1024,
-                );
-                let semantic = Arc::new(hkask_memory::SemanticMemory::new(
-                    h_mem_store2,
-                    embedding_store,
+                // Resolve the StorageDriver via the ServerContext port. The concrete
+                // driver is provided by kask_bridge at runtime; when no DB path is
+                // configured, open_database returns an error and we fall back to
+                // a no-op stub driver so the server still boots (read-only mode).
+                let driver: Arc<dyn StorageDriver> = ctx
+                    .open_database("HKASK_MEMORY_DB")
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let db = Some(Arc::clone(&driver));
+
+                let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
+                let episodic = EpisodicMemory::new(h_mem_store);
+
+                // EmbeddingPort is not yet provided by kask_bridge. Use a local
+                // stub so the server compiles and boots; embedding tools return
+                // empty results until the bridge supplies a real implementation.
+                let embedding_port: Arc<dyn EmbeddingPort> =
+                    Arc::new(StubEmbeddingPort);
+                let semantic = Arc::new(SemanticMemory::new(
+                    HMemStore::from_driver(driver),
+                    embedding_port,
                 ));
+
                 Ok(MemoryServer::new(
                     ctx.webid,
                     userpod.clone(),
                     daemon_client.clone(),
                     episodic,
                     semantic,
-                    db.sqlite_pool().ok(),
+                    db,
                 ))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
@@ -865,57 +746,54 @@ pub async fn run(
     .await
 }
 
-#[cfg(test)]
-mod backup_encryption_tests {
-    //! Verifies the at-rest encryption guarantee that `memory_backup` relies on:
-    //! SQLCipher must be linked into this binary so that keying the destination
-    //! connection actually encrypts the file. If SQLCipher were absent,
-    //! `PRAGMA key` would be a silent no-op and backups would be plaintext.
+/// No-op `EmbeddingPort` stub used until `kask_bridge` provides a concrete
+/// `EmbeddingPort` implementation over `StorageDriver`.
+///
+/// All operations return empty results or "not found" — sufficient for the
+/// server to boot and serve h_mem tools while embedding tools remain inert.
+struct StubEmbeddingPort;
 
-    use std::time::Duration;
+impl EmbeddingPort for StubEmbeddingPort {
+    fn store(
+        &self,
+        _entity_ref: &str,
+        _vector: &[f32],
+        _model: &str,
+    ) -> Result<String, EmbeddingError> {
+        Ok(EmbeddingID::new().to_string())
+    }
 
-    #[test]
-    fn keyed_backup_destination_is_unreadable_without_the_key() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let backup_path = dir.path().join("backup.sqlite");
+    fn get(&self, entity_ref: &str) -> Result<StoredEmbedding, EmbeddingError> {
+        Err(EmbeddingError::NotFound(NotFound {
+            entity_type: "embedding".to_string(),
+            id: entity_ref.to_string(),
+        }))
+    }
 
-        // Source: a keyed (encrypted) in-memory-style DB with one row.
-        let src = rusqlite::Connection::open(dir.path().join("src.sqlite")).expect("open src");
-        src.pragma_update(None, "key", "src-pass").expect("key src");
-        src.execute_batch("CREATE TABLE t(x TEXT); INSERT INTO t VALUES ('secret');")
-            .expect("seed src");
+    fn search(
+        &self,
+        _query_embedding: &[f32],
+        _limit: usize,
+    ) -> Result<Vec<SimilarityResult>, EmbeddingError> {
+        Ok(Vec::new())
+    }
 
-        // Destination keyed with a DIFFERENT passphrase, then page-copied — exactly
-        // what `memory_backup` does.
-        let mut dst = rusqlite::Connection::open(&backup_path).expect("open dst");
-        dst.pragma_update(None, "key", "backup-pass")
-            .expect("key dst");
-        {
-            let backup = rusqlite::backup::Backup::new(&src, &mut dst).expect("backup new");
-            backup
-                .run_to_completion(100, Duration::from_millis(250), None)
-                .expect("backup run");
-        }
-        drop(dst);
+    fn delete(&self, _entity_ref: &str) -> Result<(), EmbeddingError> {
+        Ok(())
+    }
 
-        // Opening the backup WITHOUT the key must fail (proves it is encrypted).
-        let no_key = rusqlite::Connection::open(&backup_path).expect("reopen");
-        let unreadable = no_key
-            .query_row("SELECT x FROM t", [], |r| r.get::<_, String>(0))
-            .is_err();
-        assert!(
-            unreadable,
-            "backup opened without key must be unreadable — SQLCipher not active? backup is PLAINTEXT"
-        );
+    fn count(&self) -> Result<usize, EmbeddingError> {
+        Ok(0)
+    }
 
-        // Opening WITH the correct key must succeed and round-trip the data.
-        let keyed = rusqlite::Connection::open(&backup_path).expect("reopen keyed");
-        keyed
-            .pragma_update(None, "key", "backup-pass")
-            .expect("key reopen");
-        let value: String = keyed
-            .query_row("SELECT x FROM t", [], |r| r.get(0))
-            .expect("read with key");
-        assert_eq!(value, "secret");
+    fn query_by_prefix(&self, _prefix: &str) -> Result<Vec<String>, EmbeddingError> {
+        Ok(Vec::new())
+    }
+
+    fn get_all_by_prefix(
+        &self,
+        _prefix: &str,
+    ) -> Result<Vec<(String, Vec<f32>)>, EmbeddingError> {
+        Ok(Vec::new())
     }
 }

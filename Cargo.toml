@@ -307,7 +307,6 @@ default-members = ["crates/zed"]
 [workspace.package]
 publish = false
 edition = "2024"
-version = "0.31.0"
 
 [workspace.dependencies]
 

@@ -14,9 +14,9 @@
 //!
 //! # Shared Bridge Integration
 //!
-//! Uses [`hkask_bridge_dublincore`] for entity type classification
-//! (e.g., `dctypes:Dataset` for memory stores) and [`hkask_bridge_dublincore`]
-//! for process classification (e.g., `pko:Step` for memory operations).
+//! Entity type and process classification (e.g., `dctypes:Dataset` for memory
+//! stores, `pko:Step` for memory operations) is handled by the shared bridge
+//! layer once it is wired into zed-kask.
 
 /// A Cognitive Atlas concept identifier.
 pub type CogatConcept = &'static str;
