@@ -287,6 +287,7 @@ members = [
     "kask/crates/hkask-services-self-heal",
     "kask/crates/hkask-services-inference",
     "kask/crates/hkask-services-kata-kanban",
+    "kask/crates/hkask-services-runtime",
     "kask/crates/hkask-services-corpus",
     "kask/crates/hkask-services-context",
     "kask/crates/hkask-services-compose",
@@ -812,6 +813,7 @@ regex = "1.5"
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
     "charset",
     "http2",
+    "json",
     "macos-system-configuration",
     "multipart",
     "rustls-tls-native-roots",
@@ -972,9 +974,9 @@ axum = { version = "0.8", features = ["ws"] }
 crossterm = "0.28"
 imageproc = { version = "0.27", default-features = false, features = ["rayon", "text"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.34"
+r2d2_sqlite = "0.25"
 ratatui = "0.28"
-rusqlite = { version = "0.39", features = ["bundled-sqlcipher", "blob", "backup"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob", "backup"] }
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 subtle = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

@@ -25,8 +25,8 @@ thiserror = { workspace = true }
 blake3 = { workspace = true }
 walkdir = { workspace = true }
 uuid = { workspace = true }
-tree-sitter = "0.25"
-tree-sitter-rust = "0.23"
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
 
 [lib]
 name = "hkask_mcp_codegraph"

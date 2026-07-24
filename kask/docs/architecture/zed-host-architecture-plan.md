@@ -10,6 +10,10 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
+> **Build status (2026-07-23):** The full kask workspace (38 crates: 27 keep + 11 MCP servers) builds clean inside the zed-kask workspace. The dependency invariant holds (no hKask crate depends on a zed crate). The `kask_bridge` and `kask_panel` crates (D8/D10) are planned but not yet created — they'll be added when the integration work begins.
+>
+> **Revised approach for `hkask-inference`:** Kept for now (MCP servers use it directly). Will read API keys from zed's `CredentialsProvider` (D9b) instead of env vars. Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.
+>
 > **One-line frame:** `Clones/zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask (`Clones/hKask`) is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 
 Reasoning chain: `pragmatic-semantics` → `pragmatic-cybernetics` → `falsifiability` → `sequential-inquiry` → `kata-improvement` → `improve-codebase-architecture` → `essentialist` → `skill-router` → `task-breakdown` → `grill-me` → `self-critique-revision`, grounded by reading the actual `zed-kask` crate tree.
@@ -47,37 +51,45 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
+**Status (2026-07-23): workspace builds clean. 38 crates total (27 keep + 11 MCP servers).**
+
 | Crate | Why irreducible |
 |---|---|
 | `hkask-types` | Foundation: IDs, `InferencePort` trait, `RegulationSpan`, vocab. |
-| `hkask-storage` | **Sovereignty:** per-pod SQLCipher encrypted private sphere (P11.1). |
+| `hkask-storage` | **Sovereignty:** per-pod SQLCipher encrypted private sphere (P11.1). `user_store` deleted (multi-user identity store — zed account replaces it). |
 | `hkask-memory` | Unique semantic/episodic memory + consolidation. |
 | `hkask-regulation` | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). |
 | `hkask-templates` | **The tools/skills:** `ManifestExecutor` + registry + cascade + PDCA. |
 | `hkask-pods` | **Curator + UserPod** + deployment (sovereignty + curator). |
 | `hkask-guard` | **Magna Carta floor (P3.1)** — becomes a layer in zed-kask's inference path. |
 | `hkask-capability` | **OCAP** — sovereignty enforcement. |
-| `hkask-identity` | **WebID** — sovereignty identity. |
 | `hkask-keystore` (trimmed) | **Sovereignty crypto only:** OCAP signing, DB passphrase, internal-secret derivation w/ versioning. *Storage* backend → zed-kask keystore. |
 | `hkask-wallet`, `hkask-ledger` | rJoule energy budget + hMem accounting. |
-| 12 MCP servers (default load; §2.4) | **The tools** — hosted in-process in zed-kask. |
+| `hkask-inference` | **Kept (revised):** MCP servers use it directly for now (InferenceRouter, EmbeddingRouter, ProviderId). Will read API keys from zed's `CredentialsProvider` (D9b) instead of env vars. Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately. |
 | `hkask-mcp-server` (framework) | Trim if zed-kask's context_server hosts them natively; keep the `reg.tool.*`+OCAP gating. |
+| `hkask-forecast`, `hkask-goal`, `hkask-condenser`, `hkask-git-cas`, `hkask-bridge-dublincore` | Domain logic used by keep-crates/MCP servers. |
+| `hkask-test-harness` | Test infra. |
+| `hkask-mcp` | MCP governance. |
+| `hkask-services-core`, `hkask-services-self-heal`, `hkask-services-inference`, `hkask-services-kata-kanban`, `hkask-services-runtime` (stripped: daemon_impl deleted), `hkask-services-corpus`, `hkask-services-context` (stripped: identity/communication/matrix/daemon modules deleted; governance + guards kept), `hkask-services-compose` | Scaffolding the MCP servers depend on until the in-process refactor (T3.0). To be deleted as the MCP servers are refactored to take direct `KaskCore` handles. |
+| 11 MCP servers (on-disk set) | **The tools** — hosted in-process in zed-kask. |
 
 ### 2.3 hKask deletes (redundant; jobs move to zed-kask)
 
-`hkask-inference` (router/providers/config — keep only the `InferencePort` *trait* in `hkask-types`), `hkask-acp` (no cross-process), `hkask-repl`, `hkask-services-chat`, `hkask-communication`, `mcp-servers/hkask-mcp-communication`, the daemon/`kask serve`, Matrix sidecar + all Matrix refs, cloud/Hetzner deploy, `hkask-api` chat/chat_ws, backward-compat shims. `hkask-cli` → slim to backup/wallet/repair/admin (links hKask crates). Deletion-test candidates (decide T0.5): `hkask-condenser`, `hkask-git-cas`, `hkask-services-*`. **Decided — deleted:** `hkask-mcp-filesystem` (zed provides fs tools; §2.4).
+**DELETED (confirmed on disk):** `hkask-identity` (zed account replaces it), `hkask-communication` (Matrix → zed voip), `hkask-mcp-cloud-gateway` (no cloud deployment), `hkask-acp` (cross-process seam dissolved), `hkask-api` (HTTP server — zed owns in-process paths), `hkask-cli` (slim CLI surface — to be rebuilt as `kask` CLI for backup/wallet/repair/admin only), `hkask-repl` (zed agent panel replaces it), `hkask-services-chat` (zed owns chat), `hkask-services-onboarding` (zed first-launch replaces it), `hkask-services-runtime` daemon_impl module (deleted; classify/guard/provider_intel kept), `hkask-services-skill`, `hkask-services-wallet`, `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
+
+**Kept temporarily (MCP servers depend on them):** `hkask-inference` (see §2.2), `hkask-services-core`, `hkask-services-self-heal`, `hkask-services-inference`, `hkask-services-kata-kanban`, `hkask-services-runtime`, `hkask-services-corpus`, `hkask-services-context`, `hkask-services-compose`. These dissolve as the MCP servers are refactored to direct `KaskCore` handles (T3.0).
 
 ---
 
-### 2.4 MCP load set (12 loaded by default)
+### 2.4 MCP load set (11 on disk)
 
-Of the original 16 MCP servers, the **default load set is 12** (verified against `BUILTIN_SERVERS` in `crates/hkask-mcp-server/src/lib.rs`):
+The original 16 MCP servers have been pruned to **11 on disk**. The `BUILTIN_SERVERS` constant in `kask/crates/hkask-mcp-server/src/lib.rs` still lists the old set and needs updating.
 
-| Loaded by default (12) | Kept, not loaded by default (2) | Deleted (2) |
-|---|---|---|
-| `memory`, `condenser`, `research`, `companies`, `media`, `docproc`, `training`, `replica`, `kata-kanban`, `codegraph`, `scenarios`, `regulation` | **`curator`** — the Curator is a native agent (D2) with direct in-process regulation access; its MCP server (regulatory query/ops: system health, escalation, spec-drift, algedonic history) is redundant for the default flow now that the Curator is addressable as an agent and `regulation` covers span queries. Unload unless an agent needs explicit Curator-ops tools. **`skill`** — exposes skills as a `skill_execute` MCP tool (render Jinja2 → run inference → return). With D1 (zed-kask's `skill_tool` → `ManifestExecutor` natively), execution is no longer via MCP, so the skill MCP server is unloaded; skill *management* (validate/publish) → `kask` CLI/registry. Crate kept pending T0.5 (are management ops still wanted as agent tools?). | **`communication`** (Matrix/TTS → zed-kask voip). **`filesystem`** (zed's agent/repl already provides filesystem tools — redundant). ⚠ sovereignty note: zed's fs tools are not hKask-OCAP-/gas-gated, so fs calls won't emit `reg.tool.*` or consume rJoule — acceptable for local install since the userpod governs hKask tool calls, not zed's native fs tools; revisit if OCAP-scoped fs is required. |
+| On disk (11) | Deleted (5) |
+|---|---|
+| `codegraph`, `companies`, `condenser`, `curator`, `docproc`, `kata-kanban`, `media`, `replica`, `research`, `scenarios`, `training` | `communication` (Matrix/TTS → zed voip), `filesystem` (zed provides fs tools), `memory` (consolidated into `hkask-memory` crate), `skill` (skill execution is native via D1), `regulation` (consolidated into `hkask-regulation` crate) |
 
-> 12 loaded + 2 kept-unloaded + 2 deleted = 16 original. Earlier "15/16 MCP servers" counts in this plan are superseded by this 12-loaded default. §2.3 still lists `hkask-mcp-filesystem` as a deletion-test candidate — now **decided: deleted** (see here).
+> The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native agent, D2). All 11 build clean.
 
 ---
 

@@ -11,6 +11,7 @@ members = [
     "crates/hkask-bridge-dublincore",
 
     "crates/hkask-services-kata-kanban",
+    "crates/hkask-services-runtime",
     "crates/hkask-services-corpus",
     "crates/hkask-services-context",
     "crates/hkask-services-compose",
