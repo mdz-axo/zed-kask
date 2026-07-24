@@ -23,7 +23,7 @@ proptest = "1"
 thiserror.workspace = true
 serde_yaml_neo.workspace = true
 reqwest.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tracing.workspace = true
 
 [dev-dependencies]

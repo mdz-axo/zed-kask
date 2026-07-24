@@ -395,18 +395,16 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
 /// synchronously (instant) and treat the keychain as "possibly present" — the user
 /// can always click "Reset Key" if the card shows configured. This avoids a flicker
 /// of "no key" on every render.
-fn has_credential(provider: &Arc<dyn CredentialsProvider>, url: &str, env_var: &str) -> bool {
+fn has_credential(_provider: &Arc<dyn CredentialsProvider>, _url: &str, env_var: &str) -> bool {
     // Env-var check is synchronous and instant.
     if env::var(env_var).is_ok() {
         return true;
     }
-    // For the keychain, we can't block. We optimistically report false and let
-    // the user enter the key. A background task could populate a cached flag,
-    // but for a settings page opened on demand, the simpler model is: the card
-    // shows "Configured" only when the env var is set; the keychain key is
+    // For the keychain, we can't block on the foreground thread. We optimistically
+    // report false and let the user enter the key. A background task could populate
+    // a cached flag, but for a settings page opened on demand, the simpler model is:
+    // the card shows "Configured" only when the env var is set; the keychain key is
     // entered via the input field and confirmed by the user.
-    drop(provider);
-    drop(url);
     false
 }
 
@@ -557,13 +555,10 @@ fn render_mcp_server_toggle(
         },
     )
     .when(!load_default, |this| {
-        this.tooltip(move |_window, _cx| {
-            ui::Tooltip::text(
-                "The master \"Load Default MCP Servers\" toggle is off — \
-                 enable it for this override to take effect.",
-            )
-            .into_any_view()
-        })
+        this.tooltip(ui::Tooltip::text(
+            "The master \"Load Default MCP Servers\" toggle is off — \
+             enable it for this override to take effect.",
+        ))
     })
     .tab_index(0)
     .into_any_element()

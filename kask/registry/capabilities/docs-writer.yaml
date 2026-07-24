@@ -35,7 +35,7 @@ default_timeout_seconds: 1800
 
 capability_tokens:
   - tool:kanban:read
-  - tool:docproc:execute
+  - tool:corpus:execute
   - tool:research:execute
   - registry:templates:read
 

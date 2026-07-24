@@ -500,6 +500,18 @@ fn main() {
         // This uses a OnceLock global hook so the agent crate doesn't depend on kask_bridge.
         {
             let async_cx = cx.to_async();
+
+            // D5: Inject the SecretsPort into hkask-keystore so sovereignty keys
+            // are stored/read via zed's CredentialsProvider in the kask://credentials/<key>
+            // namespace, not via the keyring crate's "hkask" service directly.
+            // This must happen before resolve_a2a_secret() below.
+            let credentials_provider = zed_credentials_provider::global(cx);
+            let (secrets_port, secrets_task) =
+                kask_bridge::CredentialsSecretsPort::new(credentials_provider, async_cx.clone());
+            secrets_task.detach();
+            hkask_keystore::set_secrets_port(Some(std::sync::Arc::new(secrets_port)));
+            log::info!("hKask SecretsPort injected — sovereignty keys via CredentialsProvider");
+
             // Resolve the a2a_secret for OCAP delegation token minting.
             // Falls back to an empty vec if the keystore is unavailable (first-run).
             let a2a_secret = hkask_keystore::resolve_a2a_secret()

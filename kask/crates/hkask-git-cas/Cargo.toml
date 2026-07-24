@@ -8,7 +8,7 @@ description = "gix-backed Git content-addressed storage adapter — the backup/g
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 gix = "0.81"
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 async-trait.workspace = true
 
 [dev-dependencies]
