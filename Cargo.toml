@@ -285,6 +285,22 @@ members = [
     "kask/mcp-servers/hkask-mcp-regulation",
     "kask/mcp-servers/hkask-mcp-skill",
     "kask/mcp-servers/hkask-mcp-research",
+    "kask/mcp-servers/hkask-mcp-codegraph",
+    "kask/mcp-servers/hkask-mcp-memory",
+    "kask/mcp-servers/hkask-mcp-condenser",
+    "kask/mcp-servers/hkask-mcp-curator",
+    "kask/mcp-servers/hkask-mcp-kata-kanban",
+    "kask/mcp-servers/hkask-mcp-media",
+    "kask/mcp-servers/hkask-mcp-training",
+    "kask/mcp-servers/hkask-mcp-companies",
+    "kask/mcp-servers/hkask-mcp-replica",
+    "kask/mcp-servers/hkask-mcp-docproc",
+    "kask/mcp-servers/hkask-mcp-cloud-gateway",
+
+    #
+    # kask/crates/ — keep-crates migrated late (T0.6)
+    #
+    "kask/crates/hkask-ledger",
 ]
 default-members = ["crates/zed"]
 
@@ -842,6 +858,7 @@ serde_yaml_neo = "0.11"
 rmcp = "1"
 tokio-util = { version = "0.7", features = ["rt"] }
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
+hkask-ledger = { path = "kask/crates/hkask-ledger" }
 ed25519-dalek = "2"
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
 aes-gcm = "0.10"
