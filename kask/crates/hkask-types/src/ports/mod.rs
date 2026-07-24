@@ -17,6 +17,7 @@ pub mod pipeline_runner;
 pub mod pipeline_state;
 pub mod registry;
 pub mod regulation;
+pub mod secrets_port;
 pub mod wallet_budget_port;
 
 pub use embedding::EmbeddingGenerationError;
@@ -36,4 +37,5 @@ pub use regulation::{
     BackpressureSignal, CircuitBreakerPort, ConsolidationOutcome, ConsolidationRequest,
     DecayConfig, DepletionSignal, LedgerObserver, LedgerStoragePort, WeightedEvent,
 };
+pub use secrets_port::{SecretsError, SecretsPort};
 pub use wallet_budget_port::{WalletBudgetError, WalletBudgetPort};

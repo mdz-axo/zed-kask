@@ -12188,6 +12188,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kask_bridge"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "credentials_provider",
+ "futures-util",
+ "gpui",
+ "hkask-capability",
+ "hkask-types",
+ "language_model",
+ "language_model_core",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "keymap_editor"
 version = "0.1.0"
 dependencies = [

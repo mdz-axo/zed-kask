@@ -264,6 +264,7 @@ members = [
     # See kask/docs/architecture/zed-host-architecture-plan.md
     #
     "kask/crates/hkask-types",
+    "kask/crates/kask_bridge",
     "kask/crates/hkask-capability",
     "kask/crates/hkask-goal",
     "kask/crates/hkask-keystore",

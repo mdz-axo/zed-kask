@@ -17,6 +17,7 @@ members = [
     "crates/hkask-services-compose",
     "crates/hkask-condenser",
     "crates/hkask-types",
+    "crates/kask_bridge",
     "crates/hkask-forecast",
     "crates/hkask-capability",
     "crates/hkask-inference",

@@ -1,0 +1,23 @@
+[package]
+name = "kask_bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The bidirectional seam between hKask port traits and zed-kask facilities (D8)"
+
+[dependencies]
+# hKask side — port traits only (never concrete zed crates)
+hkask-types = { path = "../hkask-types" }
+hkask-capability = { path = "../hkask-capability" }
+
+# zed-kask side — the facilities the bridge adapts over
+credentials_provider = { path = "../../../crates/credentials_provider" }
+language_model = { path = "../../../crates/language_model" }
+language_model_core = { path = "../../../crates/language_model_core" }
+gpui = { path = "../../../crates/gpui" }
+
+# Shared
+anyhow.workspace = true
+futures-util.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
