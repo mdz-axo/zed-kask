@@ -1,113 +1,207 @@
-# Continuation Prompt — zed-kask migration (T0.6 in progress)
+# Continuation Prompt — zed-kask migration (T0.6: MCP servers phase)
 
 You are continuing the migration of hKask into the zed-kask fork of Zed. Here is everything you need to pick up cleanly.
 
 ## What we're doing
 
-Migrating hKask into the `zed-kask` fork of Zed (`Clones/zed-kask`, origin `mdz-axo/zed-kask`, upstream `zed/zed`). hKask is being **fully merged** into zed-kask under a `kask/` namespace. The `mdz-axo/hKask` repo (`Clones/hKask`) will be archived. zed-kask is the single source of truth — one clone, one build, one CI.
+Migrating hKask into the `zed-kask` fork of Zed (`Clones/zed-kask`, origin `mdz-axo/zed-kask`, upstream `zed/zed`). hKask is being **fully merged** into zed-kask under a `kask/` namespace. The `mdz-axo/hKask` repo (`Clones/hKask`) will be archived. zed-kask is the single source of truth.
 
 ## Key files
 
-- `kask/docs/architecture/zed-host-architecture-plan.md` (564 lines) — the full architecture + migration plan (14 sections, D1–D10 divergence seams, §13 composition root, §14 repository consolidation).
-- `DIVERGENCE.md` (repo root, ~63 lines) — the fork's divergence manifest + upstream-sync procedure + dependency policy.
-- `kask/docs/specs/seam-specs.md` (~258 lines) — D1–D10 seam specifications with port contracts + acceptance criteria + T0.6-storage spec.
-- `kask/docs/plans/upstream-sync-runbook.md` — the sync procedure.
-- `kask/scripts/check-hkask-no-zed-deps.sh` — the §13.1 invariant CI gate (tested, passing).
+- `kask/docs/architecture/zed-host-architecture-plan.md` (564 lines) — the full architecture + migration plan
+- `DIVERGENCE.md` (repo root) — the fork's divergence manifest + sync procedure + dependency policy
+- `kask/docs/specs/seam-specs.md` (~258 lines) — D1–D10 seam specs with port contracts + AC + T0.6-storage spec
+- `kask/scripts/check-hkask-no-zed-deps.sh` — the §13.1 invariant CI gate (tested, passing)
 
 ## Governing invariant (§13.1)
 
-**hKask crates NEVER depend on zed-kask crates.** The sole bidirectional seam is `kask/crates/kask_bridge` (D8). Enforced by `kask/scripts/check-hkask-no-zed-deps.sh` which scans `hkask-*` Cargo.tomls for zed-crate denylist names + path-deps escaping `kask/`.
+**hKask crates NEVER depend on zed-kask crates.** The sole bidirectional seam is `kask/crates/kask_bridge` (D8). Enforced by `kask/scripts/check-hkask-no-zed-deps.sh`.
 
 ## Dependency policy (conform to zed)
 
-hKask conforms to zed's dependency versions where there are conflicts. **Do NOT bump zed's workspace deps.** The `libsqlite3-sys` conflict: zed pins `0.30.1` (via `sqlez` + `sqlx-sqlite` → `collab`); no `rusqlite` version is compatible. **Resolution:** `hkask-storage` will be rewritten to use a `StoragePort` trait (now defined in `hkask-types` as `StorageDriver`), implemented by `kask_bridge` over zed's `sqlez`. SQLCipher → application-layer encryption (encrypt before store, decrypt after read). See DIVERGENCE.md + seam-specs.md "T0.6-storage".
+Do NOT bump zed's workspace deps. The `libsqlite3-sys` conflict: zed pins `0.30.1` (bundled, `SQLITE_ENABLE_LOAD_EXTENSION=1`); no `rusqlite` is compatible. **Resolution:** `StorageDriver` trait in `hkask-types::storage`; `kask_bridge` implements it over `sqlez`. All hKask crates use `StorageDriver` + `EmbeddingPort` port traits, not `rusqlite`/`r2d2`/`sqlite-vec`.
 
-## Current state — 6 workspace members, 4 compiling
+## Current state — 14 workspace members, 12 compiling
 
-| Crate | Status | Notes |
+| Crate | Status |
+|---|---|
+| `hkask-types` | ✅ + DTOs (`HMem`, `HMemError`, `SimilarityResult`, `EmbeddingError`) + `EmbeddingPort` trait (7 methods) + `storage` module (`DbValue`, `DbRow`, `StorageDriver`, `query_map`, `query_row`) |
+| `hkask-capability` | ✅ |
+| `hkask-goal` | ✅ |
+| `hkask-keystore` | ✅ |
+| `hkask-regulation` | ✅ |
+| `hkask-guard` | ✅ (added `llm-guard = "0.2"` to workspace) |
+| `hkask-forecast` | ✅ |
+| `hkask-templates` | ✅ (full port-ify: `registry_sqlite.rs` rewritten to `StorageDriver`; `registry/manifests/` copied to `kask/registry/`) |
+| `hkask-memory` | ✅ (port-ify: `HMemStore` moved to `hkask-memory` over `StorageDriver`; `EmbeddingStore` → `EmbeddingPort` trait; `SemanticMemory` holds `Arc<dyn EmbeddingPort>`; `open()` constructor removed) |
+| `hkask-mcp` | ✅ (added `rmcp = "1"`, `tokio-util` to workspace; fixed `jsonschema` 0.28→0.37 API) |
+| `hkask-pods` | ✅ (full port-ify: `deployment.rs` rewritten — `PerPodStorage` holds `Arc<dyn StorageDriver>` + `Arc<dyn EmbeddingPort>`; `PodFactory::deploy` accepts driver+embedding; `CuratorSync` uses `driver_factory` closure; `test_stubs.rs` with `StubStorageDriver`/`StubEmbeddingPort`) |
+| `hkask-mcp-server` | ✅ (port-ify: `open_database()` returns `Result<Arc<dyn StorageDriver>, McpError>` — bridge needed for file-based opening; `reqwest` needs `json` feature per-crate) |
+| `kask_bridge` | stub |
+| `kask_panel` | stub |
+
+§13.1 invariant holds. All 12 crates compile together with zero errors (only pre-existing `sql` cfg warnings in hkask-types + 3 dead-code warnings in hkask-pods).
+
+## YOU ARE HERE — MCP server source migration
+
+The 16 MCP server source crates are in `Clones/hKask/mcp-servers/hkask-mcp-*/`. They need to be migrated to `kask/mcp-servers/hkask-mcp-*/`.
+
+### Architecture plan decisions (critical for MCP servers)
+
+From `zed-host-architecture-plan.md` line 68 + lines 175-181:
+
+- **`hkask-inference` → DELETED** (T5.1). Keep only the `InferencePort` *trait* in `hkask-types`. Servers that use `hkask-inference` must be refactored to use `InferencePort` from `hkask-types`.
+- **`hkask-services-*` → DELETION CANDIDATES** (T5.7). Functionality absorbed into `kask_bridge`/`KaskCore`. Servers that depend on them need those deps removed/stubbed.
+- **`hkask-condenser` → DELETION CANDIDATE** (T5.7).
+- **`hkask-communication` → DELETED** (T5.4). `hkask-mcp-communication` → DELETED.
+- **`hkask-mcp-filesystem` → DELETED** (decided, §2.4 — zed provides fs tools).
+- **`hkask-ledger` → keep-crate** (line 62: "rJoule energy budget + hMem accounting") but NOT yet migrated.
+- **`hkask-test-harness` → NOT in keep-list.** Remove from dev-deps.
+- **`hkask-bridge-dublincore` → NOT in keep-list.** Remove/stub.
+- 12 loaded by default + 2 kept-unloaded (curator, skill) + 2 deleted (communication, filesystem) = 16 original.
+
+### Server survey (from this session)
+
+Run `cargo check` from `Clones/zed-kask` to verify state. The 16 servers:
+
+**READY — only need storage/rusqlite port-ify (migrate first):**
+
+| Server | src files | lines | storage | rusqlite | deps (already-migrated only) |
+|---|---|---|---|---|---|
+| `hkask-mcp-scenarios` | 5 | 4853 | 0 | 0 | mcp-server, types, forecast — **CLEAN, no port-ify needed** |
+| `hkask-mcp-regulation` | 2 | 298 | 1 | 0 | mcp-server, types, storage — uses `RegulationArchive`, `SqliteDriver`, `open_or_repair`, `DatabaseDriver` |
+| `hkask-mcp-research` | 23 | 5616 | 0 | 3 | mcp-server, types — uses `rusqlite::Connection`, `Transaction`, `open_database_with_extensions`; has `src/research/db.rs` module with rusqlite |
+| `hkask-mcp-codegraph` | 17 | 3603 | 0 | 1 | mcp-server, types — uses `rusqlite` extensively + `sqlite-vec` FFI (`sqlite3_vec_init` in `codegraph/graph/store.rs`) |
+
+**NEED inference removed (use InferencePort from hkask-types instead of hkask-inference):**
+
+| Server | also needs | notes |
 |---|---|---|
-| `hkask-types` | ✅ compiles | Now includes `storage.rs` with `DbValue`, `DbRow`, `StorageDriver` trait, `define_driver_store!` macro, `query_map`/`query_row` helpers |
-| `hkask-capability` | ✅ compiles | OCAP ToolPort + DelegationToken |
+| `hkask-mcp-skill` | templates ✅ | 2 src files, 348 lines — small |
+| `hkask-mcp-memory` | storage, test-harness | 4 src files, 1239 lines |
+| `hkask-mcp-training` | capability ✅, memory ✅, storage | 32 src files, 13400 lines — LARGE |
+| `hkask-mcp-media` | pods ✅, storage | 18 src files, 6267 lines |
+| `hkask-mcp-condenser` | condenser (deleted), memory ✅, storage | 2 src files, 612 lines — needs rewrite (condenser deleted) |
+| `hkask-mcp-docproc` | bridge-dublincore, memory ✅, storage, guard ✅, services-core (deleted) | 40 src files, 12619 lines — VERY LARGE, needs significant rewrite |
 
-| `hkask-goal` | ✅ compiles | Goal types |
-| `hkask-keystore` | ✅ compiles | OS keychain, AES-256-GCM (trimmed: sovereignty crypto only) |
-| `kask_bridge` | stub (empty) | D8 — the sole bidirectional seam |
-| `kask_panel` | stub (empty) | D10 — native GPUI Panel |
-| **`hkask-regulation`** | **2 errors remaining** | Port-ified: all `hkask_storage` refs replaced with `hkask_types::storage`. See below. |
+**NEED services-* removed:**
 
-Workspace deps added for hKask: `blake3 = "1"`, `ed25519-dalek = "2"`, `keyring`, `aes-gcm`, `argon2`, `hmac`, `hex` (with `serde` feature), `hkask-types`, `hkask-capability`, `hkask-goal`, `hkask-keystore`, `hkask-regulation`.
+| Server | also needs | notes |
+|---|---|---|
+| `hkask-mcp-curator` | storage, memory ✅, services-context (deleted), capability ✅ | 3 src files, 646 lines — kept but unloaded |
+| `hkask-mcp-kata-kanban` | services-kata-kanban (not migrated), storage, test-harness | 4 src files, 1501 lines |
+| `hkask-mcp-replica` | many services (deleted), inference (deleted), storage, keystore ✅, test-harness | 4 src files, 1389 lines — needs major rewrite |
 
-Workspace members in `Cargo.toml`: `kask/crates/kask_bridge`, `kask/crates/kask_panel`, `kask/crates/hkask-types`, `kask/crates/hkask-capability`, `kask/crates/hkask-goal`, `kask/crates/hkask-keystore`, `kask/crates/hkask-regulation`.
+**NEED other unmigrated deps:**
 
-## The 2 errors to fix in `hkask-regulation`
+| Server | dep | notes |
+|---|---|---|
+| `hkask-mcp-companies` | `hkask-ledger` (keep-crate, NOT yet migrated) | 24 src files, 13592 lines — LARGE. Also needs storage port-ify + forecast ✅ |
 
-Run `cargo check -p hkask-regulation` from `Clones/zed-kask` to reproduce.
+**SKIP (being deleted per architecture plan):**
+- `hkask-mcp-communication` — deps: `hkask-communication` (deleted)
+- `hkask-mcp-filesystem` — decided deleted (zed provides fs tools)
 
-**Error 1 — `seam_watcher.rs:34`:**
+### Specific port-ify patterns observed
+
+**`hkask-mcp-regulation`** (lib.rs lines 24-25, 226, 249):
+```rust
+use hkask_storage::RegulationArchive;
+use hkask_storage::database::sqlite::SqliteDriver;
+let db = match hkask_storage::open_or_repair(&db_path, &passphrase) { ... };
+let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = Arc::new(SqliteDriver::new(pool));
 ```
-include_str!("../../../docs/status/public-seam-inventory.json")
+→ Replace with `StorageDriver` port. `RegulationArchive` may need to be moved or stubbed.
+
+**`hkask-mcp-research`** (lib.rs line 19, db.rs):
+```rust
+use rusqlite::Connection;
+let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred);
+tx.execute("INSERT INTO subscriptions ...", rusqlite::params![...]);
 ```
-The crate moved from `crates/hkask-regulation/` to `kask/crates/hkask-regulation/`, so the relative path is one level too shallow. Fix: either copy the JSON from `Clones/hKask/docs/status/public-seam-inventory.json` to `kask/docs/status/` and change the path to `"../../../docs/status/public-seam-inventory.json"` → `"../../../../docs/status/public-seam-inventory.json"`, OR make the include_str! fall back to an empty string (the seam watcher is non-fatal — it silently disables when no inventory is available). The simplest fix: change the path to `concat!(env!("CARGO_MANIFEST_DIR"), "/../../../docs/status/public-seam-inventory.json")` or just copy the file and fix the depth.
+Also calls `context.open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL)` which now returns error (mcp-server port-ify).
+→ Replace rusqlite with `StorageDriver::query`/`execute` + `DbValue`. Transactions via `execute_batch("BEGIN")` + `commit_tx()`.
 
-**Error 2 — `agent_wallet_store.rs:30`:**
-The wholesale `hkask_storage → hkask_types::storage` replacement doubled a path:
+**`hkask-mcp-codegraph`** (codegraph/graph/store.rs):
+```rust
+use rusqlite::{Connection, params};
+fn init_sqlite_vec_on(conn: &Connection) -> rusqlite::Result<()> {
+    // FFI: sqlite3_vec_init with raw sqlite3 pointer
+}
 ```
-hkask_types::storage::hkask_types::storage::StorageDriver
-```
-The `define_driver_store!` macro generates `$crate::storage::StorageDriver` (which resolves to `hkask_types::storage::StorageDriver`), but the `init_schema` function has a hand-written signature that got doubled by the replacement. Fix: find line 30 in `kask/crates/hkask-regulation/src/agent_wallet_store.rs`, replace the doubled path `hkask_types::storage::hkask_types::storage::StorageDriver` with `hkask_types::storage::StorageDriver`.
+Uses `sqlite-vec` for code graph vector search. **Decision needed:** pure-Rust cosine similarity (like EmbeddingPort) or stub the vector search. The `init_sqlite_vec_on` function uses `rusqlite::ffi` raw pointer access — can't be ported to `StorageDriver` without raw handle access.
 
-After these 2 fixes: `cargo check -p hkask-regulation` should compile. Then verify the invariant: `bash kask/scripts/check-hkask-no-zed-deps.sh`.
+### Migration pattern (for each server)
 
-## Migration pattern (for each remaining keep-crate)
+1. Copy from `Clones/hKask/mcp-servers/hkask-mcp-<name>` to `kask/mcp-servers/hkask-mcp-<name>`.
+2. Adapt `Cargo.toml`: pin `version = "0.31.0"`, `edition = "2024"`, `license = "MIT"`, `publish = false`. Fix path deps to `../../crates/hkask-*` (relative from `kask/mcp-servers/`). Keep `.workspace = true` for shared deps. Strip `hkask-storage`/`rusqlite`/`r2d2`/`sqlx`/`hkask-inference`/`hkask-services-*`/`hkask-test-harness`/`hkask-condenser`/`hkask-bridge-dublincore`/`hkask-communication` deps. Add `hkask-types` storage/embedding port imports if needed. Check `schemars` — may need to add to workspace or pin inline.
+3. If the server imports `hkask_storage`, replace with `hkask_types::storage::*` (port-ify).
+4. If the server uses `rusqlite` directly, replace with `StorageDriver::query`/`execute` + `DbValue`/`DbRow`.
+5. If the server uses `hkask_inference`, replace with `hkask_types::InferencePort` (the trait). Move any model constants needed to `hkask-types` or inline them.
+6. If the server uses `hkask_services_*` or `hkask_condenser` or `hkask_bridge_dublincore`, stub/remove those imports with TODO comments — the functionality moves to `kask_bridge`/`KaskCore`.
+7. If the server uses `hkask_test_harness` in dev-deps, strip it. Tests that need it should use `hkask-pods::test_stubs` or be disabled for now.
+8. Add to workspace members + `[workspace.dependencies]` in root `Cargo.toml`.
+9. `cargo check -p hkask-mcp-<name>` + `bash kask/scripts/check-hkask-no-zed-deps.sh`.
 
-1. Copy the crate from `Clones/hKask/crates/<name>` to `kask/crates/<name>`.
-2. Adapt `Cargo.toml`: pin `version = "0.31.0"`, `edition = "2024"`, `license = "MIT"`, `publish = false`. Keep `.workspace = true` for shared deps. Fix any missing features (e.g., `hex` needs `serde`, `tokio` needs `features = ["full"]`). Strip dev-deps that reference not-yet-migrated hKask crates (re-add as they arrive).
-3. If the crate imports `hkask_storage`, replace with `hkask_types::storage` (port-ify — use `StorageDriver` instead of concrete storage types).
-4. Add to workspace members + `[workspace.dependencies]` in root `Cargo.toml`.
-5. `cargo check -p <crate>` — verify it compiles.
-6. `bash kask/scripts/check-hkask-no-zed-deps.sh` — verify the §13.1 invariant.
+### Suggested migration order
 
-## Remaining migration order (dependency chain, after hkask-regulation compiles)
+1. **`hkask-mcp-scenarios`** — clean, no port-ify needed. Just copy + adapt Cargo.toml paths. ⬅️ START HERE
+2. **`hkask-mcp-regulation`** — small (298 lines), port-ify `RegulationArchive`/`SqliteDriver` → `StorageDriver`.
+3. **`hkask-mcp-skill`** — small (348 lines), remove `hkask-inference` dep, use `InferencePort`.
+4. **`hkask-mcp-research`** — medium (5616 lines), port-ify rusqlite → `StorageDriver`.
+5. **`hkask-mcp-codegraph`** — medium (3603 lines), port-ify rusqlite + decide on sqlite-vec (pure-Rust cosine or stub).
+6. **`hkask-mcp-memory`** — small (1239 lines), port-ify storage + remove test-harness.
+7. **`hkask-mcp-condenser`** — small (612 lines), needs rewrite (condenser deleted).
+8. **`hkask-mcp-curator`** — small (646 lines), kept but unloaded. Remove services-context dep.
+9. **`hkask-mcp-kata-kanban`** — medium (1501 lines), remove services-kata-kanban + test-harness.
+10. **`hkask-mcp-media`** — medium (6267 lines), remove inference + port-ify storage.
+11. **`hkask-mcp-training`** — large (13400 lines), remove inference + port-ify storage.
+12. **`hkask-mcp-companies`** — large (13592 lines), needs `hkask-ledger` migrated first (or stubbed).
+13. **`hkask-mcp-replica`** — medium (1389 lines), needs major rewrite (many deleted deps).
+14. **`hkask-mcp-docproc`** — very large (12619 lines), needs significant rewrite.
 
-1. **`hkask-regulation`** — fix the 2 errors above. ⬅️ YOU ARE HERE
-2. **`hkask-guard`** — depends on `hkask-regulation` + `hkask-types`. External dep: `llm-guard = "0.2"` (add to workspace deps).
-3. **`hkask-forecast`** — check deps; `hkask-templates` depends on it.
-4. **`hkask-templates`** — depends on `hkask-types`, `hkask-capability`, `hkask-forecast`, `hkask-guard`, `hkask-regulation`. External deps: `minijinja`, `r2d2`, `r2d2_sqlite` (deferred — strip rusqlite/r2d2 deps, port-ify if needed).
-5. **`hkask-memory`** — depends on `hkask-types`, `hkask-storage` (port-ify).
-6. **`hkask-pods`** — depends on `hkask-types`, `hkask-capability`, `hkask-mcp`, `hkask-templates`, `hkask-regulation`, `hkask-keystore`, `hkask-storage` (port-ify), `hkask-memory`. The Curator + UserPod crate.
-7. **`hkask-mcp` / `hkask-mcp-server`** — the MCP framework. Check deps.
-8. **The 15 MCP servers** — each under `kask/mcp-servers/`. The 12 loaded by default: `memory`, `condenser`, `research`, `companies`, `media`, `docproc`, `training`, `replica`, `kata-kanban`, `codegraph`, `scenarios`, `regulation`. Kept but not loaded: `curator`, `skill`. Deleted: `communication`, `filesystem`.
-9. **The skills registry** — copy `.agents/skills/` to `kask/skills/` (the `manifest.yaml` + `*.j2` templates — Pattern A source of truth).
-10. **Archive `mdz-axo/hKask`** — GitHub archive + root `README.md` pointing to `zed-kask/kask/`.
+### After MCP servers
 
-## Key decisions already made
+15. **`hkask-mcp-cloud-gateway`** — in `Clones/hKask/crates/` (not `mcp-servers/`). 4 src files, clean (no storage refs). deps: mcp-server, types, capability.
+16. **Update `BUILTIN_SERVERS`** in `hkask-mcp-server/src/lib.rs` — remove `communication` + `filesystem` entries (deleted per architecture plan).
+17. **Skills registry** → `kask/skills/` (`manifest.yaml` + `*.j2`). Copy from `Clones/hKask/registry/` (already partially copied to `kask/registry/` for templates).
+18. **Archive `mdz-axo/hKask`**.
 
-- **Full merge** (§14): hKask → zed-kask under `kask/`; hKask repo archived.
-- **No backward compatibility** (§1): build-then-delete, no coexistence shims.
-- **Conform to zed deps** (DIVERGENCE.md): don't bump zed's versions; refactor hKask to use zed's stack.
-- **StoragePort** (T0.6-storage): `StorageDriver` trait in `hkask-types`; `kask_bridge` implements over `sqlez`; SQLCipher → application-layer encryption.
-- **12 MCP servers loaded by default** (§2.4): `communication` + `filesystem` deleted; `curator` + `skill` kept but unloaded.
-- **kask panel = native GPUI** (§12, option B): reimplement `McpScopedWindow` as a zed `Panel` reusing `ui::prelude::*`; no ratatui terminal.
-- **KaskSettings** (§11, D9): new `"kask": {...}` settings.json section + kask credentials namespace in `CredentialsProvider`.
-- **App-identity separation** (§7, D7): `APP_NAME = "Zed-Kask"`, distinct single-instance port, `.zed-kask_server` remote dirs, binary `zed-kask`. Keep shared `*.zed.dev` account endpoints.
+### Key decisions already made (this session + prior)
 
-## Port set (§13.2) — all in `hkask-types` / `hkask-capability`, implemented by `kask_bridge`
+- **Full merge** into `kask/` namespace; hKask repo archived. No backward compatibility.
+- **Conform to zed deps** — don't bump zed's versions. Add new deps (like `rmcp`, `llm-guard`, `minijinja`, `serde_yaml_neo`) to workspace `[workspace.dependencies]`.
+- **`StorageDriver` port** in `hkask-types::storage`; `kask_bridge` implements over `sqlez`.
+- **`EmbeddingPort` port** in `hkask-types::ports::embedding_port`; `kask_bridge` implements with **pure-Rust brute-force cosine similarity** (NOT sqlite-vec — personal agent scale, sub-ms for 10K × 1024-dim embeddings; no C deps, no global side effects, trivially debuggable). Escape hatch: pure-Rust HNSW (`hnsw_rs`) if scale ever demands it.
+- **`HMemStore`** is a concrete struct (not a trait) — already provider-agnostic, moved to `hkask-memory` using `StorageDriver`.
+- **`MemoryPort`** (D6): `ingest_thread` + `recall_semantic` — bridge implements over in-process memory handles.
+- **`CuratorSync`** uses `driver_factory` closure (Arc<dyn Fn(&Path) -> Result<Arc<dyn StorageDriver>, String>) — bridge provides real impl.
+- **`PodFactory::deploy`** accepts `driver: Arc<dyn StorageDriver>` + `embedding: Arc<dyn EmbeddingPort>` as params — composition root moves to `KaskCore`/`kask_bridge`.
+- **`test_stubs`** module in `hkask-pods` — `StubStorageDriver` + `StubEmbeddingPort` for test harnesses.
+- **12 MCP servers loaded by default** (`communication` + `filesystem` deleted; `curator` + `skill` kept but unloaded).
+- **kask panel** = native GPUI (reuses `ui::prelude::*`; no ratatui).
+- **`KaskSettings`** = new `"kask": {...}` settings.json section + kask credentials namespace.
+- **App-identity**: `APP_NAME = "Zed-Kask"`, distinct single-instance port, `.zed-kask_server`, binary `zed-kask`. Keep `*.zed.dev` account.
 
-- `InferencePort` (exists in `hkask-types`) — over zed's `LanguageModel` (streaming → non-streaming adapter)
-- `ToolPort` (exists in `hkask-capability`) — over the in-process MCP tool registry
-- `StorageDriver` (NEW in `hkask-types::storage`) — over zed's `sqlez`
-- `SecretsPort` (NEW, to define in `hkask-types`) — over `CredentialsProvider`
-- `CuratorTurnPort` (NEW, to define in `hkask-types`) — over native-agent turn
-- `MemoryPort` (NEW, to define in `hkask-types`) — over in-process memory handles
+### Workspace deps added this session
 
-## Composition root (§13.3)
+Added to `[workspace.dependencies]` in root `Cargo.toml`:
+- `llm-guard = "0.2"`
+- `minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }`
+- `serde_yaml_neo = "0.11"`
+- `rmcp = "1"`
+- `tokio-util = { version = "0.7", features = ["rt"] }`
 
-zed-kask startup constructs one `KaskCore` (per-pod SQLCipher storage + Regulation + memory + singleton Curator + 12 MCP servers + ManifestExecutor), wires the bridge adapters, spawns the regulation/Curator tokio loops on `gpui_tokio`, registers the UserPod + Curator agents + KaskPanel, loads KaskSettings → KaskCore params, runs config migration.
+`schemars` IS in zed workspace (v1.0, features ["indexmap2"]) — MCP servers can use `.workspace = true`.
 
-## What to do right now
+### What to do right now
 
-1. Fix the 2 errors in `hkask-regulation` (see above).
-2. `cargo check -p hkask-regulation` — verify it compiles.
-3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — verify invariant.
-4. Continue the migration: `hkask-guard` → `hkask-forecast` → `hkask-templates` → `hkask-memory` → `hkask-pods` → `hkask-mcp` → MCP servers → skills → archive hKask.
-5. For each crate, follow the migration pattern above.
+1. Start with `hkask-mcp-scenarios` (clean, no port-ify needed — just copy + fix Cargo.toml paths).
+2. Then `hkask-mcp-regulation` (small, port-ify `RegulationArchive` → `StorageDriver`).
+3. Then `hkask-mcp-skill` (small, remove `hkask-inference` → `InferencePort`).
+4. Continue through the suggested order above.
+5. After all servers: update `BUILTIN_SERVERS`, copy skills registry, archive hKask.
+
+---
+
+The prompt is also saved at `Clones/zed-kask/kask/docs/plans/continuation-prompt.md` for reference. Paste it into a fresh Zed agent session to continue from exactly where we left off — 4 ready-to-migrate MCP servers away from the next checkpoint, then 10 more needing dep removal/refactoring.

@@ -276,6 +276,7 @@ members = [
     "kask/crates/hkask-memory",
     "kask/crates/hkask-mcp",
     "kask/crates/hkask-pods",
+    "kask/crates/hkask-mcp-server",
 ]
 default-members = ["crates/zed"]
 
@@ -826,6 +827,7 @@ hkask-templates = { path = "kask/crates/hkask-templates" }
 hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-pods = { path = "kask/crates/hkask-pods" }
+hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
 llm-guard = "0.2"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"

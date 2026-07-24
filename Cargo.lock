@@ -8697,6 +8697,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp-server"
+version = "0.31.0"
+dependencies = [
+ "async-trait",
+ "dirs",
+ "hex",
+ "hkask-keystore",
+ "hkask-types",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zed-reqwest",
+]
+
+[[package]]
 name = "hkask-memory"
 version = "0.31.0"
 dependencies = [
