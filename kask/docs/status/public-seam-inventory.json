@@ -1,1 +1,13 @@
-[]
+{
+  "generated": "",
+  "totals": {
+    "crate_name": "workspace",
+    "total_items": 0,
+    "covered": 0,
+    "uncovered": 0,
+    "coverage_pct": 0.0,
+    "req_tests": 0,
+    "high_risk_uncovered": 0
+  },
+  "crates": {}
+}

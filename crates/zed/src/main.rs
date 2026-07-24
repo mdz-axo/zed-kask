@@ -575,6 +575,17 @@ fn main() {
                 );
                 agent::set_manifest_executor(Some(executor));
                 log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
+
+                // D6: Wire the thread-to-memory ingestion port.
+                // The LoggingMemoryPort is a no-op placeholder — the full hKask
+                // memory stack (SQLCipher, episodic/semantic storage, consolidation)
+                // is deferred until the storage layer and WebID mapping are
+                // available in-process. The BridgeMemoryPort adapts the agent
+                // crate's local ThreadMemoryPort trait to the hKask MemoryPort trait.
+                let memory_port = std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new());
+                let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(memory_port));
+                agent::set_memory_port(Some(bridge_memory));
+                log::info!("hKask memory port wired — thread turns will be ingested (logging no-op)");
             } else {
                 log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skills will use body injection");
             }

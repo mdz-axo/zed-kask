@@ -248,6 +248,24 @@ fn default_rewrite_dimension() -> String {
 
 #[tool_router(router = persona_router, vis = "pub")]
 impl CorpusServer {
+    /// Embed a style corpus and create an authorial replica.
+    ///
+    /// This tool is the **persona output branch** of the corpus flow. It uses
+    /// `EmbedService::embed_corpus` which performs its own chunking (word-count
+    /// based via `WordCountChunker`), tagging (rule-based entity matching),
+    /// embedding (plain, no INSTRUCTOR annotation), and triple extraction
+    /// (via `hkask_services_runtime`).
+    ///
+    /// The `docproc_*` tools (chunk, tag_chunks, embed, extract_triples) are the
+    /// **QA training output branch** — they use token-count chunking, LLM-based
+    /// ontology tagging, INSTRUCTOR-method ontology-anchored embedding, and
+    /// hallucination-guarded triple extraction. Both branches share the same
+    /// operations (declared via `ChunkingStrategy`, `EmbeddingStrategy`,
+    /// `TripleExtractionStrategy` traits) but use different implementations
+    /// appropriate for their output type.
+    ///
+    /// The centroid computation (mean vector over passages) is persona-specific
+    /// and has no docproc equivalent.
     #[tool(
         description = "Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid."
     )]

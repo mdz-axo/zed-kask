@@ -12,6 +12,7 @@ pub mod flowdef_validation;
 pub mod git_cas;
 pub mod inference_port;
 pub mod inference_types;
+pub mod memory_port;
 pub mod pipeline_manifest;
 pub mod pipeline_runner;
 pub mod pipeline_state;
@@ -30,6 +31,7 @@ pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,
     InferenceUsage, StructuredToolCall, TokenProb, TokenProbability, compute_confidence,
 };
+pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, TurnRecord};
 pub use registry::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };

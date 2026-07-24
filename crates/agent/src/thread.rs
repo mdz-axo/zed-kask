@@ -2678,6 +2678,55 @@ impl Thread {
                     Ok(()) => {
                         log::debug!("Turn execution completed");
                         event_stream.send_stop(acp::StopReason::EndTurn);
+
+                        // D6: Ingest the completed turn into hKask memory.
+                        // Fire-and-forget — the memory system handles classification
+                        // and consolidation asynchronously. When no memory port is
+                        // injected (upstream zed, or before composition root runs),
+                        // this is a no-op.
+                        if let Some(port) = crate::memory_port() {
+                            let record = this.update(cx, |thread, cx| crate::ThreadTurnRecord {
+                                thread_id: thread.id().to_string(),
+                                user_prompt: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::User(user_msg) = &**msg {
+                                            Some(user_msg.to_markdown())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                                agent_response: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::Agent(agent_msg) = &**msg {
+                                            Some(agent_msg.to_markdown())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                                model: thread
+                                    .model()
+                                    .map(|m| m.name().0.to_string())
+                                    .unwrap_or_default(),
+                                thread_title: thread.title().map(|t| t.to_string()),
+                            });
+                            if let Ok(record) = record {
+                                let port = port.clone();
+                                cx.background_spawn(async move {
+                                    if let Err(e) = port.ingest_turn(record).await {
+                                        log::warn!("Memory ingestion failed: {e}");
+                                    }
+                                })
+                                .detach();
+                            }
+                        }
                     }
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);

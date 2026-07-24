@@ -8,12 +8,14 @@
 //! hKask. This bridge is the only crate that depends on both sides.
 
 mod inference;
+mod memory;
 mod secrets;
 mod settings;
 mod skill_executor;
 mod tool_port;
 
 pub use inference::LanguageModelInferencePort;
+pub use memory::{BridgeMemoryPort, LoggingMemoryPort};
 pub use secrets::{CredentialsSecretsPort, KASK_CREDENTIAL_NAMESPACE};
 pub use settings::KaskSettings;
 pub use skill_executor::BridgeManifestExecutor;

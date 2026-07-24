@@ -263,20 +263,20 @@ mod tests {
     #[test]
     fn cost_floored_at_one() {
         let mut table = DynamicGasTable::new();
-        // memory cost is 5, ratio 0.1 → new cost = 5 * 0.1 = 0.5, floored at 1
-        table.record_observation("hkask-mcp-memory", 5, 0);
+        // condenser cost is 10, ratio 0.1 → new cost = 10 * 0.1 = 1, floored at 1
+        table.record_observation("hkask-mcp-condenser", 10, 1);
         let adjusted = table.calibrate();
         assert_eq!(adjusted, 1);
         let reports = table.report_table();
-        assert_eq!(reports["hkask-mcp-memory"], 1, "cost floored at 1");
+        assert_eq!(reports["hkask-mcp-condenser"], 1, "cost floored at 1");
     }
 
     #[test]
     fn unobserved_servers_retain_initial() {
         let table = DynamicGasTable::new();
         let reports = table.report_table();
-        // hkask-mcp-memory should still have its default cost of 5
-        assert_eq!(reports["hkask-mcp-memory"], 5);
+        // hkask-mcp-condenser should still have its default cost of 10
+        assert_eq!(reports["hkask-mcp-condenser"], 10);
     }
 
     #[test]

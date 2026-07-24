@@ -2603,6 +2603,54 @@ pub(crate) fn manifest_executor() -> Option<&'static Arc<dyn SkillManifestExecut
     MANIFEST_EXECUTOR.get().and_then(|opt| opt.as_ref())
 }
 
+// ── D6: Thread → memory ingestion hook ─────────────────────────────────────
+
+/// A completed thread turn offered to the memory system for ingestion.
+///
+/// This is the `agent` crate's local mirror of `hkask_types::TurnRecord`.
+/// The bridge adapts between the two.
+pub struct ThreadTurnRecord {
+    pub thread_id: String,
+    pub user_prompt: String,
+    pub agent_response: String,
+    pub model: String,
+    pub thread_title: Option<String>,
+}
+
+/// Port for ingesting completed thread turns into memory (D6).
+///
+/// This is the `agent` crate's local trait — the bridge provides the
+/// implementation. When no implementation is injected, ingestion is a no-op.
+pub trait ThreadMemoryPort: Send + Sync {
+    /// Ingest a completed turn into memory. Fire-and-forget from the caller's
+    /// perspective — the memory system handles classification and consolidation.
+    fn ingest_turn(
+        &self,
+        record: ThreadTurnRecord,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
+}
+
+/// Global hook for the thread memory port (D6).
+///
+/// Set by the zed-kask composition root at startup. When set, thread turn
+/// completion triggers memory ingestion. When `None` (upstream zed, or before
+/// the composition root runs), turn completion is a no-op for memory.
+static MEMORY_PORT: std::sync::OnceLock<Option<Arc<dyn ThreadMemoryPort>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global thread memory port (D6 composition root).
+///
+/// Called by zed-kask's app startup to wire the `kask_bridge::LoggingMemoryPort`
+/// into the thread completion path.
+pub fn set_memory_port(port: Option<Arc<dyn ThreadMemoryPort>>) {
+    let _ = MEMORY_PORT.set(port);
+}
+
+/// Get the global thread memory port, if set.
+pub(crate) fn memory_port() -> Option<&'static Arc<dyn ThreadMemoryPort>> {
+    MEMORY_PORT.get().and_then(|opt| opt.as_ref())
+}
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
         ZED_AGENT_ID.clone()

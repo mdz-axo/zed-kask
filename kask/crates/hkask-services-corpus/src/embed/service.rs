@@ -3,6 +3,7 @@
 use super::download::download_text;
 use super::hmems::store_passage_h_mems;
 use super::passage::TaggedPassage;
+use super::strategies::ChunkingStrategy;
 use super::types::{
     CURATOR_PERSONA, CorpusConfig, DimensionCentroidResult, EmbedPhase, EmbedProgress, EmbedResult,
     ProgressFn,
@@ -255,13 +256,12 @@ impl EmbedService {
 
             let cleaned = SemanticMemory::strip_gutenberg_headers(&text);
             let entity_ref_prefix = format!("style:{}:{}", &config.author, work.slug);
-            let chunks = SemanticMemory::chunk_text(
-                &cleaned,
-                &entity_ref_prefix,
-                config.chunking.min_words,
-                config.chunking.max_words,
-                &config.chunking.sentence_boundary,
-            );
+            let chunker = crate::embed::WordCountChunker {
+                min_words: config.chunking.min_words,
+                max_words: config.chunking.max_words,
+                sentence_boundary: config.chunking.sentence_boundary.clone(),
+            };
+            let chunks = chunker.chunk(&cleaned, &entity_ref_prefix);
 
             // Tag each chunk
             let total_chunks = chunks.len();

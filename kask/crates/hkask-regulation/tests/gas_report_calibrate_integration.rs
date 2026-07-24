@@ -65,12 +65,12 @@ fn gas_report_calibrates_dynamic_table_from_settled_events() {
 #[test]
 fn calibrated_table_flows_into_composite_estimator() {
     let agent = WebID::new();
-    let server = "hkask-mcp-memory";
+    let server = "hkask-mcp-condenser";
 
     let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
     let event_store: Arc<RegulationArchive> = Arc::new(RegulationArchive::from_driver(driver));
 
-    // Actual is half of reserved → ratio 0.5 → cost should halve (5 → 2, floored at 1).
+    // Actual is half of reserved → ratio 0.5 → cost should halve (10 → 5).
     let event = settled_event(agent, server, 10, 5);
     event_store.persist(&event).expect("persist settled event");
 
@@ -88,7 +88,7 @@ fn calibrated_table_flows_into_composite_estimator() {
     let estimator = CompositeEnergyEstimator::from_dynamic_table(&table);
     let cost = estimator.estimate_cost(server, "spec_query", &serde_json::json!({}));
     assert_eq!(
-        cost, 2,
+        cost, 5,
         "estimator should use calibrated cost from settled event"
     );
 }
