@@ -6,9 +6,9 @@
 //! Tested seams:
 //! - `cosine_distance` (pure function from hkask-services)
 //! - `ProbContractRunner` (probabilistic contract verification)
-//! - `replica_explain` (static info tool)
-//! - `replica_build` (error path: missing config)
-//! - `replica_cache_work` (file write + slug validation)
+//! - `corpus_explain` (static info tool)
+//! - `corpus_build_persona` (error path: missing config)
+//! - `corpus_cache_work` (file write + slug validation)
 
 use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
 use hkask_mcp_corpus::CorpusServer;
@@ -284,9 +284,9 @@ fn error_kind(out: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn replica_explain_returns_info_via_parameters_seam() {
+async fn corpus_explain_returns_info_via_parameters_seam() {
     let server = test_server();
-    let out = server.replica_explain().await;
+    let out = server.corpus_explain().await;
     let content = parse_content(&out);
     assert!(
         content.is_object(),
@@ -295,7 +295,7 @@ async fn replica_explain_returns_info_via_parameters_seam() {
 }
 
 #[tokio::test]
-async fn replica_build_rejects_missing_config_via_parameters_seam() {
+async fn corpus_build_persona_rejects_missing_config_via_parameters_seam() {
     let server = test_server();
     let req: hkask_mcp_corpus::tools::persona::BuildRequest =
         serde_json::from_value(serde_json::json!({
@@ -304,13 +304,13 @@ async fn replica_build_rejects_missing_config_via_parameters_seam() {
             "passphrase": null
         }))
         .expect("deserialize BuildRequest");
-    let out = server.replica_build(Parameters(req)).await;
+    let out = server.corpus_build_persona(Parameters(req)).await;
     let kind = error_kind(&out).expect("expected error kind for missing config");
     assert_eq!(kind, "invalid_argument", "got: {out}");
 }
 
 #[tokio::test]
-async fn replica_cache_work_writes_file_via_parameters_seam() {
+async fn corpus_cache_work_writes_file_via_parameters_seam() {
     let server = test_server();
     let dir = tempfile::tempdir().expect("tempdir");
     let req: hkask_mcp_corpus::tools::gather::CacheWorkRequest =
@@ -320,7 +320,7 @@ async fn replica_cache_work_writes_file_via_parameters_seam() {
             "cache_dir": dir.path().to_string_lossy()
         }))
         .expect("deserialize CacheWorkRequest");
-    let out = server.replica_cache_work(Parameters(req)).await;
+    let out = server.corpus_cache_work(Parameters(req)).await;
     let content = parse_content(&out);
     let bytes = content["bytes_written"].as_u64().expect("bytes_written");
     assert!(bytes > 0, "should write bytes: {out}");
@@ -332,7 +332,7 @@ async fn replica_cache_work_writes_file_via_parameters_seam() {
 }
 
 #[tokio::test]
-async fn replica_cache_work_rejects_bad_slug_via_parameters_seam() {
+async fn corpus_cache_work_rejects_bad_slug_via_parameters_seam() {
     let server = test_server();
     let dir = tempfile::tempdir().expect("tempdir");
     let req: hkask_mcp_corpus::tools::gather::CacheWorkRequest =
@@ -342,7 +342,7 @@ async fn replica_cache_work_rejects_bad_slug_via_parameters_seam() {
             "cache_dir": dir.path().to_string_lossy()
         }))
         .expect("deserialize CacheWorkRequest");
-    let out = server.replica_cache_work(Parameters(req)).await;
+    let out = server.corpus_cache_work(Parameters(req)).await;
     let kind = error_kind(&out).expect("expected error kind for bad slug");
     assert_eq!(kind, "invalid_argument", "got: {out}");
 }

@@ -269,10 +269,10 @@ impl CorpusServer {
     #[tool(
         description = "Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid."
     )]
-    pub async fn replica_build(&self, Parameters(params): Parameters<BuildRequest>) -> String {
+    pub async fn corpus_build_persona(&self, Parameters(params): Parameters<BuildRequest>) -> String {
         let config_path = PathBuf::from(&params.config_path);
 
-        execute_tool(self, "replica_build", async {
+        execute_tool(self, "corpus_build_persona", async {
             if !config_path.exists() {
                 return Err(McpToolError::invalid_argument(format!(
                     "Config file not found: {}",
@@ -327,8 +327,8 @@ impl CorpusServer {
     }
 
     #[tool(description = "Generate prose in an author's style.")]
-    pub async fn replica_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
-        execute_tool(self, "replica_compose", async {
+    pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
+        execute_tool(self, "corpus_compose", async {
             let model = embedding_model();
             let gen_model = generation_model();
             let inf_cfg = inference_config();
@@ -377,10 +377,10 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Delegates to replica_compose with dimension-specific guidance."
+        description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Delegates to corpus_compose with dimension-specific guidance."
     )]
-    pub async fn replica_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> String {
-        execute_tool(self, "replica_rewrite", async {
+    pub async fn corpus_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> String {
+        execute_tool(self, "corpus_rewrite", async {
             let dimension_guidance = match params.dimension.to_lowercase().as_str() {
                 "gentle" => {
                     "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information."
@@ -467,11 +467,11 @@ impl CorpusServer {
     #[tool(
         description = "Compare all built author replicas, or evaluate a document against a persona's centroids."
     )]
-    pub async fn replica_compare(&self, Parameters(params): Parameters<CompareRequest>) -> String {
+    pub async fn corpus_compare(&self, Parameters(params): Parameters<CompareRequest>) -> String {
         let persona = params.persona.clone();
         let document_content = params.document_content.clone();
 
-        execute_tool(self, "replica_compare", async {
+        execute_tool(self, "corpus_compare", async {
             let db = Database::open(&params.db_path, &params.passphrase)
                 .map_err(|e| McpToolError::internal(e.to_string()))?;
             let pool = db
@@ -633,8 +633,8 @@ impl CorpusServer {
     }
 
     #[tool(description = "Generate prose blending two authors' styles.")]
-    pub async fn replica_mashup(&self, Parameters(params): Parameters<MashupRequest>) -> String {
-        execute_tool(self, "replica_mashup", async {
+    pub async fn corpus_mashup(&self, Parameters(params): Parameters<MashupRequest>) -> String {
+        execute_tool(self, "corpus_mashup", async {
             let blend = params.blend.clamp(0.0, 1.0);
             let centroid_a_ref = format!("style:{}:centroid", params.author_a);
             let centroid_b_ref = format!("style:{}:centroid", params.author_b);
@@ -652,13 +652,13 @@ impl CorpusServer {
 
             let emb_a = store.get(&centroid_a_ref).map_err(|_| {
                 McpToolError::invalid_argument(format!(
-                    "Author '{}' not found. Run replica_build first.",
+                    "Author '{}' not found. Run corpus_build_persona first.",
                     params.author_a
                 ))
             })?;
             let emb_b = store.get(&centroid_b_ref).map_err(|_| {
                 McpToolError::invalid_argument(format!(
-                    "Author '{}' not found. Run replica_build first.",
+                    "Author '{}' not found. Run corpus_build_persona first.",
                     params.author_b
                 ))
             })?;
@@ -728,11 +728,11 @@ impl CorpusServer {
     }
 
     #[tool(description = "Manage the registry of built author replicas.")]
-    pub async fn replica_registry(
+    pub async fn corpus_registry(
         &self,
         Parameters(params): Parameters<RegistryRequest>,
     ) -> String {
-        execute_tool(self, "replica_registry", async {
+        execute_tool(self, "corpus_registry", async {
             let db = Database::open(&params.db_path, &params.passphrase)
                 .map_err(|e| McpToolError::internal(e.to_string()))?;
             let pool = db
@@ -812,8 +812,8 @@ impl CorpusServer {
     }
 
     #[tool(description = "Explain what style centroids are and how the metadata layer works.")]
-    pub async fn replica_explain(&self) -> String {
-        execute_tool(self, "replica_explain", async {
+    pub async fn corpus_explain(&self) -> String {
+        execute_tool(self, "corpus_explain", async {
             Ok(json!({
             "what_is_a_centroid": "A style centroid is the average of all embedded passage vectors for an author. Each passage (50-200 words) is converted to a 1024-dimensional vector via DeepInfra's Qwen3-Embedding-0.6B. The centroid is the 'average passage' — prose that matches the author's style will have a low cosine distance to it.",
             "metadata_layer": {
@@ -831,7 +831,7 @@ impl CorpusServer {
                 "budget": "HMem storage is budget-gated per corpus (default: 3,750 h_mems per 100 pages). Passages are sorted by salience; only the top-N earn metadata h_mems. Others get embeddings only."
             },
             "how_blending_works": "Style blending interpolates between two centroids: blended[i] = centroid_a[i] * (1 - blend) + centroid_b[i] * blend. blend=0.0 is pure author A, 1.0 is pure B, 0.5 is equal mix. The blended vector retrieves exemplars from both corpora.",
-            "style_space_topology": "Authors cluster in different regions of embedding space. Similar styles have close centroids; opposite styles are far apart. The distance matrix from replica_compare shows which authors can be blended. Hemingway (paratactic) and Woolf (hypotactic) are maximally distant — blending produces noise. Similar authors like Hemingway/Crane or Woolf/Proust would blend well.",
+            "style_space_topology": "Authors cluster in different regions of embedding space. Similar styles have close centroids; opposite styles are far apart. The distance matrix from corpus_compare shows which authors can be blended. Hemingway (paratactic) and Woolf (hypotactic) are maximally distant — blending produces noise. Similar authors like Hemingway/Crane or Woolf/Proust would blend well.",
             "distance_thresholds": {
                 "identical": "0.000 — same text",
                 "very_similar": "0.000-0.030 — nearly identical style",
@@ -859,7 +859,7 @@ impl CorpusServer {
                 },
                 "academic_author": {
                     "status": "Implemented",
-                    "description": "Dynamic corpus discovery via CLI command. Given a name (e.g., 'David Dunning'), searches Semantic Scholar, arXiv, web (SerpAPI), and YouTube transcripts, caches content, and generates a corpus.yaml ready for replica_build. Curated by default — web and YouTube results presented for user confirmation.",
+                    "description": "Dynamic corpus discovery via CLI command. Given a name (e.g., 'David Dunning'), searches Semantic Scholar, arXiv, web (SerpAPI), and YouTube transcripts, caches content, and generates a corpus.yaml ready for corpus_build_persona. Curated by default — web and YouTube results presented for user confirmation.",
                     "cli_command": "kask style discover \"David Dunning\" [--serpapi-key KEY] [--no-curate] [--no-transcripts] [--no-web]",
                     "pipeline": [
                         "1. Semantic Scholar — free academic paper search with abstracts and open-access PDF links",
@@ -871,7 +871,7 @@ impl CorpusServer {
                         "7. Corpus YAML generation — ready for kask style embed-corpus"
                     ],
                     "build_command": "kask style embed-corpus --config <author>/corpus.yaml --db <path>",
-                    "implementation": "DiscoveryService in hkask-services (CLI → service, same pattern as EmbedService). MCP tools (replica_discover, replica_cache_work) available for server-mode use. Manifest (replica-discovery.yaml) serves as specification."
+                    "implementation": "DiscoveryService in hkask-services (CLI → service, same pattern as EmbedService). MCP tools (corpus_discover, corpus_cache_work) available for server-mode use. Manifest (replica-discovery.yaml) serves as specification."
                 },
                 "human_exemplar_principle": "All exemplar types model a named human individual whose body of work constitutes a representational corpus. The logical validity of the replica derives from the relationship between the human and their work — the corpus IS the evidence of their voice, style, and intellectual framework."
             }

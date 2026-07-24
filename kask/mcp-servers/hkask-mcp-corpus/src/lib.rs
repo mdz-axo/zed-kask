@@ -7,15 +7,15 @@
 //!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
 //!
 //! Tools (24):
-//! - Gather:     replica_discover, replica_cache_work
-//! - Process:    docproc_convert, docproc_ocr, docproc_chunk, docproc_tag_chunks,
-//!               docproc_embed, docproc_extract_triples, docproc_dedup_chunks,
-//!               docproc_consolidate_chunks
-//! - QA output:  docproc_build_prompts, docproc_generate_qa, docproc_generate_qa_batch,
-//!               docproc_ingest_qa, docproc_prepare_training_dataset, docproc_purge_qa
-//! - Persona:    replica_build, replica_compose, replica_rewrite, replica_mashup,
-//!               replica_compare, replica_registry, replica_explain
-//! - Manage:     docproc_cache, docproc_query, docproc_clear_index
+//! - Gather:     corpus_discover, corpus_cache_work
+//! - Process:    corpus_convert, corpus_ocr, corpus_chunk, corpus_tag_chunks,
+//!               corpus_embed, corpus_extract_triples, corpus_dedup_chunks,
+//!               corpus_consolidate_chunks
+//! - QA output:  corpus_build_prompts, corpus_generate_qa, corpus_generate_qa_batch,
+//!               corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
+//! - Persona:    corpus_build_persona, corpus_compose, corpus_rewrite, corpus_mashup,
+//!               corpus_compare, corpus_registry, corpus_explain
+//! - Manage:     corpus_cache, corpus_query, corpus_clear_index
 //!
 //! Supersedes `hkask-mcp-markitdown`, `hkask-mcp-doc-knowledge`, and `hkask-mcp-replica`.
 //!
@@ -271,7 +271,7 @@ impl CorpusServer {
 /// falls back to OCR if text extraction yields fewer than
 /// `OCR_FALLBACK_WORD_THRESHOLD` words and an OCR model is available.
 ///
-/// Used by both `docproc_convert` and `docproc_chunk` to eliminate ~160
+/// Used by both `corpus_convert` and `corpus_chunk` to eliminate ~160
 /// lines of duplicated extraction logic (P5: surgical deduplication).
 async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
     let (format, supported, note) = convert::detect_format(path);
@@ -734,7 +734,7 @@ mod tests {
 
         assert!(
             properties.contains_key("output"),
-            "docproc_convert must accept the pipeline manifest's output directory"
+            "corpus_convert must accept the pipeline manifest's output directory"
         );
     }
 

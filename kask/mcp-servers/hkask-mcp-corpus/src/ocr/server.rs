@@ -1,8 +1,8 @@
 //! OCR server methods — CorpusServer impl block for OCR pipeline operations.
 //!
 //! Extracted from lib.rs to co-locate OCR-specific code with the ocr/ module.
-//! These methods are on `CorpusServer` but are only called by `docproc_convert`
-//! and `docproc_ocr` (in tools/document.rs).
+//! These methods are on `CorpusServer` but are only called by `corpus_convert`
+//! and `corpus_ocr` (in tools/document.rs).
 
 use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
 use crate::ocr::llm_ocr::LlmOcrExecutor;
@@ -63,7 +63,7 @@ impl OcrExecutor for PipelineExecutor {
 impl CorpusServer {
     /// Run the OCR pipeline on page images and return joined text + outcome.
     ///
-    /// Consolidates 3 duplicated invocation blocks in `docproc_convert`
+    /// Consolidates 3 duplicated invocation blocks in `corpus_convert`
     /// (Candidate 1 — architectural deepening). Handles embedding router
     /// construction, pipeline execution, persistence, and text joining.
     pub async fn run_ocr_pipeline(

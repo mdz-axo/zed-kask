@@ -1,6 +1,6 @@
 //! QA generation helpers — response parsing, error types, batch writer.
 //!
-//! Used by `docproc_generate_qa` and `docproc_generate_qa_batch` in `mod.rs`.
+//! Used by `corpus_generate_qa` and `corpus_generate_qa_batch` in `mod.rs`.
 
 use crate::*;
 use serde::{Deserialize, Serialize};

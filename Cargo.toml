@@ -53,6 +53,7 @@ members = [
     "crates/debugger_ui",
     "crates/deepseek",
     "crates/dev_container",
+    "crates/kask_panel",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",

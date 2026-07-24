@@ -21,13 +21,13 @@ use serde::Deserialize;
 use std::io::Write;
 
 /// Failure-rate threshold (percent) above which embedding and QA-batch runs
-/// report `degraded` outcome. Matches the threshold used by `docproc_tag_chunks`.
+/// report `degraded` outcome. Matches the threshold used by `corpus_tag_chunks`.
 /// A run exceeding this rate indicates systemic issues (model unavailable,
 /// rate limiting, adversarial input) and must not be reported as `success`.
 const DEGRADED_FAILURE_THRESHOLD: usize = 10;
 
 /// Maximum LLM retry attempts for batch QA generation. Matches the 3-attempt
-/// pattern used by `docproc_tag_chunks` and `docproc_extract_triples`.
+/// pattern used by `corpus_tag_chunks` and `corpus_extract_triples`.
 const QA_BATCH_MAX_RETRIES: u32 = 3;
 
 // Content safety guard — mandatory at every LLM boundary (OWASP LLM01/02/04/06).
@@ -69,7 +69,7 @@ impl CorpusServer {
     #[tool(
         description = "Generate QA pairs from text chunks. Accepts a single chunk (text) or multiple chunks (texts) for cross-reference synthesis. Uses Bloom's taxonomy levels. Multi-chunk mode (texts) generates QAs that require synthesizing across all passages with source citation."
     )]
-    pub async fn docproc_generate_qa(
+    pub async fn corpus_generate_qa(
         &self,
         Parameters(GenerateQaRequest {
             text: _text,
@@ -79,7 +79,7 @@ impl CorpusServer {
             model,
         }): Parameters<GenerateQaRequest>,
     ) -> String {
-        execute_tool(self, "docproc_generate_qa", async {
+        execute_tool(self, "corpus_generate_qa", async {
             let is_cross_ref = _texts.as_ref().is_some_and(|t| !t.is_empty());
             let single_text = _text.unwrap_or_default();
 
@@ -189,7 +189,7 @@ impl CorpusServer {
                         },
                         "tokens_used": response.usage.total_tokens,
                     });
-                    self.record_experience("docproc_generate_qa", &chunk_id, "success", result.clone());
+                    self.record_experience("corpus_generate_qa", &chunk_id, "success", result.clone());
                     Ok(result)
                 }
                 Err(e) => Err(McpToolError::unavailable(format!("QA generation failed: {}", e))),
@@ -199,9 +199,9 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Batch-generate QA pairs from multiple text chunks. Same pipeline as docproc_generate_qa (Bloom taxonomy, ContentGuard, templates). Uses configurable concurrency for parallel LLM calls. Reads prompts from prompts_jsonl (one JSON per line: chunk_ref, qa_type, system, user) and writes generated QAs to the output JSONL file. Returns a summary (total + written counts)."
+        description = "Batch-generate QA pairs from multiple text chunks. Same pipeline as corpus_generate_qa (Bloom taxonomy, ContentGuard, templates). Uses configurable concurrency for parallel LLM calls. Reads prompts from prompts_jsonl (one JSON per line: chunk_ref, qa_type, system, user) and writes generated QAs to the output JSONL file. Returns a summary (total + written counts)."
     )]
-    pub async fn docproc_generate_qa_batch(
+    pub async fn corpus_generate_qa_batch(
         &self,
         Parameters(GenerateQaBatchRequest {
             prompts_jsonl,
@@ -210,7 +210,7 @@ impl CorpusServer {
             model,
         }): Parameters<GenerateQaBatchRequest>,
     ) -> String {
-        execute_tool(self, "docproc_generate_qa_batch", async {
+        execute_tool(self, "corpus_generate_qa_batch", async {
             // Read prompts from JSONL file (file-only mode)
             let content = std::fs::read_to_string(&prompts_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!(
@@ -347,7 +347,7 @@ impl CorpusServer {
                     }
                     let params = LLMParameters { temperature: 0.3, top_p: 0.95, max_tokens: 4096, frequency_penalty: 0.0, presence_penalty: 0.0, top_k: 0, min_p: 0.0, typical_p: 0.0, disable_thinking: true, ..Default::default() };
                     // B5 fix: retry with exponential backoff (3 attempts) — matches the
-                    // pattern in docproc_tag_chunks and docproc_extract_triples.
+                    // pattern in corpus_tag_chunks and corpus_extract_triples.
                     // Without this, a transient network error or rate limit would
                     // cause a permanent gap in the QA training set.
                     let mut attempts = 0u32;
@@ -393,7 +393,7 @@ impl CorpusServer {
                     match parse_qa_response(&extract_json_from_response(content), &levels, None) {
                         Ok(qa_response) => {
                             // Write one JSONL line per QA pair in envelope format
-                            // (matches what docproc_ingest_qa's parse_qa_record expects)
+                            // (matches what corpus_ingest_qa's parse_qa_record expects)
                             for pair in qa_response.qa_pairs {
                                 let result = json!({
                                     "chunk_ref": prompt.chunk_id,
@@ -462,7 +462,7 @@ impl CorpusServer {
                 );
             }
             self.record_experience(
-                "docproc_generate_qa_batch",
+                "corpus_generate_qa_batch",
                 &format!("batch: {} prompts", total),
                 outcome,
                 result.clone(),
@@ -474,7 +474,7 @@ impl CorpusServer {
     #[tool(
         description = "Extract RDF h_mems (subject, predicate, object) from text using the inference engine. Uses the canonical classifier model (HKASK_CLASSIFIER_MODEL, default Qwen3-235B-A22B-Instruct on DeepInfra) with 3-attempt retry. Reads chunks from chunks_jsonl, processes them concurrently, and stores triples as h_mems in the memory DB with entity=entity_ref from each chunk. When tagged_jsonl is provided, ontology tags from the tagging step are injected to guide predicate selection (GOLEM for narrative, schema.org for expository). Returns a summary (total_chunks, succeeded, failed, h_mems_stored)."
     )]
-    pub async fn docproc_extract_triples(
+    pub async fn corpus_extract_triples(
         &self,
         Parameters(ExtractTriplesRequest {
             chunks_jsonl,
@@ -486,7 +486,7 @@ impl CorpusServer {
             concurrency,
         }): Parameters<ExtractTriplesRequest>,
     ) -> String {
-        execute_tool(self, "docproc_extract_triples", async {
+        execute_tool(self, "corpus_extract_triples", async {
             self.extract_triples_batch(
                 &chunks_jsonl,
                 tagged_jsonl.as_deref(),
@@ -873,7 +873,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             "h_mems_stored": h_mems_stored,
         });
         self.record_experience(
-            "docproc_extract_triples",
+            "corpus_extract_triples",
             &format!("batch: {} chunks", total_chunks),
             "success",
             result.clone(),
@@ -884,7 +884,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
     #[tool(
         description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and stores each vector in the memory DB. Returns a summary (total, embedded, failed, model) — no inline vectors."
     )]
-    pub async fn docproc_embed(
+    pub async fn corpus_embed(
         &self,
         Parameters(EmbedRequest {
             chunks_jsonl,
@@ -895,7 +895,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             batch_size,
         }): Parameters<EmbedRequest>,
     ) -> String {
-        execute_tool(self, "docproc_embed", async {
+        execute_tool(self, "corpus_embed", async {
             self.embed_batch_from_jsonl(
                 &chunks_jsonl,
                 tagged_jsonl.as_deref(),
@@ -1109,7 +1109,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             );
         }
         self.record_experience(
-            "docproc_embed",
+            "corpus_embed",
             &format!("batch: {} chunks", total),
             outcome,
             result.clone(),
@@ -1162,7 +1162,7 @@ fn default_batch_concurrency() -> usize {
 pub struct ExtractTriplesRequest {
     /// Path to chunks JSONL for batch processing. Reads (entity_ref, text) per line.
     pub chunks_jsonl: String,
-    /// Path to tagged chunks JSONL (from docproc_tag_chunks). When provided,
+    /// Path to tagged chunks JSONL (from corpus_tag_chunks). When provided,
     /// ontology tags are injected into the extraction prompt so the LLM uses
     /// the appropriate predicates (GOLEM for narrative, schema.org for expository).
     #[serde(default)]
@@ -1195,7 +1195,7 @@ fn default_triples_concurrency() -> usize {
 pub struct EmbedRequest {
     /// Path to chunks JSONL (entity_ref, source, text, word_count per line).
     pub chunks_jsonl: String,
-    /// Path to tagged chunks JSONL (from docproc_tag_chunks). When provided,
+    /// Path to tagged chunks JSONL (from corpus_tag_chunks). When provided,
     /// ontology tags are prepended to chunk text before embedding, producing
     /// ontology-anchored embeddings (per INSTRUCTOR, Su et al. 2023).
     /// Requires tag to run before embed.

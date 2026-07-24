@@ -9,7 +9,7 @@ impl CorpusServer {
     #[tool(
         description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs."
     )]
-    pub async fn docproc_convert(
+    pub async fn corpus_convert(
         &self,
         Parameters(ConvertRequest {
             path,
@@ -24,7 +24,7 @@ impl CorpusServer {
                 .await;
         }
 
-        execute_tool(self, "docproc_convert", async {
+        execute_tool(self, "corpus_convert", async {
             let path_clone = path.clone();
             hkask_mcp_server::validate_path("path", &path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
@@ -88,7 +88,7 @@ impl CorpusServer {
                         "empty_pages": outcome.report.empty_pages,
                         "error_count": outcome.errors.len(),
                     });
-                    self.record_experience("docproc_convert", &path_clone, "success", result.clone());
+                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     return Ok(result);
                 }
 
@@ -145,7 +145,7 @@ impl CorpusServer {
                                 "error_count": outcome.errors.len(),
                             });
                             self.record_experience(
-                                "docproc_convert",
+                                "corpus_convert",
                                 &path_clone,
                                 "success",
                                 result.clone(),
@@ -174,7 +174,7 @@ impl CorpusServer {
                                 "word_count": text.split_whitespace().count(),
                             });
                             self.record_experience(
-                                "docproc_convert",
+                                "corpus_convert",
                                 &path_clone,
                                 "success",
                                 result.clone(),
@@ -213,7 +213,7 @@ impl CorpusServer {
                         "format": format, "path": path,
                         "method": "text_extraction", "text": text, "word_count": word_count,
                     });
-                    self.record_experience("docproc_convert", &path_clone, "success", result.clone());
+                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     return Ok(result);
                 }
 
@@ -286,7 +286,7 @@ impl CorpusServer {
                                 "error_count": outcome.errors.len(),
                             });
                             self.record_experience(
-                                "docproc_convert",
+                                "corpus_convert",
                                 &path_clone,
                                 "success",
                                 result.clone(),
@@ -349,7 +349,7 @@ impl CorpusServer {
                             "error_count": outcome.errors.len(),
                             "cross_validations": outcome.cross_validations.len(),
                         });
-                    self.record_experience("docproc_convert", &path_clone, "success", result.clone());
+                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     return Ok(result);
                         }
                         Err(e) => {
@@ -384,7 +384,7 @@ impl CorpusServer {
                             doc_structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>()
                         );
                     }
-                    self.record_experience("docproc_convert", &path_clone, "success", result.clone());
+                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     Ok(result)
                 }
                 ExtractOutcome::NeedsOcr {
@@ -423,7 +423,7 @@ impl CorpusServer {
                                         "extraction_word_count": word_count,
                                     });
                                     self.record_experience(
-                                        "docproc_convert",
+                                        "corpus_convert",
                                         &path_clone,
                                         "success",
                                         result.clone(),
@@ -500,7 +500,7 @@ impl CorpusServer {
     #[tool(
         description = "OCR a document using a local vision model. Requires HKASK_OCR_MODEL env var or explicit model parameter. The model must be a vision-capable model available in the inference catalog."
     )]
-    pub async fn docproc_ocr(
+    pub async fn corpus_ocr(
         &self,
         Parameters(OcrRequest {
             path,
@@ -508,7 +508,7 @@ impl CorpusServer {
             max_tokens,
         }): Parameters<OcrRequest>,
     ) -> String {
-        execute_tool(self, "docproc_ocr", async {
+        execute_tool(self, "corpus_ocr", async {
             let path_clone = path.clone();
             hkask_mcp_server::validate_path("path", &path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
@@ -538,7 +538,7 @@ impl CorpusServer {
                         "text": text,
                         "word_count": text.split_whitespace().count(),
                     });
-                    self.record_experience("docproc_ocr", &path_clone, "success", result.clone());
+                    self.record_experience("corpus_ocr", &path_clone, "success", result.clone());
                     Ok(result)
                 }
                 Err(e) => Err(McpToolError::unavailable(e.to_string())),
@@ -553,23 +553,23 @@ impl CorpusServer {
     /// page as text-native or needing OCR, with typed reasons.
     ///
     /// The docproc-native analogue of LiteParse's `lit is-complex`. Use it to
-    /// route, reject, or estimate cost before calling `docproc_convert`.
+    /// route, reject, or estimate cost before calling `corpus_convert`.
     /// Emits `reg.pipeline.triage` spans. PDF only.
     #[tool(
         description = "Check whether a PDF needs OCR before a full parse. Returns per-page triage verdicts with typed reasons (scanned, no-text, sparse-text, embedded-images). PDF only. No page rendering -- cheap text-layer + image-inventory pass."
     )]
-    pub async fn docproc_is_complex(
+    pub async fn corpus_is_complex(
         &self,
         Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
     ) -> String {
-        execute_tool(self, "docproc_is_complex", async {
+        execute_tool(self, "corpus_is_complex", async {
             let path_clone = path.clone();
             hkask_mcp_server::validate_path("path", &path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
             let (format, _, _) = convert::detect_format(&path);
             if format != "pdf" {
                 return Err(McpToolError::invalid_argument(
-                    "docproc_is_complex supports PDF only",
+                    "corpus_is_complex supports PDF only",
                 ));
             }
             let cfg = crate::ocr::TriageConfig::from_env();
@@ -614,7 +614,7 @@ impl CorpusServer {
                 "ocr_pages": ocr_page_count,
                 "needs_ocr": needs_ocr,
             });
-            self.record_experience("docproc_is_complex", &path_clone, "success", result.clone());
+            self.record_experience("corpus_is_complex", &path_clone, "success", result.clone());
             Ok(result)
         })
         .await
@@ -623,7 +623,7 @@ impl CorpusServer {
     #[tool(
         description = "Chunk text into passages at configurable token granularity. Accepts raw text or a file path (extracts text from PDF/MD/HTML/TXT with OCR fallback for scanned PDFs). Supports single-tier or multi-tier (coarse/medium/fine) output."
     )]
-    pub async fn docproc_chunk(
+    pub async fn corpus_chunk(
         &self,
         Parameters(ChunkRequest {
             text,
@@ -656,7 +656,7 @@ impl CorpusServer {
                 .await;
         }
 
-        execute_tool(self, "docproc_chunk", async {
+        execute_tool(self, "corpus_chunk", async {
             // Exactly one of text or path must be provided
             let has_text = text.as_ref().is_some_and(|t| !t.is_empty());
             let has_path = path.as_ref().is_some_and(|p| !p.is_empty());
@@ -842,7 +842,7 @@ impl CorpusServer {
 
                 let mut result = result;
                 result["indexed"] = json!(indexed);
-                self.record_experience("docproc_chunk", &source_label, "success", result.clone());
+                self.record_experience("corpus_chunk", &source_label, "success", result.clone());
                 Ok(result)
             } else {
                 // Single-tier
@@ -891,7 +891,7 @@ impl CorpusServer {
                     "stripped_gutenberg": strip_gutenberg.unwrap_or(false),
                     "indexed": indexed,
                 });
-                self.record_experience("docproc_chunk", &source_label, "success", result.clone());
+                self.record_experience("corpus_chunk", &source_label, "success", result.clone());
                 Ok(result)
             }
         })
@@ -907,7 +907,7 @@ impl CorpusServer {
     /// inv: existing outputs larger than 50 bytes are preserved unchanged
     /// [P3] Constraining: Generative Space — batch progress and failures remain visible in the tool result.
     async fn convert_directory(&self, path: &str, output: Option<&str>, force_ocr: bool) -> String {
-        execute_tool(self, "docproc_convert", async {
+        execute_tool(self, "corpus_convert", async {
             hkask_mcp_server::validate_path("path", path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
             let output = output.ok_or_else(|| {
@@ -960,7 +960,7 @@ impl CorpusServer {
                     continue;
                 }
 
-                let response = Box::pin(self.docproc_convert(Parameters(ConvertRequest {
+                let response = Box::pin(self.corpus_convert(Parameters(ConvertRequest {
                     path: source.to_string_lossy().into_owned(),
                     output: None,
                     force_ocr,
@@ -1020,7 +1020,7 @@ impl CorpusServer {
         strip_gutenberg: Option<bool>,
         index: bool,
     ) -> String {
-        execute_tool(self, "docproc_chunk", async {
+        execute_tool(self, "corpus_chunk", async {
             hkask_mcp_server::validate_path("input_dir", input_dir, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
             let output = output.ok_or_else(|| {
@@ -1071,7 +1071,7 @@ impl CorpusServer {
 
                 // Read the .txt file directly — no recursive MCP tool call.
                 // chunk_directory operates on already-extracted plain text;
-                // format detection and OCR are handled by docproc_convert.
+                // format detection and OCR are handled by corpus_convert.
                 let source_text = std::fs::read_to_string(source).map_err(|e| {
                     McpToolError::internal(format!("Failed to read '{}': {}", source.display(), e))
                 })?;
@@ -1234,11 +1234,11 @@ pub struct ChunkRequest {
     /// Max tokens for fine tier (multi-tier mode, default 128).
     #[serde(default)]
     pub fine_max_tokens: Option<usize>,
-    /// If true, automatically index passages for later query via docproc_query (default true).
+    /// If true, automatically index passages for later query via corpus_query (default true).
     #[serde(default = "default_true")]
     pub index: bool,
     /// Target pages to parse (1-based) when `path` is a PDF, e.g. "1-5,10,15-20".
-    /// Pages outside the set are skipped before chunking. Mirrors `docproc_convert`.
+    /// Pages outside the set are skipped before chunking. Mirrors `corpus_convert`.
     #[serde(default)]
     pub target_pages: Option<String>,
 }

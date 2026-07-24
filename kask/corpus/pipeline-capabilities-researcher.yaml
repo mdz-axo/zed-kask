@@ -8,13 +8,13 @@
 #
 # Architecture (v8.0):
 #   All pipeline steps run through MCP corpus tools:
-#     kask mcp invoke --server corpus --tool docproc_* --input '{...}'
+#     kask mcp invoke --server corpus --tool corpus_* --input '{...}'
 #
 #   Phase 2 is split into three separate steps (v6.0 combined them into one
 #   LLM call which caused bugs — wrong model, bypassed ContentGuard):
-#     2a. docproc_embed     — Qwen3-Embedding-0.6B → DB vectors + text/provenance h_mems
-#     2b. docproc_tag_chunks — canonical classifier (HKASK_CLASSIFIER_MODEL) → ontology tags JSONL + tag h_mems
-#     2c. docproc_extract_triples — canonical classifier (HKASK_CLASSIFIER_MODEL) → RDF triple h_mems in DB
+#     2a. corpus_embed     — Qwen3-Embedding-0.6B → DB vectors + text/provenance h_mems
+#     2b. corpus_tag_chunks — canonical classifier (HKASK_CLASSIFIER_MODEL) → ontology tags JSONL + tag h_mems
+#     2c. corpus_extract_triples — canonical classifier (HKASK_CLASSIFIER_MODEL) → RDF triple h_mems in DB
 #
 #   Each tool uses its own Jinja2 template from registry/templates/docproc/:
 #     tag-chunks.j2, extract-hmems.j2, consolidate-chunks.j2,
@@ -72,7 +72,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   - id: extract_text
     description: "Extract text from 106 source files (PDF + HTML)"
-    tool: docproc_convert
+    tool: corpus_convert
     params:
       path: "/home/mdz-axolotl/Clones/Library/Researcher"
       output: "corpus/extracted/researcher"
@@ -85,7 +85,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   - id: chunk_all
     description: "Chunk extracted text into ~512-token passages (tunable — validate QA coherence post-run; 256 over-fragmented, 512 is unvalidated)"
-    tool: docproc_chunk
+    tool: corpus_chunk
     params:
       input_dir: "corpus/extracted/researcher"
       output: "corpus/chunks/chunks.jsonl"
@@ -105,7 +105,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   - id: purge_existing
     description: "Purge old embeddings and QA h_mems from DB for clean pipeline run"
-    tool: docproc_purge_qa
+    tool: corpus_purge_qa
     params:
       prefix: "corpus:researcher:"
       db_path: "corpus/memory/john-brooks.db"
@@ -133,7 +133,7 @@ steps:
       ontology tags, and expertise level. Uses tag-chunks.j2 template with
       the canonical classifier model (HKASK_CLASSIFIER_MODEL). Must run BEFORE embed so embeddings can be
       ontology-anchored. Output: tagged_ontology.jsonl.
-    tool: docproc_tag_chunks
+    tool: corpus_tag_chunks
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       output: "corpus/chunks/tagged_ontology.jsonl"
@@ -154,7 +154,7 @@ steps:
       annotations from tagged_ontology.jsonl as embedding instructions.
       Produces ontology-anchored vectors for improved KNN retrieval in
       dedup, consolidate, and build_prompts. 3-attempt retry per batch.
-    tool: docproc_embed
+    tool: corpus_embed
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       tagged_jsonl: "corpus/chunks/tagged_ontology.jsonl"
@@ -179,7 +179,7 @@ steps:
       (HKASK_CLASSIFIER_MODEL). Uses extract-hmems.j2
       template. Stores triples as h_mems with entity=chunk_ref, predicate as attribute,
       object as value, confidence and 5W1H dimension. 3-attempt retry.
-    tool: docproc_extract_triples
+    tool: corpus_extract_triples
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       db_path: "corpus/memory/john-brooks.db"
@@ -192,7 +192,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   - id: dedup_chunks
     description: "Remove near-identical chunks using embeddings from DB"
-    tool: docproc_dedup_chunks
+    tool: corpus_dedup_chunks
     params:
       tagged_jsonl: "corpus/chunks/tagged_ontology.jsonl"
       output: "corpus/chunks/deduped.jsonl"
@@ -208,7 +208,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   - id: consolidate_chunks
     description: "Cluster related chunks, LLM-synthesize multi-chunk clusters"
-    tool: docproc_consolidate_chunks
+    tool: corpus_consolidate_chunks
     params:
       tagged_jsonl: "corpus/chunks/deduped.jsonl"
       output: "corpus/chunks/consolidated.jsonl"
@@ -233,7 +233,7 @@ steps:
       Build Bloom taxonomy prompts: 5 QAs per chunk. KNN scaffold from DB
       embeddings. Ontology context + concept graph + h_mem knowledge graph.
       Uses build-prompts.j2 template.
-    tool: docproc_build_prompts
+    tool: corpus_build_prompts
     params:
       tagged_jsonl: "corpus/chunks/consolidated.jsonl"
       output: "corpus/qa_pairs/prompts.jsonl"
@@ -260,7 +260,7 @@ steps:
     description: >
       Generate QA pairs via GLM-5.2 on DeepInfra. Per-Bloom sampling parameters.
       Thinking-mode JSON extraction. ContentGuard. Provenance-enriched output.
-    tool: docproc_generate_qa_batch
+    tool: corpus_generate_qa_batch
     params:
       prompts_jsonl: "corpus/qa_pairs/prompts.jsonl"
       output: "corpus/qa_pairs/generated.jsonl"
@@ -283,7 +283,7 @@ steps:
       Deduplicate within clusters at 0.89 cosine threshold.
       Store QA h_mems with 5W1H + Dublin Core + PKO provenance.
       Embed QA vectors for KNN search.
-    tool: docproc_ingest_qa
+    tool: corpus_ingest_qa
     params:
       generated_jsonl: "corpus/qa_pairs/generated.jsonl"
       output: "corpus/qa_pairs/train.jsonl"
@@ -300,7 +300,7 @@ steps:
   # Phase 8: Assemble ChatML dataset (Rust MCP tool — no Python)
   #
   # training_assemble_dataset queries training_qa_pair h_mems from the DB
-  # (stored by docproc_ingest_qa in Phase 7), converts to ChatML format with
+  # (stored by corpus_ingest_qa in Phase 7), converts to ChatML format with
   # the Capabilities Researcher system prompt, and writes train/val/test split.
   # ═══════════════════════════════════════════════════════════════════════
   - id: assemble_chatml

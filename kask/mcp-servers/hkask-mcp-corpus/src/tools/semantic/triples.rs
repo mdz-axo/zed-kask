@@ -1,6 +1,6 @@
 //! Triple extraction helper — RDF predicate → 5W1H dimension mapping.
 //!
-//! Used by `docproc_extract_triples` in `mod.rs`.
+//! Used by `corpus_extract_triples` in `mod.rs`.
 
 use crate::bridge::eso;
 use crate::bridge::fibo;
@@ -9,7 +9,7 @@ use crate::bridge::golem;
 /// Map an RDF predicate to a 5W1H dimension.
 ///
 /// Migrated from the CLI binary's `predicate_to_dimension` function.
-/// Used by `docproc_extract_triples` to assign a Dimension to each stored h_mem.
+/// Used by `corpus_extract_triples` to assign a Dimension to each stored h_mem.
 pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension {
     use hkask_types::Dimension::*;
     let p = predicate.to_lowercase();

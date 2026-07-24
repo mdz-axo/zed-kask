@@ -12196,6 +12196,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kask_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "ui",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "keymap_editor"
 version = "0.1.0"
 dependencies = [

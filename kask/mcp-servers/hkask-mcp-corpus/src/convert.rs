@@ -3,7 +3,7 @@
 /// Detect document format from file path/extension.
 ///
 /// Returns `(format_name, supported, note)` where `supported` indicates whether
-/// `docproc_convert` can extract text from this format.
+/// `corpus_convert` can extract text from this format.
 ///
 /// Supported formats (text extraction works): pdf, markdown, html, plain,
 /// docx, pptx, xlsx, csv (csv via xlsx backend)
@@ -31,7 +31,7 @@ pub fn detect_format(path: &str) -> (&'static str, bool, Option<&'static str>) {
     }
 }
 
-/// Whether a format is supported for text extraction by `docproc_convert`.
+/// Whether a format is supported for text extraction by `corpus_convert`.
 pub fn is_format_supported(format: &str) -> bool {
     matches!(
         format,

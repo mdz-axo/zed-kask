@@ -804,6 +804,19 @@ pub mod debug_panel {
     );
 }
 
+pub mod kask_panel {
+    use gpui::actions;
+    actions!(
+        kask_panel,
+        [
+            /// Toggles the kask panel.
+            Toggle,
+            /// Toggles focus on the kask panel.
+            ToggleFocus
+        ]
+    );
+}
+
 actions!(
     debugger,
     [

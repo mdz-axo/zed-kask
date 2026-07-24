@@ -57,7 +57,7 @@ struct PageImageSignal {
 /// One `pdftotext -layout` call (split on form-feed) + one `pdfimages -list`
 /// call. No page rendering. Returns one `TriageVerdict` per page, 1-based.
 ///
-/// Use this standalone entry from the `docproc_is_complex` tool. Callers that
+/// Use this standalone entry from the `corpus_is_complex` tool. Callers that
 /// already hold the per-page text (e.g. `extract_text`, which runs `pdftotext`
 /// itself) should use [`triage_pages`] to avoid a second `pdftotext` spawn.
 pub async fn triage_pdf(

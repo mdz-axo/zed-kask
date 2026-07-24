@@ -1,8 +1,8 @@
 //! Clustering helpers — shared by dedup and consolidation.
 //!
 //! `cluster_within_source` groups chunks by cosine similarity within a source
-//! file, sorted by salience descending. Used by `docproc_dedup_chunks` and
-//! `docproc_consolidate_chunks` in `mod.rs`.
+//! file, sorted by salience descending. Used by `corpus_dedup_chunks` and
+//! `corpus_consolidate_chunks` in `mod.rs`.
 
 use crate::*;
 use hkask_types::corpus::TaggedChunk;

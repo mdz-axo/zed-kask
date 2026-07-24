@@ -47,7 +47,7 @@ pub const LOCATED_IN: GolemConcept = "golem:locatedIn";
 // ── Work and authorship (from replica golem.rs) ───────────────────────────
 
 /// A creative work — the narrative text itself.
-/// Maps to the corpus works that replica_build ingests.
+/// Maps to the corpus works that corpus_build_persona ingests.
 pub const CREATIVE_WORK: GolemConcept = "golem:G1_CreativeWork";
 
 /// The author/creator of a creative work.
@@ -125,11 +125,11 @@ pub const ALL_PREDICATES: &[GolemConcept] = &[
 /// Map a replica server operation to its GOLEM concept.
 pub fn replica_op_to_golem(op: &str) -> Option<GolemConcept> {
     match op {
-        "replica_build" => Some(AUTHOR),
-        "replica_compose" => Some(CREATIVE_WORK),
-        "replica_mashup" => Some(NARRATIVE_FUNCTION),
-        "replica_discover" => Some(CREATIVE_WORK),
-        "replica_compare" => Some(CHARACTER),
+        "corpus_build_persona" => Some(AUTHOR),
+        "corpus_compose" => Some(CREATIVE_WORK),
+        "corpus_mashup" => Some(NARRATIVE_FUNCTION),
+        "corpus_discover" => Some(CREATIVE_WORK),
+        "corpus_compare" => Some(CHARACTER),
         _ => None,
     }
 }
@@ -152,10 +152,10 @@ mod tests {
 
     #[test]
     fn replica_ops_map_to_golem() {
-        assert_eq!(replica_op_to_golem("replica_build"), Some(AUTHOR));
-        assert_eq!(replica_op_to_golem("replica_compose"), Some(CREATIVE_WORK));
+        assert_eq!(replica_op_to_golem("corpus_build_persona"), Some(AUTHOR));
+        assert_eq!(replica_op_to_golem("corpus_compose"), Some(CREATIVE_WORK));
         assert_eq!(
-            replica_op_to_golem("replica_mashup"),
+            replica_op_to_golem("corpus_mashup"),
             Some(NARRATIVE_FUNCTION)
         );
         assert_eq!(replica_op_to_golem("unknown_op"), None);

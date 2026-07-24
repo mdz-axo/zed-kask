@@ -4,9 +4,9 @@
 //! the SQLCipher memory DB (containing chunk embeddings). They are the
 //! "Phase 2c" and "Phase 2d" quality gates in the corpus pipeline.
 //!
-//! - `docproc_dedup_chunks`: Removes near-identical chunks (cosine > 0.85)
+//! - `corpus_dedup_chunks`: Removes near-identical chunks (cosine > 0.85)
 //!   using stored embeddings. Keeps highest-salience survivor per cluster.
-//! - `docproc_consolidate_chunks`: Clusters semantically related chunks
+//! - `corpus_consolidate_chunks`: Clusters semantically related chunks
 //!   (cosine > 0.75), uses the inference router to LLM-synthesize each
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
@@ -31,11 +31,11 @@ impl CorpusServer {
     #[tool(
         description = "Deduplicate chunks by semantic embedding similarity. Queries chunk embeddings from the memory DB, clusters within each source file by cosine similarity > threshold (default 0.85), and keeps the highest-salience chunk per cluster. Writes deduplicated tagged chunks JSONL."
     )]
-    pub async fn docproc_dedup_chunks(
+    pub async fn corpus_dedup_chunks(
         &self,
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> String {
-        execute_tool(self, "docproc_dedup_chunks", async {
+        execute_tool(self, "corpus_dedup_chunks", async {
             let chunks = read_tagged_chunks(&req.tagged_jsonl)?;
             if chunks.is_empty() {
                 return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
@@ -115,7 +115,7 @@ impl CorpusServer {
             })?;
 
             self.record_experience(
-                "docproc_dedup_chunks",
+                "corpus_dedup_chunks",
                 &format!("{} → {}", chunks.len(), keep_indices.len()),
                 "success",
                 result.clone(),
@@ -128,11 +128,11 @@ impl CorpusServer {
     #[tool(
         description = "Consolidate semantically related chunks via LLM synthesis. Clusters chunks within each source file by cosine similarity > threshold (default 0.75), then uses the inference router to synthesize each multi-chunk cluster into a single comprehensive passage. Re-embeds consolidated text and stores the new embedding. Writes consolidated tagged chunks JSONL with provenance."
     )]
-    pub async fn docproc_consolidate_chunks(
+    pub async fn corpus_consolidate_chunks(
         &self,
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> String {
-        execute_tool(self, "docproc_consolidate_chunks", async {
+        execute_tool(self, "corpus_consolidate_chunks", async {
             let chunks = read_tagged_chunks(&req.tagged_jsonl)?;
             if chunks.is_empty() {
                 return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
@@ -504,7 +504,7 @@ impl CorpusServer {
             });
 
             self.record_experience(
-                "docproc_consolidate_chunks",
+                "corpus_consolidate_chunks",
                 &format!("{} → {}", chunks.len(), consolidated.len()),
                 "success",
                 result.clone(),
@@ -517,13 +517,13 @@ impl CorpusServer {
     // ── Build Prompts ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. For each chunk, retrieves embedding-similar passages (KNN), formats ontology tags (5W1H + Dublin Core + PKO), and queries h_mems from the memory DB to build a knowledge graph section. Outputs prompts JSONL consumed by docproc_generate_qa_batch."
+        description = "Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. For each chunk, retrieves embedding-similar passages (KNN), formats ontology tags (5W1H + Dublin Core + PKO), and queries h_mems from the memory DB to build a knowledge graph section. Outputs prompts JSONL consumed by corpus_generate_qa_batch."
     )]
-    pub async fn docproc_build_prompts(
+    pub async fn corpus_build_prompts(
         &self,
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> String {
-        execute_tool(self, "docproc_build_prompts", async {
+        execute_tool(self, "corpus_build_prompts", async {
             let chunks = read_tagged_chunks(&req.tagged_jsonl)?;
             if chunks.is_empty() {
                 return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
@@ -876,7 +876,7 @@ impl CorpusServer {
                 "output": req.output,
             });
             self.record_experience(
-                "docproc_build_prompts",
+                "corpus_build_prompts",
                 &format!("{} prompts from {} chunks", ti, total),
                 "success",
                 result.clone(),
@@ -891,8 +891,8 @@ impl CorpusServer {
     #[tool(
         description = "Ingest generated QA pairs: parse, quality-filter, exact-match dedup (case-insensitive on instruction), write training JSONL, store QA h_mems with 5W1H dimension + Dublin Core / PKO metadata. Semantic dedup (SemDeDup K-means) was removed — see the inline rationale."
     )]
-    pub async fn docproc_ingest_qa(&self, Parameters(req): Parameters<IngestQaRequest>) -> String {
-        execute_tool(self, "docproc_ingest_qa", async {
+    pub async fn corpus_ingest_qa(&self, Parameters(req): Parameters<IngestQaRequest>) -> String {
+        execute_tool(self, "corpus_ingest_qa", async {
             let content = std::fs::read_to_string(&req.generated_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!("Cannot read generated_jsonl '{}': {e}", req.generated_jsonl))
             })?;
@@ -991,7 +991,7 @@ impl CorpusServer {
                         "dc_type": "bibo:Document",
                         "dc_source": qa.source,
                         "dc_subject": qa.concepts,
-                        "pko_produced_by": "docproc_generate_qa",
+                        "pko_produced_by": "corpus_generate_qa",
                         "pko_extracted_from": qa.chunk_ref,
                     },
                 });
@@ -1013,7 +1013,7 @@ impl CorpusServer {
                 "output": req.output,
             });
             self.record_experience(
-                "docproc_ingest_qa",
+                "corpus_ingest_qa",
                 &format!("{} deduped from {}", deduped_count, qas.len()),
                 "success",
                 result.clone(),
@@ -1147,7 +1147,7 @@ fn default_type_distribution() -> String {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IngestQaRequest {
-    /// Path to generated QAs JSONL (from docproc_generate_qa_batch).
+    /// Path to generated QAs JSONL (from corpus_generate_qa_batch).
     pub generated_jsonl: String,
     /// Output path for training-ready JSONL (instruction/input/output per line).
     pub output: String,
@@ -1172,14 +1172,14 @@ fn default_dataset() -> String {
 
 // ── Training dataset preparation ───────────────────────────────────────────
 
-/// Request for `docproc_prepare_training_dataset`.
+/// Request for `corpus_prepare_training_dataset`.
 ///
-/// Converts Alpaca-format JSONL (from `docproc_ingest_qa`) to ChatML format
+/// Converts Alpaca-format JSONL (from `corpus_ingest_qa`) to ChatML format
 /// (what `training_submit` expects), applies the lora-training skill's G-D1
 /// gate (dataset size check), and returns lora-training config recommendations.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PrepareTrainingDatasetRequest {
-    /// Path to Alpaca-format JSONL (from docproc_ingest_qa).
+    /// Path to Alpaca-format JSONL (from corpus_ingest_qa).
     /// Each line: {"instruction": "...", "input": "", "output": "..."}
     pub input_jsonl: String,
     /// Output path for ChatML-format JSONL (for training_submit).
@@ -1200,7 +1200,7 @@ impl CorpusServer {
     /// Prepare a training dataset from corpus QA pairs for LoRA fine-tuning.
     ///
     /// This tool bridges the docproc corpus pipeline and the training server:
-    /// 1. Reads Alpaca-format JSONL from `docproc_ingest_qa`
+    /// 1. Reads Alpaca-format JSONL from `corpus_ingest_qa`
     /// 2. Converts to ChatML format (what `training_submit` expects)
     /// 3. Applies the lora-training skill's G-D1 gate (dataset size check)
     /// 4. Returns lora-training config recommendations (rank, alpha, QLoRA)
@@ -1211,11 +1211,11 @@ impl CorpusServer {
     #[tool(
         description = "Convert Alpaca-format QA JSONL to ChatML training format, apply lora-training G-D1 dataset size gate, and return PEFT config recommendations (rank, alpha, QLoRA, init strategy) based on the base model and dataset characteristics. Bridges the docproc corpus pipeline to the training server."
     )]
-    pub async fn docproc_prepare_training_dataset(
+    pub async fn corpus_prepare_training_dataset(
         &self,
         Parameters(req): Parameters<PrepareTrainingDatasetRequest>,
     ) -> String {
-        execute_tool(self, "docproc_prepare_training_dataset", async {
+        execute_tool(self, "corpus_prepare_training_dataset", async {
             let content = std::fs::read_to_string(&req.input_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!(
                     "Cannot read input JSONL '{}': {e}",

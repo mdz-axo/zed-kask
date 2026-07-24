@@ -2685,7 +2685,7 @@ impl Thread {
                         // injected (upstream zed, or before composition root runs),
                         // this is a no-op.
                         if let Some(port) = crate::memory_port() {
-                            let record = this.update(cx, |thread, cx| crate::ThreadTurnRecord {
+                            let record = this.update(cx, |thread, _cx| crate::ThreadTurnRecord {
                                 thread_id: thread.id().to_string(),
                                 user_prompt: thread
                                     .messages

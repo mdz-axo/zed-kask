@@ -8,11 +8,11 @@ impl CorpusServer {
     #[tool(
         description = "Cache processed document text for reference. Stores content keyed by label in the docproc cache directory (~/.config/hkask/docproc-cache/)."
     )]
-    pub async fn docproc_cache(
+    pub async fn corpus_cache(
         &self,
         Parameters(CacheRequest { content, label }): Parameters<CacheRequest>,
     ) -> String {
-        execute_tool(self, "docproc_cache", async {
+        execute_tool(self, "corpus_cache", async {
             if content.is_empty() {
                 return Err(McpToolError::invalid_argument("content must not be empty"));
             }
@@ -55,7 +55,7 @@ impl CorpusServer {
                         "path": cache_path.display().to_string(),
                         "size_bytes": content.len(),
                     });
-                    self.record_experience("docproc_cache", &label, "success", result.clone());
+                    self.record_experience("corpus_cache", &label, "success", result.clone());
                     Ok(result)
                 }
                 Err(e) => Err(McpToolError::internal(format!(
@@ -71,7 +71,7 @@ impl CorpusServer {
     #[tool(
         description = "Query the in-memory vector index for passages relevant to a natural language question. Embeds the query, computes cosine similarity against indexed passages, and returns top-k results. Optionally generates an LLM-augmented answer from retrieved context."
     )]
-    pub async fn docproc_query(
+    pub async fn corpus_query(
         &self,
         Parameters(QueryRequest {
             query,
@@ -79,7 +79,7 @@ impl CorpusServer {
             generate_answer,
         }): Parameters<QueryRequest>,
     ) -> String {
-        execute_tool(self, "docproc_query", async {
+        execute_tool(self, "corpus_query", async {
             if query.is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "query must not be empty",
@@ -133,7 +133,7 @@ impl CorpusServer {
                         "query": query,
                         "results": [],
                         "total_indexed": 0,
-                        "note": "No passages indexed. Run docproc_chunk with index=true first.",
+                        "note": "No passages indexed. Run corpus_chunk with index=true first.",
                     }));
                 }
 
@@ -208,7 +208,7 @@ impl CorpusServer {
                 }
             }
 
-            self.record_experience("docproc_query", &query, "success", result.clone());
+            self.record_experience("corpus_query", &query, "success", result.clone());
             Ok(result)
         })
         .await
@@ -217,11 +217,11 @@ impl CorpusServer {
     #[tool(
         description = "Clear the in-memory vector index. Call this when starting a new document set to avoid cross-document contamination in query results."
     )]
-    pub async fn docproc_clear_index(
+    pub async fn corpus_clear_index(
         &self,
         Parameters(ClearIndexRequest { index_id: _ }): Parameters<ClearIndexRequest>,
     ) -> String {
-        execute_tool(self, "docproc_clear_index", async {
+        execute_tool(self, "corpus_clear_index", async {
             let mut index = match self.index.lock() {
                 Ok(i) => i,
                 Err(e) => {
@@ -238,8 +238,8 @@ impl CorpusServer {
     #[tool(
         description = "Purge QA embeddings and h_mems by entity-ref prefix. Deletes embeddings matching the prefix, then deletes h_mems with matching entity or attribute. Useful for clearing old training data before re-ingesting."
     )]
-    pub async fn docproc_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
-        execute_tool(self, "docproc_purge_qa", async {
+    pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
+        execute_tool(self, "corpus_purge_qa", async {
             let dim = embedding_dim();
             let semantic =
                 SemanticMemory::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
@@ -293,7 +293,7 @@ impl CorpusServer {
                 "h_mems_purged": purged_h_mems,
                 "h_mem_errors": h_mem_errors,
             });
-            self.record_experience("docproc_purge_qa", &req.prefix, "success", result.clone());
+            self.record_experience("corpus_purge_qa", &req.prefix, "success", result.clone());
             Ok(result)
         })
         .await

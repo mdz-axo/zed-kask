@@ -2,7 +2,7 @@
 # hKask v0.27.0 — Academic Author Corpus Discovery Pipeline
 #
 # Composable skill for discovering an academic author's body of work
-# across multiple sources and generating a corpus.yaml for replica_build.
+# across multiple sources and generating a corpus.yaml for corpus_build_persona.
 #
 # Supports two modes:
 #   - agentic: Fully automated discovery → corpus generation
@@ -22,7 +22,7 @@ manifest:
     disambiguates identity, enumerates works across Semantic Scholar, arXiv,
     web search, and YouTube transcripts, extracts and caches content, extracts
     key concepts and methodological patterns via LLM, and generates a
-    corpus.yaml ready for replica_build.
+    corpus.yaml ready for corpus_build_persona.
   version: 0.27.0
   functional_role: flowdef
   editor: curator-or-human-admin
@@ -199,12 +199,12 @@ steps:
   - ordinal: 7
     action: execute
     description: >
-      Phase 6: Write extracted content to the cache directory so replica_build
+      Phase 6: Write extracted content to the cache directory so corpus_build_persona
       can skip re-downloading. Each work is saved as {cache_dir}/{slug}.txt.
     renderer: null
     template_ref: null
     mcp: hkask-mcp-corpus
-    tool: replica_cache_work
+    tool: corpus_cache_work
     arguments:
       slug: "${item.slug}"
       content: "${item.content}"
@@ -302,7 +302,7 @@ steps:
     gas_cap: 500
     timeout_seconds: 300
     choices:
-      - approve: "Proceed to replica_build with generated corpus"
+      - approve: "Proceed to corpus_build_persona with generated corpus"
       - modify: "Adjust works, concepts, or methods and regenerate corpus.yaml"
       - abort: "Stop discovery, discard results"
     output_schema:

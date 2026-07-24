@@ -4,8 +4,8 @@
 //!
 //!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
 //!
-//! `replica_discover` finds an author's body of work across multiple sources
-//! and generates a corpus.yaml. `replica_cache_work` caches extracted text
+//! `corpus_discover` finds an author's body of work across multiple sources
+//! and generates a corpus.yaml. `corpus_cache_work` caches extracted text
 //! content to disk for reuse by the embedding pipeline.
 
 use crate::*;
@@ -76,13 +76,13 @@ pub struct CacheWorkRequest {
 #[tool_router(router = gather_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Discover an academic author's body of work and generate a corpus.yaml for replica_build. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
+        description = "Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
     )]
-    pub async fn replica_discover(
+    pub async fn corpus_discover(
         &self,
         Parameters(params): Parameters<DiscoverRequest>,
     ) -> String {
-        execute_tool(self, "replica_discover", async {
+        execute_tool(self, "corpus_discover", async {
             let author_name = params.author_name.clone();
 
             let mode = match params.mode.as_str() {
@@ -177,13 +177,13 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Cache an extracted work's content to disk for reuse by replica_build. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading."
+        description = "Cache an extracted work's content to disk for reuse by corpus_build_persona. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading."
     )]
-    pub async fn replica_cache_work(
+    pub async fn corpus_cache_work(
         &self,
         Parameters(params): Parameters<CacheWorkRequest>,
     ) -> String {
-        execute_tool(self, "replica_cache_work", async {
+        execute_tool(self, "corpus_cache_work", async {
             if params.slug.is_empty()
                 || !params
                     .slug
