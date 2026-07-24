@@ -43,6 +43,10 @@ pub struct SystemPromptTemplate<'a> {
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
+    /// Static context loaded once per session via
+    /// `ContextInjector::inject_static_context`. Rendered after the project
+    /// context section. `None` when no injector is set (I2).
+    pub static_context: Option<SharedString>,
     /// Whether agent-run terminal commands are wrapped in an OS-level
     /// sandbox for this thread. When `true`, the rendered prompt
     /// describes the sandbox's read/write/network rules and the
@@ -101,6 +105,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -135,6 +140,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -164,6 +170,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -197,6 +204,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -235,6 +243,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: true,
             is_windows: false,
@@ -265,6 +274,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: true,
@@ -289,6 +299,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -309,6 +320,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -327,6 +339,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,

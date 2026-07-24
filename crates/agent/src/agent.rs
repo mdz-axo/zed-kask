@@ -2725,6 +2725,15 @@ pub trait ContextInjector: Send + Sync {
                 + '_,
         >,
     >;
+
+    /// Retrieve static context for the thread — loaded once per session and
+    /// included in the system prompt (not retrieved per-turn). Returns a
+    /// string that will be rendered after the project context section.
+    ///
+    /// Default implementation returns `None` (I2 — upstream Zed compatibility).
+    fn inject_static_context(&self, _thread_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Global hook for the context injector (D11).
@@ -2771,6 +2780,22 @@ pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
 /// Get the global thread condenser, if set.
 pub(crate) fn thread_condenser() -> Option<&'static Arc<dyn ThreadCondenser>> {
     THREAD_CONDENSER.get().and_then(|opt| opt.as_ref())
+}
+
+/// Global hook for the tool router. When set, `Thread::enabled_tools`
+/// applies the router as a final filter after profile and feature-flag
+/// checks. When `None` (upstream Zed), all enabled tools pass through (I2).
+static TOOL_ROUTER: std::sync::OnceLock<Option<Arc<dyn crate::tool_router::ToolRouter>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global tool router.
+pub fn set_tool_router(router: Option<Arc<dyn crate::tool_router::ToolRouter>>) {
+    let _ = TOOL_ROUTER.set(router);
+}
+
+/// Get the global tool router, if set.
+pub(crate) fn tool_router() -> Option<&'static Arc<dyn crate::tool_router::ToolRouter>> {
+    TOOL_ROUTER.get().and_then(|opt| opt.as_ref())
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

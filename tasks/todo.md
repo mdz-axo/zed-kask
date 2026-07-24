@@ -42,7 +42,7 @@
 
 ## Phase 3 — Static-context memory
 
-- [ ] **T5 (S3): Static-context memory block**
+- [x] **T5 (S3): Static-context memory block**
   - Add `inject_static_context` to `ContextInjector` (default returns empty — I2)
   - Add `static_context: Option<SharedString>` to `Thread`; call once on first turn, cache
   - Add `static_context` to `SystemPromptTemplate` + `.hbs`; include in `system_prompt_digest` (I1)
@@ -58,7 +58,7 @@
   - Files: `crates/agent/src/tool_router.rs` (new), `crates/agent/src/tools.rs`
   - Scope: M
 
-- [ ] **T7 (S4): Wire `ToolRouter` into `enabled_tools`**
+- [x] **T7 (S4): Wire `ToolRouter` into `enabled_tools`**
   - Add `TOOL_ROUTER` extension point in `agent.rs` (mirror `CONTEXT_INJECTOR`)
   - In `Thread::enabled_tools`, apply router filter after profile/feature-flag; fail-open on empty
   - Files: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`

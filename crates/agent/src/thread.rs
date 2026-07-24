@@ -1324,6 +1324,11 @@ pub struct Thread {
     /// changes, the new render is stored and a telemetry event is emitted so
     /// cache-bust events are observable.
     cached_system_prompt: Option<CachedSystemPrompt>,
+    /// Static context loaded once per session via `ContextInjector::inject_static_context`.
+    /// Rendered in the system prompt after the project context section. Included
+    /// in the system-prompt digest (I1). `None` when no `ContextInjector` is set
+    /// or when it returns `None` (I2 — upstream Zed compatibility).
+    static_context: Option<SharedString>,
     /// Tool results that are delivered asynchronously, after the immediate
     /// tool-result slot has been flushed. The outer turn loop drains completed
     /// entries at the top of each iteration and injects them as a synthetic
@@ -1475,6 +1480,7 @@ impl Thread {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             cached_system_prompt: None,
+            static_context: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -1861,6 +1867,7 @@ impl Thread {
                 &db_thread.sandbox_grants,
             ))),
             cached_system_prompt: None,
+            static_context: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -4279,6 +4286,17 @@ impl Thread {
             })
     }
 
+    /// Extract the text content of the latest user message, if any.
+    /// Used by the tool router to score tools based on message content.
+    fn last_user_message_text(&self) -> Option<String> {
+        self.last_user_message().and_then(|message| {
+            message.content.iter().find_map(|content| match content {
+                UserMessageContent::Text(text) => Some(text.clone()),
+                _ => None,
+            })
+        })
+    }
+
     fn pending_message(&mut self) -> &mut AgentMessage {
         self.pending_message.get_or_insert_default()
     }
@@ -4510,6 +4528,24 @@ impl Thread {
             }
         }
 
+        // Apply the tool router as a final filter. When no router is set
+        // (upstream Zed), all tools pass through (I2). When a router is set,
+        // it scores each tool and returns only those above the threshold.
+        // An empty router result means "no filtering" (fail-open) to avoid
+        // starving the model.
+        if let Some(router) = crate::tool_router() {
+            let available_tool_names: Vec<SharedString> = tools.keys().cloned().collect();
+            let context = crate::tool_router::ToolSelectionContext {
+                user_message: self.last_user_message_text(),
+                open_file_paths: Vec::new(), // TODO: wire open-file paths from workspace
+                available_tools: available_tool_names,
+            };
+            let selected = router.select_tools(&context);
+            if !selected.is_empty() {
+                tools.retain(|name, _| selected.contains(name));
+            }
+        }
+
         tools
     }
 
@@ -4642,6 +4678,18 @@ impl Thread {
         let is_linux = cfg!(target_os = "linux");
         let is_windows = cfg!(target_os = "windows");
 
+        // Load static context lazily on first render. Once loaded, it's
+        // cached on the Thread for the session.
+        if self.static_context.is_none() {
+            if let Some(injector) = crate::context_injector() {
+                let thread_id = self.id.to_string();
+                self.static_context = injector
+                    .inject_static_context(&thread_id)
+                    .map(SharedString::from);
+            }
+        }
+        let static_context = self.static_context.clone();
+
         // Compute a digest of the inputs that affect the rendered system
         // prompt. If it matches the cached digest, reuse the cached string.
         let digest = system_prompt_digest(
@@ -4650,6 +4698,7 @@ impl Thread {
             model_name.as_deref(),
             &date,
             user_agents_md.as_deref(),
+            static_context.as_deref(),
             sandboxing,
             is_linux,
             is_windows,
@@ -4668,6 +4717,7 @@ impl Thread {
             model_name,
             date,
             user_agents_md,
+            static_context,
             sandboxing,
             is_linux,
             is_windows,
@@ -5071,6 +5121,7 @@ fn system_prompt_digest(
     model_name: Option<&str>,
     date: &str,
     user_agents_md: Option<&str>,
+    static_context: Option<&str>,
     sandboxing: bool,
     is_linux: bool,
     is_windows: bool,
@@ -5094,6 +5145,8 @@ fn system_prompt_digest(
     hasher.update(date.as_bytes());
     hasher.update(b"\nuser_agents_md:");
     hasher.update(user_agents_md.unwrap_or("").as_bytes());
+    hasher.update(b"\nstatic_context:");
+    hasher.update(static_context.unwrap_or("").as_bytes());
     hasher.update(b"\nsandboxing:");
     hasher.update([sandboxing as u8]);
     hasher.update(b"\nis_linux:");

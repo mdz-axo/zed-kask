@@ -1,12 +1,12 @@
 ---
 title: "Skill, Template, and Bundle Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-07-22
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
-last-verified-against: "91bfc585c"
+last-verified-against: "b922e9529"
 ---
 
 # Skill, Template, and Bundle Registry
@@ -28,7 +28,7 @@ last-verified-against: "91bfc585c"
 ## Open issues in this registry (2026-07-17)
 
 - **SKILL.md derivation is not wired.** No `skill-translator` code or CLI command exists; the `skill-maintenance-reverse.j2` template is the only derivation path and must be invoked as a skill by an agent. Existing SKILL.md files may be hand-maintained (a P5.1 drift risk).
-- **Count reconciliation:** the filesystem has 100 registry manifests (49 category=skill, 51 non-skill). 89 template crates under `registry/templates/`; 52 SKILL.md directories under `.agents/skills/`. The kata bundle is a registry manifest composing kata-coaching, kata-improvement, and kata-starter — not a separate `.agents/skills/` directory. Total catalogued: 54 (52 skills + 1 template + 1 bundle).
+- **Count reconciliation:** the filesystem has 101 registry manifests (50 category=skill, 51 non-skill). 90 template crates under `registry/templates/`; 56 SKILL.md directories under `.agents/skills/`. Of the 56 SKILL.md directories, 6 have no FlowDef manifest (template-only or non-skill: `gpui-test`, `lint-creator`, `lora-training`, `qa-script-builder`, `skill-router`, `zed-cherry-pick`). Of those 6, three are catalogued here as `Template` type (`lora-training`, `qa-script-builder`, `skill-router`); the other three (`gpui-test`, `lint-creator`, `zed-cherry-pick`) are Zed-project-local skills not surfaced in this hKask registry catalog. The kata bundle is a registry manifest composing kata-coaching, kata-improvement, and kata-starter — not a separate `.agents/skills/` directory. Total catalogued: 55 (51 skills + 3 templates + 1 bundle).
 
 ---
 
@@ -87,16 +87,17 @@ last-verified-against: "91bfc585c"
 
 ---
 
-## Meta & Maintenance (7 skills)
+## Meta & Maintenance (7 skills + 1 template)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
+| `self-improvement` | Skill | Unified self-induced update operator (Ren et al. 2026, arXiv:2607.13104): nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ) — driven by intrinsic generative demos, intrinsic evaluative feedback, and extrinsic exploratory experience | `registry/manifests/self-improvement.yaml` · `registry/templates/self-improvement/` |
 | `skill-maintenance` | Skill | Audit skill architecture for staleness, coverage gaps; also derives SKILL.md from registry crates (reverse-translation) | `registry/manifests/skill-maintenance.yaml` · `registry/templates/skill-maintenance/` |
 | `skill-logic-audit` | Skill | Audit .j2 template logic against stated goals | `registry/manifests/skill-logic-audit.yaml` · `registry/templates/skill-logic-audit/` |
 | `skill-bundler` | Skill | Compose multiple skills into a cohesive bundle | `registry/manifests/skill-bundler.yaml` · `registry/templates/skill-bundler/` |
 | `handoff` | Skill | Session handoff — capture what was done, what remains | `registry/manifests/handoff.yaml` · `registry/templates/handoff/` |
 | `skill-discovery` | Skill | Acquire NEW skills: detect capability gaps, search catalog, evaluate candidates, guide installation | `registry/manifests/skill-discovery.yaml` · `registry/templates/skill-discovery/` |
-| `skill-router` | Skill | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals | `registry/templates/skill-router/manifest.yaml` · `registry/templates/skill-router/` |
+| `skill-router` | Template | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless `KnowAct` matching service invoked by the orchestrator and by process-skill templates (not a PDCA loop; cannot bind as `process_manifest`) | `registry/templates/skill-router/manifest.yaml` (no FlowDef manifest) · `registry/templates/skill-router/` |
 | `gpa-evolution` | Skill | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier | `registry/manifests/gpa-evolution.yaml` · `registry/templates/gpa-evolution/` |
 
 ---
@@ -112,7 +113,7 @@ last-verified-against: "91bfc585c"
 
 ---
 
-## Specialized (14 skills + 1 template)
+## Specialized (13 skills + 2 templates)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -131,7 +132,7 @@ last-verified-against: "91bfc585c"
 | `qa-script-builder` | Template | Design autonomous QA pipeline manifests (one-shot, not PDCA) | `registry/templates/qa-script-builder/manifest.yaml` (no FlowDef manifest) |
 | `semantic-graph-audit` | Skill | Domain-agnostic semantic dependency graph analysis | `registry/manifests/semantic-graph-audit.yaml` · `registry/templates/semantic-graph-audit/` |
 | `wardley-mapper` | Skill | Generic Wardley mapping: inventory components, classify evolution, map value chain, derive strategy | `registry/manifests/wardley-mapper.yaml` · `registry/templates/wardley-mapper/` |
-| `lora-training` | Skill | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit | `registry/templates/lora-training/manifest.yaml` · `registry/templates/lora-training/` |
+| `lora-training` | Template | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit. Stateless `KnowAct` templates (advisory; not a PDCA loop, cannot bind as `process_manifest`) | `registry/templates/lora-training/manifest.yaml` (no FlowDef manifest) · `registry/templates/lora-training/` |
 
 ---
 
@@ -143,9 +144,9 @@ last-verified-against: "91bfc585c"
 | Core Development | 11 | Skills |
 | Reasoning & Analysis | 10 | Skills |
 | Kata & Coaching | 4 skills + 1 composition | Skills + Composition |
-| Meta & Maintenance | 7 | Skills |
+| Meta & Maintenance | 7 skills + 1 template | Skills + Template |
 | Security & Posture | 4 | Skills |
-| Specialized | 14 skills + 1 template | Skills + Template |
-| **Catalogued here** | **52 skills + 1 templates + 1 bundle** | **54 capabilities** |
+| Specialized | 13 skills + 2 templates | Skills + Template |
+| **Catalogued here** | **51 skills + 3 templates + 1 bundle** | **55 capabilities** |
 
-> **Filesystem reality:** `registry/templates/` contains 89 template directories; `registry/manifests/` contains 100 FlowDef manifests (49 category=skill, rest are qa-script/runtime-config/daemon-process/pipeline). `.agents/skills/` contains 52 SKILL.md directories. The kata bundle is a registry manifest composing kata-coaching, kata-improvement, and kata-starter — not a separate `.agents/skills/` directory.
+> **Filesystem reality:** `registry/templates/` contains 90 template directories; `registry/manifests/` contains 101 FlowDef manifests (50 category=skill, 51 non-skill: 21 pipeline, 11 infrastructure, 10 qa-script, 5 runtime-config, 3 daemon-process, 1 registry). `.agents/skills/` contains 56 SKILL.md directories (50 with a corresponding skill-category FlowDef manifest, 6 template-only or non-skill: `gpui-test`, `lint-creator`, `lora-training`, `qa-script-builder`, `skill-router`, `zed-cherry-pick`). Of those 6, three are catalogued here as `Template` type (`lora-training`, `qa-script-builder`, `skill-router`); the other three (`gpui-test`, `lint-creator`, `zed-cherry-pick`) are Zed-project-local skills not surfaced in this hKask registry catalog. The kata bundle is a registry manifest composing kata-coaching, kata-improvement, and kata-starter — not a separate `.agents/skills/` directory.
