@@ -26,7 +26,6 @@ pub mod kata;
 pub mod regulation_store;
 pub mod sovereignty;
 pub mod token_registry;
-pub mod user_store;
 pub mod wallet;
 
 pub use consent_store::{ConsentStore, ConsentStoreError, StoredConsentRecord};
@@ -47,5 +46,4 @@ pub use kata::{KataHistoryEntry, KataHistoryError, KataHistoryStore};
 pub use regulation_store::{DecayConfig, RegulationArchive, WeightedEvent};
 pub use sovereignty::{SovereigntyBoundaryEntry, SovereigntyBoundaryStore, SovereigntyStoreError};
 pub use token_registry::TokenRegistryStore;
-pub use user_store::UserStoreError;
 pub use wallet::WalletStore;
