@@ -243,7 +243,7 @@ impl McpRuntime {
 
         // Resolve the binary path: check HKASK_MCP_{ID}_BIN first, then fall back
         // to PATH-based resolution. The env var allows pointing at a specific build
-        // (e.g., target/debug/hkask-mcp-filesystem) without polluting PATH.
+        // (e.g., target/debug/hkask-mcp-codegraph) without polluting PATH.
         //
         // P12 authenticated-host-mandate: the binary path is not a secret — it's a
         // deployment-time configuration, not an ambient authority.

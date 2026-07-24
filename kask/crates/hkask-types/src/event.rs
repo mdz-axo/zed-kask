@@ -358,7 +358,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.well.draw",
     "reg.well.exhausted",
     "reg.well.replenished",
-    // ── Pipeline (docproc) ──
+    // ── Pipeline (corpus) ──
     "reg.pipeline",
     "reg.pipeline.calibration",
     "reg.pipeline.decimation",

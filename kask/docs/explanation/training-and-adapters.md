@@ -264,9 +264,11 @@ The operational assessment and remediation sequence are in [Replica, Corpus, and
 *Inlined from `docs/diagrams/flowchart-replica-pipeline-dispatch.md`*
 
 
-# Replica Pipeline Dispatch Flowchart
+# Corpus Pipeline Dispatch Flowchart
 
-This reference flowchart shows the current executable boundary of `replica_pipeline_run`. The replica MCP server parses a `PipelineManifest`, resumes from checkpoint state, and dispatches only its four `corpus_*` steps to the `corpus-ingest` binary. Other manifest tools are deliberately not dispatched by this executor and stop the run with an external-execution error. A `requires_consent` step is rejected before execution; the runner has no approval input, so a consent-required training step cannot proceed through this path.
+> **Note:** `replica_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via `kask mcp invoke`.
+
+The historical flowchart below is retained for reference. It shows the former executable boundary of `replica_pipeline_run`.
 
 ```mermaid
 flowchart TD
@@ -292,7 +294,7 @@ flowchart TD
 ```
 `execute_tool` wraps the MCP call with a tool span and records success or error against the caller's WebID. That is observability, not authorization: per [P4 — Clear Boundaries](../architecture/core/PRINCIPLES.md#p4--clear-boundaries-ocap), operators must not treat this dispatcher as a replacement for an OCAP check. The checkpoint/result path supports [P9 — Homeostatic Self-Regulation](../architecture/core/PRINCIPLES.md#p9--homeostatic-self-regulation) by retaining the last step outcome for inspection and retry.
 
-The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-researcher.yaml`](../../corpus/pipeline-capabilities-researcher.yaml); its initial `docproc_convert` step is outside this executor's current dispatch set. See also [Replica, Corpus, and Training Readiness](../status/userpod-corpus-training-readiness.md) and [the replica server reference](../reference/mcp-servers/README.md).
+The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-researcher.yaml`](../../corpus/pipeline-capabilities-researcher.yaml); all its `docproc_*` and `training_*` steps are now dispatched by `kask mcp invoke` against the unified `hkask-mcp-corpus` server. See also [Replica, Corpus, and Training Readiness](../status/userpod-corpus-training-readiness.md) and [the corpus server reference](../reference/mcp-servers/README.md).
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-003

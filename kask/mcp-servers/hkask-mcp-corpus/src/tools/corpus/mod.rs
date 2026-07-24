@@ -27,7 +27,7 @@ use qa_parsing::{ParsedQa, parse_qa_record};
 use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
 
 #[tool_router(router = corpus_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Deduplicate chunks by semantic embedding similarity. Queries chunk embeddings from the memory DB, clusters within each source file by cosine similarity > threshold (default 0.85), and keeps the highest-salience chunk per cluster. Writes deduplicated tagged chunks JSONL."
     )]
@@ -1196,7 +1196,7 @@ pub struct PrepareTrainingDatasetRequest {
     pub dry_run: bool,
 }
 
-impl DocProcServer {
+impl CorpusServer {
     /// Prepare a training dataset from corpus QA pairs for LoRA fine-tuning.
     ///
     /// This tool bridges the docproc corpus pipeline and the training server:

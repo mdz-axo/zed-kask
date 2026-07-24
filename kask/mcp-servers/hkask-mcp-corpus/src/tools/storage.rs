@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[tool_router(router = storage_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Cache processed document text for reference. Stores content keyed by label in the docproc cache directory (~/.config/hkask/docproc-cache/)."
     )]

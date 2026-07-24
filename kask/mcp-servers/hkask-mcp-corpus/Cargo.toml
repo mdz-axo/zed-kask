@@ -73,7 +73,5 @@ name = "hkask-mcp-corpus"
 path = "src/main.rs"
 
 [dev-dependencies]
-hkask-test-harness = { path = "../../crates/hkask-test-harness" }
 rand.workspace = true
-proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }

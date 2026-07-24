@@ -203,7 +203,7 @@ steps:
       can skip re-downloading. Each work is saved as {cache_dir}/{slug}.txt.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-replica
+    mcp: hkask-mcp-corpus
     tool: replica_cache_work
     arguments:
       slug: "${item.slug}"

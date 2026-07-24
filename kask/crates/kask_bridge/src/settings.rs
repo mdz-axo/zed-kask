@@ -11,13 +11,14 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
 use settings_content::KaskSettingsContent;
 
+use collections::HashMap;
+
 /// Kask-specific settings (the `"kask"` section in settings.json).
 ///
 /// Non-secret configuration for hKask features: MCP server load set,
 /// data-service toggles, curator/regulation/guard/memory settings.
 /// API keys are stored in the keychain via `CredentialsProvider` (D9b).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, RegisterSetting)]
-#[setting_section = "kask"]
 pub struct KaskSettings {
     /// MCP server configuration — which of the 11 built-in servers to load.
     #[serde(default)]
@@ -50,7 +51,7 @@ pub struct KaskMcpSettings {
 
     /// Per-server overrides (e.g., `"curator": false` to unload the curator MCP).
     #[serde(default)]
-    pub overrides: std::collections::HashMap<String, bool>,
+    pub overrides: HashMap<String, bool>,
 }
 
 fn default_true() -> bool {
@@ -138,28 +139,45 @@ impl Settings for KaskSettings {
 impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
         Self {
-            mcp: c.mcp.map(|m| KaskMcpSettings {
-                load_default: m.load_default.unwrap_or(true),
-                overrides: m.overrides,
-            }).unwrap_or_default(),
-            data_services: c.data_services.map(|d| KaskDataServiceSettings {
-                eodhd_enabled: d.eodhd_enabled.unwrap_or(false),
-                fmp_enabled: d.fmp_enabled.unwrap_or(false),
-                exa_enabled: d.exa_enabled.unwrap_or(false),
-                tavily_enabled: d.tavily_enabled.unwrap_or(false),
-                brave_enabled: d.brave_enabled.unwrap_or(false),
-            }).unwrap_or_default(),
-            curator: c.curator.map(|c| KaskCuratorSettings {
-                always_on: c.always_on.unwrap_or(true),
-                algedonic_threshold: c.algedonic_threshold.unwrap_or(0.8),
-            }).unwrap_or_default(),
-            guard: c.guard.map(|g| KaskGuardSettings {
-                direct_chat_strategy: g.direct_chat_strategy.unwrap_or_else(|| "cascade_only".to_string()),
-            }).unwrap_or_default(),
-            memory: c.memory.map(|m| KaskMemorySettings {
-                consolidation_cadence_secs: m.consolidation_cadence_secs.unwrap_or(300),
-                confidence_floor: m.confidence_floor.unwrap_or(0.3),
-            }).unwrap_or_default(),
+            mcp: c
+                .mcp
+                .map(|m| KaskMcpSettings {
+                    load_default: m.load_default.unwrap_or(true),
+                    overrides: m.overrides,
+                })
+                .unwrap_or_default(),
+            data_services: c
+                .data_services
+                .map(|d| KaskDataServiceSettings {
+                    eodhd_enabled: d.eodhd_enabled.unwrap_or(false),
+                    fmp_enabled: d.fmp_enabled.unwrap_or(false),
+                    exa_enabled: d.exa_enabled.unwrap_or(false),
+                    tavily_enabled: d.tavily_enabled.unwrap_or(false),
+                    brave_enabled: d.brave_enabled.unwrap_or(false),
+                })
+                .unwrap_or_default(),
+            curator: c
+                .curator
+                .map(|c| KaskCuratorSettings {
+                    always_on: c.always_on.unwrap_or(true),
+                    algedonic_threshold: c.algedonic_threshold.unwrap_or(0.8),
+                })
+                .unwrap_or_default(),
+            guard: c
+                .guard
+                .map(|g| KaskGuardSettings {
+                    direct_chat_strategy: g
+                        .direct_chat_strategy
+                        .unwrap_or_else(|| "cascade_only".to_string()),
+                })
+                .unwrap_or_default(),
+            memory: c
+                .memory
+                .map(|m| KaskMemorySettings {
+                    consolidation_cadence_secs: m.consolidation_cadence_secs.unwrap_or(300),
+                    confidence_floor: m.confidence_floor.unwrap_or(0.3),
+                })
+                .unwrap_or_default(),
         }
     }
 }

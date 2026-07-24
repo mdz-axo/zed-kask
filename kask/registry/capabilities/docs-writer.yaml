@@ -20,7 +20,7 @@ memory_scope: episodic
 
 tool_servers:
   - hkask-mcp-kata-kanban
-  - hkask-mcp-docproc
+  - hkask-mcp-corpus
   - hkask-mcp-research
 
 registries:

@@ -19,6 +19,7 @@ use hkask_storage::{Database, EmbeddingStore};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -246,7 +247,7 @@ fn default_rewrite_dimension() -> String {
 // ── Tool implementations ────────────────────────────────────────────────────
 
 #[tool_router(router = persona_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid."
     )]

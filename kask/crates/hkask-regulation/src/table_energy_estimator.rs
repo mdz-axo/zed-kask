@@ -26,7 +26,6 @@ use std::collections::HashMap;
 pub(crate) fn default_gas_table() -> HashMap<&'static str, u64> {
     let mut table = HashMap::new();
     // Memory — internal storage read
-    table.insert("hkask-mcp-memory", 5);
 
     // Moderate — compute + local I/O
     table.insert("hkask-mcp-condenser", 10);
@@ -36,7 +35,6 @@ pub(crate) fn default_gas_table() -> HashMap<&'static str, u64> {
     // External API tools — expensive
     table.insert("hkask-mcp-research", 50);
     table.insert("hkask-mcp-companies", 40);
-    table.insert("hkask-mcp-communication", 50);
     table.insert("hkask-mcp-media", 100);
 
     // Inference is routed through InferenceEnergyEstimator directly.

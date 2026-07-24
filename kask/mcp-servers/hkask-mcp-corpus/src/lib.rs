@@ -145,7 +145,7 @@ fn default_embedding_model() -> &'static str {
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
-    pub struct DocProcServer {
+    pub struct CorpusServer {
         pub ocr_model: Option<String>,
         pub inference_router: Arc<InferenceRouter>,
         pub ocr_thresholds: ThresholdConfig,
@@ -167,7 +167,7 @@ pub struct IndexedPassage {
 
 // ── Server constructor + core methods ──────────────────────────────────────
 
-impl DocProcServer {
+impl CorpusServer {
     /// Check whether OCR capability is available.
     pub fn has_ocr(&self) -> bool {
         self.ocr_model.is_some()
@@ -626,18 +626,20 @@ enum ExtractOutcome {
 
 // ── Combined tool router (P5 Essentialism — modular tool groups) ──────────
 
-impl DocProcServer {
+impl CorpusServer {
     fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
         Self::document_router()
             + Self::semantic_router()
             + Self::storage_router()
             + Self::corpus_router()
             + Self::tagging_router()
+            + Self::persona_router()
+            + Self::gather_router()
     }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
-impl rmcp::ServerHandler for DocProcServer {}
+impl rmcp::ServerHandler for CorpusServer {}
 
 // ── Entry point ────────────────────────────────────────────────────────────
 
@@ -681,7 +683,7 @@ pub async fn run(
                         let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_router)));
                                     let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
 
-                        Ok(DocProcServer::new(
+                        Ok(CorpusServer::new(
                             ctx.webid,
                             userpod.clone(),
                             daemon_client.clone(),
@@ -870,7 +872,7 @@ mod tests {
     /// (0-based index 2) for OCR.
     ///
     /// Ignored by default — requires pdftoppm, pdftocairo, pdfunite, ps2pdf,
-    /// and python3+PIL. Run with: `cargo test -p hkask-mcp-docproc --lib
+    /// and python3+PIL. Run with: `cargo test -p hkask-mcp-corpus --lib
     /// -- --ignored extract_text_flags_mixed`.
     #[tokio::test]
     #[ignore = "requires pdftoppm, pdftocairo, pdfunite, ps2pdf, python3+PIL"]

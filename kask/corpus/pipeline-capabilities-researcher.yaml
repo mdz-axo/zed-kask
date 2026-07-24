@@ -7,8 +7,8 @@
 # Target: Bloom-balanced QAs for EVA LoRA training via Axolotl
 #
 # Architecture (v8.0):
-#   All pipeline steps run through MCP docproc tools:
-#     kask mcp invoke --server docproc --tool docproc_* --input '{...}'
+#   All pipeline steps run through MCP corpus tools:
+#     kask mcp invoke --server corpus --tool docproc_* --input '{...}'
 #
 #   Phase 2 is split into three separate steps (v6.0 combined them into one
 #   LLM call which caused bugs — wrong model, bypassed ContentGuard):

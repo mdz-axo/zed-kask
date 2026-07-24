@@ -13,7 +13,7 @@ pub mod event;
 pub mod fusion;
 pub mod goal;
 pub mod id;
-pub mod identity;
+
 pub mod keychain_keys;
 pub mod loops;
 pub mod macros;

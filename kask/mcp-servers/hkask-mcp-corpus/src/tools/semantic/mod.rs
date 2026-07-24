@@ -7,7 +7,7 @@
 //! - `ontology_io` — tagged-chunks JSONL readers
 //!
 //! The `#[tool_router]` macro requires all `#[tool]` methods to be on a single
-//! `impl DocProcServer` block, so the tool methods stay here in `mod.rs`.
+//! `impl CorpusServer` block, so the tool methods stay here in `mod.rs`.
 
 mod ontology_io;
 mod qa;
@@ -65,7 +65,7 @@ pub(crate) use qa::configured_qa_model;
 pub(crate) use triples::predicate_to_dimension;
 
 #[tool_router(router = semantic_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Generate QA pairs from text chunks. Accepts a single chunk (text) or multiple chunks (texts) for cross-reference synthesis. Uses Bloom's taxonomy levels. Multi-chunk mode (texts) generates QAs that require synthesizing across all passages with source citation."
     )]

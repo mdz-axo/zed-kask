@@ -183,7 +183,7 @@ fn normalize_and_cap_concept_list(raw: &[String]) -> Vec<String> {
 }
 
 #[tool_router(router = tagging_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO process concepts, FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template. Computes graph-centrality salience. Every chunk gets at least one 5W1H dimension — no zero-salience chunks."
     )]

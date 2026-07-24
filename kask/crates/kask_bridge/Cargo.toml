@@ -20,6 +20,7 @@ gpui = { path = "../../../crates/gpui" }
 agent = { path = "../../../crates/agent" }
 settings = { path = "../../../crates/settings" }
 settings_content = { path = "../../../crates/settings_content" }
+collections = { path = "../../../crates/collections" }
 schemars = { workspace = true }
 
 # Shared

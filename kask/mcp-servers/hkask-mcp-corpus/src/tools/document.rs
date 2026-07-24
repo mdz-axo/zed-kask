@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[tool_router(router = document_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Extract text from a document or directory. Detects format and automatically falls back to OCR for scanned PDFs. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs."
     )]
@@ -899,7 +899,7 @@ impl DocProcServer {
     }
 }
 
-impl DocProcServer {
+impl CorpusServer {
     /// expect: "The corpus pipeline uses hKask MCP servers, not external scripts."
     /// [P7] Motivating: Composable Systems — one MCP call executes the manifest's directory conversion step.
     /// pre: `path` names a readable directory and `output` names its destination directory

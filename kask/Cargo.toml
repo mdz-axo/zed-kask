@@ -150,5 +150,9 @@ dotenvy = "0.15"
 # Matrix protocol
 matrix-sdk = { version = "0.16", default-features = false, features = ["rustls-tls"] }
 
+# Tree-sitter (codegraph indexing)
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("hedera"))', 'cfg(kani)'] }

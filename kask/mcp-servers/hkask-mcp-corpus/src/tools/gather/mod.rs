@@ -74,7 +74,7 @@ pub struct CacheWorkRequest {
 // ── Tool implementations ────────────────────────────────────────────────────
 
 #[tool_router(router = gather_router, vis = "pub")]
-impl DocProcServer {
+impl CorpusServer {
     #[tool(
         description = "Discover an academic author's body of work and generate a corpus.yaml for replica_build. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
     )]

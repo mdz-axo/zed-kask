@@ -224,7 +224,7 @@ impl EpisodicStoragePort for MemoryLoopForwarder {
         // the `hkask-regulation` crate's Regulation runtime, not any in-source
         // subscriber. The consumer boundary is the tracing
         // registry, configured at startup via
-        // `hkask_cli::bootstrap::install_tracing_subscriber`.
+        // the app startup tracing init.
         tracing::debug!(
             target: "reg.memory.budget",
             perspective = %perspective,

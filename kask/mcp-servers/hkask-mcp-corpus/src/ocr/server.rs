@@ -1,7 +1,7 @@
-//! OCR server methods — DocProcServer impl block for OCR pipeline operations.
+//! OCR server methods — CorpusServer impl block for OCR pipeline operations.
 //!
 //! Extracted from lib.rs to co-locate OCR-specific code with the ocr/ module.
-//! These methods are on `DocProcServer` but are only called by `docproc_convert`
+//! These methods are on `CorpusServer` but are only called by `docproc_convert`
 //! and `docproc_ocr` (in tools/document.rs).
 
 use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
@@ -15,7 +15,7 @@ use async_trait::async_trait;
 /// Shareable OCR executor that bundles Tesseract + LLM backends.
 ///
 /// Created once per server and passed as `Arc<dyn OcrExecutor>` to the pipeline.
-/// This avoids the lifetime issues of passing `&DocProcServer` to parallel tasks.
+/// This avoids the lifetime issues of passing `&CorpusServer` to parallel tasks.
 pub struct PipelineExecutor {
     llm_ocr: Arc<LlmOcrExecutor>,
 }
@@ -60,7 +60,7 @@ impl OcrExecutor for PipelineExecutor {
     }
 }
 
-impl DocProcServer {
+impl CorpusServer {
     /// Run the OCR pipeline on page images and return joined text + outcome.
     ///
     /// Consolidates 3 duplicated invocation blocks in `docproc_convert`
