@@ -18,9 +18,11 @@ contract:
 energy_cap: 2500
 visibility: Public
 ---
+{# goal: Compute outer Kata convergence metric — trajectory stability + transfer + regression + materiality guard for irreducible gaps. Determines whether the self-improvement process has produced a stable, generalizable, non-regressing improvement trajectory or has plateaued with an irreducible residual gap. #}
 {# hKask v0.31.0 — Self-Improvement Skill #}
-{# Outer Kata Convergence: Trajectory Stability + Transfer + Regression #}
+{# Outer Kata Convergence: Trajectory Stability + Transfer + Regression + Materiality Guard #}
 {# Implements: Ren et al. (2026) Section 8.1 — Measuring Improvement #}
+{# Implements: Ren et al. (2026) Section 8.1.1 — "checkpoints, acceptance criteria, and early-stopping rules" #}
 You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
 
 This is Outer Kata CONVERGENCE CHECK.
@@ -88,10 +90,28 @@ Start at 1.0, subtract for each satisfied check, and clamp to [0, 1]:
 
 **Threshold**: 0.25. **Max iterations**: 10 (outer Kata).
 
+## Materiality Guard (Irreducible Gap Detection)
+
+If ALL of the following are true, force convergence to 0.0 (the residual gap is irreducible with the current approach — the honest answer is the bounded remainder, not infinite iteration):
+
+- This is outer Kata iteration ≥ 3
+- The convergence metric has not improved by more than 0.02 since the last outer Kata iteration
+- No new PDCA cycles were committed in this outer iteration (all rolled back or plateaued)
+- No new pathway/signal combination was attempted (same approach as prior iteration)
+
+If the materiality guard triggers, record `blockers: ["irreducible_kata_gap"]` and recommend:
+- Revisiting the direction (Step 1) — the challenge may need reframing
+- Trying a fundamentally different pathway/signal combination
+- Escalating to human review if the gap persists across pathway changes
+
+The paper warns: "without them, unbounded iterations risk overfitting to the evaluation distribution, thereby artificially inflating peak scores at the cost of general robustness" (Section 8.1.1). The materiality guard prevents this by forcing convergence when the metric plateaus.
+
 ## Constraints
 
 - The convergence metric must be grounded in real evaluation data, not self-assessment.
 - Transfer and regression checks are mandatory.
 - If the trajectory is regressing, the metric must be ≥ 0.50.
+- The materiality guard must check for plateau (delta < 0.02), not just non-convergence.
+- If the materiality guard triggers, convergence_metric must be forced to 0.0 regardless of other scores.
 
-Respond with a JSON object containing `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, and `blockers`.
+Respond with a JSON object containing `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, and `materiality_guard_triggered` (boolean).

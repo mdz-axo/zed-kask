@@ -55,6 +55,7 @@ use serde::{Deserialize, Serialize};
 use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
+use sha2::{Digest, Sha256};
 use std::fmt::Write;
 use std::{cell::RefCell, ops::ControlFlow};
 use std::{
@@ -1273,6 +1274,24 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// Cached rendered system prompt and its input digest. The system prompt is
+    /// re-rendered on every `build_request_messages_until` call, but its inputs
+    /// (available_tools, model_name, date, user_agents_md, sandboxing, project
+    /// context) rarely change between consecutive requests within a turn. When
+    /// the digest matches, the cached string is reused — avoiding both the
+    /// handlebars render cost and, more importantly, keeping the system-prompt
+    /// bytes identical so the provider's prefix cache hits. When the digest
+    /// changes, the new render is stored and a telemetry event is emitted so
+    /// cache-bust events are observable.
+    cached_system_prompt: Option<CachedSystemPrompt>,
+}
+
+/// A rendered system prompt cached alongside a digest of its inputs. The
+/// digest is computed from the same fields that feed `SystemPromptTemplate`; if
+/// it matches on the next render request, the cached string is reused.
+struct CachedSystemPrompt {
+    digest: [u8; 32],
+    prompt: SharedString,
 }
 
 impl Thread {
@@ -1409,6 +1428,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            cached_system_prompt: None,
         }
     }
 
@@ -1793,6 +1813,7 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
+            cached_system_prompt: None,
         }
     }
 
@@ -4100,7 +4121,7 @@ impl Thread {
     }
 
     pub(crate) fn build_completion_request(
-        &self,
+        &mut self,
         completion_intent: CompletionIntent,
         cx: &App,
     ) -> Result<LanguageModelRequest> {
@@ -4113,7 +4134,8 @@ impl Thread {
 
         let model = self
             .model()
-            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?
+            .clone();
         let sandboxing_enabled = crate::sandboxing::sandboxing_enabled(cx);
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
@@ -4184,7 +4206,7 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(model, cx),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
             // Models that can't run with thinking disabled ignore the
             // toggle state, which may be stale from a previously selected
             // model that could.
@@ -4361,7 +4383,7 @@ impl Thread {
     }
 
     fn build_request_messages(
-        &self,
+        &mut self,
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> Vec<LanguageModelRequestMessage> {
@@ -4381,7 +4403,7 @@ impl Thread {
     }
 
     fn build_request_messages_until(
-        &self,
+        &mut self,
         available_tools: Vec<SharedString>,
         end_ix: usize,
         cx: &App,
@@ -4389,32 +4411,92 @@ impl Thread {
         let end_ix = end_ix.min(self.messages.len());
         log::trace!("Building request messages from {} thread messages", end_ix);
 
-        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
-        let system_prompt = SystemPromptTemplate {
-            project: self.project_context.read(cx),
-            available_tools,
-            model_name: self.model().map(|m| m.name().0.to_string()),
-            date: Local::now().format("%Y-%m-%d").to_string(),
-            user_agents_md,
-            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
-                self.project.read(cx),
-                cx,
-            ),
-            is_linux: cfg!(target_os = "linux"),
-            is_windows: cfg!(target_os = "windows"),
-        }
-        .render(&self.templates)
-        .context("failed to build system prompt")
-        .expect("Invalid template");
+        let system_prompt = self.render_system_prompt(available_tools, cx);
         let mut messages = vec![LanguageModelRequestMessage {
             role: Role::System,
-            content: vec![system_prompt.into()],
+            content: vec![system_prompt.to_string().into()],
             cache: false,
             reasoning_details: None,
         }];
         self.extend_request_history_until(&mut messages, end_ix);
 
         messages
+    }
+
+    /// Render the system prompt, reusing a cached render when the inputs
+    /// (available_tools, model_name, date, user_agents_md, sandboxing, project
+    /// context) have not changed since the last render. This keeps the
+    /// system-prompt bytes byte-stable across consecutive requests so the
+    /// provider's prefix cache hits, and avoids the handlebars render cost.
+    /// When the digest changes, the new render is cached and a telemetry event
+    /// is emitted so cache-bust events are observable.
+    fn render_system_prompt(
+        &mut self,
+        available_tools: Vec<SharedString>,
+        cx: &App,
+    ) -> SharedString {
+        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
+        let model_name = self.model().map(|m| m.name().0.to_string());
+        let date = Local::now().format("%Y-%m-%d").to_string();
+        let sandboxing =
+            crate::sandboxing::sandboxing_enabled_for_project(self.project.read(cx), cx);
+        let is_linux = cfg!(target_os = "linux");
+        let is_windows = cfg!(target_os = "windows");
+
+        // Compute a digest of the inputs that affect the rendered system
+        // prompt. If it matches the cached digest, reuse the cached string.
+        let digest = system_prompt_digest(
+            &self.project_context.read(cx),
+            &available_tools,
+            model_name.as_deref(),
+            &date,
+            user_agents_md.as_deref(),
+            sandboxing,
+            is_linux,
+            is_windows,
+        );
+
+        if let Some(cached) = &self.cached_system_prompt
+            && cached.digest == digest
+        {
+            return cached.prompt.clone();
+        }
+
+        // Digest changed (or first render): re-render and cache.
+        let system_prompt = SystemPromptTemplate {
+            project: self.project_context.read(cx),
+            available_tools,
+            model_name,
+            date,
+            user_agents_md,
+            sandboxing,
+            is_linux,
+            is_windows,
+        }
+        .render(&self.templates)
+        .context("failed to build system prompt")
+        .expect("Invalid template");
+
+        let system_prompt: SharedString = system_prompt.into();
+
+        // Emit a telemetry event when the system-prompt digest changes across
+        // turns. This makes cache-bust events observable: if the prefix cache
+        // stops hitting, the operator can correlate it with a digest change.
+        telemetry::event!(
+            "Agent System Prompt Cache Bust",
+            thread_id = self.id.to_string(),
+            prompt_id = self.prompt_id.to_string(),
+            model = self.model().map(|m| m.telemetry_id()),
+            model_provider = self.model().map(|m| m.provider_id().to_string()),
+            prompt_bytes = system_prompt.len(),
+        );
+
+        self.cached_system_prompt = Some(CachedSystemPrompt {
+            digest,
+            prompt: system_prompt.clone(),
+        });
+
+        system_prompt
     }
 
     fn extend_request_history_until(
@@ -4550,7 +4632,7 @@ impl Thread {
     }
 
     fn build_compaction_request(
-        &self,
+        &mut self,
         insertion_ix: usize,
         model: &Arc<dyn LanguageModel>,
         cx: &App,
@@ -4773,6 +4855,53 @@ fn set_cache_breakpoints(messages: &mut [LanguageModelRequestMessage]) {
     if let Some(last_message) = messages.last_mut() {
         last_message.cache = true;
     }
+}
+
+/// Compute a SHA-256 digest of the inputs that determine the rendered system
+/// prompt. If this digest is stable across consecutive requests, the rendered
+/// system-prompt bytes are identical and the provider's prefix cache hits.
+///
+/// The digest covers every field of `SystemPromptTemplate` that varies at
+/// runtime: the project context (worktrees, rules files, skills), the available
+/// tools list, the model name, the date, the user's global AGENTS.md, the
+/// sandboxing flag, and the platform flags. Stable across Rust versions
+/// (SHA-256, not `DefaultHasher`).
+fn system_prompt_digest(
+    project: &ProjectContext,
+    available_tools: &[SharedString],
+    model_name: Option<&str>,
+    date: &str,
+    user_agents_md: Option<&str>,
+    sandboxing: bool,
+    is_linux: bool,
+    is_windows: bool,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    // Project context: worktrees (root_name, abs_path), rules files (path +
+    // text), skills (name + description + location). Serialized via serde for
+    // determinism — `ProjectContext` derives `Serialize`.
+    if let Ok(bytes) = serde_json::to_vec(project) {
+        hasher.update(b"project:");
+        hasher.update(&bytes);
+    }
+    hasher.update(b"\ntools:");
+    for tool in available_tools {
+        hasher.update(tool.as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.update(b"\nmodel:");
+    hasher.update(model_name.unwrap_or("").as_bytes());
+    hasher.update(b"\ndate:");
+    hasher.update(date.as_bytes());
+    hasher.update(b"\nuser_agents_md:");
+    hasher.update(user_agents_md.unwrap_or("").as_bytes());
+    hasher.update(b"\nsandboxing:");
+    hasher.update([sandboxing as u8]);
+    hasher.update(b"\nis_linux:");
+    hasher.update([is_linux as u8]);
+    hasher.update(b"\nis_windows:");
+    hasher.update([is_windows as u8]);
+    hasher.finalize().into()
 }
 
 fn auto_compact_threshold_token_count(
@@ -8059,6 +8188,128 @@ mod tests {
         assert!(
             matches!(&event, Some(Ok(ThreadEvent::AgentText(text))) if text == "after"),
             "expected replayed agent text, got {event:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_system_prompt_digest_stability(cx: &mut TestAppContext) {
+        // The system prompt is re-rendered on every build_request_messages
+        // call, but its inputs rarely change between consecutive requests.
+        // The digest cache must reuse the same rendered string when inputs are
+        // stable, and re-render (different bytes) when a tool is added.
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+            });
+        });
+
+        let first_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        // Second call with no changes — should reuse the cached render.
+        let second_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        assert_eq!(
+            first_prompt, second_prompt,
+            "system prompt must be byte-stable across consecutive renders with no input changes"
+        );
+
+        // Add a tool — the available_tools list changes, so the digest must
+        // change and the rendered prompt must differ (the Tool Use section
+        // appears when tools are present).
+        struct DigestBustTool;
+        impl AgentTool for DigestBustTool {
+            type Input = ();
+            type Output = String;
+            const NAME: &'static str = "digest_bust";
+            fn description(&self) -> std::borrow::Cow<'static, str> {
+                "A tool added to bust the digest".into()
+            }
+            fn input_schema(
+                &self,
+                _format: LanguageModelToolSchemaFormat,
+            ) -> Result<serde_json::Value> {
+                Ok(serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }))
+            }
+            fn run(
+                self: std::sync::Arc<Self>,
+                _input: ToolInput<Self::Input>,
+                _event_stream: ToolCallEventStream,
+                _cx: &mut App,
+            ) -> Task<Result<Self::Output, Self::Output>> {
+                Task::ready(Ok(String::new()))
+            }
+        }
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(DigestBustTool);
+            });
+        });
+
+        let third_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let available_tools: Vec<_> = thread
+                    .running_turn
+                    .as_ref()
+                    .map(|turn| turn.tools.keys().cloned().collect())
+                    .unwrap_or_default();
+                let messages = thread.build_request_messages(available_tools, cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        assert_ne!(
+            second_prompt, third_prompt,
+            "system prompt must change when a tool is added (digest bust)"
+        );
+        assert!(
+            third_prompt.contains("## Tool Use"),
+            "tool-use section should appear after adding a tool, got: {third_prompt}"
         );
     }
 

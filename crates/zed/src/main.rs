@@ -612,11 +612,21 @@ fn main() {
                 //
                 // When HKASK_DB_PATH is not set, fall back to LoggingMemoryPort
                 // (graceful degradation — logs and discards).
+                //
+                // The consolidation cadence and confidence floor come from
+                // `KaskMemorySettings` — read here so the port can fire
+                // consolidation passes after each ingestion (Task 5.2).
+                let kask_settings = kask_bridge::KaskSettings::get_global(cx);
                 let user_webid = hkask_types::WebID::for_userpod_name("zed-user");
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
                 let memory_port: std::sync::Arc<dyn hkask_types::MemoryPort> =
-                    match kask_bridge::RealMemoryPort::from_env(user_webid, embedding_model) {
+                    match kask_bridge::RealMemoryPort::from_env(
+                        user_webid,
+                        embedding_model,
+                        kask_settings.memory.consolidation_cadence_secs,
+                        kask_settings.memory.confidence_floor,
+                    ) {
                         Ok(Some(real)) => std::sync::Arc::new(real),
                         Ok(None) => {
                             log::info!("HKASK_DB_PATH not set — using LoggingMemoryPort (no-op)");
@@ -637,7 +647,6 @@ fn main() {
                 // retrieves salient memories and injects them into prompts before
                 // inference. The injector shares the same memory_port as the
                 // ingestion path — reads and writes go to the same store.
-                let kask_settings = kask_bridge::KaskSettings::get_global(cx);
                 if kask_settings.memory.auto_inject {
                     let injector = std::sync::Arc::new(kask_bridge::BridgeContextInjector::new(
                         memory_port,

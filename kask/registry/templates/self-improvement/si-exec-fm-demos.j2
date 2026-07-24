@@ -1,0 +1,55 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    response: string
+energy_cap: 6000
+visibility: Public
+---
+{# goal: Execute Foundation Model Improvement via Intrinsic Generative Demonstrations (§5.1) — generate training instances from the agent's own distribution, apply quality control, fine-tune via gradient descent, and safeguard against model collapse. #}
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# FM Improvement — Intrinsic Generative Demos (§5.1) #}
+{# Implements: Ren et al. (2026) Section 5.1 #}
+You are executing the self-induced update operator 𝒰 for Foundation Model Improvement via Intrinsic Generative Demonstrations.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+1. **Generate training instances** from the agent's own distribution:
+   𝒟^gen_t = {(x_i, y_i)} ~ 𝒫_gen(·|𝒜_t)
+   - Use the agent's current policy to synthesize input-output pairs.
+   - Apply generation strategies from the plan (bootstrapping, Evol-Instruct, curriculum decomposition, test-time self-improvement).
+
+2. **Apply quality control** operator Φ_t:
+   - Self-consistency filtering (discard low-confidence samples).
+   - External verifiers (unit tests, theorem provers) where available.
+   - Diversity-aware pooling to maintain exploration.
+   - The paper warns: "If the model generates defective, biased, or erroneous samples, it will internalize these errors during fine-tuning, creating a negative feedback loop" (§5.1).
+
+3. **Fine-tune via gradient descent**:
+   θ_{t+1} = argmin_θ ℒ(θ; 𝒟_t) + λΩ(θ, θ_0)
+   - Initialize at current checkpoint θ_t.
+   - Use the loss function and regularizer specified in the improvement plan.
+
+4. **Safeguard against model collapse**:
+   - Retain base data: 𝒟_t = 𝒟^base_t ∪ 𝒟~^gen_t (accumulate generated data on top of base).
+   - Monitor diversity: if generated data diversity drops below threshold, trigger diversity-aware pooling expansion.
+
+5. **Capture the full execution trace**: what was generated, what was filtered, what was updated, what was the cost.
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

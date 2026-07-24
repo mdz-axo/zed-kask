@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use credentials_provider::CredentialsProvider;
 use gpui::{ReadGlobal as _, ScrollHandle, Task, prelude::*};
-use settings::{Settings as _, SettingsStore};
+use settings::SettingsStore;
 use ui::{ButtonLink, ConfiguredApiCard, Divider, SwitchField, ToggleState, prelude::*};
 use util::ResultExt as _;
 use zed_credentials_provider as zed_credentials;
@@ -199,7 +199,9 @@ pub(crate) fn render_data_services_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
     _window: &mut Window,
-    _cx: &mut Context<SettingsWindow>,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let provider = zed_credentials::global(cx);
     let raw = raw_kask_settings(cx);
     let data_services = raw.and_then(|c| c.data_services).unwrap_or_default();
 
@@ -258,7 +260,7 @@ fn render_data_service_row(
     env_var: &'static str,
     enabled: bool,
     provider: Arc<dyn CredentialsProvider>,
-    cx: &mut Context<SettingsWindow>,
+    _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/{key}");
     let has_key = has_credential(&provider, &credential_url, env_var);
@@ -1018,10 +1020,6 @@ pub(crate) fn render_condenser_page(
     let condenser = raw.and_then(|c| c.condenser).unwrap_or_default();
     let profile = condenser.profile.as_deref().unwrap_or("normal");
     let auto_compress = condenser.auto_compress_tool_results.unwrap_or(true);
-    let saliency_window = condenser
-        .saliency_window
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "5".to_string());
 
     let profile_input = SettingsInputField::new("kask-condenser-profile")
         .tab_index(0)
@@ -1043,30 +1041,6 @@ pub(crate) fn render_condenser_page(
                             .profile = Some(parsed);
                     },
                 );
-            }
-        });
-
-    let saliency_input = SettingsInputField::new("kask-condenser-saliency-window")
-        .tab_index(0)
-        .with_initial_text(saliency_window)
-        .with_placeholder("5")
-        .aria_label("Saliency Window")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.parse::<u32>() {
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .condenser
-                                .get_or_insert_default()
-                                .saliency_window = Some(parsed);
-                        },
-                    );
-                }
             }
         });
 
@@ -1138,18 +1112,6 @@ pub(crate) fn render_condenser_page(
                     )
                     .tab_index(0),
                 ),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Saliency Window"))
-                .child(
-                    Label::new("Saliency window multiplier for thread summarization (max_tokens = window * 100, clamped [150, 2000]).")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(saliency_input),
         )
         .into_any_element()
 }

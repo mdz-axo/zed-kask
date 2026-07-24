@@ -1,0 +1,91 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    evaluation_result: object
+    commit_decision: object
+    improvement_plan: object
+    pdca_iteration: integer
+    max_pdca_iterations: integer
+    context: object
+  output:
+    response: string
+energy_cap: 2000
+visibility: Public
+---
+{# goal: Compute per-iteration PDCA convergence metric — performance delta, regression check, budget remaining, and materiality guard for irreducible gaps. Determines whether the inner PDCA loop should continue or exit to the outer Kata convergence check. #}
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Inner PDCA Convergence Check #}
+{# Implements: Ren et al. (2026) Section 8.1.1 — "checkpoints, acceptance criteria, and early-stopping rules" #}
+{# Implements: Ren et al. (2026) Section 8.1.1 — "Track stability, regressions, and safety over time" #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is INNER PDCA CONVERGENCE CHECK.
+
+The paper requires: "The protocol should explicitly specify checkpoints, acceptance criteria, and early-stopping rules; without them, unbounded iterations risk overfitting to the evaluation distribution" (Section 8.1.1).
+
+## What You Know
+
+Evaluation result (from PDCA Check): {{ evaluation_result | tojson }}
+Commit/rollback decision (from PDCA Act): {{ commit_decision | tojson }}
+Improvement plan: {{ improvement_plan | tojson }}
+PDCA iteration: {{ pdca_iteration | default(1) }}
+Max PDCA iterations: {{ max_pdca_iterations | default(5) }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+### 1. Determine PDCA Iteration Status
+
+Classify the current PDCA iteration:
+
+- **Committed with improvement**: The update was committed AND performance improved on held-out tasks AND no regressions detected.
+- **Committed with regression**: The update was committed BUT regressions were detected (this should not happen if the Act step worked correctly, but check anyway).
+- **Rolled back**: The update was rolled back. No improvement was made this iteration.
+- **Committed with no improvement**: The update was committed BUT performance did not improve (plateau).
+
+### 2. Compute Convergence Metric
+
+Start at 1.0 and subtract for each satisfied condition:
+
+1. **Improvement detected**: Performance on held-out tasks improved vs. baseline? → subtract 0.25 if yes
+2. **No regressions**: Previously solved tasks still solved? → subtract 0.20 if yes
+3. **Transfer confirmed**: Improvements generalize beyond the improvement signal? → subtract 0.20 if yes
+4. **Within budget**: Cost is within allocated budget? → subtract 0.15 if yes
+5. **No safety violations**: No safety policy violations, goal drift, or reward hacking? → subtract 0.10 if yes
+6. **Approaching target**: Performance is approaching the target condition from Step 3? → subtract 0.10 if yes
+
+If the iteration was **rolled back**, set convergence_metric = 1.0 (not converged — need to try a different approach).
+
+Clamp to [0, 1].
+
+### 3. Materiality Guard (Irreducible Gap Detection)
+
+If ALL of the following are true, force convergence to 0.0 (the residual gap is irreducible with the current approach):
+- This is PDCA iteration ≥ 3
+- The convergence metric has not improved by more than 0.02 since the last iteration
+- No PDCA cycles were committed in this iteration (rolled back) OR committed with no improvement
+
+If the materiality guard triggers, record `blockers: ["irreducible_pdca_gap"]` and recommend either:
+- Changing the pathway/signal combination (try a different sub-pathway)
+- Escalating to the outer Kata convergence check (the current approach has plateaued)
+
+### 4. Determine Next Action
+
+- If convergence_metric ≤ 0.25: **PDCA converged** — exit inner loop, proceed to outer Kata convergence.
+- If convergence_metric > 0.25 AND pdca_iteration < max_pdca_iterations: **PDCA not converged** — re-enter PDCA Plan with refined approach.
+- If convergence_metric > 0.25 AND pdca_iteration ≥ max_pdca_iterations: **PDCA exhausted** — exit inner loop, proceed to outer Kata convergence with `blockers: ["pdca_iterations_exhausted"]`.
+
+## Constraints
+
+- If rolled back, convergence_metric must be 1.0.
+- The materiality guard must check for plateau (delta < 0.02), not just non-convergence.
+- The next action must be one of: "exit" (converged), "re-enter" (not converged, retry), "exhausted" (max iterations hit).
+
+Respond with a JSON object containing `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, `materiality_guard_triggered` (boolean), and `next_action` ("exit", "re-enter", or "exhausted").

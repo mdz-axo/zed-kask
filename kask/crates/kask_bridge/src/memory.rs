@@ -14,13 +14,15 @@
 //! `agent` crate doesn't depend on `kask_bridge`.
 
 use hkask_inference::{EmbeddingRouter, InferenceConfig};
-use hkask_memory::EpisodicMemory;
-use hkask_memory::SemanticMemory;
+use hkask_memory::{ConsolidationBridge, ConsolidationService, EpisodicMemory, SemanticMemory};
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
+
+use chrono::Utc;
 
 // ── Logging no-op (fallback when DB not configured) ────────────────────────
 
@@ -77,12 +79,22 @@ impl MemoryPort for LoggingMemoryPort {
 /// Construction requires a SQLCipher database path and passphrase. When
 /// these are not available, use `LoggingMemoryPort` instead.
 pub struct RealMemoryPort {
-    episodic: EpisodicMemory,
-    semantic: SemanticMemory,
+    episodic: Arc<EpisodicMemory>,
+    semantic: Arc<SemanticMemory>,
     embedding_router: EmbeddingRouter,
     embedding_model: String,
     user_webid: WebID,
     curator_webid: WebID,
+    /// Consolidation service — promotes episodic h_mems to semantic memory.
+    /// `None` when consolidation is disabled (`consolidation_cadence_secs == 0`).
+    consolidation: Option<Arc<ConsolidationService>>,
+    /// Consolidation cadence in seconds. `0` disables the trigger.
+    consolidation_cadence_secs: u64,
+    /// Confidence floor for semantic cleanup during consolidation.
+    confidence_floor: f64,
+    /// Timestamp of the last consolidation pass. Guarded by a mutex so the
+    /// ingestion path (which is `&self`) can check-and-update atomically.
+    last_consolidation: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
 }
 
 impl RealMemoryPort {
@@ -97,6 +109,8 @@ impl RealMemoryPort {
         passphrase: &str,
         user_webid: WebID,
         embedding_model: String,
+        consolidation_cadence_secs: u64,
+        confidence_floor: f64,
     ) -> Result<Self, String> {
         let db = Database::open(db_path, passphrase).map_err(|e| e.to_string())?;
         let pool = db.sqlite_pool().map_err(|e| e.to_string())?;
@@ -105,17 +119,34 @@ impl RealMemoryPort {
 
         // Episodic store — first-person, Private, perspective-bound
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
-        let episodic = EpisodicMemory::new(h_mem_store);
+        let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
 
         // Semantic store — shared knowledge graph with embeddings
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver));
         let embedding_store = EmbeddingStore::from_driver(driver, 1024);
-        let semantic = SemanticMemory::new(h_mem_store2, embedding_store);
+        let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
         let inference_config = InferenceConfig::from_env();
         let embedding_router = EmbeddingRouter::new(inference_config);
 
         let curator_webid = WebID::from_persona(b"Curator");
+
+        // Consolidation service — episodic → semantic promotion.
+        // Only constructed when the cadence is non-zero; a zero cadence disables
+        // the trigger entirely (the operator can still fire consolidation
+        // manually via the curator MCP server).
+        let consolidation = if consolidation_cadence_secs > 0 {
+            let bridge = Arc::new(ConsolidationBridge::new(
+                Arc::clone(&episodic),
+                Arc::clone(&semantic),
+            ));
+            Some(Arc::new(ConsolidationService::new(
+                bridge,
+                Arc::clone(&semantic),
+            )))
+        } else {
+            None
+        };
 
         Ok(Self {
             episodic,
@@ -124,6 +155,10 @@ impl RealMemoryPort {
             embedding_model,
             user_webid,
             curator_webid,
+            consolidation,
+            consolidation_cadence_secs,
+            confidence_floor,
+            last_consolidation: Mutex::new(None),
         })
     }
 
@@ -133,7 +168,16 @@ impl RealMemoryPort {
     /// are set and the database opens successfully.
     /// Returns `Ok(None)` if `HKASK_DB_PATH` is not set (graceful degradation).
     /// Returns `Err` if the database path is set but cannot be opened.
-    pub fn from_env(user_webid: WebID, embedding_model: String) -> Result<Option<Self>, String> {
+    ///
+    /// `consolidation_cadence_secs` and `confidence_floor` come from
+    /// `KaskMemorySettings` — a cadence of `0` disables the consolidation
+    /// trigger entirely.
+    pub fn from_env(
+        user_webid: WebID,
+        embedding_model: String,
+        consolidation_cadence_secs: u64,
+        confidence_floor: f64,
+    ) -> Result<Option<Self>, String> {
         let db_path = match std::env::var("HKASK_DB_PATH") {
             Ok(p) if !p.trim().is_empty() => p,
             _ => return Ok(None),
@@ -143,13 +187,104 @@ impl RealMemoryPort {
             .map_err(|e| e.to_string())?
             .to_string();
 
-        let port = Self::new(&db_path, &passphrase, user_webid, embedding_model)?;
+        let port = Self::new(
+            &db_path,
+            &passphrase,
+            user_webid,
+            embedding_model,
+            consolidation_cadence_secs,
+            confidence_floor,
+        )?;
         tracing::info!(
             target: "reg.memory",
             db_path = %db_path,
+            consolidation_cadence_secs,
+            confidence_floor,
             "RealMemoryPort initialized — turns will be stored in episodic + semantic memory"
         );
         Ok(Some(port))
+    }
+
+    /// Check whether the consolidation cadence has elapsed and, if so, fire
+    /// a consolidation pass (episodic → semantic promotion + semantic cleanup).
+    ///
+    /// This is called after each successful `ingest_turn`. The cadence check
+    /// is atomic: the timestamp is updated under the mutex before consolidation
+    /// runs, so concurrent ingestions won't double-fire.
+    ///
+    /// Consolidation is a synchronous DB operation — it runs inline within
+    /// the `ingest_turn` future, which the caller has already detached onto a
+    /// background executor (`cx.background_spawn(...).detach()` in the agent
+    /// crate). It does not block the UI or the agent thread.
+    fn maybe_consolidate(&self) {
+        let Some(consolidation) = &self.consolidation else {
+            return;
+        };
+        if self.consolidation_cadence_secs == 0 {
+            return;
+        }
+
+        // Check-and-update under the mutex so concurrent ingestions don't
+        // double-fire consolidation. If the cadence hasn't elapsed, bail.
+        let now = Utc::now();
+        let cadence = chrono::Duration::seconds(self.consolidation_cadence_secs as i64);
+        let should_fire = match self.last_consolidation.lock() {
+            Ok(mut guard) => {
+                let elapsed = guard
+                    .map(|last| now.signed_duration_since(last) >= cadence)
+                    .unwrap_or(true);
+                if elapsed {
+                    *guard = Some(now);
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    error = %e,
+                    "last_consolidation mutex poisoned — skipping consolidation trigger"
+                );
+                return;
+            }
+        };
+
+        if !should_fire {
+            return;
+        }
+
+        tracing::info!(
+            target: "reg.memory",
+            cadence_secs = self.consolidation_cadence_secs,
+            confidence_floor = self.confidence_floor,
+            "Consolidation cadence elapsed — firing curator consolidation"
+        );
+
+        let request = hkask_types::ConsolidationRequest {
+            limit: 100,
+            confidence_floor: Some(self.confidence_floor),
+            max_semantic_triples: None,
+        };
+
+        match consolidation.consolidate(&self.user_webid, request) {
+            Ok(outcome) => {
+                tracing::info!(
+                    target: "reg.memory",
+                    consolidated = outcome.consolidated_count,
+                    deleted = outcome.deleted_count,
+                    failed = outcome.failed_count,
+                    "Consolidation pass complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    error = %e,
+                    "Consolidation pass failed"
+                );
+            }
+        }
     }
 }
 
@@ -269,6 +404,19 @@ impl MemoryPort for RealMemoryPort {
                 model = %model,
                 "Turn ingested into episodic + semantic memory"
             );
+
+            // ── 4. Curator consolidation trigger (Task 5.2) ───────────────
+            //
+            // After each ingestion, check whether the consolidation cadence has
+            // elapsed since the last pass. If so, promote episodic h_mems to
+            // semantic memory (episodic → semantic, one-way). This runs inline
+            // within the ingestion future — the caller already detached this
+            // task (`cx.background_spawn(...).detach()` in the agent crate),
+            // so consolidation does not block the UI or the agent thread.
+            //
+            // A cadence of 0 disables the trigger (the operator can still
+            // fire consolidation manually via the curator MCP server).
+            self.maybe_consolidate();
 
             Ok(())
         })
@@ -428,17 +576,37 @@ mod tests {
     }
 
     fn in_memory_port() -> RealMemoryPort {
+        in_memory_port_with_cadence(0, 0.3)
+    }
+
+    fn in_memory_port_with_cadence(
+        consolidation_cadence_secs: u64,
+        confidence_floor: f64,
+    ) -> RealMemoryPort {
         let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
-        let episodic = EpisodicMemory::new(h_mem_store);
+        let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
 
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver));
         let embedding_store = EmbeddingStore::from_driver(driver, 1024);
-        let semantic = SemanticMemory::new(h_mem_store2, embedding_store);
+        let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
         // EmbeddingRouter needs InferenceConfig, but we won't call embed in tests
         let inference_config = InferenceConfig::from_env();
         let embedding_router = EmbeddingRouter::new(inference_config);
+
+        let consolidation = if consolidation_cadence_secs > 0 {
+            let bridge = Arc::new(ConsolidationBridge::new(
+                Arc::clone(&episodic),
+                Arc::clone(&semantic),
+            ));
+            Some(Arc::new(ConsolidationService::new(
+                bridge,
+                Arc::clone(&semantic),
+            )))
+        } else {
+            None
+        };
 
         RealMemoryPort {
             episodic,
@@ -447,6 +615,10 @@ mod tests {
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
             curator_webid: WebID::from_persona(b"Curator"),
+            consolidation,
+            consolidation_cadence_secs,
+            confidence_floor,
+            last_consolidation: Mutex::new(None),
         }
     }
 
@@ -517,5 +689,91 @@ mod tests {
             .query_for_deduped("chat:thread:test-empty", webid)
             .expect("query should succeed");
         assert_eq!(h_mems.len(), 1, "episodic h_mem should still be stored");
+    }
+
+    #[tokio::test]
+    async fn ingest_turn_fires_consolidation_when_cadence_elapses() {
+        // Cadence of 1 second — any ingestion should fire consolidation.
+        let port = in_memory_port_with_cadence(1, 0.3);
+        let webid = port.user_webid;
+
+        // Ingest a turn — this should fire consolidation (no prior consolidation).
+        let record = TurnRecord {
+            thread_id: "consolidation-test".to_string(),
+            user_input: "Tell me about memory consolidation".to_string(),
+            agent_response: "Consolidation promotes episodic to semantic.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        };
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok(), "ingest_turn should succeed");
+
+        // The last_consolidation timestamp should now be set.
+        let last = port
+            .last_consolidation
+            .lock()
+            .expect("mutex not poisoned")
+            .expect("consolidation should have fired");
+        assert!(
+            Utc::now().signed_duration_since(last).num_seconds() < 5,
+            "last_consolidation should be recent"
+        );
+
+        // A second ingestion immediately after should NOT fire consolidation
+        // (cadence hasn't elapsed). We verify by checking the timestamp is
+        // unchanged.
+        let record2 = TurnRecord {
+            thread_id: "consolidation-test-2".to_string(),
+            user_input: "Another question".to_string(),
+            agent_response: "Another answer".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        };
+        let _ = port.ingest_turn(record2).await;
+        let last_after = port
+            .last_consolidation
+            .lock()
+            .expect("mutex not poisoned")
+            .expect("consolidation timestamp should still be set");
+        assert_eq!(
+            last, last_after,
+            "second ingestion within cadence should not re-fire consolidation"
+        );
+
+        // After consolidation, the first episodic h_mem may have been promoted
+        // to semantic and expired in episodic (consolidation is a one-way
+        // episodic → semantic promotion). The second h_mem was ingested after
+        // consolidation, so it should still be in episodic.
+        let h_mems = port
+            .episodic
+            .query_for_deduped("chat:thread:consolidation-test-2", webid)
+            .expect("query should succeed");
+        assert_eq!(
+            h_mems.len(),
+            1,
+            "second episodic h_mem (ingested after consolidation) should be stored"
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_turn_skips_consolidation_when_cadence_zero() {
+        // Cadence of 0 — consolidation is disabled.
+        let port = in_memory_port_with_cadence(0, 0.3);
+        let record = TurnRecord {
+            thread_id: "no-consolidation".to_string(),
+            user_input: "Hello".to_string(),
+            agent_response: "Hi".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        };
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok());
+
+        // last_consolidation should remain None (never fired).
+        let last = port.last_consolidation.lock().expect("mutex not poisoned");
+        assert!(
+            last.is_none(),
+            "consolidation should not fire when cadence is 0"
+        );
     }
 }

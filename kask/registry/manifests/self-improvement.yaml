@@ -157,21 +157,39 @@ steps:
       improvement_plan: "{{ step_4_result }}"
       proposed_artifact: "{{ step_5_result }}"
 
-  # ─── INNER PDCA LOOP: Re-enter Plan if committed but not converged ───
+  # ─── INNER PDCA CONVERGENCE CHECK ───
+  # Computes per-iteration convergence with materiality guard for irreducible gaps.
   - ordinal: 8
+    action: select
+    description: "Inner PDCA Convergence — per-iteration metric with materiality guard."
+    renderer: minijinja
+    template_ref: self-improvement/si-pdca-convergence.j2
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      evaluation_result: "{{ step_6_result }}"
+      commit_decision: "{{ step_7_result }}"
+      improvement_plan: "{{ step_4_result }}"
+      pdca_iteration: "{{ pdca_iteration | default(1) }}"
+      max_pdca_iterations: 5
+
+  # ─── INNER PDCA LOOP: Re-enter Plan if not converged ───
+  # Loop condition uses the inner PDCA convergence metric (step_8_result), not just the LLM's self-assessed next_step.
+  # The LLM's commit/rollback decision (step_7_result) is still checked, but the convergence metric is the primary signal.
+  - ordinal: 9
     action: loop
-    description: "Re-enter PDCA Plan if committed and not converged (max 5 inner iterations)."
+    description: "Re-enter PDCA Plan if not converged (max 5 inner iterations)."
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: 4  # Re-enter at PDCA Plan (step 4) for next improvement iteration
-      loop_condition: "step_7_result.decision == 'commit' and step_7_result.next_step == 're-enter'"
+      loop_condition: "step_8_result.next_action == 're-enter'"
       max_iterations: 5
 
   # ─── OUTER KATA CONVERGENCE ───
-  - ordinal: 9
+  - ordinal: 10
     action: select
-    description: "Outer Kata Convergence — Trajectory stability + transfer + regression."
+    description: "Outer Kata Convergence — Trajectory stability + transfer + regression + materiality guard."
     renderer: minijinja
     template_ref: self-improvement/si-kata-convergence.j2
     gas_cap: 2500
@@ -180,17 +198,19 @@ steps:
       direction: "{{ step_1_result }}"
       current_condition: "{{ step_2_result }}"
       target_condition: "{{ step_3_result }}"
-      pdca_iterations: "{{ step_7_result }}"
+      pdca_convergence: "{{ step_8_result }}"
+      pdca_check: "{{ step_6_result }}"
+      pdca_act: "{{ step_7_result }}"
 
   # ─── OUTER KATA LOOP: Re-enter Current Condition if not converged ───
-  - ordinal: 10
+  - ordinal: 11
     action: loop
     description: "Re-enter Kata Step 2 (current condition) if not converged (max 10 outer iterations)."
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: 2  # Re-enter at Kata Step 2 (current condition) — direction (step 1) only revisited if challenge fundamentally changes
-      loop_condition: "step_9_result.convergence_metric > 0.25"
+      loop_condition: "step_10_result.convergence_metric > 0.25 and not step_10_result.materiality_guard_triggered"
       max_iterations: 10
 
 error_handling:
@@ -232,6 +252,10 @@ ocap:
       gas_budget: 3000
     - resource: template
       action: render
+      template_id: self-improvement/si-pdca-convergence
+      gas_budget: 2000
+    - resource: template
+      action: render
       template_id: self-improvement/si-kata-convergence
       gas_budget: 2500
     - resource: manifest
@@ -264,6 +288,7 @@ ledger:
     - reg.self_improvement.pdca.do
     - reg.self_improvement.pdca.check
     - reg.self_improvement.pdca.act
+    - reg.self_improvement.pdca.convergence
     - reg.self_improvement.kata.convergence
 
 audit:
