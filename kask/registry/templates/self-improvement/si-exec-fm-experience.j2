@@ -1,0 +1,59 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    response: string
+energy_cap: 6000
+visibility: Public
+---
+{# goal: Execute Foundation Model Improvement via Extrinsic Exploratory Experience (§5.3) — collect interaction trajectories from grounded or simulated environments, update parameters via RL/DPO. #}
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# FM Improvement — Extrinsic Exploratory Experience (§5.3) #}
+{# Implements: Ren et al. (2026) Section 5.3 #}
+You are executing the self-induced update operator 𝒰 for Foundation Model Improvement via Extrinsic Exploratory Experience.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+1. **Collect interaction trajectories** from one of two modes:
+
+   **Grounded Task Environments (§5.3.1)**:
+   - Programmatic verifiers: unit tests, SQL execution, theorem proving (Agent-RLVR).
+   - Learned reward models: outcome-supervised reward from web/UI trajectories (WebRL, UI-Genie).
+   - Self-generated tasks: agent proposes tasks, environment validates (Absolute Zero, ETO).
+
+   **Simulated Proxy Environments (§5.3.2)**:
+   - Learned world model W(s_{k+1}, r_k | s_k, a_k) predicts next state and reward.
+   - Use simulated rollouts for planning, trajectory synthesis, failure analysis (WebEvolver, WebDreamer, WMPO).
+
+2. **Update parameters**:
+   - PPO for policy gradient with environment rewards.
+   - DPO for preference-based objectives (contrast successful vs. failed trajectories).
+   - θ_{t+1} = IMPROVE_θ(θ_{1:t}; τ_t)
+
+3. **Guard against reward hacking**:
+   - The paper warns: "a foundation-model agent can satisfy the literal condition of a verifier without solving the underlying task, because the verifier's specification is itself a linguistic object that the agent can manipulate" (§5.3).
+   - Use diverse verifiers, monitor for specification gaming.
+
+4. **Guard against capability regression**:
+   - Extensive RL on narrow rewards can erode broader competencies.
+   - Monitor generalization metrics alongside task-specific metrics.
+
+5. **Capture the full execution trace**.
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

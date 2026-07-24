@@ -1,0 +1,64 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    response: string
+energy_cap: 6000
+visibility: Public
+---
+{# goal: Execute Scaffolding Improvement via Memory Evolution (§6.2) — apply signal-driven CRUD operations (Create/Read/Update/Delete) to evolve the memory component m_t. #}
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Scaffolding Improvement — Memory Evolution (§6.2) #}
+{# Implements: Ren et al. (2026) Section 6.2 #}
+You are executing the self-induced update operator 𝒰 for Scaffolding Improvement via Memory Evolution.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+Apply signal-driven CRUD operations to the memory state m_t = (object_t, structure_t):
+
+### Create (C)
+- **Semantic compression**: Transform raw interactions into structured metadata, summaries, reusable schemas.
+- **Context-aware discrete decisions**: add/update/delete/no-op conditioned on retrieved neighbors.
+- **Controlled boundary insertion**: Dynamically optimize write policy for downstream utility.
+- Trade-off: over-writing inflates retrieval noise; under-writing sacrifices long-term capability.
+
+### Read (R)
+- **Hybrid heuristics**: Blend semantic relevance with recency and importance scores.
+- **Structure-aware retrieval**: Coarse-to-fine traversal over hierarchical or graph topologies.
+- **Retrieval gating**: Dynamically decide whether to query memory and how much context is sufficient.
+- **Retrieval-driven adaptation**: Fetch historical trajectories as actionable cases.
+
+### Update (U)
+- **Scheduled review and attenuation**: Periodically strengthen high-utility items, decay obsolete ones.
+- **Local refresh**: Dynamically update topological neighbors during new insertions.
+- **Iterative distillation**: Synthesize repeated successes into compact, reusable abstractions.
+- **Offline aggregation**: Shift expensive compression away from the online loop.
+
+### Delete (D)
+- **Multi-stage pruning**: Filter low-value items at write time; periodically clear by access frequency and relevance.
+- **Consensus-based eviction**: Collaborative voting in distributed setups.
+- **Tiered eviction**: OS-inspired rules across memory layers to bound size.
+
+## Constraints
+
+- Memory objects may be explicit (human-readable) or implicit (latent embeddings).
+- The paper warns: "improper deletion policies create a direct dilemma: over-pruning loses critical knowledge, while under-pruning floods the system with outdated noise" (§6.2.3).
+- Memory structure may be flat, hierarchical, graph-based, or vector-retrieval.
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

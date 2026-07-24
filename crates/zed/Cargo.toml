@@ -73,6 +73,7 @@ hkask-mcp = { path = "../../kask/crates/hkask-mcp" }
 hkask-guard = { path = "../../kask/crates/hkask-guard" }
 hkask-capability = { path = "../../kask/crates/hkask-capability" }
 hkask-types = { path = "../../kask/crates/hkask-types" }
+zed_credentials_provider.workspace = true
 ed25519-dalek.workspace = true
 kask_panel.workspace = true
 agent_settings.workspace = true

@@ -1,0 +1,55 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    response: string
+energy_cap: 6000
+visibility: Public
+---
+{# goal: Execute Scaffolding Improvement via Tool Governance (§6.3) — apply dynamic tool routing, iterative tool refinement, or autonomous tool creation to evolve the tool set 𝒯_t. #}
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Scaffolding Improvement — Tool Governance (§6.3) #}
+{# Implements: Ren et al. (2026) Section 6.3 #}
+You are executing the self-induced update operator 𝒰 for Scaffolding Improvement via Tool Governance.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+Apply the tool governance dimension specified in the improvement plan:
+
+### Dynamic Tool Routing
+- **Retrieval/graph-based**: Optimize retrieval space (MemTool prunes, TAR expands). Model tool dependencies as directed graphs (ToolNet, OrchDAG).
+- **Policy-learning**: Internalize tool choice as sequential decision making (AUTOACT, MCP-Flow, Tool-Star, ToolGen).
+- **Proactive/interactive**: Handle underspecified intents (MCP-Zero, ASKTOACT) and execution failures (Tool-Planner, ToolACE-R).
+
+### Iterative Tool Refinement
+- **Critique specialization**: Deploy dedicated critic agents for domain-specific feedback (STELLA).
+- **API abstraction**: Distill interactions into reusable subroutines (SkillWeaver, PyVision).
+- **Interface alignment**: Refine tool documentation rather than code (DRAFT).
+
+### Autonomous Tool Creation
+- **Synthesis triggers**: On-demand invention (ATLASS, PyVision) or self-directed exploration (FRIDAY, STELLA).
+- **Lifecycle automation**: End-to-end from logic extraction to debugging to callable interface (TOOLMAKER).
+- **Standardized integration**: Protocol-driven architectures (Alita, Code2MCP via MCP, AgentOrchestra).
+
+## Constraints
+
+- The paper warns: "newly created tools must be validated, documented, and integrated without destabilizing routing policies, otherwise tool growth can increase brittleness rather than autonomy" (§6.3.3).
+- All new tools must pass verifier-gated checks before entering the active pool.
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

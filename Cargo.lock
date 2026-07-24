@@ -27353,6 +27353,7 @@ dependencies = [
  "workspace",
  "zed-reqwest",
  "zed_actions",
+ "zed_credentials_provider",
  "zed_env_vars",
  "zlog",
  "zlog_settings",

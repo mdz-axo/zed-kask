@@ -8254,17 +8254,15 @@ mod tests {
             type Input = ();
             type Output = String;
             const NAME: &'static str = "digest_bust";
-            fn description(&self) -> std::borrow::Cow<'static, str> {
-                "A tool added to bust the digest".into()
+            fn kind() -> acp::ToolKind {
+                acp::ToolKind::Other
             }
-            fn input_schema(
+            fn initial_title(
                 &self,
-                _format: LanguageModelToolSchemaFormat,
-            ) -> Result<serde_json::Value> {
-                Ok(serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }))
+                _input: Result<Self::Input, serde_json::Value>,
+                _cx: &mut App,
+            ) -> SharedString {
+                "Digest Bust".into()
             }
             fn run(
                 self: std::sync::Arc<Self>,
@@ -8276,18 +8274,16 @@ mod tests {
             }
         }
         cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
+            thread.update(cx, |thread, _cx| {
                 thread.add_tool(DigestBustTool);
             });
         });
 
         let third_prompt = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                let available_tools: Vec<_> = thread
-                    .running_turn
-                    .as_ref()
-                    .map(|turn| turn.tools.keys().cloned().collect())
-                    .unwrap_or_default();
+                // Pass the tool name explicitly since running_turn is None in
+                // this test context (no turn is running).
+                let available_tools: Vec<SharedString> = thread.tools.keys().cloned().collect();
                 let messages = thread.build_request_messages(available_tools, cx);
                 messages
                     .first()

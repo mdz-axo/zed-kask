@@ -542,7 +542,7 @@ fn main() {
 
             // Resolve the a2a_secret for OCAP delegation token minting.
             // Falls back to an empty vec if the keystore is unavailable (first-run).
-            let a2a_secret = hkask_keystore::resolve_a2a_secret()
+            let a2a_secret = hkask_keystore::keychain::resolve_a2a_secret()
                 .map(|s| s.to_vec())
                 .unwrap_or_default();
 
@@ -688,11 +688,13 @@ fn main() {
                 let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
                     tool_port: panel_tool_port,
                     a2a_secret: panel_a2a_secret,
+                    executor: cx.background_executor().clone(),
                 });
                 kask_panel::set_tool_invoker(Some(panel_tool_invoker));
 
                 let panel_inference = std::sync::Arc::new(PanelScopedInference {
                     inference: panel_inference_port,
+                    executor: cx.background_executor().clone(),
                 });
                 kask_panel::set_scoped_inference(Some(panel_inference));
                 log::info!("Kask panel tool invoker + scoped inference wired");
@@ -714,7 +716,7 @@ fn main() {
         // of the 10 built-in servers to start. The binary path is resolved via
         // HKASK_MCP_{ID}_BIN env var, or falls back to the binary name on PATH.
         {
-            let kask_settings = settings::Settings::get_global::<kask_bridge::KaskSettings>(cx);
+            let kask_settings = kask_bridge::KaskSettings::get_global(cx);
             let mcp_runtime_for_spawn = mcp_runtime_for_startup.clone();
             let servers_to_start: Vec<&str> = if kask_settings.mcp.load_default {
                 BUILT_IN_MCP_SERVERS
@@ -1256,6 +1258,7 @@ fn main() {
 struct PanelToolInvoker {
     tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
     a2a_secret: Vec<u8>,
+    executor: gpui::BackgroundExecutor,
 }
 
 impl kask_panel::ToolInvoker for PanelToolInvoker {
@@ -1291,7 +1294,7 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
         let server = server.to_string();
         let tool = tool.to_string();
 
-        gpui::Task::spawn(async move {
+        self.executor.spawn(async move {
             let result = ToolPort::invoke(&*tool_port, &server, &tool, args, &token)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -1303,6 +1306,7 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
 /// Adapter implementing `kask_panel::ScopedInference` via `GuardedInferencePort`.
 struct PanelScopedInference {
     inference: std::sync::Arc<dyn hkask_types::InferencePort>,
+    executor: gpui::BackgroundExecutor,
 }
 
 impl kask_panel::ScopedInference for PanelScopedInference {
@@ -1310,7 +1314,7 @@ impl kask_panel::ScopedInference for PanelScopedInference {
         let inference = self.inference.clone();
         let prompt = prompt.to_string();
 
-        gpui::Task::spawn(async move {
+        self.executor.spawn(async move {
             let params = hkask_types::template::LLMParameters::default();
             let result = inference
                 .generate(&prompt, &params, None)

@@ -1,0 +1,58 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    response: string
+energy_cap: 8000
+visibility: Public
+---
+{# goal: Execute Scaffolding Improvement via Full Scaffolding (§6.4) — treat the entire scaffold as a mutable program, generate candidate patches via the agent-as-improver, gate through verifier checks. #}
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Scaffolding Improvement — Full Scaffolding (§6.4) #}
+{# Implements: Ren et al. (2026) Section 6.4 #}
+{# Delegates to: diagnose for reproduce→hypothesize→fix loop on scaffold bugs #}
+You are executing the self-induced update operator 𝒰 for Scaffolding Improvement via Full Scaffolding.
+
+This is the most profound level of architectural intervention: the agent treats its entire operational logic and codebase as a mutable substrate.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+1. **Serialize the scaffold**: ⟨Σ_t⟩ = serializable encoding of the program implementing the agent.
+
+2. **Generate candidate patches** via the agent-as-improver:
+   ⟨Σ~_{t+1}⟩ = exec(⟨Σ_t⟩; 𝒮_t)
+   - The improvement procedure is itself implemented within the current scaffolding (self-referential: Σ_{t+1} = ℐ_{Σ_t}(Σ_t; 𝒮_t)).
+   - Methods: AlphaEvolve (evolutionary), ShinkaEvolve (exploration-exploitation balanced), ADAS (search), Self-Taught Optimizer (recursive), Agent Symbolic Learning (symbolic backprop), Gödel Agent (monkey patching), Darwin Gödel Machine (archive-based open-ended evolution), Live-SWE-Agent (runtime self-evolution).
+
+3. **Gate updates through verifier**:
+   Σ_{t+1} = Σ~_{t+1} if 𝒱(Σ~_{t+1}) = 1, else Σ_t
+   - Verifier checks: functional correctness, tool permission boundaries, robustness to random state perturbations.
+   - The paper requires: "a self-improving agent should be conceptualized as untrusted code executing in a protected runtime environment" (§9.1).
+
+4. **Maintain version history** for rollback: Σ_{1:t} supports validation and rollback against harmful modifications.
+
+5. **Delegation**: If the improvement requires debugging a specific scaffold bug (reproduce → hypothesize → fix → regression-test), delegate to the `diagnose` skill which implements this cybernetic debugging loop.
+
+## Constraints
+
+- The paper warns: "standard transient exploits (like a one-off prompt injection) can evolve into persistent architectural vulnerabilities, as poisoned memories or hijacked tool logics are committed as stable updates" (§9.1).
+- All patches must pass verifier-gated checks before commitment.
+- The improver can evolve together with the agent it improves (self-referential loop).
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.
