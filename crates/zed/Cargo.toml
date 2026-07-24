@@ -67,6 +67,8 @@ acp_tools.workspace = true
 activity_indicator.workspace = true
 agent.workspace = true
 agent-client-protocol.workspace = true
+kask_bridge = { path = "../../kask/crates/kask_bridge" }
+hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
 agent_settings.workspace = true
 agent_skills.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }

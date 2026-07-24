@@ -808,10 +808,23 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            thread.add_tool(SkillTool::with_body_resolver(
-                skills_resolver_for_project(weak.clone(), project_id),
-                skill_body_resolver_for_project(project.clone(), self.fs.clone()),
-            ));
+            // D1: If the global manifest executor is set (by the zed-kask
+            // composition root), use it to run the hKask cascade instead of
+            // body injection. The SKILL.md frontmatter stays the discovery-only
+            // catalog entry; the manifest YAML in kask/registry/manifests/ drives
+            // the cascade.
+            if let Some(executor) = crate::manifest_executor() {
+                thread.add_tool(SkillTool::with_manifest_executor(
+                    skills_resolver_for_project(weak.clone(), project_id),
+                    skill_body_resolver_for_project(project.clone(), self.fs.clone()),
+                    executor.clone(),
+                ));
+            } else {
+                thread.add_tool(SkillTool::with_body_resolver(
+                    skills_resolver_for_project(weak.clone(), project_id),
+                    skill_body_resolver_for_project(project.clone(), self.fs.clone()),
+                ));
+            }
         });
 
         let subscriptions = vec![
@@ -2564,6 +2577,31 @@ pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed 
 /// The hKask Curator agent ID (D2). The Curator is a native in-process agent
 /// backed by hKask's regulation + metacognition loops.
 pub static CURATOR_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Curator"));
+
+/// Global hook for the hKask manifest executor (D1).
+///
+/// Set by the zed-kask composition root at startup. When set, `SkillTool`
+/// uses it to run the hKask cascade instead of body injection. When `None`
+/// (upstream zed, or before the composition root runs), falls back to body injection.
+static MANIFEST_EXECUTOR: std::sync::OnceLock<Option<Arc<dyn SkillManifestExecutor>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global hKask manifest executor (D1 composition root).
+///
+/// Called by zed-kask's app startup to wire the `kask_bridge::BridgeManifestExecutor`
+/// into the `SkillTool`. After this is called, skill activations run the hKask
+/// cascade (KnowAct/FlowDef/RenderAct + PDCA) instead of injecting the
+/// `SKILL.md` body.
+///
+/// `None` disables the manifest executor (reverts to body injection).
+pub fn set_manifest_executor(executor: Option<Arc<dyn SkillManifestExecutor>>) {
+    let _ = MANIFEST_EXECUTOR.set(executor);
+}
+
+/// Get the global manifest executor, if set.
+pub(crate) fn manifest_executor() -> Option<&'static Arc<dyn SkillManifestExecutor>> {
+    MANIFEST_EXECUTOR.get().and_then(|opt| opt.as_ref())
+}
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
