@@ -17,7 +17,7 @@ use std::sync::Arc;
 use credentials_provider::CredentialsProvider;
 use gpui::{ReadGlobal as _, ScrollHandle, Task, prelude::*};
 use settings::{Settings as _, SettingsStore};
-use ui::{Divider, SwitchField, ToggleState, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, Divider, SwitchField, ToggleState, prelude::*};
 use util::ResultExt as _;
 use zed_credentials_provider as zed_credentials;
 
@@ -199,9 +199,7 @@ pub(crate) fn render_data_services_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
     _window: &mut Window,
-    cx: &mut Context<SettingsWindow>,
-) -> AnyElement {
-    let provider = zed_credentials::global(cx);
+    _cx: &mut Context<SettingsWindow>,
     let raw = raw_kask_settings(cx);
     let data_services = raw.and_then(|c| c.data_services).unwrap_or_default();
 
@@ -387,10 +385,11 @@ fn render_data_service_row(
 }
 
 fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
+    let key = key.to_string();
     SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
         let kask = settings.kask.get_or_insert_default();
         let data_services = kask.data_services.get_or_insert_default();
-        match key {
+        match key.as_str() {
             "eodhd" => data_services.eodhd_enabled = Some(enabled),
             "fmp" => data_services.fmp_enabled = Some(enabled),
             "exa" => data_services.exa_enabled = Some(enabled),
@@ -409,7 +408,7 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
 /// of "no key" on every render.
 fn has_credential(_provider: &Arc<dyn CredentialsProvider>, _url: &str, env_var: &str) -> bool {
     // Env-var check is synchronous and instant.
-    if env::var(env_var).is_ok() {
+    if std::env::var(env_var).is_ok() {
         return true;
     }
     // For the keychain, we can't block on the foreground thread. We optimistically
@@ -426,24 +425,22 @@ fn write_credential(
     value: &str,
     cx: &mut App,
 ) -> Task<()> {
-    let async_cx = cx.to_async();
     let provider = provider.clone();
     let url = url.to_string();
     let value = value.to_string();
-    cx.background_executor().spawn(async move {
+    cx.spawn(async move |cx| {
         let _ = provider
-            .write_credentials(&url, "kask", value.as_bytes(), &async_cx)
+            .write_credentials(&url, "kask", value.as_bytes(), cx)
             .await
             .log_err();
     })
 }
 
 fn delete_credential(provider: &Arc<dyn CredentialsProvider>, url: &str, cx: &mut App) -> Task<()> {
-    let async_cx = cx.to_async();
     let provider = provider.clone();
     let url = url.to_string();
-    cx.background_executor().spawn(async move {
-        let _ = provider.delete_credentials(&url, &async_cx).await.log_err();
+    cx.spawn(async move |cx| {
+        let _ = provider.delete_credentials(&url, cx).await.log_err();
     })
 }
 
@@ -710,8 +707,8 @@ pub(crate) fn render_guard_page(
         .confirm_on_focus_out()
         .on_confirm(move |value, _window, cx| {
             if let Some(text) = value {
-                let trimmed = text.trim();
-                if matches!(trimmed, "buffer" | "incremental" | "cascade_only") {
+                let trimmed = text.trim().to_string();
+                if matches!(trimmed.as_str(), "buffer" | "incremental" | "cascade_only") {
                     SettingsStore::global(cx).update_settings_file(
                         <dyn fs::Fs>::global(cx),
                         move |settings, _| {
@@ -720,7 +717,7 @@ pub(crate) fn render_guard_page(
                                 .get_or_insert_default()
                                 .guard
                                 .get_or_insert_default()
-                                .direct_chat_strategy = Some(trimmed.to_string());
+                                .direct_chat_strategy = Some(trimmed);
                         },
                     );
                 }

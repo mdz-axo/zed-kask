@@ -1,71 +1,47 @@
 # Token Efficiency — Task Checklist
 
-## Phase 1 — Foundation (cheapest, highest leverage)
+## Phase 1 — Foundation (cheapest, highest leverage) ✅
 
-- [ ] **T1: Billed-token compaction trigger**
-  - Add `billed_input_tokens(usage) = input_tokens + cache_creation_input_tokens`
-  - Use it in `compaction_message_target_ix` (thread.rs ~L4450)
-  - Keep `total_input_tokens` for the context-window-overflow warning
-  - AC: high `cache_read_input_tokens` does NOT trigger compaction; billed tokens do
+- [x] **T1: Billed-token compaction trigger**
+  - Added `billed_input_tokens(usage) = input_tokens + cache_creation_input_tokens`
+  - Used it in `compaction_message_target_ix`
+  - Kept `total_input_tokens` for context-window-overflow warning
+  - AC met: `test_compaction_ignores_cache_read_tokens` passes — high cache reads do NOT trigger compaction
   - Files: `crates/agent/src/thread.rs`
   - Scope: S
 
-- [ ] **T2: Second cache breakpoint at latest user message**
-  - In `build_request_messages_until`, set `cache: true` on the latest user message (not just the last message)
-  - AC: `test_prompt_caching` updated; latest user message carries `cache: true` even when followed by tool results
+- [x] **T2: Second cache breakpoint at latest user message**
+  - Extracted `set_cache_breakpoints()` helper; called from `build_request_messages` AFTER pending-message extension
+  - Marks latest user message + last message
+  - AC met: `test_prompt_caching` + `test_building_request_with_pending_tools` updated and pass
   - Files: `crates/agent/src/thread.rs`, `crates/agent/src/tests/mod.rs`
   - Scope: S
 
-**Checkpoint 1**: `./script/clippy` clean; `test_prompt_caching` + compaction tests pass; new test for billed-token trigger.
+**Checkpoint 1**: ✅ `./script/clippy` clean; 4 prompt/caching tests + 13 compaction tests pass.
 
-## Phase 2 — System prompt stability
+## Phase 2 — System prompt stability (deferred)
 
-- [ ] **T3: System-prompt digest on Thread**
-  - Hash rendered system prompt + sorted available_tools; store digest on `Thread`
-  - Skip re-render (reuse cached string) when digest matches
-  - AC: digest stable across turns with no changes; busts on tool/skill/rules/date change
-  - Files: `crates/agent/src/thread.rs`, `crates/agent/src/templates.rs`
-  - Scope: M
+- [ ] **T3: System-prompt digest on Thread** — deferred; lower leverage than Phase 3
+- [ ] **T4: Cache-bust telemetry** — deferred with T3
 
-- [ ] **T4: Cache-bust telemetry**
-  - Emit telemetry event when system-prompt digest changes across turns
-  - AC: telemetry event fires on tool add; does not fire on no-op turn
-  - Files: `crates/agent/src/thread.rs`
+## Phase 3 — Compaction quality ✅
+
+- [x] **T5: Structured compaction template**
+  - Replaced `compaction_prompt.txt` with Kilocode-style fixed-section Markdown template (Goal / Constraints / Progress / Key Decisions / Next Steps / Critical Context / Relevant Files)
+  - AC met: existing compaction tests pass with new template
+  - Files: `crates/agent_settings/src/prompts/compaction_prompt.txt`
   - Scope: S
 
-**Checkpoint 2**: `./script/clippy` clean; system prompt tests pass; new digest-stability test.
-
-## Phase 3 — Compaction quality
-
-- [ ] **T5: Structured compaction template**
-  - Replace `COMPACTION_PROMPT` with fixed-section Markdown template (Goal / Constraints / Progress / Key Decisions / Next Steps / Critical Context / Relevant Files)
-  - AC: compaction request uses new template; existing compaction tests updated
-  - Files: `crates/agent/src/thread.rs` (or a new const/template)
-  - Scope: S
-
-- [ ] **T6: Iterative summary refinement**
-  - When prior `CompactionInfo::Summary` exists, feed it back in `<previous-summary>` with "preserve still-true, remove stale, merge new"
-  - Carry prior `recent` tail into new compaction context
-  - AC: second compaction refines first; `recent` tail preserved verbatim
+- [x] **T6: Iterative summary refinement**
+  - `build_compaction_request` now finds prior `CompactionInfo::Summary` before `insertion_ix`
+  - Feeds it back wrapped in `<previous-summary>` with "Preserve still-true, remove stale, merge new" instruction
+  - AC met: `test_compaction_refines_prior_summary` passes
   - Files: `crates/agent/src/thread.rs`
   - Scope: M
 
-**Checkpoint 3**: `./script/clippy` clean; compaction tests pass with new template + refinement.
+**Checkpoint 3**: ✅ `./script/clippy` clean; 13 compaction tests pass (including 2 new ones).
 
-## Phase 4 — Tool-output bounding (complementary condenser)
+## Phase 4 — Tool-output bounding (deferred)
 
-- [ ] **T7: Tool-output truncation hook**
-  - Add bounded-preview for terminal results exceeding byte/line budget
-  - Use `hkask-condenser` `RtkStyleAlgorithm` logic (vendor if workspace boundary blocks dep)
-  - Write full output to per-thread temp file; replace in-message with head/tail + marker path
-  - AC: 100KB terminal output truncated to budget with valid spillover path; full output recoverable
-  - Files: `crates/agent/src/tools/` (terminal tool), possibly `crates/agent/src/thread.rs`
-  - Scope: M
-
-- [ ] **T8: Spillover cleanup**
-  - Retention/cleanup for spillover files (thread-drop sweep or hourly 7-day TTL)
-  - AC: no leaked spillover files after thread drop
-  - Files: `crates/agent/src/thread.rs` or terminal tool
-  - Scope: S
-
-**Checkpoint 4**: `./script/clippy` clean; new truncation test passes; spillover path readable.
+- [ ] **T7: Tool-output truncation hook** — deferred; requires workspace-boundary check for `hkask-condenser` dep
+- [ ] **T8: Spillover cleanup** — deferred with T7

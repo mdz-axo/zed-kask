@@ -4118,7 +4118,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Hey!".into()],
-                cache: true,
+                cache: false,
                 reasoning_details: None,
             },
             LanguageModelRequestMessage {

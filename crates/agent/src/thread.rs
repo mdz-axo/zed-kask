@@ -3728,13 +3728,33 @@ impl Thread {
                 Err(output) => (true, output),
             };
 
+            // D12: Compress tool result text before storing in message history.
+            // When a ThreadCondenser is wired, tool output text is compressed
+            // to fit within the configured token budget. Non-text content
+            // (images) is passed through unchanged.
+            let content = if let Some(condenser) = crate::thread_condenser() {
+                output
+                    .llm_output
+                    .into_iter()
+                    .map(|part| match part {
+                        LanguageModelToolResultContent::Text(text) => {
+                            let compressed = condenser.compress_tool_result(&tool_name, &text);
+                            LanguageModelToolResultContent::Text(Arc::from(compressed))
+                        }
+                        other => other,
+                    })
+                    .collect()
+            } else {
+                output.llm_output
+            };
+
             (
                 owning_message_ix,
                 LanguageModelToolResult {
                     tool_use_id,
                     tool_name,
                     is_error,
-                    content: output.llm_output,
+                    content,
                     output: Some(output.raw_output),
                 },
             )
@@ -4352,6 +4372,11 @@ impl Thread {
             messages.extend(message.to_request());
         }
 
+        // Place cache breakpoints after pending-message extension so the
+        // breakpoints land on the final request shape (which may end with a
+        // pending tool result, not a stored message).
+        set_cache_breakpoints(&mut messages);
+
         messages
     }
 
@@ -4388,33 +4413,6 @@ impl Thread {
             reasoning_details: None,
         }];
         self.extend_request_history_until(&mut messages, end_ix);
-
-        // Place cache breakpoints. Two breakpoints mirror Kilocode's default
-        // policy (`tools + system + latest-user-message`):
-        //   1. The latest *user* message — this is the high-value boundary for
-        //      agentic tool loops. The user message stays fixed while a single
-        //      turn explodes into many assistant/tool round-trips, so caching
-        //      at this boundary lets every intra-turn request hit the prefix
-        //      up to and including the user's instruction.
-        //   2. The last message overall — covers the case where the thread ends
-        //      on a tool result or assistant turn, and satisfies the
-        //      `any_message_wants_cache` gate for Anthropic's automatic
-        //      top-level cache_control.
-        // Both are marked because the Anthropic automatic-mode lowering places
-        // the conversation-tail breakpoint on the last cacheable block, and
-        // marking the latest user message ensures the breakpoint lands on the
-        // semantically meaningful boundary rather than whichever tool result
-        // happens to be last.
-        if let Some(last_user_message) = messages
-            .iter_mut()
-            .rev()
-            .find(|message| message.role == Role::User)
-        {
-            last_user_message.cache = true;
-        }
-        if let Some(last_message) = messages.last_mut() {
-            last_message.cache = true;
-        }
 
         messages
     }
@@ -4566,9 +4564,40 @@ impl Thread {
             ..Default::default()
         };
 
+        // Iterative summary refinement (Kilocode pattern): when a prior
+        // compaction summary exists in the range being compacted, feed it back
+        // so the model updates the anchored summary rather than regenerating
+        // from scratch. This preserves still-true details, removes stale ones,
+        // and merges new facts — producing a summary that monotonically
+        // converges on the task's durable facts instead of drifting.
+        let previous_summary = self.messages[..insertion_ix.min(self.messages.len())]
+            .iter()
+            .rev()
+            .find_map(|message| {
+                if let Message::Compaction(CompactionInfo::Summary(summary)) = &**message {
+                    Some(summary.as_ref())
+                } else {
+                    None
+                }
+            });
+
+        let compaction_prompt = if let Some(previous) = previous_summary {
+            format!(
+                "Update the anchored summary below using the conversation history above.\
+                 \nPreserve still-true details, remove stale details, and merge in the new facts.\
+                 \n<previous-summary>\
+                 \n{previous}\
+                 \n</previous-summary>\
+                 \n\
+                 \n{COMPACTION_PROMPT}"
+            )
+        } else {
+            COMPACTION_PROMPT.to_string()
+        };
+
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: vec![COMPACTION_PROMPT.into()],
+            content: vec![compaction_prompt.into()],
             cache: false,
             reasoning_details: None,
         });
@@ -4715,6 +4744,35 @@ fn billed_input_tokens(usage: language_model::TokenUsage) -> u64 {
     usage
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
+}
+
+/// Place cache breakpoints on the final request message list. Two breakpoints
+/// mirror Kilocode's default cache policy (`tools + system + latest-user-message`):
+///
+///   1. The latest *user* message — the high-value boundary for agentic tool
+///      loops. The user message stays fixed while a single turn explodes into
+///      many assistant/tool round-trips, so caching at this boundary lets every
+///      intra-turn request hit the prefix up to and including the user's
+///      instruction.
+///   2. The last message overall — covers the case where the thread ends on a
+///      tool result or assistant turn, and satisfies the `any_message_wants_cache`
+///      gate for Anthropic's automatic top-level cache_control.
+///
+/// Both are marked because the Anthropic automatic-mode lowering places the
+/// conversation-tail breakpoint on the last cacheable block, and marking the
+/// latest user message ensures the breakpoint lands on the semantically
+/// meaningful boundary rather than whichever tool result happens to be last.
+fn set_cache_breakpoints(messages: &mut [LanguageModelRequestMessage]) {
+    if let Some(last_user_message) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| message.role == Role::User)
+    {
+        last_user_message.cache = true;
+    }
+    if let Some(last_message) = messages.last_mut() {
+        last_message.cache = true;
+    }
 }
 
 fn auto_compact_threshold_token_count(
@@ -7207,6 +7265,72 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_compaction_ignores_cache_read_tokens(cx: &mut TestAppContext) {
+        // Cache-read tokens are served from the provider's prompt cache at ~0.1x
+        // cost. Counting them toward the compaction threshold forces premature
+        // summarization of nearly-free cached context — the opposite of the
+        // goal. Compaction should fire on *billed* tokens (full-price input +
+        // cache-write), not gross input (which includes cache reads).
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: AutoCompactThreshold::TokensUsed(100_000),
+                },
+            );
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "mostly cached thread",
+                ));
+
+                // 200k gross input, but 195k of that is cache reads (billed =
+                // 5k). This should NOT trigger compaction — the billed cost is
+                // well under the 100k threshold.
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 5_000,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 195_000,
+                        output_tokens: 0,
+                    },
+                );
+
+                assert_eq!(
+                    thread.compaction_message_target_ix(cx),
+                    None,
+                    "cache-read tokens must not count toward compaction"
+                );
+
+                // Now bump billed tokens (input + cache_creation) over the
+                // threshold while keeping cache reads high. This SHOULD trigger.
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 100_001,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 195_000,
+                        output_tokens: 0,
+                    },
+                );
+
+                assert_eq!(
+                    thread.compaction_message_target_ix(cx),
+                    Some(1),
+                    "billed tokens over threshold must trigger compaction"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
     async fn test_compaction_unavailable_for_small_context_window(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
@@ -7388,6 +7512,71 @@ mod tests {
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_refines_prior_summary(cx: &mut TestAppContext) {
+        // When a prior CompactionInfo::Summary exists in the range being
+        // compacted, the new compaction request must feed it back so the model
+        // updates the anchored summary rather than regenerating from scratch.
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW + 1);
+        let first_user_id = ClientUserMessageId::new();
+        let compact_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(first_user_id.clone(), "first user"));
+                thread.messages.push(agent_text_message("first assistant"));
+                // Insert a prior compaction summary — this is what should be fed back.
+                thread
+                    .messages
+                    .push(Arc::new(Message::Compaction(CompactionInfo::Summary(
+                        "prior anchored summary".into(),
+                    ))));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "second user after compaction",
+                ));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(compact_message_id.clone(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        let compaction_texts = request_texts_after_system(&compaction_request.messages);
+
+        // The last message is the compaction prompt, which must contain the
+        // prior summary wrapped in <previous-summary> and the "Update the
+        // anchored summary" instruction.
+        let prompt = compaction_texts.last().unwrap();
+        assert!(
+            prompt.contains("Update the anchored summary"),
+            "expected iterative-refinement instruction, got: {prompt}"
+        );
+        assert!(
+            prompt.contains("<previous-summary>"),
+            "expected <previous-summary> wrapper, got: {prompt}"
+        );
+        assert!(
+            prompt.contains("prior anchored summary"),
+            "expected prior summary text in prompt, got: {prompt}"
+        );
+        assert!(
+            prompt.contains("Preserve still-true details"),
+            "expected preserve-stale-merge instruction, got: {prompt}"
+        );
     }
 
     /// Cancelling an in-flight manual compaction must not leave the zero-content

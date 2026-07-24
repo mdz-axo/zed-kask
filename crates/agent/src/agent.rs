@@ -2694,6 +2694,34 @@ pub(crate) fn context_injector() -> Option<&'static Arc<dyn ContextInjector>> {
     CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
 }
 
+/// Thread condenser — compresses tool results before they enter the message
+/// history (D12).
+///
+/// Called from the tool-result handling path in `run_turn_internal`.
+/// When set, tool output text is compressed before being stored in the
+/// `AgentMessage.tool_results`. When `None`, tool results are stored verbatim.
+pub trait ThreadCondenser: Send + Sync {
+    /// Compress a tool result's text output.
+    ///
+    /// Returns the compressed text. If compression is disabled or the output
+    /// is already within budget, returns the original text unchanged.
+    fn compress_tool_result(&self, tool_name: &str, output: &str) -> String;
+}
+
+/// Global hook for the thread condenser (D12).
+static THREAD_CONDENSER: std::sync::OnceLock<Option<Arc<dyn ThreadCondenser>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global thread condenser (D12 composition root).
+pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
+    let _ = THREAD_CONDENSER.set(condenser);
+}
+
+/// Get the global thread condenser, if set.
+pub(crate) fn thread_condenser() -> Option<&'static Arc<dyn ThreadCondenser>> {
+    THREAD_CONDENSER.get().and_then(|opt| opt.as_ref())
+}
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
         ZED_AGENT_ID.clone()

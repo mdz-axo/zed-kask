@@ -16,6 +16,7 @@ hkask-storage = { path = "../hkask-storage" }
 hkask-inference = { path = "../hkask-inference" }
 hkask-keystore = { path = "../hkask-keystore" }
 hkask-services-core = { path = "../hkask-services-core" }
+hkask-condenser = { path = "../hkask-condenser" }
 
 # zed-kask side — the facilities the bridge adapts over
 credentials_provider = { path = "../../../crates/credentials_provider" }

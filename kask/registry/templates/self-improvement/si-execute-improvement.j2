@@ -1,0 +1,95 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    response: string
+energy_cap: 8000
+visibility: Public
+---
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# PDCA Do: Execute the Improvement Operator 𝒰 #}
+{# Implements: Ren et al. (2026) Sections 5 (FM Improvement) and 6 (Scaffolding Improvement) #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is PDCA Do: EXECUTE THE IMPROVEMENT OPERATOR 𝒰.
+
+You will execute the self-induced update operator on the selected target using the selected signal. The operator 𝒰 maps the current configuration 𝒜_t to a candidate 𝒜~_{t+1}.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+Execute the improvement operator based on the selected pathway and signal:
+
+### If Foundation Model Improvement (θ):
+
+**Intrinsic Generative Demos (§5.1):**
+1. Generate training instances from the agent's own distribution: 𝒟^gen_t = {(x_i, y_i)} ~ 𝒫_gen(·|𝒜_t)
+2. Apply quality control operator Φ_t: filter via self-consistency, external verifiers, or diversity-aware pooling
+3. Fine-tune via gradient descent: θ_{t+1} = argmin_θ ℒ(θ; 𝒟_t) + λΩ(θ, θ_0)
+4. Safeguard against model collapse: retain base data, accumulate generated data on top
+
+**Intrinsic Evaluative Feedback (§5.2):**
+1. Sample candidate outputs: 𝒴_t(x) = {y^(1), ..., y^(K)} ~ π_{θ_t, Σ_t}(·|x)
+2. Apply intrinsic evaluator: e_t = φ_t(x, 𝒴_t(x); κ_t) — rubric judge, consistency aggregator, or critique-and-revision
+3. Convert to update signal: preference pairs, scalar rewards, or revised targets
+4. Optimize via RL, DPO, or critique-conditioned fine-tuning
+
+**Extrinsic Exploratory Experience (§5.3):**
+1. Collect interaction trajectories from grounded task environments (programmatic verifiers, learned reward models, self-generated tasks) or simulated proxy environments (learned world models)
+2. Update parameters via PPO, DPO, or preference-based objectives
+
+### If Scaffolding Improvement (Σ):
+
+**Prompt Optimization (§6.1):**
+- Scalar-Feedback: search over discrete prompt space (APE, OPRO, RLPrompt)
+- Qualitative-Feedback: iterative critique-and-revise (Self-Refine, Reflexion, ACE)
+- Population-Based Evolution: semantic crossover/mutation over prompt population (EvoPrompt, Promptbreeder, GEPA)
+- Textual Gradient: structured directional feedback as update guidance (APO, TextGrad, MetaTextGrad)
+
+**Memory Evolution (§6.2):**
+- Create: semantic compression, context-aware discrete decisions, controlled boundary insertion
+- Read: hybrid heuristics, structure-aware retrieval, retrieval gating, retrieval-driven adaptation
+- Update: scheduled review/attenuation, local refresh, iterative distillation, offline aggregation
+- Delete: multi-stage pruning, consensus-based eviction, tiered eviction
+
+**Tool Governance (§6.3):**
+- Dynamic Tool Routing: retrieval/graph-based, policy-learning, or proactive/interactive
+- Iterative Tool Refinement: critique specialization, API abstraction, interface alignment
+- Autonomous Tool Creation: synthesis triggers, lifecycle automation, standardized integration
+
+**Full Scaffolding (§6.4):**
+- Treat the entire scaffold as a mutable program: ⟨Σ~_{t+1}⟩ = exec(⟨Σ_t⟩; 𝒮_t)
+- Generate candidate patches: Σ~_{t+1} = Σ_t ⊕ Δ_t
+- Gate updates through verifier: Σ_{t+1} = Σ~_{t+1} if 𝒱(Σ~_{t+1})=1, else Σ_t
+
+## Safety Governance
+
+- All updates must pass verifier-gated checks before commitment
+- The critic (evaluator) must be decoupled from the generator
+- Version history must be maintained for rollback
+- For full scaffolding: treat the agent as untrusted code in a protected runtime
+
+## What You Must Capture
+
+Record the full execution trace:
+- What was generated (data, critiques, trajectories, patches)?
+- What was filtered (quality control)?
+- What was updated (which component of θ or Σ)?
+- What was the cost (compute, tokens, time)?
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact` (the candidate update before gating).

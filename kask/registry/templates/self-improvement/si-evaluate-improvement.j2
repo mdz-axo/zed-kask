@@ -1,0 +1,76 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    updated_config: object
+    improvement_plan: object
+    current_condition: object
+    context: object
+  output:
+    response: string
+energy_cap: 5000
+visibility: Public
+---
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# PDCA Check: Evaluate the Updated Agent #}
+{# Implements: Ren et al. (2026) Section 8 — Evaluation #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is PDCA Check: EVALUATE THE UPDATED AGENT.
+
+The paper requires: "Evaluating a self-improving agent may update the parameters of its foundation model, or may change its scaffolding... Evaluation therefore should treat improvement as a process that unfolds over time" (Section 8.1).
+
+## What You Know
+
+Updated configuration: {{ updated_config | tojson }}
+Improvement plan: {{ improvement_plan | tojson }}
+Current condition (baseline): {{ current_condition | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+### 1. Evaluate on Held-Out Distribution
+
+Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that does NOT overlap with the improvement signal. The paper requires: "To confirm genuine capability gains rather than memorization of the feedback, evaluation should measure performance on a held-out distribution that does not overlap with the optimization data" (Section 8.1.1).
+
+### 2. Report Performance Trajectory
+
+Report the full performance trajectory (m_t) across update iterations, not just the final peak score. The paper requires: "Self-improvement unfolds over time and naturally exhibits plateaus or regressions. Evaluation should therefore report the full performance trajectory across update iterations rather than exclusively highlighting a final peak score" (Section 8.1.1).
+
+### 3. Test Transfer
+
+Does the improvement generalize to held-out tasks? Use:
+- Hidden evaluation: private, unreleased task sets
+- Temporally shifted evaluation: tasks constructed after the model's knowledge cutoff
+
+### 4. Track Regressions
+
+Did the update break previously solved tasks? Track regression rates on previously solved instances. The paper requires: "Iterative self-modification can induce goal drift, reward hacking, and compounding errors... evaluation should track regression rates on previously solved tasks" (Section 8.1.1).
+
+### 5. Account for Resource Efficiency
+
+Report cost breakdown: compute, API tokens, wall-clock time, human input. The paper requires: "A rigorous protocol should provide a transparent cost breakdown rather than just final task success" (Section 8.1.1).
+
+### 6. Track Safety
+
+Any safety policy violations, goal drift, or reward hacking indicators? The paper requires: "Track stability, regressions, and safety over time" (Section 8.1.1).
+
+### 7. Judge Independence (if using LLM-as-Judge)
+
+If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use a distinct judge configuration for final reporting. The paper warns: "If the identical evaluation operator is used both to drive updates and to report final results, the self-improving system will likely over-optimize to the judge's latent biases" (Section 8.1.2).
+
+## Constraints
+
+- Evaluation distribution must be held-out (no overlap with improvement signal).
+- Performance trajectory must be reported, not just final score.
+- Regression tracking is mandatory.
+- Cost and safety metrics are mandatory.
+- If judge-based, evaluator must be independent from the improvement signal.
+
+Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based or judge-based).

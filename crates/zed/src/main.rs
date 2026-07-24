@@ -650,6 +650,27 @@ fn main() {
                     log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
                 }
 
+                // D12: Wire the thread condenser for tool result compression.
+                //
+                // When auto_compress_tool_results is enabled in KaskCondenserSettings,
+                // tool output text is compressed before entering the message
+                // history. The condenser uses the configured profile (heavy/normal/soft/light)
+                // to determine the compression budget.
+                let condenser_settings = &kask_settings.condenser;
+                if condenser_settings.auto_compress_tool_results {
+                    let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
+                        &condenser_settings.profile,
+                        condenser_settings.auto_compress_tool_results,
+                    ));
+                    agent::set_thread_condenser(Some(condenser));
+                    log::info!(
+                        "hKask thread condenser wired — tool results will be compressed (profile: {})",
+                        condenser_settings.profile
+                    );
+                } else {
+                    log::info!("hKask tool result compression disabled (kask.condenser.auto_compress_tool_results = false)");
+                }
+
                 // D10: Wire the kask panel's tool invoker and scoped inference.
                 // The panel uses global hooks (set_tool_invoker / set_scoped_inference)
                 // so it doesn't depend on kask_bridge. These adapters wrap the
