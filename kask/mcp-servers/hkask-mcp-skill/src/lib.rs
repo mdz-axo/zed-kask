@@ -24,7 +24,6 @@
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_inference::{InferenceConfig, InferenceRouter};
 use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
 use hkask_templates::Registry;
 use hkask_types::template::LLMParameters;
@@ -251,14 +250,16 @@ impl SkillServer {
 
 // ── Server runner ─────────────────────────────────────────────────────────────
 
+/// Run the skill MCP server.
+///
+/// `inference_port` is provided by the composition root (`KaskCore`/
+/// `kask_bridge`) — the concrete `InferenceRouter` lived in the deleted
+/// `hkask-inference` crate and is now a bridge responsibility (T5.1).
 pub async fn run(
     userpod: String,
     daemon_client: Option<hkask_mcp_server::DaemonClient>,
+    inference_port: Arc<dyn InferencePort>,
 ) -> Result<(), hkask_mcp_server::McpError> {
-    let inference_config = InferenceConfig::from_env();
-    let inference_router = InferenceRouter::new(inference_config);
-    let inference_port: Arc<dyn InferencePort> = Arc::new(inference_router);
-
     hkask_mcp_server::run_server(
         "hkask-mcp-skill",
         env!("CARGO_PKG_VERSION"),

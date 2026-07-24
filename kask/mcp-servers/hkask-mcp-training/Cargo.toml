@@ -1,0 +1,50 @@
+[package]
+name = "hkask-mcp-training"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Model training MCP server — ingests QA pairs and training data for future fine-tuning pipelines"
+
+[lib]
+name = "hkask_mcp_training"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hkask-mcp-training"
+path = "src/main.rs"
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-capability = { path = "../../crates/hkask-capability" }
+hkask-memory = { path = "../../crates/hkask-memory" }
+hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-inference = { path = "../../crates/hkask-inference" }
+rusqlite.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+
+blake3.workspace = true
+reqwest = { workspace = true, features = ["multipart"] }
+
+sha2.workspace = true
+hf-hub = "1.0.0"
+minijinja.workspace = true
+dirs = "5"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+async-trait.workspace = true
+

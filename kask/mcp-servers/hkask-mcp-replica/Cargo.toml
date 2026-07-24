@@ -1,0 +1,43 @@
+[package]
+name = "hkask-mcp-replica"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Style replica MCP server — embed author corpora, compose prose, list styles"
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-inference = { path = "../../crates/hkask-inference" }
+hkask-services-compose = { path = "../../crates/hkask-services-compose" }
+hkask-services-core = { path = "../../crates/hkask-services-core" }
+hkask-services-inference = { path = "../../crates/hkask-services-inference" }
+hkask-services-corpus = { path = "../../crates/hkask-services-corpus" }
+hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-keystore = { path = "../../crates/hkask-keystore" }
+
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+tracing.workspace = true
+
+
+serde_yaml_neo.workspace = true
+
+[lib]
+name = "hkask_mcp_replica"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hkask-mcp-replica"
+path = "src/main.rs"
+
+[dev-dependencies]
+hkask-test-harness = { path = "../../crates/hkask-test-harness" }
+proptest = "1"
+rand = "0.9"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

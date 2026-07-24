@@ -1,0 +1,36 @@
+[package]
+name = "hkask-mcp-kata-kanban"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kata-Kanban workflow coordination MCP server"
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-services-kata-kanban = { path = "../../crates/hkask-services-kata-kanban" }
+hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-test-harness = { path = "../../crates/hkask-test-harness" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+
+
+
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+
+
+[lib]
+name = "hkask_mcp_kata_kanban"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hkask-mcp-kata-kanban"
+path = "src/main.rs"
+
+[dev-dependencies]
+proptest = "1"

@@ -283,6 +283,8 @@ members = [
     #
     "kask/mcp-servers/hkask-mcp-scenarios",
     "kask/mcp-servers/hkask-mcp-regulation",
+    "kask/mcp-servers/hkask-mcp-skill",
+    "kask/mcp-servers/hkask-mcp-research",
 ]
 default-members = ["crates/zed"]
 

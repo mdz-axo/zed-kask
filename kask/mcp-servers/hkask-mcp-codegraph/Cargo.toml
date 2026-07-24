@@ -1,0 +1,40 @@
+[package]
+name = "hkask-mcp-codegraph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Code understanding MCP server — semantic code graph with tree-sitter indexing"
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+
+rusqlite = { workspace = true, features = ["bundled"] }
+
+
+
+# Codegraph engine dependencies
+sqlite-vec = "0.1"
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+walkdir = { workspace = true }
+uuid = { workspace = true }
+tree-sitter = "0.25"
+tree-sitter-rust = "0.23"
+
+[lib]
+name = "hkask_mcp_codegraph"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hkask-mcp-codegraph"
+path = "src/main.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

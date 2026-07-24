@@ -1,0 +1,32 @@
+[package]
+name = "hkask-mcp-skill"
+version = "0.31.0"
+edition = "2024"
+license = "MIT"
+description = "Skill invocation MCP server — exposes registered skills as callable tools"
+publish = false
+
+[lib]
+name = "hkask_mcp_skill"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hkask-mcp-skill"
+path = "src/main.rs"
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-templates = { path = "../../crates/hkask-templates" }
+hkask-types = { path = "../../crates/hkask-types" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+minijinja = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile.workspace = true

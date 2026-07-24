@@ -1,0 +1,16 @@
+type,date,symbol,quantity,price,commission,amount,currency,notes
+deposit,2024-01-02,,,,,100000.00,USD,initial funding
+buy,2024-01-15,AAPL,100,185.50,1.00,,USD,
+buy,2024-01-15,MSFT,50,375.00,1.00,,USD,
+buy,2024-02-01,BRK.B,25,390.00,1.00,,USD,
+buy,2024-03-15,VOD.L,500,0.85,5.00,,GBP,London Stock Exchange — use exchange-qualified symbol
+dividend,2024-03-20,AAPL,,,,0.24,USD,per share
+sell,2024-04-10,MSFT,20,390.00,1.00,,USD,taking some profit
+buy,2024-05-01,7203.T,100,18.50,10.00,,JPY,Tokyo Stock Exchange — use exchange-qualified symbol
+dividend,2024-06-15,AAPL,,,,0.25,USD,
+withdrawal,2024-07-01,,,,,5000.00,USD,quarterly distribution
+buy,2024-08-15,MSFT,15,410.00,1.00,,USD,adding to position
+sell,2024-09-20,AAPL,30,195.00,1.00,,USD,
+dividend,2024-09-25,AAPL,,,,0.25,USD,
+buy,2024-10-01,BMW.DE,50,95.00,5.00,,EUR,Xetra — use exchange-qualified symbol
+deposit,2024-12-01,,,,,25000.00,USD,year-end contribution

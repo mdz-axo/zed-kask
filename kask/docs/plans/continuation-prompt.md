@@ -21,30 +21,80 @@ Migrating hKask into the `zed-kask` fork of Zed (`Clones/zed-kask`, origin `mdz-
 
 Do NOT bump zed's workspace deps. The `libsqlite3-sys` conflict: zed pins `0.30.1` (bundled, `SQLITE_ENABLE_LOAD_EXTENSION=1`); no `rusqlite` is compatible. **Resolution:** `StorageDriver` trait in `hkask-types::storage`; `kask_bridge` implements it over `sqlez`. All hKask crates use `StorageDriver` + `EmbeddingPort` port traits, not `rusqlite`/`r2d2`/`sqlite-vec`.
 
-## Current state — 14 workspace members, 12 compiling
+## Current state — 16 workspace members, 15 compiling
 
 | Crate | Status |
 |---|---|
-| `hkask-types` | ✅ + DTOs (`HMem`, `HMemError`, `SimilarityResult`, `EmbeddingError`) + `EmbeddingPort` trait (7 methods) + `storage` module (`DbValue`, `DbRow`, `StorageDriver`, `query_map`, `query_row`) |
+| `hkask-types` | ✅ + DTOs + `EmbeddingPort` trait + `storage` module (`DbValue`, `DbRow`, `StorageDriver`, `query_map`, `query_row`, `define_driver_store!`) |
 | `hkask-capability` | ✅ |
 | `hkask-goal` | ✅ |
 | `hkask-keystore` | ✅ |
 | `hkask-regulation` | ✅ |
 | `hkask-guard` | ✅ (added `llm-guard = "0.2"` to workspace) |
 | `hkask-forecast` | ✅ |
-| `hkask-templates` | ✅ (full port-ify: `registry_sqlite.rs` rewritten to `StorageDriver`; `registry/manifests/` copied to `kask/registry/`) |
-| `hkask-memory` | ✅ (port-ify: `HMemStore` moved to `hkask-memory` over `StorageDriver`; `EmbeddingStore` → `EmbeddingPort` trait; `SemanticMemory` holds `Arc<dyn EmbeddingPort>`; `open()` constructor removed) |
-| `hkask-mcp` | ✅ (added `rmcp = "1"`, `tokio-util` to workspace; fixed `jsonschema` 0.28→0.37 API) |
-| `hkask-pods` | ✅ (full port-ify: `deployment.rs` rewritten — `PerPodStorage` holds `Arc<dyn StorageDriver>` + `Arc<dyn EmbeddingPort>`; `PodFactory::deploy` accepts driver+embedding; `CuratorSync` uses `driver_factory` closure; `test_stubs.rs` with `StubStorageDriver`/`StubEmbeddingPort`) |
-| `hkask-mcp-server` | ✅ (port-ify: `open_database()` returns `Result<Arc<dyn StorageDriver>, McpError>` — bridge needed for file-based opening; `reqwest` needs `json` feature per-crate) |
+| `hkask-templates` | ✅ (full port-ify: `registry_sqlite.rs` rewritten to `StorageDriver`) |
+| `hkask-memory` | ✅ (port-ify: `HMemStore` over `StorageDriver`; `EmbeddingStore` → `EmbeddingPort` trait) |
+| `hkask-mcp` | ✅ (added `rmcp = "1"`, `tokio-util` to workspace) |
+| `hkask-pods` | ✅ (full port-ify: `PerPodStorage` holds `Arc<dyn StorageDriver>` + `Arc<dyn EmbeddingPort>`; `test_stubs.rs` with `StubStorageDriver`/`StubEmbeddingPort`) |
+| `hkask-mcp-server` | ✅ (port-ify: `open_database()` returns `Result<Arc<dyn StorageDriver>, McpError>`) |
 | `kask_bridge` | stub |
 | `kask_panel` | stub |
+| `hkask-mcp-scenarios` | ✅ migrated (clean, no port-ify needed) |
+| `hkask-mcp-regulation` | ✅ migrated (port-ify: `RegulationArchive` moved into the server crate over `StorageDriver`) |
+| `hkask-mcp-skill` | ✅ migrated (removed `hkask-inference`; `run()` accepts `Arc<dyn InferencePort>` param) |
+| `hkask-mcp-research` | ✅ migrated (port-ify: `rss_db` is `Option<Arc<dyn StorageDriver>>`; `db.rs` STUBBED — all functions return "not yet ported" error; inline rusqlite transactions removed) |
 
-§13.1 invariant holds. All 12 crates compile together with zero errors (only pre-existing `sql` cfg warnings in hkask-types + 3 dead-code warnings in hkask-pods).
+§13.1 invariant holds. All 15 crates compile together with zero errors.
 
-## YOU ARE HERE — MCP server source migration
+## CRITICAL METHODOLOGY LESSON (do NOT repeat)
 
-The 16 MCP server source crates are in `Clones/hKask/mcp-servers/hkask-mcp-*/`. They need to be migrated to `kask/mcp-servers/hkask-mcp-*/`.
+**The previous session slowed to a halt by stubbing individual functions inside crates one at a time.** This is wrong. The MCP servers and core crates are deeply interconnected — they must be moved together, then the dependency graph fixed holistically, then everything compiled at once.
+
+**The correct approach (agreed with user):**
+1. **Move ALL remaining source first.** Copy every remaining MCP server crate and every remaining dependency crate from `Clones/hKask/` to `kask/` in one pass. Don't port-ify anything yet.
+2. **Add ALL to workspace.** Update root `Cargo.toml` `[workspace.members]` and `[workspace.dependencies]` for all new crates at once.
+3. **Fix the dependency graph holistically.** Now that everything is in `kask/`, fix the `Cargo.toml` path deps (all `../../crates/hkask-*` from `kask/mcp-servers/` resolve to `kask/crates/hkask-*`). Strip deleted-crate deps. Add `hkask-types` storage/embedding port imports where needed.
+4. **Get `cargo check` passing for ALL crates.** This may require stubbing entire modules (not individual functions) for crates that depend on deleted services. Use `todo!()` / `unimplemented!()` / return-Error stubs at the module level.
+5. **DO NOT touch tests.** Delete all `tests/` directories from migrated crates. Tests are a separate pass at the very end.
+6. **Run `cargo test` ONCE at the very end** after all crates compile.
+
+## YOU ARE HERE — Move ALL remaining crates, then fix deps holistically
+
+### Remaining MCP server crates to migrate (10)
+
+In `Clones/hKask/mcp-servers/`:
+- `hkask-mcp-codegraph` (17 src files, 3603 lines) — **partially copied already** to `kask/mcp-servers/hkask-mcp-codegraph/` but NOT in workspace. Uses `rusqlite` + `sqlite-vec` extensively. Needs full port-ify or module-level stub.
+- `hkask-mcp-memory` (4 src files, 1239 lines) — deps: `hkask-storage` (deleted), `hkask-memory` ✅, `hkask-test-harness` (deleted)
+- `hkask-mcp-condenser` (2 src files, 612 lines) — deps: `hkask-condenser` (deleted), `hkask-memory` ✅, `hkask-storage` (deleted), `hkask-inference` (deleted). **Needs rewrite** — condenser is deleted.
+- `hkask-mcp-curator` (3 src files, 646 lines) — deps: `hkask-storage` (deleted), `hkask-memory` ✅, `hkask-services-context` (deleted), `hkask-capability` ✅. Kept but unloaded.
+- `hkask-mcp-kata-kanban` (4 src files, 1501 lines) — deps: `hkask-services-kata-kanban` (not migrated), `hkask-storage` (deleted), `hkask-test-harness` (deleted)
+- `hkask-mcp-media` (18 src files, 6267 lines) — deps: `hkask-pods` ✅, `hkask-inference` (deleted), `hkask-storage` (deleted)
+- `hkask-mcp-training` (32 src files, 13400 lines) — deps: `hkask-capability` ✅, `hkask-memory` ✅, `hkask-storage` (deleted), `hkask-inference` (deleted). LARGE.
+- `hkask-mcp-companies` (24 src files, 13592 lines) — deps: `hkask-storage` (deleted), `hkask-ledger` (keep-crate, NOT yet migrated), `hkask-forecast` ✅. LARGE.
+- `hkask-mcp-replica` (4 src files, 1389 lines) — deps: many `hkask-services-*` (deleted), `hkask-inference` (deleted), `hkask-storage` (deleted), `hkask-keystore` ✅, `hkask-test-harness` (deleted). **Needs major rewrite.**
+- `hkask-mcp-docproc` (40 src files, 12619 lines) — deps: `hkask-bridge-dublincore` (deleted), `hkask-inference` (deleted), `hkask-memory` ✅, `hkask-storage` (deleted), `hkask-guard` ✅, `hkask-services-core` (deleted). VERY LARGE, needs significant rewrite.
+
+**SKIP (being deleted per architecture plan):**
+- `hkask-mcp-communication` — deps: `hkask-communication` (deleted)
+- `hkask-mcp-filesystem` — decided deleted (zed provides fs tools)
+
+### Remaining dependency crates to migrate (keep-crates only)
+
+In `Clones/hKask/crates/` — these are referenced by the MCP servers and MUST be migrated for the servers to compile:
+
+- **`hkask-ledger`** (3 src files) — keep-crate (line 62: "rJoule energy budget + hMem accounting"). Needed by `hkask-mcp-companies`. NOT yet migrated.
+- **`hkask-mcp-cloud-gateway`** (4 src files) — in `Clones/hKask/crates/` (not `mcp-servers/`). Clean (no storage refs). deps: mcp-server, types, capability. Migrate after the 16 servers.
+
+**DO NOT migrate these (deleted per architecture plan):**
+- `hkask-storage` → DELETED. Replace all `hkask_storage::*` imports with `hkask_types::storage::*` (port-ify).
+- `hkask-inference` → DELETED (T5.1). Keep only the `InferencePort` *trait* in `hkask-types`. Replace all `hkask_inference::*` with `hkask_types::InferencePort`.
+- `hkask-services-*` → DELETION CANDIDATES (T5.7). Functionality absorbed into `kask_bridge`/`KaskCore`. Stub/remove imports.
+- `hkask-condenser` → DELETION CANDIDATE (T5.7).
+- `hkask-communication` → DELETED (T5.4).
+- `hkask-test-harness` → NOT in keep-list. Remove from dev-deps.
+- `hkask-bridge-dublincore` → NOT in keep-list. Remove/stub.
+- All other `hkask-services-*` (chat, compose, context, corpus, inference, kata-kanban, onboarding, runtime, self-heal, skill, wallet) → DELETION CANDIDATES.
+- `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-git-cas`, `hkask-identity`, `hkask-repl`, `hkask-wallet` → NOT in keep-list for this phase.
 
 ### Architecture plan decisions (critical for MCP servers)
 
@@ -60,112 +110,70 @@ From `zed-host-architecture-plan.md` line 68 + lines 175-181:
 - **`hkask-bridge-dublincore` → NOT in keep-list.** Remove/stub.
 - 12 loaded by default + 2 kept-unloaded (curator, skill) + 2 deleted (communication, filesystem) = 16 original.
 
-### Server survey (from this session)
+### Migration pattern (DO THIS FOR ALL CRATES IN ONE PASS)
 
-Run `cargo check` from `Clones/zed-kask` to verify state. The 16 servers:
+**Step 1: Move ALL source at once.**
+```bash
+# MCP servers (10 remaining — skip communication, filesystem)
+for s in codegraph memory condenser curator kata-kanban media training companies replica docproc; do
+  cp -r /home/mdz-axolotl/Clones/hKask/mcp-servers/hkask-mcp-$s kask/mcp-servers/
+  rm -rf kask/mcp-servers/hkask-mcp-$s/tests  # DELETE all tests
+done
 
-**READY — only need storage/rusqlite port-ify (migrate first):**
+# hkask-ledger (keep-crate needed by companies)
+cp -r /home/mdz-axolotl/Clones/hKask/crates/hkask-ledger kask/crates/
+rm -rf kask/crates/hkask-ledger/tests
 
-| Server | src files | lines | storage | rusqlite | deps (already-migrated only) |
-|---|---|---|---|---|---|
-| `hkask-mcp-scenarios` | 5 | 4853 | 0 | 0 | mcp-server, types, forecast — **CLEAN, no port-ify needed** |
-| `hkask-mcp-regulation` | 2 | 298 | 1 | 0 | mcp-server, types, storage — uses `RegulationArchive`, `SqliteDriver`, `open_or_repair`, `DatabaseDriver` |
-| `hkask-mcp-research` | 23 | 5616 | 0 | 3 | mcp-server, types — uses `rusqlite::Connection`, `Transaction`, `open_database_with_extensions`; has `src/research/db.rs` module with rusqlite |
-| `hkask-mcp-codegraph` | 17 | 3603 | 0 | 1 | mcp-server, types — uses `rusqlite` extensively + `sqlite-vec` FFI (`sqlite3_vec_init` in `codegraph/graph/store.rs`) |
-
-**NEED inference removed (use InferencePort from hkask-types instead of hkask-inference):**
-
-| Server | also needs | notes |
-|---|---|---|
-| `hkask-mcp-skill` | templates ✅ | 2 src files, 348 lines — small |
-| `hkask-mcp-memory` | storage, test-harness | 4 src files, 1239 lines |
-| `hkask-mcp-training` | capability ✅, memory ✅, storage | 32 src files, 13400 lines — LARGE |
-| `hkask-mcp-media` | pods ✅, storage | 18 src files, 6267 lines |
-| `hkask-mcp-condenser` | condenser (deleted), memory ✅, storage | 2 src files, 612 lines — needs rewrite (condenser deleted) |
-| `hkask-mcp-docproc` | bridge-dublincore, memory ✅, storage, guard ✅, services-core (deleted) | 40 src files, 12619 lines — VERY LARGE, needs significant rewrite |
-
-**NEED services-* removed:**
-
-| Server | also needs | notes |
-|---|---|---|
-| `hkask-mcp-curator` | storage, memory ✅, services-context (deleted), capability ✅ | 3 src files, 646 lines — kept but unloaded |
-| `hkask-mcp-kata-kanban` | services-kata-kanban (not migrated), storage, test-harness | 4 src files, 1501 lines |
-| `hkask-mcp-replica` | many services (deleted), inference (deleted), storage, keystore ✅, test-harness | 4 src files, 1389 lines — needs major rewrite |
-
-**NEED other unmigrated deps:**
-
-| Server | dep | notes |
-|---|---|---|
-| `hkask-mcp-companies` | `hkask-ledger` (keep-crate, NOT yet migrated) | 24 src files, 13592 lines — LARGE. Also needs storage port-ify + forecast ✅ |
-
-**SKIP (being deleted per architecture plan):**
-- `hkask-mcp-communication` — deps: `hkask-communication` (deleted)
-- `hkask-mcp-filesystem` — decided deleted (zed provides fs tools)
-
-### Specific port-ify patterns observed
-
-**`hkask-mcp-regulation`** (lib.rs lines 24-25, 226, 249):
-```rust
-use hkask_storage::RegulationArchive;
-use hkask_storage::database::sqlite::SqliteDriver;
-let db = match hkask_storage::open_or_repair(&db_path, &passphrase) { ... };
-let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = Arc::new(SqliteDriver::new(pool));
+# hkask-mcp-cloud-gateway (in crates/, not mcp-servers/)
+cp -r /home/mdz-axolotl/Clones/hKask/crates/hkask-mcp-cloud-gateway kask/mcp-servers/
+rm -rf kask/mcp-servers/hkask-mcp-cloud-gateway/tests
 ```
-→ Replace with `StorageDriver` port. `RegulationArchive` may need to be moved or stubbed.
 
-**`hkask-mcp-research`** (lib.rs line 19, db.rs):
-```rust
-use rusqlite::Connection;
-let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred);
-tx.execute("INSERT INTO subscriptions ...", rusqlite::params![...]);
+**Step 2: Add ALL to workspace at once.**
+Add every new crate to `[workspace.members]` in root `Cargo.toml`. Add `hkask-ledger = { path = "kask/crates/hkask-ledger" }` to `[workspace.dependencies]`.
+
+**Step 3: Fix ALL Cargo.toml path deps at once.**
+For each `kask/mcp-servers/hkask-mcp-*/Cargo.toml`:
+- Pin `version = "0.31.0"`, `edition = "2024"`, `license = "MIT"`, `publish = false`.
+- Fix path deps to `../../crates/hkask-*` (relative from `kask/mcp-servers/`).
+- Keep `.workspace = true` for shared deps.
+- **Strip these deleted-crate deps:** `hkask-storage`, `rusqlite`, `r2d2`, `r2d2_sqlite`, `sqlite-vec`, `sqlx`, `hkask-inference`, `hkask-services-*`, `hkask-test-harness`, `hkask-condenser`, `hkask-bridge-dublincore`, `hkask-communication`.
+- Add `hkask-types = { path = "../../crates/hkask-types" }` if not present (for storage/embedding ports).
+- For tokio bins, add `features = ["rt-multi-thread", "macros"]`.
+
+**Step 4: Fix ALL source imports holistically.**
+For each crate's `src/`:
+- Replace `use hkask_storage::*` with `use hkask_types::storage::*` (port-ify).
+- Replace `use hkask_inference::*` with `use hkask_types::InferencePort` (the trait). Move any model constants to `hkask-types` or inline.
+- Replace `rusqlite::Connection` params with `&dyn StorageDriver`. Replace `rusqlite::params![...]` with `&[DbValue::...]`. Replace `rusqlite::Row` access with `DbRow`.
+- For `hkask_services_*`, `hkask_condenser`, `hkask_bridge_dublincore` imports: **stub at the module level** — replace the `use` with a TODO comment and stub the imported types/functions with `todo!()` or return-Error stubs.
+- For `hkask_test_harness` in dev-deps: strip it. (Tests already deleted.)
+- For `sqlite-vec` FFI (`init_sqlite_vec_on`): **stub the vector search** — return empty results or `todo!()`. Pure-Rust cosine similarity is a bridge responsibility (decision already made).
+
+**Step 5: `cargo check` ALL crates.**
+```bash
+cargo check -p hkask-mcp-codegraph -p hkask-mcp-memory -p hkask-mcp-condenser -p hkask-mcp-curator -p hkask-mcp-kata-kanban -p hkask-mcp-media -p hkask-mcp-training -p hkask-mcp-companies -p hkask-mcp-replica -p hkask-mcp-docproc -p hkask-ledger -p hkask-mcp-cloud-gateway
 ```
-Also calls `context.open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL)` which now returns error (mcp-server port-ify).
-→ Replace rusqlite with `StorageDriver::query`/`execute` + `DbValue`. Transactions via `execute_batch("BEGIN")` + `commit_tx()`.
-
-**`hkask-mcp-codegraph`** (codegraph/graph/store.rs):
+Fix errors. For crates with deep deleted-dep entanglement (replica, docproc, condenser), **stub entire modules** rather than individual functions. A module-level stub is:
 ```rust
-use rusqlite::{Connection, params};
-fn init_sqlite_vec_on(conn: &Connection) -> rusqlite::Result<()> {
-    // FFI: sqlite3_vec_init with raw sqlite3 pointer
+//! STUB (T0.6): original module depended on deleted crate `hkask-services-*`.
+//! Functionality moves to `kask_bridge`/`KaskCore` (T5.7). Re-implement over ports.
+pub fn <name>(...) -> Result<_, anyhow::Error> {
+    Err(anyhow::anyhow!("not yet ported — see kask/docs/specs/seam-specs.md T0.6"))
 }
 ```
-Uses `sqlite-vec` for code graph vector search. **Decision needed:** pure-Rust cosine similarity (like EmbeddingPort) or stub the vector search. The `init_sqlite_vec_on` function uses `rusqlite::ffi` raw pointer access — can't be ported to `StorageDriver` without raw handle access.
 
-### Migration pattern (for each server)
+**Step 6: Verify §13.1 invariant.**
+```bash
+bash kask/scripts/check-hkask-no-zed-deps.sh
+```
 
-1. Copy from `Clones/hKask/mcp-servers/hkask-mcp-<name>` to `kask/mcp-servers/hkask-mcp-<name>`.
-2. Adapt `Cargo.toml`: pin `version = "0.31.0"`, `edition = "2024"`, `license = "MIT"`, `publish = false`. Fix path deps to `../../crates/hkask-*` (relative from `kask/mcp-servers/`). Keep `.workspace = true` for shared deps. Strip `hkask-storage`/`rusqlite`/`r2d2`/`sqlx`/`hkask-inference`/`hkask-services-*`/`hkask-test-harness`/`hkask-condenser`/`hkask-bridge-dublincore`/`hkask-communication` deps. Add `hkask-types` storage/embedding port imports if needed. Check `schemars` — may need to add to workspace or pin inline.
-3. If the server imports `hkask_storage`, replace with `hkask_types::storage::*` (port-ify).
-4. If the server uses `rusqlite` directly, replace with `StorageDriver::query`/`execute` + `DbValue`/`DbRow`.
-5. If the server uses `hkask_inference`, replace with `hkask_types::InferencePort` (the trait). Move any model constants needed to `hkask-types` or inline them.
-6. If the server uses `hkask_services_*` or `hkask_condenser` or `hkask_bridge_dublincore`, stub/remove those imports with TODO comments — the functionality moves to `kask_bridge`/`KaskCore`.
-7. If the server uses `hkask_test_harness` in dev-deps, strip it. Tests that need it should use `hkask-pods::test_stubs` or be disabled for now.
-8. Add to workspace members + `[workspace.dependencies]` in root `Cargo.toml`.
-9. `cargo check -p hkask-mcp-<name>` + `bash kask/scripts/check-hkask-no-zed-deps.sh`.
+### After ALL MCP servers compile
 
-### Suggested migration order
-
-1. **`hkask-mcp-scenarios`** — clean, no port-ify needed. Just copy + adapt Cargo.toml paths. ⬅️ START HERE
-2. **`hkask-mcp-regulation`** — small (298 lines), port-ify `RegulationArchive`/`SqliteDriver` → `StorageDriver`.
-3. **`hkask-mcp-skill`** — small (348 lines), remove `hkask-inference` dep, use `InferencePort`.
-4. **`hkask-mcp-research`** — medium (5616 lines), port-ify rusqlite → `StorageDriver`.
-5. **`hkask-mcp-codegraph`** — medium (3603 lines), port-ify rusqlite + decide on sqlite-vec (pure-Rust cosine or stub).
-6. **`hkask-mcp-memory`** — small (1239 lines), port-ify storage + remove test-harness.
-7. **`hkask-mcp-condenser`** — small (612 lines), needs rewrite (condenser deleted).
-8. **`hkask-mcp-curator`** — small (646 lines), kept but unloaded. Remove services-context dep.
-9. **`hkask-mcp-kata-kanban`** — medium (1501 lines), remove services-kata-kanban + test-harness.
-10. **`hkask-mcp-media`** — medium (6267 lines), remove inference + port-ify storage.
-11. **`hkask-mcp-training`** — large (13400 lines), remove inference + port-ify storage.
-12. **`hkask-mcp-companies`** — large (13592 lines), needs `hkask-ledger` migrated first (or stubbed).
-13. **`hkask-mcp-replica`** — medium (1389 lines), needs major rewrite (many deleted deps).
-14. **`hkask-mcp-docproc`** — very large (12619 lines), needs significant rewrite.
-
-### After MCP servers
-
-15. **`hkask-mcp-cloud-gateway`** — in `Clones/hKask/crates/` (not `mcp-servers/`). 4 src files, clean (no storage refs). deps: mcp-server, types, capability.
-16. **Update `BUILTIN_SERVERS`** in `hkask-mcp-server/src/lib.rs` — remove `communication` + `filesystem` entries (deleted per architecture plan).
-17. **Skills registry** → `kask/skills/` (`manifest.yaml` + `*.j2`). Copy from `Clones/hKask/registry/` (already partially copied to `kask/registry/` for templates).
-18. **Archive `mdz-axo/hKask`**.
+7. **Update `BUILTIN_SERVERS`** in `hkask-mcp-server/src/lib.rs` — remove `communication` + `filesystem` entries (deleted per architecture plan).
+8. **Skills registry** → `kask/skills/` (`manifest.yaml` + `*.j2`). Copy from `Clones/hKask/registry/` (already partially copied to `kask/registry/` for templates).
+9. **Recompose tests** — write fresh tests based on zed-kask integration requirements. Use `hkask-pods::test_stubs` (`StubStorageDriver`/`StubEmbeddingPort`) for storage-backed tests. For tests needing a real `StorageDriver`, wait for `kask_bridge` (T1.4) or add an in-memory `StorageDriver` to `hkask-pods::test_stubs`.
+10. **Archive `mdz-axo/hKask`**.
 
 ### Key decisions already made (this session + prior)
 
@@ -175,15 +183,18 @@ Uses `sqlite-vec` for code graph vector search. **Decision needed:** pure-Rust c
 - **`EmbeddingPort` port** in `hkask-types::ports::embedding_port`; `kask_bridge` implements with **pure-Rust brute-force cosine similarity** (NOT sqlite-vec — personal agent scale, sub-ms for 10K × 1024-dim embeddings; no C deps, no global side effects, trivially debuggable). Escape hatch: pure-Rust HNSW (`hnsw_rs`) if scale ever demands it.
 - **`HMemStore`** is a concrete struct (not a trait) — already provider-agnostic, moved to `hkask-memory` using `StorageDriver`.
 - **`MemoryPort`** (D6): `ingest_thread` + `recall_semantic` — bridge implements over in-process memory handles.
-- **`CuratorSync`** uses `driver_factory` closure (Arc<dyn Fn(&Path) -> Result<Arc<dyn StorageDriver>, String>) — bridge provides real impl.
+- **`CuratorSync`** uses `driver_factory` closure (`Arc<dyn Fn(&Path) -> Result<Arc<dyn StorageDriver>, String>)`) — bridge provides real impl.
 - **`PodFactory::deploy`** accepts `driver: Arc<dyn StorageDriver>` + `embedding: Arc<dyn EmbeddingPort>` as params — composition root moves to `KaskCore`/`kask_bridge`.
 - **`test_stubs`** module in `hkask-pods` — `StubStorageDriver` + `StubEmbeddingPort` for test harnesses.
 - **12 MCP servers loaded by default** (`communication` + `filesystem` deleted; `curator` + `skill` kept but unloaded).
 - **kask panel** = native GPUI (reuses `ui::prelude::*`; no ratatui).
 - **`KaskSettings`** = new `"kask": {...}` settings.json section + kask credentials namespace.
 - **App-identity**: `APP_NAME = "Zed-Kask"`, distinct single-instance port, `.zed-kask_server`, binary `zed-kask`. Keep `*.zed.dev` account.
+- **`RegulationArchive`** was port-ified INTO `hkask-mcp-regulation` (the only consumer of its query methods). Pattern: when a deleted-crate's struct is only used by one server, move the struct into that server crate over `StorageDriver`.
+- **`hkask-mcp-skill::run()`** accepts `inference_port: Arc<dyn InferencePort>` param — composition root moves to `KaskCore`/`kask_bridge`. The standalone binary returns an error directing callers to the in-process path.
+- **`hkask-mcp-research::db.rs`** was STUBBED (all functions return "not yet ported" error) — the full rusqlite → StorageDriver port is a dedicated task. The `rss_db` field is `Option<Arc<dyn StorageDriver>>`.
 
-### Workspace deps added this session
+### Workspace deps already added
 
 Added to `[workspace.dependencies]` in root `Cargo.toml`:
 - `llm-guard = "0.2"`
@@ -192,16 +203,20 @@ Added to `[workspace.dependencies]` in root `Cargo.toml`:
 - `rmcp = "1"`
 - `tokio-util = { version = "0.7", features = ["rt"] }`
 
-`schemars` IS in zed workspace (v1.0, features ["indexmap2"]) — MCP servers can use `.workspace = true`.
+`schemars` IS in zed workspace (v1.0, features `["indexmap2"]`) — MCP servers can use `.workspace = true`.
 
 ### What to do right now
 
-1. Start with `hkask-mcp-scenarios` (clean, no port-ify needed — just copy + fix Cargo.toml paths).
-2. Then `hkask-mcp-regulation` (small, port-ify `RegulationArchive` → `StorageDriver`).
-3. Then `hkask-mcp-skill` (small, remove `hkask-inference` → `InferencePort`).
-4. Continue through the suggested order above.
-5. After all servers: update `BUILTIN_SERVERS`, copy skills registry, archive hKask.
+1. **Move ALL remaining source in one pass** (Step 1 above). Don't port-ify anything yet.
+2. **Add ALL to workspace** (Step 2).
+3. **Fix ALL Cargo.toml path deps** (Step 3).
+4. **Fix ALL source imports** (Step 4) — stub modules for deleted-dep crates, port-ify storage/inference.
+5. **`cargo check` ALL** (Step 5) — fix errors holistically.
+6. **Verify §13.1** (Step 6).
+7. Then: update `BUILTIN_SERVERS`, copy skills registry, recompose tests, archive hKask.
+
+**DO NOT stub individual functions inside crates.** Move everything first, then fix the dependency graph holistically. The MCP servers and core crates are interconnected — they must be moved together.
 
 ---
 
-The prompt is also saved at `Clones/zed-kask/kask/docs/plans/continuation-prompt.md` for reference. Paste it into a fresh Zed agent session to continue from exactly where we left off — 4 ready-to-migrate MCP servers away from the next checkpoint, then 10 more needing dep removal/refactoring.
+The prompt is also saved at `Clones/zed-kask/kask/docs/plans/continuation-prompt.md` for reference. Paste it into a fresh Zed agent session to continue from exactly where we left off — 4 MCP servers migrated + 1 partially copied, 10 remaining to move + 1 keep-crate (`hkask-ledger`) + 1 cloud-gateway, then fix deps holistically, then recompose tests.
