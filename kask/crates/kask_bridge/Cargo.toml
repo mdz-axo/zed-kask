@@ -11,6 +11,11 @@ hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
 hkask-templates = { path = "../hkask-templates" }
 hkask-mcp = { path = "../hkask-mcp" }
+hkask-memory = { path = "../hkask-memory" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-inference = { path = "../hkask-inference" }
+hkask-keystore = { path = "../hkask-keystore" }
+hkask-services-core = { path = "../hkask-services-core" }
 
 # zed-kask side — the facilities the bridge adapts over
 credentials_provider = { path = "../../../crates/credentials_provider" }
@@ -31,3 +36,6 @@ serde = { workspace = true }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

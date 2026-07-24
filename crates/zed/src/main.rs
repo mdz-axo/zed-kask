@@ -498,6 +498,34 @@ fn main() {
         // The manifest YAMLs in kask/registry/manifests/ drive the cascade.
         //
         // This uses a OnceLock global hook so the agent crate doesn't depend on kask_bridge.
+        //
+        // The 10 built-in kask MCP servers (matches kask_page.rs and kask_panel.rs).
+        const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = &[
+            ("codegraph", "Codegraph"),
+            ("companies", "Companies"),
+            ("condenser", "Condenser"),
+            ("corpus", "Corpus"),
+            ("curator", "Curator"),
+            ("kata-kanban", "Kata Kanban"),
+            ("media", "Media"),
+            ("research", "Research"),
+            ("scenarios", "Scenarios"),
+            ("training", "Training"),
+        ];
+
+        // D3: Construct the McpRuntime (manages MCP server child processes).
+        // The McpRuntime implements ToolPort — OCAP-gated tool invocation
+        // with gas/rjoule tracking and reg.tool.* span emission.
+        // MCP servers are started as child processes (stdio transport).
+        //
+        // Server auto-launch happens after settings::init() (below) so we
+        // can read KaskSettings to determine which servers to load.
+        let mcp_runtime = std::sync::Arc::new(hkask_mcp::McpRuntime::new());
+        let mcp_runtime_for_startup = mcp_runtime.clone();
+        let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
+            mcp_runtime.clone(),
+        ));
+
         {
             let async_cx = cx.to_async();
 
@@ -523,14 +551,9 @@ fn main() {
             let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
             let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
 
-            // D3: Construct the McpRuntime (manages MCP server child processes).
-            // The McpRuntime implements ToolPort — OCAP-gated tool invocation
-            // with gas/rjoule tracking and reg.tool.* span emission.
-            // MCP servers are started as child processes (stdio transport).
-            let mcp_runtime = std::sync::Arc::new(hkask_mcp::McpRuntime::new());
-            let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
-                mcp_runtime.clone(),
-            ));
+            // D3: McpRuntime is constructed above (before the block) so it's
+            // available for both the manifest executor and the post-settings
+            // auto-launch.
 
             // Get the default LanguageModel from zed's registry.
             let model_registry = language_model::LanguageModelRegistry::read_global(cx);
@@ -582,15 +605,31 @@ fn main() {
                 log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
 
                 // D6: Wire the thread-to-memory ingestion port.
-                // The LoggingMemoryPort is a no-op placeholder — the full hKask
-                // memory stack (SQLCipher, episodic/semantic storage, consolidation)
-                // is deferred until the storage layer and WebID mapping are
-                // available in-process. The BridgeMemoryPort adapts the agent
-                // crate's local ThreadMemoryPort trait to the hKask MemoryPort trait.
-                let memory_port = std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new());
+                //
+                // When HKASK_DB_PATH is set, use RealMemoryPort — stores turns
+                // into episodic (Private, user perspective) + semantic (Shared,
+                // curator-accessible) memory with prompt embeddings for retrieval.
+                //
+                // When HKASK_DB_PATH is not set, fall back to LoggingMemoryPort
+                // (graceful degradation — logs and discards).
+                let user_webid = hkask_types::WebID::for_userpod_name("zed-user");
+                let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
+                    .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
+                let memory_port: std::sync::Arc<dyn hkask_types::MemoryPort> =
+                    match kask_bridge::RealMemoryPort::from_env(user_webid, embedding_model) {
+                        Ok(Some(real)) => std::sync::Arc::new(real),
+                        Ok(None) => {
+                            log::info!("HKASK_DB_PATH not set — using LoggingMemoryPort (no-op)");
+                            std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new())
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to initialize RealMemoryPort: {e} — falling back to LoggingMemoryPort");
+                            std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new())
+                        }
+                    };
                 let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(memory_port));
                 agent::set_memory_port(Some(bridge_memory));
-                log::info!("hKask memory port wired — thread turns will be ingested (logging no-op)");
+                log::info!("hKask memory port wired");
 
                 // D10: Wire the kask panel's tool invoker and scoped inference.
                 // The panel uses global hooks (set_tool_invoker / set_scoped_inference)
@@ -620,6 +659,60 @@ fn main() {
         zlog_settings::init(cx);
         zed::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
+
+        // Auto-launch kask MCP servers based on KaskSettings.
+        // Reads kask.mcp.load_default + kask.mcp.overrides to determine which
+        // of the 10 built-in servers to start. The binary path is resolved via
+        // HKASK_MCP_{ID}_BIN env var, or falls back to the binary name on PATH.
+        {
+            let kask_settings = settings::Settings::get_global::<kask_bridge::KaskSettings>(cx);
+            let mcp_runtime_for_spawn = mcp_runtime_for_startup.clone();
+            let servers_to_start: Vec<&str> = if kask_settings.mcp.load_default {
+                BUILT_IN_MCP_SERVERS
+                    .iter()
+                    .filter(|(id, _)| {
+                        *kask_settings.mcp.overrides.get(*id).unwrap_or(&true)
+                    })
+                    .map(|(id, _)| *id)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            cx.background_spawn(async move {
+                // Set HKASK_MCP_HOST so MCP server binaries can bootstrap.
+                // The daemon verification will fail gracefully (no daemon running)
+                // and servers will start in degraded mode with daemon_client = None.
+                // This is the correct mode for zed-kask — tool invocation goes through
+                // the in-process McpRuntime, not the daemon.
+                let mut mcp_env = std::collections::HashMap::new();
+                mcp_env.insert(
+                    "HKASK_MCP_HOST".to_string(),
+                    "zed-kask-user".to_string(),
+                );
+
+                for server_id in &servers_to_start {
+                    let binary = format!("hkask-mcp-{server_id}");
+                    mcp_runtime_for_spawn
+                        .register_server(hkask_mcp::McpServer {
+                            id: server_id.to_string(),
+                            name: server_id.to_string(),
+                            tools: vec![],
+                        })
+                        .await;
+                    match mcp_runtime_for_spawn
+                        .start_server_with_env(server_id, &binary, mcp_env.clone())
+                        .await
+                    {
+                        Ok(()) => log::info!("Kask MCP server '{server_id}' started"),
+                        Err(e) => log::warn!(
+                            "Kask MCP server '{server_id}' failed to start: {e} \
+                             — set HKASK_MCP_{}_BIN to the binary path",
+                            server_id.to_uppercase()
+                        ),
+                    }
+                }
+            }).detach();
+        }
 
         let user_agent = format!(
             "Zed/{} ({}; {})",

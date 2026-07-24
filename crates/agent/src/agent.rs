@@ -2611,7 +2611,7 @@ pub(crate) fn manifest_executor() -> Option<&'static Arc<dyn SkillManifestExecut
 /// The bridge adapts between the two.
 pub struct ThreadTurnRecord {
     pub thread_id: String,
-    pub user_prompt: String,
+    pub user_input: String,
     pub agent_response: String,
     pub model: String,
     pub thread_title: Option<String>,

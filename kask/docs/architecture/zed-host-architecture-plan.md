@@ -32,20 +32,23 @@ mds_categories: [composition, trust, lifecycle]
 > **Composition root** (`crates/zed/src/main.rs`, after `gpui_tokio::init`):
 > 1. Constructs `CredentialsSecretsPort` (from `kask_bridge`) over zed's `CredentialsProvider` and injects it into `hkask_keystore::set_secrets_port()` (D5)
 > 2. Resolves `a2a_secret` from `hkask_keystore::resolve_a2a_secret()` (now routes through `SecretsPort`)
-> 3. Gets default `LanguageModel` from `LanguageModelRegistry::read_global(cx)`
-> 4. Constructs `LanguageModelInferencePort` (InferencePort over zed's LanguageModel)
-> 5. Wraps `InferencePort` with `GuardedInferencePort` (D4) — mandatory content guard (injection/secret scanning)
-> 6. Constructs `McpRuntime` + `BridgeToolPort` (ToolPort over MCP servers)
+> 3. Constructs `McpRuntime` + `BridgeToolPort` (ToolPort over MCP servers)
+> 4. Gets default `LanguageModel` from `LanguageModelRegistry::read_global(cx)`
+> 5. Constructs `LanguageModelInferencePort` (InferencePort over zed's LanguageModel)
+> 6. Wraps `InferencePort` with `GuardedInferencePort` (D4) — mandatory content guard (injection/secret scanning)
 > 7. Constructs `BridgeManifestExecutor` with guarded inference + tools + secret + registry paths
 > 8. Calls `agent::set_manifest_executor(Some(executor))`
-> 9. Constructs `LoggingMemoryPort` + `BridgeMemoryPort` and calls `agent::set_memory_port()` (D6)
-> 10. Calls `kask_panel::init(cx)` to register kask panel actions (D10)
+> 9. Constructs `RealMemoryPort::from_env()` (or `LoggingMemoryPort` fallback) + `BridgeMemoryPort` and calls `agent::set_memory_port()` (D6)
+> 10. Constructs `PanelToolInvoker` + `PanelScopedInference` and calls `kask_panel::set_tool_invoker()` / `set_scoped_inference()` (D10)
+> 11. After `settings::init(cx)`: reads `KaskSettings` and auto-launches enabled MCP servers via `McpRuntime::start_server()`
 >
 > **Revised approach for `hkask-inference`:** Kept (MCP servers use it directly). Reads API keys via `SecretsPort` (D9b). Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.
 >
 > **Current priorities (next work):**
-> 1. **R4 — Daemon refactor** — refactor MCP servers off `DaemonClient` to direct in-process handles. This is the big one — it dissolves the `hkask-services-*` scaffolding and the daemon layer in `hkask-mcp-server/src/daemon/`.
-> 2. **Continue dead code pruning** — daemon layer, stale docs, `hkask-services-*` scaffolding, `hkask-inference` env-var reads that should use `SecretsPort`.
+> 1. **R4 — Daemon refactor (ASSESSED: dead code in zed-kask)** — traced the launch path: `McpRuntime::start_server_with_env()` spawns MCP binaries with `HKASK_MCP_HOST=zed-kask-user`. `bootstrap_mcp_server()` tries `DaemonClient::auth_query()` → connection refused (no daemon) → `daemon_client = None` (degraded mode). `record_via_daemon()` is a no-op (logs warning). The daemon layer (`hkask-mcp-server/src/daemon/`, 6 files) is **already unreachable** in zed-kask. The `hkask-services-*` crates (8 crates, 89 files) are still needed by MCP server binaries for their service implementations. Full R4 (in-process handles) would only matter for MCP-server-side experience recording — but thread-level memory ingestion is already handled by `RealMemoryPort` (D6). **Recommendation: mark daemon as zed-kask-dead in docs; no code changes needed for MVP.**
+> 2. **Stale docs cleanup** — `kask/docs/reference/api-reference.md` references deleted `hkask-repl` and `hkask-api` crates. These should be updated or marked as historical.
+> 3. **Direct chat guard** — the `kask.guard.direct_chat_strategy` setting exists but isn't enforced. `cascade_only` is hardcoded. Wrapping zed's `LanguageModel` trait for `buffer`/`incremental` modes is a zed-side change.
+> 4. **x11 system libs** — can't install `libx11-dev` without sudo. The `zed` binary can't fully build on this machine. All validation is via `cargo check` and `diagnostics`.
 >
 > **One-line frame:** `zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 

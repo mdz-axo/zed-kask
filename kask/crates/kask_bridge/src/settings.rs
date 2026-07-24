@@ -16,7 +16,7 @@ use collections::HashMap;
 /// Kask-specific settings (the `"kask"` section in settings.json).
 ///
 /// Non-secret configuration for hKask features: MCP server load set,
-/// data-service toggles, curator/regulation/guard/memory settings.
+/// data-service toggles, curator/regulation/guard/memory/condenser settings.
 /// API keys are stored in the keychain via `CredentialsProvider` (D9b).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, RegisterSetting)]
 pub struct KaskSettings {
@@ -36,9 +36,13 @@ pub struct KaskSettings {
     #[serde(default)]
     pub guard: KaskGuardSettings,
 
-    /// Memory consolidation configuration.
+    /// Memory consolidation and recall configuration.
     #[serde(default)]
     pub memory: KaskMemorySettings,
+
+    /// Condenser configuration for context management in inference threads.
+    #[serde(default)]
+    pub condenser: KaskCondenserSettings,
 }
 
 /// MCP server load configuration.
@@ -110,7 +114,7 @@ fn default_guard_strategy() -> String {
     "cascade_only".to_string()
 }
 
-/// Memory consolidation configuration.
+/// Memory consolidation and recall configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskMemorySettings {
     /// Consolidation cadence in seconds (0 = disabled).
@@ -120,6 +124,18 @@ pub struct KaskMemorySettings {
     /// Confidence floor for memory retention (0.0–1.0).
     #[serde(default = "default_confidence_floor")]
     pub confidence_floor: f64,
+
+    /// Maximum number of memory snippets to retrieve for context injection.
+    #[serde(default = "default_recall_limit")]
+    pub recall_limit: u32,
+
+    /// Minimum confidence for a memory to be injected into context (0.0–1.0).
+    #[serde(default = "default_recall_min_confidence")]
+    pub recall_min_confidence: f64,
+
+    /// Whether to automatically inject recalled memories into prompts.
+    #[serde(default = "default_true")]
+    pub auto_inject: bool,
 }
 
 fn default_consolidation_cadence() -> u64 {
@@ -128,6 +144,53 @@ fn default_consolidation_cadence() -> u64 {
 
 fn default_confidence_floor() -> f64 {
     0.3
+}
+
+fn default_recall_limit() -> u32 {
+    5
+}
+
+fn default_recall_min_confidence() -> f64 {
+    0.3
+}
+
+/// Condenser configuration for context management in inference threads.
+///
+/// Controls how tool results are compressed before entering the message
+/// history, and what compression profile to use.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskCondenserSettings {
+    /// Compression profile: "heavy", "normal", "soft", or "light".
+    /// - Heavy: 10% retention, 30 max lines — aggressive compression
+    /// - Normal: 20% retention, 80 max lines — balanced
+    /// - Soft: 60% retention, 200 max lines — light touch
+    /// - Light: 95% retention, no max — near-passthrough
+    #[serde(default = "default_condenser_profile")]
+    pub profile: String,
+
+    /// Whether to automatically compress tool results before they enter
+    /// the message history. When false, tool results are stored verbatim.
+    #[serde(default = "default_true")]
+    pub auto_compress_tool_results: bool,
+
+    /// Persona keywords for saliency scoring (comma-separated in settings.json).
+    /// Used by the condenser's word_rank algorithm to prioritize lines
+    /// relevant to the user's domain.
+    #[serde(default)]
+    pub persona_keywords: Vec<String>,
+
+    /// Saliency window multiplier for thread summarization.
+    /// Controls the max_tokens budget: saliency_window * 100, clamped [150, 2000].
+    #[serde(default = "default_saliency_window")]
+    pub saliency_window: u32,
+}
+
+fn default_condenser_profile() -> String {
+    "normal".to_string()
+}
+
+fn default_saliency_window() -> u32 {
+    5
 }
 
 impl Settings for KaskSettings {
@@ -176,6 +239,18 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .map(|m| KaskMemorySettings {
                     consolidation_cadence_secs: m.consolidation_cadence_secs.unwrap_or(300),
                     confidence_floor: m.confidence_floor.unwrap_or(0.3),
+                    recall_limit: m.recall_limit.unwrap_or(5),
+                    recall_min_confidence: m.recall_min_confidence.unwrap_or(0.3),
+                    auto_inject: m.auto_inject.unwrap_or(true),
+                })
+                .unwrap_or_default(),
+            condenser: c
+                .condenser
+                .map(|c| KaskCondenserSettings {
+                    profile: c.profile.unwrap_or_else(|| "normal".to_string()),
+                    auto_compress_tool_results: c.auto_compress_tool_results.unwrap_or(true),
+                    persona_keywords: c.persona_keywords.unwrap_or_default(),
+                    saliency_window: c.saliency_window.unwrap_or(5),
                 })
                 .unwrap_or_default(),
         }

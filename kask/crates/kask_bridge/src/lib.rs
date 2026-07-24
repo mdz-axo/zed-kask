@@ -15,7 +15,7 @@ mod skill_executor;
 mod tool_port;
 
 pub use inference::LanguageModelInferencePort;
-pub use memory::{BridgeMemoryPort, LoggingMemoryPort};
+pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
 pub use secrets::{CredentialsSecretsPort, KASK_CREDENTIAL_NAMESPACE};
 pub use settings::KaskSettings;
 pub use skill_executor::BridgeManifestExecutor;

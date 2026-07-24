@@ -1502,9 +1502,13 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub guard: Option<KaskGuardSettingsContent>,
 
-    /// Memory consolidation configuration.
+    /// Memory consolidation and recall configuration.
     #[serde(default)]
     pub memory: Option<KaskMemorySettingsContent>,
+
+    /// Condenser configuration for context management.
+    #[serde(default)]
+    pub condenser: Option<KaskCondenserSettingsContent>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -1538,4 +1542,15 @@ pub struct KaskGuardSettingsContent {
 pub struct KaskMemorySettingsContent {
     pub consolidation_cadence_secs: Option<u64>,
     pub confidence_floor: Option<f64>,
+    pub recall_limit: Option<u32>,
+    pub recall_min_confidence: Option<f64>,
+    pub auto_inject: Option<bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCondenserSettingsContent {
+    pub profile: Option<String>,
+    pub auto_compress_tool_results: Option<bool>,
+    pub persona_keywords: Option<Vec<String>>,
+    pub saliency_window: Option<u32>,
 }

@@ -2687,7 +2687,7 @@ impl Thread {
                         if let Some(port) = crate::memory_port() {
                             let record = this.update(cx, |thread, _cx| crate::ThreadTurnRecord {
                                 thread_id: thread.id().to_string(),
-                                user_prompt: thread
+                                user_input: thread
                                     .messages
                                     .iter()
                                     .rev()

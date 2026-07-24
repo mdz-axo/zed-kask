@@ -31,7 +31,7 @@ pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,
     InferenceUsage, StructuredToolCall, TokenProb, TokenProbability, compute_confidence,
 };
-pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, TurnRecord};
+pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, MemorySnippet, TurnRecord};
 pub use registry::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
