@@ -266,13 +266,13 @@ The operational assessment and remediation sequence are in [Replica, Corpus, and
 
 # Corpus Pipeline Dispatch Flowchart
 
-> **Note:** `replica_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via `kask mcp invoke`.
+> **Note:** `corpus_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via `kask mcp invoke`.
 
-The historical flowchart below is retained for reference. It shows the former executable boundary of `replica_pipeline_run`.
+The historical flowchart below is retained for reference. It shows the former executable boundary of `corpus_pipeline_run`.
 
 ```mermaid
 flowchart TD
-    A([replica_pipeline_run]) --> B[Read and parse manifest]
+    A([corpus_pipeline_run]) --> B[Read and parse manifest]
     B --> C[Load or create checkpoint]
     C --> D{Step already complete?}
     D -->|Yes| E[Return saved output]

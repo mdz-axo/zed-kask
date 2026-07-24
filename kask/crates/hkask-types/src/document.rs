@@ -8,7 +8,7 @@
 //! Design principles (P5 simplicity, P7 deep module):
 //! - Backends produce `DocStructure`; downstream tools consume it.
 //! - `text()` flattens to plain text for backward compatibility with callers
-//!   that only need a string (e.g., `docproc_convert`'s legacy `text` field).
+//!   that only need a string (e.g., `corpus_convert`'s legacy `text` field).
 //! - Page provenance is optional — backends that don't have page boundaries
 //!   (DOCX, XLSX, PPTX, plain text) emit a single page containing all blocks.
 
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// A structured document: pages of blocks.
 ///
-/// The unit of work for `docproc_chunk` when structure is available. When a
+/// The unit of work for `corpus_chunk` when structure is available. When a
 /// backend cannot produce structure (e.g., OCR-only PDF), callers fall back to
 /// `DocStructure::from_plain_text`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -53,7 +53,7 @@ impl DocStructure {
     /// newlines and pages with form feeds.
     ///
     /// Backward-compatibility path for callers that expect a `String` (e.g.,
-    /// the `text` field in `docproc_convert`'s JSON response).
+    /// the `text` field in `corpus_convert`'s JSON response).
     pub fn text(&self) -> String {
         self.pages
             .iter()

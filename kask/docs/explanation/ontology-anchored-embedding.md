@@ -39,7 +39,7 @@ outperform generic raw-text embeddings.
 
 ### Step 1: Tag (classification from text alone)
 
-`docproc_tag_chunks` reads `chunks.jsonl` and classifies each chunk against
+`corpus_tag_chunks` reads `chunks.jsonl` and classifies each chunk against
 multiple ontologies:
 
 | Ontology | Domain | Example Tags |
@@ -55,7 +55,7 @@ Output: `tagged_ontology.jsonl` with `ontology_tags` field per chunk.
 
 ### Step 2: Embed (with ontology annotations)
 
-`docproc_embed` reads `chunks.jsonl` AND `tagged_ontology.jsonl`. For each
+`corpus_embed` reads `chunks.jsonl` AND `tagged_ontology.jsonl`. For each
 chunk, it prepends the ontology tags as an instruction prefix:
 
 ```

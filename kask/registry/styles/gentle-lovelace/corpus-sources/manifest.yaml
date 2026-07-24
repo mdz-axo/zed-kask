@@ -196,7 +196,7 @@ section_type_taxonomy:
 dimension_mapping:
   description: >
     Each exemplar maps primarily to one WRITING_EXCELLENCE dimension.
-    This mapping is used by replica_compare to build per-dimension
+    This mapping is used by corpus_compare to build per-dimension
     centroids for stylistic comparison.
   Hopper:
     exemplars: [hopper-mark1-manual-1946]

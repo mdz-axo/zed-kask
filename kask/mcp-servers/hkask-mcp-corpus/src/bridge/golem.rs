@@ -123,7 +123,7 @@ pub const ALL_PREDICATES: &[GolemConcept] = &[
 // ── Mapping helpers (from replica golem.rs) ────────────────────────────────
 
 /// Map a replica server operation to its GOLEM concept.
-pub fn replica_op_to_golem(op: &str) -> Option<GolemConcept> {
+pub fn corpus_op_to_golem(op: &str) -> Option<GolemConcept> {
     match op {
         "corpus_build_persona" => Some(AUTHOR),
         "corpus_compose" => Some(CREATIVE_WORK),
@@ -151,14 +151,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replica_ops_map_to_golem() {
-        assert_eq!(replica_op_to_golem("corpus_build_persona"), Some(AUTHOR));
-        assert_eq!(replica_op_to_golem("corpus_compose"), Some(CREATIVE_WORK));
+    fn corpus_ops_map_to_golem() {
+        assert_eq!(corpus_op_to_golem("corpus_build_persona"), Some(AUTHOR));
+        assert_eq!(corpus_op_to_golem("corpus_compose"), Some(CREATIVE_WORK));
         assert_eq!(
-            replica_op_to_golem("corpus_mashup"),
+            corpus_op_to_golem("corpus_mashup"),
             Some(NARRATIVE_FUNCTION)
         );
-        assert_eq!(replica_op_to_golem("unknown_op"), None);
+        assert_eq!(corpus_op_to_golem("unknown_op"), None);
     }
 
     #[test]

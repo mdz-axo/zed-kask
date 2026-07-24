@@ -7,14 +7,15 @@
 //! The panel is registered in the workspace alongside the Agent Panel and
 //! toggled via `kask_panel::Toggle` / `kask_panel::ToggleFocus` actions.
 
-use std::sync::Arc;
-
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Pixels, Render, Task, WeakEntity, prelude::*,
+    Focusable, Pixels, Render, Task, WeakEntity, Window, prelude::*,
 };
 use ui::{IconName, prelude::*};
-use workspace::{DockPosition, Panel, PanelEvent};
+use workspace::{
+    Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
+};
 
 use zed_actions::kask_panel::{Toggle, ToggleFocus};
 
@@ -37,38 +38,35 @@ const BUILT_IN_MCP_SERVERS: &[&str] = &[
 
 /// The kask panel — a dockable panel for direct MCP tool invocation.
 pub struct KaskPanel {
-    workspace: WeakEntity<workspace::Workspace>,
+    _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     /// Currently selected server (index into `BUILT_IN_MCP_SERVERS`).
     selected_server: usize,
-    /// The tool invocation input text.
-    tool_input: String,
     /// The result output text.
     output: String,
     /// Whether a tool invocation is in progress.
-    busy: bool,
+    _busy: bool,
 }
 
 impl KaskPanel {
     /// Create a new kask panel.
     pub fn new(
-        workspace: &workspace::Workspace,
-        _window: &mut gpui::Window,
-        cx: &mut Context<workspace::Workspace>,
+        workspace: &Workspace,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| Self {
-            workspace: workspace.weak_handle(),
+            _workspace: workspace.weak_handle(),
             focus_handle: cx.focus_handle(),
             selected_server: 0,
-            tool_input: String::new(),
             output: String::new(),
-            busy: false,
+            _busy: false,
         })
     }
 
     /// Load the panel asynchronously (matches the `Panel::load` pattern).
     pub fn load(
-        workspace: WeakEntity<workspace::Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
@@ -85,41 +83,7 @@ impl KaskPanel {
             .unwrap_or("none")
     }
 
-    fn invoke_tool(&mut self, cx: &mut Context<Self>) {
-        if self.busy || self.tool_input.is_empty() {
-            return;
-        }
-
-        let server = self.selected_server_name().to_string();
-        let input = self.tool_input.clone();
-        self.busy = true;
-        self.output = format!("Invoking {server}: {input}...\n");
-        cx.notify();
-
-        // The actual tool invocation would go through the BridgeToolPort /
-        // McpRuntime. For now, this is a placeholder that logs the invocation.
-        // The full wiring requires a global ToolPort hook (similar to
-        // set_manifest_executor / set_memory_port) so the panel can invoke
-        // tools without depending on kask_bridge.
-        let output = format!(
-            "[kask_panel] Tool invocation placeholder — server: {server}, input: {input}\n\
-             Full tool invocation wiring requires a global ToolPort hook.\n"
-        );
-
-        cx.background_executor()
-            .timer(std::time::Duration::from_millis(100))
-            .detach();
-
-        self.output = output;
-        self.busy = false;
-        cx.notify();
-    }
-
     fn render_server_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let server_names: Vec<SharedString> =
-            BUILT_IN_MCP_SERVERS.iter().map(|s| (*s).into()).collect();
-
-        // Simple label-based selector — a full dropdown would use PopoverMenu.
         let current = self.selected_server_name();
         let buttons: Vec<AnyElement> = BUILT_IN_MCP_SERVERS
             .iter()
@@ -156,42 +120,8 @@ impl KaskPanel {
             )
     }
 
-    fn render_tool_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(
-                Label::new("Tool Invocation")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        ui::Input::new(self.focus_handle.clone())
-                            .placeholder(":tool args")
-                            .text(self.tool_input.clone())
-                            .on_input(cx.listener(|this, text, _, cx| {
-                                this.tool_input = text;
-                                cx.notify();
-                            }))
-                            .on_submit(cx.listener(|this, _, window, cx| {
-                                this.invoke_tool(cx);
-                                window.focus(&this.focus_handle);
-                            })),
-                    )
-                    .child(
-                        Button::new("invoke-btn", "Invoke")
-                            .style(ButtonStyle::Filled)
-                            .disabled(self.busy || self.tool_input.is_empty())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.invoke_tool(cx);
-                            })),
-                    ),
-            )
-    }
-
-    fn render_output(&self) -> impl IntoElement {
+    fn render_output(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
         v_flex()
             .gap_1()
             .flex_1()
@@ -205,19 +135,13 @@ impl KaskPanel {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
                     .p_2()
                     .rounded_sm()
                     .border_1()
-                    .border_color(cx_theme_border())
+                    .border_color(border_color)
                     .child(Label::new(self.output.clone()).size(LabelSize::Small)),
             )
     }
-}
-
-fn cx_theme_border() -> Hsla {
-    // Simplified — a real implementation would read from cx.theme()
-    Hsla::gray(0.3)
 }
 
 impl Focusable for KaskPanel {
@@ -237,7 +161,7 @@ impl Panel for KaskPanel {
         KASK_PANEL_KEY
     }
 
-    fn position(&self, _window: &gpui::Window, _cx: &App) -> DockPosition {
+    fn position(&self, _window: &Window, _cx: &App) -> DockPosition {
         DockPosition::Right
     }
 
@@ -248,25 +172,25 @@ impl Panel for KaskPanel {
     fn set_position(
         &mut self,
         _position: DockPosition,
-        _window: &mut gpui::Window,
+        _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
         // Kask panel is always on the right dock for now.
     }
 
-    fn default_size(&self, _window: &gpui::Window, _cx: &App) -> Pixels {
+    fn default_size(&self, _window: &Window, _cx: &App) -> Pixels {
         px(400.)
     }
 
-    fn min_size(&self, _window: &gpui::Window, _cx: &App) -> Option<Pixels> {
+    fn min_size(&self, _window: &Window, _cx: &App) -> Option<Pixels> {
         Some(MIN_PANEL_WIDTH)
     }
 
-    fn icon(&self, _window: &gpui::Window, _cx: &App) -> Option<IconName> {
+    fn icon(&self, _window: &Window, _cx: &App) -> Option<IconName> {
         Some(IconName::Settings)
     }
 
-    fn icon_tooltip(&self, _window: &gpui::Window, _cx: &App) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Kask Panel")
     }
 
@@ -280,7 +204,7 @@ impl Panel for KaskPanel {
 }
 
 impl Render for KaskPanel {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .p_4()
@@ -289,16 +213,18 @@ impl Render for KaskPanel {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(Label::new("Kask Panel").size(LabelSize::Large))
-                    .child(
-                        Label::new("Direct MCP tool invocation for the 10 built-in kask servers.")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
+                    .child(Label::new("Kask Panel").size(LabelSize::Large)),
             )
             .child(self.render_server_selector(cx))
-            .child(self.render_tool_input(cx))
-            .child(self.render_output())
+            .child(
+                Label::new(
+                    "Direct MCP tool invocation for the 10 built-in kask servers. \
+                     Tool invocation wiring requires a global ToolPort hook (planned).",
+                )
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .child(self.render_output(cx))
             .into_any_element()
     }
 }
@@ -306,9 +232,9 @@ impl Render for KaskPanel {
 /// Initialize the kask panel — registers actions on the workspace.
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut workspace::Workspace, _window, _cx: &mut Context<workspace::Workspace>| {
+        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &Toggle, window, cx| {
-                workspace.toggle_panel::<KaskPanel>(window, cx);
+                workspace.toggle_panel_focus::<KaskPanel>(window, cx);
             });
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.focus_panel::<KaskPanel>(window, cx);

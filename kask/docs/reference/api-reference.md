@@ -1241,7 +1241,7 @@ PKO (Procedural Knowledge Ontology) bridge — shared by kanban, docproc, and re
 
 **Constants:** PKO concepts for procedures (`PROCEDURE`, `PROCEDURE_TYPE`, `PROCEDURE_STATUS`, `PROCEDURE_TARGET`, `HAS_STEP`, `NEXT_STEP`, `STEP`, `MULTI_STEP`), actions (`REQUIRES_ACTION`, `ACTION`, `REQUIRES_FUNCTION`, `FUNCTION`, `REQUIRES_TOOL`), executions (`PROCEDURE_EXECUTION`, `STEP_EXECUTION`, `PROCEDURE_EXECUTION_STATUS`), occurrences (`ISSUE_OCCURRENCE`, `USER_FEEDBACK_OCCURRENCE`, `USER_QUESTION_OCCURRENCE`, `ERROR`, `ERROR_CODE`), verification (`STEP_VERIFICATION`), agents/roles (`AGENT`, `ROLE`, `ROLE_IN_TIME`, `EXPERTISE_LEVEL`), resources (`REFERENCES_RESOURCE`, `WAS_EXTRACTED_FROM`), versioning (`HAS_VERSION`, `NEXT_VERSION`, `PREVIOUS_VERSION`).
 
-**Public Functions:** `kanban_status_to_pko_execution(status) -> Option<PkoConcept>`, `docproc_stage_to_pko_step(stage) -> Option<PkoConcept>`, `research_stage_to_pko(stage) -> Option<PkoConcept>`.
+**Public Functions:** `kanban_status_to_pko_execution(status) -> Option<PkoConcept>`, `corpus_stage_to_pko_step(stage) -> Option<PkoConcept>`, `research_stage_to_pko(stage) -> Option<PkoConcept>`.
 
 **Feature Flags:** None.
 
@@ -2005,8 +2005,8 @@ classDiagram
             +training_bridge: Option~Arc~dyn TrainingDataBridge~~
             +companies_bridge: Option~Arc~dyn CompaniesDataBridge~~
             +research_bridge: Option~Arc~dyn ResearchDataBridge~~
-            +docproc_bridge: Option~Arc~dyn DocprocDataBridge~~
-            +replica_bridge: Option~Arc~dyn ReplicaDataBridge~~
+            +corpus_bridge: Option~Arc~dyn CorpusDataBridge~~
+            +corpus_persona_bridge: Option~Arc~dyn CorpusPersonaDataBridge~~
             +skills_bridge: Option~Arc~dyn SkillsDataBridge~~
             +scenarios_bridge: Option~Arc~dyn ScenariosDataBridge~~
         }
@@ -2134,8 +2134,8 @@ Each of the 15 domain bridge traits exposes ≤7 methods, following deep-module 
 | `TrainingDataBridge` | 4 | Adapters, sessions, deployments |
 | `CompaniesDataBridge` | 4 | Search, financials, portfolios |
 | `ResearchDataBridge` | 4 | Web search, RSS feeds, extraction |
-| `DocprocDataBridge` | 3 | Chunks, QA pairs, index status |
-| `ReplicaDataBridge` | 2 | Replica list and count |
+| `CorpusDataBridge` | 3 | Chunks, QA pairs, index status |
+| `CorpusPersonaDataBridge` | 2 | Replica list and count |
 | `SkillsDataBridge` | 3 | Skill list, execution, count |
 | `ScenariosDataBridge` | 3 | Event trees, forecasts, calibration |
 
@@ -2409,8 +2409,8 @@ flowchart TD
         E9["with_training_bridge - optional"]
         E10["with_companies_bridge - optional"]
         E11["with_research_bridge - optional"]
-        E12["with_docproc_bridge - optional"]
-        E13["with_replica_bridge - optional"]
+        E12["with_corpus_bridge - optional"]
+        E13["with_corpus_persona_bridge - optional"]
         E14["with_skills_bridge - optional"]
         E15["with_scenarios_bridge - optional"]
     end

@@ -111,7 +111,7 @@ pub fn kanban_status_to_pko_execution(status: &str) -> Option<PkoConcept> {
 }
 
 /// Map a document processing stage to a PKO Step concept.
-pub fn docproc_stage_to_pko_step(stage: &str) -> Option<PkoConcept> {
+pub fn corpus_stage_to_pko_step(stage: &str) -> Option<PkoConcept> {
     match stage.to_lowercase().as_str() {
         "convert" | "extract" => Some(STEP),
         "ocr" => Some(FUNCTION),
@@ -193,9 +193,9 @@ mod tests {
 
     #[test]
     fn docproc_stage_mapping() {
-        assert_eq!(docproc_stage_to_pko_step("chunk"), Some(FUNCTION));
-        assert_eq!(docproc_stage_to_pko_step("generate_qa"), Some(ACTION));
-        assert_eq!(docproc_stage_to_pko_step("unknown"), None);
+        assert_eq!(corpus_stage_to_pko_step("chunk"), Some(FUNCTION));
+        assert_eq!(corpus_stage_to_pko_step("generate_qa"), Some(ACTION));
+        assert_eq!(corpus_stage_to_pko_step("unknown"), None);
     }
 
     #[test]

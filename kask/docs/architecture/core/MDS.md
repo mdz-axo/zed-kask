@@ -177,15 +177,15 @@ Spec validation, coherence checking, and quality assessment will move into the Q
 | `kask qa spec-check` | Full collection check: category coverage + per-spec quality | Not yet built |
 | `kask qa spec-check --spec-id <uuid>` | Single-spec validation via `DefaultSpecCurator::evaluate()` | Not yet built |
 
-### 4.4 Replica Integration (`replica_rewrite`)
+### 4.4 Replica Integration (`corpus_rewrite`)
 
-The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as the `replica_rewrite` tool. It takes a passage/code snippet + quality dimension (gentle/schriver/hopper/lovelace/composite) and delegates to `ComposeService::compose()` with dimension-specific prompts.
+The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as the `corpus_rewrite` tool. It takes a passage/code snippet + quality dimension (gentle/schriver/hopper/lovelace/composite) and delegates to `ComposeService::compose()` with dimension-specific prompts.
 
 | Tool | Server | Description |
 |------|--------|-------------|
-| `replica_rewrite` | `hkask-mcp-corpus` | Rewrite prose optimized for a Gentle Lovelace quality dimension |
-| `replica_compose` | `hkask-mcp-corpus` | Generate prose in any author's style (underlying engine) |
-| `replica_compare` | `hkask-mcp-corpus` | Evaluate document against persona centroids (per-dimension scoring) |
+| `corpus_rewrite` | `hkask-mcp-corpus` | Rewrite prose optimized for a Gentle Lovelace quality dimension |
+| `corpus_compose` | `hkask-mcp-corpus` | Generate prose in any author's style (underlying engine) |
+| `corpus_compare` | `hkask-mcp-corpus` | Evaluate document against persona centroids (per-dimension scoring) |
 
 ### 4.5 The Spec Store
 
@@ -206,7 +206,7 @@ The replica server provides 9 tools for style corpus management, prose generatio
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-corpus` | `replica_build`, `replica_compose`, `replica_rewrite`, `replica_mashup`, `replica_compare`, `replica_registry`, `replica_explain`, `replica_discover`, `replica_cache_work`, `docproc_convert`, `docproc_ocr`, `docproc_chunk`, `docproc_tag_chunks`, `docproc_embed`, `docproc_extract_triples`, `docproc_dedup_chunks`, `docproc_consolidate_chunks`, `docproc_build_prompts`, `docproc_generate_qa`, `docproc_generate_qa_batch`, `docproc_ingest_qa`, `docproc_prepare_training_dataset`, `docproc_cache`, `docproc_query`, `docproc_clear_index`, `docproc_purge_qa` | Corpus gathering + processing + QA generation + style replication | ✅ Implemented |
+| `hkask-mcp-corpus` | `corpus_build_persona`, `corpus_compose`, `corpus_rewrite`, `corpus_mashup`, `corpus_compare`, `corpus_registry`, `corpus_explain`, `corpus_discover`, `corpus_cache_work`, `corpus_convert`, `corpus_ocr`, `corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_triples`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`, `corpus_build_prompts`, `corpus_generate_qa`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` | Corpus gathering + processing + QA generation + style replication | ✅ Implemented |
 
 ### 4.7 Replica Exemplar Architecture
 
@@ -231,12 +231,12 @@ For academic exemplars, the corpus is not statically declared — it is discover
 | `web_find_similar` | Expand the corpus by finding related work and responses to the author |
 | `web_browse` | Navigate academic profiles (Google Scholar, Semantic Scholar, arXiv author pages) to enumerate works |
 
-The planned `replica_discover` tool would orchestrate this pipeline:
+The planned `corpus_discover` tool would orchestrate this pipeline:
 
 1. **Name disambiguation**: Given a name (e.g., "David Dunning"), search academic and open sources, present candidate matches to the Curator for confirmation. This is a consent boundary — the Curator selects *which* David Dunning.
 2. **Work enumeration**: From the confirmed identity, enumerate their known works across sources (arXiv, Semantic Scholar, open web, institutional pages, conference proceedings, transcripts).
 3. **Content acquisition**: Download and cache each work via `web_extract`, producing `.cache/{slug}.txt` files mirroring the public-domain author pattern.
-4. **Corpus config generation**: Produce a `corpus.yaml` with the discovered works, ready for `replica_build`.
+4. **Corpus config generation**: Produce a `corpus.yaml` with the discovered works, ready for `corpus_build_persona`.
 5. **Embedding and replication**: Standard pipeline from this point forward — chunk, tag, embed, store hMems, compute centroid.
 
 

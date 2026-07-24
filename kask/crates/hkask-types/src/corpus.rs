@@ -45,7 +45,7 @@ impl ExpertiseLevel {
     }
 
     /// Numeric rank for consolidation: researcher > analyst > practitioner.
-    /// Used by `docproc_consolidate_chunks` to take the highest expertise level
+    /// Used by `corpus_consolidate_chunks` to take the highest expertise level
     /// across cluster members.
     pub fn rank(&self) -> u8 {
         match self {

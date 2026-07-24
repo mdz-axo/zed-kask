@@ -21,7 +21,7 @@ use std::path::Path;
 ///
 /// Implementations:
 /// - `WordCountChunker` — used by `EmbedService` (persona pipeline)
-/// - `TokenCountChunker` — used by `docproc_chunk` (QA training pipeline)
+/// - `TokenCountChunker` — used by `corpus_chunk` (QA training pipeline)
 #[allow(dead_code)]
 pub trait ChunkingStrategy: Send + Sync {
     /// Chunk `text` into passages, returning `(entity_ref, text)` pairs.
@@ -35,7 +35,7 @@ pub trait ChunkingStrategy: Send + Sync {
 ///
 /// Implementations:
 /// - `PlainEmbedder` — used by `EmbedService` (no annotation prefix)
-/// - `InstructorEmbedder` — used by `docproc_embed` (ontology tags prepended)
+/// - `InstructorEmbedder` — used by `corpus_embed` (ontology tags prepended)
 #[allow(dead_code)] // Forward-declared for docproc integration
 pub trait EmbeddingStrategy: Send + Sync {
     /// Embed a batch of texts, returning vectors.
@@ -57,7 +57,7 @@ pub trait EmbeddingStrategy: Send + Sync {
 ///
 /// Implementations:
 /// - `RuntimeTripleExtractor` — used by `EmbedService` (via `hkask_services_runtime`)
-/// - `DocprocTripleExtractor` — used by `docproc_extract_triples` (Jinja2 template + hallucination guard)
+/// - `CorpusTripleExtractor` — used by `corpus_extract_triples` (Jinja2 template + hallucination guard)
 #[allow(dead_code)] // Forward-declared for docproc integration
 pub trait TripleExtractionStrategy: Send + Sync {
     /// Extract triples from a batch of texts.

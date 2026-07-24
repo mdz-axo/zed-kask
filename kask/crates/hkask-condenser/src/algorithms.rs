@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn derive_ontology_golem_for_replica_tools() {
         assert_eq!(
-            derive_ontology_anchor("replica_build"),
+            derive_ontology_anchor("corpus_build_persona"),
             OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Golem,
                 concept: hkask_bridge_dublincore::TEXT.to_string()
