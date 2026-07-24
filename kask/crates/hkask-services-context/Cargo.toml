@@ -3,20 +3,14 @@ name = "hkask-services-context"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "hKask context service — AgentService, PerAgentMemory, loop construction"
+description = "hKask context service — governance, regulation store, storage guards"
 
 [dependencies]
 hkask-services-core = { path = "../hkask-services-core" }
-hkask-services-inference = { path = "../hkask-services-inference" }
-hkask-services-self-heal = { path = "../hkask-services-self-heal" }
-hkask-identity = { path = "../hkask-identity" }
-hkask-services-runtime = { path = "../hkask-services-runtime" }
-hkask-services-wallet = { path = "../hkask-services-wallet" }
 hkask-pods = { path = "../hkask-pods" }
 hkask-regulation = { path = "../hkask-regulation" }
 hkask-mcp = { path = "../hkask-mcp" }
 hkask-mcp-server = { path = "../hkask-mcp-server" }
-hkask-git-cas = { path = "../hkask-git-cas" }
 hkask-memory = { path = "../hkask-memory" }
 hkask-storage = { path = "../hkask-storage" }
 hkask-templates = { path = "../hkask-templates" }
@@ -30,7 +24,6 @@ tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
-hkask-communication = { path = "../hkask-communication" }
 hkask-inference = { path = "../hkask-inference" }
 hkask-keystore = { path = "../hkask-keystore" }
 hkask-guard = { path = "../hkask-guard" }
