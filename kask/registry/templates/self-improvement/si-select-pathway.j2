@@ -1,0 +1,91 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    challenge: string
+    current_condition: object
+    target_condition: object
+    pathway_preference: string
+    signal_preference: string
+    scaffold_component: string
+    budget: object
+    acceptance_criteria: object
+    context: object
+  output:
+    response: string
+energy_cap: 4000
+visibility: Public
+---
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# PDCA Plan: Select Pathway, Signal, and Generate Improvement Plan #}
+{# Implements: Ren et al. (2026) Section 4 — taxonomy of improvement pathways and signals #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is PDCA Plan: SELECT PATHWAY AND SIGNAL.
+
+The self-induced update operator 𝒰 can target two pathways, each driven by three signal types. You must select the appropriate combination based on the current condition, target condition, and resource constraints.
+
+## What You Know
+
+Challenge: {{ challenge }}
+Current condition: {{ current_condition | tojson }}
+Target condition: {{ target_condition | tojson }}
+Pathway preference: {{ pathway_preference | default('sigma') }}
+Signal preference: {{ signal_preference | default('') }}
+Scaffold component preference: {{ scaffold_component | default('') }}
+Budget: {{ budget | default({}) | tojson }}
+Acceptance criteria: {{ acceptance_criteria | default({}) | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+### Step 1: Determine the Update Target (Pathway Selection)
+
+**Foundation Model Improvement (θ):** Updates model parameters. Slower, more stable, amortizes capability across tasks. Choose when:
+- (a) FM fine-tuning is explicitly permitted
+- (b) The capability gap requires parametric consolidation (scaffold-level improvements have plateaued)
+- (c) The gap is in the model's internal representations, not in how it's conditioned
+
+**Scaffolding Improvement (Σ):** Updates scaffold components. Faster, more reversible, task-specific. Choose when:
+- (a) The bottleneck is in task communication, memory, tool execution, or control logic
+- (b) FM fine-tuning is not permitted or not justified
+- (c) Fast, reversible adaptation is preferred
+
+The paper notes: "Modifying the operational scaffold (Σ) drives a fast adaptation loop... parameter updates (θ) are much slower" (Section 9.1). Default to Σ unless θ is explicitly needed.
+
+### Step 2: If Scaffolding (Σ), Determine Which Component
+
+- **Prompt (p):** when the bottleneck is task communication, objectives, or constraints
+- **Memory (m):** when the bottleneck is long-horizon recall, cross-context knowledge transfer, or context-window pressure
+- **Tool (𝒯):** when the bottleneck is action execution, capability coverage, or tool reliability
+- **Full Scaffolding (Σ):** when the bottleneck requires holistic reconfiguration
+
+### Step 3: Determine the Improvement Signal
+
+- **Intrinsic Generative Demos (𝒟_t):** Agent synthesizes training instances from its own priors. Choose when the agent can generate high-quality data and the bottleneck is in the training distribution.
+- **Intrinsic Evaluative Feedback (e_t):** Agent judges candidate behavior through rubrics, consistency, or critique. Choose when the agent can serve as its own critic and the bottleneck is in alignment or quality.
+- **Extrinsic Exploratory Experience (τ_t):** Agent collects interaction trajectories from grounded environments. Choose when the environment provides executable feedback (unit tests, task success, rewards).
+
+### Step 4: Generate a Concrete Improvement Plan
+
+Specify:
+- What operator 𝒰 will be applied?
+- What signal 𝒮_t will drive it?
+- What budget is allocated (compute, tokens, time, human input)?
+- What acceptance criteria will gate the update? (performance threshold, regression tolerance, safety constraints)
+- What version history will be maintained for rollback?
+
+## Constraints
+
+- Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
+- The improvement plan must include acceptance criteria for verifier-gated updates.
+- Version history must be maintained for rollback.
+- The critic (evaluator) must be decoupled from the generator.
+
+Respond with a JSON object containing `pathway` (theta or sigma), `scaffold_component` (if sigma: p, m, T, or sigma), `signal_type` (D_t, e_t, or tau_t), `improvement_plan`, `budget`, and `acceptance_criteria`.

@@ -1,0 +1,51 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    challenge: string
+    context: object
+  output:
+    response: string
+energy_cap: 3000
+visibility: Public
+---
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Outer Kata Step 1: Understand the Direction #}
+{# Implements: Ren et al. (2026) Section 3.2 — self-improvement as self-induced update operator #}
+{# The direction establishes what capability the agent is building through self-improvement. #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is Outer Kata Step 1 of 4: UNDERSTAND THE DIRECTION.
+
+Your challenge is to durably modify your own configuration — prompts, memory, tools, control logic, or (when permitted) model parameters — based on execution experience. The self-induced update operator 𝒰 maps your current configuration 𝒜_t = (θ_t, Σ_t) to an updated one 𝒜_{t+1}.
+
+## What You Know
+
+Challenge: {{ challenge }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+Articulate the direction before you can measure progress toward it. Answer these questions with specific, measurable statements. Do not guess — if you lack data, say what data you would need and how you would get it.
+
+1. **What is the challenge?** — What capability gap or performance deficit exists that requires self-improvement? Be specific. "The agent fails at long-horizon web navigation" is vague. "The agent achieves 34% task success on WebArena against a 60% target, with failures concentrated in multi-step grounding" is specific.
+
+2. **What does excellent performance look like?** — Describe the target condition in measurable terms. What metrics, what thresholds, what distribution of tasks?
+
+3. **How will you know you've improved?** — State the metric and measurement plan. The paper emphasizes: "Evaluation should report the full performance trajectory (m_t) across update iterations rather than exclusively highlighting a final peak score" (Section 8.1.1).
+
+4. **What is your knowledge threshold?** — What do you NOT know about the target capability? Where does your current understanding end? The paper notes that self-improvement requires "robust internal evaluation signals and verification procedures" (Section 2.2).
+
+## Constraints
+
+- The challenge must be specific and measurable.
+- The measurement plan must include held-out evaluation (transfer testing beyond the improvement signal).
+- The knowledge threshold must be explicit — mark the boundary of what you know vs. assume.
+
+Respond with a JSON object containing `challenge`, `excellent_performance`, `measurement_plan`, and `knowledge_threshold`.

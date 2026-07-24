@@ -4389,6 +4389,29 @@ impl Thread {
         }];
         self.extend_request_history_until(&mut messages, end_ix);
 
+        // Place cache breakpoints. Two breakpoints mirror Kilocode's default
+        // policy (`tools + system + latest-user-message`):
+        //   1. The latest *user* message — this is the high-value boundary for
+        //      agentic tool loops. The user message stays fixed while a single
+        //      turn explodes into many assistant/tool round-trips, so caching
+        //      at this boundary lets every intra-turn request hit the prefix
+        //      up to and including the user's instruction.
+        //   2. The last message overall — covers the case where the thread ends
+        //      on a tool result or assistant turn, and satisfies the
+        //      `any_message_wants_cache` gate for Anthropic's automatic
+        //      top-level cache_control.
+        // Both are marked because the Anthropic automatic-mode lowering places
+        // the conversation-tail breakpoint on the last cacheable block, and
+        // marking the latest user message ensures the breakpoint lands on the
+        // semantically meaningful boundary rather than whichever tool result
+        // happens to be last.
+        if let Some(last_user_message) = messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.role == Role::User)
+        {
+            last_user_message.cache = true;
+        }
         if let Some(last_message) = messages.last_mut() {
             last_message.cache = true;
         }
@@ -4483,7 +4506,12 @@ impl Thread {
             return None;
         }
 
-        let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
+        // Compaction is a cost-driven decision: it should fire when the
+        // *billed* input tokens (full-price + cache-write) cross the threshold,
+        // not when the gross input (which includes ~0.1x cache reads) does.
+        // Counting cache reads as full tokens forces premature summarization of
+        // context that is nearly free to retain — the opposite of the goal.
+        let active_tokens = billed_input_tokens(usage).saturating_add(usage.output_tokens);
         let compaction_threshold =
             auto_compact_threshold_token_count(auto_compact.threshold, max_input_tokens);
         if active_tokens < compaction_threshold {
@@ -4674,6 +4702,19 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+/// Billed input tokens — what the provider actually charges for at full or
+/// cache-write rates. Excludes `cache_read_input_tokens` because those are
+/// served from the prompt cache at ~0.1x cost and re-sending the same prefix
+/// is nearly free. Use this for *cost-driven* decisions like compaction
+/// triggering; use `total_input_tokens` for *context-window* decisions like
+/// overflow warnings, since the model still consumes the full window regardless
+/// of caching.
+fn billed_input_tokens(usage: language_model::TokenUsage) -> u64 {
+    usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
 }
 
 fn auto_compact_threshold_token_count(

@@ -4139,7 +4139,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     content: vec!["test".into()],
                     output: Some("test".into())
                 })],
-                cache: false,
+                cache: true,
                 reasoning_details: None,
             },
         ],

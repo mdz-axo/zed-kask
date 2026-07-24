@@ -1,0 +1,61 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    challenge: string
+    current_condition: object
+    context: object
+  output:
+    response: string
+energy_cap: 3500
+visibility: Public
+---
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Outer Kata Step 3: Establish the Target Condition #}
+{# Implements: Ren et al. (2026) Section 4 — taxonomy of improvement pathways #}
+{# The target condition establishes where the agent wants to be and what obstacles block the path. #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is Outer Kata Step 3 of 4: ESTABLISH THE TARGET CONDITION.
+
+The target condition must be specific, measurable, and time-bounded — beyond your current knowledge threshold. The paper identifies two pathways for improvement:
+- Foundation Model Improvement: θ_{t+1} = 𝒰_θ(θ_{1:t}; 𝒮_t), Σ_{t+1} = Σ_t
+- Scaffolding Improvement: Σ_{t+1} = 𝒰_Σ(Σ_{1:t}; 𝒮_t), θ_{t+1} = θ_t
+
+## What You Know
+
+Challenge: {{ challenge }}
+Current condition (from Step 2): {{ current_condition | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+1. **Declare a specific, measurable target condition** 1 week to 3 months out, beyond your current knowledge threshold. The target must specify:
+   - What metric will improve and by how much?
+   - What is the time horizon?
+   - What evaluation distribution will be used? (Must be held-out — not overlapping with the improvement signal.)
+
+2. **Identify every obstacle** between current and target conditions to create an Obstacles Parking Lot. Obstacles may include:
+   - Signal quality: "self-generated signals may reinforce common blind spots" (Section 5.2)
+   - Distribution shift: "parametric updates are susceptible to catastrophic forgetting" (Section 3.3)
+   - Reward hacking: "a foundation-model agent can satisfy the literal condition of a verifier without solving the underlying task" (Section 5.3)
+   - Resource constraints: "interaction can be slow or costly, rewards may be sparse or delayed" (Section 5.3)
+   - Safety risks: "poisoned memories or hijacked tool logics are committed as stable updates" (Section 9.1)
+
+3. **Select the ONE most consequential obstacle** to address first. The paper's guidance: "When environmental feedback is noisy, it's better to confine updates within the scaffold and validate them through rigorous execution tests" (Section 9.1).
+
+4. **Define what you do NOT know** about the focus obstacle. What additional measurement would confirm or refute your understanding?
+
+## Constraints
+
+- The target must be beyond the current knowledge threshold.
+- The evaluation distribution must be held-out.
+- Obstacles must be specific and typed (signal_quality, distribution_shift, reward_hacking, resource_constraint, safety_risk).
+
+Respond with a JSON object containing `target_condition`, `obstacles`, `focus_obstacle`, `knowledge_gap`, and `metrics_target`.

@@ -1,0 +1,67 @@
+[inference]
+template_type: WordAct
+lexicon_terms:
+- declare
+- target
+- measure
+- plan
+- explore
+contract:
+  input:
+    challenge: string
+    current_metrics: object
+    direction: object
+    context: object
+  output:
+    response: string
+energy_cap: 3500
+visibility: Public
+---
+{# hKask v0.31.0 — Self-Improvement Skill #}
+{# Outer Kata Step 2: Grasp the Current Condition #}
+{# Implements: Ren et al. (2026) Section 3.1 — agent configuration 𝒜_t = (θ_t, Σ_t) #}
+{# The current condition establishes the baseline: what is the agent's current configuration and performance? #}
+You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
+
+This is Outer Kata Step 2 of 4: GRASP THE CURRENT CONDITION.
+
+Your agent configuration is 𝒜_t = (θ_t, Σ_t), where:
+- θ_t = foundation model parameters
+- Σ_t = (p_t, m_t, 𝒯_t, g_t) = scaffold (prompts, memory, tools, control logic)
+
+You must measure the current state before you can improve it. Go and see — do not assume.
+
+## What You Know
+
+Challenge: {{ challenge }}
+Direction (from Step 1): {{ direction | tojson }}
+Current metrics provided: {{ current_metrics | default({}) | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+1. **Go and see to gather the facts.** Describe the agent's current configuration in detail:
+   - What is the current scaffold Σ_t? (prompts, memory structure, tool set, control logic)
+   - What is the current foundation model θ_t? (model name, version, fine-tuning status)
+   - What is the current induced policy π_{θ_t, Σ_t}?
+
+2. **Collect real data to describe the actual performance now.** What are the current metrics on the evaluation distribution? The paper requires: "Report trajectories under a fixed budget" and "test transfer beyond the improvement signal" (Section 8.1.1).
+
+3. **List every metric describing the current state** with method and source. Include:
+   - Performance metrics (accuracy, success rate, etc.)
+   - Cost metrics (compute, tokens, wall-clock time, human input)
+   - Safety metrics (regression rate, safety violations, goal drift indicators)
+
+4. **Observe what patterns exist in the data.** Where are failures concentrated? What types of errors dominate? The paper notes: "self-improvement unfolds over time and naturally exhibits plateaus or regressions" (Section 8.1.1).
+
+5. **Redraw the boundary between known and assumed** for your knowledge threshold.
+
+6. **Record the baseline measurements** you commit to measuring against as `metric_before`.
+
+## Constraints
+
+- All measurements must be grounded in real data, not assumptions.
+- The current configuration must be described in terms of the (θ_t, Σ_t) formalism.
+- Cost and safety metrics are mandatory, not optional.
+
+Respond with a JSON object containing `current_performance`, `metrics`, `patterns`, `knowledge_threshold`, and `metric_before`.

@@ -627,9 +627,28 @@ fn main() {
                             std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new())
                         }
                     };
-                let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(memory_port));
+                let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(memory_port.clone()));
                 agent::set_memory_port(Some(bridge_memory));
                 log::info!("hKask memory port wired");
+
+                // D11: Wire the context injector for memory-based prompt enrichment.
+                //
+                // When auto_inject is enabled in KaskMemorySettings, the injector
+                // retrieves salient memories and injects them into prompts before
+                // inference. The injector shares the same memory_port as the
+                // ingestion path — reads and writes go to the same store.
+                let kask_settings = kask_bridge::KaskSettings::get_global(cx);
+                if kask_settings.memory.auto_inject {
+                    let injector = std::sync::Arc::new(kask_bridge::BridgeContextInjector::new(
+                        memory_port,
+                        kask_settings.memory.recall_limit,
+                        kask_settings.memory.recall_min_confidence,
+                    ));
+                    agent::set_context_injector(Some(injector));
+                    log::info!("hKask context injector wired — prompts will be enriched with recalled memories");
+                } else {
+                    log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
+                }
 
                 // D10: Wire the kask panel's tool invoker and scoped inference.
                 // The panel uses global hooks (set_tool_invoker / set_scoped_inference)
