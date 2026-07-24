@@ -1,11 +1,11 @@
 ---
 title: "Regulation and Loops — Homeostatic Regulation, PDCA Skills, Curator Metacognition, Bug Hunting, QA"
 audience: [architects, developers, operators]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
-domain: "Core"
-mds_categories: [domain, composition, lifecycle, curation]
+domain: "Cross-cutting"
+mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
 
 # Regulation and Loops
@@ -349,9 +349,9 @@ The `reg.meta.*` namespace (`hkask-regulation/src/meta_span.rs`) records the Cur
 
 #### The CAT Communication Posture
 
-`MetacognitionLoop` evaluates Matrix messages through `cat::evaluate()` at `crates/hkask-pods/src/curator_agent/cat.rs:24` — a pure-function engagement gate based on Communication Accommodation Theory. The `convergence_bias` governs: >0.0 speaks when addressed by name, ≥0.7 speaks to any message, =0.0 remains silent.
+`MetacognitionLoop` evaluates in-process agent events through `cat::evaluate()` at `crates/hkask-pods/src/curator_agent/cat.rs:24` — a pure-function engagement gate based on Communication Accommodation Theory. In zed-kask, the Curator is a native agent inside the editor (D2); it evaluates agent panel events, thread store updates, and tool invocations rather than Matrix messages. The `convergence_bias` governs: >0.0 speaks when addressed by name, ≥0.7 speaks to any event, =0.0 remains silent.
 
-Before the CAT gate, `condenser/condenser_score_saliency` scores message relevance via ontology graph proximity: persona (charter-anchored), episodic memory (PKO process domain), or semantic memory (DC+BIBO document domain). The score modulates `convergence_bias` — domain-relevant messages pull the agent toward stronger engagement.
+Before the CAT gate, `condenser/condenser_score_saliency` scores event relevance via ontology graph proximity: persona (charter-anchored), episodic memory (PKO process domain), or semantic memory (DC+BIBO document domain). The score modulates `convergence_bias` — domain-relevant events pull the agent toward stronger engagement. The former Matrix-message evaluation path was removed when the `hkask-communication` crate and Matrix transport were deleted; the CAT gate now consumes the same in-process `RegulationRecord` stream that the CurationLoop senses from.
 
 #### The Curator's Relationship to Magna Carta
 
@@ -1944,13 +1944,13 @@ Reads Regulation health snapshots (`LedgerHealth`), variety counters per namespa
 ### 2. Classify
 
 - **EscalationPolicy** — pure-data module implementing the algedonic signal model. Checks three conditions: VarietyDeficit (Warning at threshold/2, Critical at threshold), CriticalAlerts (≥ threshold), BotFailures (≥ threshold). Returns `Vec<EscalationAlert>`.
-- **CAT (Communication Accommodation Theory)** — evaluates whether the Curator should engage with Matrix communication events. `convergence_bias ≥ 0.7`: speak to any message. `> 0.0`: speak only when addressed by name. `= 0.0`: always silent.
+- **CAT (Communication Accommodation Theory)** — evaluates whether the Curator should engage with in-process agent events (D2). `convergence_bias ≥ 0.7`: speak to any event. `> 0.0`: speak only when addressed by name. `= 0.0`: always silent.
 
 ### 3. Decide
 
 Two code paths gated by `ManifestExecutor` availability:
 - **Template path** (`compute_with_templates`): KnowAct manifest execution via LLM. Produces calibrated regulatory actions with confidence scores from `manifest_executor.execute_knowact`.
-- **Rust fallback** (`compute_with_thresholds`): Threshold comparison producing `RegulatoryAction` with `Calibrate`/`Escalate`/`NoAction` types. Used in standalone CLI mode when no executor is configured.
+- **Rust fallback** (`compute_with_thresholds`): Threshold comparison producing `RegulatoryAction` with `Calibrate`/`Escalate`/`NoAction` types. Used when no executor is configured (the former standalone CLI mode has been removed; the fallback now fires in-process when the ManifestExecutor is not wired).
 
 ### 4. Act
 

@@ -1,7 +1,7 @@
 ---
 title: "hKask Wallet Crate — Architectural Specification"
 audience: [architects, developers]
-last_updated: 2026-06-30
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Application"
@@ -10,10 +10,12 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 # hKask Wallet Crate — Architectural Specification
 
-**Date:** 2026-06-28
-**Project:** hKask v0.31.0
-**Status:** Phases 1–8 complete ✅ — Full wallet subsystem (types, storage, keystore, wallet crate, Regulation, services, CLI, API) built and tested
+**Date:** 2026-07-24
+**Project:** zed-kask v0.31.0 (hKask compiled in-process)
+**Status:** Wallet subsystem (types, storage, keystore, wallet crate, Regulation) built and tested. The standalone `hkask-api`, `hkask-cli`, and `hkask-services-wallet` surfaces have been **deleted** as part of the zed-kask in-process migration; the wallet now runs in-process with no service layer and no HTTP/CLI surface of its own.
 **Skills applied:** idiomatic-rust, essentialist, pragmatic-semantics, pragmatic-cybernetics, coding-guidelines
+
+**Architecture anchor:** [`zed-host-architecture-plan.md`](zed-host-architecture-plan.md) §2 (essentialist split), §11 (kask settings & credentials — D9b). zed-kask owns the editor, agent panel, inference routing, and the `CredentialsProvider` keystore. hKask plugs in via the guard layer (D4), in-process MCP (D1–D3), and `kask_bridge` (D8). `hkask-keystore` is trimmed to sovereignty crypto only; its storage backend has moved to zed's `CredentialsProvider` (D9b).
 
 ---
 
@@ -42,6 +44,8 @@ The hKask wallet is a **specialized sub-wallet** — one of several crypto walle
 - Process withdrawals (rJoules → USDC) back to user's primary wallet
 - Shielded deposits/withdrawals are deferred (no privacy port implemented in code yet)
 
+The wallet runs **in-process** inside zed-kask. There is no daemon, no HTTP API server, and no standalone CLI. Wallet operations are invoked by zed-kask surfaces (the kask panel, the `kask` admin CLI for backup/wallet/repair/admin only) and by MCP servers that hold an in-process handle to the wallet types.
+
 ### 1.2 What hKask Wallet Is NOT `[OUGHT-DECL]`
 
 - NOT a general-purpose crypto wallet — user's primary wallet (Phantom, HashPack, MetaMask) handles key storage, multi-chain asset management, DeFi
@@ -49,6 +53,7 @@ The hKask wallet is a **specialized sub-wallet** — one of several crypto walle
 - NOT a KYC/AML platform — headless constraint, P1 sovereignty
 - NOT a zkSNARK proof generator — privacy/zk integrations are deferred
 - NOT an on-chain rJoule token — rJoule is an internal accounting unit in SQLite
+- NOT a standalone service — the deleted `hkask-services-wallet` service layer, `hkask-api` REST surface, and `hkask-cli` `kask wallet` subcommands are **removed**. There is no `WalletService` orchestration layer; consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly.
 
 ---
 
@@ -74,6 +79,8 @@ hkask-wallet/
 │   └── hedera.rs           — HederaPort (feature-gated: "hedera")
 ```
 
+The crate layout is unchanged from the pre-fork hKask layout. What changed is the **consumption surface**: the deleted `hkask-services-wallet` (which composed `WalletManager` + `ApiKeyIssuer` + Regulation budget registration into a `WalletService`) is gone. In zed-kask, in-process consumers (the kask panel, the `kask` admin CLI, and MCP servers that need wallet state) compose these primitives directly.
+
 ### 2.2 Module Dependency Graph
 
 ```mermaid
@@ -88,8 +95,12 @@ graph TD
 
     subgraph "Dependencies (workspace)"
         TYPES["hkask-types"]
-        KS["hkask-keystore"]
+        KS["hkask-keystore<br/>(trimmed: sovereignty crypto only)"]
         STORE["hkask-storage"]
+    end
+
+    subgraph "zed-kask (host)"
+        CRED["CredentialsProvider<br/>(D9b — storage backend)"]
     end
 
     CHAIN --> TYPES
@@ -104,15 +115,17 @@ graph TD
     ISS --> KS
     ISS --> TYPES
     HED --> CHAIN
+    KS -.->|"storage backend delegated"| CRED
 
     style SIGN fill:#7c3aed,color:#fff
     style MGR fill:#2563eb,color:#fff
     style ISS fill:#2563eb,color:#fff
+    style CRED fill:#059669,color:#fff
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-001
-verified_date: 2026-07-12
-verified_against: crates/hkask-wallet/src/lib.rs, crates/hkask-ledger/src/lib.rs
+verified_date: 2026-07-24
+verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/docs/architecture/zed-host-architecture-plan.md
 status: VERIFIED
 -->
 
@@ -120,7 +133,7 @@ status: VERIFIED
 
 | Gate | Result |
 |------|--------|
-| **G1 — Exist** | 3 items pruned: `error.rs` (pass-through), `deposit_ref.rs` (merged into manager.rs), `TxHash` (moved to hkask-types). All surviving components encode behavior beyond direct calls. |
+| **G1 — Exist** | 3 items pruned: `error.rs` (pass-through), `deposit_ref.rs` (merged into manager.rs), `TxHash` (moved to hkask-types). All surviving components encode behavior beyond direct calls. The deleted `hkask-services-wallet` service layer does **not** reappear — its complexity was pass-through orchestration that the in-process consumers can compose directly. |
 | **G2 — Surface** | `chain.rs`: 7 (at threshold). `manager.rs`: 13 (justified — each method has distinct caller). `issuer.rs`: 6. `signing.rs`: 2. |
 | **G3 — Contract** | 0 pass-through abstractions. All traits add behavior beyond direct dependency calls. |
 
@@ -171,10 +184,12 @@ impl std::fmt::Debug for LoadedKey {
 
 ### 3.4 Configuration (Environment)
 
+> **Migration note `[OUGHT-DECL]`:** In zed-kask, data-service API keys (e.g. `HKASK_EODHD_API_KEY`) move from env vars into zed's `CredentialsProvider` under the kask credentials namespace (D9b — `kask://credentials/<service>`). The env vars below remain as a **fallback during the transition** (T3.0b / T6.3); precedence is explicit settings.json > keychain > env-var fallback. The sovereignty keys (DB passphrase, OCAP signing) also move to the kask namespace in `CredentialsProvider` (D5), so the trimmed `hkask-keystore` becomes a thin crypto-derivation layer over the shared `CredentialsProvider`.
+
 | Variable | Default | Description |
 |---|---|---|
 | `HKASK_DEPOSIT_REPAIR_MAX_INDEX` | `5` | Max derivation index scanned when repairing corrupted deposit address mappings (bounded to 100). |
-| `HKASK_EODHD_API_KEY` | _none_ | EODHD API key required for the EODHD price feed source (including composite sources). |
+| `HKASK_EODHD_API_KEY` | _none_ | EODHD API key required for the EODHD price feed source (including composite sources). **Transition fallback only** — prefer `kask://credentials/eodhd` via `CredentialsProvider` (D9b). |
 | `HEDERA_TREASURY_ACCOUNT` | _none_ | Enables Hedera chain execution when set (treasury account ID). If unset, Hedera chain port is not initialized. |
 | `HEDERA_MIRROR_NODE_URL` | `https://mainnet-public.mirrornode.hedera.com` | Hedera mirror node URL (used only when `HEDERA_TREASURY_ACCOUNT` is set). |
 | `HEDERA_CONSENSUS_NODE_URL` | `https://35.232.244.145:50211` | Hedera consensus node gRPC URL (used only when `HEDERA_TREASURY_ACCOUNT` is set). |
@@ -214,8 +229,8 @@ graph TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-002
-verified_date: 2026-07-12
-verified_against: crates/hkask-wallet/src/lib.rs, crates/hkask-ledger/src/lib.rs
+verified_date: 2026-07-24
+verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/crates/hkask-ledger/src/lib.rs
 status: VERIFIED
 -->
 
@@ -227,11 +242,14 @@ status: VERIFIED
 sequenceDiagram
     participant Caller
     participant Signing as signing.rs
-    participant Keystore as hkask-keystore
+    participant Keystore as hkask-keystore (trimmed)
+    participant Cred as CredentialsProvider (D9b)
     participant Memory
 
     Caller->>Signing: sign_withdrawal(Hedera, tx_bytes)
     Signing->>Keystore: resolve_treasury_key(Hedera)
+    Keystore->>Cred: read kask://credentials/treasury (D5)
+    Cred-->>Keystore: secret bytes
     Keystore-->>Signing: Zeroizing<Vec<u8>> (32 bytes)
     Note over Signing,Memory: Key material exists in memory
     Signing->>Signing: LoadedKey::from_zeroizing → Zeroizing<[u8; 32]>
@@ -242,8 +260,8 @@ sequenceDiagram
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-003
-verified_date: 2026-07-12
-verified_against: crates/hkask-wallet/src/lib.rs, crates/hkask-ledger/src/lib.rs
+verified_date: 2026-07-24
+verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/docs/architecture/zed-host-architecture-plan.md
 status: VERIFIED
 -->
 
@@ -258,6 +276,7 @@ status: VERIFIED
 | **Constant-time ops** | `subtle` crate for sensitive comparisons | Timing side channels |
 | **Feature gates** | Chain SDKs behind Cargo features | Reduced compile-time attack surface |
 | **Mock ports** | Chain interactions testable without real keys | Test coverage of security-critical paths |
+| **Keystore trimming (D5/D9b)** | `hkask-keystore` derives crypto only; storage backend is zed's `CredentialsProvider` (OS keychain) | Secret-at-rest handled by audited zed keystore, not a parallel hKask store |
 
 ### 4.4 Security Invariant Checklist
 
@@ -268,7 +287,7 @@ status: VERIFIED
 | MUST-1 | Seed never in plain memory beyond Zeroizing scope | ✅ `Zeroizing<Vec<u8>>` on all derived key material |
 | MUST-2 | Seed never in logs, error messages, or Debug output | ✅ `LoadedKey` Debug shows `[REDACTED]` |
 | MUST-3 | Seed derivation always uses domain-separated HKDF contexts | ✅ `TREASURY_HEDERA`, `WALLET_SEED` |
-| MUST-4 | Signing requires user consent (P2 Affirmative Consent) | 🔶 Deferred to Phase 6 (ConsentManager gate) |
+| MUST-4 | Signing requires user consent (P2 Affirmative Consent) | 🔶 Deferred to the in-process consent gate (guard layer, D4) |
 | MUST-5 | Private keys never serialized to disk unencrypted | ✅ API key private keys returned once, never stored |
 | MUST-6 | All cryptographic comparisons use constant-time equality | 🔶 Deferred (subtle crate available, not yet wired) |
 | MUST-7 | No branching on secret data | ✅ Signing path is linear, no secret-dependent branches |
@@ -276,6 +295,7 @@ status: VERIFIED
 | MUST-9 | No Clone on secret-bearing types | ✅ `LoadedKey` has no Clone; `Zeroizing` prevents Copy |
 | MUST-10 | Balance invariant: sum(ledger deltas) == current_balance | 🔶 Deferred to property test (proptest) |
 | MUST-11 | No key material leaves signing.rs | ✅ API returns `Vec<u8>` (signature), never key bytes |
+| MUST-12 | Sovereignty keys live in zed's `CredentialsProvider` kask namespace (D5/D9b), not a parallel hKask keychain store | 🔶 Migration in flight (T-A0); env-var fallback active during transition |
 
 #### SHOULD (Strongly Recommended) `[OUGHT-DECL]`
 
@@ -302,7 +322,7 @@ status: VERIFIED
 | Dependency | Justification | Risk |
 |-----------|---------------|------|
 | `hkask-types` | Domain types (workspace) | None — internal |
-| `hkask-keystore` | Key derivation (workspace) | None — internal |
+| `hkask-keystore` | Sovereignty crypto derivation only (workspace, trimmed) | None — internal |
 | `hkask-storage` | Persistence (workspace) | None — internal |
 | `reqwest` | HTTP for Hedera mirror node (feature-gated) | Medium — TLS dep (rustls) |
 | `ed25519-dalek` | Key construction from seed bytes | Low — already in keystore |
@@ -311,6 +331,8 @@ status: VERIFIED
 | `thiserror` | Error derive | Low — already in types |
 | `serde` / `serde_json` | Serialization | Low — already in types |
 | `tokio` | Async runtime | Low — already in agents |
+
+> The trimmed `hkask-keystore` no longer owns a storage backend; it derives sovereignty crypto (OCAP signing, DB passphrase, internal-secret derivation with versioning) and delegates at-rest storage to zed-kask's `CredentialsProvider` (D9b). This removes a parallel secret store and aligns with zed's existing keychain pattern.
 
 ---
 
@@ -329,16 +351,15 @@ This section is intentionally minimal until privacy ports are introduced.
 All namespaces registered in `CANONICAL_NAMESPACES` (`hkask-types::event`).
 
 **Self-healing note:** wallet-level repairs are intentionally conservative and
-local to `WalletManager`. Cross-domain or backoff-based healing should be
-centralized in a service-layer `SelfHealer` so it can coordinate across
-storage, chain ports, and curator escalation. Deposit address repair scans are
-bounded by `HKASK_DEPOSIT_REPAIR_MAX_INDEX` (default: 5, max: 100).
+local to `WalletManager`. Cross-domain or backoff-based healing is centralized
+in `hkask-services-self-heal` so it can coordinate across storage, chain ports,
+and curator escalation. Deposit address repair scans are bounded by
+`HKASK_DEPOSIT_REPAIR_MAX_INDEX` (default: 5, max: 100).
 
 | Operation | Module | Span Namespace | Verb | Phase | Status |
 |-----------|--------|---------------|------|-------|--------|
 | Deposit address derived | `manager.rs` | `reg.wallet.deposit` | `derived` | Act | ✅ |
 | Deposit detected (transparent) | `chain.rs` → `manager.rs` | `reg.wallet.deposit` | `detected` | Sense | ✅ |
-
 | Deposit credited | `manager.rs` | `reg.wallet.balance` | `credited` | Act | ✅ |
 | Deposit address unresolvable | `manager.rs` | `reg.heal` | `wallet_deposit_address_unresolvable` | Sense | ✅ |
 | Deposit address repair (single-wallet) | `manager.rs` | `reg.heal` | `wallet_deposit_address_repaired` | Act | ✅ |
@@ -374,33 +395,32 @@ bounded by `HKASK_DEPOSIT_REPAIR_MAX_INDEX` (default: 5, max: 100).
 
 ```mermaid
 graph TD
-    subgraph "AgentService (sole owner)"
-        WM["WalletManager<br/>chain_ports: HashMap<ChainId, Box<dyn ChainPort>><br/>wallet_seed: Zeroizing<[u8; 32]>"]
-                ISS["ApiKeyIssuer<br/>wallet_store: Arc<WalletStore><br/>wallet_seed: Zeroizing<[u8; 32]>"]
-                SIGN["signing.rs (stateless)<br/>no owned key material"]
-            end
+    subgraph "In-process owners (zed-kask surfaces)"
+        PANEL["Kask Panel / kask admin CLI<br/>in-process handle"]
+        MCP["MCP servers (wallet-aware)<br/>in-process handle"]
+    end
 
-            subgraph "WalletManager Internals"
-                CP["HashMap<ChainId, Box<dyn ChainPort>>"]
-                WS["Arc<WalletStore>"]
+    subgraph "Wallet primitives (sole-owned state)"
+        WM["WalletManager<br/>chain_ports: HashMap<br/>wallet_seed: Zeroizing"]
+        ISS["ApiKeyIssuer<br/>wallet_store: Arc<br/>wallet_seed: Zeroizing"]
+        SIGN["signing.rs (stateless)<br/>no owned key material"]
+    end
+
+    subgraph "WalletManager Internals"
+        CP["HashMap<ChainId, Box<dyn ChainPort>>"]
+        WS["Arc<WalletStore>"]
     end
 
     subgraph "Shared"
         Regulation["CyberneticsLoop<br/>Arc<WalletStore> (read-only)"]
     end
 
-    subgraph "Surfaces (borrow)"
-        CLI["ReplState<br/>&WalletService"]
-        API["ApiState<br/>&WalletService"]
-    end
-
+    PANEL --> WM
+    MCP --> WM
     WM --> CP
-    WM --> PP
     WM --> WS
     ISS --> WS
     Regulation --> WS
-    CLI --> WM
-    API --> WM
     WM --> SIGN
     ISS --> SIGN
 
@@ -410,8 +430,8 @@ graph TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-004
-verified_date: 2026-07-12
-verified_against: crates/hkask-wallet/src/lib.rs, crates/hkask-ledger/src/lib.rs
+verified_date: 2026-07-24
+verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/docs/architecture/zed-host-architecture-plan.md
 status: VERIFIED
 -->
 
@@ -420,7 +440,7 @@ status: VERIFIED
 - `WalletStore` is `Arc<>` — shared with Regulation for algedonic monitoring (justified)
 - `signing.rs` is stateless — no owned data, no long-lived keys
 - Treasury keys NEVER held long-term — loaded per signing operation, zeroized on drop
-- Surfaces borrow `&WalletService`, never own wallet components
+- In-process consumers (kask panel, kask admin CLI, wallet-aware MCP servers) hold a handle to `WalletManager` / `ApiKeyIssuer` directly. There is no `WalletService` orchestration layer and no `ReplState`/`ApiState` surface wrapper — those belonged to the deleted `hkask-services-wallet` / `hkask-cli` / `hkask-api` crates.
 - `ApiKeyIssuer` shares `Arc<WalletStore>` with WalletManager (both need write access to API key tables)
 
 ---
@@ -433,18 +453,18 @@ status: VERIFIED
 |-------|-------|--------|-------|-----------------|
 | 1 | `hkask-types` | ✅ | 11 | `RJoule`, `ChainId`, `PrivacyMode`, `ApiKeyCapability`, `WalletError` (15 variants), `TxHash`, 14 Regulation spans, 3 wallet SignalMetrics |
 | 2 | `hkask-storage` | ✅ | 34 | `WalletStore` — 5 tables, 16 methods, deposit addresses keyed by (wallet, chain, privacy) with unique (chain, privacy, address), anti-replay deposit references, MUST-10 property test |
-| 3 | `hkask-keystore` | ✅ | 6 | `resolve_treasury_key(chain)`, `resolve_wallet_seed()`, `sign_api_key_capability()` |
+| 3 | `hkask-keystore` (trimmed) | ✅ | 6 | `resolve_treasury_key(chain)`, `resolve_wallet_seed()`, `sign_api_key_capability()` — sovereignty crypto only; storage backend → `CredentialsProvider` (D9b) |
 | 4 | `hkask-wallet` | ✅ | 13 | `ChainPort`, `signing.rs` (LoadedKey + redacted Debug), `WalletManager` (13 methods + Regulation span emission), `ApiKeyIssuer` (Regulation span emission) |
 | 5 | `hkask-regulation` | ✅ | 11 | `WalletBackedBudget`, `WalletEnergyEstimator`, `GasBudgetManager` dual-map, algedonic alerts (balance + key health), Regulation span emission wired |
-| 6 | `hkask-services-wallet` | ✅ | 35 | `WalletService` — 13 methods composing WalletManager + ApiKeyIssuer + Regulation budget registration |
-| 7 | `hkask-cli` | ✅ | 25 | `kask wallet` — 8 subcommands (balance, deposit-address, deposit-reference, history, key create/list/revoke, withdraw) |
-| 8 | `hkask-api` | ✅ | 2 | 8 wallet REST endpoints + `ApiKeyAuthService` middleware (Ed25519 Bearer token verification) |
+
+> **Removed phases `[IS-DECL]`:** The pre-fork phases 6 (`hkask-services-wallet` — `WalletService`), 7 (`hkask-cli` — `kask wallet` subcommands), and 8 (`hkask-api` — wallet REST endpoints + `ApiKeyAuthService` middleware) are **deleted**. Their orchestration responsibilities are absorbed by in-process consumers composing `WalletManager` + `ApiKeyIssuer` + Regulation directly. The `kask` admin CLI (zed-kask) provides backup/wallet/repair/admin operations only — it is not a revival of the deleted `hkask-cli` wallet subcommand surface.
 
 ### 8.2 Remaining Phases
 
 | Phase | Scope | Dependencies |
 |-------|-------|-------------|
 | 4 (chain ports) | `hedera.rs` — feature-gated implementation | reqwest |
+| D9b migration (T3.0b / T-A0) | Move data-service API keys + sovereignty keys off env vars / parallel keychain → zed `CredentialsProvider` kask namespace | `CredentialsProvider`, `kask_bridge` (D8) |
 
 ### 8.3 Test Inventory
 
@@ -455,10 +475,9 @@ status: VERIFIED
 | `hkask-keystore` | 6 (6 wallet) | `P3-keystore` |
 | `hkask-wallet` | 13 | `P4-signing`, `P4-manager`, `P4-issuer` |
 | `hkask-regulation` | 11 (1 wallet_budget) | `P5-regulation-wallet` |
-| `hkask-services-wallet` | 35 (6 wallet) | `svc-wallet-001`–`006` |
-| `hkask-cli` | 25 (0 wallet-specific) | (existing CLI tests) |
-| `hkask-api` | 2 (0 wallet-specific) | (existing API tests) |
-| **Total** | **137** (44 wallet-specific) | |
+| **Total (surviving)** | **75** (44 wallet-specific) | |
+
+> The deleted `hkask-services-wallet` (35 tests), `hkask-cli` (25 tests), and `hkask-api` (2 tests) rows are removed from the inventory. Their coverage obligations transfer to in-process consumer tests in zed-kask.
 
 ---
 
@@ -475,13 +494,15 @@ status: VERIFIED
 | Q7: Key revocation — on-chain vs off-chain | **Off-chain (database flag)** | `revoked_at` timestamp in `api_keys` table. Unspent rJoules returned to wallet. |
 | Q8: Recovery from seed (P1 sovereignty) | **Deterministic derivation** | All keys derived from master passphrase via HKDF. Same passphrase → same keys. OCAP signing key fails closed if master key is unavailable. |
 | Q9: Hinkal support | **Deferred** | Current code is Hedera-only (`ChainId::Hedera`). Privacy ports are not implemented yet. |
+| Q10: Service layer for wallet | **Removed** ✅ | The deleted `hkask-services-wallet` / `hkask-api` / `hkask-cli` wallet surfaces are not revived. In-process consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly (essentialist G1 — the service layer was pass-through). |
+| Q11: Keystore storage backend | **Delegated to zed `CredentialsProvider` (D9b)** ✅ | `hkask-keystore` is trimmed to sovereignty crypto derivation only. At-rest storage moves to zed's audited keychain under the kask namespace, eliminating a parallel secret store. |
 
 ---
 
 ## 10. Verification Commands
 
 ```bash
-# Per-crate verification
+# Per-crate verification (run from the zed-kask workspace root)
 cargo check -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-wallet
 cargo test -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-wallet
 cargo clippy -p hkask-wallet -- -D warnings
@@ -496,6 +517,8 @@ grep -r "todo!\|unimplemented!\|#\[deprecated\]" crates/hkask-wallet/ && echo "V
 grep -r "\.unwrap()" crates/hkask-wallet/src/ && echo "VIOLATION: unwrap in library code" || echo "CLEAN"
 ```
 
+> **Note:** The deleted `hkask-api`, `hkask-cli`, and `hkask-services-wallet` crates no longer exist in the workspace; any `cargo` invocation referencing them will fail. The `kask` admin CLI (zed-kask) is a separate, slimmer surface for backup/wallet/repair/admin only.
+
 ---
 
-*ℏKask v0.31.0 — Wallet Specification 2026-06-12*
+*zed-kask v0.31.0 — Wallet Specification 2026-07-24*

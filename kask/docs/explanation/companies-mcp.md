@@ -1,12 +1,11 @@
 ---
 title: "Companies MCP Server — User Guide"
 audience: [analysts, developers, agents]
-last_updated: 2026-07-17
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Companies"
 mds_categories: [domain, lifecycle]
-last-verified-against: "fae4d94"
 ---
 
 # Companies MCP Server — User Guide
@@ -17,30 +16,28 @@ Task-oriented procedures for company valuation, forecasting, and portfolio analy
 
 ## Prerequisites
 
-1. Build hKask: `cargo build --release` (see [Install and Configure](install-and-configure.md)).
-2. Obtain API keys from Financial Modeling Prep and EOD Historical Data.
-3. Export the required credentials:
+The companies server is a builtin in-process MCP server registered inside the zed-kask editor (D1–D3). It is not started via a standalone CLI; zed-kask loads it automatically as part of its MCP server set. To use it:
 
-```bash
-export HKASK_FMP_API_KEY=your_fmp_key
-export HKASK_EODHD_API_KEY=your_eodhd_key
+1. Build zed-kask: `cargo build --release` (see the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for build and integration details).
+2. Obtain API keys from Financial Modeling Prep and EOD Historical Data.
+3. Configure the credentials through zed-kask's `CredentialsProvider` (D9) under the kask namespace — the companies server reads them at in-process startup via the `SecretsPort` adapter:
+
+```
+HKASK_FMP_API_KEY=your_fmp_key
+HKASK_EODHD_API_KEY=your_eodhd_key
 ```
 
 4. Optional research providers (enable `research_search`):
 
-```bash
-export HKASK_EXA_API_KEY=your_exa_key
-export HKASK_TAVILY_API_KEY=your_tavily_key
-export HKASK_BRAVE_API_KEY=your_brave_key
+```
+HKASK_EXA_API_KEY=your_exa_key
+HKASK_TAVILY_API_KEY=your_tavily_key
+HKASK_BRAVE_API_KEY=your_brave_key
 ```
 
-5. Start the server:
+5. Open the zed-kask agent panel and invoke the companies tools from a native agent or via the kask panel (D10). The server is already running in-process; there is no `kask mcp start` step.
 
-```bash
-kask mcp start companies
-```
-
-Tools are invoked by an agent holding a companies capability token (via `kask chat` or any MCP client pointed at the server). The examples below show the tool name and the arguments to supply.
+Tools are invoked by an agent holding a companies capability token. The examples below show the tool name and the arguments to supply.
 
 ## How to fetch financial statements
 
@@ -277,7 +274,7 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `permission_denied` | No `DelegationToken` for the companies capability | Launch the agent with a companies capability token; see [Sovereignty and Observability](sovereignty-and-observability.md) |
+| `permission_denied` | No `DelegationToken` for the companies capability | Invoke the companies tools from an agent session that holds a companies capability token; see [Sovereignty and Observability](sovereignty-and-observability.md) |
 | `invalid_argument: symbol must be ...` | Symbol exceeds 32 chars or contains invalid characters | Use a valid exchange symbol; international symbols are supported (e.g. `VOD.L`) |
 | Provider returns stale data | Provider flagged chronically stale (>90 days) | Call `result_feedback` with a low score to update the `LearningState`; the flaky override reroutes future calls |
 | `forecast task failed` | Portfolio SQLite error or owner mismatch | Verify the `forecast_id` belongs to the authenticated owner; forecasts are owner-scoped |
@@ -287,6 +284,6 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 
 - [Companies MCP Server Reference](../reference/mcp-servers/companies.md) — full tool catalog, configuration, and behavioral boundaries
 - [Tool Routing and Dispatch Flow](../reference/mcp-servers/companies.md) — DIAG-RF-004 dispatch diagram (inline)
-- [Install and Configure](install-and-configure.md) — build and profile setup
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams
 - [Sovereignty and Observability](sovereignty-and-observability.md) — capability tokens and Regulation alerts
-- [Superforecasting: Layered Model](../explanation/forecasting-and-scenarios.md) — three-layer forecasting architecture
+- [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture

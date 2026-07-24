@@ -1,12 +1,11 @@
 ---
 title: "Magna Carta — Reference"
 audience: [developers, operators, auditors]
-last_updated: 2026-07-07
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, trust, curation]
-last-verified-against: "3d1a876f"
 ---
 
 # Magna Carta Reference
@@ -15,6 +14,14 @@ The Magna Carta is hKask's charter of liberties. It defines four foundational pr
 module, agent, and pod must honour. This document is a **reference**: it states what exists, how it
 is enforced, and how to verify it. It does not explain *why* (see `docs/architecture/core/magna-carta.md`
 for rationale) or *how to fix violations* (see `docs/how-to/audit-sovereignty.md`).
+
+> **Hosting note (v0.31.0):** hKask now runs in-process inside zed-kask. The standalone `kask` CLI,
+HTTP API server (`hkask-api`), and daemon process have been **deleted**. Enforcement traces below
+reference the surviving in-process equivalents: `hkask-pods`, `hkask-capability`, `hkask-guard`,
+`hkask-regulation`, and the guard layer wired into zed-kask's inference path (D4). Where a trace
+previously pointed at `hkask-api::routes::sovereignty` or `hkask-cli::commands::sovereignty`, the
+functionality now lives in the in-process sovereignty checker invoked from the agent loop and the
+kask panel (D10). See [`docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md).
 
 ## Table of Contents
 
@@ -60,8 +67,8 @@ it cannot be violated because the type system prevents it.
 | `ConsentManager` | `hkask-pods::consent` | Production implementation: SQLite-backed, Regulation-span-emitting |
 | `PodContext::require_sovereignty()` | `hkask-pods::pod::context` | Called before every data access; fail-closed on missing checker |
 | `SovereigntyBoundaryStore` | `hkask-storage::sovereignty` | SQL persistence of user boundaries |
-| `sovereignty_router()` | `hkask-api::routes::sovereignty` | `GET/POST /sovereignty` endpoints |
-| `kask sovereignty` | `hkask-cli::commands::sovereignty` | CLI: `status`, `grant`, `revoke`, `check` |
+| In-process sovereignty gate | `hkask-pods::pod::context` + zed-kask agent loop | Replaces the deleted `hkask-api::routes::sovereignty` HTTP endpoints; sovereignty is checked in-process before any data access |
+| Kask panel sovereignty view | `crates/kask_panel` (D10) | Replaces the deleted `hkask-cli::commands::sovereignty` CLI surface; status / grant / revoke / check are exposed through the panel UI |
 
 ### What Happens When Violated
 
@@ -86,16 +93,24 @@ Data categories and their defaults:
 
 ### How to Audit
 
+The deleted `kask sovereignty` CLI has been replaced by the in-process kask panel (D10) and the
+`magna-carta-verifier` skill. The commands below describe the panel/skill surfaces; there is no
+standalone CLI binary.
+
 ```bash
-# View sovereignty status for current user
-kask sovereignty status
+# View sovereignty status for current user (kask panel, D10)
+#   Open the kask panel → Sovereignty tab → Status
 
-# Verify P1 assertions via structural audit
-kask sovereignty verify --principle user_sovereignty
-kask sovereignty verify --principle user_sovereignty --json
+# Verify P1 assertions via structural audit (magna-carta-verifier skill)
+#   Skill reads manifests from .agents/skills/magna-carta-verifier/manifests/
+#   Invoke through the agent panel or skill registry:
+#       magna-carta-verifier --principle user_sovereignty
+#       magna-carta-verifier --principle user_sovereignty --json
 
-# Check a specific access (from CLI)
-kask sovereignty check --category episodic_memory --requester webid://alice
+# Check a specific access (in-process, via the agent loop)
+#   PodContext::require_sovereignty(category, requester) is called before
+#   every data access; failures surface as SovereigntyDenied errors in the
+#   agent panel and reg.sovereignty spans.
 ```
 
 ---
@@ -138,19 +153,23 @@ kask sovereignty check --category episodic_memory --requester webid://alice
 
 ### How to Audit
 
+The deleted `kask sovereignty` CLI and `hkask-api` HTTP endpoints have been replaced by the
+in-process kask panel (D10) and the `magna-carta-verifier` skill.
+
 ```bash
-# Grant consent for a category
-kask sovereignty grant --category episodic_memory --agent curator
+# Grant consent for a category (kask panel, D10)
+#   Open the kask panel → Sovereignty tab → Grant
+#   Equivalent in-process call: ConsentManager::grant_consent(webid, category, agent)
 
-# Revoke consent
-kask sovereignty revoke --category episodic_memory
+# Revoke consent (kask panel, D10)
+#   Open the kask panel → Sovereignty tab → Revoke
+#   Equivalent in-process call: ConsentManager::revoke_consent(webid, category)
 
-# Verify P2 assertions
-kask sovereignty verify --principle affirmative_consent
+# Verify P2 assertions (magna-carta-verifier skill)
+#   magna-carta-verifier --principle affirmative_consent
 
-# Check API consent status
-curl -H "Authorization: Bearer $HKASK_API_KEY" \
-  http://localhost:3000/sovereignty
+# Check consent state in-process (no HTTP API; hkask-api is deleted)
+#   ConsentManager::has_consent(webid, category) — fail-closed via unwrap_or(false)
 ```
 
 ---
@@ -185,15 +204,19 @@ implemented in `hkask-guard` and aligned with OWASP Top 10 for LLM Applications.
 
 ### How to Audit
 
-```bash
-# Verify P3 assertions
-kask sovereignty verify --principle generative_space
+The deleted `kask sovereignty` and `kask settings` CLI commands have been replaced by the
+in-process kask panel (D10) and the `magna-carta-verifier` skill.
 
-# List exposed inference settings
-kask settings show
+```bash
+# Verify P3 assertions (magna-carta-verifier skill)
+#   magna-carta-verifier --principle generative_space
+
+# List exposed inference settings (kask panel, D10, or KaskSettings page, D9)
+#   Open the kask panel → Inference tab, or Settings → Kask section
+#   In-process: InferenceConfig exposes temperature, top_k, top_p, repeat_penalty
 
 # Verify guard configuration (structural — no runtime guard command exists)
-kask sovereignty verify --principle generative_space
+#   magna-carta-verifier --principle generative_space
 ```
 
 ---
@@ -222,8 +245,8 @@ No code path can access resources without going through both gates.
 | `GovernedTool<P>` | `hkask-regulation::governed_tool` | Membrane wrapping `ToolPort`: OCAP check → gas reserve → Regulation span → delegate → settle |
 | `GovernedTool::invoke()` | `hkask-regulation::governed_tool` | Step 0: verify token signature; Step 1: exact-match or domain-match capability; Step 2: gas budget; Step 3–5: execute, settle, emit |
 | `PodContext::require_capability()` | `hkask-pods::pod::context` | Verifies token signature + delegated_to match; fail-closed on missing checker |
-| `DaemonClient::capability_query()` | `hkask-mcp::daemon` | Server-side capability check at startup (Gate 3) |
-| `verify_startup_gates()` | `hkask-mcp::startup` | Gate 1 (auth) → Gate 2 (assignment) → Gate 3 (capability per tool) |
+| In-process capability gate | `hkask-capability::verification::checker` + zed-kask guard layer (D4) | Replaces the deleted `DaemonClient::capability_query()` from `hkask-mcp::daemon`; capability verification now happens in-process at the GovernedTool membrane and the inference guard layer |
+| `verify_startup_gates()` | `hkask-mcp::startup` | Gate 1 (auth) → Gate 2 (assignment) → Gate 3 (capability per tool); invoked in-process when an MCP server is loaded by zed's `context_server` host |
 
 ### Token Properties
 
@@ -232,7 +255,7 @@ No code path can access resources without going through both gates.
 | **Unforgeable** | Ed25519 signature must verify against a trusted root; `enforce_roots: true` rejects self-signed tokens from unknown keys |
 | **Attenuating** | `SYSTEM_MAX_ATTENUATION` limits delegation depth; `SYSTEM_MAX_RECURSION` limits recursive delegation |
 | **No admin override** | No "god token" exists; all access goes through the same `CapabilityChecker::verify()` gate |
-| **Bearer-token gate** | API middleware uses `CapabilityChecker::with_trusted_roots(vec![])` — empty roots reject ALL tokens (fail-closed for API auth misconfiguration) |
+| **Bearer-token gate** | In-process callers (agent loop, MCP server dispatch) use `CapabilityChecker::with_trusted_roots(vec![])` — empty roots reject ALL tokens (fail-closed for misconfiguration). The deleted `hkask-api` HTTP middleware is no longer the bearer gate; the in-process GovernedTool membrane is |
 
 ### The GovernedTool Membrane
 
@@ -264,15 +287,18 @@ Caller → GovernedTool.invoke(server, tool, args, token)
 
 ### How to Audit
 
+The deleted `kask sovereignty`, `kask capability`, and `kask pod` CLI commands have been replaced
+by the in-process kask panel (D10) and the `magna-carta-verifier` skill.
+
 ```bash
-# Verify P4 assertions
-kask sovereignty verify --principle clear_boundaries
+# Verify P4 assertions (magna-carta-verifier skill)
+#   magna-carta-verifier --principle clear_boundaries
 
-# Inspect delegation token
-kask capability inspect --token <token_id>
+# Inspect delegation token (kask panel, D10 → Capability tab)
+#   Equivalent in-process call: CapabilityChecker::verify(token) → TokenInfo
 
-# Check active pod's capability bindings
-kask pod status <pod_id> --verbose
+# Check active pod's capability bindings (kask panel, D10 → Pod tab)
+#   Equivalent in-process call: PodDeployment::capability_checker().bindings()
 ```
 
 ---
@@ -304,15 +330,17 @@ kask pod status <pod_id> --verbose
 
 ### How to Audit
 
-```bash
-# List all active pods
-kask pod list
+The deleted `kask pod` CLI has been replaced by the in-process kask panel (D10).
 
-# Inspect a pod's tool bindings
-kask pod status <pod_id>
+```bash
+# List all active pods (kask panel, D10 → Pod tab)
+#   Equivalent in-process call: ActivePods::list()
+
+# Inspect a pod's tool bindings (kask panel, D10 → Pod tab → select pod)
+#   Equivalent in-process call: PodDeployment::tool_binding()
 
 # Verify Regulation isolation (per-pod variety counters)
-# Check reg.* spans for pod_id prefix
+#   Check reg.* spans for pod_id prefix via the kask panel or RegulationLedger::variety()
 ```
 
 ---
@@ -322,48 +350,52 @@ kask pod status <pod_id>
 ### Magna Carta Verification
 
 The `magna-carta-verifier` skill runs structural audits against the codebase, loaded from
-`.agents/skills/magna-carta-verifier/manifests/`:
+`.agents/skills/magna-carta-verifier/manifests/`. The deleted `kask sovereignty verify` CLI command
+has been replaced by invoking this skill through the agent panel or skill registry:
 
 ```bash
-# Full verification report
-kask sovereignty verify
+# Full verification report (magna-carta-verifier skill)
+#   Invoke via agent panel or skill registry; no standalone CLI binary.
 
 # Verify a specific principle
-kask sovereignty verify --principle user_sovereignty
-kask sovereignty verify --principle affirmative_consent
-kask sovereignty verify --principle generative_space
-kask sovereignty verify --principle clear_boundaries
+#   magna-carta-verifier --principle user_sovereignty
+#   magna-carta-verifier --principle affirmative_consent
+#   magna-carta-verifier --principle generative_space
+#   magna-carta-verifier --principle clear_boundaries
 
 # JSON output for CI/automation
-kask sovereignty verify --json
+#   magna-carta-verifier --json
 ```
 
 ### Regulation Span Audit
 
-P1–P4 enforcement is observable through Regulation spans:
+P1–P4 enforcement is observable through Regulation spans. The deleted `kask regulation` CLI has
+been replaced by the in-process kask panel (D10) and programmatic `RegulationLedger` queries:
 
 ```bash
-# View sovereignty-related spans
-kask regulation alerts
+# View sovereignty-related spans (kask panel, D10 → Regulation tab)
+#   Equivalent in-process call: RegulationLedger::alerts().await
 
 # View tool invocation spans (OCAP enforcement)
-kask regulation alerts
+#   Equivalent in-process call: RegulationLedger::query_algedonic(span=reg.tool.*)
 
 # View P4 startup gate spans
-kask regulation alerts
+#   Equivalent in-process call: RegulationLedger::query_algedonic(span=reg.mcp.startup.*)
 ```
 
 ### Consent Management
 
+The deleted `kask sovereignty` CLI has been replaced by the in-process kask panel (D10):
+
 ```bash
-# Grant consent for a data category
-kask sovereignty grant --category episodic_memory --agent curator
+# Grant consent for a data category (kask panel, D10 → Sovereignty tab → Grant)
+#   Equivalent in-process call: ConsentManager::grant_consent(webid, category, agent)
 
-# Revoke consent
-kask sovereignty revoke --category episodic_memory
+# Revoke consent (kask panel, D10 → Sovereignty tab → Revoke)
+#   Equivalent in-process call: ConsentManager::revoke_consent(webid, category)
 
-# Check current consent state
-kask sovereignty status
+# Check current consent state (kask panel, D10 → Sovereignty tab → Status)
+#   Equivalent in-process call: ConsentManager::has_consent(webid, category)
 ```
 
 ---
@@ -389,7 +421,7 @@ kask sovereignty status
 | Token signature invalid | Tool call rejected | `ToolPortError::CapabilityDenied` |
 | Token expired | Tool call rejected | `CapabilityChecker::verify_with_time()` returns `false` |
 | Gas budget exhausted | Tool call rejected | `ToolPortError::EnergyBudgetExceeded` |
-| API key without budget | Request rejected | `reg.gas.depleted` span emitted |
+| API key without budget | N/A — `hkask-api` HTTP server is deleted; in-process callers settle gas via `GovernedTool`/`GovernedInference` | `reg.gas.depleted` span emitted |
 | Gate 1 (auth) fails | MCP server refuses to start | `McpError::Auth` |
 | Gate 2 (assignment) fails | MCP server refuses to start | `McpError::RoleAssignment` |
 | Gate 3 (capability denied) | Server starts, denied tools unavailable | `StartupGateResult::denied_tools` non-empty |

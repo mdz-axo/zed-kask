@@ -2686,20 +2686,29 @@ pub trait ThreadMemoryPort: Send + Sync {
 /// Set by the zed-kask composition root at startup. When set, thread turn
 /// completion triggers memory ingestion. When `None` (upstream zed, or before
 /// the composition root runs), turn completion is a no-op for memory.
-static MEMORY_PORT: std::sync::OnceLock<Option<Arc<dyn ThreadMemoryPort>>> =
-    std::sync::OnceLock::new();
+///
+/// Uses a `Mutex` (not `OnceLock`) so the port can be replaced after startup —
+/// the composition root installs a logging port immediately, then upgrades to
+/// a real port once the Zed user resolves and the userpod identity is known.
+static MEMORY_PORT: std::sync::Mutex<Option<Arc<dyn ThreadMemoryPort>>> =
+    std::sync::Mutex::new(None);
 
 /// Set the global thread memory port (D6 composition root).
 ///
-/// Called by zed-kask's app startup to wire the `kask_bridge::LoggingMemoryPort`
-/// into the thread completion path.
+/// Called by zed-kask's app startup to wire the `kask_bridge::BridgeMemoryPort`
+/// into the thread completion path. Can be called more than once — later calls
+/// replace the earlier port (e.g., upgrading from a logging port to a real
+/// memory port once the userpod identity is known).
 pub fn set_memory_port(port: Option<Arc<dyn ThreadMemoryPort>>) {
-    let _ = MEMORY_PORT.set(port);
+    *MEMORY_PORT.lock().expect("MEMORY_PORT poisoned") = port;
 }
 
 /// Get the global thread memory port, if set.
-pub(crate) fn memory_port() -> Option<&'static Arc<dyn ThreadMemoryPort>> {
-    MEMORY_PORT.get().and_then(|opt| opt.as_ref())
+///
+/// Returns an owned `Arc` clone so the caller doesn't hold the lock across
+/// an await point (the ingestion is fire-and-forget on a background task).
+pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
+    MEMORY_PORT.lock().expect("MEMORY_PORT poisoned").clone()
 }
 
 /// Context injector — enriches prompts with retrieved context (D11).
@@ -2793,9 +2802,16 @@ pub fn set_tool_router(router: Option<Arc<dyn crate::tool_router::ToolRouter>>) 
     let _ = TOOL_ROUTER.set(router);
 }
 
-/// Get the global tool router, if set.
+/// Get the global tool router. Returns the configured router if set via
+/// `set_tool_router`, otherwise returns the default `KeywordToolRouter`.
+/// Returns `None` only if explicitly set to `None` (upstream Zed mode — I2).
 pub(crate) fn tool_router() -> Option<&'static Arc<dyn crate::tool_router::ToolRouter>> {
-    TOOL_ROUTER.get().and_then(|opt| opt.as_ref())
+    let opt = TOOL_ROUTER.get_or_init(|| {
+        Some(Arc::new(crate::tool_router::LazyToolRouter::new())
+            as Arc<dyn crate::tool_router::ToolRouter>)
+    });
+    opt.as_ref()
+        .map(|arc| arc as &'static Arc<dyn crate::tool_router::ToolRouter>)
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

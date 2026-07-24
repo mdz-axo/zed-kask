@@ -529,6 +529,22 @@ fn main() {
         {
             let async_cx = cx.to_async();
 
+            // D6 (early): Install a logging memory port now so the global hook
+            // is set before any thread completes a turn. The port starts as a
+            // no-op (BridgeMemoryPort wrapping LoggingMemoryPort) and is replaced
+            // with a real port once the Zed user resolves (see the deferred task
+            // after AppState::set_global). `set_memory_port` uses a Mutex (not
+            // OnceLock), so the upgrade is a simple second call.
+            //
+            // This is hoisted out of the `if let Some(configured)` block below so
+            // it is always installed, even when no default LanguageModel is
+            // configured yet.
+            let logging_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
+                std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new());
+            let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(logging_memory));
+            agent::set_memory_port(Some(bridge_memory));
+            log::info!("hKask memory port wired (logging) — will upgrade when Zed user resolves");
+
             // D5: Inject the SecretsPort into hkask-keystore so sovereignty keys
             // are stored/read via zed's CredentialsProvider in the kask://credentials/<key>
             // namespace, not via the keyring crate's "hkask" service directly.
@@ -604,24 +620,9 @@ fn main() {
                 agent::set_manifest_executor(Some(executor));
                 log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
 
-                // D6: Wire the thread-to-memory ingestion port.
-                //
-                // The userpod identity is derived from the Zed login (User::username),
-                // which may not be available yet at startup (async auth). We install
-                // a LazyMemoryPort now (starts as a no-op logging port) and upgrade
-                // it to a RealMemoryPort once UserStore::current_user() resolves.
-                //
-                // This collapses the former `kask login <name>` onboarding step
-                // into a lookup: the userpod name = sanitize(User::username), and
-                // the WebID = WebID::for_userpod_name(&sanitized_username).
-                //
-                // When HKASK_DB_PATH is set, the upgraded port stores turns into
-                // episodic (Private, user perspective) + semantic (Shared,
-                // curator-accessible) memory. When not set, the port stays in
-                // logging mode (graceful degradation — logs and discards).
-                let lazy_memory = std::sync::Arc::new(kask_bridge::LazyMemoryPort::new());
-                agent::set_memory_port(Some(lazy_memory.clone()));
-                log::info!("hKask lazy memory port wired — will upgrade when Zed user resolves");
+                // D6: The LazyMemoryPort was installed above (before this block)
+                // so it is always available. The upgrade to RealMemoryPort happens
+                // in the deferred task after the Zed user resolves.
 
                 // D11: Wire the context injector for memory-based prompt enrichment.
                 //
@@ -860,6 +861,117 @@ fn main() {
             session: app_session,
         });
         AppState::set_global(app_state.clone(), cx);
+
+        // D6/D11/MCP-launch (deferred): Wait for the Zed user to resolve, then
+        // replace the logging memory port with a real one, wire the context
+        // injector, and launch MCP servers with the correct userpod identity.
+        //
+        // The userpod name is derived from User::username (the GitHub-style
+        // login from the Zed account) via sanitize_name(). This collapses the
+        // former `kask login <name>` onboarding into a lookup.
+        //
+        // If the user is already logged in (session restored), the upgrade
+        // happens immediately on the first watch tick. If not, the task waits
+        // until `authenticate()` (spawned below) completes.
+        {
+            let user_store = app_state.user_store.clone();
+            let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
+            let servers_to_start_clone = servers_to_start.clone();
+            cx.spawn(async move |cx| {
+                let mut current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
+
+                // Wait for the user to resolve.
+                while current_user.borrow().is_none() {
+                    // postage::watch::Receiver implements Stream — `.next()` yields
+                    // the latest value when it changes.
+                    if current_user.next().await.is_none() {
+                        // Stream ended (store dropped).
+                        break;
+                    }
+                }
+
+                let Some(user) = current_user.borrow().clone() else {
+                    log::warn!("Zed user stream ended without resolving — kask memory stays in logging mode");
+                    return;
+                };
+
+                let username = user.username.to_string();
+                let Some(userpod_name) = kask_bridge::userpod_name_from_username(&username) else {
+                    log::warn!("Zed username '{username}' sanitized to empty — kask memory stays in logging mode");
+                    return;
+                };
+
+                log::info!("Zed user resolved — kask userpod name: {userpod_name}");
+
+                // D6: Replace the logging memory port with a real one.
+                let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
+                let user_webid = hkask_types::WebID::for_userpod_name(&userpod_name);
+                let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
+                    .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
+
+                match kask_bridge::RealMemoryPort::from_env(
+                    user_webid,
+                    embedding_model,
+                    kask_settings.memory.consolidation_cadence_secs,
+                    kask_settings.memory.confidence_floor,
+                ) {
+                    Ok(Some(real)) => {
+                        let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> = std::sync::Arc::new(real);
+                        let bridge = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(real_memory.clone()));
+                        agent::set_memory_port(Some(bridge));
+                        log::info!("hKask memory port upgraded to RealMemoryPort (userpod: {userpod_name})");
+
+                        // D11: Wire the context injector now that the real memory port exists.
+                        // The injector shares the same memory port as the ingestion path.
+                        //
+                        // Note: set_context_injector uses OnceLock, so this is a one-shot.
+                        // If the user logs out and back in as a different user, the
+                        // injector is not re-wired.
+                        if kask_settings.memory.auto_inject {
+                            let injector = std::sync::Arc::new(kask_bridge::BridgeContextInjector::new(
+                                real_memory,
+                                kask_settings.memory.recall_limit,
+                                kask_settings.memory.recall_min_confidence,
+                            ));
+                            agent::set_context_injector(Some(injector));
+                            log::info!("hKask context injector wired (userpod: {userpod_name})");
+                        }
+                    }
+                    Ok(None) => {
+                        log::info!("HKASK_DB_PATH not set — kask memory stays in logging mode (userpod: {userpod_name})");
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to initialize RealMemoryPort for {userpod_name}: {e} — staying in logging mode");
+                    }
+                }
+
+                // Launch MCP servers with the resolved userpod identity.
+                if !servers_to_start_clone.is_empty() {
+                    let mcp_env = kask_settings.mcp_env(&userpod_name);
+                    for server_id in &servers_to_start_clone {
+                        let binary = format!("hkask-mcp-{server_id}");
+                        mcp_runtime_for_deferred
+                            .register_server(hkask_mcp::McpServer {
+                                id: server_id.to_string(),
+                                name: server_id.to_string(),
+                                tools: vec![],
+                            })
+                            .await;
+                        match mcp_runtime_for_deferred
+                            .start_server_with_env(server_id, &binary, mcp_env.clone())
+                            .await
+                        {
+                            Ok(()) => log::info!("Kask MCP server '{server_id}' started (userpod: {userpod_name})"),
+                            Err(e) => log::warn!(
+                                "Kask MCP server '{server_id}' failed to start: {e} \
+                                 — set HKASK_MCP_{}_BIN to the binary path",
+                                server_id.to_uppercase()
+                            ),
+                        }
+                    }
+                }
+            }).detach();
+        }
 
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);

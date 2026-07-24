@@ -1,7 +1,7 @@
 ---
 title: "Cognition and Replica — Fusion Design, Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,7 +10,9 @@ mds_categories: [domain, composition, lifecycle, curation]
 
 # Cognition and Replica
 
-This document consolidates four topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts. The fusion system design recommendations govern multi-model deliberation quality. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
+This document consolidates four topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts inside zed-kask. The fusion system design recommendations govern multi-model deliberation quality. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
+
+All four subsystems run in-process inside zed-kask: fusion is driven by `hkask-inference`'s `FusionOrchestrator` (wired through the guard layer, D4), the scenarios and companies MCP servers are registered as builtin in-process MCP servers (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D10 integration seams.
 
 ---
 
@@ -245,7 +247,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs:111` defines 
 
 | Variant | Namespace | Purpose |
 |---------|-----------|---------|
-| `Tool { subsystem }` | `reg.tool.{subsystem}` | 15 MCP subsystems: web_search, condenser, training, replica, research, communication, registry, wallet, media, kanban, memory, companies, docproc, filesystem, curator |
+| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 11 on-disk servers (codegraph, companies, condenser, curator, docproc, kata-kanban, media, replica, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. |
 | `Inference` | `reg.inference` | LLM request/response |
 | `AgentPod` | `reg.agent_pod` | Pod lifecycle events |
 | `Gas` | `reg.gas` | Energy consumption tracking |
@@ -312,16 +314,19 @@ The `hkask-mcp-companies` server provides 41 tools for retrieving company data, 
 
 ### Evidence
 
-The server requires both market-data credentials at startup. Research keys are optional:
+The server requires both market-data credentials, configured through zed-kask's `CredentialsProvider` (D9) or the kask settings page. Research keys are optional:
 
 ```bash
-kask keystore set HKASK_FMP_API_KEY "your-fmp-key"
-kask keystore set HKASK_EODHD_API_KEY "your-eodhd-key"
-# Optional research providers:
-kask keystore set HKASK_EXA_API_KEY "your-exa-key"
-kask keystore set HKASK_TAVILY_API_KEY "your-tavily-key"
-kask keystore set HKASK_BRAVE_API_KEY "your-brave-key"
+# Via zed-kask credentials (preferred — D9 SecretsPort adapter):
+#   add HKASK_FMP_API_KEY, HKASK_EODHD_API_KEY, and any optional
+#   HKASK_EXA_API_KEY / HKASK_TAVILY_API_KEY / HKASK_BRAVE_API_KEY
+#   entries under the kask namespace in the editor's credentials store.
+#
+# The companies MCP server reads these at in-process startup via the
+# SecretsPort adapter; it does not spawn a separate process.
 ```
+
+The `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` values are required for financial-data calls; the research provider keys enable `research_search`.
 
 #### Retrieve Company Data
 
@@ -516,7 +521,7 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 The hKask memory pipeline implements a two-layer (episodic + semantic) psycho-cybernetic memory architecture. Tool call experiences enter through `record_experience()` into the private episodic store, scoped to the agent's `perspective` (WebID). Every 10 experiences, a narrative generation loop (`generate_narrative()`) triggers the `ConsolidationBridge` to promote episodic hMems into the shared semantic store. The consolidation is one-way and irreversible: episodic perspective is stripped, confidence is decayed via the Wozniak-Gorzelanczyk forgetting curve, and hMems are either Bayesian-combined with existing semantic matches or seeded as new entries. A `ConsentManager` gates visibility transitions: episodic stays private (sovereign), semantic requires Public/Shared visibility.
 
-**Key source:** `crates/hkask-memory/src/episodic.rs:51-220` (`EpisodicMemory`), `crates/hkask-memory/src/semantic.rs:61-130` (`SemanticMemory`), `crates/hkask-memory/src/consolidation.rs:26-168` (`ConsolidationBridge`), `crates/hkask-memory/src/consolidation_service.rs:10-100` (`ConsolidationService`), `crates/hkask-services-runtime/src/daemon_impl.rs:227-400` (`store_experience`, `generate_narrative`).
+**Key source:** `crates/hkask-memory/src/episodic.rs:51-220` (`EpisodicMemory`), `crates/hkask-memory/src/semantic.rs:61-130` (`SemanticMemory`), `crates/hkask-memory/src/consolidation.rs:26-168` (`ConsolidationBridge`), `crates/hkask-memory/src/consolidation_service.rs:10-100` (`ConsolidationService`). In zed-kask, experience recording is driven in-process by the thread→memory bridge (D6) and the `ToolSpanGuard` experience callback; the former `daemon_impl::store_experience` / `generate_narrative` functions were removed when the standalone daemon was deleted.
 
 ### Visibility and Perspective Rules
 
@@ -536,12 +541,12 @@ The hKask memory pipeline implements a two-layer (episodic + semantic) psycho-cy
 ```mermaid
 sequenceDiagram
     participant Tool as Tool Call Handler
-    participant Daemon as DaemonHandler<br/>(store_experience)
+    participant Bridge as Thread→Memory Bridge<br/>(D6 · in-process)
     participant Narr as generate_narrative<br/>(every 10 experiences)
     participant Epi as EpisodicMemory<br/>(Private · perspective-scoped)
     participant Cons as ConsentManager<br/>(visibility gate)
     participant Sem as SemanticMemory<br/>(Public · shared)
-    participant Bridge as ConsolidationBridge
+    participant Bridge2 as ConsolidationBridge
     participant Svc as ConsolidationService
     participant Sq as SQLCipher<br/>(per-agent isolation)
     participant Regulation as Regulation RegulationSink
@@ -549,9 +554,9 @@ sequenceDiagram
     rect rgb(245, 248, 252)
         Note over Tool,Epi: Phase 1 — Tool Call Experience → Episodic Store
 
-        Tool->>+Daemon: store_experience(userpod, entity, attribute, value, confidence)
+        Tool->>+Bridge: store_experience(userpod, entity, attribute, value, confidence)
         Note over Tool: e.g., "moat_check"<br/>outcome="success"<br/>confidence=0.85
-        Daemon->>+Epi: record_experience() → store(h_mem)
+        Bridge->>+Epi: record_experience() → store(h_mem)
         Note over Epi: access.visibility = Private<br/>access.perspective = Some(agent_webid)
 
         alt visibility is Shared or Public
@@ -578,9 +583,9 @@ sequenceDiagram
     rect rgb(245, 252, 245)
         Note over Tool,Narr: Phase 2 — Narrative Generation Trigger (every 10 experiences)
 
-        Daemon->>+Daemon: experience_count % 10 == 0?
+        Bridge->>+Bridge: experience_count % 10 == 0?
         alt trigger threshold reached
-            Daemon->>+Narr: tokio::spawn(generate_narrative)
+            Bridge->>+Narr: tokio::spawn(generate_narrative)
             Narr->>+Epi: query_for_deduped("mcp_session", perspective)
             Note over Epi: Applies Wozniak-Gorzelanczyk decay:<br/>R(t) = exp(-t/S) where S=180 days
             Epi->>+Epi: dedup_h_mems() — EAV hash dedup
@@ -734,7 +739,6 @@ verified_against: >
   crates/hkask-memory/src/consolidation_service.rs:10-100 (ConsolidationService, consolidate, cleanup),
   crates/hkask-memory/src/recall_dedup.rs:10-57 (eav_hash, dedup_h_mems, BLAKE3),
   crates/hkask-memory/src/ports.rs:1-216 (EpisodicStoragePort, SemanticStoragePort, StorageRequest, RecallRequest),
-  crates/hkask-services-runtime/src/daemon_impl.rs:227-400 (store_experience, generate_narrative),
   crates/hkask-mcp-server/src/server/tool_span.rs:78-84 (ExperienceCallback, record_experience trigger)
 status: VERIFIED
 -->
@@ -750,7 +754,7 @@ status: VERIFIED
 | [`EpisodicLoop`](crates/hkask-memory/src/episodic_loop.rs:26-80) | Cybernetic loop with budget regulation |
 | [`recall_dedup`](crates/hkask-memory/src/recall_dedup.rs:10-57) | BLAKE3 EAV-hash deduplication layer |
 | [`MemoryPorts`](crates/hkask-memory/src/ports.rs:1-216) | Episodic and Semantic storage port traits |
-| [`store_experience` / `generate_narrative`](crates/hkask-services-runtime/src/daemon_impl.rs:227-400) | Daemon-based experience recording and narrative generation |
+| [`store_experience` / `generate_narrative`](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | In-process experience recording (thread→memory bridge, D6) and narrative generation; the former daemon-based implementations were removed |
 | [`ToolSpanGuard` experience callback](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | Experience callback wiring for tool span guards |
 | [Magna Carta P1](../reference/magna-carta.md#p1-user-sovereignty) | User Sovereignty — episodic memory as sovereign first-person |
 | Consent flow sequence (inlined in `sovereignty-and-ocap.md`) | Consent flow for visibility gating (DIAG-TO-006-CM) |

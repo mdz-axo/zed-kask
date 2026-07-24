@@ -1,7 +1,7 @@
 ---
 title: "Fusion Mode — Multi-Model Deliberation"
 audience: [operators, developers, users]
-last_updated: 2026-07-16
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Inference"
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust]
 
 Configure and operate hKask's provider-agnostic fusion engine: a panel of models answers in parallel, then a **judge** processes the responses. The judge is either an **LLM** operating in one of five deliberation modes (synthesis, best-of-n, critique, deliberation, pi), or an **algorithm** — the `algo` / no-judge path that merges panel responses deterministically with zero LLM calls. Fusion is **opt-in and disabled by default** — it activates only when you explicitly configure a judge and panel.
 
-This guide covers global env-var configuration, per-skill manifest overrides, the five LLM deliberation modes, the algo / no-judge method family, skill anchoring, bypass semantics, and operational checks. All facts are verified against the implementation in `crates/hkask-inference/src/fusion_orchestrator.rs`, `crates/hkask-types/src/fusion.rs`, `crates/hkask-inference/src/config.rs`, and `crates/hkask-templates/src/executor.rs`.
+In zed-kask, fusion runs in-process through the `GuardedInferencePort` (D4) that wraps the `InferencePort`-over-`LanguageModel` seam. It is operated from the zed-kask agent panel, not from a standalone REPL or TUI. This guide covers global env-var configuration, per-skill manifest overrides, the five LLM deliberation modes, the algo / no-judge method family, skill anchoring, bypass semantics, and operational checks. All facts are verified against the implementation in `crates/hkask-inference/src/fusion_orchestrator.rs`, `crates/hkask-types/src/fusion.rs`, `crates/hkask-inference/src/config.rs`, and `crates/hkask-templates/src/executor.rs`.
 
 ---
 
@@ -330,7 +330,7 @@ When a step runs, fusion config is resolved in this order (highest priority firs
 2. `step.fusion: Some(true)` or `None` → inherit the manifest config.
 3. `manifest.fusion: Some(config)` → per-manifest config (carried via `LLMParameters.fusion_config`).
 4. `manifest.fusion: None` → global config (`HKASK_FUSION_*` env vars).
-5. `params.bypass_fusion: true` → **bypass everything** (chat path, condenser, daemon narratives, summarization).
+5. `params.bypass_fusion: true` → **bypass everything** (agent panel chat path, condenser, summarization).
 
 ### Per-Step Bypass
 
@@ -356,31 +356,23 @@ Fusion routing is decided per inference call by `bypass_fusion` on `LLMParameter
 |-----------|------------------------|-----|
 | Skill `select` steps (fusion active) | ✅ yes | Skills benefit from multi-model deliberation |
 | Skill tool invocations | ✅ yes | Same as above |
-| `kask chat` interactive chat | ❌ no | `bypass_fusion = true` — user's chosen model is used directly |
-| `kask api` chat stream | ❌ no | `bypass_fusion = true` |
+| Agent panel interactive chat | ❌ no | `bypass_fusion = true` — user's chosen model is used directly |
 | Condenser / summarization | ❌ no | Always bypass — cost/latency sensitive |
-| Daemon narratives | ❌ no | Always bypass |
 | Algo / no-judge steps (`fusion: true`, `judge: algo`) | ✅ yes | The `algo` judge is a fusion path — it dispatches the panel in parallel and merges JSON via `merge_json_values` |
 
-Chat intentionally bypasses fusion so the user's explicitly-chosen model answers directly, while skills (which run autonomously) route through the fusion panel for higher quality. The algo / no-judge path follows the same routing rules as LLM-judge fusion — it is not a separate bypass mechanism.
+Chat intentionally bypasses fusion so the user's explicitly-chosen model answers directly, while skills (which run autonomously) route through the fusion panel for higher quality. The algo / no-judge path follows the same routing rules as LLM-judge fusion — it is not a separate bypass mechanism. The former `kask chat` / `kask api` standalone chat paths and daemon narratives were removed when the standalone CLI and daemon were deleted; the in-process agent panel chat path inherits the same `bypass_fusion = true` semantics.
 
 ---
 
 ## Operate Fusion
 
-### REPL commands
+### Agent panel status
 
-Inside the REPL (`kask repl` or the TUI):
+Fusion status is visible in the zed-kask agent panel and kask panel (D10). When fusion is configured, the panel shows the active judge, panel models, and deliberation mode alongside the inference routing diagnostics. There is no standalone REPL `/fusion` command — fusion is configured via env vars or per-skill manifests and observed through the editor's diagnostics surfaces.
 
-| Command | Effect |
-|---------|--------|
-| `/fusion` | Print fusion status (active/inactive, judge, panel, mode) |
-| `/fusion on` | Activate fusion for the session |
-| `/fusion off` | Deactivate fusion for the session |
+### Startup check
 
-### Startup banner
-
-When fusion is configured and the judge model is set, `kask` prints a banner on startup:
+When fusion is configured and the judge model is set, zed-kask surfaces a fusion-active indicator at agent panel startup:
 
 ```
   ⚡ Fusion mode active — model: deepseek-v4-pro
@@ -394,11 +386,11 @@ When the algo / no-judge path is active:
      2 panel models merged by algo (no LLM judge)
 ```
 
-This is emitted by `check_fusion_startup()` in `crates/hkask-cli/src/main.rs` — a P9 proactive cost-safety check so you never accidentally run fusion with an unintended model.
+This is a P9 proactive cost-safety check so you never accidentally run fusion with an unintended model. The check is performed in-process by the fusion configuration loader (the former `check_fusion_startup()` in the deleted `hkask-cli` crate has been replaced by the in-process guard layer, D4).
 
 ### Doctor check
 
-`kask doctor` verifies the fusion judge is reachable:
+The zed-kask diagnostics surface verifies the fusion judge is reachable:
 
 ```
 Fusion Model
@@ -458,7 +450,7 @@ The `ALGO_JUDGE` constant (`"algo"`) and the `algo_merge()` / `merge_json_values
 
 ## See Also
 
-- [Architecture: Fusion — Multi-Model Deliberation](../architecture/core/hKask-architecture-master.md#fusion--multi-model-deliberation) — canonical architecture reference
-- [Cognition and Replica: Fusion System Design Recommendations](../explanation/cognition-and-replica.md) — design rationale (why no partial inheritance, why no `fusion_mode` shorthand, why algo judge subsumes dual-model)
-- [Install and Configure](install-and-configure.md) — env-var setup including `HKASK_FUSION_DISABLED`
+- [Architecture: Fusion — Multi-Model Deliberation](../architecture/zed-host-architecture-plan.md) — canonical zed-kask integration map (D4 guard layer)
+- [Cognition and Replica: Fusion System Design Recommendations](cognition-and-replica.md) — design rationale (why no partial inheritance, why no `fusion_mode` shorthand, why algo judge subsumes dual-model)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — env-var setup including `HKASK_FUSION_DISABLED` and the D4 guard seam
 - [Skills and Composition](skills-and-composition.md) — manifest authoring and the `fusion:` block in context

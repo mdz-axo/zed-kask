@@ -1,17 +1,24 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-07-07
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
-last-verified-against: "a5db25a0"
 ---
 
 ## 1. Purpose
 
 Regulation spans are the observability substrate of hKask's Cybernetic Nervous System (Loop 6). Every operation that affects system state — tool invocations, inference calls, gas consumption, contract lifecycle events — emits a **span** through the Regulation tracing infrastructure.
+
+> **Hosting note (v0.31.0):** hKask runs in-process inside zed-kask. The standalone `kask` CLI and
+> `hkask-api` HTTP server have been **deleted**. Span query/subscribe commands previously exposed
+> via `kask regulation ...` are now available through the in-process kask panel (D10) and
+> programmatic `RegulationLedger` calls. The `ApiRequestSpan` enum (§3.11) is retained below as a
+> **deleted** historical reference — it metered the deleted HTTP API and is no longer emitted.
+> Skill spans (§3.9) are now emitted by `hkask-templates` (which owns `ManifestExecutor` and skill
+> execution via D1), replacing the deleted `hkask-services-skill`.
 
 A **span** is a typed identifier that pins an observation to a canonical dot-separated namespace (e.g., `reg.tool.web_search`). Spans carry an **operation** verb (e.g., `invoked`, `completed`, `reserved`) and optional structured fields. They flow through two paths:
 
@@ -160,9 +167,14 @@ Monitors architectural seam health — the boundaries where Strangler Fig migrat
 
 ### 3.9 Skill Spans
 
-**File:** `crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `crates/hkask-services-skill/src/skill_impl.rs`
+**File:** `crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `crates/hkask-templates/src/manifest_executor.rs` (skill execution via D1)
 
-Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill service.
+Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill execution layer.
+
+> **Ownership note (v0.31.0):** Skill execution moved from the deleted `hkask-services-skill`
+> crate to `hkask-templates` (`ManifestExecutor` + registry + cascade + PDCA), invoked in-process
+> via the D1 seam (`agent/tools/skill_tool.rs` → bridge.ManifestExecutor). The span emission
+> points are unchanged; only the emitting crate moved.
 
 | Variant | Namespace | Emitted When |
 |---|---|---|
@@ -229,24 +241,31 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 
 All namespaced under `reg.wallet.*`. Emitted through `crates/hkask-wallet/src/manager/reg.rs` which bridges wallet operations to the Regulation event sink.
 
-### 3.11 ApiRequestSpan — API Metering
+### 3.11 ApiRequestSpan — API Metering (DELETED)
 
-**File:** `crates/hkask-regulation/src/api_metering.rs`
+> **DELETED (v0.31.0):** The `hkask-api` HTTP server and its API key auth middleware have been
+> removed. hKask now runs in-process inside zed-kask; there is no HTTP API surface to meter.
+> `ApiRequestSpan` is retained below as a historical reference only. The span enum, the
+> `reg.api.request` namespace, and the `ApiMeter` learning loop are **no longer emitted**. Gas
+> consumption for in-process callers is settled by `GovernedTool` / `GovernedInference` and
+> tracked via `reg.gas.*` spans (§3.1).
 
-A single-variant span (`reg.api.request`) emitted for every authenticated API request after the rate limit check passes. Captures:
+**File (deleted):** `crates/hkask-regulation/src/api_metering.rs` (span enum) · `crates/hkask-api/src/middleware/api_key_auth.rs` (emission point — both deleted)
+
+Historically, this was a single-variant span (`reg.api.request`) emitted for every authenticated API request after the rate limit check passed. It captured:
 
 | Field | Description |
 |-------|-------------|
 | `key_id` | The API key ID making the request |
 | `endpoint` | Request URI path |
-| `scope_matched` | Whether the key's scope matched the path (always `true` — scope violations return early) |
-| `gas_consumed` | rJoules consumed (0 at admission; gas is settled downstream by `GovernedTool`) |
+| `scope_matched` | Whether the key's scope matched the path (always `true` — scope violations returned early) |
+| `gas_consumed` | rJoules consumed (0 at admission; gas was settled downstream by `GovernedTool`) |
 | `allocation_remaining` | Remaining rJoules in the key's encumbrance |
 | `rate_limit_status` | `ok`, `rate_exceeded`, or `tokens_exceeded` |
 
-Emitted through `ApiRequestSpan::emit_to()` in the API key auth middleware (`crates/hkask-api/src/middleware/api_key_auth.rs`). The span is an **admission observation** (CyclePhase::Sense) — it records that a request entered the system, not its completion. Gas consumption is settled later by `GovernedTool`/`GovernedInference` and tracked via `reg.gas.*` spans.
+It was emitted through `ApiRequestSpan::emit_to()` in the API key auth middleware. The span was an **admission observation** (`CyclePhase::Sense`) — it recorded that a request entered the system, not its completion. Gas consumption was settled later by `GovernedTool`/`GovernedInference` and tracked via `reg.gas.*` spans.
 
-**Configuration:** `RateLimitConfig::from_env()` reads `HKASK_API_RATE_LIMIT_*` environment variables. Per-key limits adapt over time via `ApiMeter::learn()` (LogNormal cost distribution learning).
+**Configuration (deleted):** `RateLimitConfig::from_env()` read `HKASK_API_RATE_LIMIT_*` environment variables. Per-key limits adapted over time via `ApiMeter::learn()` (LogNormal cost distribution learning).
 
 ---
 
@@ -280,10 +299,13 @@ RegulationRecords are persisted to a `RegulationArchive` (SQLite-backed) via the
 
 ### 4.3 Query
 
-- **`kask regulation health`** — displays overall health (variety deficit, critical/warning counts), variety counter summary, active algedonic alerts, and energy budget status.
-- **`kask regulation alerts`** — lists only active algedonic alerts.
-- **`kask regulation variety`** — prints per-namespace variety counters.
-- **`kask regulation subscribe --agent <name> --spans <csv>`** — subscribes to a live SSE event stream filtered to specific span namespaces.
+The deleted `kask regulation` CLI has been replaced by the in-process kask panel (D10) and
+programmatic `RegulationLedger` queries:
+
+- **kask panel (D10) → Regulation tab** — displays overall health (variety deficit, critical/warning counts), variety counter summary, active algedonic alerts, and energy budget status. Replaces `kask regulation health`.
+- **kask panel (D10) → Regulation tab → Alerts** — lists only active algedonic alerts. Replaces `kask regulation alerts`.
+- **kask panel (D10) → Regulation tab → Variety** — prints per-namespace variety counters. Replaces `kask regulation variety`.
+- **Live event stream** — in-process subscribers register via `RegulationLedger::subscribe()` filtered to specific span namespaces. Replaces the deleted `kask regulation subscribe` SSE stream.
 - `RegulationLedger::variety()` — programmatic `HashMap<SpanNamespace, u64>`.
 - `RegulationLedger::health()` — `LedgerHealth` struct with aggregate deficit and alert counts.
 - `GasReport` — programmatic gas consumption aggregation over time windows.
@@ -317,18 +339,25 @@ The default threshold is `DEFAULT_VARIETY_MAX_DEFICIT`. Per-domain expected vari
 
 ### CLI
 
+The deleted `kask regulation` CLI has been replaced by the in-process kask panel (D10). The
+equivalent panel surfaces are:
+
 ```sh
 # Overall Regulation health with span count summary
-kask regulation health
+#   kask panel (D10) → Regulation tab → Health
+#   Equivalent in-process call: RegulationLedger::health().await
 
 # Active algedonic alerts
-kask regulation alerts
+#   kask panel (D10) → Regulation tab → Alerts
+#   Equivalent in-process call: RegulationLedger::alerts().await
 
 # Per-namespace variety counters
-kask regulation variety
+#   kask panel (D10) → Regulation tab → Variety
+#   Equivalent in-process call: RegulationLedger::variety().await
 
 # Subscribe to live events for specific spans
-kask regulation subscribe --agent curator --spans reg.tool.web_search,reg.inference
+#   In-process: RegulationLedger::subscribe(filter) — filtered to span namespaces
+#   e.g. filter to reg.tool.web_search, reg.inference
 ```
 
 ### Programmatic

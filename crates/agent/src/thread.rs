@@ -4530,15 +4530,33 @@ impl Thread {
 
         // Apply the tool router as a final filter. When no router is set
         // (upstream Zed), all tools pass through (I2). When a router is set,
-        // it scores each tool and returns only those above the threshold.
-        // An empty router result means "no filtering" (fail-open) to avoid
-        // starving the model.
+        // it scores each tool by keyword overlap between the context and the
+        // tool's description. An empty router result means "no filtering"
+        // (fail-open) to avoid starving the model.
         if let Some(router) = crate::tool_router() {
-            let available_tool_names: Vec<SharedString> = tools.keys().cloned().collect();
+            let candidates: Vec<crate::tool_router::ToolCandidate> = tools
+                .iter()
+                .map(|(name, tool)| crate::tool_router::ToolCandidate {
+                    name: name.clone(),
+                    description: tool.description(),
+                })
+                .collect();
+            let open_file_paths: Vec<String> = self
+                .project
+                .read(cx)
+                .opened_buffers(cx)
+                .into_iter()
+                .filter_map(|buffer| {
+                    buffer.read(cx).file().and_then(|file| {
+                        file.as_local()
+                            .map(|local| local.abs_path(cx).to_string_lossy().into_owned())
+                    })
+                })
+                .collect();
             let context = crate::tool_router::ToolSelectionContext {
                 user_message: self.last_user_message_text(),
-                open_file_paths: Vec::new(), // TODO: wire open-file paths from workspace
-                available_tools: available_tool_names,
+                open_file_paths,
+                candidates,
             };
             let selected = router.select_tools(&context);
             if !selected.is_empty() {

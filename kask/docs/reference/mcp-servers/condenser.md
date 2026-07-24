@@ -1,7 +1,7 @@
 ---
 title: "Condenser MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-07-21
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Composition"
@@ -12,15 +12,20 @@ mds_categories: [composition, lifecycle]
 
 **Crate:** `mcp-servers/hkask-mcp-condenser` (MCP wrapper) + `crates/hkask-condenser` (pure domain)
 **Tools:** 7 — `condenser_ping`, `condenser_compress`, `condenser_classify`, `condenser_set_profile`, `condenser_stats`, `condenser_persist`, `condenser_thread_summary`, `condenser_score_saliency`
-**Auto-start:** Yes (one of the 12 core servers auto-started at REPL boot; not in `CORE_EXCLUDED`)
+**Auto-start:** Yes (one of the core servers auto-started at editor startup / agent panel initialization; not in `CORE_EXCLUDED`)
+
+> **Hosting note (v0.31.0):** The deleted `hkask-services-chat` crate has been replaced by zed's
+> in-process chat / agent panel (`crates/agent`, `crates/agent_ui`). The 2-phase `condense_history`
+> flow is invoked from the in-process agent loop, not from a standalone chat service. The deleted
+> REPL boot surface is replaced by editor startup / agent panel initialization.
 
 ## Pipeline Architecture (DIAG-RF-006)
 
-The `CondenserServer` (thin MCP wrapper) delegates to `CondenserEngine` (pure domain logic), which dispatches to one of three compression algorithms based on the classified `ContextCategory`. The engine records each compression in a bounded history ring buffer; after 10+ observations per category, it auto-selects the best-performing algorithm (learning). The ChatService's `condense_history` uses two-phase condensation: CPU pre-compress (Phase 1) then LLM summarize (Phase 2).
+The `CondenserServer` (thin MCP wrapper) delegates to `CondenserEngine` (pure domain logic), which dispatches to one of three compression algorithms based on the classified `ContextCategory`. The engine records each compression in a bounded history ring buffer; after 10+ observations per category, it auto-selects the best-performing algorithm (learning). The in-process agent loop's `condense_history` (in zed's `crates/agent`, replacing the deleted `hkask-services-chat`) uses two-phase condensation: CPU pre-compress (Phase 1) then LLM summarize (Phase 2).
 
 ```mermaid
 flowchart TD
-    Client["MCP Client\n(kask / external)"]
+    Client["MCP Client\n(zed agent panel / external)"]
     
     subgraph Wrapper["hkask-mcp-condenser (thin wrapper)"]
         Server["CondenserServer\nMCP tool router"]
@@ -52,7 +57,7 @@ flowchart TD
         Flashrank["flashrank\ngreedy marginal utility"]
     end
     
-    subgraph ChatSvc["hkask-services-chat"]
+    subgraph ChatSvc["crates/agent (in-process chat / agent panel)"]
         CondenseHistory["condense_history\n2-phase: CPU then LLM"]
         Phase1["Phase 1: CPU pre-compress\nCondenserEngine Heavy profile"]
         Phase2["Phase 2: LLM summarize\nInferencePort call"]
@@ -65,7 +70,6 @@ flowchart TD
         EmbeddingStore["EmbeddingStore\n1024-dim KNN search"]
         Daemon["Daemon\nstore_experience\n(quality-enriched)"]
     end
-    
     Client -->|"tool call"| Server
     Server --> Ping
     Server --> Compress
@@ -119,9 +123,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-07-21
-verified_against: mcp-servers/hkask-mcp-condenser/src/lib.rs (CondenserServer tool router), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms), crates/hkask-services-chat/src/chat/condenser.rs (condense_history 2-phase)
-status: VERIFIED
+verified_date: 2026-07-24
+verified_against: mcp-servers/hkask-mcp-condenser/src/lib.rs (CondenserServer tool router), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms); condense_history 2-phase now invoked from zed's crates/agent (deleted hkask-services-chat/src/chat/condenser.rs)
+status: VERIFIED (v2 — hkask-services-chat deleted; 2-phase condensation owned by in-process agent loop)
 -->
 
 ## Key paths
@@ -129,12 +133,11 @@ status: VERIFIED
 - **Compress:** `condenser_compress` → `CondenserEngine` → `AlgorithmRegistry::select` (auto-select after 10+ observations per category) → algorithm (`rtk_style` / `word_rank` / `flashrank`) → `CompressionRecord` appended to ring buffer (200 max)
 - **Classify:** `condenser_classify` → `classify_tool` maps tool name → `ContextCategory`
 - **Saliency:** `condenser_score_saliency` → `domain_saliency` (line + `OntologyAnchor`) → against persona / memory / memory-fallback
-- **Auto-condense (ChatService):** `condense_history` → Phase 1 (CPU pre-compress via `CondenserEngine` Heavy profile) → Phase 2 (LLM summarize via `InferencePort`)
+- **Auto-condense (in-process agent loop):** `condense_history` → Phase 1 (CPU pre-compress via `CondenserEngine` Heavy profile) → Phase 2 (LLM summarize via `InferencePort`)
 - **Learning loop:** After each compression, `record_experience` is called via the daemon with quality-enriched data; `recommend_algorithm` / `suggest_profile` read the ring buffer to override the static `default_for` selection
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — all 16 built-in MCP servers
-- [API Reference: hkask-condenser](../api-reference.md) — full module and type listing
+- [MCP Server Registry](README.md) — all 11 on-disk MCP servers
 - [Architecture Patterns](../../explanation/architecture-patterns.md) — MCP bootstrap and tool dispatch sequence
-- [Diagram Index](../../DIAGRAMS_INDEX.md) — DIAG-RF-006 registration
+- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams, essentialist split (hkask-services-chat deleted; chat owned by zed's `crates/agent`)
