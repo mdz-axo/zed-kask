@@ -140,29 +140,31 @@ This separation is critical because the paper identifies a key tension: "self-im
 
 ### si-execute-improvement (PDCA Do)
 
-1. Execute the improvement operator 𝒰 on the selected target using the selected signal.
-2. For Foundation Model Improvement:
-   - **Intrinsic Generative Demos (§5.1)**: Generate training instances from the agent's own distribution. Apply quality control (self-consistency filtering, external verifiers, diversity-aware pooling). Fine-tune via gradient descent on the filtered dataset. Safeguard against model collapse by retaining base data and accumulating generated data on top.
-   - **Intrinsic Evaluative Feedback (§5.2)**: Sample candidate outputs. Apply an intrinsic evaluator (rubric judge, consistency aggregator, or critique-and-revision operator). Convert the evaluative signal into preference pairs, scalar rewards, or revised targets. Optimize via RL, DPO, or critique-conditioned fine-tuning.
-   - **Extrinsic Exploratory Experience (§5.3)**: Collect interaction trajectories from grounded task environments (programmatic verifiers, learned reward models, self-generated tasks) or simulated proxy environments (learned world models). Update parameters via PPO, DPO, or preference-based objectives.
-3. For Scaffolding Improvement:
-   - **Prompt Optimization (§6.1)**: Apply one of four paradigms — Scalar-Feedback Optimization (search over discrete prompt space), Qualitative-Feedback Refinement (iterative critique-and-revise), Population-Based Evolution (semantic crossover/mutation over a prompt population), or Textual Gradient Optimization (structured directional feedback as update guidance).
-   - **Memory Evolution (§6.2)**: Apply signal-driven CRUD operations — Create (semantic compression, context-aware discrete decisions, controlled boundary insertion), Read (hybrid heuristics, structure-aware retrieval, retrieval gating, retrieval-driven adaptation), Update (scheduled review/attenuation, local refresh, iterative distillation, offline aggregation), Delete (multi-stage pruning, consensus-based eviction, tiered eviction).
-   - **Tool Governance (§6.3)**: Apply Dynamic Tool Routing (retrieval/graph-based, policy-learning, or proactive/interactive), Iterative Tool Refinement (critique specialization, API abstraction, interface alignment), or Autonomous Tool Creation (synthesis triggers, lifecycle automation, standardized integration).
-   - **Full Scaffolding (§6.4)**: Treat the entire scaffold as a mutable program. Generate candidate patches via the agent-as-improver. Gate updates through verifier checks (functional correctness, tool permission boundaries, robustness to perturbation). Maintain version history for rollback.
+1. Route to the appropriate sub-pathway template based on the pathway, scaffold component, and signal type selected in the improvement plan.
+2. The router (`si-execute-improvement.j2`) delegates to one of 7 sub-pathway templates:
+   - **FM Improvement**:
+     - `si-exec-fm-demos.j2` (§5.1): Generate training instances, apply quality control, fine-tune via gradient descent, safeguard against model collapse.
+     - `si-exec-fm-feedback.j2` (§5.2): Sample candidate outputs, apply intrinsic evaluator, convert to update signal, optimize via RL/DPO/critique-conditioned fine-tuning.
+     - `si-exec-fm-experience.j2` (§5.3): Collect interaction trajectories from grounded or simulated environments, update via PPO/DPO.
+   - **Scaffolding Improvement**:
+     - `si-exec-scaffold-prompt.j2` (§6.1): Apply one of four paradigms (scalar/qualitative/evolution/textual-gradient). Delegates to `gpa-evolution` for population-based evolution with Pareto frontier.
+     - `si-exec-scaffold-memory.j2` (§6.2): Apply signal-driven CRUD operations (Create/Read/Update/Delete).
+     - `si-exec-scaffold-tool.j2` (§6.3): Apply dynamic tool routing, iterative refinement, or autonomous creation.
+     - `si-exec-scaffold-full.j2` (§6.4): Treat entire scaffold as mutable program, generate patches, gate through verifier. Delegates to `diagnose` for reproduce→hypothesize→fix loops.
+3. Multi-signal support: if the improvement plan specifies multiple signal types, execute them in sequence (demos → feedback → experience).
 4. Capture the full execution trace: what was generated, what was filtered, what was updated, what was the cost.
 5. Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact` (the candidate update before gating).
 
 ### si-evaluate-improvement (PDCA Check)
 
-1. Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that does NOT overlap with the improvement signal.
+1. Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that does NOT overlap with the improvement signal. **Fallback**: If no held-out set is available, use cross-validation or temporal split. If neither is available, set `evaluation_method: "none_available"` and block commitment.
 2. Report the full performance trajectory (m_t) across update iterations, not just the final peak score.
 3. Test transfer beyond the improvement signal: does the improvement generalize to held-out tasks?
 4. Track regressions: did the update break previously solved tasks?
 5. Account for resource efficiency: compute cost, API tokens, wall-clock time, human input.
 6. Track safety: any safety policy violations, goal drift, or reward hacking indicators?
 7. If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use a distinct judge configuration for final reporting.
-8. Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based or judge-based).
+8. Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based, judge-based, or none_available).
 
 ### si-commit-or-rollback (PDCA Act)
 
@@ -176,8 +178,16 @@ This separation is critical because the paper identifies a key tension: "self-im
    - **Rollback** to the previous configuration 𝒜_t.
    - Diagnose the failure: was the signal noisy? Was the operator misaligned? Was the budget insufficient?
    - Record the failure mode for the Kata obstacle parking lot.
-4. Determine the next step: if committed and not converged, re-enter the PDCA cycle. If rolled back, refine the improvement plan.
-5. Respond with a JSON object containing `decision` (commit or rollback), `committed_version`, `failure_mode` (if rolled back), and `next_step`.
+4. Determine the next step.
+5. Respond with a JSON object containing `decision` (exactly "commit" or "rollback"), `committed_version`, `failure_mode` (if rolled back), and `next_step` (exactly "re-enter", "exit", or "refine").
+
+### si-pdca-convergence (Inner PDCA Convergence)
+
+1. Compute per-iteration PDCA convergence metric: improvement detected (−0.25), no regressions (−0.20), transfer confirmed (−0.20), within budget (−0.15), no safety violations (−0.10), approaching target (−0.10).
+2. If rolled back, set convergence_metric = 1.0 (not converged).
+3. **Materiality guard**: If PDCA iteration ≥ 3, metric delta < 0.02 since last iteration, and no committed cycles this iteration, force convergence to 0.0 (irreducible gap). Record `blockers: ["irreducible_pdca_gap"]`.
+4. Determine next action: "exit" (converged, ≤ 0.25), "re-enter" (not converged, retry), or "exhausted" (max iterations hit).
+5. Return JSON with `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, `materiality_guard_triggered`, and `next_action`.
 
 ### si-kata-convergence (Outer Kata Convergence)
 
@@ -187,8 +197,9 @@ This separation is critical because the paper identifies a key tension: "self-im
 4. Check trajectory stability: is the performance trajectory converging, plateauing, or regressing?
 5. Check transfer: do improvements generalize beyond the improvement signal?
 6. Check regression: are previously solved tasks still solved?
-7. Start at 1.0, subtract for each satisfied check, and clamp to [0, 1].
-8. Return JSON only with `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, and `blockers`.
+7. **Materiality guard**: If outer Kata iteration ≥ 3, metric delta < 0.02 since last iteration, no new PDCA cycles committed, and no new pathway/signal combination attempted, force convergence to 0.0 (irreducible gap). Record `blockers: ["irreducible_kata_gap"]`.
+8. Start at 1.0, subtract for each satisfied check, and clamp to [0, 1].
+9. Return JSON with `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, and `materiality_guard_triggered`.
 
 ## Improvement Measure
 
@@ -234,11 +245,19 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | `si-kata-direction.j2` | WordAct | Outer Kata Step 1 — Understand the direction. Articulate the capability challenge, excellent performance, measurement plan, knowledge threshold. |
 | `si-kata-current.j2` | WordAct | Outer Kata Step 2 — Grasp the current condition. Collect baseline data, detect patterns, establish metric_before. |
 | `si-kata-target.j2` | WordAct | Outer Kata Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle. |
-| `si-select-pathway.j2` | KnowAct | PDCA Plan — Select the improvement pathway (θ or Σ), scaffold component (if Σ), signal type (𝒟_t, e_t, or τ_t), and generate a concrete improvement plan with budget and acceptance criteria. |
-| `si-execute-improvement.j2` | WordAct | PDCA Do — Execute the improvement operator 𝒰 on the selected target using the selected signal. Implements all pathway/signal combinations from the paper. |
-| `si-evaluate-improvement.j2` | KnowAct | PDCA Check — Evaluate the updated agent on held-out tasks. Report trajectory, transfer, regression, cost, and safety. |
-| `si-commit-or-rollback.j2` | KnowAct | PDCA Act — Apply acceptance criteria, commit or rollback the update, determine next step. |
-| `si-kata-convergence.j2` | KnowAct | Outer Kata Convergence — Compute trajectory stability + transfer + regression convergence metric. Returns convergence_metric plus rationale and blockers. |
+| `si-select-pathway.j2` | KnowAct | PDCA Plan — Select the improvement pathway (θ or Σ), scaffold component (if Σ), signal type (𝒟_t, e_t, τ_t, or array for multi-signal), and generate a concrete improvement plan with budget, acceptance criteria, and variety engineering. |
+| `si-execute-improvement.j2` | WordAct | PDCA Do — Router that delegates to the appropriate sub-pathway template based on pathway/signal selection. |
+| `si-exec-fm-demos.j2` | WordAct | PDCA Do (§5.1) — FM Improvement via Intrinsic Generative Demos. Generate, filter, fine-tune, safeguard against collapse. |
+| `si-exec-fm-feedback.j2` | WordAct | PDCA Do (§5.2) — FM Improvement via Intrinsic Evaluative Feedback. Sample, judge, convert, optimize. |
+| `si-exec-fm-experience.j2` | WordAct | PDCA Do (§5.3) — FM Improvement via Extrinsic Exploratory Experience. Collect trajectories, update via RL/DPO. |
+| `si-exec-scaffold-prompt.j2` | WordAct | PDCA Do (§6.1) — Scaffolding via Prompt Optimization. Four paradigms. Delegates to `gpa-evolution` for Pareto evolution. |
+| `si-exec-scaffold-memory.j2` | WordAct | PDCA Do (§6.2) — Scaffolding via Memory Evolution. Signal-driven CRUD operations. |
+| `si-exec-scaffold-tool.j2` | WordAct | PDCA Do (§6.3) — Scaffolding via Tool Governance. Routing, refinement, creation. |
+| `si-exec-scaffold-full.j2` | WordAct | PDCA Do (§6.4) — Scaffolding via Full Scaffolding. Self-referential code rewrite. Delegates to `diagnose` for debugging. |
+| `si-evaluate-improvement.j2` | KnowAct | PDCA Check — Evaluate the updated agent on held-out tasks with fallback. Report trajectory, transfer, regression, cost, and safety. |
+| `si-commit-or-rollback.j2` | KnowAct | PDCA Act — Apply acceptance criteria, commit or rollback the update, determine next step with strict enum constraints. |
+| `si-pdca-convergence.j2` | KnowAct | Inner PDCA Convergence — Per-iteration metric with materiality guard for irreducible gaps. |
+| `si-kata-convergence.j2` | KnowAct | Outer Kata Convergence — Trajectory stability + transfer + regression + materiality guard. |
 
 ## Constraints
 
@@ -246,9 +265,17 @@ The skill implements the paper's safety recommendations (Section 9.1):
 - `si-kata-current.j2`: Public.
 - `si-kata-target.j2`: Public.
 - `si-select-pathway.j2`: Public.
-- `si-execute-improvement.j2`: Public.
+- `si-execute-improvement.j2`: Public (router only — delegates to sub-pathway templates).
+- `si-exec-fm-demos.j2`: Public.
+- `si-exec-fm-feedback.j2`: Public.
+- `si-exec-fm-experience.j2`: Public.
+- `si-exec-scaffold-prompt.j2`: Public.
+- `si-exec-scaffold-memory.j2`: Public.
+- `si-exec-scaffold-tool.j2`: Public.
+- `si-exec-scaffold-full.j2`: Public.
 - `si-evaluate-improvement.j2`: Public.
 - `si-commit-or-rollback.j2`: Public.
+- `si-pdca-convergence.j2`: Public.
 - `si-kata-convergence.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
@@ -256,4 +283,10 @@ The skill implements the paper's safety recommendations (Section 9.1):
 - Version history must be maintained for rollback.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).
-- Convergence threshold: 0.25.
+- Convergence threshold: 0.25 (outer Kata), 0.25 (inner PDCA).
+- Materiality guard: force convergence when metric delta < 0.02 for ≥ 3 iterations (both inner PDCA and outer Kata).
+- `decision` field must be exactly "commit" or "rollback" (lowercase).
+- `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
+- `signal_type` may be a single value or an array for multi-signal support.
+- Variety engineering: PDCA iteration 2+ must check for repeated pathway/signal combinations and justify or diversify.
+- Delegation: `si-exec-scaffold-prompt.j2` delegates to `gpa-evolution` for population-based evolution. `si-exec-scaffold-full.j2` delegates to `diagnose` for debugging loops.

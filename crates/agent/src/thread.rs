@@ -6015,6 +6015,7 @@ impl ToolCallEventStream {
     ///
     /// Returns `true` if the deferred result was successfully enqueued,
     /// `false` if the parent thread is no longer alive.
+    #[allow(dead_code)]
     pub(crate) fn enqueue_deferred_result(
         &self,
         receiver: oneshot::Receiver<Result<LanguageModelToolResult>>,

@@ -60,7 +60,9 @@ use project::{
     AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
     trusted_worktrees::TrustedWorktrees,
 };
-use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
+use prompt_store::{
+    ProjectContext, RULES_FILE_NAMES, RuleFrontmatter, RulesFileContext, WorktreeContext,
+};
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
@@ -454,6 +456,50 @@ static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
         })
         .collect()
 });
+
+/// Parse YAML frontmatter from a rules file. Returns the body text (with
+/// frontmatter stripped) and the parsed frontmatter (or `None` if no
+/// frontmatter is present).
+///
+/// Frontmatter format (Cline-compatible):
+/// ```yaml
+/// ---
+/// globs:
+///   - "**/*.rs"
+/// alwaysApply: false
+/// ---
+/// Rule body text...
+/// ```
+///
+/// When frontmatter is absent, returns the trimmed text and `None` (I2 —
+/// upstream Zed compatibility, `always_apply` defaults to `true`).
+fn parse_rules_frontmatter(raw_text: String) -> (String, Option<RuleFrontmatter>) {
+    let trimmed = raw_text.trim();
+    if !trimmed.starts_with("---") {
+        return (trimmed.to_string(), None);
+    }
+
+    // Find the closing `---` fence.
+    let after_open = &trimmed[3..];
+    let after_open = after_open.strip_prefix('\n').unwrap_or(after_open);
+    let Some(end_pos) = after_open.find("\n---") else {
+        // No closing fence — not valid frontmatter, treat as body.
+        return (trimmed.to_string(), None);
+    };
+
+    let yaml_block = &after_open[..end_pos];
+    let body_start = end_pos + 4; // skip "\n---"
+    let body = after_open[body_start..].trim().to_string();
+
+    match serde_yaml::from_str::<RuleFrontmatter>(yaml_block) {
+        Ok(frontmatter) => (body, Some(frontmatter)),
+        Err(error) => {
+            log::warn!("Failed to parse rules frontmatter: {error}");
+            // On parse failure, treat the whole text as body with no frontmatter.
+            (trimmed.to_string(), None)
+        }
+    }
+}
 
 static AGENTS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
     RelPath::from_unix_str(AGENTS_DIR_NAME)
@@ -1302,9 +1348,12 @@ impl NativeAgent {
             // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
                 let (project_entry_id, rope) = rope_task.await?;
+                let raw_text = rope.to_string();
+                let (text, frontmatter) = parse_rules_frontmatter(raw_text);
                 anyhow::Ok(RulesFileContext {
                     path_in_worktree,
-                    text: rope.to_string().trim().to_string(),
+                    text,
+                    frontmatter,
                     project_entry_id: project_entry_id.to_usize(),
                 })
             })

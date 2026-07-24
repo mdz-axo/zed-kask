@@ -183,6 +183,78 @@ pub(crate) fn kask_page() -> SettingsPage {
             files: USER,
             render: render_condenser_page,
         }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Codegraph".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.codegraph"),
+            description: Some(
+                "Configure the codegraph MCP server: database path for code structure storage.".into(),
+            ),
+            search_aliases: &["codegraph", "graph", "code structure"],
+            in_json: true,
+            files: USER,
+            render: render_codegraph_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Companies".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.companies"),
+            description: Some(
+                "Configure the companies MCP server: superforecasting staleness and Fermi defaults.".into(),
+            ),
+            search_aliases: &["companies", "fermi", "staleness", "superforecasting"],
+            in_json: true,
+            files: USER,
+            render: render_companies_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Corpus".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.corpus"),
+            description: Some(
+                "Configure the corpus MCP server: embedding model, OCR pipeline, and template root.".into(),
+            ),
+            search_aliases: &["corpus", "embedding", "ocr", "template"],
+            in_json: true,
+            files: USER,
+            render: render_corpus_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Media".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.media"),
+            description: Some(
+                "Configure the media MCP server: TTS, STT, vision, and image generation models.".into(),
+            ),
+            search_aliases: &["media", "tts", "stt", "vision", "image generation"],
+            in_json: true,
+            files: USER,
+            render: render_media_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Scenarios".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.scenarios"),
+            description: Some(
+                "Configure the scenarios MCP server: data directory for scenario persistence.".into(),
+            ),
+            search_aliases: &["scenarios", "wardley", "planning"],
+            in_json: true,
+            files: USER,
+            render: render_scenarios_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Training".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.training"),
+            description: Some(
+                "Configure the training MCP server: host selection and cache directory.".into(),
+            ),
+            search_aliases: &["training", "lora", "host", "cache"],
+            in_json: true,
+            files: USER,
+            render: render_training_page,
+        }),
     ];
 
     SettingsPage {

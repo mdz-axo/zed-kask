@@ -7,7 +7,7 @@ use gpui::{App, AppContext as _, AssetSource};
 use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -91,10 +91,33 @@ pub struct WorktreeContext {
     pub rules_file: Option<RulesFileContext>,
 }
 
+/// YAML frontmatter on a rules file, Cline-compatible. When `always_apply`
+/// is true (or frontmatter is absent), the rules are always included in the
+/// system prompt. When false with non-empty `globs`, the rules are only
+/// included if a file matching one of the globs is open or mentioned.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub struct RuleFrontmatter {
+    /// File globs that activate this rule. Empty means "always apply".
+    #[serde(default)]
+    pub globs: Vec<String>,
+    /// When true, the rule is always included regardless of `globs`.
+    #[serde(default = "default_always_apply", rename = "alwaysApply")]
+    pub always_apply: bool,
+}
+
+fn default_always_apply() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
     pub path_in_worktree: Arc<RelPath>,
     pub text: String,
+    /// Parsed YAML frontmatter, if present. When `None`, the rules file had
+    /// no frontmatter and `always_apply` defaults to `true` (I2 — upstream
+    /// Zed compatibility).
+    #[serde(skip)]
+    pub frontmatter: Option<RuleFrontmatter>,
     // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
     // should be moved elsewhere.
     #[serde(skip)]

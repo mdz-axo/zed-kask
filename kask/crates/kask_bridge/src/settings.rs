@@ -43,6 +43,30 @@ pub struct KaskSettings {
     /// Condenser configuration for context management in inference threads.
     #[serde(default)]
     pub condenser: KaskCondenserSettings,
+
+    /// Codegraph MCP server configuration.
+    #[serde(default)]
+    pub codegraph: KaskCodegraphSettings,
+
+    /// Companies MCP server configuration.
+    #[serde(default)]
+    pub companies: KaskCompaniesSettings,
+
+    /// Corpus MCP server configuration.
+    #[serde(default)]
+    pub corpus: KaskCorpusSettings,
+
+    /// Media MCP server configuration.
+    #[serde(default)]
+    pub media: KaskMediaSettings,
+
+    /// Scenarios MCP server configuration.
+    #[serde(default)]
+    pub scenarios: KaskScenariosSettings,
+
+    /// Training MCP server configuration.
+    #[serde(default)]
+    pub training: KaskTrainingSettings,
 }
 
 /// MCP server load configuration.
@@ -193,9 +217,279 @@ fn default_saliency_window() -> u32 {
     5
 }
 
+/// Codegraph MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskCodegraphSettings {
+    /// Database path for the codegraph store. When empty, uses in-memory.
+    #[serde(default)]
+    pub db_path: String,
+}
+
+/// Companies MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskCompaniesSettings {
+    /// Chronic staleness threshold in days for superforecasting learning state.
+    #[serde(default)]
+    pub chronic_staleness_days: u32,
+
+    /// Fermi decomposition defaults as JSON (growth + margin question arrays).
+    /// When empty, uses hardcoded defaults.
+    #[serde(default)]
+    pub fermi_defaults: String,
+}
+
+/// Corpus MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskCorpusSettings {
+    /// Embedding dimensionality (must match the embedding model's output).
+    #[serde(default = "default_embedding_dim")]
+    pub embedding_dim: u32,
+
+    /// Embedding model override (e.g., "DI/Qwen/Qwen3-Embedding-0.6B").
+    #[serde(default)]
+    pub embedding_model: String,
+
+    /// OCR concurrency — number of pages sent to the vision model in parallel.
+    #[serde(default = "default_ocr_concurrency")]
+    pub ocr_concurrency: u32,
+
+    /// OCR simple threshold (0.0–1.0). Pages below this are processed simply.
+    #[serde(default = "default_ocr_simple_max")]
+    pub ocr_simple_max: f64,
+
+    /// OCR moderate threshold (0.0–1.0). Pages above simple but below this
+    /// are processed with moderate pipeline.
+    #[serde(default = "default_ocr_moderate_max")]
+    pub ocr_moderate_max: f64,
+
+    /// OCR moderate sample rate (0.0–1.0). Fraction of moderate pages sampled.
+    #[serde(default = "default_ocr_sample_rate")]
+    pub ocr_sample_rate: f64,
+
+    /// Whether OCR tuneable mode is enabled.
+    #[serde(default = "default_true")]
+    pub ocr_tuneable: bool,
+
+    /// Template root directory for Jinja2 templates.
+    #[serde(default = "default_template_root")]
+    pub template_root: String,
+}
+
+fn default_embedding_dim() -> u32 {
+    1024
+}
+
+fn default_ocr_concurrency() -> u32 {
+    4
+}
+
+fn default_ocr_simple_max() -> f64 {
+    0.05
+}
+
+fn default_ocr_moderate_max() -> f64 {
+    0.15
+}
+
+fn default_ocr_sample_rate() -> f64 {
+    0.10
+}
+
+fn default_template_root() -> String {
+    "registry".to_string()
+}
+
+/// Media MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskMediaSettings {
+    /// TTS model override (e.g., "FA/qwen-3-tts").
+    #[serde(default)]
+    pub tts_model: String,
+
+    /// STT model override (e.g., "FA/wizper").
+    #[serde(default)]
+    pub stt_model: String,
+
+    /// Vision model override (e.g., "KC/qwen/qwen3-vl-235b-a22b-instruct").
+    #[serde(default)]
+    pub vision_model: String,
+
+    /// Image generation model override (e.g., "FA/flux-2").
+    #[serde(default)]
+    pub image_gen_model: String,
+}
+
+/// Scenarios MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskScenariosSettings {
+    /// Data directory for scenario persistence. When empty, uses in-memory.
+    #[serde(default)]
+    pub data_dir: String,
+}
+
+/// Training MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskTrainingSettings {
+    /// Training host override: "deepinfra", "nebius", or "runpod".
+    /// When empty, auto-detects from available API keys.
+    #[serde(default)]
+    pub host: String,
+
+    /// Cache directory for dataset pipeline. When empty, uses the
+    /// userpod adapters directory.
+    #[serde(default)]
+    pub cache_dir: String,
+}
+
 impl Settings for KaskSettings {
     fn from_settings(s: &settings_content::SettingsContent) -> Self {
         s.kask.clone().map(|c| c.into()).unwrap_or_default()
+    }
+}
+
+impl KaskSettings {
+    /// Build the environment variable map for MCP server child processes.
+    ///
+    /// Translates all kask settings into the env vars that MCP servers read
+    /// at startup. Called by the composition root before `start_server_with_env`.
+    /// Only non-empty/non-default values are included — MCP servers have their
+    /// own fallback defaults for unset env vars.
+    pub fn mcp_env(&self) -> std::collections::HashMap<String, String> {
+        let mut env = std::collections::HashMap::new();
+        env.insert("HKASK_MCP_HOST".to_string(), "zed-kask-user".to_string());
+
+        // ── Condenser ──
+        if !self.condenser.persona_keywords.is_empty() {
+            env.insert(
+                "HKASK_CONDENSER_PERSONA_KEYWORDS".to_string(),
+                self.condenser.persona_keywords.join(","),
+            );
+        }
+        if self.condenser.saliency_window != 5 {
+            env.insert(
+                "HKASK_CONDENSE_SALIENCY_WINDOW".to_string(),
+                self.condenser.saliency_window.to_string(),
+            );
+        }
+
+        // ── Codegraph ──
+        if !self.codegraph.db_path.is_empty() {
+            env.insert(
+                "HKASK_CODEGRAPH_DB".to_string(),
+                self.codegraph.db_path.clone(),
+            );
+        }
+
+        // ── Companies ──
+        if self.companies.chronic_staleness_days > 0 {
+            env.insert(
+                "HKASK_CHRONIC_STALENESS_DAYS".to_string(),
+                self.companies.chronic_staleness_days.to_string(),
+            );
+        }
+        if !self.companies.fermi_defaults.is_empty() {
+            env.insert(
+                "HKASK_FERMI_DEFAULTS".to_string(),
+                self.companies.fermi_defaults.clone(),
+            );
+        }
+
+        // ── Corpus ──
+        if self.corpus.embedding_dim != 1024 {
+            env.insert(
+                "HKASK_EMBEDDING_DIM".to_string(),
+                self.corpus.embedding_dim.to_string(),
+            );
+        }
+        if !self.corpus.embedding_model.is_empty() {
+            env.insert(
+                "HKASK_EMBEDDING_MODEL".to_string(),
+                self.corpus.embedding_model.clone(),
+            );
+        }
+        if self.corpus.ocr_concurrency != 4 {
+            env.insert(
+                "HKASK_OCR_CONCURRENCY".to_string(),
+                self.corpus.ocr_concurrency.to_string(),
+            );
+        }
+        if (self.corpus.ocr_simple_max - 0.05).abs() > f64::EPSILON {
+            env.insert(
+                "HKASK_OCR_SIMPLE_MAX".to_string(),
+                self.corpus.ocr_simple_max.to_string(),
+            );
+        }
+        if (self.corpus.ocr_moderate_max - 0.15).abs() > f64::EPSILON {
+            env.insert(
+                "HKASK_OCR_MODERATE_MAX".to_string(),
+                self.corpus.ocr_moderate_max.to_string(),
+            );
+        }
+        if (self.corpus.ocr_sample_rate - 0.10).abs() > f64::EPSILON {
+            env.insert(
+                "HKASK_OCR_SAMPLE_RATE".to_string(),
+                self.corpus.ocr_sample_rate.to_string(),
+            );
+        }
+        if !self.corpus.ocr_tuneable {
+            env.insert("HKASK_OCR_TUNEABLE".to_string(), "false".to_string());
+        }
+        if self.corpus.template_root != "registry" {
+            env.insert(
+                "HKASK_TEMPLATE_ROOT".to_string(),
+                self.corpus.template_root.clone(),
+            );
+        }
+
+        // ── Media ──
+        if !self.media.tts_model.is_empty() {
+            env.insert(
+                "HKASK_MEDIA_TTS_MODEL".to_string(),
+                self.media.tts_model.clone(),
+            );
+        }
+        if !self.media.stt_model.is_empty() {
+            env.insert(
+                "HKASK_MEDIA_STT_MODEL".to_string(),
+                self.media.stt_model.clone(),
+            );
+        }
+        if !self.media.vision_model.is_empty() {
+            env.insert(
+                "HKASK_MEDIA_VISION_MODEL".to_string(),
+                self.media.vision_model.clone(),
+            );
+        }
+        if !self.media.image_gen_model.is_empty() {
+            env.insert(
+                "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
+                self.media.image_gen_model.clone(),
+            );
+        }
+
+        // ── Scenarios ──
+        if !self.scenarios.data_dir.is_empty() {
+            env.insert(
+                "HKASK_SCENARIOS_DATA".to_string(),
+                self.scenarios.data_dir.clone(),
+            );
+        }
+
+        // ── Training ──
+        if !self.training.host.is_empty() {
+            env.insert(
+                "HKASK_TRAINING_HOST".to_string(),
+                self.training.host.clone(),
+            );
+        }
+        if !self.training.cache_dir.is_empty() {
+            env.insert(
+                "HKASK_TRAINING_CACHE_DIR".to_string(),
+                self.training.cache_dir.clone(),
+            );
+        }
+
+        env
     }
 }
 
@@ -251,6 +545,54 @@ impl From<KaskSettingsContent> for KaskSettings {
                     auto_compress_tool_results: c.auto_compress_tool_results.unwrap_or(true),
                     persona_keywords: c.persona_keywords.unwrap_or_default(),
                     saliency_window: c.saliency_window.unwrap_or(5),
+                })
+                .unwrap_or_default(),
+            codegraph: c
+                .codegraph
+                .map(|cg| KaskCodegraphSettings {
+                    db_path: cg.db_path.unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+            companies: c
+                .companies
+                .map(|cm| KaskCompaniesSettings {
+                    chronic_staleness_days: cm.chronic_staleness_days.unwrap_or(0),
+                    fermi_defaults: cm.fermi_defaults.unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+            corpus: c
+                .corpus
+                .map(|cp| KaskCorpusSettings {
+                    embedding_dim: cp.embedding_dim.unwrap_or(1024),
+                    embedding_model: cp.embedding_model.unwrap_or_default(),
+                    ocr_concurrency: cp.ocr_concurrency.unwrap_or(4),
+                    ocr_simple_max: cp.ocr_simple_max.unwrap_or(0.05),
+                    ocr_moderate_max: cp.ocr_moderate_max.unwrap_or(0.15),
+                    ocr_sample_rate: cp.ocr_sample_rate.unwrap_or(0.10),
+                    ocr_tuneable: cp.ocr_tuneable.unwrap_or(true),
+                    template_root: cp.template_root.unwrap_or_else(|| "registry".to_string()),
+                })
+                .unwrap_or_default(),
+            media: c
+                .media
+                .map(|m| KaskMediaSettings {
+                    tts_model: m.tts_model.unwrap_or_default(),
+                    stt_model: m.stt_model.unwrap_or_default(),
+                    vision_model: m.vision_model.unwrap_or_default(),
+                    image_gen_model: m.image_gen_model.unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+            scenarios: c
+                .scenarios
+                .map(|s| KaskScenariosSettings {
+                    data_dir: s.data_dir.unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+            training: c
+                .training
+                .map(|t| KaskTrainingSettings {
+                    host: t.host.unwrap_or_default(),
+                    cache_dir: t.cache_dir.unwrap_or_default(),
                 })
                 .unwrap_or_default(),
         }

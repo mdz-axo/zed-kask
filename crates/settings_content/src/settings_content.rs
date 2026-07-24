@@ -1509,6 +1509,30 @@ pub struct KaskSettingsContent {
     /// Condenser configuration for context management.
     #[serde(default)]
     pub condenser: Option<KaskCondenserSettingsContent>,
+
+    /// Codegraph MCP server configuration.
+    #[serde(default)]
+    pub codegraph: Option<KaskCodegraphSettingsContent>,
+
+    /// Companies MCP server configuration.
+    #[serde(default)]
+    pub companies: Option<KaskCompaniesSettingsContent>,
+
+    /// Corpus MCP server configuration.
+    #[serde(default)]
+    pub corpus: Option<KaskCorpusSettingsContent>,
+
+    /// Media MCP server configuration.
+    #[serde(default)]
+    pub media: Option<KaskMediaSettingsContent>,
+
+    /// Scenarios MCP server configuration.
+    #[serde(default)]
+    pub scenarios: Option<KaskScenariosSettingsContent>,
+
+    /// Training MCP server configuration.
+    #[serde(default)]
+    pub training: Option<KaskTrainingSettingsContent>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -1553,4 +1577,46 @@ pub struct KaskCondenserSettingsContent {
     pub auto_compress_tool_results: Option<bool>,
     pub persona_keywords: Option<Vec<String>>,
     pub saliency_window: Option<u32>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCodegraphSettingsContent {
+    pub db_path: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCompaniesSettingsContent {
+    pub chronic_staleness_days: Option<u32>,
+    pub fermi_defaults: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCorpusSettingsContent {
+    pub embedding_dim: Option<u32>,
+    pub embedding_model: Option<String>,
+    pub ocr_concurrency: Option<u32>,
+    pub ocr_simple_max: Option<f64>,
+    pub ocr_moderate_max: Option<f64>,
+    pub ocr_sample_rate: Option<f64>,
+    pub ocr_tuneable: Option<bool>,
+    pub template_root: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMediaSettingsContent {
+    pub tts_model: Option<String>,
+    pub stt_model: Option<String>,
+    pub vision_model: Option<String>,
+    pub image_gen_model: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskScenariosSettingsContent {
+    pub data_dir: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskTrainingSettingsContent {
+    pub host: Option<String>,
+    pub cache_dir: Option<String>,
 }
