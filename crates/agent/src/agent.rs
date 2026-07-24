@@ -53,7 +53,8 @@ use gpui::{
 };
 use language_model::{
     IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry,
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUseId,
 };
 use project::{
     AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
@@ -3591,6 +3592,146 @@ impl SubagentHandle for NativeSubagentHandle {
 
             result
         })
+    }
+
+    fn send_streaming(
+        &self,
+        message: String,
+        tool_use_id: LanguageModelToolUseId,
+        cx: &AsyncApp,
+    ) -> oneshot::Receiver<Result<LanguageModelToolResult>> {
+        let (result_tx, result_rx) = oneshot::channel();
+        let thread = self.subagent_thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        let subagent_session_id = self.session_id.clone();
+        let parent_thread = self.parent_thread.clone();
+        let tool_use_id_for_task = tool_use_id;
+
+        cx.spawn(async move |cx| {
+            // Reuse the same turn-execution logic as `send`, but deliver the
+            // result via the oneshot channel instead of returning it.
+            let task = cx.update(|cx| {
+                let ratio_before_prompt = thread
+                    .read(cx)
+                    .latest_token_usage()
+                    .map(|usage| usage.ratio());
+
+                parent_thread
+                    .update(cx, |parent_thread, _cx| {
+                        parent_thread.register_running_subagent(thread.downgrade())
+                    })
+                    .ok();
+
+                let task = acp_thread.update(cx, |acp_thread, cx| {
+                    acp_thread.send(vec![message.into()], cx)
+                });
+
+                let (token_limit_tx, token_limit_rx) = oneshot::channel::<()>();
+                let mut token_limit_tx = Some(token_limit_tx);
+
+                let subscription = cx.subscribe(
+                    &thread,
+                    move |_thread, event: &TokenUsageUpdated, _cx| {
+                        if let Some(usage) = &event.0 {
+                            let old_ratio = ratio_before_prompt
+                                .clone()
+                                .unwrap_or(TokenUsageRatio::Normal);
+                            let new_ratio = usage.ratio();
+                            if old_ratio == TokenUsageRatio::Normal
+                                && new_ratio == TokenUsageRatio::Warning
+                            {
+                                if let Some(tx) = token_limit_tx.take() {
+                                    tx.send(()).ok();
+                                }
+                            }
+                        }
+                    },
+                );
+
+                let wait_for_prompt = cx
+                    .background_spawn(async move {
+                        futures::select! {
+                            response = task.fuse() => match response {
+                                Ok(Some(response)) => {
+                                    match response.stop_reason {
+                                        acp::StopReason::Cancelled => SubagentPromptResult::Cancelled,
+                                        acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
+                                        acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
+                                        acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
+                                        acp::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
+                                    }
+                                }
+                                Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
+                                Err(error) => SubagentPromptResult::Error(error.to_string()),
+                            },
+                            _ = token_limit_rx.fuse() => SubagentPromptResult::ContextWindowWarning,
+                        }
+                    });
+
+                (wait_for_prompt, subscription)
+            });
+
+            let (wait_for_prompt, _subscription) = task;
+
+            let result = match wait_for_prompt.await {
+                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
+                    thread
+                        .last_message()
+                        .and_then(|message| {
+                            let content = message.as_agent_message()?
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    AgentMessageContent::Text(text) => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .join("\n\n");
+                            if content.is_empty() { None } else { Some(content) }
+                        })
+                        .context("No response from subagent")
+                }),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
+                SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
+                SubagentPromptResult::ContextWindowWarning => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    Err(anyhow!(
+                        "The agent is nearing the end of its context window and has been \
+                         stopped. You can prompt the thread again to have the agent wrap up \
+                         or hand off its work."
+                    ))
+                }
+            };
+
+            parent_thread
+                .update(cx, |parent_thread, cx| {
+                    parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                })
+                .ok();
+
+            let tool_result = match result {
+                Ok(output) => LanguageModelToolResult {
+                    tool_use_id: tool_use_id_for_task,
+                    tool_name: Arc::from("spawn_agent"),
+                    is_error: false,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(output))],
+                    output: None,
+                },
+                Err(error) => LanguageModelToolResult {
+                    tool_use_id: tool_use_id_for_task,
+                    tool_name: Arc::from("spawn_agent"),
+                    is_error: true,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        error.to_string(),
+                    ))],
+                    output: None,
+                },
+            };
+
+            let _ = result_tx.send(Ok(tool_result));
+        })
+        .detach();
+
+        result_rx
     }
 }
 

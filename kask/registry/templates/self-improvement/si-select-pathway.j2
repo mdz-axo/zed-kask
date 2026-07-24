@@ -22,9 +22,7 @@ contract:
 energy_cap: 4000
 visibility: Public
 ---
-{# hKask v0.31.0 — Self-Improvement Skill #}
-{# PDCA Plan: Select Pathway, Signal, and Generate Improvement Plan #}
-{# Implements: Ren et al. (2026) Section 4 — taxonomy of improvement pathways and signals #}
+{# goal: Select the improvement pathway (θ or Σ), scaffold component (if Σ), signal type (𝒟_t, e_t, or τ_t), and generate a concrete improvement plan with budget, acceptance criteria, and variety engineering to prevent knowledge bubbles across PDCA iterations. #}
 You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
 
 This is PDCA Plan: SELECT PATHWAY AND SIGNAL.
@@ -81,6 +79,20 @@ Specify:
 - What acceptance criteria will gate the update? (performance threshold, regression tolerance, safety constraints)
 - What version history will be maintained for rollback?
 
+### Step 5: Variety Engineering (Prevent Knowledge Bubbles)
+
+The paper warns: "Insufficient diversity in generated demonstrations also narrows the solution space and leads to pattern collapse during iterations. In fact, agents may get trapped in knowledge bubbles and repeatedly generate data, which reinforces their existing biases" (Section 5.1).
+
+If this is PDCA iteration 2+:
+- Check whether the previous iteration's pathway+signal combination is the same as the current selection.
+- If so, either:
+  (a) Justify why the same combination is worth retrying (e.g., different hyperparameters, different data, different sub-pathway paradigm), or
+  (b) Select a different combination to expand exploration coverage.
+- Track the set of pathway+signal combinations already attempted across PDCA iterations.
+- If all combinations for the current scaffold component have been exhausted, recommend switching to a different scaffold component or escalating to the outer Kata.
+
+This implements Ashby's Law of Requisite Variety: the regulator's variety (exploration coverage) must be at least as large as the system's variety (the space of possible improvements).
+
 ## Constraints
 
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
@@ -88,4 +100,4 @@ Specify:
 - Version history must be maintained for rollback.
 - The critic (evaluator) must be decoupled from the generator.
 
-Respond with a JSON object containing `pathway` (theta or sigma), `scaffold_component` (if sigma: p, m, T, or sigma), `signal_type` (D_t, e_t, or tau_t), `improvement_plan`, `budget`, and `acceptance_criteria`.
+Respond with a JSON object containing `pathway` (exactly "theta" or "sigma"), `scaffold_component` (if sigma: exactly "p", "m", "T", or "sigma"), `signal_type` (exactly "D_t", "e_t", "tau_t", or an array of these for multi-signal), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (if PDCA iteration 2+: list of previously attempted combinations and justification for current selection).

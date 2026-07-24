@@ -158,13 +158,6 @@ fn default_recall_min_confidence() -> f64 {
 ///
 /// Controls how tool results are compressed before entering the message
 /// history, and what compression profile to use.
-///
-/// Note: `persona_keywords` and `saliency_window` are intentionally NOT
-/// exposed here. They configure the standalone `condenser_score_saliency`
-/// and `condenser_thread_summary` MCP tools (via env vars
-/// `HKASK_CONDENSER_PERSONA_KEYWORDS` and `HKASK_CONDENSE_SALIENCY_WINDOW`),
-/// which are not wired into the zed agent thread path. Exposing them as zed
-/// settings would imply a wiring that does not exist.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskCondenserSettings {
     /// Compression profile: "heavy", "normal", "soft", or "light".
@@ -179,10 +172,25 @@ pub struct KaskCondenserSettings {
     /// the message history. When false, tool results are stored verbatim.
     #[serde(default = "default_true")]
     pub auto_compress_tool_results: bool,
+
+    /// Persona keywords for saliency scoring (comma-separated in settings.json).
+    /// Used by the condenser's word_rank algorithm to prioritize lines
+    /// relevant to the user's domain.
+    #[serde(default)]
+    pub persona_keywords: Vec<String>,
+
+    /// Saliency window multiplier for thread summarization.
+    /// Controls the max_tokens budget: saliency_window * 100, clamped [150, 2000].
+    #[serde(default = "default_saliency_window")]
+    pub saliency_window: u32,
 }
 
 fn default_condenser_profile() -> String {
     "normal".to_string()
+}
+
+fn default_saliency_window() -> u32 {
+    5
 }
 
 impl Settings for KaskSettings {
@@ -241,6 +249,8 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .map(|c| KaskCondenserSettings {
                     profile: c.profile.unwrap_or_else(|| "normal".to_string()),
                     auto_compress_tool_results: c.auto_compress_tool_results.unwrap_or(true),
+                    persona_keywords: c.persona_keywords.unwrap_or_default(),
+                    saliency_window: c.saliency_window.unwrap_or(5),
                 })
                 .unwrap_or_default(),
         }
