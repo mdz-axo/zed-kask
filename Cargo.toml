@@ -282,6 +282,7 @@ members = [
     # kask/mcp-servers/ — MCP server source crates (T0.6)
     #
     "kask/mcp-servers/hkask-mcp-scenarios",
+    "kask/mcp-servers/hkask-mcp-regulation",
 ]
 default-members = ["crates/zed"]
 
