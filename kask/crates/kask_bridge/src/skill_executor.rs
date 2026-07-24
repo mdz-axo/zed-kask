@@ -29,6 +29,7 @@ use serde_json::Value;
 /// KnowAct skills work now; FlowDef skills gate on D3.
 pub struct BridgeManifestExecutor {
     inference: Arc<dyn InferencePort>,
+    tools: Arc<dyn hkask_capability::ToolPort>,
     a2a_secret: Vec<u8>,
     /// Path to the hKask registry manifests directory.
     registry_manifests_dir: PathBuf,
@@ -37,18 +38,22 @@ pub struct BridgeManifestExecutor {
 }
 
 impl BridgeManifestExecutor {
-    /// Construct a new bridge manifest executor.
+    /// Construct a new bridge manifest executor with a real ToolPort (D3 wired).
     ///
+    /// `inference` is the bridge's `LanguageModelInferencePort` over zed's `LanguageModel`.
+    /// `tools` is the bridge's `BridgeToolPort` over hKask's `McpRuntime`.
     /// `registry_manifests_dir` should point to `kask/registry/manifests/`.
     /// `registry_templates_dir` should point to `kask/registry/templates/`.
     pub fn new(
         inference: Arc<dyn InferencePort>,
+        tools: Arc<dyn hkask_capability::ToolPort>,
         a2a_secret: Vec<u8>,
         registry_manifests_dir: PathBuf,
         registry_templates_dir: PathBuf,
     ) -> Self {
         Self {
             inference,
+            tools,
             a2a_secret,
             registry_manifests_dir,
             registry_templates_dir,
@@ -83,12 +88,10 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             )
         })?;
 
-        // Construct a ManifestExecutor with the bridge's InferencePort.
-        // ToolPort is not yet wired (D3) — KnowAct skills don't need it.
-        // FlowDef skills that try to invoke tools will get a "not found" error.
+        // Construct a ManifestExecutor with the bridge's InferencePort and ToolPort.
         let executor = ManifestExecutor::new(
             self.inference.clone(),
-            Arc::new(NoOpToolPort),
+            self.tools.clone(),
             hkask_types::template::LLMParameters::default(),
             self.a2a_secret.clone(),
         )
@@ -111,44 +114,5 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             .unwrap_or_else(|| serde_json::to_string(&result).unwrap_or_default());
 
         Ok(output)
-    }
-}
-
-/// Placeholder ToolPort for KnowAct-only execution (D3 not yet wired).
-/// KnowAct skills only call `inference.generate()` — they never invoke tools.
-/// If a FlowDef skill tries to execute a tool, it will get a "not found" error.
-struct NoOpToolPort;
-
-#[async_trait::async_trait]
-impl hkask_capability::ToolPort for NoOpToolPort {
-    fn invoke<'a>(
-        &'a self,
-        _server: &'a str,
-        tool: &'a str,
-        _args: Value,
-        _token: &'a hkask_capability::DelegationToken,
-    ) -> hkask_capability::ToolFuture<'a, Result<Value, hkask_capability::ToolPortError>> {
-        Box::pin(async move {
-            Err(hkask_capability::ToolPortError::NotFound(
-                hkask_types::NotFound {
-                    entity_type: "tool".to_string(),
-                    id: format!(
-                        "ToolPort not wired (D3 pending) — tool '{}' cannot be invoked",
-                        tool
-                    ),
-                },
-            ))
-        })
-    }
-
-    fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
-        Box::pin(async move { Vec::new() })
-    }
-
-    fn get_tool_info<'a>(
-        &'a self,
-        _tool_name: &'a str,
-    ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
-        Box::pin(async move { None })
     }
 }

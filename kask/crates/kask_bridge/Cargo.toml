@@ -10,6 +10,7 @@ description = "The bidirectional seam between hKask port traits and zed-kask fac
 hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
 hkask-templates = { path = "../hkask-templates" }
+hkask-mcp = { path = "../hkask-mcp" }
 
 # zed-kask side — the facilities the bridge adapts over
 credentials_provider = { path = "../../../crates/credentials_provider" }
@@ -17,11 +18,14 @@ language_model = { path = "../../../crates/language_model" }
 language_model_core = { path = "../../../crates/language_model_core" }
 gpui = { path = "../../../crates/gpui" }
 agent = { path = "../../../crates/agent" }
+settings = { path = "../../../crates/settings" }
+schemars = { workspace = true }
 
 # Shared
 anyhow.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
+serde = { workspace = true }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true

@@ -9,22 +9,17 @@
 //! - Macros: validate_field!, impl_tool_context!, mcp_server!
 
 pub const BUILTIN_SERVERS: &[(&str, &str)] = &[
-    ("memory", "hkask-mcp-memory"),
     ("condenser", "hkask-mcp-condenser"),
     ("research", "hkask-mcp-research"),
     ("companies", "hkask-mcp-companies"),
-    ("communication", "hkask-mcp-communication"),
     ("curator", "hkask-mcp-curator"),
     ("media", "hkask-mcp-media"),
     ("docproc", "hkask-mcp-docproc"),
     ("training", "hkask-mcp-training"),
     ("replica", "hkask-mcp-replica"),
     ("kanban", "hkask-mcp-kata-kanban"),
-    ("skill", "hkask-mcp-skill"),
-    ("filesystem", "hkask-mcp-filesystem"),
     ("codegraph", "hkask-mcp-codegraph"),
     ("scenarios", "hkask-mcp-scenarios"),
-    ("regulation", "hkask-mcp-regulation"),
 ];
 
 pub mod daemon; // Unix socket transport for MCP binary ↔ hKask daemon

@@ -502,8 +502,6 @@ fn main() {
             let async_cx = cx.to_async();
             // Resolve the a2a_secret for OCAP delegation token minting.
             // Falls back to an empty vec if the keystore is unavailable (first-run).
-            // KnowAct skills don't need it; FlowDef skills (which invoke tools) will
-            // fail to mint tokens until the keystore is properly initialized (D5).
             let a2a_secret = hkask_keystore::resolve_a2a_secret()
                 .map(|s| s.to_vec())
                 .unwrap_or_default();
@@ -513,10 +511,16 @@ fn main() {
             let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
             let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
 
+            // D3: Construct the McpRuntime (manages MCP server child processes).
+            // The McpRuntime implements ToolPort — OCAP-gated tool invocation
+            // with gas/rjoule tracking and reg.tool.* span emission.
+            // MCP servers are started as child processes (stdio transport).
+            let mcp_runtime = std::sync::Arc::new(hkask_mcp::McpRuntime::new());
+            let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
+                mcp_runtime.clone(),
+            ));
+
             // Get the default LanguageModel from zed's registry.
-            // The InferencePort adapter collects the stream into InferenceResult.
-            // If no model is configured yet, the manifest executor is not wired —
-            // skills fall back to body injection until a model is selected.
             let model_registry = language_model::LanguageModelRegistry::read_global(cx);
             if let Some(configured) = model_registry.default_model() {
                 let (inference_port, inference_task) =
@@ -529,6 +533,7 @@ fn main() {
                 let executor = std::sync::Arc::new(
                     kask_bridge::BridgeManifestExecutor::new(
                         std::sync::Arc::new(inference_port),
+                        tool_port,
                         a2a_secret,
                         registry_manifests_dir,
                         registry_templates_dir,

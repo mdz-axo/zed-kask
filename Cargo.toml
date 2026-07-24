@@ -305,8 +305,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-training",
     "kask/mcp-servers/hkask-mcp-companies",
-    "kask/mcp-servers/hkask-mcp-replica",
-    "kask/mcp-servers/hkask-mcp-docproc",
+    "kask/mcp-servers/hkask-mcp-corpus",
 ]
 default-members = ["crates/zed"]
 

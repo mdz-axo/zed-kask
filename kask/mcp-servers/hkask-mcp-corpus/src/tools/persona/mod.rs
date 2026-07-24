@@ -1,63 +1,34 @@
-#![forbid(unsafe_code)]
-//! hkask-mcp-replica — Build and compose authorial style replicas (library).
+//! Persona/style tools — prose generation, centroid comparison, and registry.
 //!
-//! Exports ReplicaServer struct and tool methods for fuzz testability (P5 Testing
-//! Discipline, P4 Clear Boundaries). The binary entrypoint in main.rs delegates
-//! to `run()`.
+//! These tools consume the corpus processed by the document/corpus/semantic
+//! tool groups and produce style replicas, prose composition, and persona
+//! comparisons. They are the "style output" branch of the unified corpus flow:
 //!
-//! Tools:
-//! - replica_build    — embed a corpus, create a style replica
-//! - replica_compose  — generate prose in an author's style
-//! - replica_mashup   — blend two authors' styles via centroid interpolation
-//! - replica_compare  — measure stylistic distance between two authors
-//! - replica_registry — list, inspect, and manage built replicas
-//! - replica_explain  — explain centroids and style-space topology
-//! - replica_discover — discover an academic author's work and generate corpus.yaml
-//! - replica_cache_work — cache extracted work content to disk
+//!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
+//!
+//! All persona tools delegate to `hkask_services_compose` for prose generation
+//! and `hkask_storage::EmbeddingStore` for centroid retrieval.
 
-#![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
-
-pub mod golem;
-pub mod types;
-
-// Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
-
+use crate::*;
 use hkask_inference::EmbeddingRouter;
-use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_services_compose::cosine_distance;
 use hkask_services_core::HkaskSettings;
-use hkask_services_corpus::{EmbedProgress, EmbedService};
-use hkask_services_inference::InferenceContext;
+use hkask_services_corpus::EmbedService;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};
-use rmcp::handler::server::wrapper::Parameters;
-use rmcp::{tool, tool_router};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// MCP tool parameter struct for replica_compose.
-/// Separate from `ComposeRequest` to avoid requiring `InferenceContext` serialization.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ReplicaComposeParams {
-    pub author: String,
-    pub prompt: String,
-    pub db_path: String,
-    pub passphrase: String,
-    #[serde(default)]
-    pub no_validate: bool,
-}
-use types::*;
+// ── Helpers (consolidated from replica lib.rs) ──────────────────────────────
 
-/// Default embedding model (DeepInfra Qwen3-Embedding-0.6B).
-/// Override via settings.json or HKASK_EMBEDDING_MODEL env var.
 fn embedding_model() -> String {
     HkaskSettings::load().embedding_model()
 }
 
-/// Default generation model for prose composition — from InferenceConfig.
 fn generation_model() -> String {
     hkask_inference::InferenceConfig::from_env().default_model
 }
@@ -72,9 +43,25 @@ fn database_passphrase() -> Result<String, McpToolError> {
         .map_err(|e| McpToolError::failed_precondition(e.to_string()))
 }
 
-hkask_mcp_server::mcp_server!(
-    pub struct ReplicaServer;
-);
+fn qualitative_label(distance: f64) -> String {
+    if distance < 0.20 {
+        "Excellent".to_string()
+    } else if distance < 0.40 {
+        "Good".to_string()
+    } else if distance < 0.60 {
+        "Fair".to_string()
+    } else {
+        "Needs Work".to_string()
+    }
+}
+
+fn is_centroid_entity(entity_ref: &str) -> bool {
+    if let Some(last) = entity_ref.rsplit(':').next() {
+        last == "centroid" || last.ends_with("-centroid")
+    } else {
+        false
+    }
+}
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -100,57 +87,23 @@ struct ComposeResult {
     style_passed: Option<bool>,
 }
 
-fn qualitative_label(distance: f64) -> String {
-    if distance < 0.20 {
-        "Excellent".to_string()
-    } else if distance < 0.40 {
-        "Good".to_string()
-    } else if distance < 0.60 {
-        "Fair".to_string()
-    } else {
-        "Needs Work".to_string()
-    }
-}
-
-fn is_centroid_entity(entity_ref: &str) -> bool {
-    // Match composite centroid (style:persona:centroid) and
-    // per-dimension centroids (style:persona:dimension-centroid)
-    if let Some(last) = entity_ref.rsplit(':').next() {
-        last == "centroid" || last.ends_with("-centroid")
-    } else {
-        false
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct DimensionScore {
-    /// Dimension name: "Gentle", "Schriver", "Hopper", "Lovelace".
     dimension_name: String,
-    /// Entity ref in the embedding store (e.g., "style:gentle-lovelace:gentle-centroid").
     centroid_ref: String,
-    /// Human-readable description of what this dimension measures.
     description: String,
-    /// Cosine distance from document to dimension centroid (lower = stronger alignment).
     cosine_distance: f64,
-    /// Number of passages used to compute this centroid.
     passage_count: usize,
-    /// Qualitative rating: "Excellent", "Good", "Fair", or "Needs Work".
     qualitative: String,
 }
 
 #[derive(Debug, Serialize)]
 struct PersonaCompareResult {
-    /// Persona name (e.g., "gentle-lovelace").
     persona: String,
-    /// Comparison mode used: "per-dimension" or "composite".
     compare_mode: String,
-    /// Embedding model used for document embedding.
     embedding_model: String,
-    /// Composite weighted centroid score (always present).
     composite_score: Option<DimensionScore>,
-    /// Per-dimension scores (only in "per-dimension" mode).
     dimension_scores: Vec<DimensionScore>,
-    /// Elapsed time for the comparison.
     elapsed_ms: u64,
 }
 
@@ -199,49 +152,101 @@ struct RegistryResult {
     message: String,
 }
 
-// ── Replica Discovery types ──────────────────────────────────────────────────
+// ── Request types ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
-struct DiscoverResult {
-    /// The manifest ID to execute for discovery
-    manifest_id: String,
-    /// Parameters forwarded to the manifest
-    parameters: serde_json::Value,
-    /// Human-readable summary of what will happen
-    summary: String,
-    /// Estimated phases
-    phases: Vec<DiscoverPhase>,
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BuildRequest {
+    pub config_path: String,
+    pub db_path: String,
+    #[serde(default)]
+    pub passphrase: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct DiscoverPhase {
-    ordinal: u32,
-    name: String,
-    description: String,
-    sources: Vec<String>,
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ComposeRequest {
+    pub prompt: String,
+    pub author: String,
+    pub db_path: String,
+    pub passphrase: String,
+    #[serde(default = "default_false")]
+    pub no_validate: bool,
 }
 
-// ── Cache Work types ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct CacheWorkResult {
-    slug: String,
-    path: String,
-    bytes_written: u64,
+fn default_false() -> bool {
+    false
 }
 
-// ── Pipeline request types ───────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct PipelineRunRequest {
-    /// Path to the PipelineManifest YAML file
-    pub manifest_path: String,
+fn default_compare_mode() -> String {
+    "per-dimension".to_string()
 }
 
-// ── Server implementation ───────────────────────────────────────────────────
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompareRequest {
+    pub db_path: String,
+    pub passphrase: String,
+    #[serde(default)]
+    pub persona: Option<String>,
+    #[serde(default)]
+    pub document_content: Option<String>,
+    #[serde(default = "default_compare_mode")]
+    pub compare_mode: String,
+}
 
-#[tool_router(server_handler)]
-impl ReplicaServer {
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MashupRequest {
+    pub prompt: String,
+    pub author_a: String,
+    pub author_b: String,
+    #[serde(default = "default_half")]
+    pub blend: f64,
+    pub db_path: String,
+    pub passphrase: String,
+}
+
+fn default_half() -> f64 {
+    0.5
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "lowercase")]
+pub enum RegistryAction {
+    List,
+    Remove { author: String },
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RegistryRequest {
+    #[serde(flatten)]
+    pub action: RegistryAction,
+    pub db_path: String,
+    pub passphrase: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RewriteRequest {
+    pub content: String,
+    #[serde(default = "default_rewrite_author")]
+    pub author: String,
+    #[serde(default = "default_rewrite_dimension")]
+    pub dimension: String,
+    pub db_path: String,
+    pub passphrase: String,
+    #[serde(default = "default_false")]
+    pub no_validate: bool,
+}
+
+fn default_rewrite_author() -> String {
+    "gentle-lovelace".to_string()
+}
+
+fn default_rewrite_dimension() -> String {
+    "composite".to_string()
+}
+
+// ── Tool implementations ────────────────────────────────────────────────────
+
+#[tool_router(router = persona_router, vis = "pub")]
+impl DocProcServer {
     #[tool(
         description = "Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid."
     )]
@@ -256,7 +261,7 @@ impl ReplicaServer {
                 )));
             }
 
-            let progress = Arc::new(|p: &EmbedProgress| {
+            let progress = Arc::new(|p: &hkask_services_corpus::EmbedProgress| {
                 tracing::info!(
                     target: "hkask.mcp.replica",
                     phase = ?p.phase,
@@ -303,10 +308,7 @@ impl ReplicaServer {
     }
 
     #[tool(description = "Generate prose in an author's style.")]
-    pub async fn replica_compose(
-        &self,
-        Parameters(params): Parameters<ReplicaComposeParams>,
-    ) -> String {
+    pub async fn replica_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
         execute_tool(self, "replica_compose", async {
             let model = embedding_model();
             let gen_model = generation_model();
@@ -325,7 +327,8 @@ impl ReplicaServer {
                 },
             };
 
-            let inference_ctx = InferenceContext::from_parts(None, &gen_model, inf_cfg);
+            let inference_ctx =
+                hkask_services_inference::InferenceContext::from_parts(None, &gen_model, inf_cfg);
 
             let request = hkask_services_compose::ComposeRequest {
                 prompt: params.prompt,
@@ -377,7 +380,10 @@ impl ReplicaServer {
                 }
             };
 
-            let prompt = format!("{dimension_guidance}\n\n=== TEXT TO REWRITE ===\n\n{}", params.content);
+            let prompt = format!(
+                "{dimension_guidance}\n\n=== TEXT TO REWRITE ===\n\n{}",
+                params.content
+            );
 
             let centroid_ref = if params.dimension.to_lowercase() == "composite" {
                 format!("style:{}:centroid", params.author)
@@ -406,7 +412,8 @@ impl ReplicaServer {
                 },
             };
 
-            let inference_ctx = InferenceContext::from_parts(None, &gen_model, inf_cfg);
+            let inference_ctx =
+                hkask_services_inference::InferenceContext::from_parts(None, &gen_model, inf_cfg);
 
             let request = hkask_services_compose::ComposeRequest {
                 prompt,
@@ -431,7 +438,8 @@ impl ReplicaServer {
             }))
             .map_err(|e| McpToolError::internal(e.to_string()))?;
 
-            let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({"error": "serialization failed"}));
+            let parsed: Value =
+                serde_json::from_str(&json_str).unwrap_or(json!({"error": "serialization failed"}));
             Ok(parsed)
         })
         .await
@@ -456,7 +464,6 @@ impl ReplicaServer {
             if let Some(ref doc_text) = document_content {
                 let started = Instant::now();
 
-                // Embed the document
                 let emb_model = embedding_model();
                 let inf_cfg = inference_config();
                 let embedder = EmbeddingRouter::new(inf_cfg);
@@ -470,13 +477,11 @@ impl ReplicaServer {
                     .first()
                     .ok_or_else(|| McpToolError::internal("Embedding returned empty result"))?;
 
-                // Query centroids for this persona
                 let prefix = format!("style:{}:", persona.as_deref().unwrap_or(""));
                 let all_refs = store
                     .query_by_prefix(&prefix)
                     .map_err(|e| McpToolError::internal(e.to_string()))?;
 
-                // Count non-centroid passages for passage_count on each centroid
                 let total_passages = all_refs.iter().filter(|r| !is_centroid_entity(r)).count();
 
                 let mut dimension_scores: Vec<DimensionScore> = Vec::new();
@@ -492,9 +497,6 @@ impl ReplicaServer {
                         .map_err(|e| McpToolError::internal(e.to_string()))?;
                     let dist = cosine_distance(doc_vec, &emb.vector);
 
-                    // Derive dimension name from entity_ref.
-                    // "style:{persona}:{dimension}-centroid" → dimension name
-                    // "style:{persona}:centroid" → composite
                     let last_segment = entity_ref.rsplit(':').next().unwrap_or(entity_ref);
 
                     let (dimension_name, is_composite) = if last_segment == "centroid" {
@@ -649,8 +651,8 @@ impl ReplicaServer {
                 .map(|(a, b)| a * (1.0 - blend as f32) + b * blend as f32)
                 .collect();
 
-            let dist_a = hkask_services_compose::cosine_distance(&blended, &emb_a.vector);
-            let dist_b = hkask_services_compose::cosine_distance(&blended, &emb_b.vector);
+            let dist_a = cosine_distance(&blended, &emb_a.vector);
+            let dist_b = cosine_distance(&blended, &emb_b.vector);
 
             let model = embedding_model();
             let gen_model = generation_model();
@@ -673,7 +675,8 @@ impl ReplicaServer {
                 },
             };
 
-            let inference_ctx = InferenceContext::from_parts(None, &gen_model, inf_cfg);
+            let inference_ctx =
+                hkask_services_inference::InferenceContext::from_parts(None, &gen_model, inf_cfg);
 
             let request = hkask_services_compose::ComposeRequest {
                 prompt: params.prompt,
@@ -751,7 +754,6 @@ impl ReplicaServer {
                 }
                 RegistryAction::Remove { author } => {
                     let prefix = format!("style:{}:", author);
-                    // Remove embeddings
                     let refs = store
                         .query_by_prefix(&prefix)
                         .map_err(|e| McpToolError::internal(e.to_string()))?;
@@ -759,7 +761,6 @@ impl ReplicaServer {
                     for entity_ref in &refs {
                         let _ = store.delete(entity_ref);
                     }
-                    // Remove h_mems
                     let pool = db
                         .sqlite_pool()
                         .map_err(|e| McpToolError::internal(e.to_string()))?;
@@ -856,244 +857,7 @@ impl ReplicaServer {
                 "human_exemplar_principle": "All exemplar types model a named human individual whose body of work constitutes a representational corpus. The logical validity of the replica derives from the relationship between the human and their work — the corpus IS the evidence of their voice, style, and intellectual framework."
             }
         }))
-    })
-        .await
-    }
-
-    #[tool(
-        description = "Discover an academic author's body of work and generate a corpus.yaml for replica_build. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
-    )]
-    pub async fn replica_discover(
-        &self,
-        Parameters(params): Parameters<DiscoverRequest>,
-    ) -> String {
-        execute_tool(self, "replica_discover", async {
-        let author_name = params.author_name.clone();
-
-        // Validate mode
-        let mode = match params.mode.as_str() {
-            "agentic" | "curated" => params.mode.clone(),
-            other => {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Invalid mode '{}'. Use 'agentic' or 'curated'.",
-                    other
-                )));
-            }
-        };
-
-        let author_name_lower = author_name.to_lowercase();
-
-        // Build parameters for the manifest
-        let manifest_params = serde_json::json!({
-            "author_name": author_name,
-            "author_name_lower": author_name_lower,
-            "mode": mode,
-            "max_works": params.max_works,
-            "include_transcripts": params.include_transcripts,
-            "include_web": params.include_web,
-            "output_path": params.output_path,
-        });
-
-        // Build phase descriptions for the response
-        let phases = vec![
-            DiscoverPhase {
-                ordinal: 1,
-                name: "Name Disambiguation".into(),
-                description: "Search across multiple sources to confirm author identity".into(),
-                sources: vec!["web_search (deep)".into()],
-            },
-            DiscoverPhase {
-                ordinal: 2,
-                name: "Academic Paper Search".into(),
-                description: "Enumerate papers via Semantic Scholar and arXiv".into(),
-                sources: vec!["semantic_scholar".into(), "arxiv".into()],
-            },
-            DiscoverPhase {
-                ordinal: 3,
-                name: "Web + Institutional Content".into(),
-                description: "Find faculty pages, interviews, and open web content".into(),
-                sources: vec!["web_search (web)".into()],
-            },
-            DiscoverPhase {
-                ordinal: 4,
-                name: "YouTube Transcript Discovery".into(),
-                description: "Search for talks, interviews, lectures on YouTube".into(),
-                sources: vec![
-                    "web_search (youtube.com)".into(),
-                    "serpapi_transcript".into(),
-                ],
-            },
-            DiscoverPhase {
-                ordinal: 5,
-                name: "Content Extraction".into(),
-                description: "Extract full text from all discovered works".into(),
-                sources: vec!["web_extract".into(), "docproc (PDF/OCR)".into()],
-            },
-            DiscoverPhase {
-                ordinal: 6,
-                name: "Corpus YAML Generation".into(),
-                description: "Generate corpus.yaml from discovered works".into(),
-                sources: vec!["minijinja template".into()],
-            },
-        ];
-
-        let summary = format!(
-            "Discovering corpus for '{}' in {} mode. Will search Semantic Scholar, arXiv, web{}, and generate a corpus.yaml with up to {} works.",
-            params.author_name,
-            mode,
-            if params.include_transcripts {
-                ", YouTube transcripts"
-            } else {
-                ""
-            },
-            params.max_works,
-        );
-
-        let result = DiscoverResult {
-            manifest_id: "mcp/replica-discovery".into(),
-            parameters: manifest_params,
-            summary,
-            phases,
-        };
-
-        let output = serde_json::to_value(&result)
-            .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
-
-        Ok(output)
         })
         .await
     }
-
-    #[tool(
-        description = "Cache an extracted work's content to disk for reuse by replica_build. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading."
-    )]
-    pub async fn replica_cache_work(
-        &self,
-        Parameters(params): Parameters<CacheWorkRequest>,
-    ) -> String {
-        execute_tool(self, "replica_cache_work", async {
-            // Validate slug: alphanumeric + hyphens only, no path traversal
-            if params.slug.is_empty()
-                || !params
-                    .slug
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Invalid slug '{}': must be alphanumeric with hyphens/underscores only",
-                    params.slug
-                )));
-            }
-
-            let cache_dir = PathBuf::from(&params.cache_dir);
-            let cache_path = cache_dir.join(format!("{}.txt", params.slug));
-
-            // Create cache directory if it doesn't exist
-            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(McpToolError::internal(format!(
-                    "Failed to create cache directory '{}': {}",
-                    cache_dir.display(),
-                    e
-                )));
-            }
-
-            let bytes = params.content.as_bytes();
-            match std::fs::write(&cache_path, bytes) {
-                Ok(()) => {
-                    let result = CacheWorkResult {
-                        slug: params.slug.clone(),
-                        path: cache_path.to_string_lossy().to_string(),
-                        bytes_written: bytes.len() as u64,
-                    };
-                    let output = serde_json::to_value(&result)
-                        .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
-                    Ok(output)
-                }
-                Err(e) => Err(McpToolError::internal(format!(
-                    "Failed to write cache file '{}': {}",
-                    cache_path.display(),
-                    e
-                ))),
-            }
-        })
-        .await
-    }
-
-    // ── Pipeline orchestration ─────────────────────────────────────────
-
-    #[tool(
-        description = "Execute a corpus pipeline manifest with checkpoint/resume. Reads a PipelineManifest YAML, runs each step, checkpoints after each success. MCP steps (docproc_*, replica_*, training_*) are reported as needing external execution via 'kask mcp invoke'. Returns pipeline status with completed/skipped/failed counts."
-    )]
-    pub async fn replica_pipeline_run(
-        &self,
-        Parameters(params): Parameters<PipelineRunRequest>,
-    ) -> String {
-        execute_tool(self, "replica_pipeline_run", async {
-            use hkask_types::pipeline_manifest::PipelineManifest;
-            use hkask_types::pipeline_runner::{PipelineRunner, StepExecutor};
-
-            let content = std::fs::read_to_string(&params.manifest_path)
-                .map_err(|e| McpToolError::invalid_argument(format!("Cannot read manifest: {e}")))?;
-            let manifest: PipelineManifest = serde_yaml_neo::from_str(&content)
-                .map_err(|e| McpToolError::invalid_argument(format!("Invalid manifest: {e}")))?;
-
-            let mut runner = PipelineRunner::new(manifest)
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
-
-            // Step executor — routes pipeline steps to the correct handler.
-            // All tools (docproc_*, replica_*) require external MCP execution.
-            struct ReplicaStepExecutor;
-            impl StepExecutor for ReplicaStepExecutor {
-                fn execute(&self, step: &hkask_types::pipeline_manifest::PipelineStep) -> Result<serde_json::Value, hkask_types::pipeline_runner::PipelineError> {
-                    if step.params.is_none() {
-                        return Err(hkask_types::pipeline_runner::PipelineError::StepFailed {
-                            step_id: step.id.clone(),
-                            message: format!("Step '{}' requires parameters for tool '{}'", step.id, step.tool),
-                        });
-                    }
-                    Err(hkask_types::pipeline_runner::PipelineError::StepFailed {
-                        step_id: step.id.clone(),
-                        message: format!(
-                            "Step '{}' uses tool '{}' — external MCP execution required. Run via kask mcp invoke --server <tool-server> --tool {}.",
-                            step.id, step.tool, step.tool
-                        ),
-                    })
-                }
-            }
-
-            let executor = ReplicaStepExecutor;
-            let result = runner.run_all(&executor);
-
-            Ok(serde_json::to_value(&result).unwrap_or(json!({"error": "serialization failed"})))
-        }).await
-    }
-}
-
-/// Run the replica MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
-    hkask_mcp_server::run_server(
-        "hkask-mcp-replica",
-        env!("CARGO_PKG_VERSION"),
-        |ctx| {
-            Ok(ReplicaServer::new(
-                ctx.webid,
-                userpod.clone(),
-                daemon_client.clone(),
-            ))
-        },
-        vec![
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_EMBEDDING_MODEL",
-                "Embedding model for corpus vectorization (default: Qwen/Qwen3-Embedding-0.6B)",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_DEFAULT_MODEL",
-                "Default generation model for all inference (also used for prose composition). Set via HKASK_DEFAULT_MODEL env var.",
-            ),
-        ],
-    )
-    .await
 }

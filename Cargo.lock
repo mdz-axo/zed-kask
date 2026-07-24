@@ -10322,6 +10322,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp-corpus"
+version = "0.31.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "calamine",
+ "dirs 6.0.0",
+ "docx-rs",
+ "dotenvy",
+ "hkask-bridge-dublincore",
+ "hkask-guard",
+ "hkask-inference",
+ "hkask-keystore",
+ "hkask-mcp-server",
+ "hkask-memory",
+ "hkask-services-compose",
+ "hkask-services-core",
+ "hkask-services-corpus",
+ "hkask-services-inference",
+ "hkask-storage",
+ "hkask-test-harness",
+ "hkask-types",
+ "image",
+ "minijinja",
+ "pptx-to-md",
+ "proptest 1.11.0",
+ "rand 0.9.4",
+ "regex",
+ "rmcp",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "serde_yaml_neo",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "zed-reqwest",
+]
+
+[[package]]
 name = "hkask-mcp-curator"
 version = "0.31.0"
 dependencies = [
@@ -10338,40 +10379,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "hkask-mcp-docproc"
-version = "0.31.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "calamine",
- "dirs 6.0.0",
- "docx-rs",
- "dotenvy",
- "hkask-bridge-dublincore",
- "hkask-guard",
- "hkask-inference",
- "hkask-mcp-server",
- "hkask-memory",
- "hkask-services-core",
- "hkask-storage",
- "hkask-types",
- "image",
- "minijinja",
- "pptx-to-md",
- "rand 0.9.4",
- "regex",
- "rmcp",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "zed-reqwest",
 ]
 
 [[package]]
@@ -10422,32 +10429,6 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "hkask-mcp-replica"
-version = "0.31.0"
-dependencies = [
- "hkask-inference",
- "hkask-keystore",
- "hkask-mcp-server",
- "hkask-services-compose",
- "hkask-services-core",
- "hkask-services-corpus",
- "hkask-services-inference",
- "hkask-storage",
- "hkask-test-harness",
- "hkask-types",
- "proptest 1.11.0",
- "rand 0.9.4",
- "rmcp",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "tempfile",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -12199,11 +12180,15 @@ dependencies = [
  "futures-util",
  "gpui",
  "hkask-capability",
+ "hkask-mcp",
  "hkask-templates",
  "hkask-types",
  "language_model",
  "language_model_core",
+ "schemars 1.0.4",
+ "serde",
  "serde_json",
+ "settings",
  "tokio",
  "tracing",
 ]
@@ -27235,6 +27220,7 @@ dependencies = [
  "gpui_tokio",
  "hdrhistogram",
  "hkask-keystore",
+ "hkask-mcp",
  "http_client",
  "image",
  "image_viewer",

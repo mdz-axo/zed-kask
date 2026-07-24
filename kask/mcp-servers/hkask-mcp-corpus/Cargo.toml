@@ -1,9 +1,9 @@
 [package]
-name = "hkask-mcp-docproc"
+name = "hkask-mcp-corpus"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Unified document processing MCP server: format conversion, OCR, chunking, parsing, and QA generation"
+description = "Unified corpus MCP server — gather, process, and output: document conversion, OCR, chunking, tagging, embedding, QA generation, training data, style replicas, and prose composition"
 
 [dependencies]
 # Shared infrastructure
@@ -35,6 +35,12 @@ hkask-memory = { path = "../../crates/hkask-memory" }
 hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-guard = { path = "../../crates/hkask-guard" }
 
+# Persona/style services (from replica)
+hkask-services-compose = { path = "../../crates/hkask-services-compose" }
+hkask-services-corpus = { path = "../../crates/hkask-services-corpus" }
+hkask-services-inference = { path = "../../crates/hkask-services-inference" }
+hkask-keystore = { path = "../../crates/hkask-keystore" }
+
 # Protocol + utilities
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
@@ -53,17 +59,21 @@ dirs = "6"
 regex.workspace = true
 minijinja.workspace = true
 
+serde_yaml_neo.workspace = true
+
 # Service layer (shared settings, models, paths)
 hkask-services-core = { path = "../../crates/hkask-services-core" }
 
 [lib]
-name = "hkask_mcp_docproc"
+name = "hkask_mcp_corpus"
 path = "src/lib.rs"
 
 [[bin]]
-name = "hkask-mcp-docproc"
+name = "hkask-mcp-corpus"
 path = "src/main.rs"
 
 [dev-dependencies]
+hkask-test-harness = { path = "../../crates/hkask-test-harness" }
 rand.workspace = true
+proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }

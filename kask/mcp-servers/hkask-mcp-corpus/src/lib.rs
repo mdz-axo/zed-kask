@@ -1,9 +1,23 @@
 #![forbid(unsafe_code)]
-//! hKask MCP DocProc — Unified document processing MCP server
+//! hKask MCP Corpus — Unified corpus MCP server.
 //!
-//! Combines format conversion, OCR, chunking, h_mem extraction, embedding,
-//! QA generation, caching, query, and Kindle book export (17 tools). Supersedes the former
-//! `hkask-mcp-markitdown` and `hkask-mcp-doc-knowledge` servers.
+//! Combines the former `hkask-mcp-docproc` and `hkask-mcp-replica` servers into
+//! a single server organized by corpus flow stage:
+//!
+//!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
+//!
+//! Tools (24):
+//! - Gather:     replica_discover, replica_cache_work
+//! - Process:    docproc_convert, docproc_ocr, docproc_chunk, docproc_tag_chunks,
+//!               docproc_embed, docproc_extract_triples, docproc_dedup_chunks,
+//!               docproc_consolidate_chunks
+//! - QA output:  docproc_build_prompts, docproc_generate_qa, docproc_generate_qa_batch,
+//!               docproc_ingest_qa, docproc_prepare_training_dataset, docproc_purge_qa
+//! - Persona:    replica_build, replica_compose, replica_rewrite, replica_mashup,
+//!               replica_compare, replica_registry, replica_explain
+//! - Manage:     docproc_cache, docproc_query, docproc_clear_index
+//!
+//! Supersedes `hkask-mcp-markitdown`, `hkask-mcp-doc-knowledge`, and `hkask-mcp-replica`.
 //!
 //! Server struct in lib.rs, tool methods in tools/ module.
 //! Helpers in helpers.rs (math/text) and json_extract.rs (LLM JSON parsing).
@@ -627,13 +641,13 @@ impl rmcp::ServerHandler for DocProcServer {}
 
 // ── Entry point ────────────────────────────────────────────────────────────
 
-/// Run the docproc MCP server (used by binary target).
+/// Run the corpus MCP server (used by binary target).
 pub async fn run(
     userpod: String,
     daemon_client: Option<hkask_mcp_server::DaemonClient>,
 ) -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
-        "hkask-mcp-docproc",
+        "hkask-mcp-corpus",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
             let ocr_model = ctx
@@ -685,6 +699,14 @@ pub async fn run(
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_OCR_MODEL",
                 "Vision model for OCR (must exist in inference catalog). Required for OCR functionality.",
+            ),
+            hkask_mcp_server::CredentialRequirement::optional(
+                "HKASK_EMBEDDING_MODEL",
+                "Embedding model for corpus vectorization (default: Qwen/Qwen3-Embedding-0.6B)",
+            ),
+            hkask_mcp_server::CredentialRequirement::optional(
+                "HKASK_DEFAULT_MODEL",
+                "Default generation model for all inference (also used for prose composition). Set via HKASK_DEFAULT_MODEL env var.",
             ),
         ],
     )
