@@ -1,0 +1,61 @@
+# hKask — cargo-deny configuration for supply-chain audit
+# REQ: SHOULD-5 — cargo-deny in CI for dependency license and security auditing
+#
+# Run: cargo deny check
+
+[graph]
+all-features = true
+no-default-features = false
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive dep of utoipa-axum. Reviewed 2026-07-22 — re-review 2026-10-22." },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of aquamarine→matrix-sdk→hkask-communication; no safe upgrade. Reviewed 2026-07-22 — re-review 2026-10-22." },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained but has no safe upgrade; required transitively by current lopdf and imageproc for PDF/font processing. Reviewed 2026-07-22 — re-review 2026-10-22." },
+]
+
+[licenses]
+# face_id and nom-exif lack Cargo.toml license fields but are functionally
+# permissive (face_id: BSD-style, nom-exif: MIT — verified via repo LICENSE files).
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "BSL-1.0",
+    "CC0-1.0",
+    "OpenSSL",
+    "MPL-2.0",
+    "NCSA",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+exceptions = [
+    { crate = "ring", allow = ["ISC", "MIT", "OpenSSL"] },
+]
+
+[[licenses.clarify]]
+crate = "ring"
+expression = "ISC AND MIT AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+workspace-default-features = "allow"
+external-default-features = "allow"
+deny = [
+    { crate = "libsodium", reason = "wallet spec §4.5: use RustCrypto crates" },
+    { crate = "libsodium-sys", reason = "wallet spec §4.5: use RustCrypto crates" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

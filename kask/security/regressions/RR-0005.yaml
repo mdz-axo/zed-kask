@@ -1,0 +1,21 @@
+id: RR-0005
+title: "GuardConfig::default() reads environment variables (hidden parameter)"
+surface: code
+cwe: CWE-732
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0007
+nist_ssdf: PW.6.1
+discovered_in: crates/hkask-guard/src/pipeline.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: medium
+detection:
+  kind: grep
+  # The bug: env::var inside Default::default(). The fix: Default returns
+  # pure 32,000; from_env() reads the env var explicitly.
+  pattern: 'fn default\(\).*\n.*env::var'
+  include: "crates/hkask-guard/src/**/*.rs"
+mitigation: "Use GuardConfig::from_env() for env-var-driven config. Default::default() must return the pure default (32,000) without touching the environment."
+source: "hKask Magna Carta P3 — no hidden parameters"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

@@ -1,10 +1,28 @@
 [package]
 name = "hkask-mcp-kata-kanban"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Kata-Kanban workflow coordination MCP server"
-publish = false
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-services-kata-kanban = { path = "../../crates/hkask-services-kata-kanban" }
+hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-test-harness = { path = "../../crates/hkask-test-harness" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+
+
+
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+
 
 [lib]
 name = "hkask_mcp_kata_kanban"
@@ -14,16 +32,5 @@ path = "src/lib.rs"
 name = "hkask-mcp-kata-kanban"
 path = "src/main.rs"
 
-[dependencies]
-hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
-hkask-types = { path = "../../crates/hkask-types" }
-rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-schemars = { workspace = true }
-tracing = { workspace = true }
-anyhow = { workspace = true }
-
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+proptest = "1"

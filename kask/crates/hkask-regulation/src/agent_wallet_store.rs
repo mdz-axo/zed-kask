@@ -5,10 +5,10 @@
 //! data lives in `hkask-storage::WalletStore`; this store is a regulatory
 //! cache layered on top — it holds references, not funds.
 
-use hkask_types::storage::{query_map, query_row};
-use hkask_types::DbError;
-use hkask_types::storage::DbValue;
-use hkask_types::define_driver_store;
+use hkask_storage::database::driver::{query_map, query_row};
+use hkask_storage::database::types::DbError;
+use hkask_storage::database::value::DbValue;
+use hkask_storage::define_driver_store;
 use hkask_types::{InfrastructureError, WebID};
 use thiserror::Error;
 
@@ -27,7 +27,7 @@ impl From<DbError> for AgentWalletError {
 }
 
 impl WalletStore {
-    fn init_schema(driver: &std::sync::Arc<dyn hkask_types::storage::StorageDriver>) {
+    fn init_schema(driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>) {
         let _ = driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS agent_wallets (
                 agent_webid TEXT PRIMARY KEY NOT NULL,

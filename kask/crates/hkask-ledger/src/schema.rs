@@ -1,6 +1,7 @@
 //! Ledger schema DDL — table creation and metadata initialization.
 
-use hkask_types::storage::{DbValue, StorageDriver};
+use hkask_storage::database::driver::DatabaseDriver;
+use hkask_storage::database::value::DbValue;
 
 /// The SQL DDL for ledger schema initialization.
 ///
@@ -51,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_reference
 /// Idempotent — safe to call on an existing database. Detects whether
 /// the database is newly created (no `created_at` in `_ledger_meta`)
 /// and inserts metadata if so.
-pub fn init_schema(driver: &Arc<dyn StorageDriver>) -> Result<(), super::LedgerError> {
+pub fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), super::LedgerError> {
     driver.execute_batch(SCHEMA_DDL)?;
 
     let is_new = driver

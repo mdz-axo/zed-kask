@@ -1,0 +1,104 @@
+principle: user_sovereignty
+version: "0.1.0"
+description: >
+  Data is owned by the user, correctly categorized at onboarding,
+  portable on demand, and consent terms are atomic (unbundled, ≤5 sentences each).
+  Grounded in SOLID architecture principles — Single Responsibility on data
+  ownership, Open/Closed for boundary extension without mutation,
+  Dependency Inversion via SovereigntyChecker abstraction.
+
+assertions:
+  - id: p1a
+    name: sovereign_data_gated
+    claim: >
+      Every code path that reads or writes sovereign data is gated by
+      SovereigntyChecker. No path reaches sovereign storage without passing
+      through require_sovereignty.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: pod::context
+        methods:
+          - store_episodic
+          - recall_episodic
+          - store_semantic
+          - recall_semantic
+        gate: require_sovereignty
+      - crate: hkask-agents
+        module: sovereignty
+        methods:
+          - can_access
+          - has_consent
+        gate: SovereigntyChecker
+
+  - id: p1b
+    name: non_owner_denied
+    claim: >
+      Non-owner access to sovereign data categories (EpisodicMemory,
+      PersonalContext, CapabilityTokens, OcapBoundaries) is denied.
+      Only the owner WebID may access sovereign data without explicit consent.
+    method: behavioral_probe
+    targets:
+      - crate: hkask-agents
+        module: sovereignty
+        methods:
+          - can_access
+        categories:
+          - EpisodicMemory
+          - PersonalContext
+          - CapabilityTokens
+          - OcapBoundaries
+      - crate: hkask-types
+        module: sovereignty
+        methods:
+          - is_sovereign
+
+  - id: p1c
+    name: resource_categorization
+    claim: >
+      Every resource is correctly categorized before platform entry.
+      DataSovereigntyBoundary::hkask_default assigns each DataCategory
+      to exactly one tier (sovereign, shared, public) with no overlaps.
+    method: resource_verification
+    targets:
+      - crate: hkask-types
+        module: sovereignty
+        methods:
+          - hkask_default
+          - is_sovereign
+          - is_category_shared
+          - is_category_public
+
+  - id: p1d
+    name: data_portability
+    claim: >
+      Sovereign data is portable. Users can export their episodic and
+      semantic data through the storage layer. No architectural lock-in
+      prevents data extraction.
+    method: structural_audit
+    targets:
+      - crate: hkask-storage
+        module: nu_event_store
+        methods:
+          - query_algedonic
+          - replay_weighted
+          - insert
+
+  - id: p1e
+    name: atomic_consent
+    claim: >
+      Consent terms are atomic — unbundled, each term ≤5 sentences.
+      ConsentManager grants per-category consent (not blanket grants).
+      Each category is a single, specific consent term.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: consent
+        methods:
+          - grant_consent
+          - revoke_consent
+      - crate: hkask-storage
+        module: consent_store
+        methods:
+          - store
+          - get

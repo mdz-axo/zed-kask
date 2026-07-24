@@ -1,0 +1,103 @@
+# Company Researcher — Replica Persona Configuration
+#
+# Defines the "company-researcher" persona for the replica server.
+# This persona is built from the investment literature corpus embeddings.
+# Once built, replica_compare and replica_rewrite can use it for
+# quality scoring and perspective rotation of QA pairs.
+#
+# Usage:
+#   replica_build {
+#     config_path: "corpus/replica/company-researcher.yaml"
+#     db_path: "corpus/memory/corpus_memory.db"
+#     passphrase: "hkask-default-passphrase-2024"
+#   }
+
+author: "company-researcher"
+
+# ── Embedding configuration ──────────────────────────────────────
+embedding:
+  model: "DI/Qwen/Qwen3-Embedding-0.6B"
+  dim: 1024
+  centroid_entity_ref: "style:company-researcher:centroid"
+  batch_size: 50
+
+# ── Chunking ─────────────────────────────────────────────────────
+chunking:
+  min_words: 40
+  max_words: 150
+  sentence_boundary: ".!? "
+
+# ── Validation ───────────────────────────────────────────────────
+validation:
+  centroid_distance_max: 0.40
+  per_dimension: true
+
+# ── Budget ───────────────────────────────────────────────────────
+budget:
+  mode: "absolute"
+  max_triples: 25000
+  triple_budget_per_100: 100
+
+# ── Entities — investment-domain tags for passage classification ─
+entities:
+  characters: []
+  places: []
+  events: []
+  concepts:
+    - competitive advantage
+    - barrier to entry
+    - economies of scale
+    - return on capital
+    - return on equity
+    - cost of capital
+    - discounted cash flow
+    - margin of safety
+    - reinvestment rate
+    - growth rate
+    - valuation
+    - economic profit
+    - working capital
+    - free cash flow
+    - terminal value
+    - capital allocation
+    - management quality
+    - risk premium
+    - volatility
+    - uncertainty
+
+# ── Methods — analytical approaches to detect ────────────────────
+methods:
+  - name: "DCF valuation"
+    description: "Discounted cash flow analysis passages"
+    signal: {}
+    threshold: {}
+  - name: "competitive analysis"
+    description: "Five forces, moat, barrier to entry analysis"
+    signal: {}
+    threshold: {}
+
+# ── Works — this persona draws from the ENTIRE corpus ────────────
+# Rather than listing individual works, we use the pre-built corpus
+# embeddings already in corpus_memory.db. The replica server will
+# discover centroids by scanning for style:company-researcher:* refs.
+works: []
+
+# ── Dimension centroids — quality dimensions for QA enrichment ───
+# These define the four quality dimensions that replica_rewrite
+# will rotate through when enriching QA pairs.
+#
+# Gentle:  correctness — is the answer accurate and actionable?
+# Schriver: findability — is the answer scannable and structured?
+# Hopper:  accessibility — is the answer comprehensible?
+# Lovelace: precision — is the answer verifiable and testable?
+#
+# Each dimension produces a separate centroid for comparison.
+dimension_centroids:
+  - dimension: "gentle"
+    description: "Correctness and actionability — accurate, grounded answers"
+  - dimension: "schriver"
+    description: "Findability and structure — scannable, well-organized answers"
+  - dimension: "hopper"
+    description: "Accessibility — comprehensible on first reading"
+  - dimension: "lovelace"
+    description: "Precision — independently verifiable, testable claims"

@@ -1,10 +1,9 @@
 [package]
 name = "hkask-pods"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Agent pods, ACP, and userpod management for hKask"
-publish = false
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
@@ -13,6 +12,7 @@ hkask-mcp = { path = "../hkask-mcp" }
 hkask-templates = { path = "../hkask-templates" }
 hkask-regulation = { path = "../hkask-regulation" }
 hkask-keystore = { path = "../hkask-keystore" }
+hkask-storage = { path = "../hkask-storage" }
 hkask-memory = { path = "../hkask-memory" }
 async-trait.workspace = true
 chrono.workspace = true
@@ -23,11 +23,15 @@ tracing.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+rusqlite.workspace = true
 tokio-util.workspace = true
+sqlx.workspace = true
 ed25519-dalek.workspace = true
+r2d2_sqlite.workspace = true
 
 [features]
-default = []
+sql = []  # Gates SQL-related error conversions for hkask-memory integration
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+

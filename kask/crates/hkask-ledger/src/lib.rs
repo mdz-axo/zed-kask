@@ -19,7 +19,8 @@ mod types;
 
 pub use types::{AccountBalance, DateRange, LedgerError, LedgerTransaction, Posting, QueryFilter};
 
-use hkask_types::storage::{DbValue, StorageDriver};
+use hkask_storage::database::driver::DatabaseDriver;
+use hkask_storage::database::value::DbValue;
 use std::sync::Arc;
 
 /// The double-entry ledger.
@@ -28,7 +29,7 @@ use std::sync::Arc;
 /// abstracts over SQLite and PostgreSQL, so the ledger works with either
 /// provider. `Ledger` is `Send + Sync` and can be shared via `Arc`.
 pub struct Ledger {
-    driver: Arc<dyn StorageDriver>,
+    driver: Arc<dyn DatabaseDriver>,
 }
 
 impl Ledger {
@@ -44,7 +45,7 @@ impl Ledger {
     /// post: returns Ledger with accounts, transactions, postings tables created
     /// inv:  idempotent — calling from_driver twice with the same driver creates the same tables
     /// \[P8\] Constraining: Persistence — data survives process restarts
-    pub fn from_driver(driver: Arc<dyn StorageDriver>) -> Result<Self, LedgerError> {
+    pub fn from_driver(driver: Arc<dyn DatabaseDriver>) -> Result<Self, LedgerError> {
         schema::init_schema(&driver)?;
         Ok(Self { driver })
     }
@@ -333,3 +334,302 @@ fn build_query_params(range: &DateRange, filter: &QueryFilter) -> Vec<DbValue> {
     params
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_storage::database::sqlite::SqliteDriver;
+
+    fn db() -> Ledger {
+        Ledger::from_driver(SqliteDriver::in_memory_driver()).expect("ledger from driver")
+    }
+
+    #[test]
+    fn ledger_open_creates_schema() {
+        let ledger = db();
+        // Verify tables exist by inserting and querying
+        ledger.ensure_account("test:asset", "test").unwrap();
+        let bal = ledger.balance("test:asset", None).unwrap();
+        assert_eq!(bal, 0);
+    }
+
+    #[test]
+    fn ledger_open_is_idempotent() {
+        let driver = SqliteDriver::in_memory_driver();
+        let _l1 = Ledger::from_driver(driver.clone()).unwrap();
+        let _l2 = Ledger::from_driver(driver).unwrap();
+        // No error — schema creation is idempotent
+    }
+
+    #[test]
+    fn ensure_account_creates() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        let bal = ledger.balance("alice", None).unwrap();
+        assert_eq!(bal, 0);
+    }
+
+    #[test]
+    fn ensure_account_is_idempotent() {
+        let ledger = db();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        // No error — second call is a no-op
+    }
+
+    fn sample_tx(reference: &str) -> LedgerTransaction {
+        LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: reference.to_string(),
+            postings: vec![
+                Posting {
+                    source: "alice".to_string(),
+                    destination: "bob".to_string(),
+                    asset: "usd".to_string(),
+                    amount: 100,
+                },
+                Posting {
+                    source: "bob".to_string(),
+                    destination: "alice".to_string(),
+                    asset: "usd".to_string(),
+                    amount: -100,
+                },
+            ],
+            metadata: serde_json::json!({"reason": "test"}),
+        }
+    }
+
+    #[test]
+    fn commit_stores_transaction() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        let tx = sample_tx("tx-001");
+        ledger.commit(&tx).unwrap();
+
+        let bal = ledger.balance("bob", Some("usd")).unwrap();
+        assert_eq!(bal, 200); // +100 from alice, -(-100) from alice's second posting
+    }
+
+    #[test]
+    fn commit_is_idempotent() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        let tx = sample_tx("tx-002");
+        ledger.commit(&tx).unwrap();
+        // Second commit with same reference + same postings — no-op
+        ledger.commit(&tx).unwrap();
+        let bal = ledger.balance("bob", Some("usd")).unwrap();
+        assert_eq!(bal, 200); // unchanged
+    }
+
+    #[test]
+    fn commit_rejects_idempotency_conflict() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        let tx1 = sample_tx("tx-003");
+        ledger.commit(&tx1).unwrap();
+
+        let mut tx2 = sample_tx("tx-003"); // same reference
+        tx2.postings[0].amount = 999; // different postings
+        let result = ledger.commit(&tx2);
+        assert!(matches!(
+            result,
+            Err(LedgerError::IdempotencyConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn commit_rejects_empty_postings() {
+        let ledger = db();
+        let tx = LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: "tx-empty".to_string(),
+            postings: vec![],
+            metadata: serde_json::json!({}),
+        };
+        let result = ledger.commit(&tx);
+        assert!(matches!(result, Err(LedgerError::DoubleEntryViolation(0))));
+    }
+
+    #[test]
+    fn balance_after_commit() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+
+        let tx = LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: "tx-bal-1".to_string(),
+            postings: vec![
+                Posting {
+                    source: "alice".to_string(),
+                    destination: "bob".to_string(),
+                    asset: "usd".to_string(),
+                    amount: 500,
+                },
+                Posting {
+                    source: "bob".to_string(),
+                    destination: "alice".to_string(),
+                    asset: "usd".to_string(),
+                    amount: -500,
+                },
+            ],
+            metadata: serde_json::json!({}),
+        };
+        ledger.commit(&tx).unwrap();
+
+        assert_eq!(ledger.balance("bob", Some("usd")).unwrap(), 1000);
+        assert_eq!(ledger.balance("alice", Some("usd")).unwrap(), -1000);
+    }
+
+    #[test]
+    fn balance_nonexistent_returns_zero() {
+        let ledger = db();
+        assert_eq!(ledger.balance("nobody", None).unwrap(), 0);
+    }
+
+    #[test]
+    fn balances_sum_to_zero() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        ledger.ensure_account("carol", "wallet").unwrap();
+
+        let tx = LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: "tx-sum-1".to_string(),
+            postings: vec![
+                Posting {
+                    source: "alice".to_string(),
+                    destination: "bob".to_string(),
+                    asset: "usd".to_string(),
+                    amount: 300,
+                },
+                Posting {
+                    source: "bob".to_string(),
+                    destination: "carol".to_string(),
+                    asset: "usd".to_string(),
+                    amount: 300,
+                },
+                Posting {
+                    source: "carol".to_string(),
+                    destination: "alice".to_string(),
+                    asset: "usd".to_string(),
+                    amount: 300,
+                },
+                Posting {
+                    source: "alice".to_string(),
+                    destination: "alice".to_string(),
+                    asset: "usd".to_string(),
+                    amount: -900,
+                },
+            ],
+            metadata: serde_json::json!({}),
+        };
+        ledger.commit(&tx).unwrap();
+
+        let total: i64 = ["alice", "bob", "carol"]
+            .iter()
+            .map(|a| ledger.balance(a, Some("usd")).unwrap())
+            .sum();
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn namespace_balances_returns_all_accounts() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+        ledger.ensure_account("carol", "cost").unwrap();
+
+        let tx = LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: "tx-ns-1".to_string(),
+            postings: vec![
+                Posting {
+                    source: "alice".to_string(),
+                    destination: "bob".to_string(),
+                    asset: "usd".to_string(),
+                    amount: 100,
+                },
+                Posting {
+                    source: "bob".to_string(),
+                    destination: "alice".to_string(),
+                    asset: "usd".to_string(),
+                    amount: -100,
+                },
+            ],
+            metadata: serde_json::json!({}),
+        };
+        ledger.commit(&tx).unwrap();
+
+        let wallet_balances = ledger.namespace_balances("wallet").unwrap();
+        assert!(wallet_balances.iter().any(|b| b.account == "alice"));
+        assert!(wallet_balances.iter().any(|b| b.account == "bob"));
+        assert!(!wallet_balances.iter().any(|b| b.account == "carol"));
+    }
+
+    #[test]
+    fn namespace_balances_empty_for_unknown() {
+        let ledger = db();
+        let balances = ledger.namespace_balances("nonexistent").unwrap();
+        assert!(balances.is_empty());
+    }
+
+    #[test]
+    fn query_by_time_range() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+
+        let tx = sample_tx("tx-query-1");
+        ledger.commit(&tx).unwrap();
+
+        let range = DateRange {
+            start: "2000-01-01T00:00:00Z".to_string(),
+            end: "2099-12-31T23:59:59Z".to_string(),
+        };
+        let results = ledger.query(&range, &QueryFilter::default()).unwrap();
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|t| t.reference == "tx-query-1"));
+    }
+
+    #[test]
+    fn query_empty_when_no_matches() {
+        let ledger = db();
+        let range = DateRange {
+            start: "2000-01-01T00:00:00Z".to_string(),
+            end: "2000-01-02T00:00:00Z".to_string(),
+        };
+        let results = ledger.query(&range, &QueryFilter::default()).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_filter_by_account() {
+        let ledger = db();
+        ledger.ensure_account("alice", "wallet").unwrap();
+        ledger.ensure_account("bob", "wallet").unwrap();
+
+        let tx = sample_tx("tx-filter-1");
+        ledger.commit(&tx).unwrap();
+
+        let range = DateRange {
+            start: "2000-01-01T00:00:00Z".to_string(),
+            end: "2099-12-31T23:59:59Z".to_string(),
+        };
+        let filter = QueryFilter {
+            account: Some("alice".to_string()),
+            ..Default::default()
+        };
+        let results = ledger.query(&range, &filter).unwrap();
+        assert!(!results.is_empty());
+    }
+}

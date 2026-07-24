@@ -5,8 +5,6 @@ use std::collections::HashMap;
 
 use super::credentials::resolve_credential;
 use super::error::McpError;
-use hkask_types::storage::StorageDriver;
-use std::sync::Arc;
 
 /// A credential that an MCP server requires to function.
 ///
@@ -154,22 +152,14 @@ impl ServerContext {
     /// pre:  db_env_var is set and contains a valid path in credentials map
     /// post: returns opened Database with passphrase from credentials or keystore chain, or in-memory fallback
     #[must_use = "result must be used"]
-    pub fn open_database(&self, db_env_var: &str) -> Result<Arc<dyn StorageDriver>, McpError> {
+    pub fn open_database(&self, db_env_var: &str) -> Result<hkask_storage::Database, McpError> {
+        use hkask_storage::open_database;
         match self.credentials.get(db_env_var) {
-            Some(_path) => {
-                // In the zed-kask in-process architecture (D3), the bridge
-                // provides StorageDriver directly. File-based opening requires
-                // kask_bridge (T1.4). Use in-process transport for storage access.
-                Err(McpError::Storage(
-                    "Database opening requires kask_bridge — use in-process transport (D3)".to_string(),
-                ))
+            Some(path) => {
+                let passphrase = self.resolve_db_credential()?;
+                Ok(open_database(path, &passphrase)?)
             }
-            None => {
-                // Return a no-op stub for standalone/test mode.
-                Err(McpError::Storage(
-                    "No database path configured — StorageDriver requires kask_bridge".to_string(),
-                ))
-            }
+            None => Ok(hkask_storage::Database::in_memory()?),
         }
     }
 
@@ -182,10 +172,20 @@ impl ServerContext {
     pub fn open_database_with_extensions(
         &self,
         db_env_var: &str,
-        _extensions: &str,
-    ) -> Result<Arc<dyn StorageDriver>, McpError> {
-        // In the zed-kask architecture, StorageDriver is provided by kask_bridge.
-        // See open_database() above.
-        self.open_database(db_env_var)
+        extensions: &str,
+    ) -> Result<hkask_storage::Database, McpError> {
+        match self.credentials.get(db_env_var) {
+            Some(path) => {
+                let passphrase = self.resolve_db_credential()?;
+                Ok(hkask_storage::Database::open_with_extensions(
+                    path,
+                    &passphrase,
+                    extensions,
+                )?)
+            }
+            None => Ok(hkask_storage::Database::in_memory_with_extensions(
+                extensions,
+            )?),
+        }
     }
 }

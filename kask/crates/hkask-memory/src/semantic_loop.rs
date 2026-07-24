@@ -17,7 +17,7 @@ use hkask_regulation::types::loops::{
     ActionType, Deviation, DeviationDirection, LoopId, RegulationLoop, RegulatoryAction,
     RegulatoryActionParams, Signal, SignalMetric,
 };
-use hkask_types::HMem;
+use hkask_storage::HMem;
 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanNamespace};
 use hkask_types::regulation::RegulationSpan;
 
@@ -431,7 +431,7 @@ impl RegulationLoop for SemanticLoop {
                                             sorted[1..].iter().map(|t| t.id.to_string()).collect();
 
                                         for id_str in &condensed_ids {
-                                            let tid: hkask_types::HMemId = match id_str.parse() {
+                                            let tid: hkask_storage::HMemId = match id_str.parse() {
                                                 Ok(id) => id,
                                                 Err(e) => {
                                                     tracing::debug!(

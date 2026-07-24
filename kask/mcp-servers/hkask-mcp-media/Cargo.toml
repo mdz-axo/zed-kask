@@ -1,13 +1,41 @@
 [package]
 name = "hkask-mcp-media"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Media generation MCP server (image, video, audio, 3D via fal.ai and other providers)"
-publish = false
 
 [features]
 default = []
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-pods = { path = "../../crates/hkask-pods" }
+hkask-inference = { path = "../../crates/hkask-inference" }
+
+hkask-storage = { path = "../../crates/hkask-storage" }
+
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+minijinja = "2"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_neo.workspace = true
+schemars.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+dotenvy.workspace = true
+walkdir.workspace = true
+sha2.workspace = true
+base64.workspace = true
+image.workspace = true
+imageproc.workspace = true
+ab_glyph = "0.2"
+uuid.workspace = true
+nom-exif = "3"
 
 [lib]
 name = "hkask_mcp_media"
@@ -17,30 +45,7 @@ path = "src/lib.rs"
 name = "hkask-mcp-media"
 path = "src/main.rs"
 
-[dependencies]
-hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
-hkask-types = { path = "../../crates/hkask-types" }
-hkask-pods = { path = "../../crates/hkask-pods" }
-rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
-minijinja = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-serde_yaml_neo = { workspace = true }
-schemars = { workspace = true }
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-dotenvy = { workspace = true }
-walkdir = { workspace = true }
-sha2 = { workspace = true }
-base64 = { workspace = true }
-image = { workspace = true }
-imageproc = "0.25"
-ab_glyph = "0.2"
-uuid = { workspace = true }
-nom-exif = "3"
-
 [dev-dependencies]
-tempfile = { workspace = true }
+tempfile.workspace = true
+
 tokio = { workspace = true, features = ["macros", "rt"] }

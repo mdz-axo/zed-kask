@@ -3,8 +3,7 @@
 //! Backed by the CuratorPod's own SQLCipher file. Tracks per-source-pod
 //! cursors for incremental sync on Regulation events.
 
-use hkask_memory::HMemStore;
-use hkask_types::HMem;
+use hkask_storage::{HMem, HMemStore};
 use hkask_types::id::PodID;
 use std::collections::HashMap;
 
@@ -34,7 +33,7 @@ impl SemanticIndex {
         &mut self,
         h_mem: &HMem,
         source_pod: PodID,
-    ) -> Result<bool, hkask_types::HMemError> {
+    ) -> Result<bool, hkask_storage::HMemError> {
         // Attach source pod provenance to the h_mem before storing.
         // PodID → WebID via UUID extraction (both are Id<T> wrapping Uuid).
         let mut h_mem = h_mem.clone();
@@ -46,7 +45,7 @@ impl SemanticIndex {
 
     /// Query all h_mems for an entity across all source pods.
     #[must_use = "result must be used"]
-    pub fn query_by_entity(&self, entity: &str) -> Result<Vec<HMem>, hkask_types::HMemError> {
+    pub fn query_by_entity(&self, entity: &str) -> Result<Vec<HMem>, hkask_storage::HMemError> {
         self.store.query_by_entity(entity)
     }
 
@@ -65,7 +64,7 @@ impl SemanticIndex {
         &self,
         entity: &str,
         attribute: &str,
-    ) -> Result<Vec<HMem>, hkask_types::HMemError> {
+    ) -> Result<Vec<HMem>, hkask_storage::HMemError> {
         self.store.query_by_entity_attribute(entity, attribute)
     }
 
@@ -88,3 +87,51 @@ impl SemanticIndex {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_storage::database::sqlite::SqliteDriver;
+    use hkask_types::{Visibility, WebID};
+
+    fn make_store() -> HMemStore {
+        let pool = SqliteDriver::in_memory_pool().unwrap();
+        let driver = std::sync::Arc::new(SqliteDriver::new(pool));
+        HMemStore::from_driver(driver)
+    }
+
+    fn make_h_mem(entity: &str, attribute: &str, value: &str) -> HMem {
+        let owner = WebID::from_persona(b"test");
+        HMem::new(
+            entity,
+            attribute,
+            serde_json::Value::String(value.into()),
+            owner,
+        )
+        .with_visibility(Visibility::Shared)
+    }
+
+    #[test]
+    fn insert_and_query() {
+        let store = make_store();
+        let mut index = SemanticIndex::new(store);
+        let h_mem = make_h_mem("test", "name", "hello");
+        let pod_id = PodID::new();
+
+        assert!(index.insert(&h_mem, pod_id).unwrap());
+        let results = index.query_by_entity("test").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].attribute, "name");
+    }
+
+    #[test]
+    fn cursor_tracking() {
+        let store = make_store();
+        let mut index = SemanticIndex::new(store);
+        let pod_id = PodID::new();
+
+        assert_eq!(index.cursor_for(&pod_id), 0);
+        index.advance_cursor(pod_id, 42);
+        assert_eq!(index.cursor_for(&pod_id), 42);
+        assert_eq!(index.source_count(), 1);
+    }
+}

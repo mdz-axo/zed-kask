@@ -1,9 +1,0 @@
-[package]
-name = "kask_bridge"
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-# Dependencies will be added in T0.6 when hKask keep-crates are moved under kask/crates/:
-#   hkask-types, hkask-capability, hkask-guard (port traits)
-#   gpui, gpui_tokio, language_model, context_server, credentials_provider (zed facilities)

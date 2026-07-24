@@ -1,0 +1,67 @@
+# Axolotl Config — Capabilities Researcher LoRA with EVA (direct RunPod pod)
+# v3 update (post-PiSSA portability fix): switched from PiSSA (pissa_niter_4)
+# to EVA (init_lora_weights='eva') per Paischer et al. 2024 (arXiv:2410.07170).
+# EVA uses activation-vector SVD (not weight-SVD like PiSSA) → standard portable
+# LoRA adapter (A initialized with activation variance, B=0). This avoids the
+# library-version portability failure discovered in v2 (transformers 5.9.0 vs 5.5.0).
+#
+# Base: unsloth/Qwen3.6-27B (dense, 27B). EVA init from activation vectors.
+# lora_dropout: 0 recommended (EVA initializes A with principal activation
+# directions; random dropout would discard these components).
+
+base_model: unsloth/Qwen3.6-27B
+adapter: lora
+load_in_4bit: false
+load_in_8bit: false
+trust_remote_code: true
+
+sequence_len: 4096
+bf16: true
+
+# EVA LoRA — activation-vector SVD initialization with adaptive rank
+# redistribution from the training data.
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0
+peft_init_lora_weights: eva
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+datasets:
+  - path: mdz-axo/capabilities-researcher-qa
+    data_files: train_chat_full.jsonl
+    type: chat_template
+
+# Training
+num_epochs: 3
+learning_rate: 1e-4
+warmup_steps: 100
+micro_batch_size: 1
+eval_batch_size: 1
+gradient_accumulation_steps: 16
+gradient_checkpointing: true
+lr_scheduler: cosine
+weight_decay: 0.01
+max_grad_norm: 0.3
+optim: adamw_8bit
+
+# Eval — canonical held-out split for the 229,520-example corpus.
+val_set_size: 0.0012
+eval_steps: 200
+save_steps: 200
+save_total_limit: 5
+early_stopping_patience: 25
+
+# Optimizations
+liger_kernel: true
+flash_attention: false
+cut_cross_entropy: true
+
+output_dir: /workspace/outputs
+strict: false

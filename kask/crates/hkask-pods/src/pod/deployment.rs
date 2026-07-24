@@ -17,9 +17,9 @@
 use hkask_capability::CapabilityChecker;
 use hkask_mcp::McpRuntime;
 use hkask_regulation::RegulationLedger;
-use hkask_memory::HMemStore;
-use hkask_types::storage::StorageDriver;
-use hkask_types::EmbeddingPort;
+use hkask_storage::database::sqlite::SqliteDriver;
+use hkask_storage::database::types::DbProvider;
+use hkask_storage::{Database, EmbeddingStore, HMemStore};
 use hkask_types::InferencePort;
 use hkask_types::WebID;
 use hkask_types::event::SpanNamespace;
@@ -79,12 +79,12 @@ pub struct PodDeployment {
 ///
 /// \[P11\] Goal: Digital Public/Private Sphere — storage isolation
 pub struct PerPodStorage {
-    /// The storage driver (provided by kask_bridge over sqlez)
-    pub driver: Arc<dyn StorageDriver>,
-    /// HMem store backed by this pod's driver
+    /// The encrypted database connection
+    pub db: Database,
+    /// HMem store backed by this pod's database
     pub h_mems: HMemStore,
-    /// Embedding port (provided by kask_bridge, pure-Rust cosine similarity)
-    pub embeddings: Arc<dyn EmbeddingPort>,
+    /// Embedding store backed by this pod's database
+    pub embeddings: EmbeddingStore,
     /// Path to this pod's database file
     pub db_path: PathBuf,
 }
@@ -205,6 +205,7 @@ pub struct PodFactory {
     template_loader: Arc<TemplateCrateLoader>,
     consent: Arc<dyn crate::SovereigntyConsent>,
     data_dir: PathBuf,
+    db_provider: DbProvider,
 }
 
 impl PodFactory {
@@ -212,11 +213,13 @@ impl PodFactory {
         template_loader: Arc<TemplateCrateLoader>,
         consent: Arc<dyn crate::SovereigntyConsent>,
         data_dir: PathBuf,
+        db_provider: DbProvider,
     ) -> Self {
         Self {
             template_loader,
             consent,
             data_dir,
+            db_provider,
         }
     }
 
@@ -228,7 +231,6 @@ impl PodFactory {
     ///
     ///Constraining: Digital Public/Private Sphere — per-pod SQLCipher
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub async fn deploy(
         &self,
         template_name: &str,
@@ -239,8 +241,6 @@ impl PodFactory {
         mcp_runtime: Arc<McpRuntime>,
         capability_checker: Arc<CapabilityChecker>,
         inference_port: Option<Arc<dyn InferencePort>>,
-        driver: Arc<dyn StorageDriver>,
-        embedding: Arc<dyn EmbeddingPort>,
     ) -> Result<PodDeployment, PodDeployError> {
         // 1. Create the underlying AgentPod
         let mut pod = AgentPod::new(
@@ -256,7 +256,7 @@ impl PodFactory {
         pod.id = pod_id;
 
         // 2. Create per-pod SQLCipher database + storage adapters
-        let (storage, memory_adapter) = self.create_pod_storage(pod_id, name, webid, pod_kind, driver, embedding)?;
+        let (storage, memory_adapter) = self.create_pod_storage(pod_id, name, webid, pod_kind)?;
 
         // 3. Initialize per-pod Regulation runtime
         let ledger = PerPodLedger::scoped(pod_id);
@@ -270,7 +270,17 @@ impl PodFactory {
 
         // Create SemanticIndex if this is a CuratorPod
         let semantic_index = if pod_kind == PodKind::Curator {
-            let index_store = HMemStore::from_driver(Arc::clone(&storage.driver));
+            let pool = storage
+                .db
+                .sqlite_pool()
+                .map_err(|e| PodDeployError::StorageInitFailed {
+                    path: storage.db_path.clone(),
+                    reason: format!("SQLite pool for curator semantic index: {e}"),
+                })?;
+            let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+                Arc::new(SqliteDriver::new(pool));
+            let passphrase = super::resolve_db_passphrase()?;
+            let index_store = HMemStore::from_driver(driver).with_passphrase(&passphrase);
             Some(Arc::new(std::sync::RwLock::new(SemanticIndex::new(
                 index_store,
             ))))
@@ -311,8 +321,6 @@ impl PodFactory {
         name: &str,
         webid: WebID,
         pod_kind: PodKind,
-        driver: Arc<dyn StorageDriver>,
-        embedding: Arc<dyn EmbeddingPort>,
     ) -> Result<
         (
             PerPodStorage,
@@ -331,15 +339,71 @@ impl PodFactory {
         })?;
 
         let db_path = agent_dir.join("pod.db");
-        let memory =
-            crate::adapters::memory_loop_adapter::MemoryLoopForwarder::from_driver(
-                Arc::clone(&driver),
-                Arc::clone(&embedding),
-            )
-            .map_err(|e| PodDeployError::StorageInitFailed {
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        let passphrase =
+            super::resolve_db_passphrase().map_err(|e| PodDeployError::StorageInitFailed {
                 path: db_path.clone(),
                 reason: e.to_string(),
             })?;
+
+        // Memory is always SQLite/SQLCipher (per-agent encrypted storage)
+        let db = hkask_storage::open_or_repair(&db_path_str, &passphrase).map_err(|e| {
+            PodDeployError::StorageInitFailed {
+                path: db_path.clone(),
+                reason: format!("{e}"),
+            }
+        })?;
+
+        // Embeddings: use configured provider
+        let (embeddings, memory) = match self.db_provider {
+            DbProvider::Sqlite => {
+                let pool = db
+                    .sqlite_pool()
+                    .map_err(|e| PodDeployError::StorageInitFailed {
+                        path: db_path.clone(),
+                        reason: format!("SQLite pool creation failed: {e}"),
+                    })?;
+                let sqlite_driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+                    Arc::new(SqliteDriver::new(pool));
+                let embeddings = EmbeddingStore::from_driver(Arc::clone(&sqlite_driver), 1024);
+                let memory =
+                    crate::adapters::memory_loop_adapter::MemoryLoopForwarder::from_driver(
+                        sqlite_driver,
+                    )
+                    .map_err(|e| PodDeployError::StorageInitFailed {
+                        path: db_path.clone(),
+                        reason: e.to_string(),
+                    })?;
+                (embeddings, memory)
+            }
+            DbProvider::Postgres => {
+                use hkask_storage::database::postgres::PostgresDriver;
+                let pg_url = std::env::var("HKASK_DB_PATH")
+                    .unwrap_or_else(|_| "postgresql://localhost:5432/hkask".into());
+                let handle = tokio::runtime::Handle::current();
+                let pool = handle.block_on(async {
+                    sqlx::PgPool::connect(&pg_url).await.map_err(|e| {
+                        PodDeployError::StorageInitFailed {
+                            path: db_path.clone(),
+                            reason: format!("Postgres connection failed: {e}"),
+                        }
+                    })
+                })?;
+                let pg_driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+                    Arc::new(PostgresDriver::new(pool, handle));
+                let embeddings = EmbeddingStore::from_driver(Arc::clone(&pg_driver), 1024);
+                let memory =
+                    crate::adapters::memory_loop_adapter::MemoryLoopForwarder::from_driver(
+                        pg_driver,
+                    )
+                    .map_err(|e| PodDeployError::StorageInitFailed {
+                        path: db_path.clone(),
+                        reason: e.to_string(),
+                    })?;
+                (embeddings, memory)
+            }
+        };
 
         // Write WebID sidecar for pod identity and CuratorSync provenance.
         let webid_path = db_path.with_extension("webid");
@@ -369,32 +433,49 @@ impl PodFactory {
         })?;
         // Also write pod metadata into the database for backup/portability.
         {
-            let _ = driver.execute_batch(
-                "CREATE TABLE IF NOT EXISTS pod_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-            );
+            let pool = db
+                .sqlite_pool()
+                .map_err(|e| PodDeployError::StorageInitFailed {
+                    path: db_path.clone(),
+                    reason: format!("SQLite pool for metadata: {e}"),
+                })?;
+            let conn = pool.get().map_err(|e| PodDeployError::StorageInitFailed {
+                path: db_path.clone(),
+                reason: format!("Pool get failed: {e}"),
+            })?;
             let now = chrono::Utc::now().to_rfc3339();
             for (key, value) in &[
                 ("webid", webid.to_string()),
                 ("pod_kind", format!("{:?}", pod_kind)),
                 ("created_at", now),
             ] {
-                let _ = driver.execute(
+                conn.execute(
                     "INSERT OR REPLACE INTO pod_meta (key, value) VALUES (?1, ?2)",
-                    &[
-                        hkask_types::storage::DbValue::Text(key.to_string()),
-                        hkask_types::storage::DbValue::Text(value.clone()),
-                    ],
-                );
+                    rusqlite::params![key, value],
+                )
+                .map_err(|e| PodDeployError::StorageInitFailed {
+                    path: db_path.clone(),
+                    reason: format!("Failed to write pod_meta.{}: {e}", key),
+                })?;
             }
         }
 
-        let h_mems = HMemStore::from_driver(Arc::clone(&driver));
+        // Create a driver for direct HMemStore access (persisted PerPodStorage.h_mems)
+        let hmem_pool = db
+            .sqlite_pool()
+            .map_err(|e| PodDeployError::StorageInitFailed {
+                path: db_path.clone(),
+                reason: format!("SQLite pool for h_mems: {e}"),
+            })?;
+        let hmem_driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new(hmem_pool));
+        let h_mems = HMemStore::from_driver(hmem_driver).with_passphrase(&passphrase);
 
         Ok((
             PerPodStorage {
-                driver,
+                db,
                 h_mems,
-                embeddings: embedding,
+                embeddings,
                 db_path,
             },
             memory,

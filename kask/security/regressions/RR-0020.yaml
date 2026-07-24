@@ -1,0 +1,26 @@
+id: RR-0020
+title: "All hkask-* library crates must declare an unsafe-gating attribute"
+surface: code
+cwe: CWE-732
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.6.1
+discovered_in: crates/*/src/lib.rs, mcp-servers/*/src/lib.rs (52 files missing attribute)
+discovered_by: kali-audit
+discovered_at: 2026-07-22
+severity: high
+detection:
+  # Enforced by scripts/check-unsafe-forbid.sh (standalone CI gate).
+  # kind: skill-probe is skipped by check-kali-regressions.sh; the dedicated
+  # script checks that every lib.rs line 1 is one of:
+  #   #![forbid(unsafe_code)]
+  #   #![deny(unsafe_code)]
+  #   #![cfg_attr(not(test), forbid(unsafe_code))]
+  kind: skill-probe
+  pattern: "missing unsafe-gating attribute on lib.rs line 1"
+  include: "crates/*/src/lib.rs mcp-servers/*/src/lib.rs"
+mitigation: "Add #![forbid(unsafe_code)] as the first line of every hkask-* library crate. Crates with test-only unsafe use #![cfg_attr(not(test), forbid(unsafe_code))]. Crates with genuine production unsafe (SQLite FFI, single-threaded env::set_var) use #![deny(unsafe_code)] with #[allow(unsafe_code)] on the specific function + SAFETY comment."
+source: "https://anssi-fr.github.io/rust-guide/ — ANSSI Secure Rust Guidelines"
+ci_gate: scripts/check-unsafe-forbid.sh
+status: enforced
+note: "52 files updated in baseline audit cycle 1. 37 forbid, 10 cfg_attr(not(test), forbid), 5 deny+allow. Crates with production unsafe: hkask-storage (SQLite FFI), hkask-mcp-codegraph (SQLite FFI), hkask-repl (env::set_var in REPL init), hkask-services-self-heal (env::set_var in healer startup), hkask-pods (env::set_var in test harness)."

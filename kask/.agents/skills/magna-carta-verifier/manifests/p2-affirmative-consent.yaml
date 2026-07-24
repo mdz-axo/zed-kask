@@ -1,0 +1,153 @@
+principle: affirmative_consent
+version: "0.1.0"
+description: >
+  Default is deny — no access without explicit affirmative consent.
+  Consent is scoped to categories and resource versions, expires by date
+  or version upgrade, and is organized hierarchically (master/per-agent/
+  per-agent-type). Misconfiguration fails closed.
+
+assertions:
+  - id: p2a
+    name: default_deny
+    claim: >
+      The default consent state is deny. DenyAllConsent (hkask-agents::sovereignty)
+      implements SovereigntyConsent, returning false for all queries. PodFactory::new()
+      accepts consent: Arc<dyn SovereigntyConsent> — the constructor injection point
+      where default-deny is wired into every pod. ServiceContext::build() passes
+      DenyAllConsent to PodFactory at the service boundary, ensuring no pod can be
+      constructed without a consent implementation. SovereigntyChecker denies when
+      no checker is configured — sovereignty must fail closed.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: sovereignty
+        structs: [DenyAllConsent]
+        methods:
+          - has_consent
+        gate: SovereigntyConsent
+      - crate: hkask-agents
+        module: pod::deployment
+        structs: [PodFactory]
+        methods:
+          - new
+        gate: SovereigntyConsent
+        note: >
+          PodFactory::new(consent: Arc<dyn SovereigntyConsent>) — the constructor
+          injection point where default-deny is wired. Every pod created through
+          this factory inherits the consent implementation passed at construction time.
+      - crate: hkask-services-context
+        module: context_impl
+        methods:
+          - build
+        gate: DenyAllConsent
+        note: >
+          ServiceContext::build() passes hkask_agents::DenyAllConsent to PodFactory::new().
+          This is the canonical wiring point — if this line is removed, sovereignty fails open.
+      - crate: hkask-agents
+        module: pod::context
+        methods:
+          - require_sovereignty
+        gate: SovereigntyChecker
+        note: >
+          When no SovereigntyChecker is configured (Option is None),
+          require_sovereignty denies by default — sovereignty must fail closed.
+
+  - id: p2b
+    name: scoped_consent
+    claim: >
+      Consent grants are scoped to DataCategory and resource versions.
+      ConsentRecord tracks granted_categories (HashSet<String>), not a
+      blanket boolean. Each grant is specific.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: consent
+        methods:
+          - grant_consent
+          - has_consent
+          - grant
+          - has_category
+      - crate: hkask-storage
+        module: consent_store
+        methods:
+          - store
+          - get
+
+  - id: p2c
+    name: consent_expiration
+    claim: >
+      Consent grants expire by date or version upgrade. ConsentRecord
+      tracks granted_at and revoked_at timestamps. Revoked consent is
+      inactive. Expired consent must not grant access.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: consent
+        methods:
+          - revoke_consent
+          - has_consent
+        fields:
+          - granted_at
+          - revoked_at
+          - active
+      - crate: hkask-storage
+        module: consent_store
+        methods:
+          - store
+          - get
+
+  - id: p2d
+    name: hierarchical_consent
+    claim: >
+      Consent structures are hierarchical: master/per-agent/per-agent-type.
+      Master consent (ConsentManager) resolves per-WebID consent.
+      Per-pod consent flows through SovereigntyChecker wired to the
+      consent port. Per-agent-type consent is expressed through
+      DelegationToken attenuation.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: consent
+        methods:
+          - ConsentManager
+          - has_consent
+      - crate: hkask-agents
+        module: sovereignty
+        methods:
+          - SovereigntyChecker
+          - can_access
+      - crate: hkask-agents
+        module: pod::context
+        methods:
+          - require_sovereignty
+      - crate: hkask-types
+        module: capability::token_types
+        methods:
+          - attenuate_with_expiry
+
+  - id: p2e
+    name: fail_closed
+    claim: >
+      Misconfiguration defaults to deny. When no consent is wired,
+      PodFactory defaults to DenyAllConsent via ServiceContext::build().
+      When no SovereigntyChecker is configured, require_sovereignty denies
+      by default. Storage errors in ConsentManager translate to deny
+      (fail closed, never open).
+    method: behavioral_probe
+    targets:
+      - crate: hkask-agents
+        module: sovereignty
+        methods:
+          - DenyAllConsent
+          - has_consent
+      - crate: hkask-agents
+        module: pod::context
+        methods:
+          - require_sovereignty
+        condition: sovereignty_checker == None
+      - crate: hkask-agents
+        module: consent
+        methods:
+          - ConsentManager
+          - has_consent
+        condition: store error → false

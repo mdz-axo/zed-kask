@@ -13,10 +13,10 @@ use base64::Engine;
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool, validate_tool_url,
 };
-use hkask_types::storage::StorageDriver;
 use hkask_types::time::now_rfc3339;
 use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
+use rusqlite::Connection;
 
 use crate::research::db::*;
 use crate::research::{
@@ -46,7 +46,7 @@ hkask_mcp_server::mcp_server!(
         pub pool: Arc<dyn WebSearchPort>,
         pub cache: Arc<ResponseCache>,
         pub rate_limiter: RateLimiter,
-        pub rss_db: Option<Arc<dyn StorageDriver>>,
+        pub rss_db: Option<r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>>,
         pub rss_client: Client,
     }
 );
@@ -114,14 +114,17 @@ impl ResearchServer {
 // ── RSS helpers ──
 
 pub fn spawn_db<F, T>(
-    driver: Arc<dyn StorageDriver>,
+    pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
     f: F,
 ) -> tokio::task::JoinHandle<Result<T, anyhow::Error>>
 where
-    F: FnOnce(&dyn StorageDriver) -> Result<T, anyhow::Error> + Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, anyhow::Error> + Send + 'static,
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(move || f(&*driver))
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get().map_err(|e| anyhow::anyhow!("pool get: {e}"))?;
+        f(&conn)
+    })
 }
 
 /// Handle the result of `spawn_db`: maps Ok(Ok) → Ok(v), Ok(Err)/Err → Err(McpToolError).
@@ -518,16 +521,25 @@ impl ResearchServer {
                 .map(|t| t.content.clone())
                 .unwrap_or_default();
             let entry_count = fetch_result.feed.entries.len();
-            let result = spawn_db(db, move |driver| {
-                // T0.6: transaction port-ify pending. The inline rusqlite
-                // transaction has been removed; the db.rs stub returns
-                // "not yet ported" until StorageDriver transactions are wired.
-                let feed_id = upsert_feed(driver, &url_c, &fetch_result.feed)?;
-                insert_entries(driver, feed_id, &fetch_result.feed.entries)?;
-                update_feed_cache_headers(driver, feed_id, etag.as_deref(), lm.as_deref())?;
-                Ok::<serde_json::Value, anyhow::Error>(
+            let result = spawn_db(db, move |conn| {
+                // N3 (panic-safe): use rusqlite's Transaction guard so a panic
+                // between BEGIN and COMMIT automatically rolls back.
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+                let feed_id = upsert_feed(&tx, &url_c, &fetch_result.feed)?;
+                insert_entries(&tx, feed_id, &fetch_result.feed.entries)?;
+                update_feed_cache_headers(&tx, feed_id, etag.as_deref(), lm.as_deref())?;
+                let exists: bool = tx.query_row("SELECT COUNT(*) FROM subscriptions WHERE stream_id = ?1", [&stream_id], |row| row.get::<_, i64>(0)).map(|c| c > 0)?;
+                let result = if exists {
+                    serde_json::json!({"stream_id": stream_id, "url": url_c, "subscribed": true, "note": "Already subscribed, feed refreshed"})
+                } else {
+                    tx.execute("INSERT INTO subscriptions (feed_id, stream_id, title, label, folder) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![feed_id, stream_id, feed_title, label_c, folder_c])?;
                     serde_json::json!({"stream_id": stream_id, "url": url_c, "label": label_c, "folder": folder_c, "subscribed": true, "entry_count": entry_count})
-                )
+                };
+                tx.commit()?;
+                Ok::<serde_json::Value, anyhow::Error>(result)
             }).await;
             handle_db_result!(result, |v| v)
         }).await
@@ -543,7 +555,7 @@ impl ResearchServer {
 
             let sid = stream_id.clone();
             let result = spawn_db(db, move |conn| {
-                conn.execute("DELETE FROM subscriptions WHERE stream_id = ?1", &[hkask_types::storage::DbValue::Text(sid.clone())])
+                conn.execute("DELETE FROM subscriptions WHERE stream_id = ?1", [&sid])
                     .map_err(|e| anyhow::anyhow!(e))
             })
             .await;
@@ -621,11 +633,17 @@ impl ResearchServer {
             let etag = fetch_result.etag.clone();
             let lm = fetch_result.last_modified.clone();
 
-            let result = spawn_db(db, move |driver| {
-                // T0.6: transaction port-ify pending.
-                let feed_id = upsert_feed(driver, &feed_url, &fetch_result.feed)?;
-                let new_count = insert_entries(driver, feed_id, &fetch_result.feed.entries)?;
-                update_feed_cache_headers(driver, feed_id, etag.as_deref(), lm.as_deref())?;
+            let result = spawn_db(db, move |conn| {
+                // N3 (panic-safe): use rusqlite's Transaction guard so a panic
+                // between BEGIN and COMMIT automatically rolls back.
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+                let feed_id = upsert_feed(&tx, &feed_url, &fetch_result.feed)?;
+                let new_count = insert_entries(&tx, feed_id, &fetch_result.feed.entries)?;
+                update_feed_cache_headers(&tx, feed_id, etag.as_deref(), lm.as_deref())?;
+                tx.commit()?;
                 Ok::<usize, anyhow::Error>(new_count)
             })
             .await;
@@ -833,7 +851,8 @@ pub async fn run(
 
             let rss_db = ctx
                 .open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL)
-                .ok();
+                .ok()
+                .and_then(|db| db.sqlite_pool().ok());
 
             let rss_client = Client::builder()
                 .user_agent(format!("hkask-mcp-research/{}", SERVER_VERSION))

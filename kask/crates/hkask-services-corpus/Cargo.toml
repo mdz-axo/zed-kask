@@ -1,0 +1,28 @@
+[package]
+name = "hkask-services-corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "hKask corpus services — discovery, embedding pipeline, chunking, OCR, entity extraction"
+
+[dependencies]
+hkask-services-core = { path = "../hkask-services-core" }
+hkask-services-runtime = { path = "../hkask-services-runtime" }
+hkask-inference = { path = "../hkask-inference" }
+hkask-memory = { path = "../hkask-memory" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-types = { path = "../hkask-types" }
+hkask-capability = { path = "../hkask-capability" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_neo.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+minijinja.workspace = true
+uuid.workspace = true
+
+base64.workspace = true
+tempfile.workspace = true
+pdf-extract = "0.12"

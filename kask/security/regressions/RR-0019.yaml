@@ -1,0 +1,17 @@
+id: RR-0019
+title: "TRL harness selected with incompatible trainer (axolotl+trl_trainer or trl+unsupported_trainer)"
+surface: training
+gate: G-H1
+cwe: CWE-1047
+discovered_in: mcp-servers/hkask-mcp-training/src/lora_validation.rs
+discovered_by: lora-training
+discovered_at: 2026-07-21
+severity: high
+detection:
+  kind: grep
+  pattern: 'harness:\s*(axolotl|trl)'
+  include: "*.yaml *.yml *.json"
+mitigation: "Ensure harness and trainer are compatible: axolotl supports SFT only (no trl_trainer); trl supports SFTTrainer (Phase 1), DPOTrainer/KTOTrainer/ORPOTrainer (Phase 2), RewardTrainer (Phase 3)."
+source: "https://huggingface.co/docs/trl/index"
+ci_gate: scripts/check-lora-training-regressions.sh
+status: enforced

@@ -1,10 +1,9 @@
 [package]
 name = "hkask-keystore"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "OS keychain integration and AES-256-GCM encryption for hKask"
-publish = false
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
@@ -15,8 +14,11 @@ hmac.workspace = true
 sha2.workspace = true
 ed25519-dalek.workspace = true
 rand.workspace = true
-zeroize.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+zeroize.workspace = true
 hex.workspace = true
-dirs.workspace = true
+dirs = "6"
+
+[dev-dependencies]
+tempfile.workspace = true

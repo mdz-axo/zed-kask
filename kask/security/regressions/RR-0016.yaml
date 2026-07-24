@@ -1,0 +1,19 @@
+id: RR-0016
+title: "Ontology tagging LLM boundary must validate and normalize LLM-extracted tags"
+surface: llm-io
+cwe: CWE-20
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0005
+nist_ssdf: PW.4.1
+discovered_in: mcp-servers/hkask-mcp-docproc/src/tools/tagging/ops.rs
+discovered_by: adversarial-red-team
+discovered_at: 2026-07-19
+severity: high
+detection:
+  kind: grep
+  pattern: 'validate_ontology_tags'
+  include: "mcp-servers/hkask-mcp-docproc/src/tools/tagging/ops.rs"
+mitigation: "All LLM-extracted ontology tags must pass through validate_ontology_tags before entering a TaggedChunk. The function enforces: (1) dimensions allowlist (who/what/when/where/why/how), (2) expertise_level allowlist (practitioner/analyst/researcher), (3) concept normalization (lowercase + trim + collapse whitespace) for graph-key consistency, (4) concept length cap (MAX_CONCEPT_LEN=80), (5) concept count cap per namespace (MAX_CONCEPTS_PER_NS=30), (6) namespace key normalization. Without this, a poisoned chunk can inject arbitrary strings into the salience graph, embedding annotation prefix, and QA-generation system prompt."
+source: "Adversarial review of docproc ontology tagging — C1/C2/M3 findings"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

@@ -1,0 +1,17 @@
+id: RR-0015
+title: "QLoRA training config with fp32 compute dtype causes silent 2x memory upcast"
+surface: training
+gate: G-Q2
+cwe: CWE-1047
+discovered_in: mcp-servers/hkask-mcp-training/src/lora_validation.rs
+discovered_by: lora-training
+discovered_at: 2026-07-19
+severity: critical
+detection:
+  kind: grep
+  pattern: 'bnb_4bit_compute_dtype.*fp32'
+  include: "*.yaml *.yml *.json *.py"
+mitigation: "Set bnb_4bit_compute_dtype to bf16 (preferred) or fp16. fp32 compute through a 4-bit frozen base wastes the memory savings — QLoRA paper §3 specifies bf16 compute."
+source: "https://arxiv.org/abs/2305.14314"
+ci_gate: scripts/check-lora-training-regressions.sh
+status: enforced

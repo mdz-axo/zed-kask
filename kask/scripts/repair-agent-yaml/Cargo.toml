@@ -1,0 +1,10 @@
+[package]
+name = "repair-agent-yaml"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-types = { path = "../../crates/hkask-types" }
+hkask-keystore = { path = "../../crates/hkask-keystore" }
+rusqlite = { workspace = true }

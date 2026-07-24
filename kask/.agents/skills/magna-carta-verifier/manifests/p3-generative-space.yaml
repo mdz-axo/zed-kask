@@ -1,0 +1,100 @@
+principle: generative_space
+version: "0.1.0"
+description: >
+  Generative space means settings exposure, not absence of constraints.
+  All probabilistic settings are equally exposed to all users. No
+  privileged engineer access. Open-source commitment. User
+  preference overrides take precedence over LLM defaults.
+
+assertions:
+  - id: p3a
+    name: settings_exposure
+    claim: >
+      Inference and tooling expose all probabilistic settings through
+      API, CLI, and MCP. LLMParameters (temperature, top_p, top_k,
+      frequency_penalty, presence_penalty) are surfaced equally to
+      all users. No settings are hidden behind role-based gates.
+    method: structural_audit
+    targets:
+      - crate: hkask-types
+        module: template
+        methods:
+          - LLMParameters
+          - temperature
+          - top_p
+          - top_k
+      - crate: hkask-inference
+        module: config
+        methods:
+          - InferenceConfig
+          - deepinfra_base_url
+          - fal_base_url
+          - together_base_url
+      - crate: hkask-api
+        module: lib
+        methods:
+          - create_router
+          - ApiState
+
+  - id: p3b
+    name: no_privileged_engineer_access
+    claim: >
+      No privileged engineer access to settings exists. There are no
+      admin-only settings, no hidden configuration paths, and no
+      role-based access tiers. All users see the same settings surface.
+    method: absence_check
+    targets:
+      - crate: hkask-types
+      - crate: hkask-agents
+      - crate: hkask-api
+      - crate: hkask-cli
+    prohibited:
+      - admin_role
+      - engineer_role
+      - privileged_access
+      - role_based_settings
+      - hidden_config
+
+  - id: p3c
+    name: open_source_commitment
+    claim: >
+      Generative resources are open-source with exposed weights.
+      Inference providers integrated with hKask must expose their
+      settings. Closed-weight or closed-code inference providers
+      structurally cannot meet this criterion.
+    method: structural_audit
+    targets:
+      - crate: hkask-inference
+        module: config
+        methods:
+          - InferenceConfig
+          - deepinfra_base_url
+          - fal_base_url
+          - together_base_url
+      - crate: hkask-api
+        module: lib
+        methods:
+          - create_router
+          - ApiState
+    note: >
+      Structural audit verifies that inference configuration is exposed
+      and configurable. Closed-source providers fail on architectural
+      review, not code audit — the manifest records the criterion.
+
+  - id: p3e
+    name: user_preference_precedence
+    claim: >
+      User preference overrides take precedence over LLM defaults.
+      No system-level normative overrides exist. LLM defaults are
+      starting points, not mandates.
+    method: absence_check
+    targets:
+      - crate: hkask-types
+      - crate: hkask-agents
+      - crate: hkask-api
+      - crate: hkask-cli
+    prohibited:
+      - system_override
+      - mandatory_default
+      - non_overridable_setting
+      - forced_parameter

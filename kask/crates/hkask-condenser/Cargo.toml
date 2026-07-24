@@ -1,0 +1,25 @@
+[package]
+name = "hkask-condenser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Context condensation domain logic — compression algorithms, classification, profile management, and inference formatting"
+
+[dependencies]
+hkask-bridge-dublincore = { path = "../hkask-bridge-dublincore" }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+criterion = "0.5"
+
+[[test]]
+name = "condenser_fuzz"
+path = "tests/condenser_fuzz.rs"
+
+[[bench]]
+name = "compression_bench"
+harness = false

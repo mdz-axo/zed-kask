@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 52fc4ffd97752aef0ab854aed5e5ace8dc9ab6b4c133205ddd284aa2717f4880 # shrinks to credits = [RJoule(341)], operations = [(RJoule(239), RJoule(580)), (RJoule(927), RJoule(913))]

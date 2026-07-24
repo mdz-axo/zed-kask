@@ -1,22 +1,18 @@
-//! Driver-backed registry adapter — persistent template registry backed by a
-//! `StorageDriver` (the storage port in `hkask_types::storage`).
+//! SQLite registry adapter — persistent template registry backed by SQLite.
 //!
-//! hKask crates depend on the `StorageDriver` port, not on `rusqlite`/`r2d2`
-//! (which conflict with zed's `libsqlite3-sys` 0.30.1). The `kask_bridge`
-//! implements `StorageDriver` over zed's `sqlez`. Use `from_driver()` to
-//! construct from a driver provided by the host.
+//! Connection pooling via r2d2 for thread-safe shared access.
+//! Use `new_with_pool()` when opening through `hkask_storage::Database`.
 
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleRegistryIndex;
 use crate::ports::{Result, TemplateError};
-use hkask_types::storage::{query_map, query_row, DbRow, DbValue, StorageDriver};
 use hkask_types::SkillPolarity;
 use hkask_types::template_type::TemplateType;
 use hkask_types::{InfrastructureError, NotFound, Visibility};
 use hkask_types::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
-use std::sync::Arc;
+use rusqlite::{Connection, params};
 use tracing;
 
 type SkillRow = (
@@ -33,79 +29,96 @@ type SkillRow = (
 );
 type TemplateRow = (String, TemplateType, String, String, String, u32, u32);
 
-/// Map a `DbError` into a `TemplateError::Database` with context.
-fn db_err(ctx: &str, e: hkask_types::DbError) -> TemplateError {
-    TemplateError::Database(InfrastructureError::database(format!("{ctx}: {e}")))
-}
-
-/// Read an optional text column (NULL → None). Returns `DbError` so it can be
-/// used inside `query_map`/`query_row` closures (which are bound to `DbError`).
-fn opt_text(row: &DbRow, idx: usize) -> std::result::Result<Option<String>, hkask_types::DbError> {
-    match row.get(idx) {
-        Ok(DbValue::Null) => Ok(None),
-        Ok(DbValue::Text(s)) => Ok(Some(s.clone())),
-        Ok(other) => Err(hkask_types::DbError::Database(format!(
-            "expected text or null, got {:?}",
-            other
-        ))),
-        Err(e) => Err(e),
-    }
-}
-
-/// Parse a `DbRow` (templates table order) into a `TemplateRow`.
-fn parse_template_row(row: &DbRow) -> std::result::Result<TemplateRow, hkask_types::DbError> {
-    let id = row.get_str(0)?.to_string();
-    let tt_str = row.get_str(1)?.to_string();
+fn parse_template_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TemplateRow> {
+    let tt_str: String = row.get(1)?;
     let tt = TemplateType::parse_str(&tt_str).ok_or_else(|| {
-        hkask_types::DbError::Database(format!("Unknown template type: {}", tt_str))
+        rusqlite::Error::ToSqlConversionFailure(format!("Unknown template type: {}", tt_str).into())
     })?;
     Ok((
-        id,
+        row.get(0)?,
         tt,
-        row.get_str(2)?.to_string(),
-        row.get_str(3)?.to_string(),
-        row.get_str(4)?.to_string(),
-        row.get_int(5)? as u32,
-        row.get_int(6)? as u32,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
     ))
 }
 
-/// Query a single text column for a list of strings (lexicon_terms / capabilities).
-fn query_column(driver: &dyn StorageDriver, sql: &str, id: &str) -> Result<Vec<String>> {
-    let rows = driver
-        .query(sql, &[DbValue::Text(id.to_string())])
-        .map_err(|e| db_err("Query", e))?;
-    rows.iter()
-        .map(|r| {
-            r.get_str(0)
-                .map(String::from)
-                .map_err(|e| db_err("Column", e))
-        })
-        .collect()
+fn query_column(conn: &Connection, sql: &str, id: &str) -> Result<Vec<String>> {
+    let db_err = |ctx: &str, e| {
+        TemplateError::Database(InfrastructureError::database(format!("{ctx}: {e}")))
+    };
+    let results: Vec<String> = conn
+        .prepare(sql)
+        .map_err(|e| db_err("Prepare", e))?
+        .query_map(params![id], |row| row.get::<_, String>(0))
+        .map_err(|e| db_err("Query", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(results)
 }
 
 // ── SqliteRegistry ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct SqliteRegistry {
-    driver: Arc<dyn StorageDriver>,
+    pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
 }
 
 impl SqliteRegistry {
-    /// Create a new registry from a `StorageDriver`.
+    /// Create a new SQLite-backed registry.
     ///
     /// expect: "The system persists template registrations to SQLite"
-    /// \[P3\] Motivating: Generative Space — driver-backed template registry
-    /// pre:  driver is a valid `StorageDriver` (provided by `kask_bridge` in
-    ///       production, or a test driver in tests)
+    /// \[P3\] Motivating: Generative Space — SQLite-backed template registry
+    /// pre:  path is None (in-memory) or a valid filesystem path
     /// post: returns SqliteRegistry with schema initialized
-    pub fn from_driver(driver: Arc<dyn StorageDriver>) -> Result<Self> {
-        Self::init_schema(&driver);
-        Ok(Self { driver })
+    pub fn new(path: Option<&str>) -> Result<Self> {
+        let manager = match path {
+            Some(p) => {
+                if let Some(parent) = std::path::Path::new(p).parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        TemplateError::Manifest(format!(
+                            "Failed to create registry directory {}: {}",
+                            parent.display(),
+                            e
+                        ))
+                    })?;
+                }
+                r2d2_sqlite::SqliteConnectionManager::file(p)
+            }
+            None => {
+                tracing::warn!(target: "hkask.templates",
+                    "No database path — template registry is in-memory and will be lost on restart.");
+                r2d2_sqlite::SqliteConnectionManager::memory()
+            }
+        };
+        let pool = r2d2::Pool::builder()
+            .max_size(4)
+            .build(manager)
+            .map_err(|e| TemplateError::Manifest(format!("Failed to create pool: {}", e)))?;
+        let mut registry = Self { pool };
+        registry.init_schema()?;
+        Ok(registry)
     }
 
-    fn init_schema(driver: &Arc<dyn StorageDriver>) {
-        let _ = driver.execute_batch(concat!(
+    /// Create a registry from an existing r2d2 connection pool.
+    ///
+    /// expect: "The system persists template registrations to SQLite"
+    /// \[P3\] Motivating: Generative Space — SQLite registry from existing pool
+    /// pre:  pool is a valid SQLite connection pool
+    /// post: returns SqliteRegistry with schema initialized on the given pool
+    pub fn new_with_pool(pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>) -> Result<Self> {
+        let mut registry = Self { pool };
+        registry.init_schema()?;
+        Ok(registry)
+    }
+
+    fn init_schema(&mut self) -> Result<()> {
+        self.pool
+            .get()
+            .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?
+            .execute_batch(concat!(
             "CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY, template_type TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', description TEXT, source_path TEXT NOT NULL, cascade_level INTEGER NOT NULL DEFAULT 0, matroshka_limit INTEGER NOT NULL DEFAULT 7, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
             "CREATE TABLE IF NOT EXISTS lexicon_terms(template_id TEXT NOT NULL, term TEXT NOT NULL, PRIMARY KEY(template_id, term), FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE TABLE IF NOT EXISTS template_capabilities(template_id TEXT NOT NULL, capability TEXT NOT NULL, PRIMARY KEY(template_id, capability), FOREIGN KEY(template_id) REFERENCES templates(id));",
@@ -122,7 +135,8 @@ impl SqliteRegistry {
             "CREATE INDEX IF NOT EXISTS idx_bundles_visibility ON bundles(visibility);",
             "CREATE INDEX IF NOT EXISTS idx_bundle_skills_bundle ON bundle_skills(bundle_id);",
             "CREATE INDEX IF NOT EXISTS idx_bundle_skills_skill ON bundle_skills(skill_id);",
-        ));
+        )).map_err(|e| TemplateError::Manifest(format!("Schema init: {}", e)))?;
+        Ok(())
     }
 
     /// Register a template entry in the registry.
@@ -144,62 +158,49 @@ impl SqliteRegistry {
                 vocab_warnings.join("; ")
             )));
         }
-        let driver = &self.driver;
-        let res: std::result::Result<(), TemplateError> = (|| {
-            driver
-                .execute_batch("BEGIN")
-                .map_err(|e| TemplateError::Manifest(format!("Begin: {}", e)))?;
-            driver
-                .execute(
-                    "INSERT OR REPLACE INTO templates (id, template_type, name, description, source_path, cascade_level, matroshka_limit, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)",
-                    &[
-                        DbValue::Text(entry.id.clone()),
-                        DbValue::Text(entry.template_type.as_str().to_string()),
-                        DbValue::Text(entry.name.clone()),
-                        DbValue::Text(entry.description.clone()),
-                        DbValue::Text(entry.source_path.clone()),
-                        DbValue::Integer(entry.cascade_level as i64),
-                        DbValue::Integer(entry.matroshka_limit as i64),
-                    ],
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| TemplateError::Manifest(format!("Transaction: {}", e)))?;
+        tx.execute(
+            "INSERT OR REPLACE INTO templates (id, template_type, name, description, source_path, cascade_level, matroshka_limit, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)",
+            params![entry.id, entry.template_type.as_str(), entry.name, entry.description, entry.source_path, entry.cascade_level, entry.matroshka_limit],
+        ).map_err(|e| TemplateError::Manifest(format!("Insert: {}", e)))?;
+        for (table, col, items) in [
+            ("lexicon_terms", "term", &entry.lexicon_terms),
+            (
+                "template_capabilities",
+                "capability",
+                &entry.required_capabilities,
+            ),
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {} WHERE template_id = ?1", table),
+                params![entry.id],
+            )
+            .map_err(|e| TemplateError::Manifest(format!("Delete {col}: {}", e)))?;
+            for item in items {
+                tx.execute(
+                    &format!(
+                        "INSERT INTO {} (template_id, {}) VALUES (?1, ?2)",
+                        table, col
+                    ),
+                    params![entry.id, item],
                 )
-                .map_err(|e| TemplateError::Manifest(format!("Insert: {}", e)))?;
-            for (table, col, items) in [
-                ("lexicon_terms", "term", &entry.lexicon_terms),
-                ("template_capabilities", "capability", &entry.required_capabilities),
-            ] {
-                driver
-                    .execute(
-                        &format!("DELETE FROM {} WHERE template_id = ?1", table),
-                        &[DbValue::Text(entry.id.clone())],
-                    )
-                    .map_err(|e| TemplateError::Manifest(format!("Delete {col}: {}", e)))?;
-                for item in items {
-                    driver
-                        .execute(
-                            &format!(
-                                "INSERT INTO {} (template_id, {}) VALUES (?1, ?2)",
-                                table, col
-                            ),
-                            &[DbValue::Text(entry.id.clone()), DbValue::Text(item.clone())],
-                        )
-                        .map_err(|e| TemplateError::Manifest(format!("Insert {col}: {}", e)))?;
-                }
+                .map_err(|e| TemplateError::Manifest(format!("Insert {col}: {}", e)))?;
             }
-            driver
-                .commit_tx()
-                .map_err(|e| TemplateError::Manifest(format!("Commit: {}", e)))?;
-            Ok(())
-        })();
-        if let Err(e) = res {
-            let _ = driver.rollback_tx();
-            return Err(e);
         }
+        tx.commit()
+            .map_err(|e| TemplateError::Manifest(format!("Commit: {}", e)))?;
         Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     fn row_to_entry(
-        driver: &dyn StorageDriver,
+        conn: &Connection,
         id: &str,
         tt: TemplateType,
         name: String,
@@ -215,12 +216,12 @@ impl SqliteRegistry {
             description: desc,
             source_path: sp,
             lexicon_terms: query_column(
-                driver,
+                conn,
                 "SELECT term FROM lexicon_terms WHERE template_id = ?1",
                 id,
             )?,
             required_capabilities: query_column(
-                driver,
+                conn,
                 "SELECT capability FROM template_capabilities WHERE template_id = ?1",
                 id,
             )?,
@@ -237,22 +238,23 @@ impl SqliteRegistry {
     /// post: returns RegistryEntry if found
     /// post: returns Err(NotFound) if not found
     pub fn get_entry(&self, id: &str) -> Result<RegistryEntry> {
-        let row = query_row(&*self.driver, Self::_T_SELECT, &[DbValue::Text(id.to_string())], parse_template_row)
-            .map_err(|e| db_err("Prepare/Query", e))?
-            .ok_or_else(|| TemplateError::NotFound(NotFound {
-                entity_type: "template".to_string(),
-                id: format!("Template '{}'", id),
-            }))?;
-        Self::row_to_entry(
-            &*self.driver,
-            &row.0,
-            row.1,
-            row.2,
-            row.3,
-            row.4,
-            row.5,
-            row.6,
-        )
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?;
+        let row = conn
+            .prepare(Self::_T_SELECT)
+            .map_err(|e| {
+                TemplateError::Database(InfrastructureError::database(format!("Prepare: {}", e)))
+            })?
+            .query_row(params![id], parse_template_row)
+            .map_err(|e| {
+                TemplateError::NotFound(NotFound {
+                    entity_type: "template".to_string(),
+                    id: format!("Template '{}': {}", id, e),
+                })
+            })?;
+        Self::row_to_entry(&conn, &row.0, row.1, row.2, row.3, row.4, row.5, row.6)
     }
 
     /// Delete a template and all associated data (lexicon terms, capabilities, provenance).
@@ -265,18 +267,22 @@ impl SqliteRegistry {
     /// post: returns Some(entry) if existed, None otherwise
     pub fn delete_entry(&mut self, id: &str) -> Option<RegistryEntry> {
         let entry = self.get_entry(id).ok();
+        let conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(target: "hkask.templates", error = %e, id = %id, "delete_entry: pool connection failed");
+                return entry;
+            }
+        };
         for table in &["lexicon_terms", "template_capabilities", "provenance"] {
-            if let Err(e) = self.driver.execute(
+            if let Err(e) = conn.execute(
                 &format!("DELETE FROM {} WHERE template_id = ?1", table),
-                &[DbValue::Text(id.to_string())],
+                params![id],
             ) {
                 tracing::error!(target: "hkask.templates", error = %e, id = %id, table = table, "delete_entry: DELETE failed");
             }
         }
-        if let Err(e) = self.driver.execute(
-            "DELETE FROM templates WHERE id = ?1",
-            &[DbValue::Text(id.to_string())],
-        ) {
+        if let Err(e) = conn.execute("DELETE FROM templates WHERE id = ?1", params![id]) {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "delete_entry: DELETE templates failed");
         }
         entry
@@ -290,25 +296,19 @@ impl SqliteRegistry {
     /// pre:  term is non-empty
     /// post: returns `Vec<RegistryEntry>` for templates declaring this term
     pub fn search_by_lexicon(&self, term: &str) -> Result<Vec<RegistryEntry>> {
-        let rows: Vec<TemplateRow> = query_map(
-            &*self.driver,
-            "SELECT t.id, t.template_type, t.name, t.description, t.source_path, t.cascade_level, t.matroshka_limit FROM templates t JOIN lexicon_terms l ON t.id = l.template_id WHERE l.term = ?1",
-            &[DbValue::Text(term.to_string())],
-            parse_template_row,
-        )
-        .map_err(|e| db_err("Prepare/Query", e))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?;
+        let rows: Vec<TemplateRow> = conn
+    			.prepare("SELECT t.id, t.template_type, t.name, t.description, t.source_path, t.cascade_level, t.matroshka_limit FROM templates t JOIN lexicon_terms l ON t.id = l.template_id WHERE l.term = ?1")
+    			.map_err(|e| TemplateError::Database(InfrastructureError::database(format!("Prepare: {}", e))))?
+    			.query_map(params![term], parse_template_row)
+    			.map_err(|e| TemplateError::Database(InfrastructureError::database(format!("Query: {}", e))))?
+    			.filter_map(|r| r.ok()).collect();
         let mut results = Vec::new();
         for (id, tt, name, desc, sp, cl, ml) in rows {
-            results.push(Self::row_to_entry(
-                &*self.driver,
-                &id,
-                tt,
-                name,
-                desc,
-                sp,
-                cl,
-                ml,
-            )?);
+            results.push(Self::row_to_entry(&conn, &id, tt, name, desc, sp, cl, ml)?);
         }
         Ok(results)
     }
@@ -318,16 +318,18 @@ impl SqliteRegistry {
     /// expect: "The system persists template registrations to SQLite"
     /// \[P3\] Motivating: Generative Space — reports persisted registry size
     /// post: returns count of templates in registry
-    /// post: returns 0 on error (graceful degradation)
+    /// post: returns 0 on lock error (graceful degradation)
     pub fn count(&self) -> usize {
-        query_row(
-            &*self.driver,
-            "SELECT COUNT(*) FROM templates",
-            &[],
-            |row| row.get_int(0),
-        )
-        .ok()
-        .flatten()
+        let conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(target: "hkask.templates", error = %e, "count: pool get failed, returning 0");
+                return 0;
+            }
+        };
+        conn.query_row("SELECT COUNT(*) FROM templates", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .unwrap_or(0) as usize
     }
 
@@ -338,30 +340,43 @@ impl SqliteRegistry {
 
 impl RegistryIndex for SqliteRegistry {
     fn list(&self, domain_hint: Option<TemplateType>) -> Vec<RegistryEntry> {
-        let base_sql = "SELECT id, template_type, name, description, source_path, cascade_level, matroshka_limit FROM templates";
-        let (sql, params): (&str, Vec<DbValue>) = match &domain_hint {
-            None => (base_sql, vec![]),
-            Some(tt) => (
-                &format!("{base_sql} WHERE template_type = ?1"),
-                vec![DbValue::Text(tt.as_str().to_string())],
-            ),
-        };
-        let rows: Vec<TemplateRow> = match query_map(&*self.driver, sql, &params, parse_template_row) {
-            Ok(r) => r,
+        let conn = match self.pool.get() {
+            Ok(c) => c,
             Err(_) => return Vec::new(),
         };
-        let mut results = Vec::new();
-        for (id, tt, name, desc, sp, cl, ml) in rows {
-            if let Ok(entry) = Self::row_to_entry(&*self.driver, &id, tt, name, desc, sp, cl, ml) {
-                results.push(entry);
-            }
-        }
-        results
+        let sql = "SELECT id, template_type, name, description, source_path, cascade_level, matroshka_limit FROM templates";
+        let (query_sql, query_params): (&str, &[rusqlite::types::Value]) = match &domain_hint {
+            Some(tt) => (
+                &format!("{sql} WHERE template_type = ?1"),
+                &[rusqlite::types::Value::Text(tt.as_str().to_string())][..],
+            ),
+            None => (sql, &[]),
+        };
+        let mut stmt = match conn.prepare(query_sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows: Vec<TemplateRow> = stmt
+            .query_map(
+                rusqlite::params_from_iter(
+                    query_params
+                        .iter()
+                        .map(|v| v as &dyn rusqlite::types::ToSql),
+                ),
+                parse_template_row,
+            )
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        rows.into_iter()
+            .filter_map(|(id, tt, name, desc, sp, cl, ml)| {
+                Self::row_to_entry(&conn, &id, tt, name, desc, sp, cl, ml).ok()
+            })
+            .collect()
     }
 
-    fn get(&self, id: &str) -> std::result::Result<RegistryEntry, RegistryError> {
+    fn get(&self, id: &str) -> std::result::Result<RegistryEntry, hkask_types::RegistryError> {
         self.get_entry(id).map_err(|e| {
-            RegistryError::NotFound(NotFound {
+            hkask_types::RegistryError::NotFound(NotFound {
                 entity_type: "template".to_string(),
                 id: format!("Template '{}': {}", id, e),
             })
@@ -373,21 +388,16 @@ impl RegistryIndex for SqliteRegistry {
 
 impl SkillRegistryIndex for SqliteRegistry {
     fn register_skill(&mut self, skill: Skill) -> std::result::Result<(), RegistryError> {
-        if let Err(e) = self.driver.execute(
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| RegistryError::Other(format!("pool connection failed: {e}")))?;
+        if let Err(e) = conn.execute(
             "INSERT OR REPLACE INTO skills (id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            &[
-                DbValue::Text(skill.id.clone()),
-                DbValue::Text(skill.domain.as_str().to_string()),
-                skill.word_act.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
-                skill.flow_def.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
-                skill.know_act.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
-                skill.polarity.as_ref().map(|p| DbValue::Text(p.as_str().to_string())).unwrap_or(DbValue::Null),
-                skill.content_hash.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
-                DbValue::Text(skill.visibility.as_str().to_string()),
-                DbValue::Text(skill.zone.as_str().to_string()),
-                skill.namespace.clone().map(DbValue::Text).unwrap_or(DbValue::Null),
-            ],
+            params![skill.id, skill.domain.as_str(), skill.word_act, skill.flow_def, skill.know_act,
+                skill.polarity.as_ref().map(|p| p.as_str()), skill.content_hash,
+                skill.visibility.as_str(), skill.zone.as_str(), skill.namespace],
         ) {
             tracing::error!(target: "hkask.templates", error = %e, skill_id = %skill.id, "register_skill: INSERT failed");
         }
@@ -415,10 +425,11 @@ impl SkillRegistryIndex for SqliteRegistry {
 
     fn remove_skill(&mut self, id: &str) -> std::result::Result<Option<Skill>, RegistryError> {
         let skill = self.get_skill_owned(id);
-        if let Err(e) = self.driver.execute(
-            "DELETE FROM skills WHERE id = ?1",
-            &[DbValue::Text(id.to_string())],
-        ) {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| RegistryError::Other(format!("pool connection failed: {e}")))?;
+        if let Err(e) = conn.execute("DELETE FROM skills WHERE id = ?1", params![id]) {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "remove_skill: DELETE failed");
         }
         Ok(skill)
@@ -439,40 +450,24 @@ impl BundleRegistryIndex for SqliteRegistry {
                 return Ok(());
             }
         };
-        if let Err(e) = self.driver.execute(
-            "INSERT OR REPLACE INTO bundles (id, name, description, version, editor, visibility, manifest_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)",
-            &[
-                DbValue::Text(bundle.id.clone()),
-                DbValue::Text(bundle.name.clone()),
-                DbValue::Text(bundle.description.clone()),
-                DbValue::Text(bundle.version.clone()),
-                DbValue::Text(bundle.editor.clone()),
-                DbValue::Text(bundle.visibility.as_str().to_string()),
-                DbValue::Text(manifest_json),
-            ],
-        ) {
+        let conn = self.pool.get().map_err(|e| {
+            crate::ports::TemplateError::Database(hkask_types::InfrastructureError::Io(format!(
+                "pool connection failed: {e}"
+            )))
+        })?;
+        if let Err(e) = conn.execute("INSERT OR REPLACE INTO bundles (id, name, description, version, editor, visibility, manifest_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)", params![bundle.id, bundle.name, bundle.description, bundle.version, bundle.editor, bundle.visibility.as_str(), manifest_json]) {
             tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: INSERT failed");
             return Ok(());
         }
-        if let Err(e) = self.driver.execute(
+        if let Err(e) = conn.execute(
             "DELETE FROM bundle_skills WHERE bundle_id = ?1",
-            &[DbValue::Text(bundle.id.clone())],
+            params![bundle.id],
         ) {
             tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: DELETE bundle_skills failed");
             return Ok(());
         }
         for (position, skill) in bundle.skills.iter().enumerate() {
-            if let Err(e) = self.driver.execute(
-                "INSERT INTO bundle_skills (bundle_id, skill_id, polarity, manifest_ref, content_hash, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                &[
-                    DbValue::Text(bundle.id.clone()),
-                    DbValue::Text(skill.id.clone()),
-                    DbValue::Text(skill.polarity.as_str().to_string()),
-                    DbValue::Text(skill.manifest_ref.clone()),
-                    DbValue::Text(skill.content_hash.clone()),
-                    DbValue::Integer(position as i64),
-                ],
-            ) {
+            if let Err(e) = conn.execute("INSERT INTO bundle_skills (bundle_id, skill_id, polarity, manifest_ref, content_hash, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![bundle.id, skill.id, Some(skill.polarity.as_str()), skill.manifest_ref, skill.content_hash, position as i64]) {
                 tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, skill_id = %skill.id, "register_bundle: INSERT bundle_skills failed");
             }
         }
@@ -480,30 +475,37 @@ impl BundleRegistryIndex for SqliteRegistry {
     }
 
     fn get_bundle(&self, id: &str) -> Option<BundleManifest> {
-        query_row(
-            &*self.driver,
-            "SELECT manifest_json FROM bundles WHERE id = ?1",
-            &[DbValue::Text(id.to_string())],
-            |row| row.get_str(0).map(String::from),
-        )
-        .ok()
-        .flatten()
-        .and_then(|json| serde_json::from_str(&json).ok())
+        self.pool
+            .get()
+            .ok()
+            .and_then(|conn| {
+                conn.query_row(
+                    "SELECT manifest_json FROM bundles WHERE id = ?1",
+                    params![id],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .and_then(|json| serde_json::from_str(&json).ok())
     }
 
     fn list_bundles(&self) -> Vec<BundleManifest> {
-        query_map(
-            &*self.driver,
-            "SELECT manifest_json FROM bundles",
-            &[],
-            |row| row.get_str(0).map(String::from),
-        )
-        .map(|rows| {
-            rows.into_iter()
-                .filter_map(|json| serde_json::from_str(&json).ok())
-                .collect()
-        })
-        .unwrap_or_default()
+        let conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let mut stmt = match conn.prepare("SELECT manifest_json FROM bundles") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .ok()
+            .map(|rows| {
+                rows.filter_map(|r| r.ok())
+                    .filter_map(|json| serde_json::from_str(&json).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn remove_bundle(
@@ -511,16 +513,18 @@ impl BundleRegistryIndex for SqliteRegistry {
         id: &str,
     ) -> std::result::Result<Option<BundleManifest>, crate::ports::TemplateError> {
         let bundle = self.get_bundle(id);
-        if let Err(e) = self.driver.execute(
+        let conn = self.pool.get().map_err(|e| {
+            crate::ports::TemplateError::Database(hkask_types::InfrastructureError::Io(format!(
+                "pool connection failed: {e}"
+            )))
+        })?;
+        if let Err(e) = conn.execute(
             "DELETE FROM bundle_skills WHERE bundle_id = ?1",
-            &[DbValue::Text(id.to_string())],
+            params![id],
         ) {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "remove_bundle: DELETE bundle_skills failed");
         }
-        if let Err(e) = self.driver.execute(
-            "DELETE FROM bundles WHERE id = ?1",
-            &[DbValue::Text(id.to_string())],
-        ) {
+        if let Err(e) = conn.execute("DELETE FROM bundles WHERE id = ?1", params![id]) {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "remove_bundle: DELETE bundles failed");
         }
         Ok(bundle)
@@ -588,47 +592,40 @@ impl SqliteRegistry {
     /// pre:  id is non-empty
     /// post: returns Some(Skill) if found, None otherwise
     pub fn get_skill_owned(&self, id: &str) -> Option<Skill> {
-        let row = query_row(
-            &*self.driver,
-            "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace FROM skills WHERE id = ?1",
-            &[DbValue::Text(id.to_string())],
-            |row| {
-                Ok((
-                    row.get_str(0)?.to_string(),
-                    row.get_str(1)?.to_string(),
-                    opt_text(row, 2)?,
-                    opt_text(row, 3)?,
-                    opt_text(row, 4)?,
-                    opt_text(row, 5)?,
-                    opt_text(row, 6)?,
-                    row.get_str(7)?.to_string(),
-                    row.get_str(8)?.to_string(),
-                    opt_text(row, 9)?,
-                ))
-            },
-        )
-        .ok()
-        .and_then(std::convert::identity)?;
-        let (id, ds, wa, fd, ka, ps, ch, vs, zs, ns) = row;
-        Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, vs, zs, ns)
+        let conn = self.pool.get().ok()?;
+        conn.query_row(
+            "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace FROM skills WHERE id = ?1", params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+        ).ok().and_then(|(id, ds, wa, fd, ka, ps, ch, vs, zs, ns)| Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, vs, zs, ns))
     }
 
-    fn query_skills(&self, sql: &str, params: &[DbValue]) -> Vec<Skill> {
-        let rows: Vec<SkillRow> = match query_map(&*self.driver, sql, params, |row| {
-            Ok((
-                row.get_str(0)?.to_string(),
-                row.get_str(1)?.to_string(),
-                opt_text(row, 2)?,
-                opt_text(row, 3)?,
-                opt_text(row, 4)?,
-                opt_text(row, 5)?,
-                opt_text(row, 6)?,
-                row.get_str(7)?.to_string(),
-                row.get_str(8)?.to_string(),
-                opt_text(row, 9)?,
-            ))
-        }) {
-            Ok(m) => m,
+    fn query_skills(&self, sql: &str, params: &[rusqlite::types::Value]) -> Vec<Skill> {
+        let conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows: Vec<SkillRow> = match stmt.query_map(
+            rusqlite::params_from_iter(params.iter().map(|v| v as &dyn rusqlite::types::ToSql)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                ))
+            },
+        ) {
+            Ok(m) => m.filter_map(|r| r.ok()).collect(),
             Err(_) => return Vec::new(),
         };
         let mut skills = Vec::with_capacity(rows.len());
@@ -660,7 +657,7 @@ impl SqliteRegistry {
     pub fn skills_by_domain_owned(&self, domain: TemplateType) -> Vec<Skill> {
         self.query_skills(
             &format!("{} WHERE domain = ?1", Self::_SKILLS_SELECT),
-            &[DbValue::Text(domain.as_str().to_string())],
+            &[rusqlite::types::Value::Text(domain.as_str().to_string())],
         )
     }
 
@@ -676,7 +673,7 @@ impl SqliteRegistry {
                 "{} WHERE word_act = ?1 OR flow_def = ?1 OR know_act = ?1",
                 Self::_SKILLS_SELECT
             ),
-            &[DbValue::Text(tid.to_string())],
+            &[rusqlite::types::Value::Text(tid.to_string())],
         )
     }
 }

@@ -1,0 +1,20 @@
+id: RR-0007
+title: "Spotlighting type defined but not integrated into tool output path"
+surface: mcp
+cwe: CWE-20
+owasp_llm_2025: LLM01
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: crates/hkask-guard/src/spotlight.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: high
+detection:
+  kind: grep
+  pattern: 'pub struct Spotlighter'
+  include: "crates/hkask-guard/src/spotlight.rs"
+mitigation: "Apply Spotlighter (datamarking mode) to all MCP tool outputs before they enter the LLM context. Reduces indirect prompt injection success from >50% to <2%."
+source: "https://arxiv.org/html/2403.14720v1 — Microsoft Research Spotlighting"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
+note: "Type is now integrated — see RR-0011 for the runtime call check. Spotlighter::spotlight() is called on every MCP tool result in execute_tool_invoke."

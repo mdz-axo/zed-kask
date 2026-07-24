@@ -1,0 +1,3683 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "hKask API",
+    "description": "A Minimal Viable Container for Replicants — HTTP API.\n\nhKask is an agent runtime grounded in 12 architectural principles\n(P0–P12) expressed through four composable patterns: Skills Model,\nRegulation Feedback Loop, Agentic AI Mediation, and Agent Creation with\nSovereign Memory. This API exposes all capabilities equally across\nCLI, API, and MCP surfaces under P3 (Equal Surface Exposure).\n\nAll endpoints carry OCAP DelegationToken authentication (P4).\nData access is governed by user sovereignty and affirmative\nconsent (P1, P2).",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.30.0"
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "hKask API server"
+    }
+  ],
+  "paths": {
+    "/api/chat": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Chat with the Curator or a specified agent.",
+        "description": "Accepts an optional `model` field to switch the LLM at request time.\nWhen omitted, the server default (a fast classifier model) is used. The response\nechoes the `model` used, confirming which LLM generated the output.\n\nUse `GET /api/models` or `GET /api/models/search?q=...` to discover\navailable model identifiers.",
+        "operationId": "chat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Chat response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/chat/stream": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Stream chat inference output as Server-Sent Events.",
+        "description": "Accepts the same `ChatRequest` as `/api/chat` but streams the inference\noutput as SSE `data:` events. Each event carries a JSON object with\n`text_delta`, `model`, and optionally `finish_reason`. The final event\nhas `finish_reason: \"stop\"` and includes `usage` stats.\n\nThis is a surface-layer endpoint — it bypasses ChatService's full\npipeline (memory recall, episodic storage) and calls the inference port\ndirectly for streaming. Use `/api/chat` for the full pipeline with\nmemory integration.",
+        "operationId": "chat_stream",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream of chat chunks",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/regulation/health": {
+      "get": {
+        "tags": [
+          "regulation"
+        ],
+        "summary": "Regulation health endpoint",
+        "operationId": "reg_health",
+        "responses": {
+          "200": {
+            "description": "Regulation health status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegHealthResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/regulation/subscribe": {
+      "get": {
+        "tags": [
+          "regulation"
+        ],
+        "summary": "Subscribe to Regulation events as an SSE stream.",
+        "description": "The endpoint upgrades the HTTP response to a long-lived SSE connection.\nEvents matching the requested span namespaces are forwarded in real time.\nLag notifications are emitted when the client falls behind.",
+        "operationId": "reg_subscribe",
+        "parameters": [
+          {
+            "name": "spans",
+            "in": "query",
+            "description": "Span namespaces to subscribe to (e.g., [\"reg.tool\", \"reg.inference\"])",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE event stream",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/api/regulation/variety": {
+      "get": {
+        "tags": [
+          "regulation"
+        ],
+        "summary": "Regulation variety endpoint",
+        "operationId": "reg_variety",
+        "responses": {
+          "200": {
+            "description": "Regulation variety counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegVarietyResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/consolidate": {
+      "post": {
+        "tags": [
+          "consolidation"
+        ],
+        "summary": "Consolidate episodic memories for an agent.",
+        "description": "Triggers the semantic consolidation loop: reads raw episodic triples,\nderives confidence-weighted semantic knowledge, and deletes low-confidence\nephemera. Requires the agent's master passphrase for authorization and\naffirmative consent for both memory categories.",
+        "operationId": "consolidate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsolidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Consolidation complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — invalid passphrase"
+          },
+          "403": {
+            "description": "Forbidden — caller not authorized for target agent or consent denied"
+          },
+          "429": {
+            "description": "Rate limited — try again later"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/episodic/query": {
+      "get": {
+        "tags": [
+          "episodic"
+        ],
+        "summary": "Query episodic memories for the authenticated caller by entity.",
+        "description": "Routes through `EpisodicStoragePort` with OCAP discipline.\nApplies confidence decay, temporal attention weighting, and deduplication\n(subloops 2a.2–2a.4) before returning results.",
+        "operationId": "query_episodes",
+        "parameters": [
+          {
+            "name": "entity",
+            "in": "query",
+            "description": "Entity to query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Episodes retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryEpisodesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Query error"
+          }
+        }
+      }
+    },
+    "/api/episodic/store": {
+      "post": {
+        "tags": [
+          "episodic"
+        ],
+        "summary": "Store an episodic triple for the authenticated caller.",
+        "description": "Routes through `EpisodicStoragePort` with OCAP discipline:\nthe `DelegationToken` from HTTP auth is verified at the membrane.",
+        "operationId": "store_episode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreEpisodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Episode stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreEpisodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Storage error"
+          }
+        }
+      }
+    },
+    "/api/episodic/usage": {
+      "get": {
+        "tags": [
+          "episodic"
+        ],
+        "summary": "Get episodic storage usage for the authenticated caller.",
+        "operationId": "storage_usage",
+        "responses": {
+          "200": {
+            "description": "Storage usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpisodicUsageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Query error"
+          }
+        }
+      }
+    },
+    "/api/goals": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "List all goals for the authenticated agent, optionally filtered by state.",
+        "operationId": "list_goals",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Optional state filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Goals listed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid state filter"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Authority denied"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Create a new goal for the authenticated agent.",
+        "operationId": "create_goal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGoalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Goal created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Authority denied"
+          }
+        }
+      }
+    },
+    "/api/goals/{id}/state": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Transition a goal to a new state (legal transitions only).",
+        "operationId": "set_goal_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Goal ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetGoalStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Goal state changed"
+          },
+          "400": {
+            "description": "Invalid or illegal transition"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Authority denied"
+          },
+          "404": {
+            "description": "Goal not found"
+          }
+        }
+      }
+    },
+    "/api/mcp/invoke": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Invoke an MCP tool directly.",
+        "description": "Requires authentication via Bearer token. Dispatches the tool call\nthrough the MCP runtime with capability verification. The server\nthat owns the tool is resolved automatically from the tool name.",
+        "operationId": "mcp_invoke",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpInvokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tool invocation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpInvokeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Tool or server not found"
+          },
+          "500": {
+            "description": "Tool invocation error"
+          }
+        }
+      }
+    },
+    "/api/mcp/servers": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "List MCP servers",
+        "operationId": "list_servers",
+        "responses": {
+          "200": {
+            "description": "List of MCP servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/mcp/tools": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "List MCP tools",
+        "description": "Returns all tools discovered from running MCP servers. If no servers\nare started, the list will be empty.",
+        "operationId": "list_tools",
+        "responses": {
+          "200": {
+            "description": "List of MCP tool names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "List all available models from all configured providers.",
+        "description": "Queries DeepInfra, fal.ai, Together AI, OpenRouter, and KiloCode and returns metadata for each\navailable model with provider prefix applied. Returns an empty list if\nno providers are reachable (graceful degradation).",
+        "operationId": "list_models",
+        "responses": {
+          "200": {
+            "description": "List of available models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelListResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No providers reachable (returns empty list)"
+          }
+        }
+      }
+    },
+    "/api/models/search": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Search available models by name (fuzzy matching).",
+        "description": "Performs case-insensitive substring matching against model names\nacross all providers. Use this endpoint to discover valid model\nidentifiers before passing them to `POST /api/chat` via the `model` field.",
+        "operationId": "search_models",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Fuzzy search query — matches model name (case-insensitive substring)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sovereignty/access/check": {
+      "get": {
+        "tags": [
+          "sovereignty"
+        ],
+        "summary": "Check whether the authenticated agent has access to a specific data category.",
+        "operationId": "sovereignty_check_access",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Data category to check",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Access check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessCheckResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing category parameter"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/sovereignty/consent/grant": {
+      "post": {
+        "tags": [
+          "sovereignty"
+        ],
+        "summary": "Grant explicit consent for a data category, enabling data sharing.",
+        "operationId": "sovereignty_grant_consent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SovereigntyConsentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Consent granted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SovereigntyConsentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid category"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/sovereignty/consent/revoke": {
+      "post": {
+        "tags": [
+          "sovereignty"
+        ],
+        "summary": "Revoke all explicit consent — only public data remains accessible.",
+        "operationId": "sovereignty_revoke_consent",
+        "responses": {
+          "200": {
+            "description": "Consent revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SovereigntyConsentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Consent not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/sovereignty/status": {
+      "get": {
+        "tags": [
+          "sovereignty"
+        ],
+        "summary": "Get sovereignty status for the authenticated agent — consent state,\ndata category classifications, and granted sharing categories.",
+        "operationId": "sovereignty_status",
+        "responses": {
+          "200": {
+            "description": "Sovereignty status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SovereigntyStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/specs": {
+      "get": {
+        "tags": [
+          "specs"
+        ],
+        "summary": "List specifications — with optional category filter",
+        "operationId": "list_specs",
+        "responses": {
+          "200": {
+            "description": "List of specifications",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpecListResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/specs/capture": {
+      "post": {
+        "tags": [
+          "specs"
+        ],
+        "summary": "Capture a new specification",
+        "operationId": "capture_spec",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpecCaptureRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Captured specification"
+          }
+        }
+      }
+    },
+    "/api/specs/coherence": {
+      "get": {
+        "tags": [
+          "specs"
+        ],
+        "summary": "Get specification collection coherence",
+        "operationId": "get_coherence",
+        "responses": {
+          "200": {
+            "description": "Coherence assessment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecCoherenceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/specs/{spec_id}": {
+      "get": {
+        "tags": [
+          "specs"
+        ],
+        "summary": "Get a single specification by ID",
+        "operationId": "get_spec",
+        "parameters": [
+          {
+            "name": "spec_id",
+            "in": "path",
+            "description": "Specification ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Specification details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Spec not found"
+          }
+        }
+      }
+    },
+    "/api/specs/{spec_id}/writing-quality": {
+      "get": {
+        "tags": [
+          "specs"
+        ],
+        "summary": "Get writing quality assessment for a spec",
+        "operationId": "get_writing_quality",
+        "parameters": [
+          {
+            "name": "spec_id",
+            "in": "path",
+            "description": "Specification ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Writing quality assessment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecWritingQualityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/templates": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "List templates",
+        "operationId": "list_templates",
+        "responses": {
+          "200": {
+            "description": "List of templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateResponse"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/templates/{id}": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get template by ID",
+        "operationId": "get_template",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Template ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Template details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Template not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/a2a/agents": {
+      "get": {
+        "tags": [
+          "a2a"
+        ],
+        "summary": "List all registered A2A agents",
+        "operationId": "a2a_list_agents",
+        "responses": {
+          "200": {
+            "description": "List of registered agents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/a2a/agents/{agent_id}": {
+      "delete": {
+        "tags": [
+          "a2a"
+        ],
+        "summary": "Unregister an A2A agent",
+        "operationId": "a2a_unregister_agent",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "description": "A2A agent ID to unregister",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent unregistered"
+          },
+          "400": {
+            "description": "Invalid agent ID"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/bundles": {
+      "get": {
+        "tags": [
+          "bundles"
+        ],
+        "summary": "List all bundles",
+        "operationId": "list_bundles",
+        "responses": {
+          "200": {
+            "description": "List of bundles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/compose": {
+      "post": {
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Compose a new bundle from specified skills",
+        "operationId": "compose_bundle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposeBundleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Bundle composed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposeBundleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/{id}": {
+      "get": {
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Get a specific bundle",
+        "operationId": "get_bundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bundle ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bundle manifest",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Bundle not found"
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/{id}/apply": {
+      "post": {
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Apply a bundle to the current session",
+        "operationId": "apply_bundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bundle ID to apply",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bundle applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyBundleResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bundle not found"
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/{id}/deactivate": {
+      "delete": {
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Deactivate the current bundle",
+        "operationId": "deactivate_bundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bundle ID to deactivate",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bundle deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeactivateBundleResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/{id}/evolve": {
+      "post": {
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Evolve a bundle (re-compose when skills have changed)",
+        "operationId": "evolve_bundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bundle ID to evolve",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bundle evolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvolveBundleResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bundle not found"
+          }
+        }
+      }
+    },
+    "/api/v1/curator/escalations": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "List all pending curator escalations.",
+        "operationId": "list_escalations",
+        "responses": {
+          "200": {
+            "description": "List of pending escalations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEscalationsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/curator/escalations/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Dismiss an escalation as non-actionable, recording who dismissed it.",
+        "operationId": "dismiss_escalation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Escalation ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DismissEscalationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Escalation dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DismissEscalationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Escalation not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/curator/escalations/{id}/resolve": {
+      "post": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Resolve an escalation by marking it handled with the resolver's identity.",
+        "operationId": "resolve_escalation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Escalation ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveEscalationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Escalation resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveEscalationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Escalation not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/curator/metacognition": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Get Curator metacognition status — escalation statistics and bot health reports.",
+        "operationId": "metacognition_status",
+        "responses": {
+          "200": {
+            "description": "Curator metacognition status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetacognitionStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/git/archive": {
+      "post": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Archive a repository template crate",
+        "description": "Uses `TemplateCrateLoader::load_template_crate` for template loading (domain\noperation) and `GixCasAdapter::resolve_ref` for SHA resolution.",
+        "operationId": "archive",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Template crate archived",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or missing crate"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/git/resolve/{sha}": {
+      "get": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Resolve a git reference to a SHA using GixCasAdapter",
+        "operationId": "resolve_sha",
+        "parameters": [
+          {
+            "name": "sha",
+            "in": "path",
+            "description": "Git reference to resolve (branch, tag, or commit prefix)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SHA resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveShaResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/wallet/balance": {
+      "get": {
+        "summary": "Get current wallet balance.",
+        "operationId": "get_balance",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletBalanceResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/deposit-address": {
+      "get": {
+        "summary": "Get a deposit address for receiving USDC.",
+        "operationId": "get_deposit_address",
+        "parameters": [
+          {
+            "name": "chain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "private",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "wallet_id",
+            "in": "query",
+            "description": "Wallet ID (UUID). Defaults to system wallet if omitted.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepositAddressResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/deposit-reference": {
+      "post": {
+        "summary": "Generate a one-time deposit reference for shielded deposits.",
+        "operationId": "create_deposit_reference",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepositReferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepositReferenceResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/fee": {
+      "get": {
+        "summary": "Estimate current network withdrawal fee using configured price feed.",
+        "operationId": "get_fee_estimate",
+        "parameters": [
+          {
+            "name": "chain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalFeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/keys": {
+      "get": {
+        "summary": "List active API keys.",
+        "operationId": "list_keys",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyListResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a new API key.",
+        "operationId": "create_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreatedResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/keys/{key_id}": {
+      "delete": {
+        "summary": "Revoke an API key.",
+        "operationId": "revoke_key",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyRevokedResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/transactions": {
+      "get": {
+        "summary": "Get paginated transaction history.",
+        "operationId": "get_transactions",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "wallet_id",
+            "in": "query",
+            "description": "Wallet ID (UUID). Defaults to system wallet if omitted.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionListResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    },
+    "/api/wallet/withdraw": {
+      "post": {
+        "summary": "Withdraw rJoules as USDC to an external address.",
+        "operationId": "withdraw",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawalResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Wallet service not configured"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "A2AAgentResponse": {
+        "type": "object",
+        "description": "A2A agent response — registered agent in the ACP capability delegation system (P4 OCAP).\n\n`agent_type` is \"Bot\" or \"Replicant\" (P10).\n`capabilities` are the granted capability verbs this agent holds.\n`active` indicates whether the agent is currently allowed to exercise its capabilities.",
+        "required": [
+          "webid",
+          "agent_type",
+          "capabilities",
+          "registered_at",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "agent_type": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "registered_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "webid": {
+            "type": "string"
+          }
+        }
+      },
+      "AccessCheckResponse": {
+        "type": "object",
+        "description": "Access check response — P4 (OCAP) membrane result.\n\nReports whether the authenticated agent has access to a specific data\ncategory. `classification` is one of: PUBLIC, SHARED, SOVEREIGN.\n`access_required` is the OCAP-level gate (e.g., \"capability:memory\",\n\"consent:required\").",
+        "required": [
+          "category",
+          "classification",
+          "access_required"
+        ],
+        "properties": {
+          "access_required": {
+            "type": "string",
+            "description": "OCAP-level access gate description"
+          },
+          "category": {
+            "type": "string",
+            "description": "Data category checked"
+          },
+          "classification": {
+            "type": "string",
+            "description": "Classification: PUBLIC, SHARED, or SOVEREIGN"
+          }
+        }
+      },
+      "AgentListResponse": {
+        "type": "object",
+        "description": "Agent list response — all A2A-registered agents.",
+        "required": [
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/A2AAgentResponse"
+            }
+          }
+        }
+      },
+      "ApiKeyCreatedResponse": {
+        "type": "object",
+        "description": "API key created response.\n\n**Security:** `private_key_hex` is shown only once. Store it securely.",
+        "required": [
+          "key_id",
+          "private_key_hex",
+          "spending_limit_rj",
+          "privacy_mode"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 expiry timestamp (None = no expiry)"
+          },
+          "key_id": {
+            "type": "string",
+            "description": "Unique key identifier"
+          },
+          "preferred_chain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preferred blockchain for settlement"
+          },
+          "privacy_mode": {
+            "type": "string",
+            "description": "Privacy mode: \"shielded\" or \"transparent\""
+          },
+          "private_key_hex": {
+            "type": "string",
+            "description": "Private key in hex (shown only once — store securely)"
+          },
+          "spending_limit_rj": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Spending limit in rJoules",
+            "minimum": 0
+          }
+        }
+      },
+      "ApiKeyEntry": {
+        "type": "object",
+        "description": "API key entry — status of an existing API key.\n\n`status` is \"active\", \"revoked\", \"exhausted\", or \"expired\".",
+        "required": [
+          "key_id",
+          "spent_rj",
+          "limit_rj",
+          "status",
+          "privacy_mode"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 expiry timestamp (None = no expiry)"
+          },
+          "key_id": {
+            "type": "string",
+            "description": "Unique key identifier"
+          },
+          "limit_rj": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Spending limit in rJoules",
+            "minimum": 0
+          },
+          "preferred_chain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preferred blockchain for settlement"
+          },
+          "privacy_mode": {
+            "type": "string",
+            "description": "Privacy mode: \"shielded\" or \"transparent\""
+          },
+          "spent_rj": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative rJoules spent via this key",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "Status: \"active\", \"revoked\", \"exhausted\", or \"expired\""
+          }
+        }
+      },
+      "ApiKeyListResponse": {
+        "type": "object",
+        "description": "API key list response.",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyEntry"
+            },
+            "description": "All API keys for the authenticated wallet"
+          }
+        }
+      },
+      "ApiKeyRevokedResponse": {
+        "type": "object",
+        "description": "API key revoked response.",
+        "required": [
+          "key_id",
+          "revoked"
+        ],
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "description": "Key ID that was revoked"
+          },
+          "revoked": {
+            "type": "boolean",
+            "description": "Always true on success"
+          }
+        }
+      },
+      "ApplyBundleResponse": {
+        "type": "object",
+        "description": "Apply bundle response — result of activating a bundle in the current session.\n\n`status` is \"active\" on success.",
+        "required": [
+          "status",
+          "bundle_id",
+          "name",
+          "skill_count"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "skill_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ArchiveEntry": {
+        "type": "object",
+        "description": "Archive entry response",
+        "required": [
+          "name",
+          "path",
+          "content",
+          "template_type"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "template_type": {
+            "type": "string"
+          }
+        }
+      },
+      "ArchiveRequest": {
+        "type": "object",
+        "description": "Archive repository request",
+        "required": [
+          "owner",
+          "repo",
+          "branch",
+          "path"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          }
+        }
+      },
+      "ArchiveResponse": {
+        "type": "object",
+        "description": "Archive response",
+        "required": [
+          "crate_name",
+          "git_sha",
+          "templates"
+        ],
+        "properties": {
+          "crate_name": {
+            "type": "string"
+          },
+          "git_sha": {
+            "type": "string"
+          },
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArchiveEntry"
+            }
+          }
+        }
+      },
+      "BotStatusReportResponse": {
+        "type": "object",
+        "description": "Bot status report — reflects the health of a specific bot agent.",
+        "required": [
+          "bot_name",
+          "status",
+          "issues"
+        ],
+        "properties": {
+          "bot_name": {
+            "type": "string",
+            "description": "Bot name"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Active issues requiring attention"
+          },
+          "last_report": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 timestamp of last report (None if never reported)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Aggregate status: \"healthy\", \"degraded\", or \"critical\""
+          }
+        }
+      },
+      "BundleListResponse": {
+        "type": "object",
+        "description": "List bundles response.",
+        "required": [
+          "bundles"
+        ],
+        "properties": {
+          "bundles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleSummary"
+            }
+          }
+        }
+      },
+      "BundleSummary": {
+        "type": "object",
+        "description": "Bundle summary for list responses — a skill bundle in the Skills Model (Pattern A).\n\n`visibility` is \"private\" or \"shared\" (P11).\n`skill_count` is the number of WordAct/FlowDef/KnowAct templates in the bundle.",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "version",
+          "visibility",
+          "skill_count"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "skill_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "ChatRequest": {
+        "type": "object",
+        "description": "Chat request sent to the Curator or a specified agent.\n\nThe `model` field allows switching the LLM at request time. When omitted,\nthe server default (a fast classifier model) is used. Use `GET /api/models` to discover\navailable models, and `GET /api/models/search?q=...` for fuzzy matching.",
+        "required": [
+          "input"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "User input message"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model override for inference (e.g., \"DI/google/gemma-4-9b-it\"). If unset, uses the server default."
+          },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional template ID to contextualize the prompt"
+          }
+        }
+      },
+      "ChatResponse": {
+        "type": "object",
+        "description": "Chat response from the Curator or agent.\n\nThe `model` field echoes which LLM was used, confirming model switching.",
+        "required": [
+          "output",
+          "template_id",
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Model identifier used for inference"
+          },
+          "output": {
+            "type": "string",
+            "description": "Generated response text"
+          },
+          "template_id": {
+            "type": "string",
+            "description": "Template ID that was applied (or \"auto-select\")"
+          }
+        }
+      },
+      "RegHealthResponse": {
+        "type": "object",
+        "description": "Regulation health response — P9 (Homeostatic Self-Regulation).\n\n`healthy: false` means one or more variety domains are in deficit (below\ntheir configured threshold). Check `critical_count` and `warning_count` for\nseverity. `overall_deficit` is the sum of all per-domain deficits.",
+        "required": [
+          "overall_deficit",
+          "critical_count",
+          "warning_count",
+          "healthy"
+        ],
+        "properties": {
+          "critical_count": {
+            "type": "integer",
+            "description": "Count of domains in critical deficit (escalation-triggered)",
+            "minimum": 0
+          },
+          "healthy": {
+            "type": "boolean",
+            "description": "Whether all variety domains are within healthy thresholds"
+          },
+          "overall_deficit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of all per-domain variety deficits",
+            "minimum": 0
+          },
+          "warning_count": {
+            "type": "integer",
+            "description": "Count of domains in warning deficit",
+            "minimum": 0
+          }
+        }
+      },
+      "RegSubscribeParams": {
+        "type": "object",
+        "description": "Query parameters for Regulation SSE subscription",
+        "properties": {
+          "spans": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Span namespaces to subscribe to (e.g., [\"reg.tool\", \"reg.inference\"])"
+          }
+        }
+      },
+      "RegVarietyResponse": {
+        "type": "object",
+        "description": "Regulation variety response — per-domain variety counters for the Regulation System (Pattern B).\n\n`domains` lists all canonical Regulation span namespaces registered (e.g., reg.tool,\nreg.inference, reg.memory). `total_deficit` is the aggregate variety gap across\nall domains.",
+        "required": [
+          "domains",
+          "total_deficit",
+          "counters"
+        ],
+        "properties": {
+          "counters": {
+            "type": "object",
+            "description": "Per-domain variety counters keyed by namespace",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/VarietyCounterResponse"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All registered Regulation span namespace domains"
+          },
+          "total_deficit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Aggregate variety deficit across all domains",
+            "minimum": 0
+          }
+        }
+      },
+      "ComposeBundleRequest": {
+        "type": "object",
+        "description": "Compose bundle request — create a new skill bundle from individual template IDs (Pattern A).\n\nRequires at least 2 skills. The bundle composer uses inference to generate\na manifest describing how the skills compose together.",
+        "required": [
+          "skills"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional bundle name"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Skill IDs to bundle"
+          },
+          "visibility": {
+            "type": "string",
+            "description": "Visibility: private or shared"
+          }
+        }
+      },
+      "ComposeBundleResponse": {
+        "type": "object",
+        "description": "Compose bundle response — result of inference-driven bundle composition.\n\n`manifest` is the composed bundle definition (JSON).\n`warnings` lists any composition concerns detected.",
+        "required": [
+          "warnings",
+          "message"
+        ],
+        "properties": {
+          "manifest": {
+            "description": "The composed bundle manifest (as JSON)"
+          },
+          "message": {
+            "type": "string",
+            "description": "Message about what happened"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Warnings from composition"
+          }
+        }
+      },
+      "ConsolidateRequest": {
+        "type": "object",
+        "description": "Consolidate request — triggers episodic-to-semantic memory consolidation.\n\nRequires the agents master passphrase for authorization (P4 OCAP) and P2\naffirmative consent for both `EpisodicMemory` and `SemanticMemory` on the\ntarget agent. The caller's authenticated WebID must match the target\nagent's derived WebID.",
+        "required": [
+          "agent_name",
+          "passphrase"
+        ],
+        "properties": {
+          "agent_name": {
+            "type": "string",
+            "description": "Agent name whose episodic memory to consolidate (e.g. `curator` or a replicant name)"
+          },
+          "confidence_floor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Confidence floor — semantic triples at or below this are deleted.\nOverrides the SemanticLoop default (0.33)."
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Maximum episodic triples to consolidate (default: 100)",
+            "default": 100,
+            "minimum": 0
+          },
+          "max_semantic_triples": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Maximum semantic triples to retain after consolidation.\nIf exceeded, lowest-confidence triples are deleted.",
+            "minimum": 0
+          },
+          "passphrase": {
+            "type": "string",
+            "description": "Master passphrase for authorization. Database opening uses the separately configured HKASK_DB_PASSPHRASE."
+          }
+        }
+      },
+      "ConsolidateResponse": {
+        "type": "object",
+        "description": "Consolidate response — outcome counts from the semantic consolidation loop.",
+        "required": [
+          "consolidated_count",
+          "deleted_count",
+          "failed_count"
+        ],
+        "properties": {
+          "consolidated_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deleted_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateGoalRequest": {
+        "type": "object",
+        "description": "Create goal request — P4 OCAP-gated goal creation.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Visibility: \"private\" or \"shared\" (defaults to \"private\")"
+          }
+        }
+      },
+      "CreateKeyRequest": {
+        "type": "object",
+        "description": "Create API key request.\n\nAPI keys carry a spending limit in rJoules and an optional expiry.\n`private` controls shielded (default: true) vs transparent mode.",
+        "required": [
+          "limit_rj"
+        ],
+        "properties": {
+          "chain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preferred chain: \"hinkal\" or \"hedera\" (default: \"hinkal\")"
+          },
+          "expiry_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Key expiry in days from creation (None = no expiry)",
+            "minimum": 0
+          },
+          "limit_rj": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Spending limit in rJoules",
+            "minimum": 0
+          },
+          "private": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Privacy: true = shielded, false = transparent (default: true)"
+          },
+          "wallet_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Wallet ID (UUID). Defaults to system wallet if omitted."
+          }
+        }
+      },
+      "CreatePodRequest": {
+        "type": "object",
+        "description": "Create pod request — Pattern D agent creation.\n\n`template` is a FlowDef template ID. `persona_yaml` is the agent persona\ndefinition in YAML format (maps to a WordAct).",
+        "required": [
+          "template",
+          "persona_yaml"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional human-readable pod name"
+          },
+          "persona_yaml": {
+            "type": "string",
+            "description": "Agent persona definition in YAML (WordAct)"
+          },
+          "template": {
+            "type": "string",
+            "description": "FlowDef template ID defining the agent's operational pattern"
+          }
+        }
+      },
+      "CreatePodResponse": {
+        "type": "object",
+        "description": "Create pod response — returns the new pod's ID.",
+        "required": [
+          "pod_id"
+        ],
+        "properties": {
+          "pod_id": {
+            "type": "string",
+            "description": "Unique pod identifier"
+          }
+        }
+      },
+      "DeactivateBundleResponse": {
+        "type": "object",
+        "description": "Deactivate bundle response.\n\n`status` is \"deactivated\" on success.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "DepositAddressResponse": {
+        "type": "object",
+        "description": "Deposit address response — a generated deposit address for a specific chain.\n\n`privacy` is \"shielded\" (private, zk-protected) or \"transparent\" (public).",
+        "required": [
+          "address",
+          "chain",
+          "privacy"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "On-chain deposit address"
+          },
+          "chain": {
+            "type": "string",
+            "description": "Blockchain: \"hinkal\" or \"hedera\""
+          },
+          "privacy": {
+            "type": "string",
+            "description": "Privacy mode: \"shielded\" or \"transparent\""
+          }
+        }
+      },
+      "DepositReferenceRequest": {
+        "type": "object",
+        "description": "Deposit reference request — create a time-limited deposit reference for tracking.",
+        "required": [
+          "chain"
+        ],
+        "properties": {
+          "chain": {
+            "type": "string"
+          },
+          "wallet_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Wallet ID (UUID). Defaults to system wallet if omitted."
+          }
+        }
+      },
+      "DepositReferenceResponse": {
+        "type": "object",
+        "description": "Deposit reference response — a time-limited reference code for an incoming deposit.",
+        "required": [
+          "reference",
+          "chain",
+          "expires_at"
+        ],
+        "properties": {
+          "chain": {
+            "type": "string",
+            "description": "Blockchain this reference is for"
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "ISO 8601 expiration timestamp"
+          },
+          "reference": {
+            "type": "string",
+            "description": "Unique deposit reference code"
+          }
+        }
+      },
+      "DismissEscalationRequest": {
+        "type": "object",
+        "description": "Dismiss escalation request — P12 (accountable identity).",
+        "required": [
+          "dismissed_by"
+        ],
+        "properties": {
+          "dismissed_by": {
+            "type": "string",
+            "description": "WebID of the human or agent dismissing the escalation"
+          }
+        }
+      },
+      "DismissEscalationResponse": {
+        "type": "object",
+        "description": "Dismiss escalation response.",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Escalation ID that was dismissed"
+          },
+          "status": {
+            "type": "string",
+            "description": "New status: \"dismissed\""
+          }
+        }
+      },
+      "EpisodeResponse": {
+        "type": "object",
+        "description": "A single episodic triple as returned over the API.\n\nEach episode is a (entity, attribute, value) triple with confidence,\nvisibility governance (P11), and a temporal validity marker (`valid_from`).\n`visibility` is \"private\" for episodic memory.\n`perspective` is the WebID of the observing agent (P12).",
+        "required": [
+          "id",
+          "entity",
+          "attribute",
+          "value",
+          "confidence",
+          "visibility",
+          "valid_from"
+        ],
+        "properties": {
+          "attribute": {
+            "type": "string",
+            "description": "Attribute (predicate / property)"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double",
+            "description": "Confidence score (0.0–1.0)"
+          },
+          "entity": {
+            "type": "string",
+            "description": "Entity (subject of the experience)"
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique episode ID"
+          },
+          "perspective": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "WebID of the observing agent (P12)"
+          },
+          "valid_from": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when this triple became valid"
+          },
+          "value": {
+            "description": "Value (object of the triple)"
+          },
+          "visibility": {
+            "type": "string",
+            "description": "Visibility: \"private\" (P11)"
+          }
+        }
+      },
+      "EpisodicUsageResponse": {
+        "type": "object",
+        "description": "Response for episodic storage usage.",
+        "required": [
+          "count",
+          "budget"
+        ],
+        "properties": {
+          "budget": {
+            "type": "integer",
+            "description": "Configured storage budget (max triples).",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "description": "Current triple count for the caller's perspective.",
+            "minimum": 0
+          }
+        }
+      },
+      "EscalationEntryResponse": {
+        "type": "object",
+        "description": "Escalation entry — a pending Curator escalation triggered by bot output below\nconfidence threshold or context errors (Pattern C, P12).\n\nStatus: \"pending\", \"resolved\", or \"dismissed\".",
+        "required": [
+          "id",
+          "template_id",
+          "bot_id",
+          "output",
+          "confidence",
+          "retry_count",
+          "error_context",
+          "created_at",
+          "status"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "description": "Bot WebID that triggered the escalation"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double",
+            "description": "Confidence score (0.0–1.0) at time of escalation"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 creation timestamp"
+          },
+          "error_context": {
+            "type": "string",
+            "description": "Error context or reason for escalation"
+          },
+          "id": {
+            "type": "string",
+            "description": "Escalation ID"
+          },
+          "output": {
+            "type": "string",
+            "description": "Flagged output text"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 resolution timestamp (when resolved/dismissed)"
+          },
+          "resolved_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "WebID of the resolver (P12 — accountable identity)"
+          },
+          "retry_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of retry attempts before escalation",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "Current status: \"pending\", \"resolved\", or \"dismissed\""
+          },
+          "template_id": {
+            "type": "string",
+            "description": "Template that produced the flagged output"
+          }
+        }
+      },
+      "EscalationStatsResponse": {
+        "type": "object",
+        "description": "Escalation statistics — aggregate counts across all escalations.",
+        "required": [
+          "total",
+          "pending",
+          "resolved",
+          "dismissed"
+        ],
+        "properties": {
+          "dismissed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Escalations dismissed as non-actionable"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Escalations awaiting resolution"
+          },
+          "resolved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Escalations that have been resolved"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total escalations ever created"
+          }
+        }
+      },
+      "EvolveBundleResponse": {
+        "type": "object",
+        "description": "Evolve bundle response — result of re-composing a bundle after skill changes.\n\n`evolved_manifest` is the updated bundle definition.\n`changes` lists what changed from the previous version.",
+        "required": [
+          "changes",
+          "message"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evolved_manifest": {},
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "GoalListResponse": {
+        "type": "object",
+        "description": "Goal list response.",
+        "required": [
+          "goals"
+        ],
+        "properties": {
+          "goals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GoalResponse"
+            }
+          }
+        }
+      },
+      "GoalResponse": {
+        "type": "object",
+        "description": "Goal response — reflects current goal state and visibility (P4, P11).",
+        "required": [
+          "id",
+          "text",
+          "state",
+          "visibility"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "ListEscalationsResponse": {
+        "type": "object",
+        "description": "List of pending escalations.",
+        "required": [
+          "escalations"
+        ],
+        "properties": {
+          "escalations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EscalationEntryResponse"
+            },
+            "description": "Pending escalations in the queue"
+          }
+        }
+      },
+      "ListPodsResponse": {
+        "type": "object",
+        "description": "List pods response.",
+        "required": [
+          "pods"
+        ],
+        "properties": {
+          "pods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PodStatusResponse"
+            },
+            "description": "All active pods"
+          }
+        }
+      },
+      "McpInvokeRequest": {
+        "type": "object",
+        "description": "MCP invoke request — invoke a tool on a running MCP server.\n\n`tool` is the fully-qualified tool name. Use GET /api/mcp/tools to\ndiscover available tools before invoking. `input` is a JSON object of\ntool arguments (defaults to {}).",
+        "required": [
+          "tool"
+        ],
+        "properties": {
+          "input": {
+            "description": "JSON input arguments (defaults to null)"
+          },
+          "tool": {
+            "type": "string",
+            "description": "Tool name to invoke (e.g., \"inference_generate\")"
+          }
+        }
+      },
+      "McpInvokeResponse": {
+        "type": "object",
+        "description": "MCP invoke response — result of a tool invocation.\n\nThe `result` shape varies by tool. `server` identifies which MCP server\nhandled the invocation.",
+        "required": [
+          "server",
+          "tool",
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "description": "Result from the tool invocation"
+          },
+          "server": {
+            "type": "string",
+            "description": "MCP server that provided the tool"
+          },
+          "tool": {
+            "type": "string",
+            "description": "Tool name that was invoked"
+          }
+        }
+      },
+      "MetacognitionStatusResponse": {
+        "type": "object",
+        "description": "Curator metacognition status — aggregate view of system health (Pattern C).\n\nCombines escalation queue statistics with per-bot health reports.\nThis is the primary observability endpoint for the Curator mediation loop.",
+        "required": [
+          "escalation_stats",
+          "bot_reports"
+        ],
+        "properties": {
+          "bot_reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotStatusReportResponse"
+            },
+            "description": "Per-bot health reports"
+          },
+          "escalation_stats": {
+            "$ref": "#/components/schemas/EscalationStatsResponse",
+            "description": "Aggregate escalation statistics"
+          }
+        }
+      },
+      "ModelEntry": {
+        "type": "object",
+        "description": "A model available through the inference router.\n\nIncludes metadata from the provider's model listing endpoint:\nmodel family, parameter count, quantization level, and disk size.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "family": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model family (e.g., \"llama\", \"qwen2\")"
+          },
+          "name": {
+            "type": "string",
+            "description": "Model identifier (e.g., \"qwen3:8b\", \"llama3.1:70b\")"
+          },
+          "parameter_size": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parameter count (e.g., \"8B\", \"70B\")"
+          },
+          "quantization_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Quantization level (e.g., \"Q4_0\", \"Q5_K_M\")"
+          },
+          "size_gb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Model size in gigabytes"
+          }
+        }
+      },
+      "ModelListResponse": {
+        "type": "object",
+        "description": "Response containing available models.\n\nReturned by `GET /api/models` and `GET /api/models/search`.\nModel names from this response can be used as the `model` field\nin `POST /api/chat` requests.",
+        "required": [
+          "models",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Total number of models in the list",
+            "minimum": 0
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelEntry"
+            },
+            "description": "List of available models"
+          }
+        }
+      },
+      "ModelSearchQuery": {
+        "type": "object",
+        "description": "Query parameters for fuzzy model search.\n\nThe `q` parameter performs case-insensitive substring matching\nagainst model names. For example, `q=llama` matches \"llama3.1:8b\",\n\"llama3.1:70b\", etc.",
+        "required": [
+          "q"
+        ],
+        "properties": {
+          "q": {
+            "type": "string",
+            "description": "Fuzzy search query — matches model name (case-insensitive substring)"
+          }
+        }
+      },
+      "PodStatusResponse": {
+        "type": "object",
+        "description": "Pod status response — current state of an agent pod (Pattern D).\n\n`state` is one of: \"active\", \"inactive\", \"error\".\n`agent_type` is one of: \"Bot\", \"Replicant\" (P10).",
+        "required": [
+          "pod_id",
+          "state",
+          "webid",
+          "agent_type",
+          "template",
+          "created_at"
+        ],
+        "properties": {
+          "agent_type": {
+            "type": "string",
+            "description": "Agent type: \"Bot\" or \"Replicant\" (P10)"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix epoch seconds of pod creation"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-readable pod name"
+          },
+          "pod_id": {
+            "type": "string",
+            "description": "Unique pod identifier"
+          },
+          "state": {
+            "type": "string",
+            "description": "Pod state: \"active\", \"inactive\", or \"error\""
+          },
+          "template": {
+            "type": "string",
+            "description": "FlowDef template ID"
+          },
+          "webid": {
+            "type": "string",
+            "description": "Agent WebID (P12 — accountable identity)"
+          }
+        }
+      },
+      "QueryEpisodesResponse": {
+        "type": "object",
+        "description": "Response from querying episodic memories.",
+        "required": [
+          "episodes"
+        ],
+        "properties": {
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EpisodeResponse"
+            },
+            "description": "Retrieved episodic triples"
+          }
+        }
+      },
+      "ResolveEscalationRequest": {
+        "type": "object",
+        "description": "Resolve escalation request — P12 (accountable identity).",
+        "required": [
+          "resolved_by"
+        ],
+        "properties": {
+          "resolved_by": {
+            "type": "string",
+            "description": "WebID of the human or agent resolving the escalation"
+          }
+        }
+      },
+      "ResolveEscalationResponse": {
+        "type": "object",
+        "description": "Resolve escalation response.",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Escalation ID that was resolved"
+          },
+          "status": {
+            "type": "string",
+            "description": "New status: \"resolved\""
+          }
+        }
+      },
+      "ResolveShaResponse": {
+        "type": "object",
+        "description": "SHA resolve response",
+        "required": [
+          "sha"
+        ],
+        "properties": {
+          "sha": {
+            "type": "string"
+          }
+        }
+      },
+      "SetGoalStateRequest": {
+        "type": "object",
+        "description": "Set goal state request — state machine transition.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "SovereigntyConsentRequest": {
+        "type": "object",
+        "description": "Sovereignty consent request — P2 (Affirmative Consent).\n\nGrant explicit consent for a data category. Valid categories:\n\"memory\", \"inference\", \"replica\", \"all\".",
+        "required": [
+          "category"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Data category to grant consent for (e.g. \"memory\", \"inference\", \"all\")"
+          }
+        }
+      },
+      "SovereigntyConsentResponse": {
+        "type": "object",
+        "description": "Sovereignty consent response — P2 (Affirmative Consent).\n\n`consent: true` means the grant was accepted and data sharing is enabled\nfor the listed categories. `consent: false` means consent was revoked and\nonly public data remains accessible.",
+        "required": [
+          "consent",
+          "message",
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Categories currently granted consent"
+          },
+          "consent": {
+            "type": "boolean",
+            "description": "Whether consent is currently granted"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable status message"
+          }
+        }
+      },
+      "SovereigntyStatusResponse": {
+        "type": "object",
+        "description": "Sovereignty status response — P1 (User Sovereignty) and P2 (Affirmative Consent).\n\nReflects the authenticated agent's current data sovereignty boundary:\nwhich categories are sovereign (agent-only), shared (consent-gated), and\npublic (always accessible). `granted_categories` lists categories where\nexplicit consent has been given.",
+        "required": [
+          "explicit_consent",
+          "requires_affirmative_consent",
+          "sovereign_data",
+          "shared_data",
+          "public_data",
+          "granted_categories"
+        ],
+        "properties": {
+          "explicit_consent": {
+            "type": "boolean",
+            "description": "Whether any explicit consent has been granted"
+          },
+          "granted_categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Categories for which explicit consent has been granted"
+          },
+          "public_data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Data categories that are always publicly accessible"
+          },
+          "requires_affirmative_consent": {
+            "type": "string",
+            "description": "\"required\" if the boundary demands affirmative consent; \"open\" otherwise"
+          },
+          "shared_data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Data categories eligible for sharing after explicit consent"
+          },
+          "sovereign_data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Data categories that are agent-sovereign (never shared without consent)"
+          }
+        }
+      },
+      "SpecCaptureRequestDto": {
+        "type": "object",
+        "description": "Spec capture request — MDS-aligned: uses description + context (not category/domain/criteria).",
+        "required": [
+          "description"
+        ],
+        "properties": {
+          "context": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "SpecCoherenceResponse": {
+        "type": "object",
+        "description": "Spec coherence response",
+        "required": [
+          "coherence_score",
+          "violations",
+          "suggestions"
+        ],
+        "properties": {
+          "coherence_score": {
+            "type": "number",
+            "format": "double"
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SpecDetailResponse": {
+        "type": "object",
+        "description": "Spec detail response — full details for a single MDS specification.",
+        "required": [
+          "spec_id",
+          "name",
+          "category",
+          "domain_anchor",
+          "requirements"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "domain_anchor": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "spec_id": {
+            "type": "string"
+          }
+        }
+      },
+      "SpecListResponse": {
+        "type": "object",
+        "description": "Spec list response — summary of a single MDS specification.",
+        "required": [
+          "spec_id",
+          "name",
+          "category",
+          "complete"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "spec_id": {
+            "type": "string"
+          }
+        }
+      },
+      "SpecWritingQualityResponse": {
+        "type": "object",
+        "description": "Spec writing quality response",
+        "required": [
+          "dimensions_passing",
+          "meets_publication_standard"
+        ],
+        "properties": {
+          "dimensions_passing": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "meets_publication_standard": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StoreEpisodeRequest": {
+        "type": "object",
+        "description": "Request to store an episodic triple.",
+        "required": [
+          "entity",
+          "attribute",
+          "value"
+        ],
+        "properties": {
+          "attribute": {
+            "type": "string",
+            "description": "Attribute (predicate/property)."
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Confidence (0.0–1.0). Defaults to 1.0."
+          },
+          "entity": {
+            "type": "string",
+            "description": "Entity (subject of the experience)."
+          },
+          "value": {
+            "description": "Value (object of the triple)."
+          }
+        }
+      },
+      "StoreEpisodeResponse": {
+        "type": "object",
+        "description": "Response from storing an episodic triple.",
+        "required": [
+          "entity",
+          "attribute"
+        ],
+        "properties": {
+          "attribute": {
+            "type": "string",
+            "description": "The attribute that was stored."
+          },
+          "entity": {
+            "type": "string",
+            "description": "The entity that was stored."
+          }
+        }
+      },
+      "TemplateResponse": {
+        "type": "object",
+        "description": "Template response — a registered skill template in the WordAct / FlowDef / KnowAct taxonomy (Pattern A).\n\n`template_type` is one of: WordAct, FlowDef, KnowAct.\n`lexicon_terms` maps the template to canonical vocabulary terms.",
+        "required": [
+          "id",
+          "template_type",
+          "name",
+          "description",
+          "source_path",
+          "lexicon_terms"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Template description"
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique template identifier"
+          },
+          "lexicon_terms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Canonical vocabulary terms this template implements"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable template name"
+          },
+          "source_path": {
+            "type": "string",
+            "description": "Source file path within the registry"
+          },
+          "template_type": {
+            "type": "string",
+            "description": "Template type: WordAct, FlowDef, or KnowAct"
+          }
+        }
+      },
+      "TransactionListResponse": {
+        "type": "object",
+        "description": "Transaction list response.",
+        "required": [
+          "transactions"
+        ],
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionResponse"
+            },
+            "description": "Wallet transactions, newest first"
+          }
+        }
+      },
+      "TransactionResponse": {
+        "type": "object",
+        "description": "Transaction response — a single wallet transaction.\n\n`rjoules_delta` is positive for deposits, negative for withdrawals.",
+        "required": [
+          "rjoules_delta",
+          "balance_after",
+          "timestamp"
+        ],
+        "properties": {
+          "balance_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Balance after this transaction",
+            "minimum": 0
+          },
+          "rjoules_delta": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Change in rJoules (positive = deposit, negative = withdrawal)"
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          }
+        }
+      },
+      "VarietyCounterResponse": {
+        "type": "object",
+        "description": "Regulation variety counter for a single domain.\n\n`variety` is the tracked behavioral diversity for this domain.\n`entropy` is the Shannon entropy of the domain's observation distribution\n(0.0 when not yet computed).",
+        "required": [
+          "variety",
+          "total",
+          "entropy"
+        ],
+        "properties": {
+          "entropy": {
+            "type": "number",
+            "format": "double",
+            "description": "Shannon entropy (0.0 = not computed yet)"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total observations in this domain",
+            "minimum": 0
+          },
+          "variety": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tracked behavioral diversity count",
+            "minimum": 0
+          }
+        }
+      },
+      "WalletBalanceResponse": {
+        "type": "object",
+        "description": "Wallet balance response — current rJoule balance and fiat equivalents.\n\n`rjoules` is the canonical energy unit for inference and memory operations.\n`usdc_equivalent` and `gas_equivalent` are approximate fiat conversions\nbased on the current calibrated gas-per-rjoule rate (P9 homeostatic calibration).",
+        "required": [
+          "wallet_id",
+          "rjoules",
+          "usdc_equivalent",
+          "gas_equivalent"
+        ],
+        "properties": {
+          "gas_equivalent": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Approximate native gas units equivalent (chain-dependent)",
+            "minimum": 0
+          },
+          "rjoules": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Balance in rJoules — the canonical energy unit for inference operations",
+            "minimum": 0
+          },
+          "usdc_equivalent": {
+            "type": "number",
+            "format": "double",
+            "description": "Approximate USD Coin equivalent at current calibration rate"
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "Wallet ID (UUID)"
+          }
+        }
+      },
+      "WithdrawRequest": {
+        "type": "object",
+        "description": "Withdraw request — withdraw rJoules to an on-chain address.\n\n`chain` selects the target blockchain (default: \"hinkal\").\n`private` controls shielded vs transparent mode (default: true).",
+        "required": [
+          "amount_rj",
+          "to_address"
+        ],
+        "properties": {
+          "amount_rj": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Amount to withdraw in rJoules",
+            "minimum": 0
+          },
+          "chain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Target chain: \"hinkal\" or \"hedera\" (default: \"hinkal\")"
+          },
+          "private": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Privacy: true = shielded, false = transparent (default: true)"
+          },
+          "to_address": {
+            "type": "string",
+            "description": "Destination on-chain address"
+          },
+          "wallet_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Wallet ID (UUID). Defaults to system wallet if omitted."
+          }
+        }
+      },
+      "WithdrawalFeeEstimateResponse": {
+        "type": "object",
+        "description": "Withdrawal fee estimate — cost of withdrawing rJoules to a target chain.\n\n`rjoules` is the fee in the canonical energy unit.\n`native_units` and `usdc_equivalent` are approximate conversions.",
+        "required": [
+          "chain",
+          "rjoules",
+          "native_units",
+          "usdc_equivalent"
+        ],
+        "properties": {
+          "chain": {
+            "type": "string",
+            "description": "Target blockchain: \"hinkal\" or \"hedera\""
+          },
+          "native_units": {
+            "type": "number",
+            "format": "double",
+            "description": "Fee in native chain units (e.g., SOL, HBAR)"
+          },
+          "rjoules": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fee in rJoules",
+            "minimum": 0
+          },
+          "usdc_equivalent": {
+            "type": "number",
+            "format": "double",
+            "description": "Approximate USD Coin equivalent"
+          }
+        }
+      },
+      "WithdrawalResponse": {
+        "type": "object",
+        "description": "Withdrawal response — confirmation of a completed on-chain withdrawal.",
+        "required": [
+          "tx_hash",
+          "amount_rj",
+          "chain",
+          "privacy"
+        ],
+        "properties": {
+          "amount_rj": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Amount withdrawn in rJoules",
+            "minimum": 0
+          },
+          "chain": {
+            "type": "string",
+            "description": "Settlement chain"
+          },
+          "privacy": {
+            "type": "string",
+            "description": "Privacy mode used: \"shielded\" or \"transparent\""
+          },
+          "tx_hash": {
+            "type": "string",
+            "description": "On-chain transaction hash"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "DelegationToken",
+        "description": "DelegationToken — an OCAP capability token carrying the authenticated WebID and scoped permissions (P4).\n\nObtain via the REPL onboarding flow (`kask secret`) or agent registration (A2A)."
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer_token": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "templates",
+      "description": "Template registry — WordAct / FlowDef / KnowAct skills (Pattern A)"
+    },
+    {
+      "name": "mcp",
+      "description": "MCP servers and tools — tool discovery and invocation across out-of-process MCP servers"
+    },
+    {
+      "name": "regulation",
+      "description": "Regulation System — variety tracking, algedonic alerts, and homeostatic self-regulation (P9, Pattern B)"
+    },
+    {
+      "name": "chat",
+      "description": "Curator chat interface — inference with model switching and streaming (Pattern C)"
+    },
+    {
+      "name": "models",
+      "description": "Multi-provider model catalog (DeepInfra, fal.ai, Together AI, OpenRouter, KiloCode) — discover and search available LLMs"
+    },
+    {
+      "name": "curator",
+      "description": "Curator escalation and metacognition — health reports and pending escalation queue (Pattern C, P12)"
+    },
+    {
+      "name": "git",
+      "description": "Git archival and resolution — template crate loading and SHA resolution via GitCASPort hexagonal boundary"
+    },
+    {
+      "name": "a2a",
+      "description": "A2A agent registration — register, list, and unregister agents with capability delegation (P4 OCAP)"
+    },
+    {
+      "name": "goals",
+      "description": "Goal coordination substrate — creation, listing, and state transitions with OCAP authority gating (P4)"
+    },
+    {
+      "name": "bundles",
+      "description": "Bundle composition and evolution — inference-driven skill bundling with apply/deactivate lifecycle (Pattern A)"
+    },
+    {
+      "name": "episodic",
+      "description": "Episodic memory — store and query bitemporal triples with OCAP-gated access (P1, P4, P11)"
+    },
+    {
+      "name": "sovereignty",
+      "description": "Sovereignty governance — consent grant/revoke and access checks under Magna Carta P1–P4"
+    },
+    {
+      "name": "specs",
+      "description": "MDS specification management — capture, list, coherence assessment, and writing-quality checks (MDS §3)"
+    },
+    {
+      "name": "consolidation",
+      "description": "Context consolidation — episodic→semantic memory condensation with passphrase-gated authorization"
+    }
+  ]
+}

@@ -8,8 +8,7 @@
 //! - 2a.5 Episodic Context Assembly (FILTER+ADAPT) — temporal-ordered, recency-weighted, budget-constrained
 
 use crate::recall_dedup;
-use crate::hmem_store::HMemStore;
-use hkask_types::{HMem, HMemError};
+use hkask_storage::{HMem, HMemError, HMemStore};
 use hkask_types::RegulationSink;
 use hkask_types::Visibility;
 use hkask_types::WebID;
@@ -277,7 +276,7 @@ impl EpisodicMemory {
     /// **Membrane-sealed:** Only callable from within this crate.
     pub(crate) fn expire_h_mem(
         &self,
-        id: &hkask_types::HMemId,
+        id: &hkask_storage::HMemId,
     ) -> Result<(), EpisodicMemoryError> {
         self.h_mem_store.close_by_id(id)?;
         tracing::debug!(

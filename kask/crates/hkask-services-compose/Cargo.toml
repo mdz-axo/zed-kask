@@ -1,0 +1,20 @@
+[package]
+name = "hkask-services-compose"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "hKask compose service — prompt composition with cognition config"
+
+[dependencies]
+hkask-services-core = { path = "../hkask-services-core" }
+hkask-services-inference = { path = "../hkask-services-inference" }
+hkask-memory = { path = "../hkask-memory" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-types = { path = "../hkask-types" }
+serde.workspace = true
+tracing.workspace = true
+hkask-inference = { path = "../hkask-inference" }
+minijinja.workspace = true
+
+[dev-dependencies]
+proptest = "1"

@@ -13,9 +13,8 @@ use hkask_memory::{
     StorageRequest,
 };
 use hkask_regulation::ExperienceClassification;
-use hkask_memory::HMemStore;
-use hkask_types::HMem;
-use hkask_types::{Confidence, EmbeddingPort};
+use hkask_storage::{EmbeddingStore, HMem, HMemStore};
+use hkask_types::Confidence;
 use std::sync::Arc;
 
 // ── Template Method helpers (P2.4) ──────────────────────────────────────
@@ -156,13 +155,13 @@ impl MemoryLoopForwarder {
     /// not two separate stores. Two bindings are required because each is moved
     /// into its respective memory constructor.
     pub fn from_driver(
-        driver: Arc<dyn hkask_types::storage::StorageDriver>,
-        embedding: Arc<dyn hkask_types::EmbeddingPort>,
+        driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
     ) -> Result<Self, MemoryError> {
         let episodic_store = HMemStore::from_driver(Arc::clone(&driver));
         let episodic = Arc::new(EpisodicMemory::new(episodic_store));
         let semantic_store = HMemStore::from_driver(Arc::clone(&driver));
-        let semantic = Arc::new(SemanticMemory::new(semantic_store, embedding));
+        let embedding_store = EmbeddingStore::from_driver(driver, 1024);
+        let semantic = Arc::new(SemanticMemory::new(semantic_store, embedding_store));
         Ok(Self::new(episodic, semantic))
     }
 }

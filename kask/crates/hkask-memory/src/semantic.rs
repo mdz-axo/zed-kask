@@ -10,8 +10,7 @@
 //! - **Prefix purge**: Idempotent re-ingest by deleting embeddings matching a prefix.
 
 use crate::recall_dedup;
-use crate::hmem_store::HMemStore;
-use hkask_types::{EmbeddingError, EmbeddingPort, HMem, HMemError, SimilarityResult};
+use hkask_storage::{EmbeddingError, EmbeddingStore, HMem, HMemError, HMemStore, SimilarityResult};
 use hkask_types::RegulationSink;
 use hkask_types::Visibility;
 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanNamespace};
@@ -63,7 +62,7 @@ pub struct CentroidResult {
 pub struct SemanticMemory {
     event_sink: Option<Arc<dyn RegulationSink>>,
     h_mem_store: HMemStore,
-    embedding: Arc<dyn EmbeddingPort>,
+    embedding: Arc<EmbeddingStore>,
     /// Memory life S in days — configurable, default 180 (6 months × 30).
     /// The forgetting curve is R(t) = exp(-t/S) where t is days since recall.
     /// Same decay model as episodic memory (Wozniak & Gorzelanczyk, 1995).
@@ -78,15 +77,40 @@ impl SemanticMemory {
     /// \[P8\] Constraining: Semantic Grounding — unifies h_mem and embedding stores
     /// pre:  h_mem_store and embedding_store are initialized
     /// post: returns SemanticMemory wrapping both stores
-    pub fn new(h_mem_store: HMemStore, embedding_store: Arc<dyn EmbeddingPort>) -> Self {
+    pub fn new(h_mem_store: HMemStore, embedding_store: EmbeddingStore) -> Self {
         Self {
             h_mem_store,
-            embedding: embedding_store,
+            embedding: Arc::new(embedding_store),
             event_sink: None,
             memory_life_days: crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS,
         }
     }
 
+    /// Open a SQLCipher database and construct a SemanticMemory from a single
+    /// shared connection pool. This is the canonical way to create a
+    /// SemanticMemory for file-backed storage — it eliminates the 6-line
+    /// boilerplate of opening a Database, creating a SqliteDriver, and
+    /// wiring HMemStore + EmbeddingStore separately.
+    ///
+    /// expect: "I can store shared semantic h_mems for public knowledge"
+    /// \[P3\] Motivating: Generative Space — opens shared semantic knowledge store
+    /// \[P5\] Constraining: Essentialism — single pool shared between stores
+    /// pre:  db_path is non-empty, passphrase is non-empty, dim > 0
+    /// post: returns SemanticMemory backed by a single SQLCipher pool
+    pub fn open(
+        db_path: &str,
+        passphrase: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        use hkask_storage::database::sqlite::SqliteDriver;
+        let db = hkask_storage::Database::open(db_path, passphrase)?;
+        let pool = db.sqlite_pool()?;
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new(pool));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
+        let embedding_store = EmbeddingStore::from_driver(driver, dim);
+        Ok(Self::new(h_mem_store, embedding_store))
+    }
     pub fn with_ledger(mut self, sink: Arc<dyn RegulationSink>) -> Self {
         self.event_sink = Some(sink);
         self
@@ -289,7 +313,7 @@ impl SemanticMemory {
     /// post: new h_mem inserted with updated confidence
     pub(crate) fn update_confidence(
         &self,
-        existing_id: &hkask_types::HMemId,
+        existing_id: &hkask_storage::HMemId,
         current_value: serde_json::Value,
         new_confidence: Confidence,
     ) -> Result<(), SemanticMemoryError> {
@@ -416,6 +440,16 @@ impl SemanticMemory {
         Ok(self.embedding.count()?)
     }
 
+    /// Access the underlying EmbeddingStore for direct operations
+    /// (e.g., centroid computation, KNN search).
+    ///
+    /// expect: "I can store shared semantic h_mems for public knowledge"
+    /// \[P3\] Motivating: Generative Space — exposes embedding store for advanced operations
+    /// \[P5\] Constraining: Essentialism — direct accessor avoids duplicate wrappers
+    /// post: returns reference to the EmbeddingStore
+    pub fn embedding_store(&self) -> &EmbeddingStore {
+        &self.embedding
+    }
 
     /// Retrieve all entity_refs matching a prefix.
     ///
@@ -815,7 +849,7 @@ impl SemanticMemory {
     /// pre:  id is a valid HMemId
     /// post: h_mem deleted from store
     /// post: returns Err if h_mem not found
-    pub fn delete_h_mem(&self, id: &hkask_types::HMemId) -> Result<(), SemanticMemoryError> {
+    pub fn delete_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), SemanticMemoryError> {
         tracing::info!(
             target: "hkask.semantic",
             triple_id = %id,
@@ -902,7 +936,7 @@ impl SemanticMemory {
     /// expect: "I can store shared semantic h_mems for public knowledge"
     /// pre:  id is a valid HMemId
     /// post: h_mem soft-deleted (valid_to set to now)
-    pub fn close_h_mem(&self, id: &hkask_types::HMemId) -> Result<(), SemanticMemoryError> {
+    pub fn close_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), SemanticMemoryError> {
         self.h_mem_store.close_by_id(id)?;
         Ok(())
     }

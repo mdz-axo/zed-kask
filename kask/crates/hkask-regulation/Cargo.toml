@@ -1,26 +1,32 @@
 [package]
 name = "hkask-regulation"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Cybernetic Nervous System for hKask"
-publish = false
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
+# dependency per hexagonal architecture: Regulation defines the interface it needs,
+# and hkask-wallet implements it. Per Conant-Ashby, the regulator models the
+# system via the abstract port, not the concrete type.
+hkask-storage = { path = "../hkask-storage" }
+
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_neo = "0.11"
+serde_yaml_neo.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
+
 parking_lot = "0.12"
-tokio = { workspace = true, features = ["full"] }
+
+tokio.workspace = true
 
 [dev-dependencies]
+hkask-test-harness = { path = "../hkask-test-harness" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-wallet = { path = "../hkask-wallet" }
 proptest = "1"
-
-[features]
-default = []

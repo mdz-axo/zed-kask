@@ -1,10 +1,9 @@
 [package]
 name = "hkask-templates"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Registry, vocabulary, and template execution for hKask"
-publish = false
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
@@ -18,12 +17,15 @@ serde_json.workspace = true
 serde_yaml_neo.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+rusqlite.workspace = true
 tokio.workspace = true
 ed25519-dalek.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-proptest.workspace = true
+proptest = "1"
 walkdir.workspace = true
 
 [[test]]
@@ -41,6 +43,3 @@ path = "tests/template_rendering.rs"
 [[test]]
 name = "bootstrap_test"
 path = "tests/bootstrap_test.rs"
-
-[features]
-default = []

@@ -1,0 +1,20 @@
+id: RR-0009
+title: "RuntimePolicy type defined but not integrated into MCP dispatch"
+surface: mcp
+cwe: CWE-862
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: crates/hkask-regulation/src/runtime_policy.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: medium
+detection:
+  kind: grep
+  pattern: 'pub trait RuntimePolicy'
+  include: "crates/hkask-regulation/src/runtime_policy.rs"
+mitigation: "Implement RuntimePolicy trait and check every tool invocation before execution. Enforce FIDES taint flow, rate limiting, and human-in-the-loop gates."
+source: "https://arxiv.org/html/2509.23864v1 — AgentGuard runtime verification"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
+note: "Type is now integrated — see RR-0012 for the runtime call check. Taint labels are looked up from ToolInfo via get_tool_info()."

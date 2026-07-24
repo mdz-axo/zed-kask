@@ -1,0 +1,19 @@
+id: RR-0012
+title: "RuntimePolicy::check() not called before MCP tool invocation"
+surface: mcp
+cwe: CWE-862
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: crates/hkask-templates/src/executor.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: high
+detection:
+  kind: grep
+  pattern: 'policy\.check\('
+  include: "crates/hkask-templates/src/executor.rs"
+mitigation: "Call RuntimePolicy::check() before every MCP tool invocation in execute_tool_invoke. Block, require human, or log based on the verdict."
+source: "https://arxiv.org/html/2509.23864v1 — AgentGuard runtime verification"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

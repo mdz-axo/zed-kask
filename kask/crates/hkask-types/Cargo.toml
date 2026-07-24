@@ -1,33 +1,43 @@
 [package]
 name = "hkask-types"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "ID types, nu-event, and visibility types for hKask"
-publish = false
 
 [dependencies]
+# NOTE: hkask-types must NOT depend on hkask-capability (would create a cycle).
+# Modules that need capability types (kanban, goal, loops/curation) are being
+# migrated to their domain crates.
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
-dirs.workspace = true
+dirs = "6"
 zeroize.workspace = true
 hex.workspace = true
 futures-util.workspace = true
 async-trait.workspace = true
-blake3 = "1"
+blake3.workspace = true
 sha2.workspace = true
 tracing.workspace = true
 
+rusqlite = { workspace = true, optional = true }
+
 [dev-dependencies]
-serde_yaml_neo = "0.11"
+serde_yaml_neo.workspace = true
+hkask-capability = { path = "../hkask-capability" }
+hkask-goal = { path = "../hkask-goal" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = "1"
+hkask-test-harness = { path = "../hkask-test-harness" }
 tempfile = "3"
 
 [features]
 default = []
-# sql feature + rusqlite deferred: hkask-storage will be rewritten to use zed's
-# sqlez (libsqlite3-sys 0.30.1) instead of rusqlite. See DIVERGENCE.md + plan §14.
+sql = ["dep:rusqlite"]
+
+[[test]]
+name = "types_contract"
+path = "tests/contract/types_contract.rs"

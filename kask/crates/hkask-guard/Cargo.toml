@@ -1,15 +1,14 @@
 [package]
 name = "hkask-guard"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "hKask content safety guard — mandatory input/output scanning for all LLM boundaries, OWASP LLM Top 10 aligned"
-publish = false
 
 [dependencies]
 hkask-regulation = { path = "../hkask-regulation" }
 hkask-types = { path = "../hkask-types" }
-llm-guard.workspace = true
+llm-guard = "0.2"
 futures-util.workspace = true
 tracing.workspace = true
 rand.workspace = true
@@ -19,6 +18,3 @@ zeroize.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-
-[features]
-default = []

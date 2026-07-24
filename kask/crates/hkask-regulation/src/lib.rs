@@ -4,7 +4,7 @@
 //! Homeostatic self-regulation: variety sensing, algedonic alerts, energy budgets,
 //! OCAP governance, sovereignty enforcement. Per Ashby's Law of Requisite Variety.
 
-#![allow(unused_crate_dependencies)]
+#![allow(unused_crate_dependencies)] // hkask-storage used in wallet_manager.rs #[cfg(test)]
 
 pub mod acp_span;
 pub(crate) mod algedonic; // Loop 6 subloop 6.4 — algedonic signal channel

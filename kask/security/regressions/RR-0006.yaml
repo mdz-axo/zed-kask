@@ -1,0 +1,20 @@
+id: RR-0006
+title: "Guard missing canary token for system prompt exfiltration detection"
+surface: code
+cwe: CWE-200
+owasp_llm_2025: LLM07
+atlas_tactic: AML.TA0010
+nist_ssdf: RV.1
+discovered_in: crates/hkask-guard/src/pipeline.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: high
+detection:
+  kind: grep
+  # The canary token type and check_canary method must be present.
+  pattern: 'pub struct CanaryToken'
+  include: "crates/hkask-guard/src/**/*.rs"
+mitigation: "Generate a per-session CanaryToken, embed in system prompt, check output with check_canary(). Emits reg.guard.canary on detection."
+source: "https://www.toxsec.com/p/canary-tokens-for-prompt-injection — OWASP LLM07:2025"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

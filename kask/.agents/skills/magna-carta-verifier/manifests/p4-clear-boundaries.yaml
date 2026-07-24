@@ -1,0 +1,107 @@
+principle: clear_boundaries
+version: "0.1.0"
+description: >
+  Clear Boundaries (OCAP) is the holistic verification that P1-P3 are
+  correctly enforced through object-capability boundaries. Every
+  access path goes through require_capability + require_sovereignty
+  (dual enforcement gate). Capability tokens are unforgeable and
+  attenuating. Generative settings tokens are obtainable only through
+  P2's affirmative consent. Connected inference providers expose settings.
+
+assertions:
+  - id: p4a
+    name: dual_enforcement_gate
+    claim: >
+      Every access path in PodContext goes through require_capability
+      and require_sovereignty. require_capability verifies the
+      DelegationToken (OCAP). require_sovereignty verifies data-category
+      consent (Magna Carta). Both must pass for access to succeed.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: pod::context
+        methods:
+          - store_episodic
+          - recall_episodic
+          - store_semantic
+          - recall_semantic
+          - inference_port
+          - invoke_tool
+        gates:
+          - require_capability
+          - require_sovereignty
+
+  - id: p4b
+    name: unforgeable_attenuating_tokens
+    claim: >
+      DelegationTokens are unforgeable, attenuating, and carry
+      deterministic expiry. Token::sign creates a cryptographic
+      signature binding the resource hierarchy to the token.
+      Token::attenuate_with_expiry (system level, delegation-only)
+      creates a strictly weaker child token. SYSTEM_MAX_ATTENUATION
+      caps delegation depth.
+    method: structural_audit
+    targets:
+      - crate: hkask-types
+        module: capability::token_types
+        methods:
+          - sign
+          - attenuate_with_expiry
+          - verify
+        fields:
+          - SYSTEM_MAX_ATTENUATION
+          - signature
+      - crate: hkask-agents
+        module: a2a
+        methods:
+          - create_root_token
+
+  - id: p4c
+    name: consent_gated_tokens
+    claim: >
+      Generative settings tokens are obtainable through P2's affirmative
+      consent hierarchy. Token creation flows through RootAuthority
+      (system level) → AcpRuntime::register_agent (agent level) →
+      DelegationToken attenuation (per-action level). ConsentManager
+      gates the sovereignty check that accompanies token use.
+    method: structural_audit
+    targets:
+      - crate: hkask-agents
+        module: a2a
+        methods:
+          - register_agent
+          - get_capabilities
+      - crate: hkask-agents
+        module: a2a
+        methods:
+          - create_root_token
+      - crate: hkask-agents
+        module: consent
+        methods:
+          - has_consent
+
+  - id: p4d
+    name: inference_settings_exposed
+    claim: >
+      Connected inference providers expose settings through InferenceConfig
+      and LLMParameters. No settings are hidden from the user. The
+      inference configuration surface is the same for all access paths
+      (API, CLI, MCP).
+    method: structural_audit
+    targets:
+      - crate: hkask-inference
+        module: config
+        methods:
+          - InferenceConfig
+          - deepinfra_base_url
+          - fal_base_url
+          - together_base_url
+      - crate: hkask-types
+        module: ports
+        methods:
+          - InferencePort
+      - crate: hkask-api
+        module: lib
+        methods:
+          - create_router
+          - ApiState

@@ -1,0 +1,18 @@
+[package]
+name = "hkask-services-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "hKask service-layer foundation — ServiceError, ServiceConfig, HkaskSettings"
+
+[dependencies]
+hkask-storage = { path = "../hkask-storage" }
+hkask-types = { path = "../hkask-types" }
+hkask-inference = { path = "../hkask-inference" }
+hkask-keystore = { path = "../hkask-keystore" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+dirs = "6"

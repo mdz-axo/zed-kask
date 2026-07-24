@@ -6,7 +6,7 @@
 //! response structs) is each consuming surface's responsibility. See
 //! ADR-060 for the decision and rationale.
 
-use hkask_types::HMem;
+use hkask_storage::HMem;
 use std::collections::HashSet;
 
 /// Compute a canonical content hash for a h_mem using the EAV strategy.

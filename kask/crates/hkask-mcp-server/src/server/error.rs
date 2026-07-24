@@ -43,7 +43,7 @@ pub enum McpError {
     Daemon(#[from] std::io::Error),
 
     #[error("Storage error: {0}")]
-    Storage(String),
+    Storage(#[from] hkask_storage::DatabaseError),
 
     #[error("Transport error: {0}")]
     Transport(Box<rmcp::RmcpError>),

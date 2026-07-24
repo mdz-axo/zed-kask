@@ -1,0 +1,22 @@
+id: RR-0004
+title: "Library crates missing #![forbid(unsafe_code)] attribute"
+surface: code
+cwe: CWE-732
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.6.1
+discovered_in: crates/hkask-guard/src/lib.rs, crates/hkask-types/src/lib.rs, crates/hkask-ports/src/lib.rs, crates/hkask-templates/src/lib.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: high
+detection:
+  kind: grep
+  # The attribute must be present as the first line. This pattern matches
+  # lib.rs files that do NOT start with #![forbid(unsafe_code)].
+  # The regression checks for the PRESENCE of the attribute (inverted grep).
+  pattern: '#!\[forbid\(unsafe_code\)\]'
+  include: "crates/hkask-guard/src/lib.rs crates/hkask-types/src/lib.rs crates/hkask-ports/src/lib.rs crates/hkask-templates/src/lib.rs"
+mitigation: "Add #![forbid(unsafe_code)] as the first line of src/lib.rs in all hkask-* library crates that do not use unsafe blocks."
+source: "https://anssi-fr.github.io/rust-guide/ — ANSSI Secure Rust Guidelines"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

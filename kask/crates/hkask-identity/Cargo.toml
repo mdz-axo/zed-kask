@@ -1,0 +1,12 @@
+[package]
+name = "hkask-identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "hKask human identity and authentication types — HumanUser, UserPod, UserSession, invites (extracted from hkask-services-core)"
+
+[dependencies]
+hkask-types = { path = "../hkask-types" }
+serde.workspace = true
+chrono.workspace = true
+thiserror.workspace = true

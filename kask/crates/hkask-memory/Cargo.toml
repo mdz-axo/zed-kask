@@ -1,15 +1,15 @@
 [package]
 name = "hkask-memory"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Semantic and episodic memory pipelines for hKask"
-publish = false
 
 [dependencies]
 async-trait.workspace = true
 hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
+hkask-storage = { path = "../hkask-storage" }
 hkask-regulation = { path = "../hkask-regulation" }
 serde.workspace = true
 serde_json.workspace = true
@@ -20,7 +20,4 @@ tracing.workspace = true
 blake3.workspace = true
 
 [dev-dependencies]
-proptest.workspace = true
-
-[features]
-default = []
+proptest = "1"

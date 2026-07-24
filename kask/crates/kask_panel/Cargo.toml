@@ -1,8 +1,0 @@
-[package]
-name = "kask_panel"
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-# Dependencies will be added when the kask_bridge + hKask crates are in place:
-#   gpui, ui, workspace, editor (zed); kask_bridge, hkask-types (kask)

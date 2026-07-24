@@ -1,0 +1,19 @@
+id: RR-0017
+title: "LLM JSON extraction must use brace-balanced parsing, not first-{ to last-}"
+surface: llm-io
+cwe: CWE-1336
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0005
+nist_ssdf: PW.4.1
+discovered_in: mcp-servers/hkask-mcp-docproc/src/lib.rs
+discovered_by: adversarial-red-team
+discovered_at: 2026-07-19
+severity: high
+detection:
+  kind: grep
+  pattern: 'find_balanced_json_object'
+  include: "mcp-servers/hkask-mcp-docproc/src/lib.rs"
+mitigation: "extract_json_from_response must use find_balanced_json_object (brace-balanced scan respecting string literals) rather than find('{')...rfind('}'). The old approach silently merged an injected JSON block (echoed by the LLM in its reasoning preamble) with the model's real answer, allowing a poisoned chunk to control the ontology tags assigned to it. Brace-balanced extraction returns exactly one top-level object, defeating the injection."
+source: "Adversarial review of docproc ontology tagging — C1 finding"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

@@ -1,10 +1,9 @@
 [package]
 name = "hkask-mcp"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "MCP runtime and governance for hKask"
-publish = false
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
@@ -16,7 +15,23 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
-jsonschema.workspace = true
+jsonschema = "0.28"
 
-[features]
-default = []
+[dev-dependencies]
+async-trait.workspace = true
+hkask-mcp-server = { path = "../hkask-mcp-server" }
+tempfile.workspace = true
+proptest = "1"
+tokio = { workspace = true, features = ["macros", "rt"] }
+hkask-mcp-cloud-gateway = { path = "../hkask-mcp-cloud-gateway" }
+rcgen = "0.13"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[[test]]
+name = "tool_input_fuzz"
+path = "tests/tool_input_fuzz.rs"
+
+[[test]]
+name = "mcp_lifecycle_integration"
+path = "tests/mcp_lifecycle_integration.rs"

@@ -295,7 +295,6 @@ members = [
     "kask/mcp-servers/hkask-mcp-companies",
     "kask/mcp-servers/hkask-mcp-replica",
     "kask/mcp-servers/hkask-mcp-docproc",
-    "kask/mcp-servers/hkask-mcp-cloud-gateway",
 
     #
     # kask/crates/ — keep-crates migrated late (T0.6)

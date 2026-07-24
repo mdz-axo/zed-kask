@@ -1,0 +1,10 @@
+[package]
+name = "hkask-bridge-dublincore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Ontology vocabulary bridge — Dublin Core + BIBO + CiTO + PKO constants and mapping helpers"
+
+[dependencies]
+
+[dev-dependencies]

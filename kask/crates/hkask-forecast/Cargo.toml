@@ -1,13 +1,9 @@
 [package]
 name = "hkask-forecast"
-version = "0.31.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Shared superforecasting computation engine — Fermi decomposition, outside/inside view, Bayesian updating, Brier scoring"
-publish = false
 
 [dependencies]
 thiserror.workspace = true
-
-[features]
-default = []

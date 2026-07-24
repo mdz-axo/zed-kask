@@ -1,0 +1,16 @@
+[package]
+name = "hkask-services-onboarding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "hKask onboarding service — secrets, Matrix registration, agent setup"
+
+[dependencies]
+hkask-services-core = { path = "../hkask-services-core" }
+hkask-pods = { path = "../hkask-pods" }
+hkask-keystore = { path = "../hkask-keystore" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-types = { path = "../hkask-types" }
+
+tracing.workspace = true
+

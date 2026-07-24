@@ -1,0 +1,25 @@
+id: RR-0021
+title: "quick-xml < 0.41.0 namespace-resolver OOM (RUSTSEC-2026-0194, RUSTSEC-2026-0195)"
+surface: supply-chain
+cwe: CWE-1104
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: mcp-servers/hkask-mcp-docproc/Cargo.toml (calamine = "0.34" → quick-xml 0.39.4)
+discovered_by: supply-chain-sentinel
+discovered_at: 2026-07-22
+severity: high
+detection:
+  kind: grep
+  # Detect if calamine is pinned to 0.34 (which pulls vulnerable quick-xml 0.39.x).
+  # The fix: calamine = "0.36" pulls quick-xml 0.41.0.
+  pattern: 'calamine\s*=\s*"0\.34"'
+  include: "mcp-servers/hkask-mcp-docproc/Cargo.toml"
+mitigation: "Upgrade calamine from 0.34 to 0.36 in mcp-servers/hkask-mcp-docproc/Cargo.toml. calamine 0.36 uses quick-xml 0.41.0 which fixes the namespace-resolver unbounded allocation (RUSTSEC-2026-0194, RUSTSEC-2026-0195). Run cargo update -p calamine after changing the spec."
+source: "https://rustsec.org/advisories/RUSTSEC-2026-0194, https://rustsec.org/advisories/RUSTSEC-2026-0195"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
+taxonomy_mapping:
+  osc_r_tactic: "Initial Access"
+  osc_r_technique: "Vulnerability in third-party dependency"
+  osc_r_categories: ["OpenSourceSecurity"]

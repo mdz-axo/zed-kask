@@ -1,0 +1,19 @@
+id: RR-0014
+title: "Canary token check not called in output scan path"
+surface: llm-io
+cwe: CWE-200
+owasp_llm_2025: LLM07
+atlas_tactic: AML.TA0010
+nist_ssdf: RV.1
+discovered_in: crates/hkask-guard/src/pipeline.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: high
+detection:
+  kind: grep
+  pattern: 'check_canary\('
+  include: "crates/hkask-guard/src/pipeline.rs"
+mitigation: "Call check_canary() inside scan_output() to detect system prompt exfiltration in every model output."
+source: "https://www.toxsec.com/p/canary-tokens-for-prompt-injection — OWASP LLM07:2025"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

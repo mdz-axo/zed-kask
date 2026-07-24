@@ -1,0 +1,19 @@
+id: RR-0010
+title: "Missing instruction hierarchy in system prompts"
+surface: llm-io
+cwe: CWE-1039
+owasp_llm_2025: LLM01
+atlas_tactic: AML.TA0005
+nist_ssdf: PW.4.1
+discovered_in: crates/hkask-types/src/agent_registry.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: medium
+detection:
+  kind: grep
+  pattern: 'Instruction Hierarchy'
+  include: "crates/hkask-types/src/agent_registry.rs"
+mitigation: "Add instruction hierarchy text to all system prompts: System (P10) > User (P20) > Tool output (P30). Tool output instructions must never be followed."
+source: "https://arxiv.org/html/2404.13208v1 — OpenAI Instruction Hierarchy"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

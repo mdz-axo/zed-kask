@@ -24,6 +24,12 @@ pub enum CoreError {
     A2A(#[from] crate::a2a::A2AError),
 }
 
+impl From<rusqlite::Error> for CoreError {
+    fn from(e: rusqlite::Error) -> Self {
+        CoreError::Infra(hkask_types::InfrastructureError::database(e.to_string()))
+    }
+}
+
 /// Memory storage errors
 ///
 /// Composes from `CoreError` for infrastructure transport-layer failures
@@ -43,6 +49,14 @@ pub enum MemoryError {
 impl From<hkask_types::InfrastructureError> for MemoryError {
     fn from(e: hkask_types::InfrastructureError) -> Self {
         MemoryError::Core(CoreError::Infra(e))
+    }
+}
+
+impl From<hkask_storage::DatabaseError> for MemoryError {
+    fn from(e: hkask_storage::DatabaseError) -> Self {
+        MemoryError::Core(CoreError::Infra(
+            hkask_types::InfrastructureError::database(e.to_string()),
+        ))
     }
 }
 
@@ -86,35 +100,35 @@ impl From<hkask_memory::SemanticMemoryError> for MemoryError {
     }
 }
 
-impl From<hkask_types::HMemError> for MemoryError {
-    fn from(e: hkask_types::HMemError) -> Self {
+impl From<hkask_storage::HMemError> for MemoryError {
+    fn from(e: hkask_storage::HMemError) -> Self {
         match e {
-            hkask_types::HMemError::Infra(inner) => MemoryError::Core(CoreError::Infra(inner)),
-            hkask_types::HMemError::NotFound(nf) => {
+            hkask_storage::HMemError::Infra(inner) => MemoryError::Core(CoreError::Infra(inner)),
+            hkask_storage::HMemError::NotFound(nf) => {
                 MemoryError::Core(CoreError::Infra(hkask_types::InfrastructureError::from(nf)))
             }
         }
     }
 }
 
-impl From<hkask_types::EmbeddingError> for MemoryError {
-    fn from(e: hkask_types::EmbeddingError) -> Self {
+impl From<hkask_storage::EmbeddingError> for MemoryError {
+    fn from(e: hkask_storage::EmbeddingError) -> Self {
         match e {
-            hkask_types::EmbeddingError::Infrastructure(inner) => {
+            hkask_storage::EmbeddingError::Infrastructure(inner) => {
                 MemoryError::Core(CoreError::Infra(inner))
             }
-            hkask_types::EmbeddingError::NotFound(nf) => MemoryError::Core(CoreError::Infra(
+            hkask_storage::EmbeddingError::NotFound(nf) => MemoryError::Core(CoreError::Infra(
                 hkask_types::InfrastructureError::NotFound(nf.to_string()),
             )),
-            hkask_types::EmbeddingError::DimensionMismatch { .. } => {
+            hkask_storage::EmbeddingError::DimensionMismatch { .. } => {
                 MemoryError::Core(CoreError::Infra(
                     hkask_types::InfrastructureError::Serialization(e.to_string()),
                 ))
             }
-            hkask_types::EmbeddingError::Storage(_) => MemoryError::Core(CoreError::Infra(
+            hkask_storage::EmbeddingError::Storage(_) => MemoryError::Core(CoreError::Infra(
                 hkask_types::InfrastructureError::database(e.to_string()),
             )),
-            hkask_types::EmbeddingError::Decode(msg) => MemoryError::Core(CoreError::Infra(
+            hkask_storage::EmbeddingError::Decode(msg) => MemoryError::Core(CoreError::Infra(
                 hkask_types::InfrastructureError::Serialization(msg),
             )),
         }

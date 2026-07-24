@@ -1,0 +1,20 @@
+id: RR-0008
+title: "ToolTaint type defined but not integrated into MCP tool registration"
+surface: mcp
+cwe: CWE-284
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: crates/hkask-types/src/tool_taint.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-17
+severity: medium
+detection:
+  kind: grep
+  pattern: 'pub enum ToolTaint'
+  include: "crates/hkask-types/src/tool_taint.rs"
+mitigation: "Label every MCP tool as Source/Sink/Pure/Endorser. Block Source→Sink data flow without Endorser (FIDES pattern)."
+source: "https://arxiv.org/pdf/2505.23643 — Microsoft Research FIDES"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
+note: "Type is now integrated — see RR-0013 for the ToolInfo field check. Taint labels are looked up at runtime via get_tool_info() and passed to RuntimePolicy::check()."

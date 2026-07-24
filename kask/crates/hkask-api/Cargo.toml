@@ -1,0 +1,58 @@
+[package]
+name = "hkask-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTP API with utoipa OpenAPI for hKask"
+
+[dependencies]
+hkask-types = { path = "../hkask-types" }
+hkask-capability = { path = "../hkask-capability" }
+hkask-pods = { path = "../hkask-pods" }
+hkask-regulation = { path = "../hkask-regulation" }
+hkask-templates = { path = "../hkask-templates" }
+hkask-git-cas = { path = "../hkask-git-cas" }
+hkask-keystore = { path = "../hkask-keystore" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-memory = { path = "../hkask-memory" }
+hkask-services-core = { path = "../hkask-services-core" }
+hkask-services-inference = { path = "../hkask-services-inference" }
+hkask-services-context = { path = "../hkask-services-context" }
+hkask-services-chat = { path = "../hkask-services-chat" }
+hkask-services-onboarding = { path = "../hkask-services-onboarding" }
+hkask-services-wallet = { path = "../hkask-services-wallet" }
+hkask-inference = { path = "../hkask-inference" }
+hkask-services-skill = { path = "../hkask-services-skill" }
+hkask-wallet = { path = "../hkask-wallet" }
+ed25519-dalek.workspace = true
+hex.workspace = true
+axum.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+base64.workspace = true
+utoipa.workspace = true
+
+# IMAP inbound (curator email interaction — port 993 SSL via tokio-rustls)
+async-imap = "0.9"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+webpki-roots = "0.26"
+tokio-util = { workspace = true, features = ["compat"] }
+mailparse = "0.16"
+utoipa-axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+thiserror.workspace = true
+async-stream.workspace = true
+futures-util.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+tokio-stream = "0.1"
+uuid.workspace = true
+chrono.workspace = true
+subtle.workspace = true
+cookie = "0.18"
+
+[dev-dependencies]
+proptest = "1"
