@@ -12,7 +12,6 @@ pub mod types;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::daemon::DaemonResponse;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_services_context::governance;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -50,7 +49,6 @@ impl CuratorServer {
                 "server": SERVER_NAME,
                 "curator_webid": self.webid.to_string(),
                 "userpod": self.userpod,
-                "daemon_connected": self.daemon.is_some(),
                 "stores": {
                     "escalation_queue": self.escalation_queue.is_some(),
                     "regulation_store": self.regulation_store.is_some(),
@@ -154,44 +152,29 @@ impl CuratorServer {
 
     // ── System Health ──────────────────────────────────────────────────
 
-    #[tool(description = "Run metacognition cycle — requires live daemon for Regulation data")]
+    #[tool(
+        description = "Run metacognition cycle — daemon no longer available; returns unavailable status"
+    )]
     pub async fn curator_health(&self, Parameters(_req): Parameters<PingRequest>) -> String {
         execute_tool(self, "curator_health", async {
-            let Some(ref daemon) = self.daemon else {
-                return Err(McpToolError::unavailable("Daemon not available"));
-            };
-            match daemon.curator_health_query(&self.userpod).await {
-                Ok(DaemonResponse::CuratorHealthResponse { health }) => Ok(health),
-                Ok(other) => Err(McpToolError::internal(format!(
-                    "Bad daemon response: {:?}",
-                    other
-                ))),
-                Err(e) => Err(McpToolError::internal(format!("Daemon query failed: {e}"))),
-            }
+            Err(McpToolError::unavailable(
+                "Daemon no longer available; curator_health requires a live daemon",
+            ))
         })
         .await
     }
 
-    #[tool(description = "Live Regulation status — variety per domain")]
+    #[tool(
+        description = "Live Regulation status — daemon no longer available; returns unavailable status"
+    )]
     pub async fn curator_reg_status(
         &self,
-        Parameters(req): Parameters<RegStatusRequest>,
+        Parameters(_req): Parameters<RegStatusRequest>,
     ) -> String {
         execute_tool(self, "curator_reg_status", async {
-            let Some(ref daemon) = self.daemon else {
-                return Err(McpToolError::unavailable("Daemon not available"));
-            };
-            match daemon
-                .reg_status_query(&self.userpod, req.domain.as_deref())
-                .await
-            {
-                Ok(DaemonResponse::RegStatusResponse { status }) => Ok(status),
-                Ok(other) => Err(McpToolError::internal(format!(
-                    "Bad daemon response: {:?}",
-                    other
-                ))),
-                Err(e) => Err(McpToolError::internal(format!("Daemon query failed: {e}"))),
-            }
+            Err(McpToolError::unavailable(
+                "Daemon no longer available; curator_reg_status requires a live daemon",
+            ))
         })
         .await
     }
@@ -446,10 +429,7 @@ impl CuratorServer {
 
 // ── Server startup ─────────────────────────────────────────────────────
 
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         SERVER_NAME,
         env!("CARGO_PKG_VERSION"),
@@ -459,7 +439,6 @@ pub async fn run(
             Ok(CuratorServer::new(
                 ctx.webid,
                 userpod.clone(),
-                daemon_client.clone(),
                 escalation_queue,
                 regulation_store,
                 episodic,

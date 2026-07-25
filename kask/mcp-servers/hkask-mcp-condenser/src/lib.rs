@@ -90,36 +90,16 @@ impl CondenserServer {
         outcome: &str,
         detail: serde_json::Value,
     ) {
-        if let Some(ref daemon) = self.daemon {
-            let value = serde_json::json!({
-                "tool": tool,
-                "input": input_summary,
-                "outcome": outcome,
-                "detail": detail,
-                "timestamp": now_rfc3339(),
-            });
-            let daemon_clone = daemon.clone();
-            let userpod = self.userpod.clone();
-            let tool_name = tool.to_string();
-            tokio::spawn(async move {
-                match daemon_clone
-                    .store_experience(&userpod, "mcp_session", "observed", &value, Some(0.85))
-                    .await
-                {
-                    Ok(hkask_mcp_server::DaemonResponse::StoreResponse {
-                        stored: true, ..
-                    }) => {
-                        tracing::debug!(target: "hkask.mcp.condenser.memory", tool = %tool_name, "Experience stored via daemon");
-                    }
-                    Ok(other) => {
-                        tracing::warn!(target: "hkask.mcp.condenser.memory", tool = %tool_name, response = ?other, "Unexpected daemon response")
-                    }
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.mcp.condenser.memory", tool = %tool_name, error = %e, "Failed to store experience")
-                    }
-                }
-            });
-        }
+        tracing::debug!(
+            target: "hkask.mcp.condenser.memory",
+            userpod = %self.userpod,
+            tool = %tool,
+            input = %input_summary,
+            outcome = %outcome,
+            detail = ?detail,
+            timestamp = %now_rfc3339(),
+            "Tool outcome recorded (no daemon — in-process only)",
+        );
     }
 }
 
@@ -489,10 +469,7 @@ pub struct SaliencyRequest {
 }
 
 /// Run the condenser MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     // Build the centralized inference router from environment.
     let inference_config = InferenceConfig::from_env();
     let inference_router = InferenceRouter::new(inference_config);
@@ -574,7 +551,6 @@ pub async fn run(
                 Ok(CondenserServer::new(
                     ctx.webid,
                     userpod.clone(),
-                    daemon_client.clone(),
                     Mutex::new(CondenserEngine::new()),
                     episodic,
                     semantic,

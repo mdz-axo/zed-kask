@@ -3266,10 +3266,12 @@ impl Thread {
                 let has_pending_deferred =
                     this.read_with(cx, |this, _| !this.deferred_tool_results.is_empty())?;
                 if has_pending_deferred {
-                    log::debug!("Turn has pending deferred results, waiting for completion");
-                    cx.background_executor()
-                        .timer(Duration::from_millis(50))
-                        .await;
+                    log::debug!("Turn has pending deferred results, yielding to executor");
+                    // Yield control to the executor so deferred tasks (e.g.
+                    // subagent turns) can make progress. A zero-duration timer
+                    // cooperates with the GPUI scheduler without adding real
+                    // delay.
+                    cx.background_executor().timer(Duration::ZERO).await;
                     if *cancellation_rx.borrow() {
                         return Ok(());
                     }

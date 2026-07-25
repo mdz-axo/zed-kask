@@ -53,10 +53,6 @@ hkask_mcp_server::mcp_server!(
 
 impl ResearchServer {
     /// Record a tool call as a narrative experience in the agent's memory.
-    ///
-    /// Generates a literal chat stream entry and sends it to the daemon for
-    /// dual encoding (episodic + semantic). Fire-and-forget — failures are
-    /// logged but never block the tool response.
     pub fn record_experience(
         &self,
         tool: &str,
@@ -64,50 +60,16 @@ impl ResearchServer {
         outcome: &str,
         detail: serde_json::Value,
     ) {
-        if let Some(ref daemon) = self.daemon {
-            let value = serde_json::json!({
-                "tool": tool,
-                "input": input_summary,
-                "outcome": outcome,
-                "detail": detail,
-                "timestamp": now_rfc3339(),
-            });
-            let daemon_clone = daemon.clone();
-            let userpod = self.userpod.clone();
-            let tool_name = tool.to_string();
-            tokio::spawn(async move {
-                match daemon_clone
-                    .store_experience(&userpod, "mcp_session", "observed", &value, Some(0.85))
-                    .await
-                {
-                    Ok(hkask_mcp_server::DaemonResponse::StoreResponse {
-                        stored: true, ..
-                    }) => {
-                        tracing::debug!(
-                            target: "hkask.mcp.research.memory",
-                            tool = %tool_name,
-                            "Experience stored via daemon"
-                        );
-                    }
-                    Ok(other) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.research.memory",
-                            tool = %tool_name,
-                            response = ?other,
-                            "Unexpected daemon response for store_experience"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.research.memory",
-                            tool = %tool_name,
-                            error = %e,
-                            "Failed to store experience via daemon"
-                        );
-                    }
-                }
-            });
-        }
+        tracing::debug!(
+            target: "hkask.mcp.research.memory",
+            userpod = %self.userpod,
+            tool = %tool,
+            input = %input_summary,
+            outcome = %outcome,
+            detail = ?detail,
+            timestamp = %now_rfc3339(),
+            "Tool outcome recorded (no daemon — in-process only)",
+        );
     }
 }
 
@@ -818,10 +780,7 @@ impl ResearchServer {
 // ── Entry point ──
 
 /// Run the research MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
     let dotenv = hkask_mcp_server::load_dotenv();
@@ -864,7 +823,6 @@ pub async fn run(
             Ok(ResearchServer::new(
                 ctx.webid,
                 userpod.clone(),
-                daemon_client.clone(),
                 Arc::new(pool),
                 Arc::new(ResponseCache::new(
                     cache_max,

@@ -69,7 +69,6 @@
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, validate_identifier};
-use hkask_mcp_server::{DaemonClient, DaemonResponse};
 use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 
@@ -286,34 +285,16 @@ impl CompaniesServer {
         outcome: &str,
         detail: serde_json::Value,
     ) {
-        if let Some(ref daemon) = self.daemon {
-            let value = serde_json::json!({
-                "tool": tool,
-                "input": input_summary,
-                "outcome": outcome,
-                "detail": detail,
-                "timestamp": now_rfc3339(),
-            });
-            let daemon_clone = daemon.clone();
-            let userpod = self.userpod.clone();
-            let tool_name = tool.to_string();
-            tokio::spawn(async move {
-                match daemon_clone
-                    .store_experience(&userpod, "mcp_session", "observed", &value, Some(0.85))
-                    .await
-                {
-                    Ok(DaemonResponse::StoreResponse { stored: true, .. }) => {
-                        tracing::debug!(target: "hkask.mcp.companies.memory", tool = %tool_name, "Experience stored via daemon");
-                    }
-                    Ok(other) => {
-                        tracing::warn!(target: "hkask.mcp.companies.memory", tool = %tool_name, response = ?other, "Unexpected daemon response")
-                    }
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.mcp.companies.memory", tool = %tool_name, error = %e, "Failed to store experience")
-                    }
-                }
-            });
-        }
+        tracing::debug!(
+            target: "hkask.mcp.companies.memory",
+            userpod = %self.userpod,
+            tool = %tool,
+            input = %input_summary,
+            outcome = %outcome,
+            detail = ?detail,
+            timestamp = %now_rfc3339(),
+            "Tool outcome recorded (no daemon — in-process only)",
+        );
     }
 }
 
@@ -337,10 +318,7 @@ impl rmcp::ServerHandler for CompaniesServer {}
 // ── Entry point ─────────────────────────────────────────────────────
 
 /// Run the companies MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-companies",
         env!("CARGO_PKG_VERSION"),
@@ -361,7 +339,6 @@ pub async fn run(
             Ok(CompaniesServer::new(
                 ctx.webid,
                 userpod.clone(),
-                daemon_client.clone(),
                 reqwest::Client::new(),
                 fmp_api_key,
                 eodhd_api_key,

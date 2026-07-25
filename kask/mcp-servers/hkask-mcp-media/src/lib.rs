@@ -27,7 +27,6 @@ pub use error::{MediaError, map_media_error};
 use gallery::GalleryState;
 use gallery::vision::{self};
 use hkask_inference::InferenceRouter;
-use hkask_mcp_server::DaemonClient;
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url};
 use hkask_pods::VoiceDesign;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -1341,30 +1340,13 @@ impl MediaServer {
 impl rmcp::ServerHandler for MediaServer {}
 
 /// Run the media MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    _daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
     // Build the inference router for vision LLM tasks.
     // Backends are constructed lazily — only those with configured API keys are available.
     let inference_config = hkask_inference::InferenceConfig::from_env();
     let inference = Arc::new(InferenceRouter::new(inference_config));
-
-    let daemon_ok = match try_daemon_flow(&userpod).await {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.media", userpod = %userpod, error = %e, "Daemon unavailable — falling back to direct mode");
-            false
-        }
-    };
-
-    let daemon_client = if daemon_ok {
-        Some(DaemonClient::new())
-    } else {
-        None
-    };
 
     // Create an in-memory GalleryStore for the media server.
     // Gracefully degrade if DB initialization fails — gallery tools
@@ -1385,7 +1367,6 @@ pub async fn run(
             Ok(MediaServer::new(
                 ctx.webid,
                 userpod.clone(),
-                daemon_client.clone(),
                 inference.clone(),
                 Arc::new(Mutex::new(None)),
                 gallery_store.clone(),
@@ -1409,17 +1390,6 @@ pub async fn run(
         ],
     )
     .await
-}
-
-async fn try_daemon_flow(userpod: &str) -> anyhow::Result<()> {
-    let client = DaemonClient::new();
-    let result = hkask_mcp_server::verify_startup_gates(&client, userpod, "media", &[]).await?;
-    tracing::info!(target: "hkask.mcp.media", userpod = %userpod,
-        "P4 gates verified{}",
-        if result.denied_tools.is_empty() { String::new() }
-        else { format!(" — {} tool(s) denied: {:?}", result.denied_tools.len(), result.denied_tools) }
-    );
-    Ok(())
 }
 
 // ── Integration tests ────────────────────────────────────────────────────

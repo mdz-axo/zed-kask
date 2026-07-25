@@ -30,7 +30,6 @@
 use std::collections::HashSet;
 
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use hkask_mcp_server::{DaemonClient, DaemonResponse};
 use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
@@ -333,41 +332,17 @@ impl ScenariosServer {
         detail: serde_json::Value,
     ) {
         self.check_sequence(tool);
-        if let Some(ref daemon) = self.daemon {
-            let value = serde_json::json!({
-                "tool": tool,
-                "input": input_summary,
-                "outcome": outcome,
-                "detail": detail,
-                "timestamp": now_rfc3339(),
-                "provenance": {
-                    "server": "hkask-mcp-scenarios",
-                    "version": "0.31.0",
-                    "framework": "Tetlock GJP Superforecasting + Schwartz Scenario Planning + Chermack Project Assessment"
-                },
-                "ontology_anchor": Self::ontology_anchor(tool),
-            });
-            let daemon_clone = daemon.clone();
-            let userpod = self.userpod.clone();
-            let tool_name = tool.to_string();
-            tokio::spawn(async move {
-                match daemon_clone
-                    .store_experience(&userpod, "mcp_session", "observed", &value, Some(0.85))
-                    .await
-                {
-                    Ok(DaemonResponse::StoreResponse { stored: true, .. }) => {
-                        tracing::debug!(target: "hkask.mcp.scenarios.memory", tool = %tool_name, "Experience stored via daemon");
-                    }
-                    Ok(other) => {
-                        tracing::warn!(target: "hkask.mcp.scenarios.memory", tool = %tool_name, response = ?other, "Unexpected daemon response")
-                    }
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.mcp.scenarios.memory", tool = %tool_name, error = %e, "Failed to store experience");
-                        tracing::warn!(target: "hkask.mcp.scenarios.experience_drop", tool = %tool_name, "Regulation experience-drop signal: tool outcome not persisted to daemon");
-                    }
-                }
-            });
-        }
+        tracing::debug!(
+            target: "hkask.mcp.scenarios.memory",
+            userpod = %self.userpod,
+            tool = %tool,
+            input = %input_summary,
+            outcome = %outcome,
+            detail = ?detail,
+            timestamp = %now_rfc3339(),
+            ontology_anchor = %Self::ontology_anchor(tool),
+            "Tool outcome recorded (no daemon — in-process only)",
+        );
     }
 }
 
@@ -1819,10 +1794,7 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-scenarios",
         SERVER_VERSION,
@@ -1830,7 +1802,6 @@ pub async fn run(
             Ok(ScenariosServer::new(
                 hkask_types::WebID::new(),
                 userpod.clone(),
-                daemon_client.clone(),
                 std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
                     std::env::var("HKASK_SCENARIOS_DATA")
                         .ok()

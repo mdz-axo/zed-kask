@@ -290,10 +290,7 @@ impl TrainingServer {
 // ── Entry point ───────────────────────────────────────────────────────────
 
 /// Run the training MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     // Host selection: auto-detect from env vars, or use HKASK_TRAINING_HOST.
     // DeepInfra is preferred when DI_API_KEY is set (B200 at $3.69/hr).
     // Nebius is used when NEBIUS_PROJECT_ID is set (H100 at $3.85/hr).
@@ -429,7 +426,6 @@ pub async fn run(
                 Ok(TrainingServer::new(
                     ctx.webid,
                     userpod.clone(),
-                    daemon_client.clone(),
                     semantic,
                     host,
                     host_config.host,

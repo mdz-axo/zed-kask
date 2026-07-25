@@ -10,5 +10,5 @@ async fn main() -> Result<(), hkask_mcp_server::McpError> {
     let boot =
         hkask_mcp_server::bootstrap_mcp_server("kanban", "hkask.mcp.kata_kanban", "HKASK_MCP_HOST")
             .await?;
-    hkask_mcp_kata_kanban::run(boot.userpod, boot.daemon_client).await
+    hkask_mcp_kata_kanban::run(boot.userpod).await
 }

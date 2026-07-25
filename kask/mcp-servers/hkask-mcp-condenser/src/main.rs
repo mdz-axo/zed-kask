@@ -13,5 +13,5 @@ async fn main() -> Result<(), hkask_mcp_server::McpError> {
         "HKASK_MCP_HOST",
     )
     .await?;
-    hkask_mcp_condenser::run(boot.userpod, boot.daemon_client).await
+    hkask_mcp_condenser::run(boot.userpod).await
 }

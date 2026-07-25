@@ -9,7 +9,6 @@ use crate::codegraph::graph::traversal;
 use crate::codegraph::indexer::pipeline::IndexPipeline;
 use crate::codegraph::types::Direction;
 use crate::codegraph::{ContextBudget, graph};
-use hkask_mcp_server::DaemonClient;
 use hkask_mcp_server::run_server;
 use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
 use hkask_types::WebID;
@@ -391,10 +390,7 @@ impl CodeGraphServer {
     }
 }
 
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     let db_path = std::env::var("HKASK_CODEGRAPH_DB").ok();
     run_server(
         "hkask-mcp-codegraph",
@@ -416,7 +412,6 @@ pub async fn run(
             Ok(CodeGraphServer::new(
                 webid,
                 userpod.clone(),
-                daemon_client.clone(),
                 CapabilityTier::detect(&std::collections::HashMap::new()),
                 Arc::new(Mutex::new(pipeline)),
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),

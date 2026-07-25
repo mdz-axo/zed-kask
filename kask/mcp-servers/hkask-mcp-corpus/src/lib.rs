@@ -233,33 +233,16 @@ impl CorpusServer {
         outcome: &str,
         detail: serde_json::Value,
     ) {
-        if let Some(ref daemon) = self.daemon {
-            let value = serde_json::json!({
-                "tool": tool, "input": input_summary, "outcome": outcome,
-                "detail": detail, "timestamp": now_rfc3339(),
-            });
-            let daemon_clone = daemon.clone();
-            let userpod = self.userpod.clone();
-            let tool_name = tool.to_string();
-            tokio::spawn(async move {
-                match daemon_clone
-                    .store_experience(&userpod, "mcp_session", "observed", &value, Some(0.85))
-                    .await
-                {
-                    Ok(hkask_mcp_server::DaemonResponse::StoreResponse {
-                        stored: true, ..
-                    }) => {
-                        tracing::debug!(target: "hkask.mcp.docproc.memory", tool = %tool_name, "Experience stored via daemon");
-                    }
-                    Ok(other) => {
-                        tracing::warn!(target: "hkask.mcp.docproc.memory", tool = %tool_name, response = ?other, "Unexpected daemon response")
-                    }
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.mcp.docproc.memory", tool = %tool_name, error = %e, "Failed to store experience")
-                    }
-                }
-            });
-        }
+        tracing::debug!(
+            target: "hkask.mcp.docproc.memory",
+            userpod = %self.userpod,
+            tool = %tool,
+            input = %input_summary,
+            outcome = %outcome,
+            detail = ?detail,
+            timestamp = %now_rfc3339(),
+            "Tool outcome recorded (no daemon — in-process only)",
+        );
     }
 }
 
@@ -644,10 +627,7 @@ impl rmcp::ServerHandler for CorpusServer {}
 // ── Entry point ────────────────────────────────────────────────────────────
 
 /// Run the corpus MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-corpus",
         env!("CARGO_PKG_VERSION"),
@@ -686,7 +666,6 @@ pub async fn run(
                         Ok(CorpusServer::new(
                             ctx.webid,
                             userpod.clone(),
-                            daemon_client.clone(),
                             ocr_model,
                             inference_router,
                             ocr_thresholds,

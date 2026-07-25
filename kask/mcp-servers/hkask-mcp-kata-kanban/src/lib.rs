@@ -881,10 +881,7 @@ pub fn default_columns() -> Vec<hkask_services_kata_kanban::ColumnDef> {
 }
 
 /// Run the kanban MCP server (used by binary target).
-pub async fn run(
-    userpod: String,
-    daemon_client: Option<hkask_mcp_server::DaemonClient>,
-) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-kata-kanban",
         env!("CARGO_PKG_VERSION"),
@@ -938,12 +935,7 @@ pub async fn run(
                     )
                     .expect("DDL batch must succeed");
                 let service = KanbanService::new(store);
-                Ok(KanbanServer::new(
-                    ctx.webid,
-                    userpod.clone(),
-                    daemon_client.clone(),
-                    service,
-                ))
+                Ok(KanbanServer::new(ctx.webid, userpod.clone(), service))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),
