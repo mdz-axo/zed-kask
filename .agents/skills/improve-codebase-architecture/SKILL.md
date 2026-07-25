@@ -53,7 +53,7 @@ Find deepening opportunities in the codebase. Surfaces shallow modules, proposes
 ### arch-route
 
 1. Route the deepened design to the correct follow-up based on the decision signal.
-2. If proceeding to refactor: recommend `strangler-fig` for incremental migration or `refactor-service-layer` for extracting shared logic, and produce a migration plan with ordered steps and tests that must pass at each step.
+2. If proceeding to refactor: recommend `refactor-service-layer` for extracting shared logic (includes the strangler-fig migration-strategy phase for incremental migration), and produce a migration plan with ordered steps and tests that must pass at each step.
 3. If more data is needed: recommend the `diagnose` skill, and specify what measurements are needed, how to instrument, and what thresholds would confirm or refute the hypothesis.
 4. If deferring or rejecting: produce a decision summary with reasoning, and if a load-bearing reason was given, recommend recording it as an ADR with a suggested title and body.
 

@@ -1,7 +1,7 @@
 ---
 name: metacognition
 visibility: public
-description: "Master self-reflection skill. Reflects on a context and sees it from different perspectives — decomposes goals, self-assesses progress, detects ellipses (what is missing) via Bloom's method, rotates perspectives via the Falstaffian engine, and calibrates strategy. Improves itself through GEPA evolutionary optimization (gpa-evolution). Composes sequential-inquiry, pragmatic-laziness, and hypothesis-framer. Any userpod may invoke this skill."
+description: "Master self-reflection skill. Reflects on a context and sees it from different perspectives — decomposes goals, self-assesses progress, detects ellipses (what is missing) via Bloom's method, rotates perspectives via the Falstaffian engine, and calibrates strategy. Improves itself through GEPA evolutionary optimization (gpa-evolution). Composes sequential-inquiry and hypothesis-framer. Any userpod may invoke this skill."
 ---
 
 # Metacognition
@@ -17,7 +17,7 @@ Master self-reflection skill. Any userpod — curator, bot, agent, or ensemble m
 - You want to produce a testable next experiment (PDCA) with clear success criteria
 - You want to improve your own metacognitive process through evolutionary optimization
 - You need to frame a research question formally (delegates to `hypothesis-framer`)
-- You need to find the path of least action through a complex situation (delegates to `pragmatic-laziness`)
+- You need to find the path of least action through a complex situation (compose `essentialist` + `pragmatic-cybernetics` at the call site)
 - You need multi-step reasoning with branching and hypothesis testing (delegates to `sequential-inquiry`)
 - When confidence is low (< 0.5) and standard evidence-gathering has plateaued — the Calibrate step maps `uncertainty` obstacles to strategy adjustments (iterative_refinement, depth_first, breadth_first) and the Falstaffian engine rotates perspective to find non-obvious paths to higher certainty
 - When uncertainty is a first-class obstacle that needs classification (knowledge_gap, perspective_blind, context_loss, conflict) and routing to the appropriate certainty-finding tool — metacognition is the master uncertainty router
@@ -81,7 +81,6 @@ Metacognition is a **master skill** that composes other skills for deeper analys
 |-------|------|-------------|
 | `gpa-evolution` | Self-improvement | Post-convergence — evolves metacognition's own templates through GEPA |
 | `sequential-inquiry` | Deep analysis | On-demand — when assessment reveals a subproblem requiring multi-step reasoning with branching and hypothesis testing |
-| `pragmatic-laziness` | Path optimization | On-demand — when calibration identifies wasted effort, broken feedback loops, or unnecessary complexity |
 | `hypothesis-framer` | Hypothesis formation | On-demand — when the next experiment needs a formally testable hypothesis with FINER + PICO structuring |
 
 ### Composition Protocol
@@ -91,7 +90,7 @@ Metacognition is a **master skill** that composes other skills for deeper analys
 3. **Detect ellipses** — If context_text is provided, apply Bloom's method to find what is missing.
 4. **Delegate when needed** — If the assessment reveals a subproblem that needs:
    - Multi-step reasoning → delegate to `sequential-inquiry`
-   - Least-action path finding → delegate to `pragmatic-laziness`
+   - Least-action path finding → compose `essentialist` + `pragmatic-cybernetics` at the call site (pragmatic-laziness skill deleted; was a thin wrapper)
    - Formal hypothesis → delegate to `hypothesis-framer`
 5. **Calibrate with perspective** — Apply Falstaffian shape rotation to reframe the calibration.
 6. **Improve after convergence** — Invoke `gpa-evolution` to evolve the process.

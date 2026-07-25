@@ -6,17 +6,17 @@
 
 ## Capability Groups (Principle-Aligned)
 
-50 skills in `.agents/skills/` (47 PDCA skills + 2 templates + 1 bundle). Below: 7 principle-aligned groups covering the active registry. Full list: `.agents/skills/`.
+42 skills in `.agents/skills/` (39 PDCA skills + 2 templates + 1 bundle). Below: 7 principle-aligned groups covering the active registry. Full list: `.agents/skills/`.
 
 | Group | Activation | Principle / Defense Link | Key Skills |
 |---|---|---|---|
 | **Guardrails** | Author-first (before any code/review) | P5 · P7 (simplicity, depth) | `coding-guidelines` |
-| **Core Development** | Agent-autonomous (PDCA cycles) | P3 · P5 · P7 | `bug-hunt`, `tdd`, `diagnose`, `deep-module`, `strangler-fig`, `idiomatic-rust` |
+| **Core Development** | Agent-autonomous (PDCA cycles) | P3 · P5 · P7 | `bug-hunt`, `tdd`, `diagnose`, `deep-module`, `refactor-service-layer` (includes strangler-fig migration phase), `idiomatic-rust` |
 | **Reasoning & Analysis** | Agent-autonomous / ensemble | P1 · P3 · P12 (sovereignty, consent, identity) | `pragmatic-semantics`, `sequential-inquiry`, `falsifiability`, `metacognition` |
-| **Kata & Coaching** | Ensemble / coaching loop | P4 (clear boundaries) | `kata` (bundle), `kata-improvement`, `kata-coaching`, `improv` |
-| **Meta & Maintenance** | Agent-autonomous (self-improvement) | P1 · P12 | `skill-maintenance`, `skill-logic-audit`, `gpa-evolution`, `handoff` |
+| **Kata & Coaching** | Ensemble / coaching loop | P4 (clear boundaries) | `kata` (bundle), `kata-improvement` (includes beginner_mode from kata-starter), `kata-coaching`, `improv` |
+| **Meta & Maintenance** | Agent-autonomous (self-improvement) | P1 · P12 | `skill-maintenance` (includes validate sub-operation from skill-logic-audit), `gpa-evolution`, `handoff` |
 | **Routing & Curation** | Agent-autonomous (skill matching) | P5 · P12 | `skill-router`, `skill-discovery` |
-| **Security & Posture** | Agent-autonomous (runtime) | P5–P8 · P12 | `kali-audit`, `supply-chain-sentinel`, `runtime-posture-monitor`, `attack-taxonomy-mapper` |
+| **Security & Posture** | Agent-autonomous (runtime) | P5–P8 · P12 | `kali-audit` (includes taxonomy_map phase from attack-taxonomy-mapper), `supply-chain-sentinel`, `runtime-posture-monitor` |
 | **Training** | Pre-flight (before training job) | P3.1 · P5 · P8 · P12 | `lora-training` |
 
 *Note: `media-workflow`, `logo-builder`, `qa-script-builder` are specialized templates; activate as needed, not by default.*
@@ -85,7 +85,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 |---|---|---|
 | Before writing/reviewing code | `coding-guidelines` | `bug-hunt` or `tdd` |
 | Hard bug / regression | `diagnose` | `codegraph` (if unknown structure) |
-| Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `improv` (riffing) or `zoom-out` (if context-loss) or `falsifiability` (if hypothesis-conflict) |
+| Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `improv` (riffing) or `codegraph` (context-expansion mode, if context-loss) or `falsifiability` (if hypothesis-conflict) |
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
 | Security audit | `kali-audit` | `supply-chain-sentinel` (manifests) |
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
@@ -107,7 +107,7 @@ When an agent or LLM enters a low-confidence regime (confidence < 0.5), the syst
 | **Epistemic classification** | Classify certainty level, trace provenance, resolve conflicts | `pragmatic-semantics` |
 | **Standard PDCA** | Decompose, assess, calibrate strategy, experiment | `metacognition` (obstacle type `uncertainty`), `sequential-inquiry`, `falsifiability` |
 | **Non-standard paths** | Find certainty through perspective-shift, not more data | `metacognition` (Falstaffian rotation, ellipsis detection), `improv` (Riffing for divergent exploration) |
-| **Context expansion** | Raise confidence by broadening scope, not adding detail | `zoom-out`, `codegraph` |
+| **Context expansion** | Raise confidence by broadening scope, not adding detail | `codegraph` (context-expansion mode, folded from zoom-out) |
 | **Runtime enforcement** | Prune low-confidence memory, escalate low-confidence output | `Confidence` type, consolidation `confidence_floor`, Curator escalation queue (Pattern C) |
 | **Curation gap-fill** | Detect missing certainty-finding methods, acquire new skills | `skill-router` (`epistemic_state` boost), `skill-discovery` (`epistemic` gap category) |
 

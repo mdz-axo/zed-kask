@@ -50,12 +50,12 @@ The calling agent has reported its epistemic state. Use this to boost trigger-al
 - **Confidence**: {{ epistemic_state.confidence }} (0.0–1.0)
 - **Uncertainty type**: {{ epistemic_state.uncertainty_type }}
 
-When confidence < 0.5, apply a **+0.20 boost** to the trigger-alignment dimension for any skill whose `when_to_use` mentions: uncertainty, confidence, low-certainty, perspective, non-obvious paths, ellipsis, gaps, calibration, or divergent exploration. This reflects that the agent is in an epistemic state where certainty-finding skills (metacognition, improv, zoom-out, falsifiability) are more relevant than task lexicon alone suggests. Clamp the boosted trigger-alignment to [0.0, 1.0].
+When confidence < 0.5, apply a **+0.20 boost** to the trigger-alignment dimension for any skill whose `when_to_use` mentions: uncertainty, confidence, low-certainty, perspective, non-obvious paths, ellipsis, gaps, calibration, or divergent exploration. This reflects that the agent is in an epistemic state where certainty-finding skills (metacognition, improv, codegraph, falsifiability) are more relevant than task lexicon alone suggests. Clamp the boosted trigger-alignment to [0.0, 1.0].
 
 Map uncertainty_type to likely skill families:
 - `knowledge_gap` → falsifiability, diagnose, sequential-inquiry
 - `perspective_blind` → metacognition (Falstaffian rotation), improv (Riffing)
-- `context_loss` → zoom-out, codegraph
+- `context_loss` → codegraph (context-expansion mode)
 - `conflict` → pragmatic-semantics, falsifiability, mcda
 {% endif %}
 
