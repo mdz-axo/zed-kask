@@ -26,7 +26,10 @@ gpui = { path = "../../../crates/gpui" }
 agent = { path = "../../../crates/agent" }
 settings = { path = "../../../crates/settings" }
 settings_content = { path = "../../../crates/settings_content" }
+credentials_provider = { path = "../../../crates/credentials_provider" }
+fs = { path = "../../../crates/fs" }
 ui = { path = "../../../crates/ui" }
+util = { path = "../../../crates/util" }
 collections = { path = "../../../crates/collections" }
 schemars = { workspace = true }
 

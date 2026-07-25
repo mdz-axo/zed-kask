@@ -12,8 +12,8 @@ manifest:
     Typically invoked as the execution phase after improve-codebase-architecture
     has completed architectural analysis. Includes the migration-strategy phase
     (folded from the standalone strangler-fig skill). The SKILL.md documents practitioner-level
-    composition with tdd, coding-guidelines, pragmatic-semantics, codegraph
-    (context-expansion), deep-module, and essentialist as methodological
+    composition with tdd, coding-guidelines, pragmatic-semantics, graph-audit
+    (code mode, context-expansion), deep-module, and essentialist as methodological
     guidance (not machine-executable delegation).
   functional_role: flowdef
   version: 0.30.0

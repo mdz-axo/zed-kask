@@ -1,0 +1,70 @@
+{# goal: Compute combined convergence metric for dual mode (code coverage + graph health). Both must be sufficient for convergence. #}
+{# Used by: graph-audit dual mode only #}
+
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- synthesize
+- verify
+- assess
+contract:
+  input:
+    code_coverage_result: object
+    graph_health_result: object
+  output:
+    convergence_metric: number
+    rationale: string
+    blockers: array
+energy_cap: 2000
+visibility: Public
+---
+{# Template: graph-audit/dual-convergence-check.j2 #}
+{# Functional Role: KnowAct - Combined convergence for dual mode #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a convergence evaluator for the graph-audit dual mode.
+
+## Inputs
+
+- **code_coverage_result**: analysis results from code mode steps 1-4 (discovery, query, analyze, context)
+- **graph_health_result**: graph health report from semantic mode steps 9-12 (classify, analyze, detect, report)
+
+## Convergence Logic
+
+Dual mode converges when BOTH:
+1. Code coverage is sufficient (code mode convergence <= 0.25)
+2. Graph health is acceptable (semantic mode convergence <= 0.15)
+
+Compute the combined metric as the MAX of the two individual metrics. This ensures dual mode only converges when both perspectives are sufficient - a great code map with an unaudited graph (or vice versa) does not converge.
+
+## Scoring
+
+Start at 1.0. Subtract for each satisfied check:
+
+1. Code discovery: relevant crates and entry symbols identified? -> +0.15 if not
+2. Code query: matched symbols cover the goal scope? -> +0.15 if major gaps
+3. Code traversal: dependencies and callers mapped for key symbols? -> +0.15 if incomplete
+4. Code analysis: complexity, dead code, and impact assessed? -> +0.10 if missing
+5. Graph classification: all edges classified by constraint force? -> +0.15 if incomplete
+6. Graph analysis: four-lens evaluation complete? -> +0.15 if vague
+7. Graph detection: structural pathologies identified? -> +0.10 if missing
+8. Graph report: health verdict and recommendations produced? -> +0.05 if vague
+
+Clamp to [0.0, 1.0]. Converged when <= 0.25.
+
+## Output
+
+JSON object:
+- convergence_metric: number in [0,1] (0 = converged, 1 = not converged)
+- rationale: why this score was assigned
+- blockers: array of specific issues preventing convergence
+- code_coverage_score: the code-mode component score
+- graph_health_score: the semantic-mode component score

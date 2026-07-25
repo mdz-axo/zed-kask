@@ -1,0 +1,14 @@
+{# codegraph/analysis-complexity.j2 — Template-driven complexity analysis query.
+   Override to customize complexity thresholds.
+
+   Context variables:
+     min_cyclomatic: u32 — minimum cyclomatic complexity (default 10)
+     min_cognitive:  u32 — minimum cognitive complexity (default 5)
+#}SELECT s.name, s.kind, f.path, s.start_line, s.complexity_json
+FROM symbols s JOIN code_files f ON s.file_id = f.id
+WHERE s.complexity_json IS NOT NULL
+AND s.complexity_json != '{"NotComputed"}'
+AND s.complexity_json != '{"Unparseable"}'
+ORDER BY s.name
+{# Filtering by complexity values is done in Rust after JSON parsing.
+   The SQL returns all computable symbols; the analysis code filters by thresholds. #}

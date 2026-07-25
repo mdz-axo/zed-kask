@@ -1,0 +1,24 @@
+{# codegraph/fix-suggestion.j2 — Generate fix suggestions for analysis findings.
+   Rendered per-finding, sent to inference router for suggestions.
+
+   Context:
+     finding_type: string — "dead_code" or "high_complexity"
+     symbol_name:  string — qualified name
+     kind:         string — function, struct, etc.
+     signature:    string — first line
+     file:         string — relative path
+     line:         number — start line
+     detail:       string — additional detail (e.g., cyclomatic=12)
+#}You are a Rust refactoring advisor. Given a code quality finding, suggest a specific fix.
+
+Finding type: {{ finding_type }}
+Symbol: {{ symbol_name }} ({{ kind }})
+Location: {{ file }}:{{ line }}
+Signature: {{ signature }}
+{% if detail %}
+Detail: {{ detail }}
+{% endif %}
+
+Suggest ONE specific, actionable fix. Be concrete — mention specific Rust patterns, refactoring techniques, or code changes. If the finding is "dead_code", suggest whether to delete it, mark it #[allow(dead_code)], or use it somewhere. If "high_complexity", suggest which parts to extract.
+
+Fix suggestion:

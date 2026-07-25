@@ -1,0 +1,24 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [embed, encode, vectorize]
+contract:
+  input:
+    target: object
+    goal: string
+    discovery: object|null
+    query_results: array|null
+  output:
+    embedded_count: integer
+    skipped: integer
+    errors: array
+  pre:
+    - target is specified with crate or file paths
+    - codegraph index is built (call codegraph_reindex if needed)
+  post:
+    - returns count of symbols embedded
+    - symbols without parseable signatures are skipped
+instructions:
+  - Use codegraph_index_embeddings to generate vector embeddings for code symbols.
+  - Embeddings enable semantic search over the codebase.
+  - Call after reindexing or when semantic search quality degrades.
+  - The tool handles batching and deduplication internally.

@@ -663,6 +663,15 @@ fn main() {
         // deferred task below) so MCP servers can route inference through zed's
         // LanguageModelRegistry via the IPC socket.
         let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx);
+
+        // Ensure `openai_compatible.<provider_id>` entries exist in settings.json
+        // for every enabled inference provider. This makes the providers appear
+        // in Settings → AI → LLM Providers and the agent model picker via the
+        // existing `register_compatible_providers` machinery in `language_models`.
+        // Must run before `language_models::init` so the providers are registered
+        // on the first settings observation.
+        kask_bridge::ensure_openai_compatible_entries(kask_settings_for_mcp, cx);
+
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
             BUILT_IN_MCP_SERVERS
                 .iter()
@@ -953,7 +962,23 @@ fn main() {
 
                 // Launch MCP servers.
                 if !servers_to_start_clone.is_empty() {
-                    let mut mcp_env = kask_settings.mcp_env();
+                    // Build the MCP env, including API keys resolved from zed's
+                    // keychain. This bridges the two keychain namespaces: the
+                    // kask settings UI writes keys via zed's CredentialsProvider
+                    // (under `kask://credentials/<key>`), while MCP servers read
+                    // env vars / hKask's Keychain (service "hkask").
+                    let credential_urls = cx.update(|cx| {
+                        let settings = kask_bridge::KaskSettings::get_global(cx);
+                        kask_bridge::credential_urls_for_mcp(&settings)
+                    });
+                    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+                    let mut mcp_env = kask_settings
+                        .mcp_env_with_credentials(
+                            &credential_urls,
+                            credentials_provider.as_ref(),
+                            &cx,
+                        )
+                        .await;
                     // Pass the inference IPC socket path so MCP servers can
                     // route inference through zed's LanguageModelRegistry.
                     if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {

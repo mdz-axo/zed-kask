@@ -1,0 +1,100 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [context, assemble, budget, format, package]
+contract:
+  input:
+    goal: string
+    context_result: object|null
+    analysis_result: object|null
+    budget: string
+  output:
+    assembled_context: string
+    token_count: number
+    symbols_included: array
+    budget_met: boolean
+    context_summary: string
+energy_cap: 2048
+visibility: Public
+---
+{# Template: codegraph/codegraph-context.j2 #}
+{# Functional Role: KnowAct — Assemble token-budgeted context for LLM prompts #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: assembled_context, token_count, symbols_included, budget_met, context_summary #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are performing **context assembly** — formatting gathered code understanding into a token-budgeted context package for downstream LLM use.
+
+## Goal
+
+{{ goal }}
+
+## Token Budget
+
+{{ budget | default("medium") }}
+- `small` = 2048 tokens
+- `medium` = 4096 tokens
+- `large` = 8192 tokens
+
+{% if context_result %}
+## Raw Context (from codegraph_context MCP tool)
+
+```json
+{{ context_result | tojson }}
+```
+
+{% endif %}
+{% if analysis_result %}
+## Analysis Results (from traversal and quality analysis)
+
+```json
+{{ analysis_result | tojson }}
+```
+
+{% endif %}
+
+## Your Task
+
+Assemble a token-budgeted context package from the raw context and analysis results:
+
+1. **Assembled context** — A formatted string containing the most relevant code symbols, their definitions, doc comments, and key relationships — within the token budget. Prioritize:
+   - Entry symbols and their direct dependencies (from analysis dependency_map)
+   - High-impact symbols (from analysis impact_analysis)
+   - Quality findings (from analysis quality_findings)
+   - Symbol definitions and signatures (from context_result)
+
+2. **Token count** — Estimated token count of the assembled context.
+
+3. **Symbols included** — Array of symbol names included in the assembled context.
+
+4. **Budget met** — Boolean: does the assembled context fit within the token budget?
+
+5. **Context summary** — One-paragraph summary of what the context package covers.
+
+## Formatting Rules
+
+- Start with a brief architecture summary (2–3 sentences)
+- List key symbols with their qualified names, file locations, and one-line descriptions
+- Include relevant code snippets only for the most critical symbols
+- Omit boilerplate (imports, test setup, re-exports)
+- If the context exceeds the budget, truncate from the least relevant symbols first
+- Format as markdown with clear section headers
+
+## Output
+
+Return JSON only:
+
+```json
+{
+  "assembled_context": "markdown-formatted context string",
+  "token_count": 3500,
+  "symbols_included": ["symbol1", "symbol2"],
+  "budget_met": true,
+  "context_summary": "One-paragraph summary of what the context covers"
+}
+```

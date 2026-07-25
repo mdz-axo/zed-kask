@@ -1,0 +1,14 @@
+{# codegraph/analysis-dead-code.j2 — Template-driven dead code detection query.
+   Override this template to customize dead code filtering.
+
+   Context variables:
+     exclude_tests:   bool — exclude paths containing "/tests/"
+     min_line_count:  u32  — minimum lines to consider (skip tiny stubs)
+#}SELECT s.name, s.kind, f.path, s.start_line
+FROM symbols s JOIN code_files f ON s.file_id = f.id
+WHERE s.id NOT IN (SELECT DISTINCT to_id FROM edges)
+AND s.visibility != 'public'
+AND s.kind NOT IN ('module', 'test', 'variant')
+{% if exclude_tests %}AND f.path NOT LIKE '%/tests/%' AND f.path NOT LIKE '%test%'{% endif %}
+{% if min_line_count > 0 %}AND (s.end_line - s.start_line + 1) >= {{ min_line_count }}{% endif %}
+ORDER BY s.name

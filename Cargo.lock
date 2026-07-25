@@ -11005,6 +11005,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "collections",
+ "credentials_provider",
+ "fs",
  "futures 0.3.32",
  "futures-util",
  "gpui",
@@ -11030,6 +11032,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ui",
+ "util",
 ]
 
 [[package]]

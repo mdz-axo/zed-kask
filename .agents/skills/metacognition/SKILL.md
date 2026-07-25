@@ -90,7 +90,6 @@ Metacognition is a **master skill** that composes other skills for deeper analys
 3. **Detect ellipses** — If context_text is provided, apply Bloom's method to find what is missing.
 4. **Delegate when needed** — If the assessment reveals a subproblem that needs:
    - Multi-step reasoning → delegate to `sequential-inquiry`
-   - Least-action path finding → compose `essentialist` + `pragmatic-cybernetics` at the call site (pragmatic-laziness skill deleted; was a thin wrapper)
    - Formal hypothesis → delegate to `hypothesis-framer`
 5. **Calibrate with perspective** — Apply Falstaffian shape rotation to reframe the calibration.
 6. **Improve after convergence** — Invoke `gpa-evolution` to evolve the process.
