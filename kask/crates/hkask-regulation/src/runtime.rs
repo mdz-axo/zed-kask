@@ -19,7 +19,6 @@ use crate::algedonic::{
 };
 use crate::energy::{AgentGasStatus, GasBudget, GasCost};
 use crate::set_points::DEFAULT_VARIETY_MAX_DEFICIT;
-use crate::slo_manager::{SloDataProvider, SloManager};
 use crate::tool_stats::ToolStats;
 
 use hkask_types::WebID;
@@ -307,7 +306,6 @@ struct RegState {
     tracker: VarietyMonitor,
     outcome: HashMap<String, OutcomeTracker>,
     gas_budgets: Arc<tokio::sync::RwLock<HashMap<WebID, GasBudget>>>,
-    slo_manager: SloManager,
     regulation_health: RegulationHealth,
     regulation_history: VecDeque<RegulationCycleEntry>,
     tool_stats: Arc<ToolStats>,
@@ -322,7 +320,6 @@ impl RegState {
         let tracker = VarietyMonitor::new();
         let outcome = HashMap::new();
         let gas_budgets = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
-        let slo_manager = SloManager::with_seed_slos();
         let regulation_health = RegulationHealth::default();
         let regulation_history = VecDeque::with_capacity(MAX_REGULATION_HISTORY);
         let tool_stats = Arc::new(ToolStats::new());
@@ -331,7 +328,6 @@ impl RegState {
             tracker,
             outcome,
             gas_budgets,
-            slo_manager,
             regulation_health,
             regulation_history,
             tool_stats,
@@ -917,103 +913,6 @@ impl RegulationLedger {
         let state = self.state.read().await;
         let budgets = state.gas_budgets.read().await;
         budgets.get(agent).map(AgentGasStatus::from)
-    }
-
-    // ── SLO Management ────────────────────────────────────────────────────
-
-    /// Evaluate all registered SLOs against the given data provider.
-    ///
-    /// expect: "The system evaluates SLOs against measured data and emits Regulation spans"
-    /// `[P9]` Motivating: Homeostatic Self-Regulation — SLO evaluation is the platform contract layer
-    /// `[P8]` Constraining: Semantic Grounding — evaluations are computed from regulation record data
-    /// pre:  provider is operational
-    /// post: returns SloEvaluation list with Regulation spans emitted
-    pub async fn evaluate_slos(
-        &self,
-        provider: &dyn SloDataProvider,
-    ) -> Vec<crate::slo_types::SloEvaluation> {
-        let state = self.state.read().await;
-        state.slo_manager.evaluate(provider)
-    }
-
-    /// Register a new SLO definition at runtime.
-    ///
-    /// expect: "The system supports dynamic SLO registration"
-    /// `[P9]` Motivating: Homeostatic Self-Regulation — the SLO registry is extensible
-    /// pre:  slo.slo_id is unique
-    /// post: SLO added to the registry
-    pub async fn register_slo(&self, slo: crate::slo_types::SloDefinition) {
-        let mut state = self.state.write().await;
-        state.slo_manager.register(slo);
-    }
-
-    /// Deregister an SLO by ID.
-    ///
-    /// expect: "The system supports SLO lifecycle management"
-    /// post: if slo_id exists, it is removed; returns true if removed
-    pub async fn deregister_slo(&self, slo_id: &str) -> bool {
-        let mut state = self.state.write().await;
-        state.slo_manager.deregister(slo_id)
-    }
-
-    /// Evaluate all SLOs and escalate breaches through the algedonic pathway.
-    ///
-    /// This closes the cybernetic feedback loop: Sensor (regulation record query) →
-    /// Comparator (SLO evaluation) → Regulator (algedonic escalation).
-    /// Breached SLOs are emitted as RuntimeAlert with the SLO ID as domain.
-    ///
-    /// expect: "The system closes the SLO feedback loop by escalating breaches"
-    /// `[P9]` Motivating: Homeostatic Self-Regulation — SLO breach escalation
-    /// `[P8]` Constraining: Semantic Grounding — breaches are measured, not guessed
-    /// pre:  provider is operational
-    /// post: SLOs evaluated; breached Critical SLOs produce algedonic alerts
-    pub async fn evaluate_and_escalate_slos(
-        &self,
-        provider: &dyn SloDataProvider,
-    ) -> Vec<crate::slo_types::SloEvaluation> {
-        let state = self.state.read().await;
-        let evaluations = state.slo_manager.evaluate(provider);
-        let algedonic = state.algedonic.clone();
-        drop(state);
-
-        for eval in &evaluations {
-            if eval.in_breach && eval.data_available {
-                // Use the existing algedonic outcome check — maps success rate
-                // to AlertSeverity and produces a RuntimeAlert.
-                let mut mgr = algedonic.write();
-                let total_ops = ((1.0 / (1.0 - eval.current_compliance)) * 1000.0) as u64;
-                let domain = format!("slo:{}", eval.slo_id);
-                let alert = mgr
-                    .check_outcome(&domain, eval.current_compliance, total_ops.max(1))
-                    .cloned();
-                drop(mgr);
-
-                if let Some(alert) = alert {
-                    tracing::warn!(
-                        target: "reg",
-                        reg_domain = "reg.slo.breach_escalated",
-                        slo_id = %eval.slo_id,
-                        compliance = %eval.current_compliance,
-                        error_budget_pct = %(eval.error_budget_remaining * 100.0),
-                        alert_severity = ?alert.severity,
-                        "SLO breach escalated via algedonic pathway",
-                    );
-                }
-            }
-        }
-
-        evaluations
-    }
-
-    /// Get all registered SLOs.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — SLO listing enables platform contract auditing
-    /// \[P8\] Constraining: Semantic Grounding — pure observation, no transformation
-    /// post: returns all registered SloDefinitions
-    pub async fn slos(&self) -> Vec<crate::slo_types::SloDefinition> {
-        let state = self.state.read().await;
-        state.slo_manager.slos().to_vec()
     }
 }
 

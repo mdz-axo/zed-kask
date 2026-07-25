@@ -9,6 +9,4 @@
 
 pub mod governance;
 pub mod mcp_server_guard;
-pub mod reg_store_slo_provider;
-pub mod regulation;
 pub mod storage_guard;

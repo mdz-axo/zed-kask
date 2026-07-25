@@ -154,16 +154,6 @@ pub struct SetPoints {
     /// When per-crate coverage drops below its previous snapshot,
     /// an algedonic alert fires. Default: 0.0 (any regression alerts).
     pub seam_coverage_min: f64,
-    pub fed_sync_latency_warning_ms: u64,
-    pub fed_sync_latency_critical_ms: u64,
-    pub fed_link_downtime_warning_secs: u64,
-    pub fed_link_downtime_critical_secs: u64,
-    /// Maximum pause duration before Regulation escalation (hours). Default: 24.
-    pub fed_max_pause_duration_hours: u64,
-    /// Invitation rate warning threshold (invites/hour). Default: 5.
-    pub fed_invitation_rate_warning_per_hour: u64,
-    /// Registry divergence warning threshold (entries/sync). Default: 10.
-    pub fed_registry_divergence_warning: u64,
     // ── Dampener configuration (v0.30.0) ──
     /// Dampener window for routine directives (seconds). Default: 60.
     pub dampen_window_secs: u64,
@@ -229,13 +219,6 @@ pub struct SetPointsConfig {
     pub connector_latency_max_secs: Option<f64>,
     pub communication_backpressure_threshold: Option<QueueDepth>,
     pub seam_coverage_min: Option<f64>,
-    pub fed_sync_latency_warning_ms: Option<u64>,
-    pub fed_sync_latency_critical_ms: Option<u64>,
-    pub fed_link_downtime_warning_secs: Option<u64>,
-    pub fed_link_downtime_critical_secs: Option<u64>,
-    pub fed_max_pause_duration_hours: Option<u64>,
-    pub fed_invitation_rate_warning_per_hour: Option<u64>,
-    pub fed_registry_divergence_warning: Option<u64>,
     pub dampen_window_secs: Option<u64>,
     pub metacognitive_window_secs: Option<u64>,
     pub override_cooldown_secs: Option<u64>,
@@ -276,13 +259,6 @@ impl Default for SetPoints {
             connector_latency_max_secs: DEFAULT_CONNECTOR_LATENCY_MAX_SECS,
             communication_backpressure_threshold: DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD,
             seam_coverage_min: DEFAULT_SEAM_COVERAGE_MIN,
-            fed_sync_latency_warning_ms: 5000,
-            fed_sync_latency_critical_ms: 30000,
-            fed_link_downtime_warning_secs: 3600,
-            fed_link_downtime_critical_secs: 86400,
-            fed_max_pause_duration_hours: 24,
-            fed_invitation_rate_warning_per_hour: 5,
-            fed_registry_divergence_warning: 10,
             dampen_window_secs: DEFAULT_DAMPEN_WINDOW_SECS,
             metacognitive_window_secs: DEFAULT_METACOGNITIVE_WINDOW_SECS,
             override_cooldown_secs: DEFAULT_OVERRIDE_COOLDOWN_SECS,
@@ -322,27 +298,6 @@ impl SetPoints {
             seam_coverage_min: config
                 .seam_coverage_min
                 .unwrap_or(defaults.seam_coverage_min),
-            fed_sync_latency_warning_ms: config
-                .fed_sync_latency_warning_ms
-                .unwrap_or(defaults.fed_sync_latency_warning_ms),
-            fed_sync_latency_critical_ms: config
-                .fed_sync_latency_critical_ms
-                .unwrap_or(defaults.fed_sync_latency_critical_ms),
-            fed_link_downtime_warning_secs: config
-                .fed_link_downtime_warning_secs
-                .unwrap_or(defaults.fed_link_downtime_warning_secs),
-            fed_link_downtime_critical_secs: config
-                .fed_link_downtime_critical_secs
-                .unwrap_or(defaults.fed_link_downtime_critical_secs),
-            fed_max_pause_duration_hours: config
-                .fed_max_pause_duration_hours
-                .unwrap_or(defaults.fed_max_pause_duration_hours),
-            fed_invitation_rate_warning_per_hour: config
-                .fed_invitation_rate_warning_per_hour
-                .unwrap_or(defaults.fed_invitation_rate_warning_per_hour),
-            fed_registry_divergence_warning: config
-                .fed_registry_divergence_warning
-                .unwrap_or(defaults.fed_registry_divergence_warning),
             dampen_window_secs: config
                 .dampen_window_secs
                 .unwrap_or(defaults.dampen_window_secs),
@@ -403,20 +358,6 @@ impl SetPoints {
                 "outcome_warning_threshold ({}) must be > outcome_critical_threshold ({})",
                 self.outcome_warning_threshold,
                 self.outcome_critical_threshold
-            ));
-        }
-        if self.fed_sync_latency_warning_ms >= self.fed_sync_latency_critical_ms {
-            return Err(anyhow::anyhow!(
-                "fed_sync_latency_warning_ms ({}) must be < fed_sync_latency_critical_ms ({})",
-                self.fed_sync_latency_warning_ms,
-                self.fed_sync_latency_critical_ms
-            ));
-        }
-        if self.fed_link_downtime_warning_secs >= self.fed_link_downtime_critical_secs {
-            return Err(anyhow::anyhow!(
-                "fed_link_downtime_warning_secs ({}) must be < fed_link_downtime_critical_secs ({})",
-                self.fed_link_downtime_warning_secs,
-                self.fed_link_downtime_critical_secs
             ));
         }
         if self.variety_max_deficit <= 0.0 {
