@@ -903,45 +903,71 @@ fn main() {
 
                 log::info!("Zed user resolved — kask userpod name: {userpod_name}");
 
-                // D6: Replace the logging memory port with a real one.
+                // D6: Provision the userpod and replace the logging memory port
+                // with a real one. `provision_userpod` handles first-run setup
+                // as lookups and directory creation — no interactive onboarding:
+                //   1. Create the userpod directory structure on disk
+                //   2. Ensure a DB passphrase exists (auto-generate a random
+                //      English word if none, stored in the keychain)
+                //   3. Return the resolved DB path and passphrase
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
-                let user_webid = hkask_types::WebID::for_userpod_name(&userpod_name);
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
 
-                match kask_bridge::RealMemoryPort::from_env(
-                    user_webid,
-                    embedding_model,
-                    kask_settings.memory.consolidation_cadence_secs,
-                    kask_settings.memory.confidence_floor,
-                ) {
-                    Ok(Some(real)) => {
-                        let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> = std::sync::Arc::new(real);
-                        let bridge = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(real_memory.clone()));
-                        agent::set_memory_port(Some(bridge));
-                        log::info!("hKask memory port upgraded to RealMemoryPort (userpod: {userpod_name})");
+                match kask_bridge::provision_userpod(&username) {
+                    Ok(provisioned) => {
+                        let kask_bridge::ProvisionedUserpod { db_path, passphrase, webid: user_webid } = provisioned;
+                        match kask_bridge::RealMemoryPort::new(
+                            &db_path,
+                            &passphrase,
+                            user_webid,
+                            embedding_model,
+                            kask_settings.memory.consolidation_cadence_secs,
+                            kask_settings.memory.confidence_floor,
+                        ) {
+                            Ok(real) => {
+                                let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
+                                    std::sync::Arc::new(real);
+                                let bridge = std::sync::Arc::new(
+                                    kask_bridge::BridgeMemoryPort::new(real_memory.clone()),
+                                );
+                                agent::set_memory_port(Some(bridge));
+                                log::info!(
+                                    "hKask memory port upgraded to RealMemoryPort \
+                                     (userpod: {userpod_name}, db: {db_path})"
+                                );
 
-                        // D11: Wire the context injector now that the real memory port exists.
-                        // The injector shares the same memory port as the ingestion path.
-                        //
-                        // Note: set_context_injector uses OnceLock, so this is a one-shot.
-                        // If the user logs out and back in as a different user, the
-                        // injector is not re-wired.
-                        if kask_settings.memory.auto_inject {
-                            let injector = std::sync::Arc::new(kask_bridge::BridgeContextInjector::new(
-                                real_memory,
-                                kask_settings.memory.recall_limit,
-                                kask_settings.memory.recall_min_confidence,
-                            ));
-                            agent::set_context_injector(Some(injector));
-                            log::info!("hKask context injector wired (userpod: {userpod_name})");
+                                // D11: Wire the context injector now that the real memory port exists.
+                                // The injector shares the same memory port as the ingestion path.
+                                //
+                                // Note: set_context_injector uses OnceLock, so this is a one-shot.
+                                // If the user logs out and back in as a different user, the
+                                // injector is not re-wired.
+                                if kask_settings.memory.auto_inject {
+                                    let injector = std::sync::Arc::new(
+                                        kask_bridge::BridgeContextInjector::new(
+                                            real_memory,
+                                            kask_settings.memory.recall_limit,
+                                            kask_settings.memory.recall_min_confidence,
+                                        ),
+                                    );
+                                    agent::set_context_injector(Some(injector));
+                                    log::info!("hKask context injector wired (userpod: {userpod_name})");
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to open memory DB at {db_path} for {userpod_name}: {e} \
+                                     — staying in logging mode"
+                                );
+                            }
                         }
                     }
-                    Ok(None) => {
-                        log::info!("HKASK_DB_PATH not set — kask memory stays in logging mode (userpod: {userpod_name})");
-                    }
                     Err(e) => {
-                        log::warn!("Failed to initialize RealMemoryPort for {userpod_name}: {e} — staying in logging mode");
+                        log::warn!(
+                            "Failed to provision userpod for {userpod_name}: {e} \
+                             — staying in logging mode"
+                        );
                     }
                 }
 

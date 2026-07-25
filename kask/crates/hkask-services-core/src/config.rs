@@ -139,8 +139,13 @@ impl ServiceConfig {
     /// Resolve configuration from environment variables and keychain.
     ///
     /// Reads `HKASK_DB_PATH`, `HKASK_TEMPLATE_CACHE_PATH`,
-    /// and `HKASK_MEMORY_DB_PATH` from environment. The A2A authority secret
-    /// and database passphrase are resolved via `hkask-keystore`.
+    /// `HKASK_MEMORY_DB_PATH`, and `HKASK_USERPOD_NAME` from environment.
+    /// The A2A authority secret and database passphrase are resolved via
+    /// `hkask-keystore`.
+    ///
+    /// The userpod name defaults to `HKASK_USERPOD_NAME` env var (set by the
+    /// zed-kask composition root from the Zed login username), falling back to
+    /// `DEFAULT_USER_NAME` ("curator") for standalone CLI usage.
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  keystore must have a2a_secret and db_passphrase configured
@@ -157,6 +162,9 @@ impl ServiceConfig {
         let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
             .unwrap_or_else(|_| DEFAULT_TEMPLATE_CACHE_PATH.to_string());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
+        let user_name = std::env::var("HKASK_USERPOD_NAME")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|_| DEFAULT_USER_NAME.to_string());
 
         // Resolve secrets from keystore. If keystore resolution fails,
         // fall back to empty secrets (in-memory mode will be used).
@@ -197,7 +205,7 @@ impl ServiceConfig {
             energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
             gas_replenish_rate: DEFAULT_GAS_REPLENISH_RATE,
             in_memory: false,
-            user_name: DEFAULT_USER_NAME.to_string(),
+            user_name,
             template_cache_path,
             memory_db_path,
             wallet_config: WalletConfig::default(),

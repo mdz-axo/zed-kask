@@ -19,7 +19,9 @@ mod tool_port;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
-pub use identity::{userpod_name_from_username, webid_from_username};
+pub use identity::{
+    ProvisionedUserpod, provision_userpod, userpod_name_from_username, webid_from_username,
+};
 pub use inference::LanguageModelInferencePort;
 pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
 pub use secrets::{CredentialsSecretsPort, KASK_CREDENTIAL_NAMESPACE};

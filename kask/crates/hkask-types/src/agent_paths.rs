@@ -114,7 +114,7 @@ pub fn userpod_manifest_json(name: &str) -> PathBuf {
 // ── Initialization ───────────────────────────────────────────────────────────
 
 /// All subdirectories created by `ensure_userpod_dirs`.
-const USERPOD_SUBDIRS: &[&str] = &[
+pub const USERPOD_SUBDIRS: &[&str] = &[
     "gallery",
     "documents",
     "library",
