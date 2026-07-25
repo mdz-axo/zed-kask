@@ -107,7 +107,7 @@ steps:
       and verifies defense-layer presence. Collect structured findings.
 
       Design note: This phase requires the agent to execute MCP tools between
-      template calls. In pure FlowDef execution (kask run), the probe_findings
+      template calls. In pure FlowDef execution (ManifestExecutor), the probe_findings
       input should be pre-populated. In Zed sessions, the agent orchestrates
       probing between audit and report steps.
     renderer: minijinja

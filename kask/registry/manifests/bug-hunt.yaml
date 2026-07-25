@@ -1,5 +1,5 @@
 # Bug Hunt Process Manifest
-# ℏKask v0.30.0 — Exploratory bug hunting as phased PDCA
+# ℏKask v0.31.0 — Exploratory bug hunting as phased PDCA
 # Decomposed from monolithic expedition into: Charter → Probe → Oracle → Taxonomize → Report
 
 manifest:
@@ -101,7 +101,7 @@ steps:
       as text to feed the oracle phase.
 
       Design note: This phase requires the agent to execute MCP tools between
-      template calls. In pure FlowDef execution (kask run), the probe_findings
+      template calls. In pure FlowDef execution (ManifestExecutor), the probe_findings
       input should be pre-populated before invoking the flow. In Zed sessions,
       the agent orchestrates the probe manually between charter and oracle.
       If probe_findings is not provided, the template outputs probe guidance

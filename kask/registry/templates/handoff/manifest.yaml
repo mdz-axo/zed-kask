@@ -3,7 +3,7 @@
 
 crate:
   name: handoff
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Session context transfer skill. Compacts the current conversation into a
     structured handoff document that a fresh agent can use to pick up work

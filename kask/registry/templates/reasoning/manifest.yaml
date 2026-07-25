@@ -3,7 +3,7 @@
 
 crate:
   name: reasoning
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Reasoning templates for atomic fact extraction and tool-augmented
     inference. Extracts atomic facts with confidence scores from evidence

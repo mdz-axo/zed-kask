@@ -28,6 +28,7 @@ Never author `SKILL.md` directly. Build the registry crate first, then derive th
 - `essentialist` — 3-gate elimination (Exist → Surface → Contract).
 - `gpa-evolution` — Genetic-Pareto mutation of text artifacts.
 - `bug-hunt` / `diagnose` — Exploration and debugging.
+- `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
 - `kali-audit` / `supply-chain-sentinel` — Security posture.
 - `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
 - `skill-router` — Match tasks to installed skills (fit-scored recommendations).

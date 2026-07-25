@@ -5,7 +5,7 @@
 
 infrastructure:
   name: inference
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Inference engine selector configuration. Routes inference requests to the
     appropriate engine (DeepInfra, Together AI, fal.ai, OpenRouter) based on model

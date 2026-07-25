@@ -10,7 +10,7 @@ manifest:
     ranks options, runs sensitivity analysis, computes convergence, and iterates
     until decision robustness is stable.
   functional_role: flowdef
-  version: 0.30.0
+  version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
 

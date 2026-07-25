@@ -754,8 +754,8 @@ fn render_inference_provider_row(
             .button_tab_index(0)
             .on_click({
                 let provider = credentials_provider.clone();
-                let desc_credential_url = credential_url.clone();
-                let desc_api_url = api_url.clone();
+                let desc_credential_url = credential_url;
+                let desc_api_url = api_url;
                 move |_, _, cx| {
                     // Delete from both keychain locations.
                     let provider = provider.clone();
@@ -773,8 +773,8 @@ fn render_inference_provider_row(
         let input_id = format!("kask-inference-{provider_id}-api-key-input");
         let aria_label = format!("{provider_name} API Key");
         let credentials_provider = credentials_provider.clone();
-        let desc_credential_url = credential_url.clone();
-        let desc_api_url = api_url.clone();
+        let desc_credential_url = credential_url;
+        let desc_api_url = api_url;
         v_flex()
             .gap_2()
             .child(
@@ -838,7 +838,6 @@ fn render_inference_provider_row(
                                     let provider = credentials_provider.clone();
                                     let url1 = desc_api_url.clone();
                                     let url2 = desc_credential_url.clone();
-                                    let key_value = key_value.clone();
                                     cx.spawn(async move |cx| {
                                         // Write under the api_url (for zed's OpenAI-compatible provider).
                                         let _ = provider

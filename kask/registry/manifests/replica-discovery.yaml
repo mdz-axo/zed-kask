@@ -23,7 +23,7 @@ manifest:
     web search, and YouTube transcripts, extracts and caches content, extracts
     key concepts and methodological patterns via LLM, and generates a
     corpus.yaml ready for corpus_build_persona.
-  version: 0.27.0
+  version: 0.31.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public

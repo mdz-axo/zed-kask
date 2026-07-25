@@ -3,7 +3,7 @@
 
 crate:
   name: kanban-task-management
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Kanban board monitoring and task verification. Monitors board state with
     summary statistics and verifies individual task completion against

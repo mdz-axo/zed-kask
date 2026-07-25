@@ -3,7 +3,7 @@
 
 crate:
   name: replica
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Academic author replica pipeline. Discovers an author's works across
     search databases, extracts recurring concepts and entities, and infers

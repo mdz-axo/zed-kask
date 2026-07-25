@@ -100,22 +100,14 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
              two-variant enums for bools, non-empty collections. Single owners, explicit \
              error domains, thiserror for libraries. Many small traits over few large ones."
         }
-        FusionSkill::ImproveCodebaseArchitecture => {
-            "Improve Codebase Architecture (Ousterhout): Surface shallow modules. Apply the \
-             deletion test — if complexity vanishes, the module was a pass-through. Propose \
-             deep modules with small interfaces and large implementations. Rank by leverage, \
-             locality, and testability."
-        }
-        FusionSkill::Metacognition => {
-            "Metacognition: Decompose goals, self-assess progress, detect ellipses via Bloom's \
-             method, rotate perspectives, calibrate strategy. Be honest — overestimating \
-             progress is worse than underestimating. Improve through GEPA optimization."
-        }
-        FusionSkill::RefactorServiceLayer => {
-            "Refactor Service Layer: Strangler fig pattern — migrate one domain at a time, \
-             both surfaces functional at every step. Deep-module discipline for extracted \
-             services. Vertical tracer-bullet TDD. Delete only after full verification.\
-             Includes the migration-strategy phase (formerly the standalone strangler-fig skill)."
+        FusionSkill::RefactorArchitecture => {
+            "Refactor Architecture: End-to-end architecture refactoring. Discover phase: \
+             explore friction, rank deepening candidates, walk the design tree. Execution \
+             phase: audit duplication, plan strangler-fig migration, verify integrity. \
+             Deep-module discipline for extracted services. Vertical tracer-bullet TDD. \
+             Delete only after full verification. Includes migration-strategy phase \
+             (folded from strangler-fig). Merged from improve-codebase-architecture \
+             and refactor-service-layer."
         }
     }
 }

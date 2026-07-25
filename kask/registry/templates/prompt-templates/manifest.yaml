@@ -3,7 +3,7 @@
 
 crate:
   name: prompt-templates
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     LLM inference prompt templates. Condenses long session
     transcripts, extracts structured content from documents, performs

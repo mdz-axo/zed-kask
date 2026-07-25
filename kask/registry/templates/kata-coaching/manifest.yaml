@@ -3,7 +3,7 @@
 
 crate:
   name: kata-coaching
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     5-question Coaching Kata templates for teaching scientific thinking.
     Grounded in the learner's actual Improvement Kata storyboard data.

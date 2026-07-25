@@ -1,0 +1,193 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- verify
+- assess
+- validate
+- discriminate
+- crystallize
+contract:
+  input:
+    domain: string
+    migration_phase: string
+    code_context: object
+    known_adrs: array
+  output:
+    verification_report: object
+    depth_test_results: array
+    dependency_check: object
+    p6_p7_p8_compliance: object
+    clippy_result: string
+    test_result: string
+    checklist: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: refactor-service-layer/rsl-verify.j2 #}
+{# Functional Role: KnowAct — Verify surgical completeness after domain migration #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: verification_report, depth_test_results, dependency_check, p6_p7_p8_compliance, clippy_result, test_result, checklist #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a service layer verification agent. After a domain migration or full extraction, verify surgical completeness: dependency direction, depth, P6/P7/P8 compliance, clippy, test suite, deletion test.
+
+## Domain
+
+{{ domain }}
+
+## Migration Phase
+
+{{ migration_phase }}
+
+{% if code_context %}
+## Code Context
+
+```json
+{{ code_context | tojson }}
+```
+{% endif %}
+
+{% if known_adrs %}
+## Known ADRs
+
+```json
+{{ known_adrs | tojson }}
+```
+{% endif %}
+
+## Verification Checklist
+
+Run each check and report pass/fail with evidence:
+
+### 1. Dependency Direction
+
+Verify the dependency graph:
+- `hkask-cli` → `hkask-services` → domain crates (no direct CLI→domain for business logic)
+- `hkask-api` → `hkask-services` → domain crates (no direct API→domain for business logic)
+- Domain crates do NOT depend on `hkask-services`
+- No circular dependencies
+
+Evidence: `cargo tree -p hkask-services` output or import analysis.
+
+### 2. Depth Test
+
+For each module in `hkask-services`, apply the deletion test:
+- **Delete the module.** Does complexity vanish (pass-through) or reappear across N callers (earns its keep)?
+- **Count public functions.** More than 7 = shallow interface. Refactor or merge.
+- **Count public types vs functions.** More types than functions = data without behavior. Consider merging.
+
+### 3. P6/P7/P8 Compliance
+
+- **P6 (Delete stubs):** `grep -r "todo!\|unimplemented!\|#\[deprecated\]" crates/hkask-services/` — must be empty
+- **P7 (Prefer deletion over deprecation):** No `#[deprecated]` attributes in the new crate
+- **P8 (Test with invariants):** Every `#[test]` in `hkask-services` verifies a stated behavioral property of a public seam. Tests without invariants are structural and must be rewritten or removed.
+
+### 4. Clippy
+
+```bash
+cargo clippy -p hkask-services -- -D warnings
+```
+
+Must pass with zero warnings.
+
+### 5. Test Suite
+
+```bash
+cargo test -p hkask-services
+cargo test -p hkask-cli
+cargo test -p hkask-api
+cargo test --workspace
+```
+
+All must pass.
+
+### 6. Surface Adapter Thinness
+
+CLI adapters should contain only:
+- Service call (one line)
+- Terminal output formatting (println, ANSI colors)
+- Error formatting for terminal
+
+API adapters should contain only:
+- Service call (one line)
+- HTTP status code mapping from `ServiceError`
+- JSON serialization via Axum's `Json<T>`
+
+If an adapter contains business logic (state construction, domain operations, DB access), flag it as a violation.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "verification_report": {
+    "domain": "curator",
+    "phase": "domain_migration",
+    "overall_status": "pass|fail|partial",
+    "timestamp": "2026-06-07T00:00:00Z"
+  },
+  "depth_test_results": [
+    {
+      "module": "CuratorService",
+      "public_functions": 4,
+      "public_types": 2,
+      "deletion_test": "earns-keep",
+      "verdict": "deep|shallow"
+    }
+  ],
+  "dependency_check": {
+    "cli_to_services": true,
+    "api_to_services": true,
+    "services_to_domain_only": true,
+    "no_circular_deps": true,
+    "violations": []
+  },
+  "p6_p7_p8_compliance": {
+    "p6_no_stubs": true,
+    "p7_no_deprecated": true,
+    "p8_tests_have_invariants": true,
+    "violations": []
+  },
+  "clippy_result": "pass|fail with details",
+  "test_result": "pass|fail with details",
+  "checklist": [
+    {"item": "RED: Service operation test written (anchor: expect: + [P{N}])", "status": "done|not_done"},
+    {"item": "GREEN: Minimal implementation passes test", "status": "done|not_done"},
+    {"item": "CLI wired: calls service, formats terminal output", "status": "done|not_done"},
+    {"item": "API wired: calls service, serializes JSON", "status": "done|not_done"},
+    {"item": "Both surfaces verified", "status": "done|not_done"},
+    {"item": "Duplicated logic deleted from both surfaces", "status": "done|not_done"},
+    {"item": "Workspace verified: cargo check && cargo test", "status": "done|not_done"},
+    {"item": "Deletion test passed: service module is deep", "status": "done|not_done"},
+    {"item": "Dependency direction verified: no circular deps", "status": "done|not_done"},
+    {"item": "No todo!/unimplemented!/#[deprecated]", "status": "done|not_done"},
+    {"item": "clippy clean", "status": "done|not_done"}
+  ]
+}
+```
+
+## Constraints
+
+- Every verification must produce evidence (command output, file paths, line numbers).
+- If any check fails, report the specific failure with remediation steps.
+- Depth test must be applied honestly — shallow modules must be flagged.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

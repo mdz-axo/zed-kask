@@ -3,7 +3,7 @@
 
 crate:
   name: skill-bundler
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Orchestrate and compose multiple skills into a cohesive bundle.
     Activates a set of skills together, resolves conflicts, determines

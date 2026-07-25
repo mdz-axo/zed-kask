@@ -3,7 +3,7 @@
 
 crate:
   name: hypothesis-framer
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Research question framing and hypothesis formulation using FINER criteria
     and PICO process. Evaluates broad research topics through Feasibility,

@@ -3,7 +3,7 @@
 
 crate:
   name: rca
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Root Cause Analysis toolkit. Defines precise problem statements, performs
     Ishikawa fishbone and 5-Whys causal chain analysis, and produces

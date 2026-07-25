@@ -3,7 +3,7 @@
 
 crate:
   name: wordact
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     WordAct core execution framework. Selects the appropriate prompt template,
     renders it with variable bindings, dispatches to the inference engine,

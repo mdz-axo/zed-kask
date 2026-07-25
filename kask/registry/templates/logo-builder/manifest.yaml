@@ -6,7 +6,7 @@
 
 crate:
   name: logo-builder
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Pragmatic and principled logo design using LLM-assisted generation.
     Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua

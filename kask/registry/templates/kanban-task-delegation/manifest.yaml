@@ -3,7 +3,7 @@
 
 crate:
   name: kanban-task-delegation
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Task delegation completion verification. Evaluates delivered artifacts
     and evidence against acceptance criteria to determine pass/fail with

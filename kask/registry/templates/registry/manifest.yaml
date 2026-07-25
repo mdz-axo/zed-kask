@@ -5,7 +5,7 @@
 
 infrastructure:
   name: registry
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Template registry selector configuration. Maps template lookup requests
     to registry crate paths and version resolution.

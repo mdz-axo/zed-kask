@@ -1,0 +1,172 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- explore
+- classify
+- discriminate
+- orient
+- assess
+- rank
+contract:
+  input:
+    focus_area: string
+    code_context: object
+    known_adrs: array
+    constraint_forces: array
+  output:
+    rdf_triples: array
+    classification_table: array
+    mermaid_diagram: string
+    deletion_test_results: array
+    constraint_force_map: array
+    top_recommendation: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: refactor-service-layer/rsl-audit.j2 #}
+{# Functional Role: KnowAct — Audit and classify duplicated operations across surfaces #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: rdf_triples, classification_table, mermaid_diagram, deletion_test_results, constraint_force_map, top_recommendation #}
+
+[inference]
+temperature = 0.4
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a service layer audit agent. Your job is to find every domain operation that exists in more than one surface (CLI commands, API routes, MCP servers), classify the duplication, and assess whether extraction is justified using the deletion test.
+
+## Focus Area
+
+{{ focus_area }}
+
+{% if code_context %}
+## Code Context
+
+```json
+{{ code_context | tojson }}
+```
+{% endif %}
+
+{% if known_adrs %}
+## Known ADRs
+
+Do not re-litigate these decisions unless the friction is severe enough to warrant revisiting:
+
+```json
+{{ known_adrs | tojson }}
+```
+{% endif %}
+
+{% if constraint_forces %}
+## Constraint Force Classifications
+
+```json
+{{ constraint_forces | tojson }}
+```
+{% endif %}
+
+## Glossary
+
+Use these terms exactly:
+
+- **Module** — anything with an interface and an implementation (function, struct, trait impl, crate)
+- **Interface** — everything a caller must know to use the module: types, invariants, error modes, ordering, config
+- **Implementation** — the code inside
+- **Depth** — leverage at the interface: a lot of behaviour behind a small interface. **Deep** = high leverage. **Shallow** = interface nearly as complex as the implementation
+- **Seam** — where an interface lives; a place behaviour can be altered without editing in place
+- **Adapter** — a concrete thing satisfying an interface at a seam
+- **Leverage** — what callers get from depth
+- **Locality** — what maintainers get from depth: change, bugs, knowledge concentrated in one place
+- **Strangler Fig** — incremental migration pattern: introduce new alongside old, migrate one domain at a time, delete duplication only after both surfaces delegate
+
+## Duplication Classification
+
+For each duplicated operation, classify as one of:
+
+| Classification | Meaning | Action |
+|----------------|---------|--------|
+| **Identical** | Same logic, different framing | Extract to service, thin adapters |
+| **Divergent** | Different logic for same intent | Unify in service, parameterize variation |
+| **Surface-only** | No counterpart in other surface | Evaluate — may belong in surface, not service |
+| **Pass-through** | Surface just delegates to domain crate | Don't extract; surface stays as-is |
+
+## Deletion Test
+
+For each candidate extraction: imagine deleting the proposed service module. If complexity vanishes (it was a pass-through), don't create it. If complexity reappears across N callers, it earns its keep — extract it.
+
+## Constraint Forces (per `pragmatic-semantics`)
+
+Classify each design decision using the five-force hierarchy:
+- **Prohibition** (Rank 1): Inviolable. P1 User Sovereignty, P1.6 Headless.
+- **Guardrail** (Rank 2): Measured boundary. User-overridable.
+- **Guideline** (Rank 3): Best practice. Relax with stated reason.
+- **Evidence** (Rank 4): Measured fact. Informational.
+- **Hypothesis** (Rank 5): Speculative. Needs verification.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "rdf_triples": [
+    {
+      "subject": "curator_escalations",
+      "predicate": "duplicates-in",
+      "object": ["cli/commands/curator.rs", "api/routes/curator.rs"],
+      "returns": "Vec<EscalationEntry> × Json<ListEscalationsResponse>",
+      "divergence": "identical|divergent|surface-only|pass-through",
+      "current_locus": "both surfaces",
+      "desired_locus": "hkask-services::curator"
+    }
+  ],
+  "classification_table": [
+    {
+      "operation": "curator_escalations",
+      "classification": "Identical",
+      "action": "Extract to CuratorService, thin adapters"
+    }
+  ],
+  "mermaid_diagram": "erDiagram ... (entity-relationship diagram of duplication landscape)",
+  "deletion_test_results": [
+    {
+      "proposed_module": "CuratorService",
+      "deleting_surface_code": "Complexity reappears in 2 callers",
+      "deleting_service_module": "Complexity vanishes — pass-through",
+      "verdict": "earns-keep|pass-through|uncertain"
+    }
+  ],
+  "constraint_force_map": [
+    {
+      "decision": "OCAP gates in domain crates",
+      "force": "Prohibition",
+      "rationale": "P1 User Sovereignty — inviolable boundary"
+    }
+  ],
+  "top_recommendation": "Which domain to migrate first and why"
+}
+```
+
+## Constraints
+
+- Use the project's domain vocabulary consistently.
+- Every RDF triple must reference actual file paths in the codebase.
+- The mermaid diagram must show surfaces, service layer, and domain crates as separate subgraphs.
+- Apply the deletion test honestly — if a module is shallow, say so.
+- Constraint force classifications must map to hKask's Magna Carta principles where applicable.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

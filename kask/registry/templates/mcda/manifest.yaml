@@ -3,7 +3,7 @@
 
 crate:
   name: mcda
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Multi-Criteria Decision Analysis. Identifies decision criteria, weights
     and scores alternatives, ranks options with compensation masking detection,

@@ -3,7 +3,7 @@
 
 crate:
   name: gml
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     The Generative Meaning Layer — a Monod-Wyman-Changeux allosteric model for
     concept interpretation. Models conceptual flexibility as equilibrium between

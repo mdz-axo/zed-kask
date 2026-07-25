@@ -3,7 +3,7 @@
 
 crate:
   name: web
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Web search and research templates. Performs quick, news, and deep
     multi-provider searches with RRF fusion, extracts and synthesizes URL

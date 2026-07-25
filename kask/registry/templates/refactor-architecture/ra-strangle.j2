@@ -1,0 +1,233 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- deepen
+- design
+- constrain
+- verify
+- crystallize
+- migrate
+- extract
+contract:
+  input:
+    domain: string
+    service_module_name: string
+    current_cli_path: string
+    current_api_path: string
+    service_context_design: object
+    known_adrs: array
+    constraint_forces: array
+  output:
+    migration_plan: object
+    service_interface: array
+    cli_adapter: object
+    api_adapter: object
+    test_seam: object
+    deletion_targets: array
+    verification_steps: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: refactor-service-layer/rsl-strangle.j2 #}
+{# Functional Role: KnowAct — Plan a strangler fig migration for a selected domain #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: migration_plan, service_interface, cli_adapter, api_adapter, test_seam, deletion_targets, verification_steps #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a service layer migration agent. Execute the strangler fig pattern for a selected domain: create the service operation, wire CLI, wire API, delete duplication, verify. Enforce one-domain-per-commit discipline and surgical change scope.
+
+## Selected Domain
+
+{{ domain }}
+
+## Service Module Name
+
+{{ service_module_name }}
+
+## Current CLI Path
+
+{{ current_cli_path }}
+
+## Current API Path
+
+{{ current_api_path }}
+
+{% if service_context_design %}
+## ServiceContext Design
+
+```json
+{{ service_context_design | tojson }}
+```
+{% endif %}
+
+{% if known_adrs %}
+## Known ADRs
+
+```json
+{{ known_adrs | tojson }}
+```
+{% endif %}
+
+{% if constraint_forces %}
+## Constraint Forces
+
+```json
+{{ constraint_forces | tojson }}
+```
+{% endif %}
+
+## Migration Process (Strangler Fig)
+
+Execute these steps IN ORDER. Each step produces a verifiable output. Do not proceed to the next step until the current step passes.
+
+### Step 1 — RED: Write Service Seam Test
+
+Write one failing test per service operation in `hkask-services`. Each test must:
+- Exercise the public interface of the service module
+- Use a `ServiceContext` (or mock) to provide dependencies
+- Verify a domain behavior, not a surface presentation
+- Carry a contract annotation (`expect:` + `[P{N}]`) referencing a functional requirement
+
+**Pattern (not actual API — adapt to your service crate's conventions):**
+
+```rust
+// expect: "I can [domain operation] through the [service name]"
+// [P{N}] The test exercises a public seam with a stated behavioral property
+#[tokio::test]
+async fn service_operation_test() {
+    // Build test context using your service crate's test harness
+    // let ctx = your_crate::test_utils::build_test_context();
+    // let result = YourService::operation(&ctx).await;
+    // assert!(result.is_ok());
+}
+```
+
+### Step 2 — GREEN: Implement Service Operation
+
+Implement the minimal code to pass the test. The service calls domain crates directly — no surface code copied. The service returns domain types (`Vec<EscalationEntry>`), not surface DTOs.
+
+### Step 3 — Wire CLI Adapter
+
+Change the CLI command handler to call the service operation and format terminal output. Delete the duplicate business logic from the CLI command file.
+
+Verify: `cargo test -p <cli-crate>`
+
+### Step 4 — Wire API Adapter
+
+Change the API route handler to call the same service operation and serialize to JSON. Delete the duplicate business logic from the API route file.
+
+Verify: `cargo test -p <api-crate>`
+
+### Step 5 — Delete Duplicated Logic
+
+Remove all duplicated business logic from both surfaces. Surface files now contain only I/O framing.
+
+### Step 6 — Verify Full Workspace
+
+```bash
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+```
+
+**Note:** Replace `<cli-crate>`, `<api-crate>`, and `<service-crate>` above with your project's actual crate names (e.g., `hkask-cli`, `hkask-api`, `hkask-services`).
+
+## Glossary
+
+- **Strangler Fig** — Introduce new alongside old, migrate one domain at a time, delete duplication only after both surfaces delegate
+- **Service Seam** — The public interface of a service module: domain types in, domain types out, no surface types
+- **Adapter** — The thin surface layer that calls a service operation and translates to presentation format (terminal output or JSON)
+- **Depth** — Leverage at the interface: a lot of behaviour behind a small interface
+- **Deletion Test** — Imagine deleting the module. If complexity vanishes, it was shallow. If complexity reappears across N callers, it earns its keep.
+
+## Dependency Direction Rule
+
+```
+hkask-cli ──→ hkask-services ──→ hkask-agents
+hkask-api  ──→ hkask-services ──→ hkask-regulation
+                                ──→ hkask-memory
+                                ──→ hkask-templates
+                                ──→ hkask-types
+                                ──→ hkask-storage
+```
+
+Domain crates NEVER depend on `hkask-services`. Circular dependency = wrong boundary.
+
+## Surgical Change Discipline
+
+Each step touches exactly one domain. No cross-domain refactors. No style changes. Every changed line traces to the extraction. If you can't explain why a line changed, it doesn't belong.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "migration_plan": {
+    "domain": "curator",
+    "service_module": "CuratorService",
+    "service_interface": [
+      {
+        "function": "list_escalations",
+        "signature": "pub async fn list_escalations(ctx: &ServiceContext) -> Result<Vec<EscalationEntry>, ServiceError>",
+        "behavior": "List all pending escalations from the shared escalation queue"
+      }
+    ],
+    "cli_adapter": {
+      "file": "cli/commands/curator.rs",
+      "change": "Replace direct EscalationQueue::new + list_pending with CuratorService::list_escalations call",
+      "deletion_targets": ["open_registry_db call", "EscalationQueue construction", "list_pending call"]
+    },
+    "api_adapter": {
+      "file": "api/routes/curator.rs",
+      "change": "Replace direct EscalationQueue access with CuratorService::list_escalations call",
+      "deletion_targets": ["State.escalation_queue clone", "queue.list_pending"]
+    },
+    "test_seam": {
+      "service_test": "hkask-services::curator::tests::list_escalations_via_service",
+      "cli_test": "hkask-cli integration test for curator subcommand",
+      "api_test": "hkask-api integration test for GET /api/v1/curator/escalations"
+    },
+    "deletion_targets": [
+      "cli/commands/curator.rs: open_registry_db + EscalationQueue::new + list_pending logic",
+      "api/routes/curator.rs: State.escalation_queue access in list_escalations handler"
+    ],
+    "verification_steps": [
+      "cargo test -p <service-crate>",
+      "cargo test -p <cli-crate>",
+      "cargo test -p <api-crate>",
+      "cargo check --workspace",
+      "cargo test --workspace",
+      "cargo clippy --workspace -- -D warnings"
+    ]
+  }
+}
+```
+
+## Constraints
+
+- One domain per migration. No cross-domain changes.
+- Service module must be deep: small interface, much behavior behind it.
+- No surface types in service signatures (no `Json<T>`, no `println!`).
+- Every test must be anchored on a contract (`expect:` + `[P{N}]` annotation).
+- Dependency direction is inviolable: no circular dependencies.
+- P6: No `todo!()` or `unimplemented!()` stubs.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+
+{% if safety_mode %}
+## Safety Mode
+
+Safety mode is enabled. Additional restrictions:
+- No file system access
+- No network calls
+- No environment variable access
+- Strict Jinja2 sandbox enforcement
+{% endif %}

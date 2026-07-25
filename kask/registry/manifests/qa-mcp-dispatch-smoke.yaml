@@ -4,7 +4,7 @@
 # multiple MCP servers to verify McpRuntime → Peer → rmcp dispatch.
 #
 # Targets:
-#   - skill_ping (hkask-mcp-skill)
+#   - curator_ping (hkask-mcp-curator)
 #   - kanban_board_list (hkask-mcp-kata-kanban)
 #   - condenser_ping (hkask-mcp-condenser)
 #
@@ -12,6 +12,10 @@
 # MCP dispatch support.
 #
 # Runner readiness: NEEDS RUNNER — all steps are mcp_tool.
+#
+# Note: Formerly targeted skill_ping on hkask-mcp-skill, which was removed
+# when skill execution became native (no longer routed through a separate
+# MCP server). Replaced with curator_ping on hkask-mcp-curator.
 
 manifest:
   id: qa-mcp-dispatch-smoke
@@ -21,7 +25,7 @@ manifest:
   visibility: Private
   description: >
     End-to-end smoke test for MCP tool dispatch in the QA runner.
-    Calls skill_ping, kanban_board_list, and condenser_ping to verify
+    Calls curator_ping, kanban_board_list, and condenser_ping to verify
     McpRuntime → Peer → rmcp JSON-RPC dispatch works across servers.
     All steps require QaScriptRunner with mcp_tool support.
 
@@ -31,12 +35,12 @@ gas:
   hard_limit: true
 
 steps:
-  # Step 1: Call skill_ping — skill server starts fast, no heavy deps
+  # Step 1: Call curator_ping — curator server starts fast, no heavy deps
   - ordinal: 1
     action: mcp_tool
-    tool_name: skill_ping
+    tool_name: curator_ping
     tool_params: "{}"
-    description: "Call skill_ping via MCP dispatch"
+    description: "Call curator_ping via MCP dispatch"
     retries: 0
     branching:
       success: 2
@@ -67,16 +71,16 @@ steps:
   # Step 4: PASS
   - ordinal: 4
     action: run_command
-    command: "echo '[QA:mcp-dispatch] PASS — skill_ping, kanban_board_list, condenser_ping all dispatched successfully'"
-    description: "All MCP tool dispatch calls succeeded"
+    command: "echo '[QA:mcp-dispatch] PASS — curator_ping, kanban_board_list, condenser_ping all dispatched successfully'",
+    description: "All MCP tool dispatch calls succeeded",
     retries: 0
     terminal: true
 
-  # Step 5: skill_ping failed
+  # Step 5: curator_ping failed
   - ordinal: 5
     action: run_command
-    command: "echo '[QA:mcp-dispatch] FAIL — skill_ping dispatch failed'"
-    description: "skill_ping MCP dispatch failure"
+    command: "echo '[QA:mcp-dispatch] FAIL — curator_ping dispatch failed'",
+    description: "curator_ping MCP dispatch failure",
     retries: 0
     terminal: true
 

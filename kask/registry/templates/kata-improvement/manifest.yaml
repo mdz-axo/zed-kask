@@ -3,7 +3,7 @@
 
 crate:
   name: kata-improvement
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     4-step Improvement Kata templates for scientific capability development.
     Step 1: Understand Direction. Step 2: Grasp Current Condition.

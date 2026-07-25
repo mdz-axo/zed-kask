@@ -1,5 +1,5 @@
 # Web News Timeline Manifest
-# ℏKask v0.21.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: mcp/web-news-timeline
@@ -8,7 +8,7 @@ manifest:
   description: >
     News-oriented search with recency ranking and timeline output.
     Searches news-capable providers, buckets results by recency, and produces a chronological summary.
-  version: 0.21.0
+  version: 0.31.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public

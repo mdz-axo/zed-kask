@@ -3,7 +3,7 @@
 
 crate:
   name: structured-extraction
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Structured data extraction from unstructured text. Identifies entities,
     extracts inter-entity relations, and maps extracted data to target

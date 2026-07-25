@@ -3,7 +3,7 @@
 
 crate:
   name: curator
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     The canonical system persona for hKask. Gathers system state, diagnoses
     issues, calibrates thresholds, escalates critical alerts, and maintains

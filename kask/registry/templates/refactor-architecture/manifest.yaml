@@ -1,0 +1,85 @@
+# Template crate manifest for refactor-architecture skill
+# hKask v0.31.0
+# Merged from improve-codebase-architecture + refactor-service-layer
+
+crate:
+  name: refactor-architecture
+  version: "0.31.0"
+  description: >
+    End-to-end architecture refactoring templates. Discover phase: explore
+    friction, rank deepening candidates, walk the design tree, route decisions.
+    Execution phase: audit duplication, plan strangler-fig migration, verify
+    integrity. Includes migration-strategy phase (folded from strangler-fig).
+
+templates:
+  # -- Discover phase (folded from improve-codebase-architecture) --
+  - id: refactor-architecture/ra-explore
+    name: "Explore the codebase for architectural friction"
+    path: ra-explore.j2
+    type: KnowAct
+    lexicon_terms: [detect, explore, classify, discriminate, orient]
+    description: >
+      Explore the codebase for architectural friction: shallow modules, tight
+      coupling, missing locality, wide import surfaces, untested code. Apply
+      the deletion test to suspected shallowness.
+
+  - id: refactor-architecture/ra-candidates
+    name: "Present deepening candidates with files, problem, solution, benefits"
+    path: ra-candidates.j2
+    type: KnowAct
+    lexicon_terms: [assess, rank, propose, evaluate, specify]
+    description: >
+      Present deepening candidates with files, problem, solution, benefits
+      (leverage and locality), and recommendation strength. Use hKask domain
+      vocabulary. Ask user which to explore.
+
+  - id: refactor-architecture/ra-deepen
+    name: "Grill loop for a selected candidate: walk the design tree"
+    path: ra-deepen.j2
+    type: KnowAct
+    lexicon_terms: [deepen, design, constrain, verify, crystallize]
+    description: >
+      Grill loop for a selected candidate: walk the design tree, define the
+      deepened module shape, identify seams and adapters, confirm test surface.
+      Update glossary and ADRs inline as decisions crystallize.
+
+  - id: refactor-architecture/ra-route
+    name: "Route a deepened architecture design to the appropriate follow-up"
+    path: ra-route.j2
+    type: KnowAct
+    lexicon_terms: [route, decide, recommend, delegate, classify]
+    description: >
+      Route a deepened architecture design to the appropriate follow-up action
+      (proceed_to_refactor, need_more_data, defer_or_reject).
+
+  # -- Execution phase (folded from refactor-service-layer) --
+  - id: refactor-architecture/ra-audit
+    name: "Audit and classify all duplicated operations across CLI, API, and MCP"
+    path: ra-audit.j2
+    type: KnowAct
+    lexicon_terms: [detect, explore, classify, discriminate, orient, assess, rank]
+    description: >
+      Audit and classify all duplicated operations across CLI, API, and MCP surfaces.
+      Apply the deletion test to each candidate. Produce RDF triples, classification
+      table, and mermaid entity-relationship diagram of the duplication landscape.
+
+  - id: refactor-architecture/ra-strangle
+    name: "Plan the strangler-fig migration for a selected domain"
+    path: ra-strangle.j2
+    type: KnowAct
+    lexicon_terms: [deepen, design, constrain, verify, crystallize, migrate, extract]
+    description: >
+      Plan the strangler-fig migration for a selected domain: define the new
+      service operation, design CLI/API adapters, identify duplication to delete,
+      and list verification steps. Enforces one-domain-per-commit discipline,
+      dependency direction checks, and surgical change scope.
+
+  - id: refactor-architecture/ra-verify
+    name: "Verify surgical completeness after a domain migration or full extraction"
+    path: ra-verify.j2
+    type: KnowAct
+    lexicon_terms: [verify, assess, validate, discriminate, crystallize]
+    description: >
+      Verify surgical completeness after a domain migration or full extraction:
+      dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite,
+      deletion test on service modules. Produces a structured pass/fail report.

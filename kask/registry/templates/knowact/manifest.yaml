@@ -3,7 +3,7 @@
 
 crate:
   name: knowact
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Core cognitive operations for agent self-awareness and adaptation. Detects
     behavioral drift from baselines, recalibrates agent profiles, analyzes

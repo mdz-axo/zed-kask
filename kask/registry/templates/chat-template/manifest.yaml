@@ -5,7 +5,7 @@
 
 infrastructure:
   name: chat-template
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Chat session configuration: agent persona definitions and dispatch manifests.
     Referenced by the runtime at session start.

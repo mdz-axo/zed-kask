@@ -3,7 +3,7 @@
 
 crate:
   name: rag
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Retrieval-Augmented Generation pipeline. Reformulates queries for improved
     retrieval, synthesizes grounded answers with inline citations, and verifies

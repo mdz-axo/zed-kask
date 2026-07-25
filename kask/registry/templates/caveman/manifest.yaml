@@ -3,7 +3,7 @@
 
 crate:
   name: caveman
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Ultra-compressed communication mode. Cuts token usage ~75% by dropping
     filler, articles, and pleasantries while keeping full technical accuracy.

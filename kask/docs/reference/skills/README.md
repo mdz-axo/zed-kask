@@ -40,7 +40,7 @@ last-verified-against: "b922e9529"
 
 ---
 
-## Core Development (10 skills)
+## Core Development (8 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -48,8 +48,7 @@ last-verified-against: "b922e9529"
 | `tdd` | Skill | Test-driven development: RED → GREEN → REFACTOR loop | `registry/manifests/tdd.yaml` · `registry/templates/tdd/` |
 | `diagnose` | Skill | Disciplined diagnosis loop: reproduce → anchor → hypothesise → instrument → fix → regression-test | `registry/manifests/diagnose.yaml` · `registry/templates/diagnose/` |
 | `deep-module` | Skill | Module design via Ousterhout's deletion test and interface minimalism (≤7 public functions) | `registry/manifests/deep-module.yaml` · `registry/templates/deep-module/` |
-| `refactor-service-layer` | Skill | Extract shared service layer via strangler fig pattern (includes migration-strategy phase folded from strangler-fig) | `registry/manifests/refactor-service-layer.yaml` · `registry/templates/refactor-service-layer/` |
-| `improve-codebase-architecture` | Skill | Find deepening opportunities in codebases | `registry/manifests/improve-codebase-architecture.yaml` · `registry/templates/improve-codebase-architecture/` |
+| `refactor-architecture` | Skill | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity. Merged from improve-codebase-architecture + refactor-service-layer + strangler-fig. | `registry/manifests/refactor-architecture.yaml` · `registry/templates/refactor-architecture/` |
 | `idiomatic-rust` | Skill | Type-driven Rust design through Graydon Hoare's principles | `registry/manifests/idiomatic-rust.yaml` · `registry/templates/idiomatic-rust/` |
 | `task-breakdown` | Skill | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing | `registry/manifests/task-breakdown.yaml` · `registry/templates/task-breakdown/` |
 | `codegraph` | Skill | Code understanding: discover, map, query, and assemble context from the code graph (includes context-expansion mode folded from zoom-out) | `registry/manifests/codegraph.yaml` · `registry/templates/codegraph/` |
@@ -132,14 +131,14 @@ last-verified-against: "b922e9529"
 | Category | Count | Types |
 |----------|-------|-------|
 | Guardrails | 1 | Skill |
-| Core Development | 10 | Skills |
+| Core Development | 8 | Skills |
 | Reasoning & Analysis | 7 | Skills |
 | Kata & Coaching | 3 skills + 1 composition | Skills + Composition |
 | Meta & Maintenance | 6 skills + 1 template | Skills + Template |
 | Security & Posture | 3 | Skills |
 | Specialized | 10 skills + 2 templates | Skills + Template |
-| **Catalogued here** | **42 skills + 3 templates + 1 bundle** | **46 capabilities** |
+| **Catalogued here** | **40 skills + 3 templates + 1 bundle** | **44 capabilities** |
 
 > **Filesystem reality:** `registry/templates/` contains 82 template directories; `registry/manifests/` contains 92 FlowDef manifests (43 category=skill, 49 non-skill). `.agents/skills/` contains 47 SKILL.md directories (41 with a corresponding skill-category FlowDef manifest, 6 template-only or non-skill: `gpui-test`, `lint-creator`, `lora-training`, `qa-script-builder`, `skill-router`, `zed-cherry-pick`). Of those 6, three are catalogued here as `Template` type (`lora-training`, `qa-script-builder`, `skill-router`); the other three (`gpui-test`, `lint-creator`, `zed-cherry-pick`) are Zed-project-local skills not surfaced in this hKask registry catalog. The kata bundle is a registry manifest composing kata-coaching and kata-improvement (kata-starter folded into kata-improvement) — not a separate `.agents/skills/` directory.
 >
-> **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Archived `magna-carta-verifier` (deleted; recoverable from git history).
+> **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).

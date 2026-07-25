@@ -41,7 +41,7 @@ Session context transfer skill. Compacts the current conversation into a structu
 ### 3. Suggest skills and extract open questions (handoff-skills-suggest)
 
 1. Analyze the session's domain, remaining work, and artifact types to recommend skills the next agent should invoke.
-2. Match skills by domain and task type — debugging → diagnostic/tdd skills, architecture → improve-codebase-architecture, code quality → coding-guidelines/metacognition.
+2. Match skills by domain and task type — debugging → diagnostic/tdd skills, architecture → refactor-architecture, code quality → coding-guidelines/metacognition.
 3. Match skills by project stage — pre-implementation → grill-me, hypothesis-framer, mcda; mid-implementation → tdd, diagnose, deep-module; post-implementation → metacognition, caveman.
 4. Use hKask naming conventions (lowercase, hyphenated) for skill IDs. Recommend by describing what the next agent needs to do.
 5. Assign priority levels: `critical` (must invoke), `recommended` (should invoke), `optional` (may invoke). Maximum 5 suggestions.

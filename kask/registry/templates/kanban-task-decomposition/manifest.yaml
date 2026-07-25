@@ -3,7 +3,7 @@
 
 crate:
   name: kanban-task-decomposition
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Project-to-task decomposition for agent kanban coordination. Gathers
     structured context, decomposes work into INVEST-compliant tasks at the

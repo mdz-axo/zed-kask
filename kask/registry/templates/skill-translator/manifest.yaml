@@ -3,7 +3,7 @@
 
 crate:
   name: skill-translator
-  version: "0.30.0"
+  version: "0.31.0"
   description: >
     Translate external skill definitions into hKask-compatible structures.
     Supports iterative normalization and validation with convergence checks.

@@ -5,7 +5,7 @@
 
 infrastructure:
   name: git
-  version: "0.28.0"
+  version: "0.31.0"
   description: >
     Git MCP operation selectors and dispatch configuration. Maps git operations
     to MCP server tool invocations.

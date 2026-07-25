@@ -1,6 +1,6 @@
 # File: registry/manifests/hemingway-style-synthesizer.yaml
 # Hemingway Style Synthesizer Process Manifest
-# ℏKask v0.23.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: hemingway-style-synthesizer
@@ -14,7 +14,7 @@ manifest:
     implicit semantic subordination, strategic polysyndeton/asyndeton.
     Generative layer uses Stanley Fish form-first approach and RDF triple model.
     Embedding layer uses Qwen/Qwen3-Embedding-0.6B for exemplar retrieval and centroid validation.
-  version: 0.23.0
+  version: 0.31.0
   editor: curator
   visibility: Public
 

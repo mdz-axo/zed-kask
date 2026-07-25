@@ -131,12 +131,10 @@ pub enum FusionSkill {
     GrillMe,
     #[serde(rename = "idiomatic-rust")]
     IdiomaticRust,
-    #[serde(rename = "improve-codebase-architecture")]
-    ImproveCodebaseArchitecture,
+    #[serde(rename = "refactor-architecture")]
+    RefactorArchitecture,
     #[serde(rename = "metacognition")]
     Metacognition,
-    #[serde(rename = "refactor-service-layer")]
-    RefactorServiceLayer,
 }
 
 crate::enum_snake_str!(FusionSkill, {
@@ -153,9 +151,8 @@ crate::enum_snake_str!(FusionSkill, {
     Falsifiability => "falsifiability",
     GrillMe => "grill-me",
     IdiomaticRust => "idiomatic-rust",
-    ImproveCodebaseArchitecture => "improve-codebase-architecture",
+    RefactorArchitecture => "refactor-architecture",
     Metacognition => "metacognition",
-    RefactorServiceLayer => "refactor-service-layer",
 });
 
 /// Configuration for fusion multi-model deliberation.
