@@ -1,0 +1,66 @@
+# zed-kask CI — runs on standard GitHub Actions runners (no Namespace, no sccache).
+# This workflow is fork-specific and does not replace upstream's run_tests.yml
+# (which is gated on repository_owner == 'zed-industries' and skipped on forks).
+name: kask-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ['**']
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  CARGO_INCREMENTAL: '0'
+  CC: clang
+  CXX: clang++
+
+jobs:
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        run: ./script/linux
+      - name: Clippy
+        run: ./script/clippy
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        run: ./script/linux
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: Run tests
+        run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        run: ./script/linux
+      - name: Build all binaries
+        run: cargo build --workspace --bins

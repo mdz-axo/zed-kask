@@ -816,8 +816,9 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
             let rss_client = Client::builder()
                 .user_agent(format!("hkask-mcp-research/{}", SERVER_VERSION))
                 .build()
-                .map_err(|e| {
-                    hkask_mcp_server::McpError::from(std::io::Error::other(e.to_string()))
+                .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "research rss client build".into(),
+                    detail: e.to_string(),
                 })?;
 
             Ok(ResearchServer::new(

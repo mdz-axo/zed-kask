@@ -9214,7 +9214,6 @@ version = "0.31.0"
 dependencies = [
  "async-trait",
  "hkask-capability",
- "hkask-mcp-server",
  "hkask-regulation",
  "hkask-types",
  "jsonschema 0.28.3",

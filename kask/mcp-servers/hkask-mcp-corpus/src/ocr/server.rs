@@ -99,43 +99,27 @@ impl CorpusServer {
         (text, word_count, outcome)
     }
 
-    /// Persist pipeline outcome to daemon for Regulation observability.
+    /// Persist pipeline outcome for Regulation observability.
     pub async fn persist_pipeline_outcome(&self, outcome: &crate::ocr::PipelineOutcome) {
-        if let Some(ref daemon) = self.daemon {
-            let daemon_clone = daemon.clone();
-            let userpod = self.userpod.clone();
-            let data = serde_json::json!({
-                "total_pages": outcome.results.len(),
-                "error_count": outcome.errors.len(),
-                "verification_passed": outcome.report.passed,
-                "page_count_match": outcome.report.page_count_match,
-                "empty_pages": outcome.report.empty_pages,
-                "cross_validations": outcome.cross_validations.len(),
-                "backend_distribution": outcome.results.iter()
-                    .fold(std::collections::HashMap::new(), |mut acc, r| {
-                        *acc.entry(r.backend.label().to_string()).or_insert(0) += 1;
-                        acc
-                    }),
-            });
-            tokio::spawn(async move {
-                match daemon_clone
-                    .store_experience(&userpod, "ocr_pipeline", "verification", &data, Some(0.85))
-                    .await
-                {
-                    Ok(hkask_mcp_server::DaemonResponse::StoreResponse {
-                        stored: true, ..
-                    }) => {
-                        tracing::debug!(target: "hkask.mcp.docproc.reg", "Pipeline outcome persisted to daemon");
-                    }
-                    Ok(other) => {
-                        tracing::warn!(target: "hkask.mcp.docproc.reg", response = ?other, "Unexpected daemon response");
-                    }
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.mcp.docproc.reg", error = %e, "Failed to persist pipeline outcome");
-                    }
-                }
-            });
-        }
+        let data = serde_json::json!({
+            "total_pages": outcome.results.len(),
+            "error_count": outcome.errors.len(),
+            "verification_passed": outcome.report.passed,
+            "page_count_match": outcome.report.page_count_match,
+            "empty_pages": outcome.report.empty_pages,
+            "cross_validations": outcome.cross_validations.len(),
+            "backend_distribution": outcome.results.iter()
+                .fold(std::collections::HashMap::new(), |mut acc, r| {
+                    *acc.entry(r.backend.label().to_string()).or_insert(0) += 1;
+                    acc
+                }),
+        });
+        tracing::debug!(
+            target: "hkask.mcp.docproc.reg",
+            userpod = %self.userpod,
+            detail = ?data,
+            "Pipeline outcome recorded (no daemon — in-process only)",
+        );
 
         self.accumulate_and_check_drift(outcome);
     }

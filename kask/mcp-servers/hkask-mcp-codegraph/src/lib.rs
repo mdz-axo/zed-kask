@@ -401,11 +401,17 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                 match &db_path {
                     Some(path) => {
                         crate::codegraph::graph::store::GraphStore::open(path).map_err(|e| {
-                            hkask_mcp_server::McpError::from(std::io::Error::other(e.to_string()))
+                            hkask_mcp_server::McpError::UnexpectedResponse {
+                                context: "codegraph graph store open".into(),
+                                detail: e.to_string(),
+                            }
                         })?
                     }
                     None => crate::codegraph::graph::store::GraphStore::open_in_memory().map_err(
-                        |e| hkask_mcp_server::McpError::from(std::io::Error::other(e.to_string())),
+                        |e| hkask_mcp_server::McpError::UnexpectedResponse {
+                            context: "codegraph graph store open_in_memory".into(),
+                            detail: e.to_string(),
+                        },
                     )?,
                 };
             let pipeline = IndexPipeline::new(store);

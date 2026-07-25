@@ -47,6 +47,7 @@
 //!
 //! `.env` is deprecated for this server — deployment settings must come from
 //! the OS keychain (`kask keystore load`) or the explicit process environment.
+use crate::providers::harness::HarnessAdapter;
 use crate::providers::types::*;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -218,7 +219,7 @@ impl RunpodHost {
             .jobs
             .lock()
             .map(|m| m.clone())
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(|e| e.into_inner().clone());
         let json = match serde_json::to_string_pretty(&map) {
             Ok(j) => j,
             Err(e) => {
@@ -716,6 +717,7 @@ pub fn generate_install_script(
     Ok(script)
 }
 
+#[async_trait::async_trait]
 impl TrainingHost for RunpodHost {
     async fn submit(&self, job: &TrainingJob) -> Result<String, ProviderError> {
         // GPU selection: operator-accepted `RUNPOD_GPU_TYPE_ID` (resolved

@@ -912,9 +912,11 @@ impl CompaniesServer {
                 .await?;
             }
 
-            // Store in daemon
-            if let Some(ref daemon) = self.daemon {
-                let mut value = serde_json::json!({
+            self.record_experience(
+                "forecast_record",
+                &format!("symbol={}", req.symbol),
+                "outcome_recorded",
+                serde_json::json!({
                     "symbol": req.symbol,
                     "forecast_date": req.forecast_date,
                     "horizon": req.horizon,
@@ -926,25 +928,11 @@ impl CompaniesServer {
                     "multiple_brier": multiple_brier,
                     "return_brier": return_brier,
                     "combined_brier": combined,
+                    "decomposition": decomposition,
+                    "forecast_id": req.forecast_id,
                     "timestamp": now_rfc3339(),
-                });
-                if let Some(ref dec) = decomposition {
-                    value["decomposition"] = dec.clone();
-                }
-                if let Some(ref fid) = req.forecast_id {
-                    value["forecast_id"] = serde_json::Value::String(fid.clone());
-                }
-                let daemon_clone = daemon.clone();
-                let userpod = self.userpod.clone();
-                let symbol = req.symbol.clone();
-                #[allow(clippy::let_underscore_future)]
-                let _ = tokio::spawn(async move {
-                    let _ = daemon_clone.store_experience(
-                        &userpod, &format!("forecast_outcome:{symbol}"), "outcome_recorded",
-                        &value, Some(0.95),
-                    ).await;
-                });
-            }
+                }),
+            );
 
             let mut output = serde_json::json!({
                 "status": "recorded",
@@ -1009,31 +997,20 @@ impl CompaniesServer {
             // Accept empty feedback as an acknowledgment (no score, no comments = "I saw it")
             let has_feedback = score.is_some() || !comments.is_empty();
 
-            // Store feedback as a daemon experience linked to the original tool.
-            if let Some(ref daemon) = self.daemon {
-                let value = serde_json::json!({
+            // Record feedback as an experience linked to the original tool.
+            self.record_experience(
+                &tool,
+                &query,
+                "user_rated",
+                serde_json::json!({
                     "tool": tool,
                     "query": query,
                     "score": score,
                     "comments": comments,
                     "has_feedback": has_feedback,
                     "timestamp": now_rfc3339(),
-                });
-                let daemon_clone = daemon.clone();
-                let userpod = self.userpod.clone();
-                let tool_for_spawn = tool.clone();
-                tokio::spawn(async move {
-                    let _ = daemon_clone
-                        .store_experience(
-                            &userpod,
-                            &format!("feedback:{tool_for_spawn}"),
-                            "user_rated",
-                            &value,
-                            Some(0.95),
-                        )
-                        .await;
-                });
-            }
+                }),
+            );
 
             // Kanban-style learning: feedback updates in-process state.
             // Extracts symbol from query to track per-symbol provider quality.

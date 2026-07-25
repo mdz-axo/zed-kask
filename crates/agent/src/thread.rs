@@ -3259,25 +3259,6 @@ impl Thread {
                     }
                 })?;
             } else if end_turn {
-                // Don't end the turn if there are pending deferred tool
-                // results. The outer loop will drain them on the next
-                // iteration. Use a short GPUI timer to yield control so
-                // deferred tasks can make progress without busy-spinning.
-                let has_pending_deferred =
-                    this.read_with(cx, |this, _| !this.deferred_tool_results.is_empty())?;
-                if has_pending_deferred {
-                    log::debug!("Turn has pending deferred results, yielding to executor");
-                    // Yield control to the executor so deferred tasks (e.g.
-                    // subagent turns) can make progress. A zero-duration timer
-                    // cooperates with the GPUI scheduler without adding real
-                    // delay.
-                    cx.background_executor().timer(Duration::ZERO).await;
-                    if *cancellation_rx.borrow() {
-                        return Ok(());
-                    }
-                    intent = CompletionIntent::ToolResults;
-                    continue;
-                }
                 return Ok(());
             } else {
                 let end_at_boundary =
@@ -6338,6 +6319,7 @@ pub struct ToolCallEventStream {
     /// The index in `Thread.messages` of the agent message containing the
     /// `ToolUse` block for this tool call. Used by `enqueue_deferred_result`
     /// to inject the deferred result into the correct message.
+    #[allow(dead_code)]
     owning_message_ix: usize,
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
@@ -6364,6 +6346,7 @@ impl ToolCallEventStream {
     ///
     /// Returns `true` if the deferred result was successfully enqueued,
     /// `false` if the parent thread is no longer alive.
+    #[allow(dead_code)]
     pub(crate) fn enqueue_deferred_result(
         &self,
         tool_name: Arc<str>,

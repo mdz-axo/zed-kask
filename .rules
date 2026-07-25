@@ -36,6 +36,18 @@
 
 GPUI is a UI framework which also provides primitives for state and concurrency management.
 
+## No `block_on` on the foreground thread
+
+Never use `futures::executor::block_on` (or any blocking executor) inside a sync trait method that is called from the GPUI foreground thread. If the underlying future needs the GPUI or tokio executor to make progress, `block_on` will deadlock. Instead, make the trait method async (return `Pin<Box<dyn Future>>`) and await it in an async context like `run_turn_internal`.
+
+## Mutating `Arc<Message>` in `Thread.messages`
+
+When injecting deferred tool results into a stored `Arc<Message>`, do not use `Arc::get_mut` — it silently returns `None` when the Arc is shared (e.g., after a DB save clones the message), dropping the result. Instead, read the `AgentMessage` from the `Arc`, clone it (`AgentMessage` derives `Clone`), modify the clone, and replace the `Arc` in the vector.
+
+## Deferred results and the turn loop
+
+The `end_turn` path in `run_turn_internal` must not busy-spin or use timers to wait for pending deferred tool results — the GPUI test scheduler's `run_until_parked` will fail with "Parking forbidden" if a foreground task is alive but waiting. If deferred results are pending at `end_turn`, let the turn end. The results will be drained on the next turn iteration (triggered by a user message or `cx.notify()`).
+
 ## Context
 
 Context types allow interaction with global state, windows, entities, and system services. They are typically passed to functions as the argument named `cx`. When a function takes callbacks they come after the `cx` parameter.

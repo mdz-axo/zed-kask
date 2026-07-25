@@ -19,7 +19,6 @@ jsonschema = "0.28"
 
 [dev-dependencies]
 async-trait.workspace = true
-hkask-mcp-server = { path = "../hkask-mcp-server" }
 tempfile.workspace = true
 proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }
