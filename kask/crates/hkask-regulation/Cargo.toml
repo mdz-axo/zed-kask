@@ -7,9 +7,8 @@ description = "Cybernetic Nervous System for hKask"
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
-# dependency per hexagonal architecture: Regulation defines the interface it needs,
-# and hkask-wallet implements it. Per Conant-Ashby, the regulator models the
-# system via the abstract port, not the concrete type.
+# Regulation defines WalletBudgetPort; regulation::WalletManager implements it
+# directly (gas/rJoule tracking without chain/wallet infrastructure).
 hkask-storage = { path = "../hkask-storage" }
 
 serde.workspace = true

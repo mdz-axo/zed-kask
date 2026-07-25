@@ -16,7 +16,6 @@ hkask-storage = { path = "../hkask-storage" }
 hkask-templates = { path = "../hkask-templates" }
 hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
-hkask-wallet = { path = "../hkask-wallet" }
 serde_json.workspace = true
 async-trait.workspace = true
 parking_lot = "0.12"

@@ -1717,6 +1717,7 @@ impl Thread {
             let tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 tool_call_id.clone(),
+                message_ix,
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
@@ -3996,6 +3997,7 @@ impl Thread {
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             tool_call_id,
+            owning_message_ix,
             event_stream.clone(),
             Some(fs),
             cancellation_rx,
@@ -6354,16 +6356,14 @@ impl ToolCallEventStream {
     /// `spawn_agent`) that return an immediate placeholder and deliver the
     /// real result later.
     ///
-    /// `owning_message_ix` is the index of the agent message containing the
-    /// original `ToolUse` block. `tool_name` is used for error synthesis if
-    /// the deferred task fails.
+    /// `tool_name` is used for error synthesis if the deferred task fails.
+    /// The `owning_message_ix` is read from `self` (set at construction
+    /// time by `run_tool`).
     ///
     /// Returns `true` if the deferred result was successfully enqueued,
     /// `false` if the parent thread is no longer alive.
-    #[allow(dead_code)]
     pub(crate) fn enqueue_deferred_result(
         &self,
-        owning_message_ix: usize,
         tool_name: Arc<str>,
         receiver: oneshot::Receiver<Result<LanguageModelToolResult>>,
         cx: &mut App,
@@ -6377,7 +6377,7 @@ impl ToolCallEventStream {
         thread.update(cx, |thread, _cx| {
             thread.enqueue_deferred_tool_result(
                 self.tool_use_id.clone(),
-                owning_message_ix,
+                self.owning_message_ix,
                 tool_name,
                 receiver,
             );
@@ -6405,6 +6405,7 @@ impl ToolCallEventStream {
         let stream = ToolCallEventStream::new(
             "test_id".into(),
             acp::ToolCallId::new("test_id"),
+            0,
             ThreadEventStream(events_tx),
             None,
             cancellation_rx,
@@ -6423,6 +6424,7 @@ impl ToolCallEventStream {
         let stream = ToolCallEventStream::new(
             "test_id".into(),
             acp::ToolCallId::new("test_id"),
+            0,
             ThreadEventStream(events_tx),
             None,
             cancellation_rx,

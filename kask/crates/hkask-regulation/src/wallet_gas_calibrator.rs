@@ -237,7 +237,7 @@ mod tests {
     use hkask_types::RegulationSink;
     use hkask_types::WebID;
     use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
-    use hkask_wallet::GAS_PER_RJOULE;
+    use hkask_types::GAS_PER_RJOULE;
     use std::sync::Mutex;
 
     /// A test event sink that captures the last persisted event.
@@ -268,26 +268,13 @@ mod tests {
             Ok(())
         }
     }
-    use hkask_wallet::WalletManager;
+    use crate::wallet_manager::WalletManager;
     use std::collections::HashMap;
 
     fn make_wallet_manager() -> Arc<dyn WalletBudgetPort> {
-        // SAFETY: test-only env var set in single-threaded test context.
-        unsafe {
-            std::env::set_var(
-                "HKASK_MASTER_KEY",
-                "xXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxX",
-            );
-        }
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let store = Arc::new(hkask_storage::WalletStore::from_driver(driver));
-        let manager = WalletManager::build(
-            hkask_wallet::WalletConfig::default(),
-            store,
-            HashMap::new(),
-            Arc::new(hkask_wallet::price_feed::StaticPriceFeed::new()),
-        )
-        .unwrap();
+        let manager = WalletManager::new(store);
         Arc::new(manager)
     }
 

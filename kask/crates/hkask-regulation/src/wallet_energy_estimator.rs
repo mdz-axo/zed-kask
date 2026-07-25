@@ -118,7 +118,7 @@ impl EnergyEstimator for WalletEnergyEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_wallet::GAS_PER_RJOULE;
+    use hkask_types::GAS_PER_RJOULE;
 
     #[test]
     fn calibrate_first_observation_initializes_ema() {

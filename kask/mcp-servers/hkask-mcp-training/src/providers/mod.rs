@@ -51,8 +51,6 @@ pub fn create_host(config: &TrainingHostConfig) -> Result<Box<dyn TrainingHost>,
                 template_id: config.runpod_template_id.clone(),
                 gpu_type_id: config.runpod_gpu_type_id.clone(),
                 container_disk_gb: config.runpod_container_disk_gb,
-                min_memory_gb: config.runpod_min_memory_gb,
-                min_vcpu: config.runpod_min_vcpu_count,
                 docker_image: config.runpod_docker_image.clone(),
             })))
         }
@@ -130,10 +128,6 @@ pub struct TrainingHostConfig {
     pub runpod_gpu_type_id: String,
     /// Container disk in GB.
     pub runpod_container_disk_gb: u32,
-    /// Minimum pod memory in GB.
-    pub runpod_min_memory_gb: u32,
-    /// Minimum vCPU count.
-    pub runpod_min_vcpu_count: u32,
     /// Docker image name.
     pub runpod_docker_image: String,
 }
@@ -159,8 +153,6 @@ impl Default for TrainingHostConfig {
             runpod_template_id: String::new(),
             runpod_gpu_type_id: String::new(),
             runpod_container_disk_gb: 0,
-            runpod_min_memory_gb: 0,
-            runpod_min_vcpu_count: 0,
             runpod_docker_image: String::new(),
         }
     }
