@@ -9,6 +9,7 @@
 
 mod condenser_bridge;
 mod context_injector;
+mod fusion_model;
 mod identity;
 mod inference;
 mod memory;
@@ -19,6 +20,7 @@ mod tool_port;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
+pub use fusion_model::{FUSION_MODEL_ID, FUSION_PROVIDER_ID, FusionLanguageModel};
 pub use identity::{
     ProvisionedUserpod, provision_userpod, userpod_name_from_username, webid_from_username,
 };

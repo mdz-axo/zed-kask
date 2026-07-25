@@ -580,15 +580,29 @@ fn main() {
             agent::set_memory_port(Some(bridge_memory));
             log::info!("hKask memory port wired (logging) — will upgrade when Zed user resolves");
 
-            // Inject the SecretsPort into hkask-keystore so subsequent sovereignty
-            // key reads/writes route through zed's CredentialsProvider in the
-            // kask://credentials/<key> namespace.
-            let credentials_provider = zed_credentials_provider::global(cx);
-            let (secrets_port, secrets_task) =
-                kask_bridge::CredentialsSecretsPort::new(credentials_provider, async_cx.clone());
-            secrets_task.detach();
-            hkask_keystore::set_secrets_port(Some(std::sync::Arc::new(secrets_port)));
-            log::info!("hKask SecretsPort injected — sovereignty keys via CredentialsProvider");
+            // D5: SecretsPort is NOT injected in the main process.
+            //
+            // The SecretsPort adapter bridges async CredentialsProvider calls
+            // to sync keystore reads. On the GPUI main thread, this creates a
+            // sync→async bridge that deadlocks: block_on blocks the foreground
+            // thread, but the CredentialsProvider receiver task also needs the
+            // foreground thread to run.
+            //
+            // Instead, the main process uses the `keyring` crate directly
+            // (synchronous OS keychain I/O) for all keystore reads/writes.
+            // The SecretsPort is only needed by MCP server child processes,
+            // which run on Tokio and can safely use block_in_place.
+            //
+            // The SecretsPort adapter is still constructed (for future use by
+            // MCP servers that share the process) but not injected into the
+            // global keystore hook.
+            //
+            // API keys for inference providers are read via zed's own
+            // CredentialsProvider through the LanguageModelRegistry, not through
+            // the kask keystore. The kask keystore only handles sovereignty
+            // keys (a2a_secret, db_passphrase, ocap_secret) which are stored
+            // in the OS keychain via the `keyring` crate.
+            log::info!("hKask keystore uses keyring crate directly (no SecretsPort injection — avoids GPUI deadlock)");
 
             // D3: McpRuntime is constructed above (before the block) so it's
             // available for both the manifest executor and the post-settings

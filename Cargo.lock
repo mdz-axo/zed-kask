@@ -9321,7 +9321,6 @@ dependencies = [
  "hkask-services-corpus",
  "hkask-services-inference",
  "hkask-storage",
- "hkask-test-harness",
  "hkask-types",
  "image",
  "minijinja",
@@ -9564,7 +9563,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "hkask-storage",
- "hkask-test-harness",
  "hkask-types",
  "parking_lot",
  "proptest 1.11.0",
@@ -9717,20 +9715,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-services-self-heal"
-version = "0.31.0"
-dependencies = [
- "dirs 6.0.0",
- "dotenvy",
- "hkask-types",
- "minijinja",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
 name = "hkask-storage"
 version = "0.31.0"
 dependencies = [
@@ -9744,7 +9728,6 @@ dependencies = [
  "hkask-capability",
  "hkask-goal",
  "hkask-keystore",
- "hkask-test-harness",
  "hkask-types",
  "r2d2",
  "r2d2_sqlite",
@@ -9788,32 +9771,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-test-harness"
-version = "0.31.0"
-dependencies = [
- "chrono",
- "hkask-capability",
- "hkask-goal",
- "hkask-inference",
- "hkask-regulation",
- "hkask-services-self-heal",
- "hkask-storage",
- "hkask-types",
- "proptest 1.11.0",
- "rand 0.9.4",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "walkdir",
- "zed-reqwest",
-]
-
-[[package]]
 name = "hkask-types"
 version = "0.31.0"
 dependencies = [
@@ -9825,7 +9782,6 @@ dependencies = [
  "hex",
  "hkask-capability",
  "hkask-goal",
- "hkask-test-harness",
  "proptest 1.11.0",
  "rusqlite",
  "serde",
