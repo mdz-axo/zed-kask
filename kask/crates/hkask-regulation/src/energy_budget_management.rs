@@ -122,7 +122,9 @@ impl GasBudgetManager {
         if let Some(budget) = budgets.get(agent) {
             budget.can_proceed(gas)
         } else {
-            true
+            // No budget registered for this agent — deny rather than silently
+            // allowing ungoverned access.
+            false
         }
     }
 

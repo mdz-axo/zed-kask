@@ -520,6 +520,12 @@ fn main() {
         //
         // Server auto-launch happens after settings::init() (below) so we
         // can read KaskSettings to determine which servers to load.
+        //
+        // The regulation system (CyberneticsLoop, RegulationLedger, gas budgets,
+        // OCAP verification) is NOT wired here — tool invocations are
+        // ungoverned. To wire it, construct a CyberneticsLoop + RegulationLedger
+        // + EnergyEstimator + RegulationSink and call McpRuntime::with_governance().
+        log::info!("hKask regulation system NOT wired — tool invocations are ungoverned");
         let mcp_runtime = std::sync::Arc::new(hkask_mcp::McpRuntime::new());
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
