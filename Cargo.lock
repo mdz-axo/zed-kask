@@ -11014,6 +11014,7 @@ dependencies = [
  "hkask-keystore",
  "hkask-mcp",
  "hkask-memory",
+ "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",
  "hkask-templates",

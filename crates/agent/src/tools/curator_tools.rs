@@ -4,9 +4,9 @@
 //! Agent tools. They expose the Curator's regulatory surface: system health,
 //! escalation management, and regulation observability.
 //!
-//! The tools are thin wrappers over the regulation system's in-process state
-//! (RegulationLedger, CyberneticsLoop). When the regulation system is not
-//! wired (upstream Zed), the tools return "not available" messages.
+//! The tools use a `MetacognitionProvider` trait (defined here) to read
+//! system health. The composition root injects the provider; when not set,
+//! the tools return "not available".
 
 use std::sync::Arc;
 
@@ -17,6 +17,30 @@ use serde::{Deserialize, Serialize};
 use ui::SharedString;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
+
+// ── MetacognitionProvider trait ─────────────────────────────────────────────
+
+/// Provider for curator metacognition state.
+///
+/// Implemented by the composition root over `hkask_regulation::MetacognitionLoop`.
+/// When not set, curator tools return "not available".
+pub trait MetacognitionProvider: Send + Sync {
+    /// Get the last health snapshot as a JSON value.
+    fn health_snapshot_json(&self) -> Task<Option<serde_json::Value>>;
+}
+
+/// Global hook for the metacognition provider.
+static METACOGNITION_PROVIDER: std::sync::OnceLock<Option<Arc<dyn MetacognitionProvider>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global metacognition provider (composition root).
+pub fn set_metacognition_provider(provider: Option<Arc<dyn MetacognitionProvider>>) {
+    let _ = METACOGNITION_PROVIDER.set(provider);
+}
+
+fn metacognition_provider() -> Option<&'static Arc<dyn MetacognitionProvider>> {
+    METACOGNITION_PROVIDER.get().and_then(|opt| opt.as_ref())
+}
 
 // ── Curator Status Tool ─────────────────────────────────────────────────────
 
@@ -69,6 +93,7 @@ impl AgentTool for CuratorStatusTool {
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
+        let provider = metacognition_provider().cloned();
         cx.background_executor().spawn(async move {
             let input = input.recv().await.map_err(|_| CuratorStatusOutput {
                 status: "error: invalid input".to_string(),
@@ -77,16 +102,39 @@ impl AgentTool for CuratorStatusTool {
                 critical_alerts: None,
                 variety_counters: None,
             })?;
+
+            // If a metacognition provider is wired, read from it.
+            if let Some(provider) = provider {
+                if let Some(snapshot) = provider.health_snapshot_json().await {
+                    let effectiveness = snapshot
+                        .get("regulation_effectiveness")
+                        .and_then(|v| v.as_f64());
+                    let critical = snapshot
+                        .get("critical_alerts")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize);
+                    let deficit = snapshot.get("variety_deficit").and_then(|v| v.as_u64());
+                    return Ok(CuratorStatusOutput {
+                        status: "ok".to_string(),
+                        regulation_effectiveness: effectiveness,
+                        escalation_count: deficit.map(|_| 0), // escalations not tracked separately yet
+                        critical_alerts: critical,
+                        variety_counters: if input.include_variety {
+                            deficit.map(|d| vec![("overall".to_string(), d)])
+                        } else {
+                            None
+                        },
+                    });
+                }
+            }
+
+            // No provider or no snapshot — return not available.
             Ok(CuratorStatusOutput {
-                status: "ok".to_string(),
+                status: "not available".to_string(),
                 regulation_effectiveness: None,
                 escalation_count: None,
                 critical_alerts: None,
-                variety_counters: if input.include_variety {
-                    Some(Vec::new())
-                } else {
-                    None
-                },
+                variety_counters: None,
             })
         })
     }

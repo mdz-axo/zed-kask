@@ -34,6 +34,9 @@ pub use settings::KaskSettings;
 pub use skill_executor::BridgeManifestExecutor;
 pub use tool_port::BridgeToolPort;
 
+mod metacognition_bridge;
+pub use metacognition_bridge::BridgeMetacognitionProvider;
+
 /// The URL prefix for kask-namespaced credentials in the keychain.
 /// Used by the settings UI to read/write API keys via zed's CredentialsProvider.
 pub const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";

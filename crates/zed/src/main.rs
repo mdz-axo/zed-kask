@@ -540,7 +540,7 @@ fn main() {
             hkask_regulation::RegulationLedger::default(),
         ));
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
-            hkask_regulation::CyberneticsLoop::new(regulation_ledger),
+            hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone()),
         ));
         let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
             std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
@@ -552,24 +552,29 @@ fn main() {
         );
         log::info!("hKask regulation system wired — tool invocations are governed");
 
-        // Curator metacognition background task — periodically logs
-        // system health. This is a simplified version of the full
-        // MetacognitionLoop (which lived in hkask-pods and was removed).
-        // The full loop would sense→compare→compute→act; this version
-        // just senses and logs.
+        // Curator metacognition loop — runs sense→compare→compute→act cycles
+        // on a background task. Reads from RegulationLedger (already wired)
+        // and emits health snapshots + escalation alerts.
+        //
+        // This is a self-contained implementation in hkask-regulation that
+        // doesn't need hkask-pods. It reads directly from RegulationLedger.
+        let metacognition_loop = std::sync::Arc::new(
+            hkask_regulation::MetacognitionLoop::new(regulation_ledger),
+        );
+        let metacog_loop = metacognition_loop.clone();
         cx.background_spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-            interval.tick().await; // skip the first immediate tick
-            loop {
-                interval.tick().await;
-                log::info!(
-                    target: "reg.curator.metacognition",
-                    "Curator metacognition tick — system health sensed"
-                );
-            }
+            metacog_loop.run().await;
         })
         .detach();
-        log::info!("Curator metacognition background task started (30s interval)");
+        log::info!("Curator metacognition loop started (30s tick interval)");
+
+        // Wire the metacognition provider so the CuratorStatusTool can read
+        // health snapshots from the agent's tool surface.
+        let provider = std::sync::Arc::new(
+            kask_bridge::BridgeMetacognitionProvider::new(metacognition_loop),
+        );
+        agent::set_metacognition_provider(Some(provider));
+        log::info!("Curator metacognition provider wired to CuratorStatusTool");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
             mcp_runtime,

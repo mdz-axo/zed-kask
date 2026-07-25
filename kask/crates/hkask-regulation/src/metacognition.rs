@@ -29,7 +29,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use hkask_types::curator::{CuratorDirective, EscalationSeverity};
+use hkask_types::curator::EscalationSeverity;
 use hkask_types::regulation::{LedgerHealth, RegulationHealth};
 use tokio::sync::RwLock;
 
@@ -275,5 +275,16 @@ impl MetacognitionLoop {
     /// Get the last health snapshot (if any).
     pub async fn last_snapshot(&self) -> Option<HealthSnapshot> {
         self.last_snapshot.read().await.clone()
+    }
+
+    /// Get the last health snapshot synchronously (blocking RwLock read).
+    ///
+    /// This is safe to call from a sync context — the RwLock is a parking_lot
+    /// RwLock which doesn't require an async runtime.
+    pub fn last_snapshot_blocking(&self) -> Option<HealthSnapshot> {
+        self.last_snapshot
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 }
