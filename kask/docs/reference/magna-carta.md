@@ -13,7 +13,7 @@ mds_categories: [domain, trust, curation]
 The Magna Carta is hKask's charter of liberties. It defines four foundational principles that every
 module, agent, and pod must honour. This document is a **reference**: it states what exists, how it
 is enforced, and how to verify it. It does not explain *why* (see `docs/architecture/core/magna-carta.md`
-for rationale) or *how to fix violations* (see `docs/how-to/audit-sovereignty.md`).
+for rationale) or *how to fix violations* (see `explanation/sovereignty-and-observability.md`).
 
 > **Hosting note (v0.31.0):** hKask now runs in-process inside zed-kask. The standalone `kask` CLI,
 HTTP API server (`hkask-api`), and daemon process have been **deleted**. Enforcement traces below

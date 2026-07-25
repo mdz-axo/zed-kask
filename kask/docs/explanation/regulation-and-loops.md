@@ -1029,7 +1029,7 @@ decision paths in `compute()`, the substitution ladder for repeatedly
 ineffective actions, the 3-tier ActionDecision gate, and stagnation detection
 leading to RegulatoryPlateau escalation.
 
-Cross-linked from: [`hKask-architecture-master.md`](../architecture/core/hKask-architecture-master.md)
+Cross-linked from: [`zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)
 
 The diagram below shows the full regulation cycle. Each phase maps to a
 `Loop` trait method (or `CyberneticsLoop` override). Signal metrics flow

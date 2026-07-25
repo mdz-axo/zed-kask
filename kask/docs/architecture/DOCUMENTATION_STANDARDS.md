@@ -422,7 +422,7 @@ This documentation standard itself maps to the 5 MDS categories:
 
 ### 12.2 Responsibilities
 
-- **Architecture steward:** Maintain `hKask-architecture-master.md`, review framework docs per release, approve ADRs.
+- **Architecture steward:** Maintain `zed-host-architecture-plan.md`, review framework docs per release, approve ADRs.
 - **Documentation steward:** Run corpus hygiene sweeps, maintain portal accuracy, own `corpus_inventory.yaml`.
 - **CI/CD steward:** Maintain verification scripts, own `PROJECT_STATUS.md`.
 - **Workstream lead:** Maintain `TODO.md`, review plans for staleness weekly.

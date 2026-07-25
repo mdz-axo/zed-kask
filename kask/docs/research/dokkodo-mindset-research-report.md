@@ -16,7 +16,7 @@ mds_categories: [domain, composition, curation, trust]
 - Miyamoto Musashi, *Dokkodo* ("The Way of Walking Alone"), 1645 — 21 precepts written days before his death
 - Jonathan Hall, *American Ronin* — contemporary commentary on the Dokkodo as resilience in adversity
 
-**Related:** [`PRINCIPLES.md`](../architecture/core/PRINCIPLES.md), [`hKask-architecture-master.md`](../architecture/core/hKask-architecture-master.md)
+**Related:** [`PRINCIPLES.md`](../architecture/core/PRINCIPLES.md), [`zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)
 
 **Registry:** `registry/templates/dokkodo-mindset/` — `manifest.yaml` + `dokkodo-perceive.j2`
 **Skill file:** `.agents/skills/dokkodo-mindset/SKILL.md`
@@ -66,7 +66,7 @@ Invoke the Dokkodo mindset by saying any of these:
 ### Prerequisites
 
 This guide assumes familiarity with:
-- **hKask skill types:** KnowAct ("how to think"), FlowDef ("what to do"), WordAct ("what to say") — see [`hKask-architecture-master.md`](../architecture/core/hKask-architecture-master.md) Pattern A
+- **hKask skill types:** KnowAct ("how to think"), FlowDef ("what to do"), WordAct ("what to say") — see [`zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) Pattern A
 - **Pragmatic laziness:** The skill that finds the path of least structural action (δS = 0) by decomposing, mapping loops, and applying the deletion test
 - **pragmatic-semantics:** The skill that classifies constraints as Prohibition, Guardrail, Guideline, Evidence, or Hypothesis
 
@@ -294,7 +294,7 @@ The Dokkodo introduces a **perceptual layer** that sits before hKask's existing 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Relationship to hKask's four essential patterns** (Patterns A–D in [`hKask-architecture-master.md`](../architecture/core/hKask-architecture-master.md)): The perceptual layer is an extension of Pattern A (the Skills Model) — it adds a new composition position (pre-regulative) to the existing KnowAct/FlowDef/WordAct type system. It does not modify Patterns B (Regulation), C (OCAP), or D (Pods).
+**Relationship to hKask's four essential patterns** (Patterns A–D in [`zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)): The perceptual layer is an extension of Pattern A (the Skills Model) — it adds a new composition position (pre-regulative) to the existing KnowAct/FlowDef/WordAct type system. It does not modify Patterns B (Regulation), C (OCAP), or D (Pods).
 
 ### 6.2 Why Perception Precedes Analysis
 

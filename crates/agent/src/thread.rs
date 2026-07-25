@@ -4297,6 +4297,44 @@ impl Thread {
         })
     }
 
+    /// Collect absolute paths of files currently open in the editor.
+    /// Used by conditional-rules scoping and the tool router.
+    fn collect_open_file_paths(&self, cx: &App) -> Vec<String> {
+        self.project
+            .read(cx)
+            .opened_buffers(cx)
+            .into_iter()
+            .filter_map(|buffer| {
+                buffer.read(cx).file().and_then(|file| {
+                    file.as_local()
+                        .map(|local| local.abs_path(cx).to_string_lossy().into_owned())
+                })
+            })
+            .collect()
+    }
+
+    /// Collect file paths mentioned in the latest user message (via
+    /// `UserMessageContent::Mention` with `MentionUri::File`).
+    fn collect_mentioned_paths(&self) -> Vec<String> {
+        self.last_user_message()
+            .map(|message| {
+                message
+                    .content
+                    .iter()
+                    .filter_map(|content| match content {
+                        UserMessageContent::Mention { uri, .. } => match uri {
+                            MentionUri::File { abs_path } => {
+                                Some(abs_path.to_string_lossy().into_owned())
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn pending_message(&mut self) -> &mut AgentMessage {
         self.pending_message.get_or_insert_default()
     }
@@ -4708,10 +4746,27 @@ impl Thread {
         }
         let static_context = self.static_context.clone();
 
+        // Apply conditional-rules scoping: filter out rules files whose
+        // frontmatter specifies `alwaysApply: false` with globs that don't
+        // match any open file or mentioned path. This is done on a clone of
+        // the ProjectContext so the stored entity is unchanged — the filter
+        // is per-render, reflecting the current open-file state.
+        let filtered_project_context = {
+            let context = self.project_context.read(cx);
+            let open_paths = self.collect_open_file_paths(cx);
+            let mentioned_paths = self.collect_mentioned_paths();
+            let all_paths: Vec<&str> = open_paths
+                .iter()
+                .map(|s| s.as_str())
+                .chain(mentioned_paths.iter().map(|s| s.as_str()))
+                .collect();
+            filter_conditional_rules(context.clone(), &all_paths)
+        };
+
         // Compute a digest of the inputs that affect the rendered system
         // prompt. If it matches the cached digest, reuse the cached string.
         let digest = system_prompt_digest(
-            &self.project_context.read(cx),
+            &filtered_project_context,
             &available_tools,
             model_name.as_deref(),
             &date,
@@ -4730,7 +4785,7 @@ impl Thread {
 
         // Digest changed (or first render): re-render and cache.
         let system_prompt = SystemPromptTemplate {
-            project: self.project_context.read(cx),
+            project: &filtered_project_context,
             available_tools,
             model_name,
             date,
@@ -5122,6 +5177,58 @@ fn set_cache_breakpoints(messages: &mut [LanguageModelRequestMessage]) {
     if let Some(last_message) = messages.last_mut() {
         last_message.cache = true;
     }
+}
+
+/// Filter conditional rules from a `ProjectContext` clone. Rules files
+/// whose frontmatter specifies `alwaysApply: false` with non-empty `globs`
+/// are excluded unless a path in `active_paths` matches one of the globs.
+///
+/// `alwaysApply: true` rules and rules without frontmatter are always
+/// included (I2 — upstream Zed compatibility).
+///
+/// Glob matching uses `globset` for correctness with patterns like `**/*.rs`.
+fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) -> ProjectContext {
+    // Build a globset for each conditional rule. If any active path matches,
+    // the rule is kept; otherwise it's filtered out.
+    for worktree in context.worktrees.iter_mut() {
+        let rules_file = &mut worktree.rules_file;
+        let Some(rules) = rules_file.as_ref() else {
+            continue;
+        };
+        let Some(frontmatter) = &rules.frontmatter else {
+            continue;
+        };
+        // always_apply: true (or no frontmatter) → always include.
+        if frontmatter.always_apply {
+            continue;
+        }
+        // No globs → always include (defensive — shouldn't happen with valid frontmatter).
+        if frontmatter.globs.is_empty() {
+            continue;
+        }
+
+        // Check if any active path matches any glob.
+        let matched = frontmatter.globs.iter().any(|pattern| {
+            if let Ok(matcher) = globset::Glob::new(pattern) {
+                let matcher = matcher.compile_matcher();
+                active_paths.iter().any(|path| matcher.is_match(path))
+            } else {
+                false
+            }
+        });
+
+        if !matched {
+            *rules_file = None;
+        }
+    }
+    // Recompute `has_rules` after filtering — if all conditional rules
+    // were filtered out, the flag must be false so the template doesn't
+    // render an empty rules section.
+    context.has_rules = context
+        .worktrees
+        .iter()
+        .any(|worktree| worktree.rules_file.is_some());
+    context
 }
 
 /// Compute a SHA-256 digest of the inputs that determine the rendered system
@@ -9550,5 +9657,118 @@ mod tests {
                 "cancel should clear deferred results"
             );
         });
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_excludes_non_matching() {
+        use prompt_store::{ProjectContext, RuleFrontmatter, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "Use strict mode".to_string(),
+                frontmatter: Some(RuleFrontmatter {
+                    globs: vec!["**/*.rs".to_string()],
+                    always_apply: false,
+                }),
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // No matching paths → rule should be filtered out.
+        let filtered = filter_conditional_rules(context, &[]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_none(),
+            "conditional rule should be filtered when no paths match"
+        );
+        assert!(!filtered.has_rules);
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_includes_matching() {
+        use prompt_store::{ProjectContext, RuleFrontmatter, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "Use strict mode".to_string(),
+                frontmatter: Some(RuleFrontmatter {
+                    globs: vec!["**/*.rs".to_string()],
+                    always_apply: false,
+                }),
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // Matching path → rule should be kept.
+        let filtered = filter_conditional_rules(context, &["/project/src/main.rs"]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_some(),
+            "conditional rule should be kept when a path matches"
+        );
+        assert!(filtered.has_rules);
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_always_apply_true_passes_through() {
+        use prompt_store::{ProjectContext, RuleFrontmatter, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "Always apply".to_string(),
+                frontmatter: Some(RuleFrontmatter {
+                    globs: vec!["**/*.rs".to_string()],
+                    always_apply: true,
+                }),
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // always_apply: true → rule should be kept even with no matching paths.
+        let filtered = filter_conditional_rules(context, &[]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_some(),
+            "always_apply: true rule should be kept regardless of paths"
+        );
+        assert!(filtered.has_rules);
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_no_frontmatter_passes_through() {
+        use prompt_store::{ProjectContext, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "No frontmatter".to_string(),
+                frontmatter: None,
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // No frontmatter → rule should be kept (I2 — upstream Zed compatibility).
+        let filtered = filter_conditional_rules(context, &[]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_some(),
+            "rule without frontmatter should be kept"
+        );
+        assert!(filtered.has_rules);
     }
 }

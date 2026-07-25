@@ -316,6 +316,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
+ "globset",
  "gpui",
  "gpui_tokio",
  "handlebars 4.5.0",

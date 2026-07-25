@@ -14,7 +14,7 @@ mds_categories: [domain, composition, curation]
 
 **Source text:** Jennifer Coopersmith, [*The Lazy Universe: An Introduction to the Principle of Least Action*](https://a.co/d/0eVwmycu) (Oxford, 2017).
 
-**Related:** [`PRINCIPLES.md`](../architecture/core/PRINCIPLES.md), [`MDS.md`](../architecture/core/MDS.md), [`hKask-architecture-master.md` § Six-Loop Architecture](../architecture/core/hKask-architecture-master.md#six-loop-architecture--semantic-root-cause-analysis), [`magna-carta.md`](../architecture/core/magna-carta.md)
+**Related:** [`PRINCIPLES.md`](../architecture/core/PRINCIPLES.md), [`MDS.md`](../architecture/core/MDS.md), [`zed-host-architecture-plan.md` § Six-Loop Architecture](../architecture/zed-host-architecture-plan.md), [`magna-carta.md`](../architecture/core/magna-carta.md)
 
 ---
 

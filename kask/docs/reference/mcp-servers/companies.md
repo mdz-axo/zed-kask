@@ -13,7 +13,7 @@ last-verified-against: "fae4d94"
 
 **Diataxis type:** Reference · **Crate:** `mcp-servers/hkask-mcp-companies` · **Server id:** `companies`
 
-Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and local portfolio-ledger operations. Tools are provider-agnostic: each financial-data tool routes to FMP or EODHD based on symbol characteristics, with automatic fallback and EODHD normalization to FMP format. This page documents the current behavior of the shipping code and the standing properties of its design. For task-oriented procedures, see the [Companies User Guide](../../how-to/companies-mcp.md).
+Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and local portfolio-ledger operations. Tools are provider-agnostic: each financial-data tool routes to FMP or EODHD based on symbol characteristics, with automatic fallback and EODHD normalization to FMP format. This page documents the current behavior of the shipping code and the standing properties of its design. For task-oriented procedures, see the [Companies User Guide](../../explanation/companies-mcp.md).
 
 ## Architecture
 
@@ -193,9 +193,9 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 
 ## Quick start
 
-```bash
-kask mcp start companies
-```
+The companies server is a builtin in-process MCP server in zed-kask — no
+standalone CLI command is needed. It is registered alongside the other
+builtin MCP servers and started automatically by the host.
 
 The server requires `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` credentials at launch; optional research keys enable `research_search`.
 
@@ -210,7 +210,7 @@ The suite covers provider-error handling, EODHD normalization, valuation request
 ## Cross-links
 
 - [MCP Server Registry](README.md) — catalog of all 15 built-in servers
-- [Companies User Guide](../../how-to/companies-mcp.md) — task-oriented procedures for valuation, forecasting, and portfolio operations
+- [Companies User Guide](../../explanation/companies-mcp.md) — task-oriented procedures for valuation, forecasting, and portfolio operations
 - Companies Semantic Graph Audit — internal module dependency graph health
 - Companies MCP Code Review — adversarial code review of the companies server
 - [Diagram Index](../../DIAGRAMS_INDEX.md) — DIAG-RF-004 registration

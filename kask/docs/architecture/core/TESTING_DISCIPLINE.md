@@ -320,8 +320,6 @@ Tests accumulate the scar tissue of every production incident. They become the r
 | Format | `cargo fmt --check` | No diffs |
 | Prohibitions | `grep -r "todo!\|unimplemented!\|#\[deprecated\]" crates/ --include="*.rs"` | Zero |
 | Headless | `grep -r "grafana\|prometheus\|dashboard\|visual.*ui" crates/ --include="*.rs"` | Zero |
-| Regulation daemon | `kask daemon start` (smoke test) | Binds socket, loops active |
-| Deployment smoke | `kask init --profile server && kask daemon` | Server starts, health endpoint responds |
 | Deployment sidecar | `kask matrix deploy-sidecar --domain localhost` | Valid docker-compose.yml generated |
 
 ---
@@ -449,10 +447,8 @@ Four manifests run today via `cargo test -p hkask-test-harness -- qa_script`:
 
 | Manifest | Crate Tested | Tests |
 |----------|-------------|-------|
-| `qa-comm-integration-gate` | `hkask-mcp-communication` | 5 |
 | `qa-condenser-health-check` | `hkask-mcp-condenser` | 11 |
 | `qa-keystore-security-gate` | `hkask-keystore` | 16 |
-| `qa-memory-privacy-boundary` | `hkask-mcp-memory` | 6 |
 
 Without `DI_API_KEY`, classify steps gracefully degrade through `classifier_unavailable`.
 
@@ -461,7 +457,6 @@ Without `DI_API_KEY`, classify steps gracefully degrade through `classifier_unav
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
 | QA script runner | `crates/hkask-test-harness/src/qa_script.rs` | Manifest parsing, step execution, gas, Regulation |
-| CLI subcommand | `crates/hkask-cli/src/commands/qa.rs` | `kask qa run --script`, `kask qa list` |
 | Regulation QA spans | `crates/hkask-types/src/regulation.rs` | 4 `RegulationSpan` variants |
 | Classifier config | `registry/classify/qa-triage.yaml` | Canonical classifier triage prompt (HKASK_CLASSIFIER_MODEL) |
 | QA manifests | `registry/manifests/qa-*.yaml` | 9 manifests (4 executable, 5 planned) |

@@ -329,7 +329,7 @@ status: VERIFIED
 
 ## Cross-Reference
 
-- [`hKask-architecture-master.md` § OCAP Capability Model](../architecture/core/hKask-architecture-master.md#ocap-capability-model)
+- [`zed-host-architecture-plan.md` § OCAP Capability Model](../architecture/zed-host-architecture-plan.md)
 - [`token_types.rs`](crates/hkask-capability/src/token_types.rs) — `DelegationToken`, `SYSTEM_MAX_ATTENUATION`, `attenuate()`, `verify_attenuation_chain()`
 - [`verification/checker.rs`](crates/hkask-capability/src/verification/checker.rs) — `CapabilityChecker`, `check()`, `verify()`, `grant()`
 - [`resources.rs`](crates/hkask-capability/src/resources.rs) — `capabilities_match()`, `CapabilitySpec`
@@ -455,7 +455,7 @@ The `SovereigntyConsent` trait impl translates storage errors into `false`, enfo
 
 ## Cross-Reference
 
-- [`hKask-architecture-master.md` § Sovereignty & Consent](../architecture/core/hKask-architecture-master.md#sovereignty--consent)
+- [`zed-host-architecture-plan.md` § Sovereignty & Consent](../architecture/zed-host-architecture-plan.md)
 - [`consent.rs`](crates/hkask-pods/src/consent.rs) — `ConsentManager`, `ConsentRecord`, `has_consent()`, `grant_consent()`, `revoke_consent()`
 - [`sovereignty.rs`](crates/hkask-pods/src/sovereignty.rs) — `SovereigntyConsent` trait
 - [Magna Carta P1 — User Sovereignty](../reference/magna-carta.md#p1-user-sovereignty)

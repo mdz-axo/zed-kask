@@ -111,6 +111,7 @@ Specifications, plans, standards, and the canonical architecture document.
 
 | Document | Description |
 |----------|-------------|
+| [`zed-kask-architecture.md`](architecture/zed-kask-architecture.md) | **Architecture overview** — composition root diagram, dependency invariant, D1–D10 integration seams summary. |
 | [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — zed-kask fork, D1–D10 integration seams, essentialist split (keep/delete), composition root, kask_bridge. |
 | [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Metadata, citation, diagram, lifecycle mandates for this docs corpus. |
 | [`salience-specification.md`](architecture/salience-specification.md) | Passage salience algorithm — MMR-based scoring for `hkask-memory` budget-gated hMem storage. |

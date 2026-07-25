@@ -33,7 +33,7 @@
   - Files: `crates/prompt_store/src/prompts.rs`, `crates/agent/src/agent.rs`
   - Scope: S
 
-- [ ] **T4 (S6): Conditional-rules scoping**
+- [x] **T4 (S6): Conditional-rules scoping**
   - Filter conditional rules (`always_apply: false` + non-empty `globs`) in `build_project_context` by open-files + mentioned-paths
   - AC: `**/*.rs`-scoped rule included iff a `.rs` file is open or a `.rs` path is in latest user message
   - AC: `alwaysApply: true` rules always included (I2)
