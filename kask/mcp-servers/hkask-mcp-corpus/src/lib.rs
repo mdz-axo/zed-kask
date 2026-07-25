@@ -45,7 +45,7 @@ pub(crate) use json_extract::extract_json_from_response;
 
 use crate::ocr::ThresholdConfig;
 use crate::ocr::decimation;
-use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
+use hkask_inference::{EmbeddingRouter, InferenceConfig};
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_memory::SemanticMemory;
 use hkask_services_core::settings::HkaskSettings;
@@ -147,7 +147,7 @@ fn default_embedding_model() -> &'static str {
 hkask_mcp_server::mcp_server!(
     pub struct CorpusServer {
         pub ocr_model: Option<String>,
-        pub inference_router: Arc<InferenceRouter>,
+        pub inference_router: Arc<dyn InferencePort>,
         pub ocr_thresholds: ThresholdConfig,
         pub embedding_router: Option<EmbeddingRouter>,
         pub cv_accumulator: Mutex<Vec<crate::ocr::CrossValidation>>,
@@ -628,6 +628,10 @@ impl rmcp::ServerHandler for CorpusServer {}
 
 /// Run the corpus MCP server (used by binary target).
 pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+    // Resolve the inference port once, before entering the sync server-construction
+    // closure. `resolve_inference_port` is async (it may connect to the zed IPC bridge);
+    // the closure passed to `run_server` is sync, so the await must happen here.
+    let inference_port = hkask_inference::resolve_inference_port().await;
     hkask_mcp_server::run_server(
         "hkask-mcp-corpus",
         env!("CARGO_PKG_VERSION"),
@@ -636,7 +640,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                 .credentials
                 .get("HKASK_OCR_MODEL")
                 .cloned();
-            let inference_config = InferenceConfig::from_env();
 
             let ocr_thresholds = ThresholdConfig {
                 simple_max: std::env::var("HKASK_OCR_SIMPLE_MAX")
@@ -657,17 +660,16 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                     .unwrap_or(true),
             };
 
-            let embedding_router = EmbeddingRouter::new(inference_config.clone());
-            let inference_router = Arc::new(InferenceRouter::new(inference_config));
+            let embedding_router = EmbeddingRouter::new(InferenceConfig::from_env());
 
-                        let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_router)));
+                        let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_port)));
                                     let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
 
                         Ok(CorpusServer::new(
                             ctx.webid,
                             userpod.clone(),
                             ocr_model,
-                            inference_router,
+                            inference_port,
                             ocr_thresholds,
                             Some(embedding_router),
                             Mutex::new(Vec::new()),

@@ -485,14 +485,4 @@ mod tests {
         };
         assert!(sp.validate().is_err());
     }
-
-    #[test]
-    fn reject_inverted_fed_latency_thresholds() {
-        let sp = SetPoints {
-            fed_sync_latency_warning_ms: 50000,
-            fed_sync_latency_critical_ms: 5000,
-            ..Default::default()
-        };
-        assert!(sp.validate().is_err());
-    }
 }

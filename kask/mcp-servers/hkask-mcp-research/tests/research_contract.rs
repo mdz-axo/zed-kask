@@ -154,7 +154,6 @@ fn test_server() -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
         "test-userpod".into(),
-        None,
         Arc::new(pool),
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(30, 60),
@@ -266,7 +265,6 @@ fn test_server_with_db() -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
         "test-userpod".into(),
-        None,
         Arc::new(pool),
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(30, 60),

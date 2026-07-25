@@ -102,7 +102,7 @@ impl ContextInjector for BridgeContextInjector {
 
             vec![LanguageModelRequestMessage {
                 role: Role::System,
-                content: vec![MessageContent::Text(context_text.into())],
+                content: vec![MessageContent::Text(context_text)],
                 cache: false,
                 reasoning_details: None,
             }]

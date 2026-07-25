@@ -361,4 +361,36 @@ impl InferencePort for InferenceRouter {
                 .await
         })
     }
+
+    fn list_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn std::future::Future<Output = Vec<hkask_types::ModelEntry>> + Send + 'a>> {
+        Box::pin(async move {
+            self.list_models()
+                .await
+                .into_iter()
+                .map(|m| hkask_types::ModelEntry {
+                    prefixed_name: m.prefixed_name,
+                    model: m.model,
+                    supports_vision: m.supports_vision.unwrap_or(false),
+                })
+                .collect()
+        })
+    }
+
+    fn list_vision_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn std::future::Future<Output = Vec<hkask_types::ModelEntry>> + Send + 'a>> {
+        Box::pin(async move {
+            self.list_vision_models()
+                .await
+                .into_iter()
+                .map(|m| hkask_types::ModelEntry {
+                    prefixed_name: m.prefixed_name,
+                    model: m.model,
+                    supports_vision: m.supports_vision.unwrap_or(false),
+                })
+                .collect()
+        })
+    }
 }

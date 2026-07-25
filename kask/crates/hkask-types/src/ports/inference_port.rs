@@ -4,12 +4,28 @@ use super::inference_types::{
 };
 use crate::template::LLMParameters;
 use futures_util::Stream;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
 /// Impls: `InferenceRouter` (hkask-inference), `Arc<dyn InferencePort>` (blanket).
+/// A model available from an inference provider.
+///
+/// Simplified version of `hkask_inference::RouterModelEntry` that lives in
+/// `hkask-types` so the `InferencePort` trait can return it without depending
+/// on `hkask-inference`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    /// Full model name with provider prefix (e.g., "OR/z-ai/glm-5.2")
+    pub prefixed_name: String,
+    /// Raw model name without prefix
+    pub model: String,
+    /// Whether the model supports vision/multimodal input.
+    pub supports_vision: bool,
+}
+
 pub trait InferencePort: Send + Sync {
     fn generate(
         &self,
@@ -136,6 +152,33 @@ pub trait InferencePort: Send + Sync {
             ))
         })
     }
+
+    /// List available models across all configured providers.
+    ///
+    /// Default: returns an empty vec. `InferenceRouter` overrides this to
+    /// enumerate models from its backends. The IPC client returns empty
+    /// (model listing is not available when routed through zed's bridge).
+    #[must_use]
+    fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+        Box::pin(async { Vec::new() })
+    }
+
+    /// List only vision-capable models.
+    ///
+    /// Default: delegates to `list_models()` and filters by the vision flag.
+    /// Returns empty when `list_models()` returns empty.
+    #[must_use]
+    fn list_vision_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+        Box::pin(async {
+            self.list_models()
+                .await
+                .into_iter()
+                .filter(|m| m.supports_vision)
+                .collect()
+        })
+    }
 }
 
 /// A single chunk of streaming inference output. Final chunk has `finish_reason` + `usage`.
@@ -237,6 +280,14 @@ impl InferencePort for Arc<dyn InferencePort> {
         m: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
         self.as_ref().generate_vision(p, imgs, pa, m)
+    }
+    fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+        self.as_ref().list_models()
+    }
+    fn list_vision_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+        self.as_ref().list_vision_models()
     }
 }
 

@@ -30,7 +30,7 @@ use hkask_condenser::inference;
 use hkask_condenser::inference::SUMMARY_SYSTEM_PROMPT;
 use hkask_condenser::saliency;
 use hkask_condenser::types::*;
-use hkask_inference::{InferenceConfig, InferenceRouter};
+
 use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
 use hkask_memory::EpisodicMemory;
 use hkask_memory::SemanticMemory;
@@ -470,10 +470,7 @@ pub struct SaliencyRequest {
 
 /// Run the condenser MCP server (used by binary target).
 pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
-    // Build the centralized inference router from environment.
-    let inference_config = InferenceConfig::from_env();
-    let inference_router = InferenceRouter::new(inference_config);
-    let inference_port: Arc<dyn InferencePort> = Arc::new(inference_router);
+    let inference_port: Arc<dyn InferencePort> = hkask_inference::resolve_inference_port().await;
 
     hkask_mcp_server::run_server(
         "hkask-mcp-condenser",

@@ -206,7 +206,7 @@ fn token_attenuate_preserves_resource() {
 #[test]
 fn check_allows_correct_holder_resource_action() {
     let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk.clone());
+    let checker = CapabilityChecker::with_signing_key(sk);
     let token = checker.grant(
         DelegationResource::Tool,
         "my_tool".into(),
@@ -230,7 +230,7 @@ fn check_allows_correct_holder_resource_action() {
 #[test]
 fn check_rejects_wrong_holder() {
     let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk.clone());
+    let checker = CapabilityChecker::with_signing_key(sk);
     let token = checker.grant(
         DelegationResource::Tool,
         "my_tool".into(),
@@ -254,7 +254,7 @@ fn check_rejects_wrong_holder() {
 #[test]
 fn check_rejects_wrong_resource() {
     let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk.clone());
+    let checker = CapabilityChecker::with_signing_key(sk);
     let token = checker.grant(
         DelegationResource::Tool,
         "my_tool".into(),

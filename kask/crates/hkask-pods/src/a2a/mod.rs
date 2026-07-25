@@ -228,7 +228,7 @@ impl A2AMessage {
     /// pre:  (none).
     /// post: Returns `Some(&WebID)` for variants with a sender field;
     ///       `None` for `TemplateResponse`.
-    pub fn from_webid(&self) -> Option<&WebID> {
+    pub fn sender_webid(&self) -> Option<&WebID> {
         match self {
             A2AMessage::TemplateDispatch { from, .. } => Some(from),
             A2AMessage::TemplateResponse { .. } => None,
@@ -468,7 +468,7 @@ impl A2ARuntime {
     }
 
     pub(crate) async fn send_message(&self, message: A2AMessage) -> Result<String, A2AError> {
-        let from = message.from_webid().copied();
+        let from = message.sender_webid().copied();
         let to = match &message {
             A2AMessage::TemplateDispatch { to, .. } => *to,
             _ => None,

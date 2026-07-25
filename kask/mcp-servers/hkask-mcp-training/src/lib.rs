@@ -91,8 +91,8 @@ use crate::providers::{
     TrainingHarnessId, TrainingHost, TrainingHostConfig, TrainingHostId, TrainingJobStatus,
     create_host,
 };
-use hkask_inference::InferenceConfig;
 use hkask_memory::SemanticMemory;
+use hkask_types::InferencePort;
 
 use rmcp::tool_router;
 use std::path::PathBuf;
@@ -111,7 +111,7 @@ hkask_mcp_server::mcp_server!(
         pub adapter_store: Arc<crate::adapter::AdapterStore>,
         pub job_store: Option<JobStore>,
         pub adapter_router: Option<Arc<AdapterRouter>>,
-        pub inference_config: InferenceConfig,
+        pub inference_port: Arc<dyn InferencePort>,
     }
 );
 
@@ -319,10 +319,15 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     );
     let pipeline = DatasetPipeline::new(cache_dir);
 
+    // Resolve the inference port before the sync server factory closure.
+    // This tries the IPC bridge to zed first, falling back to InferenceRouter.
+    let inference_port = hkask_inference::resolve_inference_port().await;
+
     hkask_mcp_server::run_server_with_preloaded(
         "hkask-mcp-training",
         env!("CARGO_PKG_VERSION"),
-        |ctx: hkask_mcp_server::ServerContext| {
+        move |ctx: hkask_mcp_server::ServerContext| {
+            let inference_port = inference_port.clone();
             (|| -> anyhow::Result<TrainingServer> {
                 let db_path = ctx
                     .credentials
@@ -421,8 +426,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                 let host = create_host(&host_config)
                     .map_err(|e| anyhow::anyhow!("Failed to create training host: {}", e))?;
 
-                let inference_config = InferenceConfig::from_env();
-
                 Ok(TrainingServer::new(
                     ctx.webid,
                     userpod.clone(),
@@ -434,7 +437,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                     adapter_store,
                     job_store,
                     adapter_router,
-                    inference_config,
+                    inference_port,
                 ))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {

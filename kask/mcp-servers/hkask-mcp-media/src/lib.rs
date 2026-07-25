@@ -26,7 +26,6 @@ pub use error::{MediaError, map_media_error};
 
 use gallery::GalleryState;
 use gallery::vision::{self};
-use hkask_inference::InferenceRouter;
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url};
 use hkask_pods::VoiceDesign;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -1343,10 +1342,9 @@ impl rmcp::ServerHandler for MediaServer {}
 pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
-    // Build the inference router for vision LLM tasks.
-    // Backends are constructed lazily — only those with configured API keys are available.
-    let inference_config = hkask_inference::InferenceConfig::from_env();
-    let inference = Arc::new(InferenceRouter::new(inference_config));
+    // Resolve the inference port — tries the IPC bridge to zed first,
+    // falls back to InferenceRouter with env-var keys.
+    let inference = hkask_inference::resolve_inference_port().await;
 
     // Create an in-memory GalleryStore for the media server.
     // Gracefully degrade if DB initialization fails — gallery tools

@@ -167,7 +167,7 @@ impl LanguageModelInferencePort {
                 let role = match m.role.as_str() {
                     "system" => Role::System,
                     "assistant" => Role::Assistant,
-                    "user" | _ => Role::User,
+                    _ => Role::User,
                 };
                 LanguageModelRequestMessage {
                     role,

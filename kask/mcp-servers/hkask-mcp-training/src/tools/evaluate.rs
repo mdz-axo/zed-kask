@@ -1,6 +1,5 @@
 use crate::TrainingServer;
 use crate::types::TrainEvaluateRequest;
-use hkask_inference::InferenceRouter;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
@@ -103,7 +102,7 @@ impl TrainingServer {
             let limit = max_examples.unwrap_or(examples.len()).min(examples.len());
             examples.truncate(limit);
 
-            let router = InferenceRouter::new(self.inference_config.clone());
+            let router = &self.inference_port;
             let mut correct = 0;
             let mut errors = 0;
             let mut total_tokens = 0u64;
@@ -235,7 +234,7 @@ impl TrainingServer {
         let limit = max_examples.unwrap_or(questions.len()).min(questions.len());
         questions.truncate(limit);
 
-        let router = InferenceRouter::new(self.inference_config.clone());
+        let router = &self.inference_port;
         let mut correct = 0;
         let mut errors = 0;
         let mut total_tokens = 0u64;

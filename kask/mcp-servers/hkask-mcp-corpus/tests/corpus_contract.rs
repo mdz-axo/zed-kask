@@ -10,7 +10,7 @@
 //! - `corpus_build_persona` (error path: missing config)
 //! - `corpus_cache_work` (file write + slug validation)
 
-use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
+use hkask_inference::{EmbeddingRouter, InferenceConfig};
 use hkask_mcp_corpus::CorpusServer;
 use hkask_mcp_corpus::ocr::ThresholdConfig;
 use hkask_services_compose::cosine_distance;
@@ -248,10 +248,9 @@ fn recovery_window_rescues_failing_contract() {
 
 // ── Tool-behavior contract tests (Parameters<T> seam) ───────────────────────
 
-fn test_server() -> CorpusServer {
-    let inference_config = InferenceConfig::from_env();
-    let inference_router = Arc::new(InferenceRouter::new(inference_config.clone()));
-    let embedding_router = EmbeddingRouter::new(inference_config);
+async fn test_server() -> CorpusServer {
+    let inference_router = hkask_inference::resolve_inference_port().await;
+    let embedding_router = EmbeddingRouter::new(InferenceConfig::from_env());
     let llm_ocr = Arc::new(hkask_mcp_corpus::ocr::llm_ocr::LlmOcrExecutor::new(
         Arc::clone(&inference_router),
     ));
@@ -285,7 +284,7 @@ fn error_kind(out: &str) -> Option<String> {
 
 #[tokio::test]
 async fn corpus_explain_returns_info_via_parameters_seam() {
-    let server = test_server();
+    let server = test_server().await;
     let out = server.corpus_explain().await;
     let content = parse_content(&out);
     assert!(
@@ -296,7 +295,7 @@ async fn corpus_explain_returns_info_via_parameters_seam() {
 
 #[tokio::test]
 async fn corpus_build_persona_rejects_missing_config_via_parameters_seam() {
-    let server = test_server();
+    let server = test_server().await;
     let req: hkask_mcp_corpus::tools::persona::BuildRequest =
         serde_json::from_value(serde_json::json!({
             "config_path": "/nonexistent/corpus.yaml",
@@ -311,7 +310,7 @@ async fn corpus_build_persona_rejects_missing_config_via_parameters_seam() {
 
 #[tokio::test]
 async fn corpus_cache_work_writes_file_via_parameters_seam() {
-    let server = test_server();
+    let server = test_server().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let req: hkask_mcp_corpus::tools::gather::CacheWorkRequest =
         serde_json::from_value(serde_json::json!({
@@ -333,7 +332,7 @@ async fn corpus_cache_work_writes_file_via_parameters_seam() {
 
 #[tokio::test]
 async fn corpus_cache_work_rejects_bad_slug_via_parameters_seam() {
-    let server = test_server();
+    let server = test_server().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let req: hkask_mcp_corpus::tools::gather::CacheWorkRequest =
         serde_json::from_value(serde_json::json!({

@@ -540,7 +540,7 @@ fn main() {
             hkask_regulation::RegulationLedger::default(),
         ));
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
-            hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone()),
+            hkask_regulation::CyberneticsLoop::new(regulation_ledger),
         ));
         let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
             std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
@@ -553,9 +553,8 @@ fn main() {
         log::info!("hKask regulation system wired — tool invocations are governed");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
-            mcp_runtime.clone(),
+            mcp_runtime,
         ));
-
         // D5: a2a_secret for OCAP delegation token minting.
         // Resolved via the `keyring` crate (synchronous OS keychain I/O).
         //
@@ -791,8 +790,8 @@ fn main() {
         // until `authenticate()` (spawned below) completes.
         {
             let user_store = app_state.user_store.clone();
-            let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
-            let servers_to_start_clone = servers_to_start.clone();
+            let mcp_runtime_for_deferred = mcp_runtime_for_startup;
+            let servers_to_start_clone = servers_to_start;
             cx.spawn(async move |cx| {
                 let mut current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
 
@@ -1129,7 +1128,7 @@ fn main() {
                 let (inference_port, inference_task) =
                     kask_bridge::LanguageModelInferencePort::new(
                         inference_model.clone(),
-                        async_cx.clone(),
+                        async_cx,
                     );
                 inference_task.detach();
 
@@ -1208,7 +1207,7 @@ fn main() {
 
                 let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
                     tool_port: panel_tool_port,
-                    a2a_secret: a2a_secret.clone(),
+                    a2a_secret: a2a_secret,
                     executor: cx.background_executor().clone(),
                 });
                 kask_panel::set_tool_invoker(Some(panel_tool_invoker));

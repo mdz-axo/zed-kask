@@ -36,7 +36,3 @@ utoipa.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
-
-[[test]]
-name = "services_storage_contract"
-path = "tests/contract/services_storage_contract.rs"

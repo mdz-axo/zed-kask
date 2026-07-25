@@ -35,7 +35,6 @@ fn test_server() -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
         "test-userpod".into(),
-        None,
         Arc::new(Mutex::new(ForecastStore::new(None))),
         reqwest::Client::new(),
         Mutex::new(None),

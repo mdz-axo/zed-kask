@@ -544,7 +544,7 @@ impl FusionLanguageModelProvider {
     /// `FusionLanguageModel`. When disabled or construction fails, `model`
     /// is `None` and the provider returns no models.
     pub fn new(cx: &mut App) -> Self {
-        let state = cx.new(|cx| FusionProviderState::new(cx));
+        let state = cx.new(FusionProviderState::new);
 
         let kask_settings = kask_bridge_settings(cx);
         let model = kask_settings

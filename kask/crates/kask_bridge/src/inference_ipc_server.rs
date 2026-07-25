@@ -81,17 +81,9 @@ impl InferenceIpcServer {
 
         let listener = rx
             .recv()
+            .map_err(|e| std::io::Error::other(format!("IPC socket bind channel failed: {e}")))?
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("IPC socket bind channel failed: {e}"),
-                )
-            })?
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to bind inference IPC socket: {e}"),
-                )
+                std::io::Error::other(format!("Failed to bind inference IPC socket: {e}"))
             })?;
 
         let port = inference_port.clone();

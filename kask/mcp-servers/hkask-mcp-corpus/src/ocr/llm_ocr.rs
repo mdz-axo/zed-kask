@@ -10,8 +10,7 @@ use async_trait::async_trait;
 
 use crate::ocr::{OcrBackend, OcrResult};
 use base64::Engine;
-use hkask_inference::InferenceRouter;
-use hkask_types::template::LLMParameters;
+use hkask_types::{InferencePort, template::LLMParameters};
 use image::DynamicImage;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -112,10 +111,10 @@ fn now_unix() -> i64 {
 /// (DeepInfra, Together AI) through provider-prefixed model names.
 ///
 /// The router is constructed once and shared across all concurrent
-/// OCR tasks via `Arc<InferenceRouter>`.
+/// OCR tasks via `Arc<dyn InferencePort>`.
 pub struct LlmOcrExecutor {
-    /// Shared inference router (constructed once, used by all concurrent tasks).
-    router: Arc<InferenceRouter>,
+    /// Shared inference port (constructed once, used by all concurrent tasks).
+    router: Arc<dyn InferencePort>,
     /// Maximum output tokens per page.
     max_tokens: u32,
     /// Circuit breaker for rate-limit resilience.
@@ -123,8 +122,8 @@ pub struct LlmOcrExecutor {
 }
 
 impl LlmOcrExecutor {
-    /// Create a new LLM OCR executor with a shared router.
-    pub fn new(router: Arc<InferenceRouter>) -> Self {
+    /// Create a new LLM OCR executor with a shared inference port.
+    pub fn new(router: Arc<dyn InferencePort>) -> Self {
         Self {
             router,
             max_tokens: 4096,
@@ -275,7 +274,6 @@ impl OcrExecutor for LlmOcrExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_inference::InferenceConfig;
     use image::{ImageBuffer, RgbImage};
 
     /// Create a simple test image.
@@ -284,26 +282,26 @@ mod tests {
         DynamicImage::ImageRgb8(img)
     }
 
-    fn test_executor() -> LlmOcrExecutor {
-        LlmOcrExecutor::new(Arc::new(InferenceRouter::new(InferenceConfig::from_env())))
+    async fn test_executor() -> LlmOcrExecutor {
+        LlmOcrExecutor::new(hkask_inference::resolve_inference_port().await)
     }
 
-    #[test]
-    fn is_available_for_llm_ocr() {
-        let executor = test_executor();
+    #[tokio::test]
+    async fn is_available_for_llm_ocr() {
+        let executor = test_executor().await;
         // Circuit breaker starts closed, so should be available
         assert!(executor.is_available(&OcrBackend::LlmOcr("any-model".into())));
     }
 
-    #[test]
-    fn is_available_false_for_other_backends() {
-        let executor = test_executor();
+    #[tokio::test]
+    async fn is_available_false_for_other_backends() {
+        let executor = test_executor().await;
         assert!(!executor.is_available(&OcrBackend::Tesseract));
     }
 
-    #[test]
-    fn is_available_false_when_circuit_open() {
-        let executor = test_executor();
+    #[tokio::test]
+    async fn is_available_false_when_circuit_open() {
+        let executor = test_executor().await;
         executor.force_open_circuit();
         assert!(
             !executor.is_available(&OcrBackend::LlmOcr("any-model".into())),
@@ -313,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_wrong_backend() {
-        let executor = test_executor();
+        let executor = test_executor().await;
         let image = test_image();
         let result = executor
             .execute(0, &OcrBackend::Tesseract, &image, false)

@@ -371,20 +371,19 @@ impl MemoryPort for RealMemoryPort {
 
             match vectors {
                 Ok(vectors) => {
-                    if let Some(vector) = vectors.into_iter().next() {
-                        if let Err(e) = self.semantic.store_embedding(
+                    if let Some(vector) = vectors.into_iter().next()
+                        && let Err(e) = self.semantic.store_embedding(
                             &embedding_entity,
                             &vector,
                             &self.embedding_model,
-                        ) {
-                            tracing::warn!(
-                                target: "reg.memory",
-                                thread_id = %thread_id,
-                                error = %e,
-                                "Failed to store prompt embedding"
-                            );
-                            // Non-fatal — the h_mem records are the primary store.
-                        }
+                        )
+                    {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            thread_id = %thread_id,
+                            error = %e,
+                            "Failed to store prompt embedding"
+                        );
                     }
                 }
                 Err(e) => {
@@ -439,36 +438,36 @@ impl MemoryPort for RealMemoryPort {
                 .embed_sentences(&self.embedding_model, &[query])
                 .await;
 
-            if let Ok(vectors) = vectors {
-                if let Some(query_vector) = vectors.into_iter().next() {
-                    match self.semantic.search_similar(&query_vector, limit) {
-                        Ok(results) => {
-                            for result in results {
-                                // Retrieve the h_mem associated with this embedding
-                                // to get the full text content.
-                                let entity_ref = &result.embedding.entity_ref;
-                                if let Ok(h_mems) = self.semantic.query_deduped(entity_ref) {
-                                    for h_mem in h_mems {
-                                        let text = h_mem.value.as_str().unwrap_or("").to_string();
-                                        if !text.is_empty() {
-                                            snippets.push(MemorySnippet {
-                                                text,
-                                                source: "semantic".to_string(),
-                                                confidence: h_mem.confidence.value(),
-                                                relevance_score: 1.0 - result.distance,
-                                            });
-                                        }
+            if let Ok(vectors) = vectors
+                && let Some(query_vector) = vectors.into_iter().next()
+            {
+                match self.semantic.search_similar(&query_vector, limit) {
+                    Ok(results) => {
+                        for result in results {
+                            // Retrieve the h_mem associated with this embedding
+                            // to get the full text content.
+                            let entity_ref = &result.embedding.entity_ref;
+                            if let Ok(h_mems) = self.semantic.query_deduped(entity_ref) {
+                                for h_mem in h_mems {
+                                    let text = h_mem.value.as_str().unwrap_or("").to_string();
+                                    if !text.is_empty() {
+                                        snippets.push(MemorySnippet {
+                                            text,
+                                            source: "semantic".to_string(),
+                                            confidence: h_mem.confidence.value(),
+                                            relevance_score: 1.0 - result.distance,
+                                        });
                                     }
                                 }
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "reg.memory",
-                                error = %e,
-                                "Semantic search failed during recall"
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            error = %e,
+                            "Semantic search failed during recall"
+                        );
                     }
                 }
             }
@@ -484,7 +483,7 @@ impl MemoryPort for RealMemoryPort {
                 .collect();
 
             for word in &query_words {
-                let entity = format!("chat:thread:");
+                let entity = "chat:thread:".to_string();
                 if let Ok(h_mems) = self.episodic.query_for_deduped(&entity, self.user_webid) {
                     for h_mem in h_mems {
                         let text = h_mem.value.as_str().unwrap_or("").to_string();

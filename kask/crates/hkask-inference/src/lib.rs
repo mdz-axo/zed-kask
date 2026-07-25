@@ -180,3 +180,58 @@ impl RouterModelEntry {
         None
     }
 }
+
+/// Resolve the best available `InferencePort` for an MCP server.
+///
+/// This is the canonical entry point for MCP servers at startup. It tries
+/// the IPC bridge first (connecting back to zed's `LanguageModelRegistry`
+/// via a Unix socket), and falls back to constructing an `InferenceRouter`
+/// from env-var API keys when the IPC socket is not available (e.g., when
+/// running the MCP server standalone outside zed).
+///
+/// # Priority
+///
+/// 1. `InferenceIpcClient` — if `HKASK_INFERENCE_SOCKET` is set and the
+///    socket is reachable. This routes inference through zed's
+///    `LanguageModelRegistry` (with fusion, guard, and zed's configured
+///    API keys).
+/// 2. `InferenceRouter` — constructed from `InferenceConfig::from_env()`.
+///    This uses env-var API keys (`DI_API_KEY`, `OR_API_KEY`, etc.) and the
+///    OS keychain. Used when running standalone or when the IPC socket is
+///    not available.
+///
+/// # Logs
+///
+/// Logs which path was taken at `info` level so operators can verify the
+/// inference routing from server startup logs.
+///
+/// expect: "MCP servers route inference through zed when available, fall back to env-var keys"
+/// pre:  none (reads env vars)
+/// post: returns an `Arc<dyn InferencePort>` ready for inference calls
+#[must_use]
+pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
+    match InferenceIpcClient::from_env().await {
+        Some(Ok(client)) => {
+            tracing::info!(
+                target: "hkask.inference",
+                "MCP inference routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
+            );
+            std::sync::Arc::new(client)
+        }
+        Some(Err(e)) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                error = %e,
+                "IPC bridge connection failed — falling back to InferenceRouter with env-var keys"
+            );
+            std::sync::Arc::new(InferenceRouter::new(InferenceConfig::from_env()))
+        }
+        None => {
+            tracing::info!(
+                target: "hkask.inference",
+                "HKASK_INFERENCE_SOCKET not set — using InferenceRouter with env-var keys"
+            );
+            std::sync::Arc::new(InferenceRouter::new(InferenceConfig::from_env()))
+        }
+    }
+}
