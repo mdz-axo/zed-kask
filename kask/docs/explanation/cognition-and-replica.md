@@ -318,13 +318,13 @@ The `hkask-mcp-companies` server provides 41 tools for retrieving company data, 
 The server requires both market-data credentials, configured through zed-kask's `CredentialsProvider` (D9) or the kask settings page. Research keys are optional:
 
 ```bash
-# Via zed-kask credentials (preferred — D9 SecretsPort adapter):
+# Via zed-kask credentials (preferred — D9 keyring crate adapter):
 #   add HKASK_FMP_API_KEY, HKASK_EODHD_API_KEY, and any optional
 #   HKASK_EXA_API_KEY / HKASK_TAVILY_API_KEY / HKASK_BRAVE_API_KEY
 #   entries under the kask namespace in the editor's credentials store.
 #
 # The companies MCP server reads these at in-process startup via the
-# SecretsPort adapter; it does not spawn a separate process.
+# keyring crate adapter; it does not spawn a separate process.
 ```
 
 The `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` values are required for financial-data calls; the research provider keys enable `research_search`.

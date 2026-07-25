@@ -131,7 +131,7 @@ impl AgentServer for CuratorAgentServer {
                 agent.update(cx, |agent, cx| {
                     agent.set_system_prompt_override(curator_prompt, cx);
                 });
-            }).ok();
+            });
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

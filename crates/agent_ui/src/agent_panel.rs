@@ -36,7 +36,7 @@ use zed_actions::{
 
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
-use crate::agent_connection_store::AgentConnectionStore;
+use crate::agent_connection_store::{AgentConnectionEntry, AgentConnectionStore};
 use crate::completion_provider::{AgentContextSelection, AgentContextSource};
 use crate::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, compose_terminal_thread_title,
@@ -2927,6 +2927,11 @@ impl AgentPanel {
 
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
+        let already_connecting = self
+            .connection_store
+            .read(cx)
+            .entry(&Agent::NativeAgent)
+            .is_some_and(|entry| matches!(entry.read(cx), AgentConnectionEntry::Connecting { .. }));
         self.connection_store.update(cx, |store, cx| {
             store.request_connection(
                 Agent::NativeAgent,
@@ -2934,6 +2939,35 @@ impl AgentPanel {
                 cx,
             );
         });
+
+        // Eagerly populate the global `SkillIndex` so the Skills settings
+        // page shows skills before the user opens an agent conversation.
+        // `maintain_project_context` (which calls `publish_skill_index`)
+        // otherwise only runs when a session is created or a thread is
+        // loaded, leaving the index empty on a fresh startup.
+        if !already_connecting {
+            let connect_task = self.connection_store.update(cx, |store, cx| {
+                store
+                    .entry(&Agent::NativeAgent)
+                    .map(|entry| entry.read(cx).wait_for_connection())
+            });
+            if let Some(connect_task) = connect_task {
+                let project = self.project.clone();
+                cx.spawn(async move |_this, cx| -> Result<()> {
+                    let connected = connect_task.await?;
+                    if let Some(native_connection) = connected
+                        .connection
+                        .downcast::<agent::NativeAgentConnection>()
+                    {
+                        cx.update(|cx| {
+                            native_connection.refresh_skills_for_project(project, cx);
+                        });
+                    }
+                    Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
     }
 
     pub fn activate_draft(

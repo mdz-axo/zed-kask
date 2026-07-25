@@ -12,7 +12,7 @@ mds_categories: [composition, trust, lifecycle]
 
 The zed-kask fork integrates hKask into the Zed editor as a native in-process agent platform. This diagram shows the composition root — the dependency injection wiring at startup (`crates/zed/src/main.rs`) that connects zed's editor surfaces to hKask's agent runtime via the `kask_bridge` seam (D8).
 
-The architecture follows a strict dependency invariant: **no hKask crate depends on a zed crate**. The `kask_bridge` crate is the sole bidirectional seam, adapting zed's `LanguageModel`, `CredentialsProvider`, and `ThreadMemoryPort` traits into hKask's `InferencePort`, `SecretsPort`, and `MemoryPort` interfaces. All ten integration seams (D1–D10) are wired at the composition root before the editor event loop begins.
+The architecture follows a strict dependency invariant: **no hKask crate depends on a zed crate**. The `kask_bridge` crate is the sole bidirectional seam, adapting zed's `LanguageModel`, `CredentialsProvider`, and `ThreadMemoryPort` traits into hKask's `InferencePort`, `keyring` crate, and `MemoryPort` interfaces. All ten integration seams (D1–D10) are wired at the composition root before the editor event loop begins.
 
 ```mermaid
 flowchart TD
@@ -28,7 +28,7 @@ flowchart TD
 
     subgraph Bridge["kask_bridge (D8 — sole bidirectional seam)"]
         BridgeInf["LanguageModelInferencePort<br/>InferencePort over LanguageModel"]
-        BridgeSec["CredentialsSecretsPort<br/>SecretsPort over CredentialsProvider"]
+        BridgeSec["Credentialskeyring crate<br/>keyring crate over CredentialsProvider"]
         BridgeMem["BridgeMemoryPort<br/>MemoryPort over ThreadMemoryPort"]
         BridgeExec["BridgeManifestExecutor<br/>Skill execution adapter"]
         BridgeTool["BridgeToolPort<br/>ToolPort over McpRuntime"]
@@ -70,7 +70,7 @@ flowchart TD
     end
 
     %% Composition root wiring (numbered = startup order)
-    CredProv -->|"1. set_secrets_port()"| BridgeSec
+    CredProv -->|"1. keyring crate directly"| BridgeSec
     BridgeSec --> Keystore
     Keystore -->|"2. resolve_a2a_secret()"| BridgeSec
 
@@ -144,11 +144,11 @@ All ten integration seams are wired at the composition root in `crates/zed/src/m
 | D2 | Curator agent | `Curator` variant in `agent_ui::Agent` enum; native agent selectable in Agent Panel. |
 | D3 | Tools in-process | `BridgeToolPort` wraps `McpRuntime`; MCP servers run as child processes (stdio). OCAP/gas/spans enforced. |
 | D4 | Guard layer | `GuardedInferencePort` wraps `InferencePort`; `hkask-guard` scans inputs (injection, role override) and outputs (secret redaction). |
-| D5 | Sovereignty keys | `hkask-keystore` crypto-derivation over `SecretsPort`/`CredentialsProvider`; kask namespace (`kask://credentials/<key>`). |
+| D5 | Sovereignty keys | `hkask-keystore` crypto-derivation over `keyring` crate/`CredentialsProvider`; kask namespace (`kask://credentials/<key>`). |
 | D6 | Thread → memory | `BridgeMemoryPort` adapts `ThreadMemoryPort` → `MemoryPort`; thread turn completion ingests into hKask memory. |
 | D7 | App-identity | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, bundle IDs `dev.zed-kask.*`. |
-| D8 | Bridge + adapters | `kask_bridge` crate: `InferencePort`, `SecretsPort`, `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
-| D9a/b/c | Settings + credentials + UI | `KaskSettings` in settings.json; `SecretsPort` over `CredentialsProvider`; settings UI page with 5 sub-pages. |
+| D8 | Bridge + adapters | `kask_bridge` crate: `InferencePort`, `keyring` crate, `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
+| D9a/b/c | Settings + credentials + UI | `KaskSettings` in settings.json; `keyring` crate over `CredentialsProvider`; settings UI page with 5 sub-pages. |
 | D10 | Kask panel | Native GPUI dockable panel; `/tool args` direct invocation (OCAP-gated); scoped inference with selected server's tools. |
 
 ## Cross-References

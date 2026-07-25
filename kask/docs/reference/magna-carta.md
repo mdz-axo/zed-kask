@@ -193,7 +193,7 @@ implemented in `hkask-guard` and aligned with OWASP Top 10 for LLM Applications.
 | `hkask-guard` | `crates/hkask-guard/` | Mandatory content safety at every LLM boundary (P3.1 floor). Wrapped by `GuardedInferencePort` (D4) over `LanguageModelInferencePort` (D8). |
 | No admin bypass | Codebase-wide | No `is_admin` check, no `engineer_mode` feature flag, no hidden control plane |
 | Open-source | AGPL-3.0 | All weights/settings exposed; closed-source providers are excluded by charter |
-| `hkask-inference` (MCP-server-internal) | `kask/crates/hkask-inference` | **Not user-facing.** Retained only for MCP-server-internal use (e.g. `hkask-mcp-condenser`'s `condenser_thread_summary`). Reads API keys via `SecretsPort` (D9b), not env vars. The `InferenceConfig` / `FusionSkill` types it exposes are server-internal and do not constitute the user-facing generative-settings surface. |
+| `hkask-inference` (MCP-server-internal) | `kask/crates/hkask-inference` | **Not user-facing.** Retained only for MCP-server-internal use (e.g. `hkask-mcp-condenser`'s `condenser_thread_summary`). Reads API keys via `keyring` crate (D9b), not env vars. The `InferenceConfig` / `FusionSkill` types it exposes are server-internal and do not constitute the user-facing generative-settings surface. |
 
 ### What Happens When Violated
 

@@ -20,7 +20,7 @@ The companies server is a builtin in-process MCP server registered inside the ze
 
 1. Build zed-kask: `cargo build --release` (see the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for build and integration details).
 2. Obtain API keys from Financial Modeling Prep and EOD Historical Data.
-3. Configure the credentials through zed-kask's `CredentialsProvider` (D9) under the kask namespace — the companies server reads them at in-process startup via the `SecretsPort` adapter:
+3. Configure the credentials through zed-kask's `CredentialsProvider` (D9) under the kask namespace — the companies server reads them at in-process startup via the `keyring` crate adapter:
 
 ```
 HKASK_FMP_API_KEY=your_fmp_key
