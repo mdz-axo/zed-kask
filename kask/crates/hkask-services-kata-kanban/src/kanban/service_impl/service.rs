@@ -257,7 +257,7 @@ impl KanbanService {
             }
         }
 
-        boards.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        boards.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         Ok(boards)
     }
 
@@ -526,7 +526,7 @@ impl KanbanService {
             }
         }
 
-        tasks.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        tasks.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         if let Some(limit) = filter.limit {
             tasks.truncate(limit);
         }

@@ -26,6 +26,7 @@ pub use error::{MediaError, map_media_error};
 
 use gallery::GalleryState;
 use gallery::vision::{self};
+use hkask_inference::InferenceRouter;
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url};
 use hkask_pods::VoiceDesign;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -933,21 +934,23 @@ impl MediaServer {
         let models = self.inference.list_vision_models().await;
 
         for model in &models {
-            match model.provider {
-                hkask_inference::ProviderId::Fal => {
+            // Check the provider prefix in the model name.
+            let prefix = model.prefixed_name.split('/').next().unwrap_or("");
+            match prefix {
+                "FA" => {
                     // Qwen2.5-VL 72B — Apache 2.0 open-weight, served by fal.ai
                     return Some(("FA/Qwen/Qwen2.5-VL-72B-Instruct", "qwen2.5-vl-72b"));
                 }
-                hkask_inference::ProviderId::DeepInfra => {
+                "DI" => {
                     return Some((
                         "DI/meta-llama/Llama-3.2-11B-Vision-Instruct",
                         "llama-3.2-vision",
                     ));
                 }
-                hkask_inference::ProviderId::OpenRouter => {
+                "OR" => {
                     return Some(("OR/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
                 }
-                hkask_inference::ProviderId::Together => {
+                "TG" => {
                     return Some(("TG/Qwen/Qwen2.5-VL-72B-Instruct", "qwen-vl"));
                 }
                 _ => continue,
@@ -1342,9 +1345,10 @@ impl rmcp::ServerHandler for MediaServer {}
 pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
-    // Resolve the inference port — tries the IPC bridge to zed first,
-    // falls back to InferenceRouter with env-var keys.
-    let inference = hkask_inference::resolve_inference_port().await;
+    // Build the inference router for vision LLM tasks.
+    // Backends are constructed lazily — only those with configured API keys are available.
+    let inference_config = hkask_inference::InferenceConfig::from_env();
+    let inference = Arc::new(InferenceRouter::new(inference_config));
 
     // Create an in-memory GalleryStore for the media server.
     // Gracefully degrade if DB initialization fails — gallery tools

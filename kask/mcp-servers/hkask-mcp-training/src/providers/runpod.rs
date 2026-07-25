@@ -443,6 +443,7 @@ struct PodDeploySpec<'a> {
     container_disk_gb: u32,
     docker_image: &'a str,
     docker_args: &'a str,
+    #[allow(dead_code)]
     template_id: &'a str,
 }
 
@@ -808,7 +809,7 @@ impl TrainingHost for RunpodHost {
         // override our defaults (operator-accepted docker_image still wins
         // over the template's image). v2 createPod does not take a templateId
         // field — template fields must be spread into the request body.
-        let (resolved_image, resolved_disk, resolved_ports) = if !template_id.is_empty() {
+        let (resolved_image, resolved_disk, _resolved_ports) = if !template_id.is_empty() {
             let template = self.get_template(&template_id).await?;
             let tpl_image = template
                 .get("image")
@@ -1325,6 +1326,7 @@ mod tests {
         assert_eq!(body["image"], "");
     }
 
+    #[allow(dead_code)]
     fn make_host(template_id: &str) -> RunpodHost {
         RunpodHost::new(RunpodHostInit {
             api_key: "test-key".to_string(),

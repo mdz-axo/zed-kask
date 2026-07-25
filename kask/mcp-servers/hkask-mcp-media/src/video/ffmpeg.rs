@@ -27,13 +27,16 @@ impl FfmpegRunner {
     /// Cleans up leftover temp files from previous crashed sessions.
     pub fn detect() -> Self {
         let ffmpeg_path = "ffmpeg".to_string();
-        let available = std::process::Command::new(&ffmpeg_path)
-            .arg("-version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let available = {
+            #[allow(clippy::disallowed_methods)]
+            std::process::Command::new(&ffmpeg_path)
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
 
         let temp_dir = std::env::temp_dir().join("hkask-media");
 

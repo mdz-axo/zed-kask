@@ -95,16 +95,19 @@ async fn ocr_via_decimation(bytes: &[u8], _model: &str) -> anyhow::Result<String
 
     // Decimate via pdftoppm — JPEG at 72 DPI to stay within 128K token context limit
     let prefix = temp_dir.path().join("page");
-    let output = std::process::Command::new("pdftoppm")
-        .arg("-jpeg")
-        .arg("-jpegopt")
-        .arg("quality=85")
-        .arg("-r")
-        .arg("72")
-        .arg(&pdf_path)
-        .arg(&prefix)
-        .output()
-        .map_err(|e| anyhow::anyhow!("pdftoppm not available: {}", e))?;
+    let output = {
+        #[allow(clippy::disallowed_methods)]
+        std::process::Command::new("pdftoppm")
+            .arg("-jpeg")
+            .arg("-jpegopt")
+            .arg("quality=85")
+            .arg("-r")
+            .arg("72")
+            .arg(&pdf_path)
+            .arg(&prefix)
+            .output()
+    }
+    .map_err(|e| anyhow::anyhow!("pdftoppm not available: {}", e))?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
