@@ -10,7 +10,7 @@
 //! ## Prefix-based keys and the listing limitation
 //!
 //! Several key patterns use a prefix + dynamic suffix convention (e.g.,
-//! `matrix-pod-pending-{name}`, `matrix-userpod-{display_name}`). This
+//! `matrix-pod-pending-{name}`, `matrix-agent-{display_name}`). This
 //! allows per-entity keychain entries without a central registry.
 //!
 //! **Limitation:** The OS keychain API (`dbus-secret-service` on Linux,
@@ -50,11 +50,11 @@ pub const KEY_MATRIX_HUMAN_USERNAME: &str = "matrix-human-username";
 /// Keychain key for Matrix human account password.
 pub const KEY_MATRIX_HUMAN_PASSWORD: &str = "matrix-human-password";
 
-/// Keychain key for Matrix userpod account username.
-pub const KEY_MATRIX_USERPOD_USERNAME: &str = "matrix-userpod-username";
+/// Keychain key for Matrix agent account username.
+pub const KEY_MATRIX_AGENT_USERNAME: &str = "matrix-agent-username";
 
-/// Keychain key for Matrix userpod account password.
-pub const KEY_MATRIX_USERPOD_PASSWORD: &str = "matrix-userpod-password";
+/// Keychain key for Matrix agent account password.
+pub const KEY_MATRIX_AGENT_PASSWORD: &str = "matrix-agent-password";
 
 /// Keychain key for the Matrix bot Curator credentials.
 pub const KEY_MATRIX_BOT_CURATOR: &str = "matrix-bot-curator";
@@ -66,8 +66,8 @@ pub const KEY_MATRIX_PENDING_RECOVERY: &str = "matrix-pending-recovery";
 /// Keychain key for the homeserver URL stored alongside the pending-recovery flag.
 pub const KEY_MATRIX_PENDING_HOMESERVER: &str = "matrix-pending-homeserver";
 
-/// Keychain key prefix for per-userpod Matrix credentials (format with display_name).
-pub const KEY_MATRIX_USERPOD_PREFIX: &str = "matrix-userpod-";
+/// Keychain key prefix for per-agent Matrix credentials (format with display_name).
+pub const KEY_MATRIX_AGENT_PREFIX: &str = "matrix-agent-";
 
 /// Keychain key prefix for per-pod Matrix credentials (format with pod_name).
 pub const KEY_MATRIX_POD_PREFIX: &str = "matrix-pod-";

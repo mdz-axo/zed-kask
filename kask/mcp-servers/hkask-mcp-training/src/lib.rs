@@ -312,7 +312,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
     let cache_dir = PathBuf::from(
         std::env::var("HKASK_TRAINING_CACHE_DIR").unwrap_or_else(|_| {
-            hkask_types::agent_paths::userpod_adapters_dir("curator")
+            hkask_types::agent_paths::agent_adapters_dir("curator")
                 .to_string_lossy()
                 .to_string()
         }),
@@ -334,7 +334,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .get("HKASK_TRAINING_DB")
                     .cloned()
                     .unwrap_or_else(|| {
-                        let relative = hkask_types::agent_paths::userpod_training_db("curator");
+                        let relative = hkask_types::agent_paths::agent_training_db("curator");
                         hkask_types::agent_paths::resolve_under_data_dir(&relative)
                             .to_string_lossy()
                             .to_string()

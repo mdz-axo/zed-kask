@@ -1791,7 +1791,7 @@ pub(crate) fn render_training_page(
     let cache_dir_input = kask_string_input(
         "kask-training-cache-dir",
         "Cache Directory",
-        "(userpod adapters dir)",
+        "(agent adapters dir)",
         cache_dir,
         "training",
         "cache_dir",
@@ -1837,7 +1837,7 @@ pub(crate) fn render_training_page(
                 .gap_1()
                 .child(Label::new("Cache Directory"))
                 .child(
-                    Label::new("Cache directory for dataset pipeline. Leave empty for the userpod adapters directory.")
+                    Label::new("Cache directory for dataset pipeline. Leave empty for the agent adapters directory.")
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )

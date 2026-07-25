@@ -1,7 +1,7 @@
 //! Wallet — Per-agent gas/rJoule balance store.
 //!
 //! Backed by SQLite via AgentWalletStore. Wallets are created by the Curator daemon
-//! on userpod registration. Agents spend from wallets via WalletBackedBudget.
+//! on agent registration. Agents spend from wallets via WalletBackedBudget.
 
 use crate::agent_wallet_store::{AgentWalletError, WalletStore};
 use crate::energy::{GasCost, GasError};

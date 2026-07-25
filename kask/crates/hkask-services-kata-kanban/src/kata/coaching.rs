@@ -113,7 +113,7 @@ impl KataEngine {
             state.current_step = q.number as usize;
 
             state.step_experiences.push(StepExperience {
-                userpod: state.learner_bot.clone(),
+                agent: state.learner_bot.clone(),
                 kata_type: "coaching".into(),
                 step_label: format!("q{}", q.number),
                 action: "coaching_question".into(),

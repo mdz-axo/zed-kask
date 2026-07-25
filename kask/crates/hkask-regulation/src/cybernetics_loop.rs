@@ -1032,7 +1032,7 @@ impl RegulationLoop for CyberneticsLoop {
             // Send CurationInput::Alert on direct alerts channel.
             // Fallback: persist to RegulationArchive when channel is down (Curator inactive).
             // Per design decision: the algedonic system must always be connected
-            // to the Curator userpod/agent — persistence is the bridge when the
+            // to the Curator agent — persistence is the bridge when the
             // live channel has no receiver.
             if action.action_type == ActionType::Escalate && target_id == LoopId::Curation {
                 let (deficit, threshold) = extract_deficit_threshold(&action.parameters.data);

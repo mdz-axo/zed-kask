@@ -78,7 +78,7 @@ impl KataEngine {
                 .take(200)
                 .collect::<String>();
             state.step_experiences.push(StepExperience {
-                userpod: state.learner_bot.clone(),
+                agent: state.learner_bot.clone(),
                 kata_type: "improvement".into(),
                 step_label: format!("{}", step.ordinal),
                 action: step.action.clone(),

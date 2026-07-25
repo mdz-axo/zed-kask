@@ -67,7 +67,7 @@ impl KataEngine {
             state.current_step += 1;
 
             state.step_experiences.push(StepExperience {
-                userpod: state.learner_bot.clone(),
+                agent: state.learner_bot.clone(),
                 kata_type: "starter".into(),
                 step_label: practice.name.clone(),
                 action: "practice_routine".into(),

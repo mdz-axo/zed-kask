@@ -546,8 +546,8 @@ pub(crate) fn filter_outcome_to_pages(
 /// inline fallback prompt.
 ///
 /// Template base path is resolved relative to the workspace root. If the
-/// server is started from a different directory, set `HKASK_USERPOD_REGISTRY_PATH`
-/// to the absolute path of the `registry/userpods` directory.
+/// server is started from a different directory, set `HKASK_AGENT_REGISTRY_PATH`
+/// to the absolute path of the `registry/agents` directory.
 pub(crate) fn default_owner() -> String {
     DEFAULT_OWNER.to_string()
 }

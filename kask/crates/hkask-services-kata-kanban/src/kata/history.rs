@@ -1,7 +1,7 @@
 //! Kata practice history — tracks practice frequency, streaks, and automaticity.
 //!
 //! Cybernetic feedback types for Improvement Kata signal computation.
-//! Persisted per userpod to enable composition (graduation criteria, habit monitoring).
+//! Persisted per agent to enable composition (graduation criteria, habit monitoring).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use super::error::KataError;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct KataHistory {
-    pub userpods: HashMap<String, Vec<PracticeEntry>>,
+    pub agents: HashMap<String, Vec<PracticeEntry>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,21 +70,21 @@ impl KataHistory {
     }
 
     /// \[P9\] Motivating: Homeostatic Self-Regulation — each practice session recorded.
-    /// pre:  userpod is non-empty; entry is a valid PracticeEntry
-    /// post: entry appended to userpod's practice history list
-    pub fn record(&mut self, userpod: &str, entry: PracticeEntry) {
-        self.userpods
-            .entry(userpod.to_string())
+    /// pre:  agent is non-empty; entry is a valid PracticeEntry
+    /// post: entry appended to agent's practice history list
+    pub fn record(&mut self, agent: &str, entry: PracticeEntry) {
+        self.agents
+            .entry(agent.to_string())
             .or_default()
             .push(entry);
     }
 
     /// \[P9\] Motivating: Homeostatic Self-Regulation — streak computation for habit health.
-    /// pre:  userpod is non-empty; today is a YYYY-MM-DD date string
+    /// pre:  agent is non-empty; today is a YYYY-MM-DD date string
     /// post: returns consecutive day streak including today, or 0 if today missing
     #[must_use]
-    pub fn current_streak(&self, userpod: &str, today: &str) -> u32 {
-        let entries = match self.userpods.get(userpod) {
+    pub fn current_streak(&self, agent: &str, today: &str) -> u32 {
+        let entries = match self.agents.get(agent) {
             Some(e) => e,
             None => return 0,
         };
@@ -111,12 +111,12 @@ impl KataHistory {
     }
 
     /// \[P9\] Motivating: Homeostatic Self-Regulation — automaticity score for kata graduation.
-    /// pre:  userpod is non-empty; today is a YYYY-MM-DD date string
+    /// pre:  agent is non-empty; today is a YYYY-MM-DD date string
     /// post: returns score 0.0–1.0 based on streak (target 21d) with decay for gaps >3d
     #[must_use]
-    pub fn compute_automaticity(&self, userpod: &str, today: &str) -> f64 {
-        let streak = self.current_streak(userpod, today) as f64;
-        let days_since = self.days_since_last(userpod, today) as f64;
+    pub fn compute_automaticity(&self, agent: &str, today: &str) -> f64 {
+        let streak = self.current_streak(agent, today) as f64;
+        let days_since = self.days_since_last(agent, today) as f64;
 
         let mut auto = (streak / 21.0).min(1.0);
 
@@ -128,11 +128,11 @@ impl KataHistory {
     }
 
     /// \[P9\] Motivating: Homeostatic Self-Regulation — gap detection for habit decay.
-    /// pre:  userpod is non-empty; today is a YYYY-MM-DD date string
+    /// pre:  agent is non-empty; today is a YYYY-MM-DD date string
     /// post: returns days since last practice, or u32::MAX if no history
     #[must_use]
-    pub fn days_since_last(&self, userpod: &str, today: &str) -> u32 {
-        let entries = match self.userpods.get(userpod) {
+    pub fn days_since_last(&self, agent: &str, today: &str) -> u32 {
+        let entries = match self.agents.get(agent) {
             Some(e) => e,
             None => return u32::MAX,
         };
@@ -144,19 +144,19 @@ impl KataHistory {
     }
 
     /// \[P9\] Motivating: Homeostatic Self-Regulation — starter kata graduation gate.
-    /// pre:  userpod is non-empty; today is a YYYY-MM-DD date string
+    /// pre:  agent is non-empty; today is a YYYY-MM-DD date string
     /// post: returns true if automaticity > 0.5 (graduation threshold)
     #[must_use]
-    pub fn can_graduate_from_starter(&self, userpod: &str, today: &str) -> bool {
-        self.compute_automaticity(userpod, today) > 0.5
+    pub fn can_graduate_from_starter(&self, agent: &str, today: &str) -> bool {
+        self.compute_automaticity(agent, today) > 0.5
     }
 
     /// \[P9\] Motivating: Homeostatic Self-Regulation — habit decay intervention trigger.
-    /// pre:  userpod is non-empty; today is a YYYY-MM-DD date string
+    /// pre:  agent is non-empty; today is a YYYY-MM-DD date string
     /// post: returns true if 3+ days since last practice (intervention needed)
     #[must_use]
-    pub fn needs_habit_intervention(&self, userpod: &str, today: &str) -> bool {
-        let days = self.days_since_last(userpod, today);
+    pub fn needs_habit_intervention(&self, agent: &str, today: &str) -> bool {
+        let days = self.days_since_last(agent, today);
         (3..u32::MAX).contains(&days)
     }
 }
@@ -226,7 +226,7 @@ pub enum ImprovementDirection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepExperience {
-    pub userpod: String,
+    pub agent: String,
     pub kata_type: String,
     pub step_label: String,
     pub action: String,

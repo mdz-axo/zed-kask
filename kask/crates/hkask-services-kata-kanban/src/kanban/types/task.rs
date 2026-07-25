@@ -17,7 +17,7 @@ pub struct Task {
     pub description: Option<String>,
     /// Current status (determines which column the task is in).
     pub status: TaskStatus,
-    /// The userpod who created this task (P12).
+    /// The agent who created this task (P12).
     pub owner: WebID,
     /// The agent assigned to work on this task (requires consent).
     pub assignee: Option<WebID>,
@@ -98,7 +98,7 @@ impl Task {
 /// Comment — a text note appended to a task by an agent.
 ///
 /// Forms a mini-REPL thread attached to each task: agents append notes
-/// as they work, and the coordinating userpod responds inline.
+/// as they work, and the coordinating agent responds inline.
 /// Every comment carries `author: WebID` (P12).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {

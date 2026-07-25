@@ -340,7 +340,7 @@ pub struct KaskTrainingSettings {
     pub host: String,
 
     /// Cache directory for dataset pipeline. When empty, uses the
-    /// userpod adapters directory.
+    /// agent adapters directory.
     #[serde(default)]
     pub cache_dir: String,
 }

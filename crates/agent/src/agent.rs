@@ -2774,7 +2774,7 @@ pub trait ThreadMemoryPort: Send + Sync {
 ///
 /// Uses a `Mutex` (not `OnceLock`) so the port can be replaced after startup —
 /// the composition root installs a logging port immediately, then upgrades to
-/// a real port once the Zed user resolves and the userpod identity is known.
+/// a real port once the Zed user resolves and the agent identity is known.
 static MEMORY_PORT: std::sync::Mutex<Option<Arc<dyn ThreadMemoryPort>>> =
     std::sync::Mutex::new(None);
 
@@ -2783,7 +2783,7 @@ static MEMORY_PORT: std::sync::Mutex<Option<Arc<dyn ThreadMemoryPort>>> =
 /// Called by zed-kask's app startup to wire the `kask_bridge::BridgeMemoryPort`
 /// into the thread completion path. Can be called more than once — later calls
 /// replace the earlier port (e.g., upgrading from a logging port to a real
-/// memory port once the userpod identity is known).
+/// memory port once the agent identity is known).
 pub fn set_memory_port(port: Option<Arc<dyn ThreadMemoryPort>>) {
     *MEMORY_PORT.lock().expect("MEMORY_PORT poisoned") = port;
 }

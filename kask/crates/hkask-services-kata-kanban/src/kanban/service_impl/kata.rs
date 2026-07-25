@@ -57,7 +57,7 @@ Deliverables (file links = work output):",
             evidence.push_str(
                 "
 
-Comment thread (agent/userpod communication):",
+Comment thread (agent communication):
             );
             for c in &task.comments {
                 evidence.push_str(&format!(

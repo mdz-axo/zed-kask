@@ -226,7 +226,7 @@ impl KanbanService {
     /// List all boards for a given owner.
     ///
     /// pre:  owner is a valid WebID
-    /// post: returns all boards owned by this userpod
+    /// post: returns all boards owned by this agent
     #[must_use = "result must be used"]
     pub fn board_list(&self, owner: &WebID) -> Result<Vec<Board>, KanbanError> {
         let h_mems = self

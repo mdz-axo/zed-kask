@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// A structured voice profile for TTS generation.
 ///
-/// Designed by an LLM via the `voice_design` tool, stored with the userpod,
+/// Designed by an LLM via the `voice_design` tool, stored with the agent,
 /// and passed to TTS models as a natural-language voice description.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VoiceDesign {

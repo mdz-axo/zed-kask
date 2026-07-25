@@ -111,7 +111,7 @@ pub struct SpanNamespace(String);
 const CANONICAL_NAMESPACES: &[&str] = &[
     // ── ACP (Agent Communication Protocol) ──
     "reg.acp.ide.connection_state",
-    "reg.acp.userpod.memory_size",
+    "reg.acp.agent.memory_size",
     // ── Core infrastructure ──
     "reg.adapter",
     "reg.pod",
@@ -257,8 +257,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.outcome.calibration",
     "reg.outcome.coherence",
     "reg.outcome.predictive",
-    // ── UserPod ──
-    "reg.userpod.registered",
+    // ── Agent ──
+    "reg.agent.registered",
     // ── Semantic ──
     "reg.semantic.published",
     // ── Skill (organized by subdomain) ──

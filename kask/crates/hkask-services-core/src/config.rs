@@ -22,9 +22,9 @@ const DEFAULT_ENERGY_BUDGET_CAP: u64 = 10_000;
 const DEFAULT_GAS_REPLENISH_RATE: u64 = 1_000;
 const DEFAULT_REG_THRESHOLD: u64 = 100;
 const DEFAULT_TEMPLATE_CACHE_PATH: &str = "/tmp/hkask-templates";
-/// Fallback userpod name when `HKASK_USERPOD_NAME` is not set.
+/// Fallback agent name when `HKASK_AGENT_NAME` is not set.
 ///
-/// In zed-kask, the composition root sets `HKASK_USERPOD_NAME` from the
+/// In zed-kask, the composition root sets `HKASK_AGENT_NAME` from the
 /// Zed login username. This constant is only used for standalone CLI usage
 /// (admin commands, repair tools) where no Zed session is available.
 const DEFAULT_USER_NAME: &str = "curator";
@@ -107,8 +107,8 @@ pub struct ServiceConfig {
     /// Default inference model name.
     pub default_model: String,
 
-    /// User name (from the Zed login via `HKASK_USERPOD_NAME`, or `DEFAULT_USER_NAME`
-    /// for standalone CLI). The 1:1 userpod name.
+    /// User name (from the Zed login via `HKASK_AGENT_NAME`, or `DEFAULT_USER_NAME`
+    /// for standalone CLI). The 1:1 agent name.
     pub user_name: String,
 
     /// Path for the template cache (Git CAS storage).
@@ -145,11 +145,11 @@ impl ServiceConfig {
     /// Resolve configuration from environment variables and keychain.
     ///
     /// Reads `HKASK_DB_PATH`, `HKASK_TEMPLATE_CACHE_PATH`,
-    /// `HKASK_MEMORY_DB_PATH`, and `HKASK_USERPOD_NAME` from environment.
+    /// `HKASK_MEMORY_DB_PATH`, and `HKASK_AGENT_NAME` from environment.
     /// The A2A authority secret and database passphrase are resolved via
     /// `hkask-keystore`.
     ///
-    /// The userpod name defaults to `HKASK_USERPOD_NAME` env var (set by the
+    /// The agent name defaults to `HKASK_AGENT_NAME` env var (set by the
     /// zed-kask composition root from the Zed login username), falling back to
     /// `DEFAULT_USER_NAME` ("curator") for standalone CLI usage.
     ///
@@ -168,7 +168,7 @@ impl ServiceConfig {
         let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
             .unwrap_or_else(|_| DEFAULT_TEMPLATE_CACHE_PATH.to_string());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
-        let user_name = std::env::var("HKASK_USERPOD_NAME")
+        let user_name = std::env::var("HKASK_AGENT_NAME")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_USER_NAME.to_string());
@@ -325,7 +325,7 @@ fn parse_db_provider(raw: &str) -> DbProvider {
 impl ServiceConfig {
     /// Returns the effective memory DB path when `in_memory: false`.
     ///
-    /// Uses the standard userpod directory layout: `userpods/{user_name}/memory.db`.
+    /// Uses the standard agent directory layout: `agents/{user_name}/memory.db`.
     /// This puts the agent's memory database alongside its pod database in the
     /// same directory, so all of an agent's data is self-contained in one folder.
     ///
@@ -339,7 +339,7 @@ impl ServiceConfig {
             return None;
         }
         Some(
-            hkask_types::agent_paths::userpod_memory_db(&self.user_name)
+            hkask_types::agent_paths::agent_memory_db(&self.user_name)
                 .to_string_lossy()
                 .to_string(),
         )

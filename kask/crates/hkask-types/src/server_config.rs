@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerRegistration {
-    /// Anyone with an OAuth account can register and create userpods.
+    /// Anyone with an OAuth account can register and create agents.
     Open,
     /// Only users with an admin-issued invite code can register.
     Closed,

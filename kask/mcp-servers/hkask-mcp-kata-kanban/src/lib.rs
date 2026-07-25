@@ -893,7 +893,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .get("HKASK_KANBAN_DB")
                     .cloned()
                     .unwrap_or_else(|| {
-                        let relative_path = hkask_types::agent_paths::userpod_kanban_db("curator");
+                        let relative_path = hkask_types::agent_paths::agent_kanban_db("curator");
                         let default_path =
                             hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
                         if let Some(parent) = default_path.parent() {

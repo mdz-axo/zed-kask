@@ -89,7 +89,7 @@ pub struct KataEngine {
     /// Optional SQLite-backed kata history store for concurrent, queryable persistence.
     history_store: Option<Arc<KataHistoryStore>>,
     /// Optional metric collector — called to capture Regulation metrics before/after cycles.
-    /// Receives (userpod_name, metric_name) and returns the current metric value.
+    /// Receives (agent_name, metric_name) and returns the current metric value.
     metric_collector: Option<MetricCollectorFn>,
     /// Optional Regulation runtime for variety counter increments and algedonic alert checks.
     /// When present, replaces tracing-only spans with actual Regulation state mutations.
@@ -242,12 +242,12 @@ impl KataEngine {
     /// caller should fall back to JSON-based persistence.
     ///
     /// `[P5]` Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  userpod_name, date, kata_type, practice_name must be non-empty
+    /// pre:  agent_name, date, kata_type, practice_name must be non-empty
     /// post: returns Some(row_id) if history_store is set and record succeeds; None if store not configured; Err on store failure
     #[must_use = "result must be used"]
     pub fn record_history_entry(
         &self,
-        userpod_name: &str,
+        agent_name: &str,
         date: &str,
         kata_type: &str,
         practice_name: &str,
@@ -257,7 +257,7 @@ impl KataEngine {
         if let Some(ref store) = self.history_store {
             let id = store
                 .record(
-                    userpod_name,
+                    agent_name,
                     date,
                     kata_type,
                     practice_name,

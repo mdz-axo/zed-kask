@@ -1,7 +1,7 @@
 //! Kata practice history — SQLite-backed persistence for habit tracking,
 //! automaticity scoring, and streak computation.
 //!
-//! Each practice session logs userpod name, date, kata type, practice name,
+//! Each practice session logs agent name, date, kata type, practice name,
 //! steps completed, and gas consumed.
 use crate::database::driver::{query_map, query_row};
 use crate::database::value::DbValue;
@@ -13,7 +13,7 @@ define_driver_store!(KataHistoryStore);
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KataHistoryEntry {
     pub id: i64,
-    pub userpod_name: String,
+    pub agent_name: String,
     pub date: String,
     pub kata_type: String,
     pub practice_name: String,
@@ -37,7 +37,7 @@ impl KataHistoryStore {
         let _ = driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS kata_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                userpod_name TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
                 date TEXT NOT NULL,
                 kata_type TEXT NOT NULL,
                 practice_name TEXT NOT NULL,
@@ -51,7 +51,7 @@ impl KataHistoryStore {
     /// Record a kata practice session.
     pub fn record(
         &self,
-        userpod_name: &str,
+        agent_name: &str,
         date: &str,
         kata_type: &str,
         practice_name: &str,
@@ -60,9 +60,9 @@ impl KataHistoryStore {
     ) -> Result<i64, KataHistoryError> {
         let driver = &*self.driver;
         driver.execute(
-            "INSERT INTO kata_history (userpod_name, date, kata_type, practice_name, steps_completed, gas_consumed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO kata_history (agent_name, date, kata_type, practice_name, steps_completed, gas_consumed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             &[
-                DbValue::Text(userpod_name.to_string()),
+                DbValue::Text(agent_name.to_string()),
                 DbValue::Text(date.to_string()),
                 DbValue::Text(kata_type.to_string()),
                 DbValue::Text(practice_name.to_string()),
@@ -78,20 +78,20 @@ impl KataHistoryStore {
         )
     }
 
-    /// Retrieve all entries for a userpod, ordered by date descending.
+    /// Retrieve all entries for an agent, ordered by date descending.
     #[must_use = "result must be used"]
-    pub fn entries_for_userpod(
+    pub fn entries_for_agent(
         &self,
-        userpod_name: &str,
+        agent_name: &str,
     ) -> Result<Vec<KataHistoryEntry>, KataHistoryError> {
         Ok(query_map(
             &*self.driver,
-            "SELECT id, userpod_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE userpod_name = ?1 ORDER BY date DESC",
-            &[DbValue::Text(userpod_name.to_string())],
+            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE agent_name = ?1 ORDER BY date DESC",
+            &[DbValue::Text(agent_name.to_string())],
             |row| {
                 Ok(KataHistoryEntry {
                     id: row.get_int(0)?,
-                    userpod_name: row.get_str(1)?.to_string(),
+                    agent_name: row.get_str(1)?.to_string(),
                     date: row.get_str(2)?.to_string(),
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
@@ -103,29 +103,29 @@ impl KataHistoryStore {
         )?)
     }
 
-    /// Count total entries for a userpod.
-    pub fn count_entries_for_userpod(&self, userpod_name: &str) -> Result<usize, KataHistoryError> {
+    /// Count total entries for an agent.
+    pub fn count_entries_for_agent(&self, agent_name: &str) -> Result<usize, KataHistoryError> {
         let count = query_row(
             &*self.driver,
-            "SELECT COUNT(*) FROM kata_history WHERE userpod_name = ?1",
-            &[DbValue::Text(userpod_name.to_string())],
+            "SELECT COUNT(*) FROM kata_history WHERE agent_name = ?1",
+            &[DbValue::Text(agent_name.to_string())],
             |row| row.get_int(0),
         )?
         .unwrap_or(0);
         Ok(count as usize)
     }
 
-    /// Count entries for a userpod on a specific date.
+    /// Count entries for an agent on a specific date.
     pub fn count_entries_on(
         &self,
-        userpod_name: &str,
+        agent_name: &str,
         date: &str,
     ) -> Result<usize, KataHistoryError> {
         let count = query_row(
             &*self.driver,
-            "SELECT COUNT(*) FROM kata_history WHERE userpod_name = ?1 AND date = ?2",
+            "SELECT COUNT(*) FROM kata_history WHERE agent_name = ?1 AND date = ?2",
             &[
-                DbValue::Text(userpod_name.to_string()),
+                DbValue::Text(agent_name.to_string()),
                 DbValue::Text(date.to_string()),
             ],
             |row| row.get_int(0),
@@ -134,20 +134,20 @@ impl KataHistoryStore {
         Ok(count as usize)
     }
 
-    /// Get the most recent entry for a userpod.
+    /// Get the most recent entry for an agent.
     #[must_use = "result must be used"]
-    pub fn last_entry_for_userpod(
+    pub fn last_entry_for_agent(
         &self,
-        userpod_name: &str,
+        agent_name: &str,
     ) -> Result<Option<KataHistoryEntry>, KataHistoryError> {
         Ok(query_row(
             &*self.driver,
-            "SELECT id, userpod_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE userpod_name = ?1 ORDER BY date DESC, id DESC LIMIT 1",
-            &[DbValue::Text(userpod_name.to_string())],
+            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE agent_name = ?1 ORDER BY date DESC, id DESC LIMIT 1",
+            &[DbValue::Text(agent_name.to_string())],
             |row| {
                 Ok(KataHistoryEntry {
                     id: row.get_int(0)?,
-                    userpod_name: row.get_str(1)?.to_string(),
+                    agent_name: row.get_str(1)?.to_string(),
                     date: row.get_str(2)?.to_string(),
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
@@ -159,25 +159,25 @@ impl KataHistoryStore {
         )?)
     }
 
-    /// Get all entries for a userpod within a date range (inclusive).
+    /// Get all entries for an agent within a date range (inclusive).
     pub fn entries_in_range(
         &self,
-        userpod_name: &str,
+        agent_name: &str,
         from_date: &str,
         to_date: &str,
     ) -> Result<Vec<KataHistoryEntry>, KataHistoryError> {
         Ok(query_map(
             &*self.driver,
-            "SELECT id, userpod_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE userpod_name = ?1 AND date >= ?2 AND date <= ?3 ORDER BY date DESC",
+            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE agent_name = ?1 AND date >= ?2 AND date <= ?3 ORDER BY date DESC",
             &[
-                DbValue::Text(userpod_name.to_string()),
+                DbValue::Text(agent_name.to_string()),
                 DbValue::Text(from_date.to_string()),
                 DbValue::Text(to_date.to_string()),
             ],
             |row| {
                 Ok(KataHistoryEntry {
                     id: row.get_int(0)?,
-                    userpod_name: row.get_str(1)?.to_string(),
+                    agent_name: row.get_str(1)?.to_string(),
                     date: row.get_str(2)?.to_string(),
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
@@ -217,9 +217,9 @@ mod tests {
         store
             .record("Alice", "2026-06-15", "starter", "starter-kata", 5, 0)
             .unwrap();
-        let entries = store.entries_for_userpod("Alice").unwrap();
+        let entries = store.entries_for_agent("Alice").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].userpod_name, "Alice");
+        assert_eq!(entries[0].agent_name, "Alice");
         assert_eq!(entries[0].kata_type, "starter");
         assert_eq!(entries[0].steps_completed, 5);
     }
@@ -243,13 +243,13 @@ mod tests {
                 15000,
             )
             .unwrap();
-        assert_eq!(store.count_entries_for_userpod("Alice").unwrap(), 2);
+        assert_eq!(store.count_entries_for_agent("Alice").unwrap(), 2);
         assert_eq!(store.count_entries_on("Alice", "2026-06-15").unwrap(), 1);
-        assert_eq!(store.count_entries_for_userpod("Bob").unwrap(), 1);
+        assert_eq!(store.count_entries_for_agent("Bob").unwrap(), 1);
     }
 
     #[test]
-    fn last_entry_for_userpod() {
+    fn last_entry_for_agent() {
         let store = make_test_store();
         store
             .record("Alice", "2026-06-14", "starter", "starter-kata", 5, 0)
@@ -264,7 +264,7 @@ mod tests {
                 15000,
             )
             .unwrap();
-        let last = store.last_entry_for_userpod("Alice").unwrap().unwrap();
+        let last = store.last_entry_for_agent("Alice").unwrap().unwrap();
         assert_eq!(last.date, "2026-06-15");
         assert_eq!(last.kata_type, "improvement");
         assert_eq!(last.gas_consumed, 15000);
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn no_entries_returns_none() {
         let store = make_test_store();
-        let last = store.last_entry_for_userpod("Nobody").unwrap();
+        let last = store.last_entry_for_agent("Nobody").unwrap();
         assert!(last.is_none());
     }
 
@@ -298,7 +298,7 @@ mod tests {
             .unwrap();
         let deleted = store.delete_entries_before("2026-06-14").unwrap();
         assert_eq!(deleted, 1);
-        let remaining = store.entries_for_userpod("Alice").unwrap();
+        let remaining = store.entries_for_agent("Alice").unwrap();
         assert_eq!(remaining.len(), 2);
     }
 }

@@ -89,7 +89,7 @@ impl<T: IdKind> Id<T> {
     ///
     /// Same name → same Id. Useful for creating stable identifiers
     /// for entities that need to be looked up by name (e.g., wallets
-    /// bound to userpod names).
+    /// bound to agent names).
     ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  name is any non-empty string (empty produces a deterministic but degenerate Id)

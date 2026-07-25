@@ -473,7 +473,7 @@ fn open_curator_stores(
         .get("HKASK_CURATOR_DB")
         .cloned()
         .unwrap_or_else(|| {
-            let p = hkask_types::agent_paths::userpod_pod_db("curator");
+            let p = hkask_types::agent_paths::agent_pod_db("curator");
             let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
             if let Some(parent) = resolved.parent() {
                 std::fs::create_dir_all(parent).ok();

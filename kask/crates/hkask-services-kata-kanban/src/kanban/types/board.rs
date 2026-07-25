@@ -14,7 +14,7 @@ pub struct Board {
     pub id: BoardId,
     /// Human-readable board name.
     pub name: String,
-    /// The userpod who created/manages this board.
+    /// The agent who created/manages this board.
     pub owner: WebID,
     /// Columns in display order (position-sorted).
     pub columns: Vec<ColumnDef>,

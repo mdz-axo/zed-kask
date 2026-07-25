@@ -91,7 +91,7 @@ pub struct HMemEntry {
 }
 
 /// A proposal template for a contract missing its user-facing `expect:` annotation.
-/// UserPods use this to compose and submit contract grounding proposals.
+/// Agents use this to compose and submit contract grounding proposals.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExpectProposal {
     pub crate_name: String,

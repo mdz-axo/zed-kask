@@ -49,7 +49,7 @@ pub struct Verification {
     pub passed: bool,
     /// Human-readable reasoning for the verdict.
     pub reasoning: String,
-    /// The WebID of the verifier (LLM userpod or human).
+    /// The WebID of the verifier (LLM agent or human).
     pub verifier: WebID,
     /// When the verification occurred.
     pub verified_at: DateTime<Utc>,

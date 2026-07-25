@@ -16,7 +16,7 @@ use crate::visibility::Visibility;
 
 // ── CuratorHandle — Loop 5 capability handle ────────────────────────────────
 
-/// The Curator's capability handle. Single userpod — the user's
+/// The Curator's capability handle. Single agent — the user's
 /// counterpart in the zed-kask agent panel. Can read all loop state and write
 /// governance/observability policy.
 ///

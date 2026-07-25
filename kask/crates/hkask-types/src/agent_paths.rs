@@ -1,18 +1,18 @@
-//! Filesystem path helpers for per-userpod storage.
+//! Filesystem path helpers for per-agent storage.
 //!
-//! Each userpod (1:1 with a user) owns a directory tree under `{data_dir}/userpods/{name}/`
+//! Each agent (1:1 with a user) owns a directory tree under `{data_dir}/agents/{name}/`
 //! containing its pod DB, memory DB, wallet DB, sessions, artifacts, etc.
 //! These helpers compute those paths and bootstrap the directory structure.
 
 use std::path::PathBuf;
 
-/// Root directory for userpod artifacts.
-pub const USERPODS_DIR: &str = "userpods";
+/// Root directory for agent artifacts.
+pub const AGENTS_DIR: &str = "agents";
 
-/// Resolve a relative userpod path against the hKask data directory.
+/// Resolve a relative agent path against the hKask data directory.
 ///
 /// Checks `HKASK_DATA_DIR` env var, falls back to CWD. This ensures
-/// userpod databases end up in a predictable location regardless of where
+/// agent databases end up in a predictable location regardless of where
 /// the MCP server process is spawned from.
 #[must_use]
 pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf {
@@ -32,89 +32,89 @@ pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf 
     relative.to_path_buf()
 }
 
-/// Get the directory for a specific userpod.
-pub fn userpod_dir(name: &str) -> PathBuf {
-    PathBuf::from(USERPODS_DIR).join(sanitize_name(name))
+/// Get the directory for a specific agent.
+pub fn agent_dir(name: &str) -> PathBuf {
+    PathBuf::from(AGENTS_DIR).join(sanitize_name(name))
 }
 
 // ── Database paths ───────────────────────────────────────────────────────────
 
 /// Pod database — HMemStore, EmbeddingStore, Regulation events.
-pub fn userpod_pod_db(name: &str) -> PathBuf {
-    userpod_dir(name).join("pod.db")
+pub fn agent_pod_db(name: &str) -> PathBuf {
+    agent_dir(name).join("pod.db")
 }
 
-/// Memory database — episodic + semantic tool storage via hkask-mcp-memory.
-pub fn userpod_memory_db(name: &str) -> PathBuf {
-    userpod_dir(name).join("memory.db")
+/// Memory database — episodic + semantic tool storage.
+pub fn agent_memory_db(name: &str) -> PathBuf {
+    agent_dir(name).join("memory.db")
 }
 
 /// Style database — corpus embeddings and centroids for style composition.
-pub fn userpod_style_db(name: &str) -> PathBuf {
-    userpod_dir(name).join("style.db")
+pub fn agent_style_db(name: &str) -> PathBuf {
+    agent_dir(name).join("style.db")
 }
 
-/// Kanban database — tasks, unjam items, board state for the userpod.
-pub fn userpod_kanban_db(name: &str) -> PathBuf {
-    userpod_dir(name).join("kanban.db")
+/// Kanban database — tasks, unjam items, board state for the agent.
+pub fn agent_kanban_db(name: &str) -> PathBuf {
+    agent_dir(name).join("kanban.db")
 }
 
 /// Training database — LoRA adapter training jobs (model, dataset, status).
-pub fn userpod_training_db(name: &str) -> PathBuf {
-    userpod_dir(name).join("training.db")
+pub fn agent_training_db(name: &str) -> PathBuf {
+    agent_dir(name).join("training.db")
 }
 
-/// Wallet database — per-userpod rJoule balances, API keys, encumbrances.
-pub fn userpod_wallet_db(name: &str) -> PathBuf {
-    userpod_dir(name).join("wallet.db")
+/// Wallet database — per-agent rJoule balances, API keys, encumbrances.
+pub fn agent_wallet_db(name: &str) -> PathBuf {
+    agent_dir(name).join("wallet.db")
 }
 
 // ── Directory paths ──────────────────────────────────────────────────────────
 
 /// Gallery directory — media server assets (images, video, audio).
-pub fn userpod_gallery_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("gallery")
+pub fn agent_gallery_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("gallery")
 }
 
 /// Documents directory — docproc parsed/extracted documents.
-pub fn userpod_documents_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("documents")
+pub fn agent_documents_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("documents")
 }
 
 /// Library directory — research materials, downloaded papers, RSS feeds.
-pub fn userpod_library_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("library")
+pub fn agent_library_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("library")
 }
 
 /// Sessions directory — MCP session transcripts.
-pub fn userpod_sessions_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("sessions")
+pub fn agent_sessions_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("sessions")
 }
 
 /// Adapters directory — LoRA adapter weight files.
-pub fn userpod_adapters_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("adapters")
+pub fn agent_adapters_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("adapters")
 }
 
 /// Portfolios directory — financial portfolio/watchlist data.
-pub fn userpod_portfolios_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("portfolios")
+pub fn agent_portfolios_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("portfolios")
 }
 
-/// Artifacts directory — userpod-specific styles, bots, templates, bundles.
-pub fn userpod_artifacts_dir(name: &str) -> PathBuf {
-    userpod_dir(name).join("artifacts")
+/// Artifacts directory — agent-specific styles, bots, templates, bundles.
+pub fn agent_artifacts_dir(name: &str) -> PathBuf {
+    agent_dir(name).join("artifacts")
 }
 
-/// Artifact manifest — per-userpod index of published artifacts.
-pub fn userpod_manifest_json(name: &str) -> PathBuf {
-    userpod_dir(name).join("manifest.json")
+/// Artifact manifest — per-agent index of published artifacts.
+pub fn agent_manifest_json(name: &str) -> PathBuf {
+    agent_dir(name).join("manifest.json")
 }
 
 // ── Initialization ───────────────────────────────────────────────────────────
 
-/// All subdirectories created by `ensure_userpod_dirs`.
-pub const USERPOD_SUBDIRS: &[&str] = &[
+/// All subdirectories created by `ensure_agent_dirs`.
+pub const AGENT_SUBDIRS: &[&str] = &[
     "gallery",
     "documents",
     "library",
@@ -124,35 +124,35 @@ pub const USERPOD_SUBDIRS: &[&str] = &[
     "artifacts",
 ];
 
-/// Create the full userpod directory structure on disk.
+/// Create the full agent directory structure on disk.
 ///
-/// Called during userpod provisioning to ensure the userpod's space exists
+/// Called during agent provisioning to ensure the agent's space exists
 /// before any databases are deployed. Safe to call multiple times
 /// (idempotent — directories already existing are not errors).
 ///
-/// Creates the userpod root directory and all subdirectories listed in
-/// `USERPOD_SUBDIRS`.
-pub fn ensure_userpod_dirs(name: &str) -> std::io::Result<()> {
-    let dir = userpod_dir(name);
+/// Creates the agent root directory and all subdirectories listed in
+/// `AGENT_SUBDIRS`.
+pub fn ensure_agent_dirs(name: &str) -> std::io::Result<()> {
+    let dir = agent_dir(name);
     std::fs::create_dir_all(&dir)?;
-    for sub in USERPOD_SUBDIRS {
+    for sub in AGENT_SUBDIRS {
         std::fs::create_dir_all(dir.join(sub))?;
     }
     Ok(())
 }
 
-/// Publish an artifact to the userpod's manifest for Curator indexing.
+/// Publish an artifact to the agent's manifest for Curator indexing.
 ///
-/// Called when a userpod produces a shareable artifact (style, bot, gallery
+/// Called when an agent produces a shareable artifact (style, bot, gallery
 /// item, trained adapter). The CuratorSync reads manifest files to build
-/// the cross-userpod artifact index.
+/// the cross-agent artifact index.
 pub fn publish_artifact(
     name: &str,
     artifact_type: &str,
     artifact_name: &str,
     content_hash: &str,
 ) -> std::io::Result<()> {
-    let manifest_path = userpod_manifest_json(name);
+    let manifest_path = agent_manifest_json(name);
     let entry = serde_json::json!({
         "type": artifact_type,
         "name": artifact_name,
@@ -184,10 +184,10 @@ pub fn publish_artifact(
     std::fs::write(&manifest_path, json)
 }
 
-/// Sanitize a userpod name for filesystem use.
+/// Sanitize an agent name for filesystem use.
 ///
 /// Replaces characters that are problematic in filenames with hyphens.
-/// Userpod names can contain spaces but filenames shouldn't.
+/// Agent names can contain spaces but filenames shouldn't.
 /// Guards against path traversal: names that sanitize to `.` or `..` are
 /// replaced with `unnamed` to prevent directory escape.
 pub fn sanitize_name(name: &str) -> String {
@@ -227,7 +227,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sanitize_userpod_names() {
+    fn sanitize_agent_names() {
         assert_eq!(sanitize_name("alice"), "alice");
         assert_eq!(sanitize_name("a/b\\c:d"), "a-b-c-d");
     }
@@ -241,28 +241,28 @@ mod tests {
     #[test]
     fn db_paths() {
         assert_eq!(
-            userpod_pod_db("alice"),
-            PathBuf::from("userpods").join("alice").join("pod.db")
+            agent_pod_db("alice"),
+            PathBuf::from("agents").join("alice").join("pod.db")
         );
         assert_eq!(
-            userpod_memory_db("alice"),
-            PathBuf::from("userpods").join("alice").join("memory.db")
+            agent_memory_db("alice"),
+            PathBuf::from("agents").join("alice").join("memory.db")
         );
         assert_eq!(
-            userpod_wallet_db("alice"),
-            PathBuf::from("userpods").join("alice").join("wallet.db")
+            agent_wallet_db("alice"),
+            PathBuf::from("agents").join("alice").join("wallet.db")
         );
     }
 
     #[test]
     fn dir_paths() {
         assert_eq!(
-            userpod_gallery_dir("alice"),
-            PathBuf::from("userpods").join("alice").join("gallery")
+            agent_gallery_dir("alice"),
+            PathBuf::from("agents").join("alice").join("gallery")
         );
         assert_eq!(
-            userpod_sessions_dir("alice"),
-            PathBuf::from("userpods").join("alice").join("sessions")
+            agent_sessions_dir("alice"),
+            PathBuf::from("agents").join("alice").join("sessions")
         );
     }
 
@@ -272,18 +272,18 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        ensure_userpod_dirs("testuserpod").expect("create dirs");
+        ensure_agent_dirs("testagent").expect("create dirs");
 
-        assert!(userpod_dir("testuserpod").exists());
-        for sub in USERPOD_SUBDIRS {
+        assert!(agent_dir("testagent").exists());
+        for sub in AGENT_SUBDIRS {
             assert!(
-                userpod_dir("testuserpod").join(sub).exists(),
+                agent_dir("testagent").join(sub).exists(),
                 "missing subdir: {sub}"
             );
         }
 
         // Idempotent: calling again should not error
-        ensure_userpod_dirs("testuserpod").expect("idempotent");
+        ensure_agent_dirs("testagent").expect("idempotent");
 
         std::env::set_current_dir(cwd).unwrap();
     }
