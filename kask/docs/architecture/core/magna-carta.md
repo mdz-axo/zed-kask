@@ -303,8 +303,8 @@ assertions:
     claim: "Every code path to sovereign data is gated by SovereigntyChecker"
     method: structural_audit  # or behavioral_probe, resource_verification, absence_check
     targets:
-      - crate: hkask-pods
-        module: pod::context
+      - crate: hkask-types (replaces deleted hkask-pods)
+        module: visibility
         methods: [store_episodic, recall_episodic, store_semantic, recall_semantic]
         gate: require_sovereignty
 ```
@@ -380,22 +380,22 @@ event sink is wired. The agent-pod `SovereigntyChecker` enforces the
 sovereignty policy on every memory access.
 
 ```rust
-// In hkask-pods::curator_agent::DefaultSpecCurator
+// In zed-kask curator agent::DefaultSpecCurator (replaces deleted hkask-pods::curator_agent::DefaultSpecCurator)
 impl DefaultSpecCurator {
     /// Record a sovereignty check for a spec evaluation.
     /// Emits a `reg.sovereignty.checked` RegulationRecord (CyclePhase::Compare).
     pub fn check_sovereignty(&self, spec_id: &str, categories: &[String]) { /* ... */ }
 }
 
-// In hkask-pods::pod::PodContext
-impl PodContext {
+// In hkask-types::visibility (replaces deleted hkask-pods::pod::PodContext)
+impl SovereigntyChecker {
     /// Enforce the Magna Carta's data-sovereignty policy on access.
     /// Complements `require_capability` (OCAP) with the data-class policy.
     pub fn require_sovereignty(
         &self,
         category: &DataCategory,
         requester: &WebID,
-    ) -> Result<(), AgentPodError> { /* ... */ }
+    ) -> Result<(), SovereigntyDenied> { /* ... */ }
 }
 ```
 

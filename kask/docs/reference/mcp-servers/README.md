@@ -52,12 +52,12 @@ path (`hkask_mcp::bootstrap_mcp_server` → `hkask_mcp::run_server`).
 
 All servers follow these patterns:
 
-1. **Bootstrap:** `hkask_mcp::bootstrap_mcp_server(name, target, host_env_var)` → returns `MCPBootstrap { userpod, daemon_client }`
-2. **Struct:** `hkask_mcp::mcp_server!` macro generates the struct with `webid`, `userpod`, `daemon` fields plus domain fields. The `daemon` field is dead in zed-kask (always `None`; `DaemonClient::auth_query()` fails → degraded mode, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
+1. **Bootstrap:** `hkask_mcp::bootstrap_mcp_server(name, target, host_env_var)` → returns `MCPBootstrap { userpod }` (resolves userpod identity only; the daemon was deleted in the 2026-07-25 cleanup, so `daemon_client` is no longer part of the bootstrap result)
+2. **Struct:** `hkask_mcp::mcp_server!` macro generates the struct with `webid`, `userpod`, `daemon` fields plus domain fields. The `daemon` field is dead in zed-kask (always `None`; the daemon was deleted — `DaemonClient` is retained only for compile-stability, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
 3. **Tool dispatch:** `execute_tool_semantic(self, tool_name, ontology, async { ... })` wraps each tool with Regulation span + daemon outcome recording
 4. **Tool router:** `#[tool_handler(router = Self::...router())]` on the `ServerHandler` impl
 5. **Error type:** `McpToolError` for tool-level errors, domain `Error` enums (via `thiserror`) for computation errors
-6. **Governance:** OCAP is enforced at the dispatcher `GovernedTool` membrane (`DelegationToken` per call), not at the server. The server is the transport pipe; `shell_exec`-style tools are reachable only by agents holding the relevant capability token. See [`lib.rs` (`GovernedTool`)](../../../crates/hkask-pods/src/lib.rs) and the `kask_bridge` `BridgeToolPort` adapter (`kask/crates/kask_bridge/src/tool_port.rs`, D3/D8).
+6. **Governance:** OCAP is enforced at the dispatcher `GovernedTool` membrane (`DelegationToken` per call), not at the server. The server is the transport pipe; `shell_exec`-style tools are reachable only by agents holding the relevant capability token. See [`lib.rs` (`GovernedTool`)](../../../crates/hkask-regulation/src/governed_tool.rs) (replaces deleted `crates/hkask-pods/src/lib.rs`) and the `kask_bridge` `BridgeToolPort` adapter (`kask/crates/kask_bridge/src/tool_port.rs`, D3/D8).
 
 ## Testing standard
 
@@ -91,7 +91,7 @@ classDiagram
     class KanbanServer {
         +webid: WebID
         +userpod: String
-        +daemon: Option~DaemonClient~  // DEAD in zed-kask — always None; daemon deleted (R4/T3.0 pending)
+        +daemon: Option~DaemonClient~  // DEAD in zed-kask — always None; daemon deleted in 2026-07-25 cleanup
         +service: KanbanService
         +kanban_board_create() String
         +kanban_board_list() String
@@ -263,5 +263,5 @@ classDiagram
 id: DIAG-IC-017
 verified_date: 2026-07-24
 verified_against: mcp-servers/hkask-mcp-kata-kanban/src/lib.rs:29-33 (KanbanServer struct — db field deleted; daemon field retained but always None in zed-kask — dead code, R4/T3.0 refactor pending), crates/hkask-services-kata-kanban/src/kanban/service_impl/service.rs:34-37 (KanbanService struct — kata_bridge field deleted, pod_manager removed post-pivot), crates/hkask-services-kata-kanban/src/kata/mod.rs:76-94 (KataEngine struct), crates/hkask-storage/src/hmem.rs:134-138 (HMemStore struct), crates/hkask-services-kata-kanban/src/kanban/types/task.rs:9-55 (Task struct), crates/hkask-services-kata-kanban/src/kanban/types/status.rs:16-27 (TaskStatus enum), crates/hkask-services-kata-kanban/src/kanban/socratic.rs:265-270 (SocraticRole enum); KataEngine construction now in-process (deleted kask kata start CLI surface)
-status: VERIFIED (v4 — daemon field annotated as dead in zed-kask; always None; DaemonClient refactor T3.0 pending)
+status: VERIFIED (v4 — daemon field annotated as dead in zed-kask; always None; daemon deleted in 2026-07-25 cleanup)
 -->

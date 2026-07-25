@@ -71,9 +71,9 @@ The `WalletBackedBudget` (`crates/hkask-regulation/src/wallet_budget.rs`) extend
 
 #### RJoule: The Currency of Inference
 
-rJoule is defined in `hkask-types`. The conversion rate is configured via `GAS_PER_RJOULE` — 250,000 gas cycles = 1 rJoule, reflecting the cost differential between cheap local compute and expensive LLM inference. This rate is runtime-adjustable; the Regulation calibration loop in `CalibratedEnergyEstimator` updates it based on observed settlement data.
+rJoule is defined in `hkask-types`. The conversion rate is configured via `GAS_PER_RJOULE` — 250,000 gas cycles = 1 rJoule, reflecting the cost differential between cheap local compute and expensive LLM inference. This rate is runtime-adjustable; `regulation::WalletManager` (which implements `WalletBudgetPort`) tracks `gas_per_rjoule` and updates it based on observed settlement data. (The deleted `CalibratedEnergyEstimator` previously performed this calibration; the `FlatEnergyEstimator` in `hkask-mcp` is now the simple 10-gas-per-call estimator.)
 
-The `hkask-wallet` crate (`crates/hkask-wallet/src/lib.rs`) provides the full wallet infrastructure: multi-chain support via `ChainPort` trait (Hedera port is feature-gated), self-custody via HKDF-derived keys, API key issuance, price feeds for fee estimation, and zeroizing wrappers on all secret key material.
+The wallet infrastructure now lives in `hkask-regulation::wallet_manager` (replaces the deleted `hkask-wallet` crate): per-agent gas balance tracking, gas→rJoule conversion via `WalletBudgetPort`, and `WellManager` for auto-draw on low balance. Multi-chain support, API key issuance, and price feeds from the deleted `hkask-wallet` crate are **not** carried forward. Wallet types (rJoule, WalletBalance, Encumbrance) live in `hkask-types`.
 
 #### The Ledger: Double-Entry Accounting
 
@@ -92,13 +92,13 @@ Three invariants are structurally enforced: idempotency (same reference, identic
 
 #### Regulation Feedback Loop
 
-The economic layer feeds directly into Regulation regulation. `reg.gas` spans emit on every reserve, settle, consume, and reset operation. `GasReport` (`crates/hkask-regulation/src/gas_report.rs`) queries these events and produces per-agent `AgentGasSummary` reports with per-tool breakdowns (`ToolGasBreakdown`: reserved, consumed, depleted, invocations).
+The economic layer feeds directly into Regulation regulation. `reg.gas` spans emit on every reserve, settle, consume, and reset operation. (The deleted `GasReport` module previously queried these events and produced per-agent `AgentGasSummary` reports with per-tool breakdowns.)
 
-`CalibratedEnergyEstimator` (`crates/hkask-regulation/src/calibrated_energy_estimator.rs`) closes the Good Regulator feedback loop. It wraps `CompositeEnergyEstimator` and keeps its per-server table in sync with observed `reg.gas.settled` events via `DynamicGasTable`. A background calibration task refreshes estimates every 5 minutes, adjusting by exponential moving average. This is P9 (Homeostatic Self-Regulation) at work: estimates are continuously validated against reality and adjusted to minimize prediction error.
+> **2026-07-25 cleanup note:** The `CalibratedEnergyEstimator`, `CompositeEnergyEstimator`, `DynamicGasTable`, `GasReport`, `TableEnergyEstimator`, and `InferenceEnergyEstimator` modules were deleted in the 2026-07-25 cleanup. The `FlatEnergyEstimator` in `hkask-mcp` is now the simple 10-gas-per-call estimator. The Good Regulator feedback loop they provided is no longer a separate calibration loop; `regulation::WalletManager` tracks `gas_per_rjoule` directly.
 
 #### Provider Intelligence
 
-`EnergyEstimator` (`crates/hkask-regulation/src/governed_tool.rs`) is the trait that enables cost-aware routing. Different tool categories have different cost models: `InferenceEnergyEstimator` estimates by token count; `TableEnergyEstimator` uses flat per-server costs. The `GovernedTool` membrane — which wraps every tool invocation — checks OCAP authority, reserves gas, invokes the tool, settles actual cost, and emits Regulation spans. This is where the economic layer becomes the enforcement layer.
+`EnergyEstimator` (`crates/hkask-regulation/src/governed_tool.rs`) is the trait that enables cost-aware routing. The `FlatEnergyEstimator` in `hkask-mcp` is the simple 10-gas-per-call estimator (replaces the deleted `InferenceEnergyEstimator` and `TableEnergyEstimator`). The `GovernedTool` membrane — which wraps every tool invocation — checks OCAP authority, reserves gas, invokes the tool, settles actual cost, and emits Regulation spans. This is where the economic layer becomes the enforcement layer.
 
 ### Diagram
 
@@ -119,7 +119,7 @@ flowchart TD
     WBB -->|"reserve → execute → settle"| GT
     GT -->|"reg.gas.settled"| Regulation
     GT -->|"postings"| LEDGER
-    Regulation -->|"CalibratedEnergyEstimator\nadjusts estimates"| GT
+    Regulation -->|"FlatEnergyEstimator\nadjusts estimates"| GT
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ENG-001
@@ -130,7 +130,7 @@ status: VERIFIED
 
 ### Implications
 
-The dual-currency system (gas for compute, rJoules for inference) means that hKask can regulate two distinct resource dimensions independently. A skill that does heavy local compute (parsing, sorting, embedding) consumes gas; a skill that calls expensive LLM APIs consumes rJoules. The Regulation can throttle one without throttling the other — an agent with plenty of gas but depleted rJoules can still do local work but cannot call inference. The hold-settle pattern prevents over-estimation waste: if a tool is estimated to cost 1000 gas but actually costs 400, the 600 difference is refunded. The `CalibratedEnergyEstimator` closes the loop by adjusting future estimates based on observed actuals — the system learns the true cost of each tool and tightens reserves over time. This is the Good Regulator theorem applied to economics: the regulator's model of tool costs converges toward reality through continuous feedback.
+The dual-currency system (gas for compute, rJoules for inference) means that hKask can regulate two distinct resource dimensions independently. A skill that does heavy local compute (parsing, sorting, embedding) consumes gas; a skill that calls expensive LLM APIs consumes rJoules. The Regulation can throttle one without throttling the other — an agent with plenty of gas but depleted rJoules can still do local work but cannot call inference. The hold-settle pattern prevents over-estimation waste: if a tool is estimated to cost 1000 gas but actually costs 400, the 600 difference is refunded. `regulation::WalletManager` tracks `gas_per_rjoule` and adjusts the conversion rate based on observed actuals — the system learns the true cost of each tool and tightens reserves over time. This is the Good Regulator theorem applied to economics: the regulator's model of tool costs converges toward reality through continuous feedback.
 
 ---
 
@@ -424,7 +424,7 @@ The P2 (Affirmative Consent) enforcement on provider selection is noteworthy —
 - `crates/hkask-regulation/src/well.rs` — Well and WellManager
 - `crates/hkask-regulation/src/wallet_manager.rs` — WalletManager
 - `crates/hkask-regulation/src/wallet_budget.rs` — WalletBackedBudget
-- `crates/hkask-regulation/src/calibrated_energy_estimator.rs` — CalibratedEnergyEstimator
+- `crates/hkask-mcp/` — `FlatEnergyEstimator` (simple 10-gas-per-call estimator; replaces deleted `CalibratedEnergyEstimator`)
 - `crates/hkask-ledger/src/lib.rs` — Double-entry ledger
 - `crates/hkask-storage/src/driver.rs` — DatabaseDriver trait
 - `crates/hkask-storage/src/sqlite.rs` — SqliteDriver

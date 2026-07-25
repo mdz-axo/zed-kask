@@ -49,8 +49,8 @@ mds_categories: [lifecycle, curation]
 | DIAG-TO-002 | OCAP Boundary Enforcement Flow | `explanation/sovereignty-and-ocap.md` | `crates/hkask-mcp/src/security.rs` (SecurityGateway) | ✅ VERIFIED 2026-07-01 |
 | DIAG-TO-004 | Regulation Span Emission Flow (4 namespaces → Sink) | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-types/src/event.rs` | ✅ VERIFIED 2026-07-01 |
 | DIAG-TO-005 | Algedonic Alert Escalation (variety deficit > threshold → Curator/Human) | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/algedonic.rs` | ✅ VERIFIED 2026-07-01 |
-| DIAG-TO-006 | Regulation Span Emission and Algedonic Alert End-to-End Flow | `explanation/regulation-and-loops.md` | `crates/hkask-pods/src/curator_agent/spec_curator.rs`, `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/algedonic.rs` | ✅ VERIFIED 2026-07-01 (crate renamed) |
-| DIAG-TO-006-CM | ConsentManager Authorization Flow | `explanation/sovereignty-and-ocap.md` | `crates/hkask-pods/src/consent.rs`, `crates/hkask-pods/src/sovereignty.rs`, `crates/hkask-storage/src/consent_store.rs` | ✅ VERIFIED 2026-07-01 |
+| DIAG-TO-006 | Regulation Span Emission and Algedonic Alert End-to-End Flow | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/algedonic.rs` (curator agent module in zed-kask; `hkask-pods` deleted 2026-07-25) | ✅ VERIFIED 2026-07-25 |
+| DIAG-TO-006-CM | ConsentManager Authorization Flow | `explanation/sovereignty-and-ocap.md` | `hkask-types::visibility` (replaces deleted `crates/hkask-pods/src/consent.rs` and `sovereignty.rs`), `crates/hkask-storage/src/consent_store.rs` | ✅ VERIFIED 2026-07-25 |
 
 ## 4. Persistence & Lifecycle Diagrams
 
@@ -85,10 +85,10 @@ These interaction patterns exist in the codebase but lack dedicated diagram cove
 | Pattern | MDS Category | Crates Involved | Priority |
 |---------|----------------|----------------|----------|
 | Federation Message Flow (deferred) | Composition | `hkask-*` (deferred to v1.1+) | P2 |
-| Competition Socket Protocol (ACP) | Interface | `hkask-pods` (ACP) | P2 |
-| Git CAS Content-Addressed Blob Flow | Persistence | `hkask-storage (git_cas)`, `gix 0.81` | P2 |
+| Competition Socket Protocol (ACP) | Interface | `hkask-pods` (ACP) — `hkask-pods` deleted 2026-07-25; ACP deferred | P2 |
+| Git CAS Content-Addressed Blob Flow | Persistence | `hkask-storage (git_cas)` — `hkask-git-cas` deleted 2026-07-25; `GitCASPort` deleted from `hkask-types` | P2 |
 | Template Manifest Validation Flow (ContractValidator) | Composition | `hkask-templates` | P2 |
-| MVSDD Cycle (Specify → Grant → Compose → Curate → Reflect) | Curation | `hkask-templates`, `hkask-pods` | P2 |
+| MVSDD Cycle (Specify → Grant → Compose → Curate → Reflect) | Curation | `hkask-templates`, zed-kask curator agent (replaces deleted `hkask-pods`) | P2 |
 
 > **Note (2026-06-09):** `hkask-mcp-memory` consolidates episodic and semantic memory operations. Its interaction patterns with the memory subsystem are now covered by DIAG-PL-003 (inlined in `explanation/cognition-and-replica.md`).
 

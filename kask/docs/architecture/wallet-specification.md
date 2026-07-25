@@ -1,18 +1,20 @@
 ---
 title: "hKask Wallet Crate — Architectural Specification"
 audience: [architects, developers]
-last_updated: 2026-07-24
+last_updated: 2026-07-25
 version: "0.31.0"
-status: "Active"
+status: "Archived"
 domain: "Application"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
 
 # hKask Wallet Crate — Architectural Specification
 
-**Date:** 2026-07-24
+> **2026-07-25 cleanup note:** The `hkask-wallet` crate was **deleted** in the 2026-07-25 cleanup. `gas_per_rjoule` now lives in `regulation::WalletManager` (in `hkask-regulation`), which implements `WalletBudgetPort`. Wallet types live in `hkask-types`. The `hkask-services-self-heal` crate (referenced in §3.5 below for cross-domain self-healing coordination) was also deleted. The specification below is retained as a historical reference for the wallet design; the live wallet implementation now lives in `hkask-regulation::wallet_manager` and `hkask-types`. See [`zed-host-architecture-plan.md`](zed-host-architecture-plan.md) for the current module inventory.
+
+**Date:** 2026-07-24 (historical; wallet crate deleted 2026-07-25)
 **Project:** zed-kask v0.31.0 (hKask compiled in-process)
-**Status:** Wallet subsystem (types, storage, keystore, wallet crate, Regulation) built and tested. The standalone `hkask-api`, `hkask-cli`, and `hkask-services-wallet` surfaces have been **deleted** as part of the zed-kask in-process migration; the wallet now runs in-process with no service layer and no HTTP/CLI surface of its own.
+**Status:** Wallet subsystem (types, storage, keystore, wallet crate, Regulation) built and tested. The standalone `hkask-api`, `hkask-cli`, and `hkask-services-wallet` surfaces have been **deleted** as part of the zed-kask in-process migration; the wallet now runs in-process with no service layer and no HTTP/CLI surface of its own. **The `hkask-wallet` crate itself was deleted in the 2026-07-25 cleanup**; `gas_per_rjoule` moved to `regulation::WalletManager` which implements `WalletBudgetPort`, and wallet types moved to `hkask-types`.
 **Skills applied:** idiomatic-rust, essentialist, pragmatic-semantics, pragmatic-cybernetics, coding-guidelines
 
 **Architecture anchor:** [`zed-host-architecture-plan.md`](zed-host-architecture-plan.md) §2 (essentialist split), §11 (kask settings & credentials — D9b). zed-kask owns the editor, agent panel, inference routing, and the `CredentialsProvider` keystore. hKask plugs in via the guard layer (D4), in-process MCP (D1–D3), and `kask_bridge` (D8). `hkask-keystore` is trimmed to sovereignty crypto only; its storage backend has moved to zed's `CredentialsProvider` (D9b).
@@ -59,10 +61,12 @@ The wallet runs **in-process** inside zed-kask. There is no daemon, no HTTP API 
 
 ## 2. Crate Architecture
 
-### 2.1 Crate Map
+### 2.1 Crate Map (historical — `hkask-wallet` deleted 2026-07-25)
+
+> The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup. The layout below is the historical crate map. The live wallet implementation now lives in `hkask-regulation::wallet_manager` (which implements `WalletBudgetPort` and tracks `gas_per_rjoule`), and wallet types live in `hkask-types`.
 
 ```
-hkask-wallet/
+hkask-wallet/  (DELETED 2026-07-25)
 ├── Cargo.toml              — Feature gates: hedera
 ├── src/
 │   ├── lib.rs              — Crate docs, module declarations, re-exports
@@ -79,13 +83,13 @@ hkask-wallet/
 │   └── hedera.rs           — HederaPort (feature-gated: "hedera")
 ```
 
-The crate layout is unchanged from the pre-fork hKask layout. What changed is the **consumption surface**: the deleted `hkask-services-wallet` (which composed `WalletManager` + `ApiKeyIssuer` + Regulation budget registration into a `WalletService`) is gone. In zed-kask, in-process consumers (the kask panel, the `kask` admin CLI, and MCP servers that need wallet state) compose these primitives directly.
+The crate layout was unchanged from the pre-fork hKask layout. What changed is the **consumption surface**: the deleted `hkask-services-wallet` (which composed `WalletManager` + `ApiKeyIssuer` + Regulation budget registration into a `WalletService`) is gone. In zed-kask, in-process consumers (the kask panel, the `kask` admin CLI, and MCP servers that need wallet state) compose these primitives directly. **With the 2026-07-25 deletion of `hkask-wallet`, the wallet primitives now live in `hkask-regulation::wallet_manager` (which implements `WalletBudgetPort`) and `hkask-types` (wallet types).**
 
 ### 2.2 Module Dependency Graph
 
 ```mermaid
 graph TD
-    subgraph "hkask-wallet"
+    subgraph "hkask-wallet (DELETED 2026-07-25)"
         CHAIN["chain.rs<br/>ChainPort trait"]
         SIGN["signing.rs<br/>Security boundary"]
         MGR["manager/*<br/>WalletManager"]
@@ -125,7 +129,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-001
 verified_date: 2026-07-24
-verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/docs/architecture/zed-host-architecture-plan.md
+verified_against: kask/crates/hkask-regulation/src/wallet_manager.rs, kask/docs/architecture/zed-host-architecture-plan.md
 status: VERIFIED
 -->
 
@@ -230,7 +234,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-002
 verified_date: 2026-07-24
-verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/crates/hkask-ledger/src/lib.rs
+verified_against: kask/crates/hkask-regulation/src/wallet_manager.rs, kask/crates/hkask-ledger/src/lib.rs
 status: VERIFIED
 -->
 
@@ -261,7 +265,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-003
 verified_date: 2026-07-24
-verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/docs/architecture/zed-host-architecture-plan.md
+verified_against: kask/crates/hkask-regulation/src/wallet_manager.rs, kask/docs/architecture/zed-host-architecture-plan.md
 status: VERIFIED
 -->
 
@@ -351,8 +355,8 @@ This section is intentionally minimal until privacy ports are introduced.
 All namespaces registered in `CANONICAL_NAMESPACES` (`hkask-types::event`).
 
 **Self-healing note:** wallet-level repairs are intentionally conservative and
-local to `WalletManager`. Cross-domain or backoff-based healing is centralized
-in `hkask-services-self-heal` so it can coordinate across storage, chain ports,
+local to `WalletManager`. Cross-domain or backoff-based healing was centralized
+in `hkask-services-self-heal` (deleted in the 2026-07-25 cleanup) so it could coordinate across storage, chain ports,
 and curator escalation. Deposit address repair scans are bounded by
 `HKASK_DEPOSIT_REPAIR_MAX_INDEX` (default: 5, max: 100).
 
@@ -431,7 +435,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-WAL-004
 verified_date: 2026-07-24
-verified_against: kask/crates/hkask-wallet/src/lib.rs, kask/docs/architecture/zed-host-architecture-plan.md
+verified_against: kask/crates/hkask-regulation/src/wallet_manager.rs, kask/docs/architecture/zed-host-architecture-plan.md
 status: VERIFIED
 -->
 
@@ -454,8 +458,8 @@ status: VERIFIED
 | 1 | `hkask-types` | ✅ | 11 | `RJoule`, `ChainId`, `PrivacyMode`, `ApiKeyCapability`, `WalletError` (15 variants), `TxHash`, 14 Regulation spans, 3 wallet SignalMetrics |
 | 2 | `hkask-storage` | ✅ | 34 | `WalletStore` — 5 tables, 16 methods, deposit addresses keyed by (wallet, chain, privacy) with unique (chain, privacy, address), anti-replay deposit references, MUST-10 property test |
 | 3 | `hkask-keystore` (trimmed) | ✅ | 6 | `resolve_treasury_key(chain)`, `resolve_wallet_seed()`, `sign_api_key_capability()` — sovereignty crypto only; storage backend → `CredentialsProvider` (D9b) |
-| 4 | `hkask-wallet` | ✅ | 13 | `ChainPort`, `signing.rs` (LoadedKey + redacted Debug), `WalletManager` (13 methods + Regulation span emission), `ApiKeyIssuer` (Regulation span emission) |
-| 5 | `hkask-regulation` | ✅ | 11 | `WalletBackedBudget`, `WalletEnergyEstimator`, `GasBudgetManager` dual-map, algedonic alerts (balance + key health), Regulation span emission wired |
+| 4 | ~~`hkask-wallet`~~ (deleted 2026-07-25) | ✅ (historical) | 13 | `ChainPort`, `signing.rs` (LoadedKey + redacted Debug), `WalletManager` (13 methods + Regulation span emission), `ApiKeyIssuer` (Regulation span emission). **Deleted in 2026-07-25 cleanup; `gas_per_rjoule` moved to `regulation::WalletManager` which implements `WalletBudgetPort`; wallet types moved to `hkask-types`.** |
+| 5 | `hkask-regulation` | ✅ | 11 | `WalletBackedBudget`, `GasBudgetManager` dual-map, algedonic alerts (balance + key health), Regulation span emission wired. `WalletManager` now implements `WalletBudgetPort` (`gas_per_rjoule` tracking). |
 
 > **Removed phases `[IS-DECL]`:** The pre-fork phases 6 (`hkask-services-wallet` — `WalletService`), 7 (`hkask-cli` — `kask wallet` subcommands), and 8 (`hkask-api` — wallet REST endpoints + `ApiKeyAuthService` middleware) are **deleted**. Their orchestration responsibilities are absorbed by in-process consumers composing `WalletManager` + `ApiKeyIssuer` + Regulation directly. The `kask` admin CLI (zed-kask) provides backup/wallet/repair/admin operations only — it is not a revival of the deleted `hkask-cli` wallet subcommand surface.
 
@@ -473,7 +477,7 @@ status: VERIFIED
 | `hkask-types` | 11 (7 wallet) | `P1-wallet-types` |
 | `hkask-storage` | 34 (11 wallet_store) | `P2-wallet-store`, `MUST-10` |
 | `hkask-keystore` | 6 (6 wallet) | `P3-keystore` |
-| `hkask-wallet` | 13 | `P4-signing`, `P4-manager`, `P4-issuer` |
+| ~~`hkask-wallet`~~ (deleted) | 13 (historical) | `P4-signing`, `P4-manager`, `P4-issuer` — deleted in 2026-07-25 cleanup; tests transferred to `hkask-regulation::wallet_manager` and `hkask-types` |
 | `hkask-regulation` | 11 (1 wallet_budget) | `P5-regulation-wallet` |
 | **Total (surviving)** | **75** (44 wallet-specific) | |
 
@@ -499,22 +503,27 @@ status: VERIFIED
 
 ---
 
-## 10. Verification Commands
+## 10. Verification Commands (historical — `hkask-wallet` deleted 2026-07-25)
+
+> The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup. The commands below are historical; replace `-p hkask-wallet` with `-p hkask-regulation` (which now contains `WalletManager` implementing `WalletBudgetPort`) and `-p hkask-types` (which now contains wallet types).
 
 ```bash
 # Per-crate verification (run from the zed-kask workspace root)
-cargo check -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-wallet
-cargo test -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-wallet
-cargo clippy -p hkask-wallet -- -D warnings
+# Historical: cargo check -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-wallet
+cargo check -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-regulation
+cargo test -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-regulation
+cargo clippy -p hkask-regulation -- -D warnings
 
 # Full workspace (after all phases)
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 
-# Constraint verification
-grep -r "todo!\|unimplemented!\|#\[deprecated\]" crates/hkask-wallet/ && echo "VIOLATION" || echo "CLEAN"
-grep -r "\.unwrap()" crates/hkask-wallet/src/ && echo "VIOLATION: unwrap in library code" || echo "CLEAN"
+# Constraint verification (historical — crates/hkask-wallet/ no longer exists)
+# grep -r "todo!\|unimplemented!\|#\[deprecated\]" crates/hkask-wallet/ && echo "VIOLATION" || echo "CLEAN"
+grep -r "todo!\|unimplemented!\|#\[deprecated\]" kask/crates/hkask-regulation/src/wallet_manager.rs && echo "VIOLATION" || echo "CLEAN"
+# grep -r "\.unwrap()" crates/hkask-wallet/src/ && echo "VIOLATION: unwrap in library code" || echo "CLEAN"
+grep -r "\.unwrap()" kask/crates/hkask-regulation/src/wallet_manager.rs && echo "VIOLATION: unwrap in library code" || echo "CLEAN"
 ```
 
 > **Note:** The deleted `hkask-api`, `hkask-cli`, and `hkask-services-wallet` crates no longer exist in the workspace; any `cargo` invocation referencing them will fail. The `kask` admin CLI (zed-kask) is a separate, slimmer surface for backup/wallet/repair/admin only.

@@ -63,13 +63,15 @@ The `invoke()` method (line 200) enforces a strict sequence:
 
 #### Fail-Closed Semantics
 
-Every step in the chain fails closed. Cryptographic verification fails? Denied. OCAP check fails? Denied. Gas budget exhausted? Denied. The `governed_tool.rs` tests at line 505 verify this: `exact_match_denies_wrong_tool`, `domain_capability_denies_different_domain`. The `CapabilityDenied` error is returned before any resource is consumed. In the `sovereignty.rs` module, `SovereigntyChecker::can_access()` adds a second gate: even with a valid capability token, sovereign data requires the requester to BE the owner AND have explicit consent. `DenyAllConsent` is the default at `crates/hkask-pods/src/sovereignty.rs:31` — a misconfigured checker always denies.
+Every step in the chain fails closed. Cryptographic verification fails? Denied. OCAP check fails? Denied. Gas budget exhausted? Denied. The `governed_tool.rs` tests at line 505 verify this: `exact_match_denies_wrong_tool`, `domain_capability_denies_different_domain`. The `CapabilityDenied` error is returned before any resource is consumed. In the `hkask-types::visibility` module, `SovereigntyChecker::can_access()` adds a second gate: even with a valid capability token, sovereign data requires the requester to BE the owner AND have explicit consent. `DenyAllConsent` is the default — a misconfigured checker always denies.
 
-#### Per-Pod Tool Isolation — Structural
+#### Per-User Tool Isolation — Structural
 
-At `crates/hkask-pods/src/pod/deployment.rs`, `PodDeployment` holds `mcp_runtime: Arc<McpRuntime>` (the in-process MCP tool registry, D3) alongside the pod's dedicated `capability_checker`, `sovereignty_checker`, `PerPodStorage` (SQLCipher), and `PerPodLedger`. A pod can invoke tools only through its own `mcp_runtime` binding and the configured system trust roots; cross-pod access requires a valid `DelegationToken`. SQLCipher database encryption is a separate concern and consistently uses the canonical `HKASK_DB_PASSPHRASE` resolver.
+> **2026-07-25 cleanup note:** The `hkask-pods` pod abstraction (`PodDeployment`, `PerPodStorage`, `PerPodLedger`) was deleted in the 2026-07-25 cleanup. The equivalent boundary is now the per-user data directory isolation enforced by the in-process sovereignty checker and OCAP membranes.
 
-This means P4.1 (pod boundary = OCAP perimeter) is enforced by construction: each pod's `PodDeployment` carries its own `McpRuntime` handle and `CapabilityChecker`; the type system prevents a pod from even addressing another pod's governed tool. The only path through the boundary is via the proper delegation chain.
+Each user/curator data directory holds its own `mcp_runtime: Arc<McpRuntime>` (the in-process MCP tool registry, D3) alongside the user's dedicated `capability_checker`, `sovereignty_checker`, and per-user SQLCipher storage. A user can invoke tools only through their own `mcp_runtime` binding and the configured system trust roots; cross-user access requires a valid `DelegationToken`. SQLCipher database encryption is a separate concern and consistently uses the canonical `HKASK_DB_PASSPHRASE` resolver.
+
+This means P4.1 (per-user boundary = OCAP perimeter) is enforced by construction: each user's data directory carries its own `McpRuntime` handle and `CapabilityChecker`; the type system prevents a user from even addressing another user's governed tool. The only path through the boundary is via the proper delegation chain.
 
 ### Diagram
 
@@ -202,7 +204,7 @@ status: VERIFIED
 
 ### Implications
 
-The Diataxis review is itself a feedback loop — the same sense→compare→compute→act→verify cycle that governs the Regulation. The functional gates are the sense phase (does the diagram match the code?); the deep quality gates are the compare phase (does it fit the reader's need?); the quadrant fit is the compute phase (is it in the right Diataxis quadrant?); the gap analysis and closure are the act phase. The review is not a one-time audit — it is a recurring process that catches drift between documentation and code, just as the `SeamWatcher` catches drift between specification and implementation. A diagram that was accurate when drawn may become inaccurate when the code changes; the Diataxis review is the mechanism that detects and corrects this drift.
+The Diataxis review is itself a feedback loop — the same sense→compare→compute→act→verify cycle that governs the Regulation. The functional gates are the sense phase (does the diagram match the code?); the deep quality gates are the compare phase (does it fit the reader's need?); the quadrant fit is the compute phase (is it in the right Diataxis quadrant?); the gap analysis and closure are the act phase. The review is not a one-time audit — it is a recurring process that catches drift between documentation and code. (The deleted `SeamWatcher` previously caught drift between specification and implementation; the Diataxis review now serves this role for documentation.) A diagram that was accurate when drawn may become inaccurate when the code changes; the Diataxis review is the mechanism that detects and corrects this drift.
 
 The OWASP anchoring of the guard and state diagrams is deliberate — security-relevant diagrams must connect to established threat taxonomies, not invent their own. This is the same principle as the dual-axis ontology: hKask does not invent ontologies, it bridges to existing ones. The guard diagrams bridge to OWASP LLM Top 10; the state diagram maps violation types to specific OWASP risk numbers.
 
@@ -344,13 +346,15 @@ status: VERIFIED
 
 ## Description
 
-The `ConsentManager` in `hkask-pods` enforces Magna Carta P1 (User Sovereignty) and P2 (Affirmative Consent) through explicit, scoped, revocable consent grants. Every data access check flows through `has_consent()`, which validates: (1) an active `ConsentRecord` exists for the user's `WebID`, (2) the requested `DataCategory` is in `granted_categories`, and (3) the record is not revoked (`active == true`). On denial, a `reg.consent.denied` ν-event is emitted to the Regulation `RegulationSink` for observability — this is a Prohibition-gate observation, not a regulatory feedback loop. The `SovereigntyConsent` trait implementation translates storage errors into `false` (fail-closed). `grant_consent()` and `revoke_consent()` modify the in-memory cache and persist to the SQLite-backed `ConsentStore`.
+The `ConsentManager` (in `hkask-types::visibility`, replaces the deleted `hkask-pods::consent`) enforces Magna Carta P1 (User Sovereignty) and P2 (Affirmative Consent) through explicit, scoped, revocable consent grants. Every data access check flows through `has_consent()`, which validates: (1) an active `ConsentRecord` exists for the user's `WebID`, (2) the requested `DataCategory` is in `granted_categories`, and (3) the record is not revoked (`active == true`). On denial, a `reg.consent.denied` ν-event is emitted to the Regulation `RegulationSink` for observability — this is a Prohibition-gate observation, not a regulatory feedback loop. The `SovereigntyConsent` trait implementation translates storage errors into `false` (fail-closed). `grant_consent()` and `revoke_consent()` modify the in-memory cache and persist to the SQLite-backed `ConsentStore`.
 
-**Key source:** `crates/hkask-pods/src/consent.rs:136-144` (`ConsentManager` struct), `consent.rs:316-338` (`has_consent`), `consent.rs:243-273` (`grant_consent`), `consent.rs:283-300` (`revoke_consent`), `consent.rs:344-366` (`emit_consent_denied`), `consent.rs:388-395` (`SovereigntyConsent` impl).
+> **2026-07-25 cleanup note:** The `hkask-pods` crate was deleted in the 2026-07-25 cleanup. The `ConsentManager` and `SovereigntyConsent` trait now live in `hkask-types::visibility`. The source file references below are historical.
+
+**Key source (historical — `hkask-pods` deleted 2026-07-25):** `crates/hkask-pods/src/consent.rs:136-144` (`ConsentManager` struct), `consent.rs:316-338` (`has_consent`), `consent.rs:243-273` (`grant_consent`), `consent.rs:283-300` (`revoke_consent`), `consent.rs:344-366` (`emit_consent_denied`), `consent.rs:388-395` (`SovereigntyConsent` impl). The live equivalents now live in `hkask-types::visibility`.
 
 ```mermaid
 sequenceDiagram
-    participant Caller as Caller (PodContext / API)
+    participant Caller as Caller (in-process agent loop)
     participant CM as ConsentManager
     participant Cache as In-Memory Cache<br/>(RwLock~Vec~)
     participant Store as ConsentStore<br/>(SQLite)
@@ -456,8 +460,8 @@ The `SovereigntyConsent` trait impl translates storage errors into `false`, enfo
 ## Cross-Reference
 
 - [`zed-host-architecture-plan.md` § Sovereignty & Consent](../architecture/zed-host-architecture-plan.md)
-- [`consent.rs`](crates/hkask-pods/src/consent.rs) — `ConsentManager`, `ConsentRecord`, `has_consent()`, `grant_consent()`, `revoke_consent()`
-- [`sovereignty.rs`](crates/hkask-pods/src/sovereignty.rs) — `SovereigntyConsent` trait
+- `hkask-types::visibility` (replaces deleted `crates/hkask-pods/src/consent.rs`) — `ConsentManager`, `ConsentRecord`, `has_consent()`, `grant_consent()`, `revoke_consent()`
+- `hkask-types::visibility` (replaces deleted `crates/hkask-pods/src/sovereignty.rs`) — `SovereigntyConsent` trait
 - [Magna Carta P1 — User Sovereignty](../reference/magna-carta.md#p1-user-sovereignty)
 - [Magna Carta P2 — Affirmative Consent](../reference/magna-carta.md#p2-affirmative-consent)
 

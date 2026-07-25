@@ -134,7 +134,7 @@ status: VERIFIED (v3 — InferencePort relabeled to GuardedInferencePort/Languag
 - **Classify:** `condenser_classify` → `classify_tool` maps tool name → `ContextCategory`
 - **Saliency:** `condenser_score_saliency` → `domain_saliency` (line + `OntologyAnchor`) → against persona / memory / memory-fallback
 - **Auto-condense (in-process agent loop):** `condense_history` → Phase 1 (CPU pre-compress via `CondenserEngine` Heavy profile) → Phase 2 (LLM summarize via `InferencePort`)
-- **Learning loop:** The daemon `record_experience` path is **dead in zed-kask** (the daemon is deleted; `DaemonClient` is always `None`). The call is a no-op. Thread-level memory is captured via `RealMemoryPort` (D6) — the in-process `MemoryPort` trait ingests thread turns via `cx.background_spawn()` at turn completion. `recommend_algorithm` / `suggest_profile` continue to read the in-process ring buffer (200 max observations) to override the static `default_for` selection; the ring buffer is the live learning substrate, not the daemon.
+- **Learning loop:** The daemon `record_experience` path is **dead in zed-kask** (the daemon was deleted in the 2026-07-25 cleanup; `DaemonClient` is retained only for compile-stability and is always `None`). The call is a no-op. Thread-level memory is captured via `RealMemoryPort` (D6) — the in-process `MemoryPort` trait ingests thread turns via `cx.background_spawn()` at turn completion. `recommend_algorithm` / `suggest_profile` continue to read the in-process ring buffer (200 max observations) to override the static `default_for` selection; the ring buffer is the live learning substrate, not the daemon.
 
 ## Cross-links
 

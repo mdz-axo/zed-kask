@@ -14,7 +14,7 @@ This document consolidates five architectural patterns that define hKask's struc
 
 ## In-process architecture
 
-zed-kask is a fork of the Zed editor with hKask compiled in-process. There is no standalone user-facing `kask` CLI, no HTTP API, and no daemon. The hKask domain crates (`hkask-regulation`, `hkask-pods`, `hkask-capability`, `hkask-types`, `hkask-guard`, `hkask-templates`, etc.) define port traits and pure regulatory logic; the single bridge crate `kask_bridge` (D8) implements every adapter over zed's native types, and the composition root in `zed/src/main.rs` wires them together. The governing invariant — enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh` — is that **hKask crates never depend on zed-kask; zed-kask depends on hKask crates.**
+zed-kask is a fork of the Zed editor with hKask compiled in-process. There is no standalone user-facing `kask` CLI, no HTTP API, and no daemon. The hKask domain crates (`hkask-regulation`, `hkask-capability`, `hkask-types`, `hkask-guard`, `hkask-templates`, etc.) define port traits and pure regulatory logic; the single bridge crate `kask_bridge` (D8) implements every adapter over zed's native types, and the composition root in `zed/src/main.rs` wires them together. The governing invariant — enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh` — is that **hKask crates never depend on zed-kask; zed-kask depends on hKask crates.** (The `hkask-pods` crate was deleted in the 2026-07-25 cleanup; the pod abstraction is replaced by user/curator data directories.)
 
 The user-facing surfaces are all in-process: the Agent Panel (zed native, drives the Curator agent D2 and skills via `ManifestExecutor` D1), the Kask Panel (D10, per-MCP-server one-on-one window), the `magna-carta-verifier` skill, and a slim `kask` admin CLI for backup/wallet/repair/admin only. The old P3 "API surface equivalence" (CLI ≡ API ≡ MCP) is dead; the live equivalence is **MCP ≡ in-process surfaces**.
 
@@ -30,7 +30,7 @@ The hexagonal architecture in hKask is not a pattern adopted for aesthetics. It 
 
 In standard hexagonal architecture, the domain core is surrounded by ports (interfaces the core defines) and adapters (implementations that satisfy those interfaces). In Rust, ports are **traits**, and adapters are **structs that implement those traits**. The rule is simple: domain crates define the traits; infrastructure crates provide the implementations.
 
-This design exists because hKask's dependency graph imposes a strict Authority DAG. Domain crates (`hkask-regulation`, `hkask-pods`, `hkask-inference`) must not depend on infrastructure crates (`hkask-storage`, `hkask-mcp`). The port traits in `hkask-types` are the only shared dependency — every domain crate imports from `hkask-types`, and every infrastructure crate implements against it. There is no other coupling path.
+This design exists because hKask's dependency graph imposes a strict Authority DAG. Domain crates (`hkask-regulation`, `hkask-inference`) must not depend on infrastructure crates (`hkask-storage`, `hkask-mcp`). The port traits in `hkask-types` are the only shared dependency — every domain crate imports from `hkask-types`, and every infrastructure crate implements against it. There is no other coupling path. (The `hkask-pods` crate was deleted in the 2026-07-25 cleanup.)
 
 As the crate-level documentation in `crates/hkask-types/src/lib.rs` states: "Port traits that enable crates to depend on abstractions rather than concrete implementations. Per the Authority DAG, domain crates depend on these port traits (not on each other)."
 
@@ -58,9 +58,9 @@ The concrete implementor in zed-kask is **`BridgeToolPort`** in `kask_bridge`, w
 
 **`MemoryPort`** — The memory ingestion boundary. The concrete implementor in zed-kask is **`BridgeMemoryPort`** in `kask_bridge`, which adapts zed's `ThreadMemoryPort` (thread completion path) to the hKask port. The composition root installs a `LoggingMemoryPort` early (so the global hook is set before any thread completes a turn) and upgrades it to a real `BridgeMemoryPort` once the Zed user resolves (D6). This replaces the deleted `DaemonHandler`/`DaemonClient` memory-ingestion path — there is no daemon in zed-kask.
 
-**`CircuitBreakerPort`** (`crates/hkask-types/src/regulation.rs`) — The circuit breaker boundary for the Cybernetics membrane. A minimal trait — `allow_request()`, `record_success()`, `record_failure()`, `state()` — that allows the Inference loop to use circuit breaking without depending on `hkask-regulation`. The concrete implementor is `CircuitBreaker` in `hkask-regulation`. When the Regulation detects elevated error rates above the `error_rate_max` set-point (default: 30%), it opens the circuit and the inference loop stops sending requests.
+**`CircuitBreakerPort`** (`crates/hkask-types/src/regulation.rs`) — The circuit breaker boundary for the Cybernetics membrane. A minimal trait — `allow_request()`, `record_success()`, `record_failure()`, `state()` — that allows the Inference loop to use circuit breaking without depending on `hkask-regulation`. When the Regulation detects elevated error rates above the `error_rate_max` set-point (default: 30%), it opens the circuit and the inference loop stops sending requests. (The concrete `CircuitBreaker` struct in `hkask-regulation` was deleted in the 2026-07-25 cleanup; the port trait and `CircuitBreakerState` signal metric remain.)
 
-**`LedgerStoragePort`** (`crates/hkask-types/src/regulation.rs`) — Storage abstraction for Regulation event queries. While `CircuitBreakerPort` is the actuator boundary, `LedgerStoragePort` is the memory boundary — it abstracts the `RegulationArchive` behind a trait so the cybernetic regulation layer (`GasReport`, `CalibratedEnergyEstimator`, `WalletGasCalibrator`) can be tested without a real SQLite database. It provides `query_algedonic()` for alert retrospectives, `replay_weighted()` for temporal decay-weighted event replay, and `persist_cursor()`/`load_cursor()` for crash recovery.
+**`LedgerStoragePort`** (`crates/hkask-types/src/regulation.rs`) — Storage abstraction for Regulation event queries. While `CircuitBreakerPort` is the actuator boundary, `LedgerStoragePort` is the memory boundary — it abstracts the `RegulationArchive` behind a trait so the cybernetic regulation layer can be tested without a real SQLite database. It provides `query_algedonic()` for alert retrospectives, `replay_weighted()` for temporal decay-weighted event replay, and `persist_cursor()`/`load_cursor()` for crash recovery. (The deleted `GasReport`, `CalibratedEnergyEstimator`, and `WalletGasCalibrator` modules previously consumed this port; the remaining consumers query algedonic events directly.)
 
 **`LedgerObserver`** (`crates/hkask-types/src/regulation.rs`) — The subscriber interface for Regulation events. Observers declare an `interest_mask()` of `SpanNamespace` values they care about, then receive `on_event()`, `on_depletion()`, and `on_backpressure()` callbacks. The concrete implementor in `hkask-inference` uses this to react to throttle and circuit-break signals.
 
@@ -100,7 +100,7 @@ Conant and Ashby's Good Regulator theorem states that "every good regulator of a
 
 ### Evidence
 
-The Regulation's model is the `RegulationArchive` — a persistent, queryable record of every ν-event the system has emitted. `CyberneticsLoop::verify_impact()` re-senses the targeted metric after an action and compares pre- and post-action values, producing an `ImpactReport` with an `ActionDecision` (`Accept`, `Stage`, `Block`). The `SetPointCalibrator` queries the archive periodically and adjusts thresholds within bounds. The Curator's `MetacognitionLoop::sense()` reads via `query_algedonic` to build its model of system state.
+The Regulation's model is the `RegulationArchive` — a persistent, queryable record of every ν-event the system has emitted. `CyberneticsLoop::verify_impact()` re-senses the targeted metric after an action and compares pre- and post-action values, producing an `ImpactReport` with an `ActionDecision` (`Accept`, `Stage`, `Block`). The Curator's `MetacognitionLoop::self_calibrate()` queries the archive periodically and adjusts thresholds within bounds (replaces the deleted `SetPointCalibrator`). The Curator's `MetacognitionLoop::sense()` reads via `query_algedonic` to build its model of system state.
 
 ### Implications
 
@@ -118,10 +118,10 @@ hKask's operational structure maps onto Stafford Beer's Viable System Model: fiv
 
 | VSM System | hKask Component | Role |
 |------------|-----------------|------|
-| S1 — Operations | Agent pods, `ManifestExecutor`, MCP servers | Do the work |
-| S2 — Coordination | `CyberneticsLoop`, gas budgets, circuit breakers | Prevent oscillation |
+| S1 — Operations | User/curator data directories, `ManifestExecutor`, MCP servers | Do the work |
+| S2 — Coordination | `CyberneticsLoop`, gas budgets | Prevent oscillation |
 | S3 — Control | `RegulationLedger`, `SetPoints`, variety monitors | Audit and optimize S1 |
-| S3* — Audit | `SeamWatcher`, `SloManager`, `StorageGuardLoop` | Independent audit channel |
+| S3* — Audit | `StorageGuardLoop` (the deleted `SeamWatcher` and `SloManager` were previously in this row) | Independent audit channel |
 | S4 — Intelligence | Curator agent (D2), `MetacognitionLoop` | Scan environment, plan |
 | S5 — Policy | Magna Carta (P1–P4), `CuratorHandle::system()` singleton | Identity and policy |
 

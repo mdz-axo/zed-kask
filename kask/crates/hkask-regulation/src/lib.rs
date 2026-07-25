@@ -15,6 +15,7 @@ pub mod energy_estimator; // Loop 6 — tool cost estimation trait
 
 pub mod infra_span;
 pub mod meta_span;
+pub mod metacognition;
 pub mod qa_span;
 pub(crate) mod regulation_policy; // Loop 6 — per-metric regulation rules
 pub mod set_points; // Loop 6 — set-points config & loaders
@@ -36,6 +37,9 @@ pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{AgentGasStatus, DEFAULT_GAS_ALERT_THRESHOLD, GasBudget, GasCost, GasError};
 pub use energy_budget_management::GasBudgetManager;
 pub use energy_estimator::EnergyEstimator;
+pub use metacognition::{
+    EscalationAlert, EscalationTrigger, HealthSnapshot, MetacognitionConfig, MetacognitionLoop,
+};
 
 pub use hkask_types::regulation::QueueDepth;
 pub use infra_span::InfraSpan;

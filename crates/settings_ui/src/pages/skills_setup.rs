@@ -15,12 +15,37 @@ use crate::{SettingsUiFile, SettingsWindow};
 pub(crate) fn displayed_skills(settings_window: &SettingsWindow, cx: &App) -> Vec<Skill> {
     let skill_index = cx.try_global::<SkillIndex>();
 
+    // TEMP DIAGNOSTIC: log what the Skills page sees so we can trace
+    // why fewer-than-expected skills appear.
+    let (global_count, project_groups_summary) = match &skill_index {
+        Some(idx) => {
+            let groups: Vec<String> = idx
+                .project_skills
+                .iter()
+                .map(|g| format!("wt={}({} skills)", g.worktree_id.0, g.skills.len()))
+                .collect();
+            (idx.global_skills.len(), groups.join(", "))
+        }
+        None => (0, "<no SkillIndex global>".to_string()),
+    };
+    log::info!(
+        "[skills-diag] displayed_skills: current_file={:?} global_count={} project_groups=[{}] hidden_deleted={}",
+        settings_window.current_file,
+        global_count,
+        project_groups_summary,
+        settings_window.hidden_deleted_skill_directory_paths.len(),
+    );
+
     match &settings_window.current_file {
         SettingsUiFile::User => skill_index
             .map(|idx| idx.global_skills.clone())
             .unwrap_or_default(),
         SettingsUiFile::Project((worktree_id, _)) => {
             let worktree_id = usize::from(*worktree_id);
+            log::info!(
+                "[skills-diag] Project scope: looking for worktree_id={} in project_skills groups",
+                worktree_id,
+            );
             skill_index
                 .and_then(|index| {
                     index

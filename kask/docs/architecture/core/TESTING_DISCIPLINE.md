@@ -289,7 +289,7 @@ Tests accumulate the scar tissue of every production incident. They become the r
 | **T5** | Fuzz tests verify that all input surfaces handle arbitrary input without panicking |
 | **T6** | No `todo!()`, `unimplemented!()`, or `#[deprecated]` in test code (P5) |
 | **T7** | Use `#[cfg(test)]` module for unit tests; `tests/` for integration; `#[tokio::test]` for async |
-| **T8** | Use `tempfile` or `hkask-test-harness` for filesystem/database — never write to the project tree |
+| **T8** | Use `tempfile` (or the QA script runner, replacing deleted `hkask-test-harness`) for filesystem/database — never write to the project tree |
 | **T9** | Prefer `assert!` with meaningful messages; test error paths, not just happy paths |
 
 ### 6.3 Process Rules
@@ -358,7 +358,7 @@ Tests accumulate the scar tissue of every production incident. They become the r
 
 ## 8. Property-Based Testing
 
-hKask uses **proptest** (already in `hkask-test-harness`) for property-based testing.
+hKask uses **proptest** for property-based testing.
 Property tests live in `#[cfg(test)]` modules alongside the code they verify and
 are run via standard `cargo test`. No external fuzzing frameworks are used.
 
@@ -372,9 +372,11 @@ cargo test --workspace
 cargo test -p hkask-regulation -p hkask-types -p hkask-storage
 ```
 
-### 8.2 Fuzz Seed Corpora
+### 8.2 Fuzz Seed Corpora (historical — `hkask-test-harness` deleted 2026-07-25)
 
-The `hkask-test-harness::fuzz` module provides pre-built seed corpora for
+> The `hkask-test-harness` crate was deleted in the 2026-07-25 cleanup; `ExpectProposal` moved to `hkask-types`. The fuzz module described below is historical.
+
+The `hkask-test-harness::fuzz` module (deleted) provided pre-built seed corpora for
 input surface testing:
 
 ```rust
@@ -409,7 +411,7 @@ failure in a QA manifest.
 
 ### 10.1 Overview
 
-The QA system runs YAML-defined test manifests through `hkask_test_harness::qa_script::run_script()`.
+The QA system runs YAML-defined test manifests through the QA script runner (`qa_script::run_script()`, replacing the deleted `hkask_test_harness::qa_script::run_script()`).
 Each manifest executes `cargo test` commands, optionally classifies failures via Gemma 4 26B,
 and routes to terminal states (PASS/FAIL/WARN) based on branch conditions.
 
@@ -435,7 +437,7 @@ and routes to terminal states (PASS/FAIL/WARN) based on branch conditions.
 kask qa run --script <manifest.yaml>
     │
     ▼
-hkask-test-harness/src/qa_script.rs
+qa_script.rs (replaces deleted hkask-test-harness/src/qa_script.rs)
 ├── parse YAML manifest
 ├── validate branch targets
 ├── execute run_command steps (shell, 5-min timeout)
@@ -448,7 +450,7 @@ hkask-test-harness/src/qa_script.rs
 
 ### 10.4 Executable Manifests
 
-Four manifests run today via `cargo test -p hkask-test-harness -- qa_script`:
+Four manifests run today via `cargo test` (the `cargo test -p hkask-test-harness -- qa_script` invocation is historical — `hkask-test-harness` was deleted in the 2026-07-25 cleanup):
 
 | Manifest | Crate Tested | Tests |
 |----------|-------------|-------|
@@ -461,7 +463,7 @@ Without `DI_API_KEY`, classify steps gracefully degrade through `classifier_unav
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
-| QA script runner | `crates/hkask-test-harness/src/qa_script.rs` | Manifest parsing, step execution, gas, Regulation |
+| QA script runner | `qa_script.rs` (replaces deleted `crates/hkask-test-harness/src/qa_script.rs`) | Manifest parsing, step execution, gas, Regulation |
 | Regulation QA spans | `crates/hkask-types/src/regulation.rs` | 4 `RegulationSpan` variants |
 | Classifier config | `registry/classify/qa-triage.yaml` | Canonical classifier triage prompt (HKASK_CLASSIFIER_MODEL) |
 | QA manifests | `registry/manifests/qa-*.yaml` | 9 manifests (4 executable, 5 planned) |

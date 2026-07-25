@@ -611,7 +611,7 @@ dotenvy = { workspace = true }
 
 ### Step 1: Define the Server Struct
 
-Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with mandatory fields (`webid`, `userpod`, `daemon`) plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The `daemon` field is dead in zed-kask (always `None`; `DaemonClient::auth_query()` fails → degraded mode, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
+Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with mandatory fields (`webid`, `userpod`, `daemon`) plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The `daemon` field is dead in zed-kask (always `None`; the daemon was deleted — `DaemonClient` is retained only for compile-stability, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
 
 ```rust
 // mcp-servers/<your-mcp-package>/src/lib.rs
@@ -696,11 +696,10 @@ impl ExampleServer {
 Every hKask MCP server has a `run()` function that accepts the bootstrap result and calls `run_server()` with a factory closure. In the in-process model (D3), this factory is invoked directly by zed-kask's `context_server` transport rather than spawning a stdio subprocess:
 
 ```rust
-use hkask_mcp_server::{DaemonClient, McpError, run_server};
+use hkask_mcp_server::{McpError, run_server};
 
 pub async fn run(
     userpod: String,
-    daemon_client: Option<DaemonClient>,
 ) -> Result<(), McpError> {
     run_server(
         "example",
@@ -710,7 +709,7 @@ pub async fn run(
             let server = ExampleServer::new(
                 webid,
                 userpod.clone(),
-                daemon_client.clone(),
+                None, // daemon_client — always None (daemon deleted in 2026-07-25 cleanup)
                 None,
                 std::collections::HashMap::new(),
             );
@@ -742,16 +741,14 @@ async fn main() -> Result<(), hkask_mcp_server::McpError> {
 
     hkask_mcp_example::run(
         bootstrap.userpod,
-        bootstrap.daemon_client,
     ).await
 }
 ```
 
 `bootstrap_mcp_server` does:
 1. **Loads `.env`** — calls `dotenvy::dotenv().ok()`
-2. **Reads userpod identity** — from the env var you specify (default: `HKASK_MCP_HOST`)
-3. **Verifies P4 startup gates** — calls `verify_startup_gates()`
-4. **Falls back to direct mode** — if the daemon is unavailable, warns and returns `daemon_client: None`
+2. **Reads userpod identity** — from the env var you specify (default: `HKASK_MCP_HOST`). `bootstrap_mcp_server()` resolves userpod identity only (the daemon was deleted).
+3. **Falls back to direct mode** — `daemon_client` is always `None` (daemon deleted in 2026-07-25 cleanup; `verify_startup_gates()` was also deleted)
 
 ### Startup Gate Behaviour
 

@@ -39,7 +39,7 @@ The Magna Carta defines four principles, each enforced by specific code paths:
 | **P2 — Affirmative Consent** | Default is deny; access requires explicit, scoped, revocable consent | `ConsentManager::has_consent()` (`unwrap_or(false)`) | Storage errors → deny |
 | **P3 — Generative Space** | No hidden control plane; content safety is a mandatory floor, not a ceiling | `hkask-guard` at every LLM boundary; no `is_admin` flag | Structurally impossible to hide settings |
 | **P4 — Clear Boundaries (OCAP)** | All resource access is capability-gated; no ambient authority | `CapabilityChecker::verify()` + `GovernedTool::invoke()` | Empty roots → reject all; no "god token" |
-| **P4.1 — Pod Boundaries** | Pods cannot structurally reach other pods' MCP servers | Type system enforcement via `PerPodToolBinding` | Always enforced (structural) |
+| **P4.1 — Per-User Boundaries** | Users cannot structurally reach other users' MCP servers | Type system enforcement via per-user data directory isolation | Always enforced (structural) |
 
 ### Data Categories
 
@@ -61,7 +61,7 @@ There is no `kask sovereignty status` command. Sovereignty state is observed in-
 
 - **Consent state per data category** — queryable through the Curator agent in the Agent Panel ("show me the current consent state for episodic_memory"), which reads `ConsentManager` directly.
 - **Active delegation tokens** — visible via the kask panel (D10) by invoking the appropriate MCP tool on the `replica` or `curator` server through `PanelToolInvoker` (OCAP-gated).
-- **Per-pod capability bindings** — surfaced by the Curator agent, which holds the singleton `CuratorHandle::system()` and can report `PerPodToolBinding` state.
+- **Per-user capability bindings** — surfaced by the Curator agent, which holds the singleton `CuratorHandle::system()` and can report per-user scoped MCP runtime state.
 
 A representative consent-state view (as the Curator would render it):
 
@@ -121,15 +121,15 @@ let token = checker.grant_tool("web_search", issuer_webid, holder_webid)?;
 
 Revocation is performed through the same in-process `CapabilityChecker` surface (the consent store flips `active = false`). There is no `kask token revoke` command. The Curator agent can revoke on operator direction through `CuratorContext::issue_directive()` (which itself passes through OCAP).
 
-### Checking pod-level capability bindings
+### Checking user-level capability bindings
 
-Per-pod bindings (`PerPodToolBinding` in `crates/hkask-pods/src/pod/deployment.rs`) are inspected by asking the Curator agent or by invoking the appropriate `replica` MCP tool through the kask panel. Each pod's binding shows which tokens authorize which tools.
+Per-user bindings (the scoped MCP runtime for each user/curator data directory; replaces the deleted `PerPodToolBinding` in `crates/hkask-pods/src/pod/deployment.rs`) are inspected by asking the Curator agent or by invoking the appropriate `replica` MCP tool through the kask panel. Each user's binding shows which tokens authorize which tools.
 
 ---
 
 ## Consent Management
 
-Consent is managed in-process through `ConsentManager` (`crates/hkask-pods/src/consent.rs`). There is no `kask sovereignty grant` / `revoke` / `check` CLI.
+Consent is managed in-process through `ConsentManager` (in `hkask-types::visibility`, replaces the deleted `crates/hkask-pods/src/consent.rs`). There is no `kask sovereignty grant` / `revoke` / `check` CLI.
 
 ### Granting consent
 
@@ -157,14 +157,14 @@ The check flows through `ConsentManager::has_consent()` → `SovereigntyChecker:
 
 ---
 
-## Pod Boundary Auditing
+## Per-User Boundary Auditing
 
-There is no `kask pod list` / `kask pod status` CLI. Pod state is observed in-process:
+There is no `kask pod list` / `kask pod status` CLI. Per-user state is observed in-process (the `hkask-pods` pod abstraction was deleted in the 2026-07-25 cleanup; the equivalent boundary is the per-user data directory):
 
-- **Active pods** — surfaced by the Curator agent (which holds the singleton `CuratorHandle::system()`). A representative listing:
+- **Active user/curator data directories** — surfaced by the Curator agent (which holds the singleton `CuratorHandle::system()`). A representative listing:
 
 ```
-Agent pods (2):
+Agent directories (2):
   curator-primary (active)
     WebID: webid://curator
     Name:  curator
@@ -173,7 +173,7 @@ Agent pods (2):
     Name:  alice
 ```
 
-- **Per-pod tool bindings and OCAP state** — inspected via the Curator agent or the kask panel. Each pod has its own `PerPodToolBinding`, dedicated SQLCipher file, and per-pod variety counters. Pods are structurally isolated — cross-pod dispatch is impossible at the type level.
+- **Per-user tool bindings and OCAP state** — inspected via the Curator agent or the kask panel. Each user has their own scoped MCP runtime, dedicated SQLCipher file, and per-user variety counters. Users are structurally isolated — cross-user dispatch is impossible at the type level.
 
 ---
 
@@ -215,9 +215,9 @@ Magna Carta Verification Report
 ## User Sovereignty (P1)
 
   ✓ P1-001 sovereignty_checker_configured check: pass
-    → SovereigntyChecker found in crate hkask-pods
+    → SovereigntyChecker found in crate hkask-types::visibility (replaces deleted hkask-pods)
   ✓ P1-002 require_sovereignty_enforced check: pass
-    → All pod accesses route through require_sovereignty()
+    → All user accesses route through the in-process sovereignty gate
   △ P1-003 data_portability_export check: gap
     → Export path exists but not tested
     ⚑ Add integration test for the export tool

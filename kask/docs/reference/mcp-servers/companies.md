@@ -25,7 +25,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `fetch` | Provider-agnostic data access; clones `LearningState` and delegates to `providers::companies_get` |
 | `LearningState` | `src/learning.rs` — Beta(α+1, β+1) conjugate prior per (symbol, provider); temporal price snapshots for staleness detection; `preferred_provider` override when a provider is flaky. Chronic-staleness threshold configurable via `with_staleness_days` or `HKASK_CHRONIC_STALENESS_DAYS` |
 | `PortfolioManager` | SQLite-backed ledger, notes, file attachments, and durable forecast store; owner-scoped by `webid` |
-| `record_experience` | DEAD in zed-kask — the daemon `store_experience` path is a no-op (daemon deleted; `DaemonClient` always `None`). Thread-level memory is captured via `RealMemoryPort` (D6) at thread-turn completion, not per-tool-outcome. The call site remains for compile-stability but does nothing. |
+| `record_experience` | DEAD in zed-kask — the daemon `store_experience` path is a no-op (daemon deleted in 2026-07-25 cleanup; `DaemonClient` is retained only for compile-stability and is always `None`). Thread-level memory is captured via `RealMemoryPort` (D6) at thread-turn completion, not per-tool-outcome. The call site remains for compile-stability but does nothing. |
 
 Two Regulation emission paths run per tool call: the framework-level `execute_tool` span (tool name + outcome) and the (now-dead) server-level experience recording path. Provider routing additionally emits `reg.tool.companies.provider.*` spans via `providers::emit_provider_reg`. The daemon narrative path is dead code in zed-kask (always `None`); thread-level memory is owned by `RealMemoryPort` (D6).
 
@@ -181,7 +181,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 - **Local persistence.** The portfolio ledger is a local SQLite database per owner. No portfolio data leaves the host; the server is the sole reader and writer.
 - **Import and attachment limits.** `ledger_import` rejects requests above `MAX_IMPORT_REQUEST_BYTES` or more than `MAX_IMPORT_TRANSACTION_COUNT` transactions. `file_attach` rejects encoded payloads above `MAX_ENCODED_ATTACHMENT_BYTES` and decoded payloads above `MAX_DECODED_ATTACHMENT_BYTES`.
 - **Governance is at the dispatcher membrane.** OCAP is enforced by the `GovernedTool` membrane in `crates/hkask-mcp/src/dispatch.rs`, which verifies a `DelegationToken` per call before the request reaches this server. The companies server is the transport pipe; it does not re-check capabilities per call.
-- **Experience recording is dead in zed-kask.** The `record_experience` call site remains for compile-stability, but the daemon `store_experience` path is a no-op (daemon deleted; `DaemonClient` always `None`). Thread-level memory is captured via `RealMemoryPort` (D6) at thread-turn completion, not per-tool-outcome. There is no fire-and-forget tokio task for narrative memory.
+- **Experience recording is dead in zed-kask.** The `record_experience` call site remains for compile-stability, but the daemon `store_experience` path is a no-op (daemon deleted in 2026-07-25 cleanup; `DaemonClient` retained for compile-stability, always `None`). Thread-level memory is captured via `RealMemoryPort` (D6) at thread-turn completion, not per-tool-outcome. There is no fire-and-forget tokio task for narrative memory.
 
 ## Regulation observability
 
@@ -189,7 +189,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 |------|--------------|
 | `reg.tool.companies.<tool>` | Every tool call via `execute_tool` (success and error paths) |
 | `reg.tool.companies.provider.<provider>` | Provider selection and outcome via `providers::emit_provider_reg` |
-| `reg.mcp.companies.memory` | DEAD in zed-kask — daemon experience store result (no-op; `DaemonClient` always `None`). Retained for enum stability; not emitted in practice. |
+| `reg.mcp.companies.memory` | DEAD in zed-kask — daemon experience store result (no-op; daemon deleted in 2026-07-25 cleanup; `DaemonClient` retained for compile-stability, always `None`). Retained for enum stability; not emitted in practice. |
 
 ## Quick start
 
