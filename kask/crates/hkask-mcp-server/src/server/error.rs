@@ -1,7 +1,7 @@
 //! Error types for hkask-mcp library operations.
 //!
 //! Two error layers:
-//! - `McpError` — server-level failures (missing credentials, daemon errors, storage, transport)
+//! - `McpError` — server-level failures (missing credentials, storage, transport)
 //! - `McpToolError` — tool-level failures with structured classification (internal, not_found, etc.)
 
 use hkask_types::McpErrorKind;
@@ -38,9 +38,6 @@ pub enum McpError {
 
     #[error("MCP host identity is required: set {env_var}")]
     MissingHostIdentity { env_var: String },
-
-    #[error("Daemon communication error: {0}")]
-    Daemon(#[from] std::io::Error),
 
     #[error("Storage error: {0}")]
     Storage(#[from] hkask_storage::DatabaseError),

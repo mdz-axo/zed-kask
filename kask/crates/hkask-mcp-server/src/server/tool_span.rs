@@ -1,7 +1,6 @@
 //! Tool execution — Regulation span emission, experience recording, and framework-level execution.
 
 use hkask_types::McpErrorKind;
-use hkask_types::time::now_rfc3339;
 use serde_json::Value;
 use std::time::Instant;
 
@@ -277,49 +276,6 @@ pub async fn execute_tool_semantic<C: ToolContext>(
         Err(_) => ctx.record_tool_outcome(tool_name, "error"),
     }
     span.finish(result)
-}
-
-/// Record a tool outcome to the daemon for semantic memory encoding.
-///
-/// Standard fire-and-forget pattern used by all MCP servers that have
-/// daemon access. Call this from your `ToolContext::record_tool_outcome`
-/// implementation.
-pub fn record_via_daemon(
-    daemon: &Option<crate::daemon::DaemonClient>,
-    userpod: &str,
-    tool: &str,
-    outcome: &str,
-) {
-    if let Some(daemon) = daemon.as_ref() {
-        let value = serde_json::json!({
-            "tool": tool,
-            "outcome": outcome,
-            "timestamp": now_rfc3339(),
-        });
-        let daemon = daemon.clone();
-        let userpod = userpod.to_string();
-        let tool_name = tool.to_string();
-        let _outcome = outcome.to_string();
-        tokio::spawn(async move {
-            match daemon
-                .store_experience(&userpod, "mcp_session", "observed", &value, Some(0.85))
-                .await
-            {
-                Ok(crate::daemon::DaemonResponse::StoreResponse { stored: true, .. }) => {
-                    tracing::debug!(target: "reg.memory", tool = %tool_name, "Experience stored via daemon");
-                }
-                Ok(other) => {
-                    tracing::warn!(target: "reg.memory", tool = %tool_name, response = ?other, "Unexpected daemon response")
-                }
-                Err(e) => {
-                    tracing::warn!(target: "reg.memory", tool = %tool_name, error = %e, "Failed to store experience");
-                    tracing::warn!(target: "hkask.experience_drop", tool = %tool_name, "Regulation experience-drop signal: tool outcome not persisted to daemon");
-                }
-            }
-        });
-    } else {
-        tracing::warn!(target: "reg.memory", tool = %tool, outcome = %outcome, "Experience not persisted — daemon unavailable");
-    }
 }
 
 // ── Convenience helpers ────────────────────────────────────────────────────

@@ -1,10 +1,9 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
-//! hKask MCP Server — MCP server utilities, daemon transport, and startup verification.
+//! hKask MCP Server — MCP server utilities and startup verification.
 //!
 //! Provides the lightweight layer that all hKask MCP servers depend on:
 //! - Server scaffolding (McpToolError, ServerContext, CredentialRequirement, run_stdio_server)
-//! - Daemon transport (DaemonClient, DaemonListener)
-//! - Startup verification (P4 Gate 1/2/3)
+//! - Startup identity verification (P12 host identity)
 //! - URL validation, identifier validation, HTTP helpers
 //! - Macros: validate_field!, impl_tool_context!, mcp_server!
 
@@ -21,11 +20,8 @@ pub const BUILTIN_SERVERS: &[(&str, &str)] = &[
     ("scenarios", "hkask-mcp-scenarios"),
 ];
 
-pub mod daemon; // Unix socket transport for MCP binary ↔ hKask daemon
-
 pub(crate) mod security;
 pub mod server;
-pub mod startup; // P4 Gate 1/2/3 startup verification for MCP server binaries
 
 // ── Canonical MCP server registry ─────────────────────────────────────────
 // Single source of truth for all (server_id, binary_name) mappings.
@@ -35,15 +31,12 @@ pub mod startup; // P4 Gate 1/2/3 startup verification for MCP server binaries
 // (e.g., API server may exclude filesystem for security), but must
 // reference this constant as the upper bound.
 
-pub use daemon::{DaemonClient, DaemonHandler, DaemonListener, DaemonRequest, DaemonResponse};
-
 pub use server::{
     CapabilityTier, CredentialRequirement, ExperienceCallback, McpError, ServerContext,
-    ToolContext, api_get, api_put, execute_tool, load_dotenv, record_via_daemon,
-    resolve_credential, run_stdio_server, run_stdio_server_with_preloaded, tool_internal_error,
-    validate_identifier, validate_path, validate_tool_url, validate_tool_url_permissive,
+    ToolContext, api_get, api_put, execute_tool, load_dotenv, resolve_credential, run_stdio_server,
+    run_stdio_server_with_preloaded, tool_internal_error, validate_identifier, validate_path,
+    validate_tool_url, validate_tool_url_permissive,
 };
-pub use startup::{StartupGateResult, verify_startup_gates};
 
 /// Run an MCP server with stdio transport.
 ///
@@ -81,36 +74,33 @@ where
     run_stdio_server_with_preloaded(name, version, factory, credentials, preloaded).await
 }
 
-/// Result of the standard MCP server daemon bootstrap flow.
+/// Result of the standard MCP server bootstrap flow.
 ///
-/// All 16 MCP server binaries use this. The userpod identity
-/// and optional daemon client are passed to the server's `run()`.
+/// All MCP server binaries use this. The userpod identity is passed to the
+/// server's `run()` function.
 #[must_use = "bootstrap result must be passed to the server's run() function"]
 pub struct MCPBootstrap {
     pub userpod: String,
-    pub daemon_client: Option<DaemonClient>,
 }
 
-/// Standard MCP server bootstrap: .env → daemon verification → fallback.
+/// Standard MCP server bootstrap: resolve host identity from env.
 ///
 /// Every hKask MCP server binary follows this pattern:
 /// 1. Load `.env`
-/// 2. Verify P4 startup gates (auth, role, tools) against the daemon
-/// 3. If daemon is unavailable, warn and fall back to direct/standalone mode
+/// 2. Resolve the userpod identity from the host env var
 ///
-/// After calling this, pass `userpod` and `daemon_client` to the
-/// server's `run()` function.
+/// After calling this, pass `userpod` to the server's `run()` function.
 ///
 /// # Arguments
-/// - `server_name` — short name used in `verify_startup_gates` (e.g. "communication")
-/// - `target` — tracing target for log messages (e.g. "hkask.mcp.communication")
+/// - `server_name` — short name for logging (e.g. "corpus")
+/// - `target` — tracing target for log messages (e.g. "hkask.mcp.corpus")
 /// - `host_env_var` — environment variable for the userpod identity
 ///   (defaults to `"HKASK_MCP_HOST"` for most servers)
 ///
 /// expect: "Every MCP action has an authenticated host identity."
 /// \[P12\] Motivating: every action has an authenticated author.
 /// pre: `host_env_var` names a non-empty host identity environment variable.
-/// post: returns an error before daemon verification when the host identity is absent.
+/// post: returns an error when the host identity is absent.
 /// \[P1\] Constraining: User Sovereignty — anonymous agency is never synthesized.
 #[must_use = "MCPBootstrap must be passed to the server's run() function"]
 pub async fn bootstrap_mcp_server(
@@ -125,47 +115,14 @@ pub async fn bootstrap_mcp_server(
             env_var: host_env_var.to_string(),
         })?;
 
-    let client = DaemonClient::new();
-    let daemon_client = match verify_startup_gates(&client, &userpod, server_name, &[]).await {
-        Ok(result) => {
-            tracing::info!(
-                target,
-                userpod = %userpod,
-                "P4 gates verified{}",
-                if result.denied_tools.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        " — {} tool(s) denied: {:?}",
-                        result.denied_tools.len(),
-                        result.denied_tools
-                    )
-                }
-            );
-            Some(DaemonClient::new())
-        }
-        Err(e) => {
-            tracing::warn!(
-                target,
-                userpod = %userpod,
-                error = %e,
-                "Daemon unavailable — falling back to direct mode"
-            );
-            tracing::info!(
-                target: "reg.mcp.health",
-                status = "degraded",
-                server = server_name,
-                error = %e,
-                "MCP server degraded — daemon unavailable"
-            );
-            None
-        }
-    };
+    tracing::info!(
+        target,
+        server = server_name,
+        userpod = %userpod,
+        "MCP server bootstrapped",
+    );
 
-    Ok(MCPBootstrap {
-        userpod,
-        daemon_client,
-    })
+    Ok(MCPBootstrap { userpod })
 }
 
 /// Macro to validate an identifier field and return early on error.
@@ -192,9 +149,8 @@ macro_rules! validate_field {
 
 /// Generate a `ToolContext` impl for an MCP server struct.
 ///
-/// Assumes the struct has `webid: WebID`, `userpod: String`,
-/// and `daemon: Option<DaemonClient>` fields — the standard
-/// pattern for all 14 hKask MCP servers.
+/// Assumes the struct has `webid: WebID` and `userpod: String` fields —
+/// the standard pattern for all hKask MCP servers.
 ///
 /// Usage:
 /// ```ignore
@@ -208,7 +164,13 @@ macro_rules! impl_tool_context {
                 &self.webid
             }
             fn record_tool_outcome(&self, tool: &str, outcome: &str) {
-                $crate::record_via_daemon(&self.daemon, &self.userpod, tool, outcome);
+                tracing::debug!(
+                    target: "reg.memory",
+                    userpod = %self.userpod,
+                    tool = %tool,
+                    outcome = %outcome,
+                    "Tool outcome recorded (no daemon — in-process only)",
+                );
             }
         }
     };
@@ -216,7 +178,7 @@ macro_rules! impl_tool_context {
 
 /// Define an MCP server struct with standard fields + constructor.
 ///
-/// Generates the struct with mandatory `webid`, `userpod`, `daemon`
+/// Generates the struct with mandatory `webid`, `userpod`
 /// fields plus any domain-specific fields, a `new()` constructor, and
 /// a `ToolContext` impl via `impl_tool_context!`.
 ///
@@ -228,7 +190,7 @@ macro_rules! impl_tool_context {
 /// });
 /// ```
 ///
-/// Expands to a struct with `webid, userpod, daemon, inference_port, skills`.
+/// Expands to a struct with `webid, userpod, inference_port, skills`.
 #[macro_export]
 macro_rules! mcp_server {
     // Variant with custom fields
@@ -247,8 +209,6 @@ macro_rules! mcp_server {
             pub webid: hkask_types::WebID,
             /// UserPod identity serving this MCP server.
             pub userpod: String,
-            /// Daemon client for event recording.
-            pub daemon: Option<$crate::DaemonClient>,
             $(
                 $(#[$field_meta])*
                 $field_vis $field : $ty
@@ -260,10 +220,9 @@ macro_rules! mcp_server {
             pub fn new(
                 webid: hkask_types::WebID,
                 userpod: String,
-                daemon: Option<$crate::DaemonClient>,
                 $($field : $ty),*
             ) -> Self {
-                Self { webid, userpod, daemon, $($field),* }
+                Self { webid, userpod, $($field),* }
             }
         }
 
@@ -281,17 +240,14 @@ macro_rules! mcp_server {
             pub webid: hkask_types::WebID,
             /// UserPod identity serving this MCP server.
             pub userpod: String,
-            /// Daemon client for event recording.
-            pub daemon: Option<$crate::DaemonClient>,
         }
 
         impl $name {
             pub fn new(
                 webid: hkask_types::WebID,
                 userpod: String,
-                daemon: Option<$crate::DaemonClient>,
             ) -> Self {
-                Self { webid, userpod, daemon }
+                Self { webid, userpod }
             }
         }
 
