@@ -8,8 +8,6 @@
 //! Escalation CRUD lives here — the data and the behavior co-locate.
 
 use hkask_capability::CapabilityChecker;
-use hkask_pods::a2a::A2ARuntime;
-use hkask_pods::consent::ConsentManager;
 use hkask_regulation::types::loops::{CurationInput, GoalTransitionEvent};
 
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
@@ -60,30 +58,20 @@ impl From<EscalationEntry> for EscalationResponse {
 /// escalations, and curation signals.
 pub struct GovernanceContext {
     pub checker: Arc<CapabilityChecker>,
-    pub consent: Arc<ConsentManager>,
-
-    pub a2a: Arc<A2ARuntime>,
     pub escalations: Arc<EscalationQueue>,
     pub events: Arc<dyn RegulationSink>,
     pub curation_tx: tokio::sync::mpsc::UnboundedSender<CurationInput>,
 }
 
 impl GovernanceContext {
-    /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
-    /// post: returns a GovernanceContext wired with OCAP checker, consent manager, dispatcher, A2A runtime, escalation queue, event sink, and optional curation channel
     pub fn new(
         checker: Arc<CapabilityChecker>,
-        consent: Arc<ConsentManager>,
-
-        a2a: Arc<A2ARuntime>,
         escalations: Arc<EscalationQueue>,
         events: Arc<dyn RegulationSink>,
         curation_tx: tokio::sync::mpsc::UnboundedSender<CurationInput>,
     ) -> Self {
         Self {
             checker,
-            consent,
-            a2a,
             escalations,
             events,
             curation_tx,

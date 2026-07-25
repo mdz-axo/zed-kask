@@ -1,3 +1,4 @@
+mod curator_agent_server;
 mod db;
 mod legacy_thread;
 mod native_agent_server;
@@ -14,6 +15,7 @@ pub mod tool_router;
 mod tools;
 
 use context_server::ContextServerId;
+pub use curator_agent_server::CuratorAgentServer;
 pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
@@ -428,6 +430,9 @@ pub struct NativeAgent {
     /// three agent-panel interaction points: input box focus, slash
     /// autocomplete, and conversation submit.
     skills_state: SkillsState,
+    /// When set, all new threads created by this agent get this system
+    /// prompt override. Used by the Curator agent to inject its own persona.
+    system_prompt_override: Option<SharedString>,
 }
 
 #[derive(Default)]
@@ -645,6 +650,7 @@ impl NativeAgent {
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
+                system_prompt_override: None,
             }
         })
     }
@@ -772,6 +778,15 @@ impl NativeAgent {
         self.sibling_thread_host = Some(host);
     }
 
+    /// Set a system prompt override for all new threads created by this agent.
+    ///
+    /// Used by the Curator agent to inject its own persona. When set,
+    /// each new thread created via `new_session` gets this prompt via
+    /// `Thread::set_system_prompt_override`.
+    pub fn set_system_prompt_override(&mut self, prompt: SharedString, _cx: &mut Context<Self>) {
+        self.system_prompt_override = Some(prompt);
+    }
+
     pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
         self.sibling_thread_host.clone()
     }
@@ -802,6 +817,13 @@ impl NativeAgent {
                 cx,
             )
         });
+
+        // Apply the system prompt override if set (e.g., Curator persona).
+        if let Some(ref override_prompt) = self.system_prompt_override {
+            thread.update(cx, |thread, cx| {
+                thread.set_system_prompt_override(override_prompt.clone(), cx);
+            });
+        }
 
         self.register_session(thread, project_id, 1, cx)
     }

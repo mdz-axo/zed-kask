@@ -105,3 +105,6 @@ pub struct ExpectProposal {
     pub suggested_goal_principle: String,
     pub existing_constraining_principles: Vec<String>,
 }
+
+pub mod voice;
+pub use voice::VoiceDesign;

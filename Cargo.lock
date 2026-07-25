@@ -9385,7 +9385,6 @@ dependencies = [
  "dotenvy",
  "hkask-inference",
  "hkask-mcp-server",
- "hkask-pods",
  "hkask-storage",
  "hkask-types",
  "image",
@@ -9526,34 +9525,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-pods"
-version = "0.31.0"
-dependencies = [
- "async-trait",
- "chrono",
- "ed25519-dalek",
- "hkask-capability",
- "hkask-keystore",
- "hkask-mcp",
- "hkask-memory",
- "hkask-regulation",
- "hkask-storage",
- "hkask-templates",
- "hkask-types",
- "r2d2_sqlite",
- "rusqlite",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
 name = "hkask-regulation"
 version = "0.31.0"
 dependencies = [
@@ -9602,7 +9573,6 @@ dependencies = [
  "hkask-mcp",
  "hkask-mcp-server",
  "hkask-memory",
- "hkask-pods",
  "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",
@@ -9674,7 +9644,6 @@ version = "0.31.0"
 dependencies = [
  "chrono",
  "hkask-inference",
- "hkask-pods",
  "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",

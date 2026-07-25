@@ -7,7 +7,6 @@ description = "hKask context service — governance, regulation store, storage g
 
 [dependencies]
 hkask-services-core = { path = "../hkask-services-core" }
-hkask-pods = { path = "../hkask-pods" }
 hkask-regulation = { path = "../hkask-regulation" }
 hkask-mcp = { path = "../hkask-mcp" }
 hkask-mcp-server = { path = "../hkask-mcp-server" }

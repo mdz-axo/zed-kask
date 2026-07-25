@@ -497,11 +497,9 @@ impl Agent {
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
-            // The Curator reuses the NativeAgentServer infrastructure (D2).
-            // It's a native in-process agent with a Curator-specific system prompt
-            // and guarded inference. The regulation/metacognition loops run as
-            // background tasks wired at startup.
-            Self::Curator => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
+            // The Curator uses a dedicated server with its own system prompt
+            // that reflects its role as a cybernetic regulator.
+            Self::Curator => Rc::new(agent::CuratorAgentServer::new(fs, thread_store)),
             Self::Custom { id: name } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }

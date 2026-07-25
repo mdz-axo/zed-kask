@@ -26,7 +26,6 @@ members = [
     "crates/hkask-memory",
     "crates/hkask-regulation",
     "crates/hkask-templates",
-    "crates/hkask-pods",
     "crates/hkask-keystore",
     "crates/hkask-ledger",
 
