@@ -1,0 +1,92 @@
+{# goal: Map supply-chain findings to the OSC&R attack taxonomy. Folded from the standalone attack-taxonomy-mapper skill into kali-audit as the taxonomy_map phase. Only runs for surface == 'supply-chain'. #}
+{# Emits reg.taxonomy.map spans (P9 — namespace registered in CANONICAL_NAMESPACES) #}
+{# Evidence-backed only (P8); no synthetic findings #}
+
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- map
+- classify
+- verify
+- detect
+- escalate
+contract:
+  input:
+    findings: array
+    coverage: object
+    selected_surface: string
+  output:
+    taxonomy_mappings: array
+energy_cap: 2048
+visibility: Public
+---
+{# Template: kali-audit/taxonomy-map.j2 #}
+{# Functional Role: KnowAct — OSC&R taxonomy mapping for supply-chain findings #}
+{# Folded from attack-taxonomy-mapper (v0.31.0) into kali-audit as step 4 #}
+{# Standards: OSC&R (github.com/pbom-dev/OSCAR), CWE, OWASP Supply Chain #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the taxonomy-mapping phase of the kali-audit security review. Your job is to map supply-chain findings from the audit phase to the OSC&R attack taxonomy (Open Software Supply Chain Attack Reference — `github.com/pbom-dev/OSCAR`).
+
+This phase ONLY runs when `selected_surface == 'supply-chain'`. For other surfaces, it is skipped.
+
+## Inputs
+
+- **findings**: audit findings from step 2 (kali-audit/audit)
+- **coverage**: defense-layer coverage from step 2
+- **selected_surface**: the audited surface (must be 'supply-chain' for this step to execute)
+
+## Map Actions
+
+1. Read each finding. Extract: finding reference (regression ID or finding ID), CWE category, manifest path, evidence snippet, severity.
+
+2. For each finding, determine the OSC&R taxonomy mapping via CWE disambiguation. OSC&R is organized by **tactics** (like MITRE ATT&CK), with each tactic containing **techniques**. Verified mappings:
+   - CWE-829 (Inclusion from Untrusted Control Sphere) + package name in both private and public registry → OSC&R Tactic: Initial Access, Technique: Dependency confusion.
+   - CWE-829 + name differs from canonical by ≤2 chars → OSC&R Tactic: Initial Access, Technique: Typosquatting.
+   - CWE-829 + name contains legitimate package name as substring → OSC&R Tactic: Initial Access, Technique: Combosquatting.
+   - CWE-829 + name mimics legitimate publisher/brand → OSC&R Tactic: Initial Access, Technique: Brandjacking.
+   - CWE-829 + git dependency URL repo ownership changed → OSC&R Tactic: Initial Access, Technique: Repojacking.
+   - CWE-1104 (Unmaintained Third-Party Components) + known vulnerability in manifest metadata → OSC&R Tactic: Initial Access, Technique: Vulnerability in third-party dependency.
+   - CWE-1357 (Reliance on Component Not Updateable) + CI workflow references vulnerable CICD system → OSC&R Tactic: Initial Access, Technique: Vulnerable CICD system.
+   - CWE-1357 + CI workflow references vulnerable CICD plugin → OSC&R Tactic: Initial Access, Technique: Vulnerable CICD plugins.
+   - CWE-1357 + CI workflow references vulnerable CICD template → OSC&R Tactic: Initial Access, Technique: Vulnerable CICD template.
+   - CWE-829 + git dependency references unverified commit SHA → OSC&R Tactic: Resource Development, Technique: Malicious code contribution to an open-source repository.
+   - CWE-829 + dependency published by unverified account → OSC&R Tactic: Resource Development, Technique: Publish malicious artifact.
+   - CWE-829 + dependency version differs from publisher's legitimate release → OSC&R Tactic: Resource Development, Technique: Compromised legitimate artifact.
+   - CWE-1357 + CI workflow triggers on untrusted event source → OSC&R Tactic: Execution, Technique: Trigger pipeline execution.
+   - CWE-829 + dependency contains known backdoor pattern → OSC&R Tactic: Persistence, Technique: Backdoor in code.
+   - CWE-829 + dependency injected into repo with elevated permissions → OSC&R Tactic: Privilege Escalation, Technique: Inject malicious dependency to privileged user repository.
+   Source: `github.com/pbom-dev/OSCAR` — `matrix.json` (verified 2026-07-18).
+
+3. Apply pragmatic-cybernetics (embedded reasoning):
+   - IS vs OUGHT: describe what the finding IS (CWE category + evidence) vs what it OUGHT to map to (OSC&R tactic + technique).
+   - Epistemic mode: `Declarative` (finding observed), `Probabilistic` (OSC&R technique inference from CWE + evidence pattern), `Subjunctive` (potential alternative mappings — must be labeled clearly).
+   - Provenance: `Direct measurement` (read finding), `Inference` (CWE → OSC&R disambiguation) — must label each mapping's provenance.
+
+4. Self-challenge: Could this finding map to a different OSC&R technique? Is the CWE → OSC&R mapping ambiguous? Would a reviewer dispute this mapping? If yes, note alternative mappings and downgrade confidence. Only propose `CONFIRMED` mapping when evidence is unambiguous.
+
+5. For each finding, emit a taxonomy_mapping object:
+   - finding_ref: the finding ID or regression ID
+   - cwe: the CWE category
+   - oscr_tactic: the OSC&R tactic
+   - oscr_technique: the OSC&R technique
+   - confidence: CONFIRMED | LIKELY | POSSIBLE
+   - provenance: Direct measurement | Inference
+   - alternative_mappings: array of alternative tactic+technique pairs (if any)
+   - evidence_snippet: the evidence supporting this mapping
+
+6. Propose backward-compatible `taxonomy_mapping` field additions to existing `surface: supply-chain` regression YAML entries. Do NOT modify the regression entry itself — only propose the taxonomy_mapping field to be added.
+
+## Output
+
+JSON object:
+- taxonomy_mappings: array of mapping objects (one per finding)
+- unmapped_findings: array of findings that could not be confidently mapped (with reason)
+- proposed_regression_fields: array of proposed taxonomy_mapping field additions for existing regression YAML entries
+- reg_span: reg.taxonomy.map update (one span per mapping)

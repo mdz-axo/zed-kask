@@ -141,6 +141,25 @@ steps:
   - ordinal: 4
     action: select
     description: >
+      TAXONOMY_MAP (folded from attack-taxonomy-mapper): Map findings to the
+      OSC&R attack taxonomy (dependency confusion, typosquatting, malicious
+      commit injection, build pipeline compromise, unmaintained component,
+      unverified registry). Adds an optional, backward-compatible
+      `taxonomy_mapping` field to existing `surface: supply-chain` regression
+      YAML entries. Skipped for non-supply-chain surfaces.
+    renderer: minijinja
+    template_ref: kali-audit/taxonomy-map
+    gas_cap: 2048
+    timeout_seconds: 60
+    condition: "step_1_result.selected_surface == 'supply-chain'"
+    input_mapping:
+      findings: "{{ step_2_result.findings | default([]) }}"
+      coverage: "{{ step_2_result.coverage | default({}) }}"
+      selected_surface: "{{ step_1_result.selected_surface | default(target_surface) }}"
+
+  - ordinal: 5
+    action: select
+    description: >
       Compute convergence metric via defense-layer coverage + residual risk +
       CWE coverage + regression library growth. Converged when metric <= 0.10.
     renderer: minijinja
@@ -158,10 +177,11 @@ steps:
       cwe_classes_checked: "{{ step_2_result.coverage.cwe_classes_covered | default([]) }}"
       cwe_classes_total: 0
       regression_library_size: "{{ step_1_result.known_regressions | default([]) | length }}"
+      taxonomy_mappings: "{{ step_4_result.taxonomy_mappings | default([]) }}"
       previous_metric: 1.0
     fusion: false
 
-  - ordinal: 5
+  - ordinal: 6
     action: loop
     description: Re-enter audit cycle if convergence is not met.
     input_mapping:
@@ -190,6 +210,10 @@ ocap:
       gas_budget: 4096
     - resource: template
       action: render
+      template_id: kali-audit/taxonomy-map
+      gas_budget: 2048
+    - resource: template
+      action: render
       template_id: kali-audit/convergence-check
       gas_budget: 2048
     - resource: manifest
@@ -212,6 +236,10 @@ ledger:
     - reg.skill.kali.audit
     - reg.skill.kali.report
     - reg.skill.kali.converge
+    - reg.taxonomy.select
+    - reg.taxonomy.map
+    - reg.taxonomy.report
+    - reg.taxonomy.convergence
 
 audit:
   enabled: true

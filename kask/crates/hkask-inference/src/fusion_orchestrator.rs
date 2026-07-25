@@ -38,11 +38,6 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
              homeostasis. Every system change must have an observable feedback mechanism. \
              Prefer closed-loop over open-loop interventions. Map control channels."
         }
-        FusionSkill::PragmaticLaziness => {
-            "Pragmatic Laziness: Find the path of least action. Before adding anything, \
-             ask: can this be deleted? Can a simpler mechanism achieve the same result? \
-             Compose from existing primitives rather than creating new ones."
-        }
         FusionSkill::CodingGuidelines => {
             "Coding Guidelines (Karpathy): (1) Think before coding — surface assumptions, \
              present alternatives. (2) Simplicity first — minimum code, no speculative features. \

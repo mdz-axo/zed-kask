@@ -384,7 +384,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.runtime.classify",
     "reg.runtime.regulate",
     "reg.runtime.convergence",
-    // ── Attack taxonomy (security audit — attack-taxonomy-mapper skill) ──
+    // ── Attack taxonomy (folded into kali-audit as taxonomy_map phase) ──
     "reg.taxonomy",
     "reg.taxonomy.select",
     "reg.taxonomy.map",

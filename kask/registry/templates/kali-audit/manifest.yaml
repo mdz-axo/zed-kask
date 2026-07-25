@@ -44,6 +44,16 @@ templates:
       finding, propose a regression entry (RR-NNNN.yaml) for human review.
       Classify by CWE, OWASP LLM, severity, and surface.
 
+  - id: kali-audit/taxonomy-map
+    name: "Map supply-chain findings to OSC&R attack taxonomy"
+    path: taxonomy-map.j2
+    type: KnowAct
+    lexicon_terms: [map, classify, verify, detect, escalate]
+    description: >
+      Map supply-chain audit findings to the OSC&R attack taxonomy (Open Software
+      Supply Chain Attack Reference). Folded from the standalone attack-taxonomy-mapper
+      skill. Only runs for surface == 'supply-chain'. Emits reg.taxonomy.map spans.
+
   - id: kali-audit/convergence-check
     name: "Compute coverage metric for kali-audit PDCA cycle"
     path: convergence-check.j2
