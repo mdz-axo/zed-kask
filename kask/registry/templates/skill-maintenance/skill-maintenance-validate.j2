@@ -51,7 +51,7 @@ Validate **all skills** in the registry directory.
 
 | ID | Check | Pass Criteria |
 |----|-------|---------------|
-| R1 | manifest.yaml exists | File present in `registry/templates/<name>/` |
+| R1 | manifest.yaml exists | FlowDef manifest present at `registry/manifests/<name>.yaml` AND crate manifest present at `registry/templates/<name>/manifest.yaml` |
 | R2 | Crate metadata valid | `crate.name`, `crate.version`, `crate.description` all present |
 | R3 | Templates list non-empty | At least one entry in `templates` array |
 | R4 | Template entry valid | Each entry has `id`, `path`, `type`, `description` |

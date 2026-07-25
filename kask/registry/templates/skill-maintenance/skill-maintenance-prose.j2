@@ -10,13 +10,13 @@ contract:
     when_to_use: string
     instructions: string
 energy_cap: 4096
-visibility: Shared
+visibility: Public
 ---
 {# hKask v0.31.0 — SKILL.md prose derivation (raw markdown, not JSON-wrapped) #}
 {# KnowAct — Synthesize only the prose sections of a SKILL.md from a registry crate. #}
 {# The structural sections (frontmatter, templates table, constraints) are built #}
-{# mechanically by `kask skill derive`; this template emits ONLY the two prose #}
-{# sections that need synthesis: "When to Use" and "Instructions". #}
+{# mechanically by the skill-maintenance skill or agent panel; this template emits #}
+{# ONLY the two prose sections that need synthesis: "When to Use" and "Instructions". #}
 
 [inference]
 temperature = 0.2

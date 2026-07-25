@@ -59,9 +59,10 @@ templates:
     description: >
       Prose-only derivation: synthesize the "When to Use" and "Instructions"
       sections of a SKILL.md from a registry crate, emitted as raw markdown.
-      Used by `kask skill derive` alongside the mechanically-built skeleton
-      (frontmatter, templates table, constraints) — the LLM only writes the
-      prose that needs synthesis, not the structural parts copied from the registry.
+      Used by the skill-maintenance skill or agent panel alongside the
+      mechanically-built skeleton (frontmatter, templates table, constraints)
+      — the LLM only writes the prose that needs synthesis, not the structural
+      parts copied from the registry.
 
   - id: skill-maintenance/skill-maintenance-audit
     name: "Run staleness and health audit for target scope"

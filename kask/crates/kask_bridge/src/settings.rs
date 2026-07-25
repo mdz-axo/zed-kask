@@ -671,6 +671,42 @@ impl KaskSettings {
 
         env
     }
+
+    /// Build the environment variable map for MCP server child processes,
+    /// including API keys resolved from zed's `CredentialsProvider` keychain.
+    ///
+    /// This bridges the two keychain namespaces: the kask settings UI writes
+    /// keys via zed's `CredentialsProvider` (under `kask://credentials/<key>`),
+    /// while MCP servers read env vars / hKask's `Keychain` (service "hkask").
+    /// This function reads from zed's keychain and injects the values as env
+    /// vars so MCP servers find them via `std::env::var`.
+    ///
+    /// `credential_urls` is a list of `(env_var_name, keychain_url)` pairs to read.
+    /// The composition root builds this from the enabled data services and
+    /// inference providers via `credential_urls_for_mcp`.
+    pub async fn mcp_env_with_credentials(
+        &self,
+        credential_urls: &[(String, String)],
+        credentials_provider: &dyn credentials_provider::CredentialsProvider,
+        cx: &gpui::AsyncApp,
+    ) -> std::collections::HashMap<String, String> {
+        let mut env = self.mcp_env();
+        for (env_var, url) in credential_urls {
+            // Don't override env vars already set in the process environment —
+            // the operator's shell takes precedence.
+            if std::env::var(env_var).is_ok() {
+                continue;
+            }
+            if let Ok(Some((_username, password))) =
+                credentials_provider.read_credentials(url, cx).await
+                && let Ok(value) = String::from_utf8(password)
+                && !value.is_empty()
+            {
+                env.insert(env_var.clone(), value);
+            }
+        }
+        env
+    }
 }
 
 impl From<KaskSettingsContent> for KaskSettings {

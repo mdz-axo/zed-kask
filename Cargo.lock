@@ -19016,6 +19016,7 @@ dependencies = [
  "http_client",
  "http_proxy",
  "itertools 0.14.0",
+ "kask_bridge",
  "language",
  "language_model",
  "log",

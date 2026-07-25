@@ -218,10 +218,10 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
                 // We only remove if the api_url matches our known URL
                 // (to avoid removing a user's custom provider that happens
                 // to share the ID).
-                if let Some(existing) = openai_compatible.get(&provider_id) {
-                    if existing.api_url == provider.api_url {
-                        openai_compatible.remove(&provider_id);
-                    }
+                if let Some(existing) = openai_compatible.get(&provider_id)
+                    && existing.api_url == provider.api_url
+                {
+                    openai_compatible.remove(&provider_id);
                 }
             }
         }

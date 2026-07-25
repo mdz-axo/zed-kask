@@ -1,5 +1,5 @@
 # Skill Maintenance Process Manifest
-# ℏKask v0.30.0 — Registry health maintenance as PDCA
+# ℏKask v0.31.0 — Registry health maintenance as PDCA
 # Template type: FlowDef — audit + coverage + convergence loop
 
 manifest:
@@ -11,7 +11,7 @@ manifest:
     checks coverage gaps, computes convergence, and iterates until critical
     maintenance blockers are reduced below threshold.
   functional_role: flowdef
-  version: 0.30.0
+  version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
 

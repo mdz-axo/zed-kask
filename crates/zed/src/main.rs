@@ -662,7 +662,7 @@ fn main() {
         // The actual launch is deferred until the Zed user resolves (see the
         // deferred task below) so MCP servers can route inference through zed's
         // LanguageModelRegistry via the IPC socket.
-        let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx);
+        let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx).clone();
 
         // Ensure `openai_compatible.<provider_id>` entries exist in settings.json
         // for every enabled inference provider. This makes the providers appear
@@ -670,7 +670,7 @@ fn main() {
         // existing `register_compatible_providers` machinery in `language_models`.
         // Must run before `language_models::init` so the providers are registered
         // on the first settings observation.
-        kask_bridge::ensure_openai_compatible_entries(kask_settings_for_mcp, cx);
+        kask_bridge::ensure_openai_compatible_entries(&kask_settings_for_mcp, cx);
 
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
             BUILT_IN_MCP_SERVERS
@@ -976,7 +976,7 @@ fn main() {
                         .mcp_env_with_credentials(
                             &credential_urls,
                             credentials_provider.as_ref(),
-                            &cx,
+                            cx,
                         )
                         .await;
                     // Pass the inference IPC socket path so MCP servers can

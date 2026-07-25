@@ -1,14 +1,11 @@
 ---
 name: skill-maintenance
-visibility: public
-description: "Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Includes the validate sub-operation (folded from skill-logic-audit): audit .j2 template logic against stated goals via a bounded dual-layer critique cascade. Pairs with skill-discovery and skill-bundler.
-"
+description: Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Pairs with skill-discovery and skill-bundler.
 ---
 
 # Skill Maintenance
 
-Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Includes the validate sub-operation (folded from skill-logic-audit): audit .j2 template logic against stated goals via a bounded dual-layer critique cascade. Pairs with skill-discovery and skill-bundler.
-
+Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Pairs with skill-discovery and skill-bundler.
 
 ## When to Use
 
@@ -17,6 +14,8 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 - When you need to translate a classified source skill into a hKask registry crate (manifest.yaml + .j2 templates).
 - When you need to reverse-translate a registry crate into a SKILL.md companion for the Zed coding agent.
 - When you need to synthesize the "When to Use" and "Instructions" prose sections of a SKILL.md from a registry crate.
+- When you need to audit registry crates for staleness signals, health scoring, and deprecation recommendations.
+- When you need to map task patterns against the skill corpus to identify coverage gaps.
 
 ## Instructions
 
@@ -61,21 +60,50 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 4. Ensure every instruction traces to a manifest field or .j2 body without inventing content.
 5. Output raw markdown only, containing exactly the "When to Use" and "Instructions" sections, without JSON, code fences, or structural sections.
 
+### skill-maintenance-audit
+
+1. Audit registry crates for staleness signals: manifest validity, .j2 contract drift, template_type correctness, FlowDef tool/template validation, and health scoring.
+2. Apply the staleness signal table (Critical/High/Medium/Low severity) and compute health scores from 0.0 to 1.0 using weighted penalties.
+3. Recommend deprecation or retirement based on health score thresholds (0.00-0.19 retirement, 0.20-0.49 critical, 0.50-0.79 stale warning, 0.80-1.00 active).
+4. Cite every finding from a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path — never from SKILL.md alone.
+5. Respond with a JSON object containing staleness report, health scores, coverage gaps, and deprecation recommendations.
+
+### skill-maintenance-coverage
+
+1. Map task patterns against the existing skill corpus to determine full, partial, or no coverage.
+2. Classify each task pattern into exactly one category: covered, uncovered, or partial coverage.
+3. For uncovered patterns, assess impact (critical/high/medium/low) and recommend action (create_skill, extend_skill, discover_external, ignore).
+4. For partial coverage, identify the missing aspects and the extension needed.
+5. Respond with a JSON object containing covered patterns, uncovered patterns, partial coverage, and recommendations.
+
+### skill-maintenance-convergence-check
+
+1. Compute a normalized convergence metric in [0,1] for the maintenance PDCA cycle, where 0 means critical staleness signals are resolved.
+2. Start at 1.0 and adjust downward based on audit and coverage results: critical signals keep metric >= 0.7, medium/low findings set metric in [0.2, 0.6], no critical/high with bounded gaps sets metric <= 0.1.
+3. Identify unresolved critical signals and blockers preventing convergence.
+4. Return a JSON object containing convergence_metric, rationale, blockers, and unresolved_critical_signals.
+
 ## Registry Templates
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `skill-maintenance-validate.j2` | KnowAct | Validate skills against registry format and quality checks. Check manifest structure, .j2 frontmatter (template_type, contract, visibility, energy_cap). SKILL.md is validated as secondary companion.  |
-| `skill-maintenance-build.j2` | KnowAct | Scaffold a new registry crate from a user description. Generate manifest.yaml with crate metadata, template entries, and lexicon_terms. Generate companion SKILL.md from the registry crate. Validate and confirm before writing.  |
-| `skill-maintenance-translate.j2` | KnowAct | Forward translation: convert a classified source skill into a hKask registry crate (manifest.yaml + *.j2 templates). Map source elements to hKask equivalents, drop concepts with no equivalent, produce validated output with translation summary.  |
-| `skill-maintenance-reverse.j2` | KnowAct | Reverse translation: generate a SKILL.md companion from a registry crate. Read manifest.yaml for crate metadata, read .j2 templates for methodology, produce a markdown companion suitable for the Zed coding agent.  |
-| `skill-maintenance-prose.j2` | KnowAct | Prose-only derivation: synthesize the "When to Use" and "Instructions" sections of a SKILL.md from a registry crate, emitted as raw markdown. Used by `kask skill derive` alongside the mechanically-built skeleton (frontmatter, templates table, constraints) — the LLM only writes the prose that needs synthesis, not the structural parts copied from the registry.  |
+| `skill-maintenance-validate.j2` | KnowAct | Validate skills against registry format and quality checks. Check manifest structure, .j2 frontmatter (template_type, contract, visibility, energy_cap). SKILL.md is validated as secondary companion. |
+| `skill-maintenance-build.j2` | KnowAct | Scaffold a new registry crate from a user description. Generate manifest.yaml with crate metadata, template entries, and lexicon_terms. Generate companion SKILL.md from the registry crate. Validate and confirm before writing. |
+| `skill-maintenance-translate.j2` | KnowAct | Forward translation: convert a classified source skill into a hKask registry crate (manifest.yaml + *.j2 templates). Map source elements to hKask equivalents, drop concepts with no equivalent, produce validated output with translation summary. |
+| `skill-maintenance-reverse.j2` | KnowAct | Reverse translation: generate a SKILL.md companion from a registry crate. Read manifest.yaml for crate metadata, read .j2 templates for methodology, produce a markdown companion suitable for the Zed coding agent. |
+| `skill-maintenance-prose.j2` | KnowAct | Prose-only derivation: synthesize the "When to Use" and "Instructions" sections of a SKILL.md from a registry crate, emitted as raw markdown. Used by the skill-maintenance skill or agent panel alongside the mechanically-built skeleton (frontmatter, templates table, constraints) — the LLM only writes the prose that needs synthesis, not the structural parts copied from the registry. |
+| `skill-maintenance-audit.j2` | KnowAct | Run staleness and health audit for target scope. Checks R1-R12 registry rules, Z1-Z8 companion checks, X1-X4 cross-artifact checks. Used by the FlowDef manifest as step 1 of the maintenance PDCA loop. |
+| `skill-maintenance-coverage.j2` | KnowAct | Run corpus coverage analysis for uncovered/partial capabilities. Maps common task patterns against the existing skill corpus, identifies what is covered, uncovered, and partial. Used by the FlowDef manifest as step 2 of the maintenance PDCA loop. |
+| `skill-maintenance-convergence-check.j2` | KnowAct | Compute normalized convergence metric for maintenance PDCA cycles. Measures critical signal count, coverage gaps, and regression library growth. Used by the FlowDef manifest as step 3 of the maintenance PDCA loop. |
 
 ## Constraints
 
-- `skill-maintenance-validate.j2`: Public.
-- `skill-maintenance-build.j2`: Public.
-- `skill-maintenance-translate.j2`: Public.
-- `skill-maintenance-reverse.j2`: Public.
-- `skill-maintenance-prose.j2`: Public.
+- `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact. R1-R5 failures are critical; Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
+- `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes.
+- `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef; visibility must be Private/Public/Shared; energy_cap must be 2048-8192.
+- `skill-maintenance-reverse.j2`: Public. Every instruction must trace to a manifest field or .j2 body — do not invent content.
+- `skill-maintenance-prose.j2`: Public. Output raw markdown only — no JSON, code fences, frontmatter, or structural sections.
+- `skill-maintenance-audit.j2`: Public. Every finding must cite a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path. Recommendations based solely on SKILL.md must be marked confidence: Hypothesis (Speculative) at maximum.
+- `skill-maintenance-coverage.j2`: Public. Every task pattern must appear in exactly one of: covered, uncovered, or partial. Do not recommend `ignore` for uncovered patterns with critical or high impact.
+- `skill-maintenance-convergence-check.j2`: Public. Metric in [0,1]; threshold 0.15; max 3 iterations.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

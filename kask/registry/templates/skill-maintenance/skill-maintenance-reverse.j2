@@ -3,14 +3,14 @@ template_type: KnowAct
 lexicon_terms: [translate, extract, compose, generate, verify]
 contract:
   input:
-    manifest_path: string
-    template_paths: array
     skill_name: string
+    manifest_yaml: string
+    template_contents: string
   output:
     skill_md: string
     warnings: array
   energy_cap: 4096
-  visibility: Shared
+  visibility: Public
 
 ---
 {# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
@@ -56,12 +56,10 @@ Generate the SKILL.md with this structure:
 
 ```markdown
 ---
-{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
 name: <crate.name from manifest>
 visibility: public
 description: "<crate.description from manifest>"
 ---
-{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
 
 # <Title Case Name>
 
