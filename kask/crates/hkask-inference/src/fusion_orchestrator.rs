@@ -100,6 +100,11 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
              two-variant enums for bools, non-empty collections. Single owners, explicit \
              error domains, thiserror for libraries. Many small traits over few large ones."
         }
+        FusionSkill::Metacognition => {
+            "Metacognition: Decompose goals, self-assess progress, detect ellipses via Bloom's \
+             method, rotate perspectives, calibrate strategy. Be honest — overestimating \
+             progress is worse than underestimating. Improve through GEPA optimization."
+        }
         FusionSkill::RefactorArchitecture => {
             "Refactor Architecture: End-to-end architecture refactoring. Discover phase: \
              explore friction, rank deepening candidates, walk the design tree. Execution \

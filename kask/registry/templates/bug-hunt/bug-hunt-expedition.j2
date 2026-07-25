@@ -2,7 +2,7 @@
 {# Functional Role: FlowDef (bug hunting expedition) #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: Structured bug report with charter, findings, taxonomy #}
-{# hKask v0.30.0 — Bug Hunting Expedition #}
+{# hKask v0.31.0 — Bug Hunting Expedition #}
 
 [inference]
 template_type: KnowAct
@@ -67,10 +67,10 @@ Use available tools to probe the target:
 3. Run `cargo check` or `cargo test` if applicable.
 4. For public APIs: probe with empty, boundary, and edge-case inputs.
 
-Apply diagnose-skill pattern (v0.30.0): reproduce before diagnosing, isolate one variable at a time.
-Apply adversarial pattern (v0.30.0): try unexpected input orders, state transitions, boundary values.
+Apply diagnose-skill pattern (v0.31.0): reproduce before diagnosing, isolate one variable at a time.
+Apply adversarial pattern (v0.31.0): try unexpected input orders, state transitions, boundary values.
 
-Apply pragmatic-cybernetics (v0.30.0) during probing:
+Apply pragmatic-cybernetics (v0.31.0) during probing:
 - For each public function or data path, trace its feedback loop: what signals does it send, what does it receive, is the loop closed?
 - Analyze on 5 properties: polarity (stabilizing or amplifying?), delay (how long between action and feedback?), gain (how strongly does feedback affect behavior?), closure (is the signal consumed or dropped?), fidelity (does the signal accurately represent reality?).
 - Good Regulator check (Conant-Ashby): does the module's internal model match its actual behavior? Where do the two diverge? Flag every divergence.
@@ -85,13 +85,13 @@ For each finding, evaluate: bug = threat to user-defined quality.
 - Tier 2: Pattern matched, no contract → POTENTIAL BUG (0.60–0.89). Cite the pattern.
 - Tier 3: Suspicious but unverified → OBSERVATION (<0.60). Flag as contract gap.
 
-Apply pragmatic-semantics (v0.30.0) to every finding:
+Apply pragmatic-semantics (v0.31.0) to every finding:
 - IS vs OUGHT: Are you describing what the code DOES (descriptive IS) or what you think it SHOULD do (prescriptive OUGHT)? Never present OUGHT as IS. If the code checks a threshold, say "the code checks" — not "the code should check."
 - Epistemic mode: Is this finding declarative (verified by observation — test output, code path traced), probabilistic (pattern match against known bug class), or subjunctive (speculation about possible behavior you haven't verified)? Label each finding.
 - Provenance: Where did this fact come from? Direct measurement (you read the code and traced the path), inference (pattern match like "dead parameter"), or assessment (your opinion)? Flag LLM-assessed conclusions.
 - If you cannot verify a finding, downgrade it. A subjunctive statement presented as declarative is a false positive.
 
-Apply grill-me pattern (v0.30.0): challenge your own verdicts. Could this be intentional? Edge case?
+Apply grill-me pattern (v0.31.0): challenge your own verdicts. Could this be intentional? Edge case?
 
 ## Phase 4 — TAXONOMIZE
 

@@ -26,7 +26,7 @@ visibility: Public
 {# Implementation: Jinja2 prompt #}
 {# Produces: oracle_findings #}
 {# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
-{# hKask v0.30.0 — Bug Hunting Expedition #}
+{# hKask v0.31.0 — Bug Hunting Expedition #}
 
 [inference]
 temperature = 0.2
@@ -58,7 +58,7 @@ For each finding, assign a tier and confidence:
 | Tier 2 | Pattern matched, no contract | 0.60–0.89 | POTENTIAL BUG — cite the pattern |
 | Tier 3 | Suspicious but unverified | <0.60 | OBSERVATION — flag as contract gap |
 
-## Pragmatic-Semantics Classification (v0.30.0)
+## Pragmatic-Semantics Classification (v0.31.0)
 
 For every finding, apply three classifications:
 
@@ -78,7 +78,7 @@ For every finding, apply three classifications:
 - **Inference**: Pattern match (e.g., "dead parameter").
 - **Assessment**: Your opinion. Flag LLM-assessed conclusions.
 
-## Grill-Me Self-Challenge (v0.30.0)
+## Grill-Me Self-Challenge (v0.31.0)
 
 For each potential bug, challenge your own verdict:
 - Could this be intentional behavior?
