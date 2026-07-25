@@ -12182,6 +12182,7 @@ dependencies = [
  "chrono",
  "collections",
  "credentials_provider",
+ "futures 0.3.32",
  "futures-util",
  "gpui",
  "hkask-capability",

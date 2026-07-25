@@ -1,7 +1,7 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-06-28
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,7 +10,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # The Magna Carta of hKask
 
-## ℏKask v0.31.0 — A Sovereign Chat Client for Human Users with AI Tools
+## ℏKask v0.31.0 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
 
 **User Sovereignty is Non-Negotiable.**
 
@@ -154,7 +154,7 @@ Within boundaries, hKask is maximally generative. This is not a ban on constrain
 
 ### Settings Exposure
 
-Inference and tooling must expose all probabilistic/generative settings to users — temperature, top-k, top-p, repeat penalty, and any other parameters the underlying model or tool supports. No settings are hidden or admin-gated. This is why hKask uses an inference router supporting DeepInfra, Together AI, fal.ai, and OpenRouter.
+Inference and tooling must expose all probabilistic/generative settings to users — temperature, top-k, top-p, repeat penalty, and any other parameters the underlying model or tool supports. No settings are hidden or admin-gated. After the in-process pivot, the user-facing inference settings surface is zed's `KaskSettings` (D9a), which configures the `LanguageModelInferencePort` in `kask_bridge` over zed's `LanguageModelRegistry`. Whatever providers the user has configured in zed (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) are the providers hKask uses — wrapped by `GuardedInferencePort` (D4) for sovereignty/capability gating. The old `InferenceRouter` with 9 hard-coded providers is gone; it survives only as an MCP-server-internal detail of `hkask-inference` and is not exposed to in-process surfaces.
 
 ### No Privileged Engineer Access
 
@@ -261,9 +261,10 @@ The Cybernetic Nervous System monitors, providing algedonic signaling from the V
 **Algedonic Alert Threshold:** Variety deficit > 100
 
 When triggered, the Curator escalates to:
-- The human user or the user's userpod (via the Curator chat session)
-- System administrator
-- External audit trail
+- The human user or the user's userpod (via the agent panel, where the Curator is a native in-process agent — D2)
+- External audit trail (Regulation spans)
+
+> **Note (v0.31.0, in-process pivot):** The "System administrator" escalation target is removed. hKask is single-user in-process; there is no sysadmin role. The Curator escalates to the user through the agent panel.
 
 ---
 
@@ -346,7 +347,7 @@ Verification is triggered by:
 
 | Trigger | When |
 |---------|------|
-| Start-up | Verification runs when hKask starts |
+| Start-up | Verification runs when zed-kask starts (composition root — `crates/zed/src/main.rs`) |
 | Expiration | Consent grants expire → re-verification scheduled |
 | User change | New consent, settings change, new API key → re-verify affected assertions |
 | Resource/service change | New version of MCP server, inference provider, or model → re-verify affected assertions |
@@ -418,7 +419,7 @@ The Magna Carta is not aspirational. It is enforced:
 2. **Sovereignty Checks** — Every invocation checked
 3. **Consent Verification** — Scoped, versioned, expiring consent
 4. **Regulation Alerts** — Violations trigger immediate alerts
-5. **Magna Carta Verifier** — YAML manifests and Jinja2 templates verify each principle. Invoked via `kask sovereignty verify` (CLI) or `reg_verify_magna_carta` (MCP tool)
+5. **Magna Carta Verifier** — YAML manifests and Jinja2 templates verify each principle. Invoked via the `magna-carta-verifier` skill through the agent panel or kask panel (D10). (The deleted `kask sovereignty verify` CLI and the deleted `reg_verify_magna_carta` MCP tool from `hkask-mcp-regulation` are both gone — the skill is the sole entry point.)
 6. **Audit Trail** — All decisions recorded
 
 ---

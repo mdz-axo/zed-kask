@@ -1,3 +1,13 @@
+---
+title: "Rust LoRA Training Research"
+audience: [ml-engineers, developers]
+last_updated: 2026-07-20
+version: "0.31.0"
+status: "Active"
+domain: "Training"
+mds_categories: [domain]
+---
+
 # Rust-Native LoRA Training on RunPod — Research Report
 
 > **Question**: Can we use a pure Rust Docker container on RunPod to train LoRA

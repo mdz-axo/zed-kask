@@ -483,6 +483,16 @@ fn parse_rules_frontmatter(raw_text: String) -> (String, Option<RuleFrontmatter>
     // Find the closing `---` fence.
     let after_open = &trimmed[3..];
     let after_open = after_open.strip_prefix('\n').unwrap_or(after_open);
+
+    // Handle empty frontmatter: `---\n---` (no YAML between fences).
+    if after_open.starts_with("---") {
+        let body = after_open[3..]
+            .strip_prefix('\n')
+            .unwrap_or(&after_open[3..])
+            .trim();
+        return (body.to_string(), Some(RuleFrontmatter::default()));
+    }
+
     let Some(end_pos) = after_open.find("\n---") else {
         // No closing fence — not valid frontmatter, treat as body.
         return (trimmed.to_string(), None);
@@ -2802,16 +2812,11 @@ pub fn set_tool_router(router: Option<Arc<dyn crate::tool_router::ToolRouter>>) 
     let _ = TOOL_ROUTER.set(router);
 }
 
-/// Get the global tool router. Returns the configured router if set via
-/// `set_tool_router`, otherwise returns the default `KeywordToolRouter`.
-/// Returns `None` only if explicitly set to `None` (upstream Zed mode — I2).
+/// Get the global tool router, if set. Returns `None` when no router has
+/// been configured (upstream Zed — I2). hKask's composition root calls
+/// `set_tool_router(Some(Arc::new(LazyToolRouter::new())))` to enable it.
 pub(crate) fn tool_router() -> Option<&'static Arc<dyn crate::tool_router::ToolRouter>> {
-    let opt = TOOL_ROUTER.get_or_init(|| {
-        Some(Arc::new(crate::tool_router::LazyToolRouter::new())
-            as Arc<dyn crate::tool_router::ToolRouter>)
-    });
-    opt.as_ref()
-        .map(|arc| arc as &'static Arc<dyn crate::tool_router::ToolRouter>)
+    TOOL_ROUTER.get().and_then(|opt| opt.as_ref())
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

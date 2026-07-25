@@ -1,4 +1,16 @@
+---
+title: "Ontology-Anchored Embedding Pipeline"
+audience: [developers, architects]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, composition]
+---
+
 # Ontology-Anchored Embedding Pipeline
+
+The corpus pipeline tools run in-process via the corpus MCP server (D1–D3).
 
 ## Design Decision
 
@@ -94,7 +106,7 @@ Three ontology bridge crates provide canonical predicate constants:
 | `hkask-mcp-corpus::bridge::fibo` | Financial/business | 12 concepts (competitiveAdvantage, returnOnCapital, ...) |
 | `hkask-mcp-corpus::bridge::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
 
-These follow the pattern of `hkask-bridge-dublincore` and `hkask-bridge-dublincore`:
+These follow the pattern of `hkask-bridge-dublincore`:
 type alias + const strings, no dependencies, no reasoners.
 
 ## Why Not Embed → Tag?

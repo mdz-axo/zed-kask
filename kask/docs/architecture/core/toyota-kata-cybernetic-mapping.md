@@ -1,7 +1,7 @@
 ---
 title: "Toyota Kata Cybernetic Mapping — hKask Control Planes, Nodes, Edges, and Interaction Loops"
 audience: [architects, developers, agents]
-last_updated: 2026-07-21
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -133,21 +133,22 @@ hKask's architecture has four control planes (surfaces), each with distinct node
 **Kata correspondence:** The Agentic Mediation Plane is the **Coaching Kata surface**. The Curator IS the coach — it observes the regulator (Cybernetics) and intervenes when the regulator's model diverges from reality.
 
 **Nodes:**
-- `CuratorAgent` — the persona layer (singleton, VSM S4)
+- `CuratorAgent` — the persona layer (singleton, VSM S4); a native in-process agent (D2) running inside zed-kask, not a daemon
 - `CurationLoop` — the pure regulatory observer (sense/compute/act)
 - `MetacognitionLoop` — the persona/agent loop (template-driven metacognition)
-- `7R7 Listener` — the passive observer (Matrix rooms, zero authority)
-- `R7.3 SeamWatcher` — the public API contract observer (zero authority)
+- `zed-kask thread-watcher` — the passive observer background task (replaces the deleted 7R7 Listener / Matrix rooms; zero authority)
+- `R7.3 SeamWatcher` — the in-process seam contract observer (watches D1–D10 integration seams; the deleted public API is no longer observed; zero authority)
 - `DefaultSpecCurator` — the spec drift detector (Conant-Ashby: model vs. reality)
 - `CuratorContext` — the capability-disciplined access point (OCAP-gated)
 
 **Edges:**
 - `CurationLoop → CuratorAgent` — `CuratorDirective` dispatch
 - `MetacognitionLoop → InferencePort` — template-driven diagnosis (KnowAct)
-- `CuratorAgent → A2ARuntime` — bot orchestration (direct_bot)
-- `CuratorAgent → MatrixTransport` — standing session posting
+- `CuratorAgent → CuratorThread` — in-process Curator thread (replaces the deleted `CuratorAgent → MatrixTransport` edge; the Curator posts to its in-process thread, not Matrix rooms)
 - `CuratorContext → RegulationLedger` — capability-disciplined Regulation access
 - `SeamWatcher → RegulationLedger` — seam coverage as variety dimension
+
+> **Deleted edges (v0.31.0, in-process pivot):** `CuratorAgent → A2ARuntime` (direct_bot) is removed from this plane — A2A is deferred (see Plane D). `CuratorAgent → MatrixTransport` is removed — Matrix is deleted. The 7R7 Listener is replaced by the zed-kask thread-watcher background task. The R7.3 SeamWatcher no longer observes a public API (deleted); it observes in-process seams instead.
 
 **Interaction loops:**
 - **Two-level meta-loop:** Cybernetics regulates agents → Curation regulates Cybernetics → if Cybernetics unstable, Curation detects via metacognitive monitoring and intervenes
@@ -163,7 +164,7 @@ hKask's architecture has four control planes (surfaces), each with distinct node
 
 ### 2.4 Control Plane D — The Agent Pod Plane (Pattern D: Agent Creation + Sovereign Memory)
 
-**What it is:** The sovereign container infrastructure — each human user gets a userpod with its own identity, capabilities, memory, and consent boundaries. The userpod is the deployment unit that makes the human's `kask chat` experience sovereign (P1). Agent pods (`hkask-pods`) are the runtime container; the human user is the principal.
+**What it is:** The sovereign container infrastructure — each human user gets a userpod with its own identity, capabilities, memory, and consent boundaries. The userpod is the deployment unit that makes the human's agent-panel experience sovereign (P1). Agent pods (`hkask-pods`) are the runtime container; the human user is the principal.
 
 **Kata correspondence:** The Agent Pod Plane is the **implementation surface** — the place where the Kata is practiced. The human user is the learner practicing the Kata; the userpod is the sovereign container that carries their identity and memory. The Curator is the coach.
 
@@ -175,20 +176,20 @@ hKask's architecture has four control planes (surfaces), each with distinct node
 - `PerPodRegulationLedger` — per-pod Regulation isolation (`reg.agent_pod.{pod_id}.*`)
 - `PerPodStorage` — per-pod SQLCipher boundary
 - `AgentPod` — identity, lifecycle, persona, capability token
-- `A2ARuntime` — agent-to-agent messaging (TemplateDispatch, TemplateResponse, MemoryArtifact)
+- `A2ARuntime` — agent-to-agent messaging (TemplateDispatch, TemplateResponse, MemoryArtifact) — **DEFERRED (v0.31.0):** A2A is not live; the type is retained for future inter-pod/inter-agent messaging but is not wired at the composition root
 
 **Edges:**
 - `PodFactory::deploy() → PodDeployment` — pod creation
 - `PodDeployment → PerPodRegulationLedger` — per-pod Regulation scoping
 - `PodDeployment → McpRuntime` — per-pod MCP bindings
-- `A2ARuntime → A2AMessage` — inter-agent communication
-- `CuratorSync → SemanticIndex` — cross-pod semantic aggregation
+- `A2ARuntime → A2AMessage` — inter-agent communication — **DEFERRED:** edge is not active in v0.31.0
+- `CuratorSync → SemanticIndex` — cross-pod semantic aggregation — **DEFERRED:** cross-pod aggregation requires A2A/multi-pod, which is deferred; in single-user in-process mode there is one userpod and no cross-pod sync
 
 **Interaction loops:**
 - **Pod lifecycle loop:** Creation → Populated → Registered → Activated → Deactivated
 - **Dual memory encoding loop:** tool call → `record_experience()` → episodic (private) + semantic (public) → every 10 experiences → `generate_narrative()`
 - **Consent loop:** `ConsentManager` requires explicit affirmative consent for visibility transitions → sovereignty fails closed
-- **CuratorSync loop:** `store_semantic()` writes locally → `reg.semantic.published` → `CuratorSync` polling → `SemanticIndex` aggregation
+- **CuratorSync loop:** `store_semantic()` writes locally → `reg.semantic.published` → `CuratorSync` polling → `SemanticIndex` aggregation — **DEFERRED:** the cross-pod CuratorSync loop is not active in v0.31.0; local `store_semantic()` still emits `reg.semantic.published`, but no cross-pod aggregation runs
 
 **Kata alignment:**
 - The learner (UserPod) practices the Kata on this plane
@@ -253,7 +254,7 @@ graph TD
     CR -->|"algedonic alert"| CUL
     CUL -->|"CuratorDirective"| CL
     ML -->|"diagnosis"| CA
-    CA -->|"direct_bot"| A2A
+    %% CA -->|"direct_bot"| A2A  %% DEFERRED (v0.31.0): A2A is not live; edge retained for future wiring
     SW -->|"seam coverage"| CR
     DSC -->|"spec drift"| CUL
 

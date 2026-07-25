@@ -78,7 +78,11 @@ Core spans used across 2+ crates. This is the foundational enum implementing `Ob
 
 **ToolSubsystem variants** for `RegulationSpan::Tool`:
 
-`WebSearch`, `Condenser`, `Training`, `Replica`, `Research`, `Communication`, `Registry`, `Wallet`, `Media`, `Kanban`, `Memory`, `Companies`, `Docproc`, `Filesystem`, `Curator`, `Other` (catch-all).
+`WebSearch`, `Condenser`, `Training`, `Replica`, `Research`, `Registry`, `Wallet`, `Media`, `Kanban`, `Memory`, `Companies`, `Docproc`, `Filesystem`, `Curator`, `Other` (catch-all).
+
+> **Deleted variant (v0.31.0):** `Communication` has been removed. The `hkask-mcp-communication`
+> server (Matrix/TTS) was deleted; comms/voip/CRDT are now owned by zed-kask upstream and do not
+> emit `reg.tool.communication.*` spans.
 
 ### 3.2 AcpSpan — Agent Client Protocol
 
@@ -117,15 +121,20 @@ Emitted through `emit_contract_*()` functions in `crates/hkask-regulation/src/co
 
 **File:** `crates/hkask-regulation/src/infra_span.rs`
 
-Cross-subsystem spans used by curator, governance, chat, and wallet components.
+Cross-subsystem spans used by curator, governance, and wallet components.
 
 | Variant | Namespace | Meaning | Emitted When |
 |---|---|---|---|
 | `CiInvariantViolation` | `reg.ci.invariant.violation` | CI invariant check failed | CI pipeline detects a structural invariant break |
 | `GuardViolation` | `reg.guard.violation` | Guard rule triggered | A prohibition or constraint guard fires |
 | `CuratorConsolidation` | `reg.curator.consolidation` | Curator consolidation run | Curator consolidates pod state from Regulation telemetry |
-| `Chat` | `reg.chat` | Chat/messaging event | Message sent, thread created, turn completed |
 | `WalletConversion` | `reg.wallet.conversion` | Currency conversion | rJ ↔ USDC conversion executed |
+
+> **Deleted variant (v0.31.0):** `Chat` (`reg.chat`) has been removed from the active span set. It
+> was emitted by the deleted `hkask-services-chat` crate. Chat/agent-panel events in zed-kask flow
+> through zed's own telemetry and the in-process `MemoryPort` (D6) ingestion path, not through a
+> `reg.chat.*` span. The variant is retained in the enum for compile-stability but is no longer
+> emitted.
 
 ### 3.6 QaSpan — QA Repair Lifecycle
 
@@ -182,7 +191,7 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 | `reg.skill.lifecycle.skill_activated` | `reg.skill.lifecycle.skill_activated` | A skill is activated for an agent session |
 | `reg.skill.lifecycle.skills_loaded` | `reg.skill.lifecycle.skills_loaded` | Skills loaded from the registry |
 | `reg.skill.lifecycle.skills_discovered` | `reg.skill.lifecycle.skills_discovered` | Skills discovered during registry scan |
-| `reg.skill.lifecycle.skill_published` | `reg.skill.lifecycle.skill_published` | A skill is published to the public zone |
+| `reg.skill.lifecycle.skill_published` | `reg.skill.lifecycle.skill_published` | A skill is published to the local registry (legacy: "public zone" publish concept is vestigial — there is no public zone in zed-kask; skills are installed into the local `kask/skills/` registry) |
 
 | Variant | Namespace | Emitted When |
 |---|---|---|
@@ -234,6 +243,8 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 | `reg.skill.discovery.searched` | `reg.skill.discovery.searched` | skill-discovery searched the catalog for candidates |
 | `reg.skill.discovery.evaluated` | `reg.skill.discovery.evaluated` | skill-discovery scored a candidate skill |
 
+
+### 3.10 Wallet Spans
 
 **File:** `crates/hkask-wallet/src/reg_span.rs`
 

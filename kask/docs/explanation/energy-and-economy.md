@@ -1,7 +1,7 @@
 ---
 title: "Energy and Economy — Gas System, Database Driver, LoRA Adapter Lifecycle"
 audience: [architects, developers, operators]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -9,6 +9,8 @@ mds_categories: [domain, composition, lifecycle, trust]
 ---
 
 # Energy and Economy
+
+The gas system, ledger, and adapter store run in-process inside zed-kask.
 
 This document consolidates three infrastructure themes that share a single concern: resource governance. The gas system makes computational resource consumption visible and governable. The database driver abstraction makes storage provider selection a deployment-time decision, not a code-level one. The LoRA adapter store makes model lifecycle — from training through deployment to teardown — an OCAP-gated, cost-tracked, Regulation-observable pipeline. Together, they form the economic and storage backbone that enables hKask's autonomous agents to operate within bounded resources.
 
@@ -363,7 +365,7 @@ Every adapter has an owner. The `TrainedLoRAAdapter.owner` field is a `WebID` �
 
 #### Provider Support
 
-Three cloud inference providers are supported, each with a `CostModel` and `ProviderCapability` for transparent pricing:
+The provider table below lists the **cloud GPU providers for LoRA composition** — the endpoints that accept an uploaded adapter and serve inference against a base model. This is distinct from **inference routing** (which in zed-kask is handled by zed's `LanguageModelRegistry` over the `LanguageModelInferencePort`/`GuardedInferencePort` seam, D4). Three cloud inference providers are supported for LoRA composition, each with a `CostModel` and `ProviderCapability` for transparent pricing:
 
 | Provider | LoRA Compose | Hourly Rate (USD) | Setup Time | Max Adapter | Base Models |
 |----------|-------------|-------------------|------------|-------------|-------------|

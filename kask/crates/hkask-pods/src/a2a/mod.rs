@@ -543,15 +543,16 @@ impl Default for A2ARuntime {
     ///
     /// P4.1: The `Default` trait cannot return `Result`, so this is a
     /// documented panic if the secret is unavailable. The panic message
-    /// is the actionable onboarding instruction ("run `kask chat` to
-    /// complete onboarding, or set HKASK_MASTER_KEY or HKASK_A2A_SECRET").
+    /// is the actionable instruction ("set HKASK_MASTER_KEY or
+    /// HKASK_A2A_SECRET, or ensure the zed-kask composition root has
+    /// provisioned the keystore").
     /// \[NORMATIVE\] Callers that need graceful failure should call (P4 — Clear Boundaries).
     /// `hkask_keystore::resolve_a2a_secret()` directly and handle the
     /// `Result` instead of using `Default::default()`.
     fn default() -> Self {
         let secret = hkask_keystore::keychain::resolve_a2a_secret().expect(
-            "A2A secret not available. Run `kask chat` to complete onboarding, \
-                 or set HKASK_MASTER_KEY or HKASK_A2A_SECRET.",
+            "A2A secret not available. Set HKASK_MASTER_KEY or HKASK_A2A_SECRET, \
+                 or ensure the zed-kask composition root has provisioned the keystore.",
         );
         Self::new(&secret)
     }

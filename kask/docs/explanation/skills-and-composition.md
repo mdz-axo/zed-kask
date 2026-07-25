@@ -611,7 +611,7 @@ dotenvy = { workspace = true }
 
 ### Step 1: Define the Server Struct
 
-Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with mandatory fields (`webid`, `userpod`, `daemon`) plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation.
+Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with mandatory fields (`webid`, `userpod`, `daemon`) plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The `daemon` field is dead in zed-kask (always `None`; `DaemonClient::auth_query()` fails → degraded mode, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
 
 ```rust
 // mcp-servers/<your-mcp-package>/src/lib.rs
@@ -631,7 +631,7 @@ mcp_server! {
 }
 ```
 
-The macro generates a struct with `webid`, `userpod`, `daemon`, and your custom fields, a `new()` constructor, and a `ToolContext` implementation. The server struct can have zero custom fields using the `;` variant:
+The macro generates a struct with `webid`, `userpod`, `daemon`, and your custom fields, a `new()` constructor, and a `ToolContext` implementation. The `daemon` field is dead in zed-kask (always `None`). The server struct can have zero custom fields using the `;` variant:
 
 ```rust
 mcp_server! {
@@ -860,7 +860,7 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 The Improvement Kata PDCA cycle in `hkask-services-kata-kanban` executes as a 5-step **single-pass** sequential pipeline within the `KataEngine` that maps to four conceptual PDCA phases. Each step runs an LLM inference via the registered template (e.g., `kata-improvement/improvement-step1-direction`), validates output against the step's `output_schema`, records a `StepExperience`, and emits Regulation spans. The `KataEngine::run_improvement_from()` iterates through steps **exactly once** (`for step in &manifest.steps` — no re-entry loop). The cycle is bounded by `gas.cap` (default 15,000). Metric capture flanks the execution: `metric_before` is captured pre-cycle and `metric_after` post-cycle, yielding an `ImprovementSignal` (Positive/Negative/Stalled/NotMeasured). Regulation algedonic alerts fire if variety deficit exceeds threshold.
 
-**Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The kata engine is a *step executor* called within that loop; it does not drive convergence itself. The CLI `kask kata start` command constructs `KataEngine` directly and calls `execute()`; the kanban service exposes only prompt generation for MCP/REPL surfaces.
+**Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The kata engine is a *step executor* called within that loop; it does not drive convergence itself. In zed-kask, `KataEngine` is constructed and `execute()` is invoked in-process via the kata-kanban MCP server (one of the 11 in-process MCP servers); the deleted `kask kata start` CLI is gone. The kanban service's prompt-generation tools (`kanban_task_kata_improvement`) do not invoke the engine — they render prompt text only.
 
 **Key source:** `crates/hkask-services-kata-kanban/src/kata/mod.rs:333-486` (`execute` — single-pass orchestration), `crates/hkask-services-kata-kanban/src/kata/improvement.rs:20-121` (`run_improvement_from` — single-pass `for` loop, no re-entry), `crates/hkask-services-kata-kanban/src/kata/metrics.rs:6-133` (metric capture + signal).
 
@@ -990,7 +990,7 @@ stateDiagram-v2
 
 | PDCA Phase | Kanban `TaskStatus` | Regulation Event | Trigger |
 |------------|---------------------|-----------|---------|
-| **Plan** | `Backlog` | `reg.tool.kanban` (task created) | `kask kata start` (CLI constructs KataEngine directly) |
+| **Plan** | `Backlog` | `reg.tool.kanban` (task created) | Kata-kanban MCP server `kanban_task_kata_improvement` (in-process, via Agent Panel or kask panel) |
 | **Do** | `InProgress` | `reg.tool.kanban` (task moved) | Coaching Q4: "What is your next step?" |
 | **Check** | `Review` | `reg.tool.kanban` (task verified) | Coaching Q5: task transitions to Review |
 | **Act** | `Done` | `reg.tool.kanban` (task completed) | Verification passes |
@@ -1044,7 +1044,9 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 # Kata-Kanban Execution Boundary
 
-This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available through the CLI `kask kata start` command, which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest’s convergence, budget, or OCAP declarations.
+This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available in-process through the kata-kanban MCP server, which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or OCAP declarations.
+
+> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked in-process — the kata-kanban MCP server (one of the 11 in-process MCP servers) constructs `KataEngine` and runs `execute()` within the zed-kask process. The Agent Panel and the kask panel (D10) are the user-facing entry points.
 
 ```mermaid
 sequenceDiagram
@@ -1052,7 +1054,6 @@ sequenceDiagram
     participant MCP as Kanban MCP
     participant Service as KanbanService
     participant Task as Task Store
-    participant CLI as kask kata start
     participant Engine as KataEngine
 
     Caller->>+MCP: kanban_task_kata_improvement(task_id)
@@ -1062,15 +1063,15 @@ sequenceDiagram
     Service-->>-MCP: rendered prompt text
     MCP-->>-Caller: TaskKataResponse
 
-    opt Full kata execution via CLI
-        Caller->>+CLI: kask kata start --name kata-improvement --bot agent
-        CLI->>+Engine: KataEngine::from_env(registry)
-        CLI->>+Engine: execute(manifest, learner, context)
-        Engine-->>-CLI: KataResult
-        CLI-->>-Caller: KataResult
+    opt Full kata execution (in-process)
+        Caller->>+MCP: kata_execute(manifest, learner, context)
+        MCP->>+Engine: KataEngine::from_registry(registry)
+        MCP->>+Engine: execute(manifest, learner, context)
+        Engine-->>-MCP: KataResult
+        MCP-->>-Caller: KataResult
     end
 
-    Note over MCP,Engine: The MCP prompt tools do not invoke the engine.\nFull execution is via the CLI, not the MCP surface.
+    Note over MCP,Engine: The MCP prompt tools do not invoke the engine.<br/>Full execution is in-process via the kata-kanban MCP server,<br/>not via a deleted CLI surface.
 ```
 
 <!-- DIAGRAM_ALIGNMENT
@@ -1092,7 +1093,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process vi
 
 This diagram shows the valid state transitions for a kanban `Task`. Transitions are column-ordered: forward one step or backward one step — no skipping. The `task_reopen` operation is a special backward transition from `Done` directly to `InProgress` (clearing verification), bypassing the one-step rule. Gas/rJoule exhaustion auto-completes a task from `InProgress` or `Review` directly to `Done` via `task_gas_exhaust`.
 
-The gas feedback loop is wired: when `kask kata start --task <id>` is used, each inference call deducts its actual token cost from `task.gas_remaining` via `task_consume_gas`. When `gas_remaining` hits 0, the `unjam_fix` auto-completion path detects the exhausted task (after a 60-minute grace period) and completes it via `task_gas_exhaust`.
+The gas feedback loop is wired: when a kata is executed in-process via the kata-kanban MCP server (with a `--task <id>` binding on the manifest), each inference call deducts its actual token cost from `task.gas_remaining` via `task_consume_gas`. When `gas_remaining` hits 0, the `unjam_fix` auto-completion path detects the exhausted task (after a 60-minute grace period) and completes it via `task_gas_exhaust`.
 
 ```mermaid
 stateDiagram-v2

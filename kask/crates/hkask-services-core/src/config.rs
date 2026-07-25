@@ -22,6 +22,11 @@ const DEFAULT_ENERGY_BUDGET_CAP: u64 = 10_000;
 const DEFAULT_GAS_REPLENISH_RATE: u64 = 1_000;
 const DEFAULT_REG_THRESHOLD: u64 = 100;
 const DEFAULT_TEMPLATE_CACHE_PATH: &str = "/tmp/hkask-templates";
+/// Fallback userpod name when `HKASK_USERPOD_NAME` is not set.
+///
+/// In zed-kask, the composition root sets `HKASK_USERPOD_NAME` from the
+/// Zed login username. This constant is only used for standalone CLI usage
+/// (admin commands, repair tools) where no Zed session is available.
 const DEFAULT_USER_NAME: &str = "curator";
 const TEST_USER_NAME: &str = "test-user";
 
@@ -67,7 +72,7 @@ pub fn resolve_data_dir() -> std::path::PathBuf {
 ///
 /// Construction methods:
 /// - `from_env()` — resolves secrets from environment variables and keychain
-/// - `from_secrets()` — accepts pre-resolved secrets (from onboarding)
+/// - `from_secrets()` — accepts pre-resolved secrets (from the composition root)
 /// - `in_memory()` — synthetic config for tests
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
@@ -102,7 +107,8 @@ pub struct ServiceConfig {
     /// Default inference model name.
     pub default_model: String,
 
-    /// User name (from onboarding or config). The 1:1 userpod name.
+    /// User name (from the Zed login via `HKASK_USERPOD_NAME`, or `DEFAULT_USER_NAME`
+    /// for standalone CLI). The 1:1 userpod name.
     pub user_name: String,
 
     /// Path for the template cache (Git CAS storage).
@@ -163,8 +169,9 @@ impl ServiceConfig {
             .unwrap_or_else(|_| DEFAULT_TEMPLATE_CACHE_PATH.to_string());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
         let user_name = std::env::var("HKASK_USERPOD_NAME")
+            .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|_| DEFAULT_USER_NAME.to_string());
+            .unwrap_or_else(|| DEFAULT_USER_NAME.to_string());
 
         // Resolve secrets from keystore. If keystore resolution fails,
         // fall back to empty secrets (in-memory mode will be used).
@@ -214,10 +221,11 @@ impl ServiceConfig {
         })
     }
 
-    /// Create a config from pre-resolved secrets (e.g., from onboarding).
+    /// Create a config from pre-resolved secrets.
     ///
-    /// This avoids re-resolving from the keychain, which is important
-    /// for the REPL's interactive onboarding flow.
+    /// This avoids re-resolving from the keychain, which is useful when the
+    /// caller has already resolved secrets (e.g., the zed-kask composition root
+    /// which derives identity from the Zed login).
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  a2a_secret, db_passphrase, and user_name must be non-empty

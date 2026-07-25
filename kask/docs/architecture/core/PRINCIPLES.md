@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-07-01
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -104,21 +104,19 @@ Every artifact in hKask has both a state identity and a process identity — it 
 
 | MCP Server | Process Axis | State Axis | Domain Bridge |
 |---|---|---|---|
-| **kata-kanban** | PKO | DC+BIBO | — |
-| **docproc** | PKO | DC+BIBO | — |
-| **research** | PKO | DC+BIBO | — |
-| **skill** | PKO | DC+BIBO | — |
+| **codegraph** | PKO | DC+BIBO | — |
 | **companies** | PKO | DC+BIBO | FIBO (financial concepts) |
-| **replica** | PKO | DC+BIBO | GOLEM (narrative structure) |
-| **memory** | PKO | DC+BIBO | CogAT (cognitive concepts) |
-| **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
-| **media** | PKO | DC+BIBO | OMC (media creation) |
 | **condenser** | PKO | DC+BIBO | — (DC is the connective tissue for graph saliency) |
 | **curator** | PKO | DC+BIBO | — (the curator IS the 5W1H core applied as Socratic inquiry) |
-| **communication** | PKO | DC+BIBO | — (deferred) |
-| **filesystem** | PKO | DC+BIBO | — |
-| **codegraph** | PKO | DC+BIBO | — |
+| **docproc** | PKO | DC+BIBO | — |
+| **kata-kanban** | PKO | DC+BIBO | — |
+| **media** | PKO | DC+BIBO | OMC (media creation) |
+| **replica** | PKO | DC+BIBO | GOLEM (narrative structure) |
+| **research** | PKO | DC+BIBO | — |
 | **scenarios** | PKO | DC+BIBO | — |
+| **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
+
+> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`crates/hkask-skills`); memory is owned by the userpod's SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. The 11 servers above are the surviving set on disk.
 
 **Bridge locations:**
 - Process axis vocabulary: `crates/hkask-bridge-dublincore/` (shared crate)
@@ -126,7 +124,7 @@ Every artifact in hKask has both a state identity and a process identity — it 
 - Domain-specific bridges: server-local modules following the `fibo.rs` pattern
 
 #### P6 — Space for UserPods
-hKask exists as a generative container for **human user agency** (each user via their own userpod) and **AI tools** (skills + MCP servers), coordinated by the curator daemon, under sovereignty and capability constraints.
+hKask exists as a generative container for **human user agency** (each user via their own userpod) and **AI tools** (skills + MCP servers), coordinated by the Curator — a native in-process agent (D2) running inside zed-kask, not a daemon — under sovereignty and capability constraints.
 
 **P6.1 — Per-UserPod Deployment Model (v0.29.0):** Each user inhabits exactly one persistent userpod (1:1; multi-persona removed). The userpod IS the deployment unit — not a cache entry in a shared manager — and persists for the life of the account. A userpod owns its SQLCipher file (`{data_dir}/agents/{sanitized_name}/pod.db`), its Regulation runtime (per-pod variety counters), and its MCP server bindings (no cross-pod dispatch). The userpod makes shared state structurally impossible. See Pattern D.1 — UserPod as Solid Pod Isomorphism.
 
@@ -169,23 +167,21 @@ Regulation (Cybernetic Nervous System) spans are the primary observability primi
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|
 | Tool dispatch (all MCP servers) | `reg.tool.*` | ~170 | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |
-| Inference (8 providers: DeepInfra, fal.ai, Together, OpenRouter, KiloCode, Ollama, Cline, RunPod) | `reg.inference` | 53 | ✅ generate/generate_vision — 7 chat backends + RunPod (vision/OCR only) | `Inference` |
-| Fusion (multi-model deliberation) | `reg.fusion` | 9 | ✅ orchestrate + per-round/mode events (convergence verdict, swap-revote, algo method) | `Fusion` |
+| Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge`, wrapped by `GuardedInferencePort` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
+| Fusion (multi-model deliberation — MCP-server-internal to `hkask-inference`; not exposed to in-process surfaces) | `reg.fusion` | 9 | ✅ orchestrate + per-round/mode events (convergence verdict, swap-revote, algo method) | `Fusion` |
 | Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
 | Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
 | Backup | `reg.backup` | 22 | ✅ snapshot/restore/verify/prune/delete_blob | `Backup` |
 | Condenser | `reg.condenser` | 3 | ✅ compression ratio + health | `Condenser` |
 | Skill lifecycle | `reg.skill` | 5 | ✅ activate/load/discover/publish/validate | `Skill` |
-| MCP server infra | `reg.mcp.*` | 47 | ✅ startup gates + daemon flow | *(stringly-typed)* |
-| CLI command dispatch | `reg.cli` | 2 | ✅ command_invoked/completed | *(performative)* |
-| API middleware | `reg.api` | 2 | ✅ per-request Regulation span | *(performative)* |
+| MCP server infra | `reg.mcp.*` | 47 | ✅ startup gates + in-process wiring | *(stringly-typed)* |
 | Kata coaching | `reg.kata` | 20 | ✅ PDCA cycles, automaticity | `Kata` |
 | Agent pod | `reg.agent_pod` | — | ✅ revert, spawn_agent (via PodBackupOps) | `AgentPod` |
 | Wallet | `reg.wallet.*` | — | ✅ pre-existing | `WalletBalance` etc. |
 | Memory | `reg.memory.*` | — | ✅ pre-existing | `MemoryEncode` |
 | Curation | `reg.curation` | — | ✅ pre-existing | `Curation` |
-| Deployment sessions | `reg.deploy` | 2 | ✅ session_open/close | `SessionOpen`, `SessionClose` |
-| Backup export lifecycle | `reg.deploy` | 3 | ✅ backup_export/auto_export/upload | `BackupExport`, `BackupAutoExport`, `BackupUpload` |
+
+> **Deleted rows (v0.31.0, in-process pivot):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone (only a slim admin CLI for backup/wallet/repair/admin remains, which emits `hkask.*` performative logs, not registered `reg.*` spans); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted. Performative telemetry for the surviving admin CLI uses `hkask.*` tracing targets, NOT registered `reg.*` spans.
 
 **§9.2 — Span Emission Pattern**
 
@@ -214,19 +210,20 @@ Users, via their userpods, can explicitly control what is private versus shared;
 #### P12 — Authenticated Host Mandate
 Every action has an accountable host identity. No anonymous agency.
 
-**P12.1 — Surface-Host Mapping (v0.30.0):**
+**P12.1 — Surface-Host Mapping (v0.31.0, in-process pivot):**
 
 > **Incorporated from:** `docs/architecture/mandates/P12-authenticated-host-mandate.md`
 
-Every interaction with hKask carries a userpod (or curator) host identity. Three interaction surfaces map to three host classes:
+Every interaction with hKask carries a userpod (or Curator) host identity. After the in-process pivot, there is no standalone CLI, no HTTP API, and no daemon — hKask runs compiled into zed-kask. Four in-process interaction surfaces map to host classes:
 
 | Surface | Host | WebID Source | Storage | Keychain |
 |---------|------|-------------|---------|----------|
-| **CLI / REPL** | Human user (via userpod) + Curator daemon | `kask login <name>` → UserStore session | `~/.config/hkask/agents/<userpod>.db` | OS keychain via `hkask-keystore` |
-| **Daemon / System** | Curator daemon | `Curator` — system daemon | `~/.config/hkask/agents/curator.db` | System keychain |
-| **API** | Userpods | Userpod-managed capability tokens | Per-userpod DB | Userpod-attested HKDF keys |
+| **Agent panel** (zed Assistant) | Human user (via userpod) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active userpod from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/pod.db` (SQLCipher) | OS keychain via `hkask-keystore` |
+| **Kask panel (D10)** | Human user (via userpod) | Same composition-root resolution | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
+| **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via userpod) | `kask admin` subcommand resolves the userpod from settings | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
+| **In-process MCP** (the 11 MCP servers wired into zed-kask) | The active userpod | Capability tokens minted by the userpod at composition-root wiring time | Per-userpod DB | Userpod-attested HKDF keys |
 
-**Dual-presence pattern:** The CLI/REPL surface hosts both the user's userpod AND the Curator daemon in a single loop. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly via `kask curator chat`. This is not two separate sessions — it is one conversation with two participants. The user's userpod is the sovereign host; the Curator daemon is the system's presence.
+**Dual-presence pattern:** The agent panel hosts both the user's userpod AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's userpod is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 
 [^dublin-core]: Dublin Core Metadata Initiative. *DCMI Metadata Terms*. ISO 15836. <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>.
 [^bibo]: D'Arcus, B. & Giasson, F. *Bibliographic Ontology (BIBO)*. <https://bibliontology.com/>.

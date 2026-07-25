@@ -59,7 +59,8 @@ pub const KEY_MATRIX_USERPOD_PASSWORD: &str = "matrix-userpod-password";
 /// Keychain key for the Matrix bot Curator credentials.
 pub const KEY_MATRIX_BOT_CURATOR: &str = "matrix-bot-curator";
 
-/// Keychain key for Matrix pending-recovery flag (set when Conduit was down during onboarding).
+/// Keychain key for Matrix pending-recovery flag (legacy — Matrix was deleted in v0.31.0).
+/// Kept for keychain cleanup on existing installs.
 pub const KEY_MATRIX_PENDING_RECOVERY: &str = "matrix-pending-recovery";
 
 /// Keychain key for the homeserver URL stored alongside the pending-recovery flag.

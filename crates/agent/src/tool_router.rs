@@ -28,6 +28,7 @@ use std::collections::HashSet;
 /// A candidate tool for routing. The name + description pair is what the
 /// router scores — descriptions are available for all tools including MCP
 /// tools via `AnyAgentTool::description()`.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ToolCandidate {
     pub name: SharedString,
@@ -35,6 +36,7 @@ pub struct ToolCandidate {
 }
 
 /// Context for tool selection, built from the current turn's state.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ToolSelectionContext {
     /// The latest user message text, if any.
@@ -48,10 +50,13 @@ pub struct ToolSelectionContext {
 
 /// A tool router selects which tools to activate based on context.
 ///
-/// Returns the names of tools that should be included. An empty return value
-/// means "no filtering" (fail-open) — the caller passes all tools through.
+/// Returns `Some(names)` to filter to that set. Returns `None` to signal
+/// "no filtering" (fail-open) — the caller passes all tools through.
+/// This distinguishes "router did not activate" from "router activated
+/// but found no matching tools."
+#[allow(dead_code)]
 pub trait ToolRouter: Send + Sync {
-    fn select_tools(&self, context: &ToolSelectionContext) -> Vec<SharedString>;
+    fn select_tools(&self, context: &ToolSelectionContext) -> Option<Vec<SharedString>>;
 }
 
 /// Lazy keyword-overlap tool router. Only activates when the request is
@@ -61,6 +66,7 @@ pub trait ToolRouter: Send + Sync {
 /// When activated, scores each tool by keyword overlap between the context
 /// and the tool's description. Tools scoring ≥ the threshold are included.
 /// Always-on tools (spawn_agent, skill, etc.) bypass scoring.
+#[allow(dead_code)]
 pub struct LazyToolRouter {
     /// Tools that are always included when the router activates.
     always_on: HashSet<&'static str>,
@@ -94,15 +100,15 @@ impl Default for LazyToolRouter {
 }
 
 impl ToolRouter for LazyToolRouter {
-    fn select_tools(&self, context: &ToolSelectionContext) -> Vec<SharedString> {
+    fn select_tools(&self, context: &ToolSelectionContext) -> Option<Vec<SharedString>> {
         let Some(message) = &context.user_message else {
-            return Vec::new();
+            return None; // No message → fail-open.
         };
 
         // Decide whether to activate. The router is lazy — it only filters
         // when the request is complex or explicitly tool-directed.
         if !self.should_activate(message, &context.open_file_paths) {
-            return Vec::new();
+            return None; // Not activated → fail-open.
         }
 
         let context_keywords = extract_context_keywords(context);
@@ -111,18 +117,21 @@ impl ToolRouter for LazyToolRouter {
             .iter()
             .any(|path| is_code_file(path));
 
-        context
-            .candidates
-            .iter()
-            .filter_map(|candidate| {
-                let score = self.score_tool(candidate, &context_keywords, has_code_file);
-                if score >= self.threshold {
-                    Some(candidate.name.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        // Activated: return the filtered set (may be empty if no tools match).
+        Some(
+            context
+                .candidates
+                .iter()
+                .filter_map(|candidate| {
+                    let score = self.score_tool(candidate, &context_keywords, has_code_file);
+                    if score >= self.threshold {
+                        Some(candidate.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )
     }
 }
 
@@ -418,7 +427,6 @@ mod tests {
 
     #[test]
     fn test_lazy_router_does_not_activate_for_simple_message() {
-        // "hello" is a simple greeting — router should not activate.
         let context = ToolSelectionContext {
             user_message: Some("hello".to_string()),
             open_file_paths: vec![],
@@ -430,14 +438,13 @@ mod tests {
         let router = LazyToolRouter::new();
         let selected = router.select_tools(&context);
         assert!(
-            selected.is_empty(),
+            selected.is_none(),
             "simple message should fail-open (no filtering)"
         );
     }
 
     #[test]
     fn test_lazy_router_activates_for_explicit_tool_request() {
-        // "use grep to search" mentions "grep" — router should activate.
         let context = ToolSelectionContext {
             user_message: Some("use grep to search for the function".to_string()),
             open_file_paths: vec![],
@@ -448,7 +455,9 @@ mod tests {
             ],
         };
         let router = LazyToolRouter::new();
-        let selected = router.select_tools(&context);
+        let selected = router
+            .select_tools(&context)
+            .expect("router should activate");
         assert!(selected.contains(&"grep".into()));
         assert!(selected.contains(&"spawn_agent".into()));
         assert!(
@@ -459,7 +468,6 @@ mod tests {
 
     #[test]
     fn test_lazy_router_activates_for_complex_request() {
-        // Long message with decomposition signal.
         let long_message = "I need to plan a multi-step refactoring of the authentication \
             module. We should break down the work into parallel subtasks and delegate \
             each one to a subagent. The first step is to search for all usages of the \
@@ -478,8 +486,9 @@ mod tests {
             ],
         };
         let router = LazyToolRouter::new();
-        let selected = router.select_tools(&context);
-        // Should include code tools and spawn_agent, exclude fetch.
+        let selected = router
+            .select_tools(&context)
+            .expect("router should activate");
         assert!(selected.contains(&"grep".into()));
         assert!(selected.contains(&"read_file".into()));
         assert!(selected.contains(&"edit_file".into()));
@@ -503,7 +512,9 @@ mod tests {
             ],
         };
         let router = LazyToolRouter::new();
-        let selected = router.select_tools(&context);
+        let selected = router
+            .select_tools(&context)
+            .expect("router should activate");
         assert!(selected.contains(&"read_file".into()));
         assert!(selected.contains(&"grep".into()));
         assert!(selected.contains(&"spawn_agent".into()));
@@ -523,7 +534,7 @@ mod tests {
         let router = LazyToolRouter::new();
         let selected = router.select_tools(&context);
         assert!(
-            selected.is_empty(),
+            selected.is_none(),
             "short question should fail-open — no tool signal"
         );
     }
@@ -540,7 +551,9 @@ mod tests {
             ],
         };
         let router = LazyToolRouter::new();
-        let selected = router.select_tools(&context);
+        let selected = router
+            .select_tools(&context)
+            .expect("router should activate");
         assert!(selected.contains(&"fetch".into()));
         assert!(selected.contains(&"web_search".into()));
     }
@@ -565,7 +578,9 @@ mod tests {
             ],
         };
         let router = LazyToolRouter::new();
-        let selected = router.select_tools(&context);
+        let selected = router
+            .select_tools(&context)
+            .expect("router should activate");
         assert!(
             selected.contains(&"corpus_search".into()),
             "corpus_search should match via 'search' keyword overlap"
@@ -589,7 +604,9 @@ mod tests {
             ],
         };
         let router = LazyToolRouter::new();
-        let selected = router.select_tools(&context);
+        let selected = router
+            .select_tools(&context)
+            .expect("router should activate");
         assert!(selected.contains(&"spawn_agent".into()));
         assert!(selected.contains(&"grep".into()));
         assert!(!selected.contains(&"fetch".into()));

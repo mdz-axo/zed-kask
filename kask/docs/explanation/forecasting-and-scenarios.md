@@ -1,4 +1,17 @@
+---
+title: "Forecasting and Scenarios"
+audience: [architects, developers, operators]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, composition]
+---
+
 # Forecasting and Scenarios
+
+The scenarios and companies MCP servers run as builtin in-process servers
+inside zed-kask (D1–D3).
 
 **Diataxis type:** Explanation
 **Status:** Current (v0.31.0)

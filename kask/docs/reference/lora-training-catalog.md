@@ -1,3 +1,13 @@
+---
+title: "LoRA Training — Method & Gate Catalog"
+audience: [developers, ml-engineers]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "Training"
+mds_categories: [domain, trust]
+---
+
 # LoRA Training — Method & Gate Catalog
 
 Reference catalog for the `lora-training` skill. Extracted from

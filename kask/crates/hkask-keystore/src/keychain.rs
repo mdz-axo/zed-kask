@@ -397,7 +397,7 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
                         entity_type: "secret".to_string(),
                         id: format!(
                             "Master key '{}' not found in environment or keychain; \
-                     set {} or run `kask init` to derive secrets from a master passphrase",
+                     set {} or ensure the zed-kask composition root has provisioned the keystore",
                             master_key_env, master_key_env
                         ),
                     })

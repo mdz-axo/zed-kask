@@ -126,7 +126,7 @@ pub const USERPOD_SUBDIRS: &[&str] = &[
 
 /// Create the full userpod directory structure on disk.
 ///
-/// Called during userpod onboarding to ensure the userpod's space exists
+/// Called during userpod provisioning to ensure the userpod's space exists
 /// before any databases are deployed. Safe to call multiple times
 /// (idempotent — directories already existing are not errors).
 ///

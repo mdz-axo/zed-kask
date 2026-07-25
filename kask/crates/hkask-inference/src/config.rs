@@ -203,7 +203,7 @@ pub struct InferenceConfig {
     pub together_api_key: String,
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
-    /// OpenRouter onboarding thresholds (used by CLI model discovery).
+    /// OpenRouter model discovery thresholds (used by CLI model discovery).
     pub openrouter_max_prompt_price_per_m: f64,
     pub openrouter_min_intelligence_index: f64,
     pub kilocode_base_url: String,

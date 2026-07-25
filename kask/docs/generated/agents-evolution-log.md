@@ -1,3 +1,13 @@
+---
+title: "AGENTS.md Evolution Log"
+audience: [developers, agents]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [lifecycle, curation]
+---
+
 # AGENTS.md Evolution Log
 
 Artifact: `AGENTS.md` (operating guide for userpod agents)

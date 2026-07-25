@@ -1,3 +1,13 @@
+---
+title: "Corpus MCP Server — Reference"
+audience: [developers, operators]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "MCP Servers"
+mds_categories: [domain, composition]
+---
+
 # Corpus Server (`hkask-mcp-corpus`)
 
 Unified corpus MCP server — gather, process, and output. Combines document
@@ -105,9 +115,10 @@ Centroid computation is persona-specific (no trait, no QA equivalent).
 
 ## Quick Start
 
-```bash
-# The server starts automatically with kask
-kask chat
-# Or standalone:
-hkask-mcp-corpus
-```
+The corpus server is a builtin in-process MCP server in zed-kask — it
+auto-starts when enabled via KaskSettings (D9a). No standalone CLI command
+is needed.
+
+> **Note:** This document lists 27 tools, while `mcp-servers/README.md`
+> lists 24. The discrepancy is unresolved here — verify against
+> `mcp-servers/hkask-mcp-corpus/src/lib.rs` before relying on either count.

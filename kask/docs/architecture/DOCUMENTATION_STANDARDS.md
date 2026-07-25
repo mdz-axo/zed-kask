@@ -1,7 +1,7 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-06-30
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -346,7 +346,7 @@ Before a document is merged:
 All architecture documents MUST map to at least one of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §1:
 
 1. **Domain** — Bounded context, ν-events, entities
-2. **Composition** — Registry, cascade rules, template types, MCP/CLI/API surfaces, equivalence matrix
+2. **Composition** — Registry, cascade rules, template types, MCP/in-process surfaces, equivalence matrix
 3. **Trust** — Threat model, OCAP boundaries, keystore, capability tokens, attenuation policy
 4. **Lifecycle** — Bootstrap, evolution, deprecation, Regulation spans, variety counters, storage schema, memory pipelines, encryption
 5. **Curation** — Evaluation gradient, coherence metric, curator authority, writing quality
@@ -361,7 +361,7 @@ Documents spanning multiple categories list all applicable categories in the met
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-06-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -382,7 +382,7 @@ The verification checklist (§10) is extended with MDS alignment checks:
 | Category | Required Content | Verification |
 |----------|-----------------|--------------|
 | **Domain** | Bounded context, ν-event types, entity definitions | Terms allocated |
-| **Composition** | Registry schema, cascade rules, template types, surface definitions, equivalence matrix | Template types documented; MCP ≡ CLI ≡ API verified for core operations |
+| **Composition** | Registry schema, cascade rules, template types, surface definitions, equivalence matrix | Template types documented; MCP ≡ in-process surfaces verified for core operations |
 | **Trust** | Threat model, mitigations, keystore config, OCAP policy, attenuation rules | STRIDE-lite analysis complete; capability grant table present |
 | **Lifecycle** | Bootstrap sequence, evolution rules, deprecation policy, Regulation span registry, storage schema, encryption config | All operations emit spans; bitemporal semantics documented |
 | **Curation** | Decision gradient, coherence metric, writing quality assessment | Curator authority bounded; ≥3/4 writing dimensions passing |
@@ -426,7 +426,7 @@ This documentation standard itself maps to the 5 MDS categories:
 - **Documentation steward:** Run corpus hygiene sweeps, maintain portal accuracy, own `corpus_inventory.yaml`.
 - **CI/CD steward:** Maintain verification scripts, own `PROJECT_STATUS.md`.
 - **Workstream lead:** Maintain `TODO.md`, review plans for staleness weekly.
-- **User advocate:** Maintain user guides, test against current CLI.
+- **User advocate:** Maintain user guides, test against current in-process surfaces (agent panel, kask panel).
 - **Methodology steward:** Maintain research/practice guides.
 
 ### 12.3 Review Cadence

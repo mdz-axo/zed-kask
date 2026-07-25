@@ -1,7 +1,7 @@
 ---
 title: "Sovereignty and Observability"
 audience: [operators, developers]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Core"
@@ -11,6 +11,19 @@ mds_categories: [domain, trust, lifecycle]
 # Sovereignty and Observability
 
 Inspect and verify hKask's Magna Carta principles (P1–P4), manage delegation tokens and consent records, audit pod boundaries, and read Regulation (Cybernetic Nervous System) spans, variety counters, and algedonic alerts to understand system health. Sovereignty is the foundational guarantee; the Regulation is the observability substrate that verifies enforcement.
+
+## In-process observation surface
+
+zed-kask has no standalone user-facing CLI and no HTTP API. Sovereignty and Regulation state are observed and managed through three in-process surfaces:
+
+| Surface | What it exposes | How to reach it |
+|---------|-----------------|-----------------|
+| **Agent Panel** (zed native) | Conversational interaction with the Curator agent (D2) and any registered userpod; skills execute via `ManifestExecutor` (D1) | `cmd-t` → select agent (e.g. `Curator`) |
+| **Kask Panel** (D10) | Per-MCP-server one-on-one window: direct `/tool args` invocation (OCAP-gated via `PanelToolInvoker` → `BridgeToolPort`) and scoped inference (via `PanelScopedInference` → `GuardedInferencePort`) | `kask_panel::Toggle` / `kask_panel::ToggleFocus` action |
+| **`magna-carta-verifier` skill** | Structural audits of P1–P4 enforcement against the codebase (YAML assertions + Jinja2 report templates) | Invoke from the Agent Panel as a skill |
+| **`kask` admin CLI** | Backup, wallet, repair, admin only — **not** a user surface for sovereignty/Regulation inspection | `kask <admin-subcommand>` |
+
+The deleted `hkask-api` HTTP server and the deleted `hkask-cli` user surface (`kask sovereignty status`, `kask token list`, `kask regulation health`, etc.) have no equivalents — their function moved in-process. The examples below use the in-process surfaces.
 
 ---
 
@@ -44,20 +57,20 @@ The Magna Carta defines four principles, each enforced by specific code paths:
 
 ## Viewing Sovereignty Status
 
-Get the full sovereignty picture for the current user:
+There is no `kask sovereignty status` command. Sovereignty state is observed in-process:
 
-```bash
-kask sovereignty status
-```
+- **Consent state per data category** — queryable through the Curator agent in the Agent Panel ("show me the current consent state for episodic_memory"), which reads `ConsentManager` directly.
+- **Active delegation tokens** — visible via the kask panel (D10) by invoking the appropriate MCP tool on the `replica` or `curator` server through `PanelToolInvoker` (OCAP-gated).
+- **Per-pod capability bindings** — surfaced by the Curator agent, which holds the singleton `CuratorHandle::system()` and can report `PerPodToolBinding` state.
 
-Output:
+A representative consent-state view (as the Curator would render it):
 
 ```
 Sovereignty Status
 ==================
 
 Consent State:
-  WebID: webid://cli-user
+  WebID: webid://zed-user
   • episodic_memory: GRANTED
   • personal_context: DENIED
   • capability_tokens: GRANTED
@@ -75,96 +88,60 @@ Affirmative Consent:
   • Requires Affirmative Consent: true
 ```
 
+The `WebID` is the resolved zed-kask user (single-user in-process; no federation).
+
 ---
 
 ## Delegation Tokens
 
-OCAP (Object Capability) enforcement uses Ed25519-signed `DelegationToken` objects.
+OCAP (Object Capability) enforcement uses Ed25519-signed `DelegationToken` objects. Tokens are minted in-process by the `CapabilityChecker` (root issuer is the zed-kask host / `CuratorHandle::system()` singleton — A2A root authority is deferred, not live).
 
-### List Tokens
+### Listing tokens
 
-```bash
-kask token list
-kask token list --userpod <userpod-name>
-```
-
-Output:
+Tokens are not listed via a CLI. Use the kask panel (D10) to invoke the appropriate tool on the `replica` or `curator` MCP server, or ask the Curator agent in the Agent Panel. A representative listing:
 
 ```
 curator — tool:*, inference:*, memory:read — 2026-06-15T10:30:00Z
 userpod-alice — tool:web_search, tool:condenser — 2026-06-20T14:22:00Z
 ```
 
-### Issue a Token
+### Issuing a token
 
-```bash
-kask token issue \
-  --userpod my-userpod \
-  --capabilities "tool:web_search,tool:condenser,inference:*" \
-  --ttl 24h
+Tokens are issued in-process through the `CapabilityChecker::grant()` / `grant_tool()` / `grant_registry()` API. The kask panel's `PanelToolInvoker` obtains its token from the `a2a_secret` resolved at startup (composition root in `zed/src/main.rs`); skill cascades receive tokens from the `ManifestExecutor` (D1). There is no `kask token issue` command.
+
+To authorize a new binding programmatically (Rust):
+
+```rust
+use hkask_capability::verification::CapabilityChecker;
+
+let token = checker.grant_tool("web_search", issuer_webid, holder_webid)?;
 ```
 
-Output:
+### Revoking a token
 
-```json
-{
-  "token_id": "...",
-  "capabilities": [...],
-  "expires_at": 1234567890
-}
-```
+Revocation is performed through the same in-process `CapabilityChecker` surface (the consent store flips `active = false`). There is no `kask token revoke` command. The Curator agent can revoke on operator direction through `CuratorContext::issue_directive()` (which itself passes through OCAP).
 
-Use the token in an IDE or deployment:
+### Checking pod-level capability bindings
 
-```bash
-export HKASK_DELEGATION_TOKEN='{"token_id":"...","capabilities":[...],"expires_at":1234567890}'
-```
-
-### Revoke a Token
-
-```bash
-kask token revoke <token_id>
-```
-
-### Check Pod-Level Capability Bindings
-
-```bash
-kask pod status <pod_id> --verbose
-```
-
-This shows per-pod capability bindings — which tokens authorize which tools.
+Per-pod bindings (`PerPodToolBinding` in `crates/hkask-pods/src/pod/deployment.rs`) are inspected by asking the Curator agent or by invoking the appropriate `replica` MCP tool through the kask panel. Each pod's binding shows which tokens authorize which tools.
 
 ---
 
 ## Consent Management
 
-### Grant Consent
+Consent is managed in-process through `ConsentManager` (`crates/hkask-pods/src/consent.rs`). There is no `kask sovereignty grant` / `revoke` / `check` CLI.
 
-Grant consent for a data category. Use `--agent curator` to authorize the Curator daemon:
+### Granting consent
 
-```bash
-# Grant curator access to episodic memory
-kask sovereignty grant --category episodic_memory --agent curator
+Grant consent by directing the Curator agent (Agent Panel) to grant a category, or by invoking the appropriate MCP tool through the kask panel. The underlying call is `ConsentManager::grant_consent(webid, category)`, which updates the in-memory cache and persists to the SQLite-backed `ConsentStore`.
 
-# Grant for the CLI user
-kask sovereignty grant --category semantic_memory
-```
+### Revoking consent
 
-### Revoke Consent
+`ConsentManager::revoke_consent(webid)` flips `active = false` and sets `revoked_at = Some(now)`. Revoke all consent for the current user by directing the Curator agent to do so. A `reg.sovereignty` span with `operation=consent_revoked` is emitted.
 
-Revoke ALL consent for the current user:
+### Checking access for a specific category
 
-```bash
-kask sovereignty revoke
-```
-
-### Check Access for a Specific Category
-
-```bash
-kask sovereignty check --category episodic_memory
-```
-
-Output:
+A consent check returns a verdict shaped like:
 
 ```
 Data Access Check
@@ -173,20 +150,18 @@ Data Access Check
   Classification: SOVEREIGN
   Access required: CONSENT + OWNER_MATCH
   Access: DENIED
-  Use 'kask sovereignty grant --category episodic_memory' to grant.
+  → Grant via the Curator agent or the kask panel's consent tool.
 ```
+
+The check flows through `ConsentManager::has_consent()` → `SovereigntyChecker::can_access()`. Sovereign categories require both consent **and** owner match.
 
 ---
 
 ## Pod Boundary Auditing
 
-List all active agent pods:
+There is no `kask pod list` / `kask pod status` CLI. Pod state is observed in-process:
 
-```bash
-kask pod list
-```
-
-Output:
+- **Active pods** — surfaced by the Curator agent (which holds the singleton `CuratorHandle::system()`). A representative listing:
 
 ```
 Agent pods (2):
@@ -198,13 +173,7 @@ Agent pods (2):
     Name:  alice
 ```
 
-Inspect a pod's tool bindings and OCAP state:
-
-```bash
-kask pod status curator-primary --verbose
-```
-
-Each pod has its own `PerPodToolBinding`, dedicated SQLCipher file, and per-pod variety counters. Pods are structurally isolated — cross-pod dispatch is impossible at the type level.
+- **Per-pod tool bindings and OCAP state** — inspected via the Curator agent or the kask panel. Each pod has its own `PerPodToolBinding`, dedicated SQLCipher file, and per-pod variety counters. Pods are structurally isolated — cross-pod dispatch is impossible at the type level.
 
 ---
 
@@ -222,6 +191,8 @@ Caller → GovernedTool.invoke(server, tool, args, token)
            └─ Step 5: settle_gas(agent, reserved, actual) → refund if over-estimated
 ```
 
+The inner `ToolPort` is `BridgeToolPort` (in `kask_bridge`, over zed's `McpRuntime`), **not** the deleted `McpDispatcher` from `hkask-mcp`.
+
 Three startup gates control MCP server access:
 - **Gate 1 (auth):** Server refuses to start on failure → `McpError::Auth`
 - **Gate 2 (assignment):** Server refuses to start on failure → `McpError::RoleAssignment`
@@ -231,23 +202,11 @@ Three startup gates control MCP server access:
 
 ## Magna Carta Verification
 
-Run structural audits against the codebase to verify P1–P4 enforcement:
+Structural audits of P1–P4 enforcement are run through the **`magna-carta-verifier` skill**, invoked from the Agent Panel. The skill loads YAML assertion manifests (one per principle) and renders a verification report through Jinja2 templates. There is no `kask sovereignty verify` CLI.
 
-```bash
-# Full verification report
-kask sovereignty verify
+To run a full verification, invoke the `magna-carta-verifier` skill from the Agent Panel. To verify a single principle, scope the skill invocation (e.g. "verify only `affirmative_consent`"). The skill's assertion manifests live in `.agents/skills/magna-carta-verifier/manifests/` (`p1-user-sovereignty.yaml`, `p2-affirmative-consent.yaml`, `p3-generative-space.yaml`, `p4-clear-boundaries.yaml`).
 
-# Verify a specific principle
-kask sovereignty verify --principle user_sovereignty
-kask sovereignty verify --principle affirmative_consent
-kask sovereignty verify --principle generative_space
-kask sovereignty verify --principle clear_boundaries
-
-# JSON output for CI/automation
-kask sovereignty verify --json
-```
-
-Sample output:
+A representative report:
 
 ```
 Magna Carta Verification Report
@@ -260,26 +219,21 @@ Magna Carta Verification Report
   ✓ P1-002 require_sovereignty_enforced check: pass
     → All pod accesses route through require_sovereignty()
   △ P1-003 data_portability_export check: gap
-    → Export endpoint exists but not tested
-    ⚑ Add integration test for kask sovereignty export
+    → Export path exists but not tested
+    ⚑ Add integration test for the export tool
 
   Principle summary: 2 pass, 0 fail, 1 gap
 ```
 
-### API Consent Status
+### No HTTP consent endpoint
 
-If the API server is running:
-
-```bash
-curl -H "Authorization: Bearer $HKASK_API_KEY" \
-  http://localhost:3000/sovereignty
-```
+The deleted `hkask-api` HTTP server exposed `curl -H "Authorization: Bearer $HKASK_API_KEY" http://localhost:3000/sovereignty`. That endpoint no longer exists. Consent state is queried in-process through the surfaces above.
 
 ---
 
 ## Understanding Denial Events
 
-When access is denied, Regulation emits spans that help trace the root cause.
+When access is denied, Regulation emits spans that help trace the root cause. Observe these spans through the Curator agent or the kask panel (D10), which read from `RegulationLedger`.
 
 ### `reg.tool` (ToolError)
 
@@ -294,8 +248,8 @@ Emitted when a tool invocation fails, including OCAP denials. Look for error mes
 
 Emitted when a consent check is performed. The observation field contains the result (`granted` or `denied`):
 
-- **No consent grant** → `has_consent()` returns `false` — run `kask sovereignty grant`
-- **Storage error** → `unwrap_or(false)` in `has_consent()` — check database connectivity
+- **No consent grant** → `has_consent()` returns `false` — grant consent via the Curator agent or kask panel
+- **Storage error** → `unwrap_or(false)` in `has_consent()` — check database connectivity (`HKASK_DB_PATH`, `HKASK_DB_PASSPHRASE`)
 - **Consent revoked** → `ConsentRecord::active = false` — re-grant if appropriate
 - **Sovereign data without owner match** → Even with consent, sovereign data requires owner match
 
@@ -308,7 +262,7 @@ Emitted when a consent check is performed. The observation field contains the re
 | No `ConsentManager` wired | `DenyAllConsent` returns `false` | Wired automatically by `AgentService` |
 | Storage error in consent check | Consent denied | Check `HKASK_DB_PATH` and `HKASK_DB_PASSPHRASE` |
 | Token expired | `CapabilityChecker::verify_with_time()` returns `false` | Re-issue token with a longer TTL |
-| API key without budget | `reg.gas.depleted` span emitted | Increase energy budget |
+| Skill cascade without budget | `reg.gas.depleted` span emitted | Increase energy budget |
 
 ---
 
@@ -329,15 +283,16 @@ Spans describe *what* happened; ν-events describe *who observed it, when, in wh
 
 ### Reading Health Status
 
-```bash
-kask regulation health
-```
+There is no `kask regulation health` CLI. Health status is observed in-process:
 
-Output breakdown:
+- Ask the Curator agent (Agent Panel) to report Regulation health — it reads `RegulationLedger::health()` directly.
+- Or invoke the appropriate tool on the `replica` MCP server through the kask panel (D10).
+
+A representative health view:
 
 ```
 Regulation Health Status
-=================
+========================
 
 Runtime Status:
   • Healthy: true | false            ← Overall health
@@ -372,11 +327,9 @@ Key indicators to watch:
 
 ### Viewing Active Alerts
 
-```bash
-kask regulation alerts
-```
+Active algedonic alerts are surfaced by the Curator agent (which receives `CurationInput` messages on the `alerts_tx` channel) or via the kask panel. There is no `kask regulation alerts` CLI.
 
-Output:
+A representative alert view:
 
 ```
 Algedonic alerts:
@@ -414,13 +367,9 @@ The default variety threshold is `DEFAULT_VARIETY_MAX_DEFICIT` (from `hkask_regu
 
 ## Variety Counters
 
-Variety measures how many distinct operational states each namespace is experiencing:
+Variety measures how many distinct operational states each namespace is experiencing. Observe via the Curator agent or kask panel (D10); there is no `kask regulation variety` CLI.
 
-```bash
-kask regulation variety
-```
-
-Output:
+A representative view:
 
 ```
 Variety counters:
@@ -436,22 +385,17 @@ Low variety in a namespace signals the system is stuck in a narrow operational b
 
 ## Set Points
 
-Set points define the Regulation's expected operating parameters. View current set points:
+Set points define the Regulation's expected operating parameters. Observe and adjust them in-process; there is no `kask regulation set-points` CLI.
 
-```bash
-kask regulation set-points
-```
-
-Output:
+A representative view:
 
 ```
 Regulation Set-Points
-==============
-  gas_min_remaining:       100
-  variety_max_deficit:        50
-  error_rate_max:             0.25
-  connector_latency_max_secs: 5
-  communication_backpressure_threshold: 1000
+=====================
+  gas_min_remaining:           0.20
+  variety_max_deficit:         100
+  error_rate_max:              0.30
+  connector_latency_max_secs:  30.0
 ```
 
 | Set Point | Meaning | What Happens When Breached |
@@ -460,64 +404,31 @@ Regulation Set-Points
 | `variety_max_deficit` | Maximum tolerated variety drop | Algedonic alert fires; severity depends on deficit size |
 | `error_rate_max` | Maximum tolerated error rate (0.0–1.0) | Error rate alert fires |
 | `connector_latency_max_secs` | Maximum connector response latency | Latency alert fires |
-| `communication_backpressure_threshold` | Queue depth before backpressure engages | Backpressure alert fires |
 
-To configure set points, provide the flags:
+> **Note:** The `communication_backpressure_threshold` set-point and the `CommunicationQueueDepth` signal metric have been removed. They belonged to the deleted `hkask-communication` Matrix transport; zed-kask has no communication queue and no `reg.communication` spans.
 
-```bash
-kask regulation set-points \
-  --gas-min-remaining 50 \
-  --variety-max-deficit 100 \
-  --error-rate-max 0.30
-```
+Set points are loaded from YAML via `SetPointsConfig::load_from_file()` and merged with defaults in `SetPoints::from_config()`. Adjust them by editing the YAML config and reloading, or by directing the Curator agent to issue a calibration directive (within its authority bounds).
 
 ---
 
 ## Filtering Spans by Namespace
 
-Query Regulation spans by namespace to focus on specific subsystems:
+Query Regulation spans by namespace in-process — through the Curator agent or the kask panel. There is no `kask regulation subscribe` CLI.
 
-```bash
-# Sovereignty-related spans (P1–P2 enforcement)
-kask regulation subscribe --agent curator --spans reg.sovereignty
+Common namespace filters:
 
-# Tool invocation spans (P4 OCAP enforcement)
-kask regulation subscribe --agent curator --spans reg.tool
+| Filter | Purpose |
+|--------|---------|
+| `reg.sovereignty` | Sovereignty-related spans (P1–P2 enforcement) |
+| `reg.tool` | Tool invocation spans (P4 OCAP enforcement) |
+| `reg.mcp` | MCP startup gate spans |
+| `reg.guard.input`, `reg.guard.output` | Guard violation spans |
 
-# MCP startup gate spans
-kask regulation subscribe --agent curator --spans reg.mcp
+> **Removed namespaces:** `reg.communication.*` (Matrix transport deleted) and `reg.federation.*` (single-user in-process; no federation) are no longer emitted. Do not filter for them.
 
-# Federation spans
-kask regulation subscribe --agent curator --spans reg.federation
+### Live Event Observation
 
-# Communication spans
-kask regulation subscribe --agent curator --spans reg.communication
-
-# Guard violation spans
-kask regulation subscribe --agent curator --spans reg.guard.input,reg.guard.output
-```
-
-### Live Event Subscription
-
-Subscribe to live Regulation events for specific span namespaces:
-
-```bash
-kask regulation subscribe --agent curator --spans reg.tool.web_search,reg.inference
-```
-
-Output:
-
-```
-Regulation Event Subscription
-=====================
-  Agent: curator
-  Span namespaces:
-    • reg.tool.web_search
-    • reg.inference
-
-  Note: Subscription is active for the lifetime of this process.
-  Events matching the specified namespaces will be delivered.
-```
+Live Regulation events are observed in-process through the Curator agent's `MetacognitionLoop::sense()` (which reads via `query_algedonic`) or through a kask panel tool subscription. There is no long-lived CLI subscription process.
 
 ---
 
@@ -535,9 +446,11 @@ Regulation Event Subscription
 | `reg.qa.repair_exhausted` | QA repair attempts exhausted | Strong signal — escalate to Curator |
 | `reg.architecture.seam.drift` | Architecture seam divergence | Triggers warnings |
 | `reg.slo.evaluated` | SLO metric evaluation | SLO breach → Critical if SLO severity is Critical |
-| `reg.federation.*` | Federation link lifecycle | Yes — link degradation |
+| `reg.meta.*` | Curator self-calibration decisions | No (meta-level; deliberately not in algedonic categories) |
 
-For the full span catalog, see `docs/reference/regulation-spans.md` (100+ entries across 11 domain enum types).
+> **Removed:** `reg.communication.*` and `reg.federation.*` are no longer emitted (Matrix transport and federation deleted).
+
+For the full span catalog, see `docs/reference/regulation-spans.md`.
 
 ---
 
@@ -545,13 +458,13 @@ For the full span catalog, see `docs/reference/regulation-spans.md` (100+ entrie
 
 1. **Identify the domain** — The alert message names the affected namespace (e.g., `reg.tool`)
 
-2. **Check variety counters** — `kask regulation variety` to see which namespace is deficient
+2. **Check variety counters** — Ask the Curator agent (or use the kask panel) to report variety per namespace
 
-3. **Check recent alerts** — `kask regulation alerts` to see active alerts, or `kask regulation subscribe --agent curator --spans <namespace>` to monitor a specific namespace
+3. **Check active alerts** — Ask the Curator agent to list active algedonic alerts
 
-4. **Check the energy budget** — `kask regulation health` shows gas status; depletion can cascade into tool failures
+4. **Check the energy budget** — Health status includes gas status; depletion can cascade into tool failures
 
-5. **Inspect pod state** — `kask pod list` then `kask pod status <pod_id>` to verify agents are healthy
+5. **Inspect pod state** — Ask the Curator agent to report per-pod bindings and OCAP state
 
 6. **Review escalation log** — If the alert triggered a `DepletionSignal`, check agent pod escalation records
 
@@ -561,12 +474,7 @@ For the full span catalog, see `docs/reference/regulation-spans.md` (100+ entrie
    - **Error rate spike**: Check `reg.tool.*` for tool failures, `reg.inference` for model errors
    - **SLO breach**: Review the breached service-level objective and its time window
 
-8. **Escalate if unresolved** — Persistent critical alerts should be escalated to the Curator daemon for metacognitive review:
-
-   ```bash
-   kask curator escalations
-   kask curator metacognition
-   ```
+8. **Escalate if unresolved** — Persistent critical alerts escalate to the Curator's metacognition layer automatically (the `alerts_tx` channel delivers `CurationInput` messages to `CurationLoop`). Direct the Curator agent (Agent Panel) to review its escalation queue and self-calibration decisions (`reg.meta.*` spans).
 
 ---
 
@@ -583,11 +491,14 @@ let health = rt.health().await;   // LedgerHealth { healthy, overall_deficit, ..
 let alerts = rt.alerts().await;   // Vec<RuntimeAlert>
 ```
 
+This is the same surface the Curator agent and the kask panel use to render their views.
+
 ---
 
 ## Related
 
 - [Magna Carta Reference](../reference/magna-carta.md) — Full principle text, enforcement traces, failure modes
-- [Regulation Span Registry](../reference/regulation-spans.md) — Full span taxonomy (100+ entries)
+- [Regulation Span Registry](../reference/regulation-spans.md) — Full span taxonomy
 - [Install and Configure hKask](install-and-configure.md) — Content guard configuration and `reg.guard.*` spans
-- [Agents and Pods](install-and-configure.md) — Pod status and capability inspection
+- [Architecture Patterns](architecture-patterns.md) — Hexagonal ports, bridge adapters (`BridgeToolPort`, `BridgeMemoryPort`, `LanguageModelInferencePort`)
+- [Sovereignty and OCAP](sovereignty-and-ocap.md) — OCAP dispatch membrane and delegation token attenuation

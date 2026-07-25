@@ -1,7 +1,7 @@
 ---
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
-last_updated: 2026-07-17
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Companies"
@@ -19,15 +19,15 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 
 | Component | Role |
 |-----------|------|
-| `CompaniesServer` | Server struct: `webid`, `userpod`, `daemon`, `client`, FMP/EODHD keys, optional research keys, `PortfolioManager`, `LearningState` (Arc<Mutex>), `FermiDefaults` |
+| `CompaniesServer` | Server struct: `webid`, `userpod`, `daemon` (DEAD in zed-kask — always `None`; daemon deleted, R4/T3.0 pending), `client`, FMP/EODHD keys, optional research keys, `PortfolioManager`, `LearningState` (Arc<Mutex>), `FermiDefaults` |
 | `combined_router` | Sums seven domain sub-routers: `financial_data_router` + `analysis_router` + `portfolio_router` + `analytics_router` + `valuation_router` + `economic_profit_router` + `expectations_router` |
-| `execute_tool` | Framework wrapper: Regulation tool span (`reg.tool.companies.*`) + daemon outcome recording |
+| `execute_tool` | Framework wrapper: Regulation tool span (`reg.tool.companies.*`) + daemon outcome recording (dead in zed-kask — no-op) |
 | `fetch` | Provider-agnostic data access; clones `LearningState` and delegates to `providers::companies_get` |
 | `LearningState` | `src/learning.rs` — Beta(α+1, β+1) conjugate prior per (symbol, provider); temporal price snapshots for staleness detection; `preferred_provider` override when a provider is flaky. Chronic-staleness threshold configurable via `with_staleness_days` or `HKASK_CHRONIC_STALENESS_DAYS` |
 | `PortfolioManager` | SQLite-backed ledger, notes, file attachments, and durable forecast store; owner-scoped by `webid` |
-| `record_experience` | Fire-and-forget daemon `store_experience` for every tool outcome (narrative memory, salience 0.85) |
+| `record_experience` | DEAD in zed-kask — the daemon `store_experience` path is a no-op (daemon deleted; `DaemonClient` always `None`). Thread-level memory is captured via `RealMemoryPort` (D6) at thread-turn completion, not per-tool-outcome. The call site remains for compile-stability but does nothing. |
 
-Two Regulation emission paths run per tool call: the framework-level `execute_tool` span (tool name + outcome) and the server-level experience recording (daemon narrative). Provider routing additionally emits `reg.tool.companies.provider.*` spans via `providers::emit_provider_reg`.
+Two Regulation emission paths run per tool call: the framework-level `execute_tool` span (tool name + outcome) and the (now-dead) server-level experience recording path. Provider routing additionally emits `reg.tool.companies.provider.*` spans via `providers::emit_provider_reg`. The daemon narrative path is dead code in zed-kask (always `None`); thread-level memory is owned by `RealMemoryPort` (D6).
 
 ## Tool routing and dispatch flow
 
@@ -57,7 +57,7 @@ flowchart TD
     Seam --> SinkC["run_portfolio<br/>spawn_blocking"]
     SinkA --> Learn["LearningState<br/>preferred_provider override"]
     Learn --> FmpEod["FMP or EODHD<br/>normalize to FMP shape"]
-    FmpEod --> Rec["record_fetch_outcome<br/>record_experience daemon"]
+    FmpEod --> Rec["record_fetch_outcome\nrecord_experience (DEAD — daemon no-op in zed-kask)"]
     SinkB --> Stored["StoredForecast snapshot"]
     Stored --> Persist["save_forecast<br/>owner-scoped SQLite"]
     SinkC --> Ledger["PortfolioManager<br/>ledger notes files"]
@@ -68,9 +68,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-004
-verified_date: 2026-07-17
-verified_against: mcp-servers/hkask-mcp-companies/src/lib.rs:499-509 (combined_router); mcp-servers/hkask-mcp-companies/src/lib.rs:368-495 (fetch, save_forecast, record_experience); mcp-servers/hkask-mcp-companies/src/tools/mod.rs:1-8; mcp-servers/hkask-mcp-companies/src/providers.rs:111-198; mcp-servers/hkask-mcp-companies/src/portfolio.rs:290-340
-status: VERIFIED
+verified_date: 2026-07-24
+verified_against: mcp-servers/hkask-mcp-companies/src/lib.rs:499-509 (combined_router); mcp-servers/hkask-mcp-companies/src/lib.rs:368-495 (fetch, save_forecast, record_experience — daemon path dead in zed-kask); mcp-servers/hkask-mcp-companies/src/tools/mod.rs:1-8; mcp-servers/hkask-mcp-companies/src/providers.rs:111-198; mcp-servers/hkask-mcp-companies/src/portfolio.rs:290-340
+status: VERIFIED (v2 — daemon record_experience annotated as dead no-op; thread-level memory via RealMemoryPort D6)
 -->
 
 ## Tools (41)
@@ -181,7 +181,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 - **Local persistence.** The portfolio ledger is a local SQLite database per owner. No portfolio data leaves the host; the server is the sole reader and writer.
 - **Import and attachment limits.** `ledger_import` rejects requests above `MAX_IMPORT_REQUEST_BYTES` or more than `MAX_IMPORT_TRANSACTION_COUNT` transactions. `file_attach` rejects encoded payloads above `MAX_ENCODED_ATTACHMENT_BYTES` and decoded payloads above `MAX_DECODED_ATTACHMENT_BYTES`.
 - **Governance is at the dispatcher membrane.** OCAP is enforced by the `GovernedTool` membrane in `crates/hkask-mcp/src/dispatch.rs`, which verifies a `DelegationToken` per call before the request reaches this server. The companies server is the transport pipe; it does not re-check capabilities per call.
-- **Experience recording is fire-and-forget.** `record_experience` spawns a tokio task that calls `daemon.store_experience` at salience 0.85. A daemon failure is logged at `warn` and does not fail the tool call.
+- **Experience recording is dead in zed-kask.** The `record_experience` call site remains for compile-stability, but the daemon `store_experience` path is a no-op (daemon deleted; `DaemonClient` always `None`). Thread-level memory is captured via `RealMemoryPort` (D6) at thread-turn completion, not per-tool-outcome. There is no fire-and-forget tokio task for narrative memory.
 
 ## Regulation observability
 
@@ -189,7 +189,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 |------|--------------|
 | `reg.tool.companies.<tool>` | Every tool call via `execute_tool` (success and error paths) |
 | `reg.tool.companies.provider.<provider>` | Provider selection and outcome via `providers::emit_provider_reg` |
-| `reg.mcp.companies.memory` | Daemon experience store result (`debug` on success, `warn` on failure) |
+| `reg.mcp.companies.memory` | DEAD in zed-kask — daemon experience store result (no-op; `DaemonClient` always `None`). Retained for enum stability; not emitted in practice. |
 
 ## Quick start
 
@@ -209,7 +209,7 @@ The suite covers provider-error handling, EODHD normalization, valuation request
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — catalog of all 15 built-in servers
+- [MCP Server Registry](README.md) — catalog of all 11 on-disk servers
 - [Companies User Guide](../../explanation/companies-mcp.md) — task-oriented procedures for valuation, forecasting, and portfolio operations
 - Companies Semantic Graph Audit — internal module dependency graph health
 - Companies MCP Code Review — adversarial code review of the companies server

@@ -25,7 +25,8 @@ pub fn version_file_path() -> PathBuf {
 
 /// Read the current key version from disk.
 ///
-/// Returns an error if the version file does not exist (run `kask init` first).
+/// Returns an error if the version file does not exist (the composition root
+/// should have provisioned the keystore on first launch).
 ///
 /// expect: "My keys are generated, stored, and rotated under my sovereignty"
 /// post: returns u32 version from file, or io::Error if missing

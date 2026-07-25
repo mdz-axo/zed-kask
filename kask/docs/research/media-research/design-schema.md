@@ -1,4 +1,17 @@
+---
+title: "Media Server Design Schema"
+audience: [developers, architects]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "MCP Servers"
+mds_categories: [domain, composition]
+---
+
 # Media Gallery Schema & Tool Design
+
+> **Note:** `InferenceRouter` references in this research doc describe the media MCP server's internal delegation path. In zed-kask, `hkask-inference`'s `InferenceRouter` is kept for MCP-server-internal use only; the user-facing inference surface is zed's `LanguageModelRegistry` via `kask_bridge` (D4/D8).
+
 ## Design Phase: T4–T5
 
 ---

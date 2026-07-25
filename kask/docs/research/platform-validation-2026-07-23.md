@@ -1,3 +1,13 @@
+---
+title: "Platform Validation — 2026-07-23"
+audience: [ml-engineers, developers]
+last_updated: 2026-07-23
+version: "0.31.0"
+status: "Active"
+domain: "Training"
+mds_categories: [domain, lifecycle]
+---
+
 # Platform Validation — RunPod Post-Mortem + Nebius Comparison
 
 > **Date**: 2026-07-23

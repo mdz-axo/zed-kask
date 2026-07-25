@@ -16,7 +16,7 @@ hKask is compiled into zed-kask as a set of native crates and in-process MCP ser
 
 | Guide | Topics | Domain Tier |
 |-------|-------|-------------|
-| [Architecture Patterns](architecture-patterns.md) | Hexagonal ports and adapters (17 traits), loom-and-thread philosophy, Good Regulator theorem (Conant-Ashby), Viable System Model mapping (S1–S5), dual-axis ontology (PKO + DC+BIBO), API surface equivalence (P3). | Core |
+| [Architecture Patterns](architecture-patterns.md) | Hexagonal ports and adapters (17 traits), loom-and-thread philosophy, Good Regulator theorem (Conant-Ashby), Viable System Model mapping (S1–S5), dual-axis ontology (PKO + DC+BIBO) | Core |
 | [Regulation and Loops](regulation-and-loops.md) | Regulation homeostatic loop (sense→compare→compute→act→verify), skill PDCA model (FlowDef manifests, convergence contracts), Curator metacognition (CurationLoop + MetacognitionLoop) evaluating in-process agent events, bug hunting methodology (Weinberg, Beizer, Hendrickson), QA system (YAML manifests, LLM classification, Regulation spans). | Core |
 | [Sovereignty and OCAP](sovereignty-and-ocap.md) | Object Capability MCP dispatch (DelegationToken, GovernedTool 6-step membrane, fail-closed semantics), Diataxis quality review (diagram audit gates, OWASP anchoring). | Core |
 | [Sovereignty and Observability](sovereignty-and-observability.md) | Capability tokens, Regulation alerts, and the observability surfaces exposed in-process to zed-kask's agent panel. | Core |

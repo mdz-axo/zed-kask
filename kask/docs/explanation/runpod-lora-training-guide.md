@@ -1,3 +1,13 @@
+---
+title: "RunPod LoRA Training Guide"
+audience: [ml-engineers, developers]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "Training"
+mds_categories: [domain, lifecycle]
+---
+
 # RunPod LoRA Training Guide — Lessons for Agents
 
 > **Purpose**: This guide consolidates hard-won lessons from RunPod LoRA training
@@ -5,8 +15,6 @@
 > repeating them. Each lesson is grounded in a specific failure that cost real
 > money or time. Update this guide after every training run — new failures,
 > new fixes, new patterns.
->
-> **Last updated**: 2026-07-20 (after ~$600 of failed runs + this session's debugging)
 
 ---
 

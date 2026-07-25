@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-07-21
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Composition"
@@ -12,7 +12,7 @@ mds_categories: [composition, lifecycle]
 
 **Crate:** `mcp-servers/hkask-mcp-scenarios`
 **Tools:** 18 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_research`, `scenario_quantify`, `scenario_calibrate`, `scenario_update`, `scenario_sensitivity`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_companies`, `scenario_full`
-**Auto-start:** No (in `CORE_EXCLUDED` — requires explicit opt-in via `/mcp start`)
+**Auto-start:** No (in `CORE_EXCLUDED` — requires explicit opt-in via the kask panel (D10) or KaskSettings toggle (D9a))
 
 ## Pipeline Architecture (DIAG-RF-005)
 

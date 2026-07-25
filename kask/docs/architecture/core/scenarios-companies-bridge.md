@@ -1,3 +1,13 @@
+---
+title: "Scenarios ↔ Companies Bridge"
+audience: [developers, architects]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "MCP Servers"
+mds_categories: [domain, composition]
+---
+
 # Scenarios ↔ Companies Bridge
 
 **Diataxis type:** Architecture

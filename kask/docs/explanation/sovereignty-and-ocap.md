@@ -1,7 +1,7 @@
 ---
 title: "Sovereignty and OCAP — Object Capability Dispatch, Diataxis Quality Review"
 audience: [architects, developers, agents]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Core"
@@ -65,11 +65,11 @@ The `invoke()` method (line 200) enforces a strict sequence:
 
 Every step in the chain fails closed. Cryptographic verification fails? Denied. OCAP check fails? Denied. Gas budget exhausted? Denied. The `governed_tool.rs` tests at line 505 verify this: `exact_match_denies_wrong_tool`, `domain_capability_denies_different_domain`. The `CapabilityDenied` error is returned before any resource is consumed. In the `sovereignty.rs` module, `SovereigntyChecker::can_access()` adds a second gate: even with a valid capability token, sovereign data requires the requester to BE the owner AND have explicit consent. `DenyAllConsent` is the default at `crates/hkask-pods/src/sovereignty.rs:31` — a misconfigured checker always denies.
 
-#### PerPodToolBinding — Structural Pod Isolation
+#### Per-Pod Tool Isolation — Structural
 
-At `crates/hkask-pods/src/pod/deployment.rs`, `PodDeployment` holds `tools: PerPodToolBinding`, which wraps `mcp_runtime: Arc<dyn MCPRuntimePort>` and an optional `governed_tool: Option<Arc<GovernedTool<RawMcpToolPort>>>`. A pod can invoke tools only through its own binding and the configured system/A2A trust roots; cross-pod access requires a valid `DelegationToken`. SQLCipher database encryption is a separate concern and consistently uses the canonical `HKASK_DB_PASSPHRASE` resolver.
+At `crates/hkask-pods/src/pod/deployment.rs`, `PodDeployment` holds `mcp_runtime: Arc<McpRuntime>` (the in-process MCP tool registry, D3) alongside the pod's dedicated `capability_checker`, `sovereignty_checker`, `PerPodStorage` (SQLCipher), and `PerPodLedger`. A pod can invoke tools only through its own `mcp_runtime` binding and the configured system trust roots; cross-pod access requires a valid `DelegationToken`. SQLCipher database encryption is a separate concern and consistently uses the canonical `HKASK_DB_PASSPHRASE` resolver.
 
-This means P4.1 (pod boundary = OCAP perimeter) is enforced by construction: the type system prevents a pod from even addressing another pod's governed tool. The only path is through the proper delegation chain.
+This means P4.1 (pod boundary = OCAP perimeter) is enforced by construction: each pod's `PodDeployment` carries its own `McpRuntime` handle and `CapabilityChecker`; the type system prevents a pod from even addressing another pod's governed tool. The only path through the boundary is via the proper delegation chain.
 
 ### Diagram
 
@@ -78,7 +78,7 @@ flowchart TD
     CALLER["Caller\n(agent / template / surface)"]
     TOKEN["DelegationToken\nEd25519-signed\nattenuatable"]
     GT["GovernedTool&lt;P: ToolPort&gt;\n6-step membrane"]
-    INNER["Inner ToolPort\n(McpDispatcher)"]
+    INNER["Inner ToolPort\n(BridgeToolPort in kask_bridge)"]
     SINK["RegulationSink\n(persisted)"]
     STATS["ToolStats\n(statistical learning)"]
     Regulation["CyberneticsLoop\n(regulation)"]
@@ -103,8 +103,8 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SOV-001
-verified_date: 2026-07-12
-verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs
+verified_date: 2026-07-24
+verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs, crates/kask_bridge/src/tool_port.rs
 status: VERIFIED
 -->
 
@@ -195,7 +195,7 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SOV-002
-verified_date: 2026-07-12
+verified_date: 2026-07-24
 verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs
 status: VERIFIED
 -->
@@ -230,7 +230,7 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 ## Description
 
-The OCAP (Object Capability) delegation system in `hkask-capability` uses Ed25519-signed `DelegationToken` instances with cryptographic attenuation. A root token at depth 0 is minted by a trusted issuer (e.g., the A2A root authority). Each delegation step calls `attenuate()` / `attenuate_with_expiry()`, incrementing `attenuation_level` and chaining `context_nonce` (e.g. `root-attenuated-uuid-...`). The `CapabilityChecker` verifies token integrity, root trust, holder match, and resource/action alignment. Attenuation is bounded by `SYSTEM_MAX_ATTENUATION` (7) — a token at depth 7 cannot be further attenuated. Each level reduces authority: the attenuated token inherits parent caveats and gains a 1-hour default expiry.
+The OCAP (Object Capability) delegation system in `hkask-capability` uses Ed25519-signed `DelegationToken` instances with cryptographic attenuation. A root token at depth 0 is minted by a trusted issuer — in zed-kask, the in-process issuer is the zed-kask host / the Curator's `CuratorHandle::system()` singleton (the A2A root authority is deferred, not a live component). Each delegation step calls `attenuate()` / `attenuate_with_expiry()`, incrementing `attenuation_level` and chaining `context_nonce` (e.g. `root-attenuated-uuid-...`). The `CapabilityChecker` verifies token integrity, root trust, holder match, and resource/action alignment. Attenuation is bounded by `SYSTEM_MAX_ATTENUATION` (7) — a token at depth 7 cannot be further attenuated. Each level reduces authority: the attenuated token inherits parent caveats and gains a 1-hour default expiry.
 
 **Key source:** `crates/hkask-capability/src/token_types.rs:17` (`SYSTEM_MAX_ATTENUATION = 7`), `token_types.rs:347-398` (`attenuate`, `attenuate_with_expiry`), `verification/checker.rs:20-33` (`CapabilityChecker`), `resources.rs` (`capabilities_match`).
 
@@ -297,13 +297,13 @@ classDiagram
     Depth2 --> "..." : attenuate()
     "..." --> Depth7Max : attenuate()
 
-    note for RootToken "Root token minted by\ntrusted issuer (A2A root)"
+    note for RootToken "Root token minted by\nin-process issuer\n(CuratorHandle::system() singleton;\nA2A root authority deferred)"
     note for Depth1 "Authority reduced:\nexpiry enforced\ncaveats inherited"
     note for Depth7Max "Terminal depth:\ncan_attenuate() → false\nSYSTEM_MAX_ATTENUATION = 7"
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SOV-003
-verified_date: 2026-07-12
+verified_date: 2026-07-24
 verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs
 status: VERIFIED
 -->
@@ -426,7 +426,7 @@ sequenceDiagram
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SOV-004
-verified_date: 2026-07-12
+verified_date: 2026-07-24
 verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs
 status: VERIFIED
 -->
@@ -520,7 +520,7 @@ stateDiagram-v2
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SOV-005
-verified_date: 2026-07-12
+verified_date: 2026-07-24
 verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs
 status: VERIFIED
 -->
@@ -578,7 +578,7 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SOV-006
-verified_date: 2026-07-12
+verified_date: 2026-07-24
 verified_against: crates/hkask-capability/src/lib.rs, crates/hkask-regulation/src/governed_tool.rs
 status: VERIFIED
 -->

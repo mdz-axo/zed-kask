@@ -110,7 +110,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 | `hkask-services-runtime` | Runtime services: classify + guard + provider_intel (daemon_impl module deleted) | `P{N}-svc-runtime-*` | 13 | ✅ Realigned |
 | `hkask-services-self-heal` | Cross-domain self-healing coordination | — | — | ✅ Realigned |
 | `hkask-services-inference` | Inference orchestration scaffolding | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
-| `hkask-inference` | Inference routing primitives (InferenceRouter, EmbeddingRouter, ProviderId) — reads API keys from zed `CredentialsProvider` (D9b) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
+| `hkask-inference` | Inference routing primitives (InferenceRouter, EmbeddingRouter, ProviderId) — reads API keys from zed `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
 
 ---
 
@@ -574,7 +574,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Storage backend → zed `CredentialsProvider` (D9b) |
 | `hkask-wallet` | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — in-process, no service layer |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
-| `hkask-inference` | Composition | `InferenceRouter`, `EmbeddingRouter`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) |
+| `hkask-inference` | Composition | `InferenceRouter`, `EmbeddingRouter`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-goal` | Domain | Goal analysis, completion verification |

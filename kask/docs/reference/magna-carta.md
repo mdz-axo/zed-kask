@@ -189,17 +189,17 @@ implemented in `hkask-guard` and aligned with OWASP Top 10 for LLM Applications.
 
 | Artefact | Crate/Module | Role |
 |----------|-------------|------|
-| `InferenceConfig` | `hkask-inference` | Exposes `temperature`, `top_k`, `top_p`, `repeat_penalty` — no hidden params |
-| `hkask-guard` | `crates/hkask-guard/` | Mandatory content safety at every LLM boundary (P3.1 floor) |
+| `LanguageModelRegistry` + `KaskSettings` | zed `crates/language_models` + `kask/crates/kask_bridge/src/settings.rs` (D9a) | The user-facing inference-settings surface in zed-kask. Provider selection, model choice, and kask-scoped inference config live here — no hidden params. `hkask-inference`'s `InferenceConfig` is **not** the user-facing surface; it is MCP-server-internal only (see below). |
+| `hkask-guard` | `crates/hkask-guard/` | Mandatory content safety at every LLM boundary (P3.1 floor). Wrapped by `GuardedInferencePort` (D4) over `LanguageModelInferencePort` (D8). |
 | No admin bypass | Codebase-wide | No `is_admin` check, no `engineer_mode` feature flag, no hidden control plane |
 | Open-source | AGPL-3.0 | All weights/settings exposed; closed-source providers are excluded by charter |
-| `FusionSkill` enum | `hkask-inference::config` | Skills are user-selectable; no system-imposed defaults |
+| `hkask-inference` (MCP-server-internal) | `kask/crates/hkask-inference` | **Not user-facing.** Retained only for MCP-server-internal use (e.g. `hkask-mcp-condenser`'s `condenser_thread_summary`). Reads API keys via `SecretsPort` (D9b), not env vars. The `InferenceConfig` / `FusionSkill` types it exposes are server-internal and do not constitute the user-facing generative-settings surface. |
 
 ### What Happens When Violated
 
-- **Hidden settings:** Not possible structurally — all inference parameters are in `LLMParameters` and exposed through the router.
+- **Hidden settings:** Not possible structurally — the user-facing inference surface is zed's `LanguageModelRegistry` + `KaskSettings` (D9a), both exposed in the Settings UI and the kask panel (D10). `hkask-inference`'s `InferenceConfig` is MCP-server-internal and not a user control plane.
 - **Content safety bypass:** `hkask-guard` runs at every LLM boundary. Bypassing it requires modifying source code.
-- **Engineer-only access:** No code path grants elevated access based on role. If one were added, it would be a Magna Carta violation flagged by `kask sovereignty verify`.
+- **Engineer-only access:** No code path grants elevated access based on role. If one were added, it would be a Magna Carta violation flagged by the magna-carta-verifier skill.
 - **Non-open-source providers:** Cannot satisfy this principle; hKask is limited to open-weight/open-code providers by charter.
 
 ### How to Audit
@@ -213,7 +213,8 @@ in-process kask panel (D10) and the `magna-carta-verifier` skill.
 
 # List exposed inference settings (kask panel, D10, or KaskSettings page, D9)
 #   Open the kask panel → Inference tab, or Settings → Kask section
-#   In-process: InferenceConfig exposes temperature, top_k, top_p, repeat_penalty
+#   User-facing surface: LanguageModelRegistry + KaskSettings (D9a)
+#   hkask-inference's InferenceConfig is MCP-server-internal only (not user-facing)
 
 # Verify guard configuration (structural — no runtime guard command exists)
 #   magna-carta-verifier --principle generative_space
@@ -421,7 +422,6 @@ The deleted `kask sovereignty` CLI has been replaced by the in-process kask pane
 | Token signature invalid | Tool call rejected | `ToolPortError::CapabilityDenied` |
 | Token expired | Tool call rejected | `CapabilityChecker::verify_with_time()` returns `false` |
 | Gas budget exhausted | Tool call rejected | `ToolPortError::EnergyBudgetExceeded` |
-| API key without budget | N/A — `hkask-api` HTTP server is deleted; in-process callers settle gas via `GovernedTool`/`GovernedInference` | `reg.gas.depleted` span emitted |
 | Gate 1 (auth) fails | MCP server refuses to start | `McpError::Auth` |
 | Gate 2 (assignment) fails | MCP server refuses to start | `McpError::RoleAssignment` |
 | Gate 3 (capability denied) | Server starts, denied tools unavailable | `StartupGateResult::denied_tools` non-empty |

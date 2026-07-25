@@ -1,7 +1,7 @@
 ---
 title: "hKask Testing Discipline"
 audience: [engineers, agents, userpods]
-last_updated: 2026-07-04
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -31,7 +31,7 @@ Every test must answer one of these first-principle questions:
 
 1. **Boundary:** Did the operation respect OCAP and consent boundaries (P4, P1–P3)?
 2. **Invariant:** Did a defined invariant hold across valid inputs or sequences (P8)?
-3. **Equivalence:** Did the same operation yield the same result across surfaces (CLI/API/MCP) where required?
+3. **Equivalence:** Did the same operation yield the same result across in-process surfaces (agent panel / kask panel / kask admin CLI / MCP) where required?
 4. **Homeostasis:** Did the feedback loop restore stability after perturbation (P9)?
 
 If a test answers none, it is ontological noise (P5.2) and should be deleted.
@@ -76,18 +76,21 @@ proptest! {
 | **Fuzz** | Input surface robustness | `catch_unwind` + arbitrary input; verifies no panic |
 | **System** | End-to-end workflows | Integration tracer bullet (TDD skill); verifies full vertical slice |
 
-### 2.4 Deployment Testing
+### 2.4 Composition-Root Wiring Testing
 
-Deployment testing covers the provisioning surface — the operations that initialize and configure a running hKask server:
+After the in-process pivot, there is no server init, sidecar generation, OAuth callback, health endpoint, single binary, or Docker build — those deployment surfaces are deleted. The provisioning surface is now the zed-kask composition root (`crates/zed/src/main.rs`), which wires hKask into zed in-process. Testing covers the D1–D10 integration seams declared in `zed-host-architecture-plan.md`:
 
 | Domain | Test Type | Example |
-|--------|-----------|---------|
-| Server init | Integration | `init_server_creates_config_and_keychain_entries` |
-| Sidecar generation | Integration | `deploy_sidecar_generates_valid_docker_compose` |
-| OAuth callback | Integration | `oauth_callback_provisions_human_user_and_session` |
-| Health endpoint | Unit | `health_endpoint_returns_reg_status` |
-| Single binary | Smoke | `single_binary_contains_all_components` |
-| Docker build | CI | `docker_build_produces_working_image` |
+|--------|-----------|--------|
+| D1 — In-process composition | Integration | `composition_root_wires_userpod_and_curator()` — verifies the userpod, Curator (D2), and Regulation ledger are constructed and reachable from zed's app context |
+| D2 — Curator as native agent | Integration | `curator_registered_as_zed_agent_panel_participant()` — verifies the Curator is registered with zed's agent panel, not spawned as a daemon |
+| D4 — `GuardedInferencePort` | Integration | `guarded_inference_port_wraps_language_model_registry()` — verifies `LanguageModelInferencePort` in `kask_bridge` is wrapped by `GuardedInferencePort` and gated by sovereignty/capability checks |
+| D9a — `KaskSettings` | Unit | `kask_settings_round_trips_through_zed_settings()` — verifies the user-facing inference settings surface serializes correctly |
+| D10 — Kask panel | Smoke | `kask_panel_renders_and_dispatches_to_userpod()` — verifies the kask panel UI renders and routes actions to the active userpod |
+| MCP wiring (11 servers) | Integration | `all_11_mcp_servers_registered_at_composition_root()` — verifies codegraph, companies, condenser, curator, docproc, kata-kanban, media, replica, research, scenarios, training are wired in-process |
+| Admin CLI (slim) | Smoke | `kask_admin_cli_supports_backup_wallet_repair_admin_only()` — verifies the surviving admin CLI exposes only backup/wallet/repair/admin subcommands |
+
+> **Deleted surfaces (v0.31.0):** Server init, sidecar generation, OAuth callback, health endpoint, single binary, and Docker build are all gone. Tests referencing them are deleted, not adapted.
 
 ---
 
@@ -157,11 +160,13 @@ Implementation-coupled tests are not forbidden — they exist because some code 
 ### 5.3 Interface (REQ-IFC-*)
 
 | Strategy | Details |
-|----------|---------|
-| **Primary seam** | CLI ↔ API ↔ MCP equivalence (core operations) |
-| **Test type** | Integration: cross-surface parity (same operation, same result, via all three surfaces) |
-| **Key invariant** | `MCP ≡ CLI ≡ API` for core operations; spec lifecycle is CLI + API + QA only |
-| **Anti-pattern** | Testing only one surface and assuming the others work |
+|----------|--------|
+| **Primary seam** | MCP ≡ in-process surfaces equivalence (core operations across agent panel / kask panel / kask admin CLI / MCP) |
+| **Test type** | Integration: cross-surface parity (same operation, same result, via all in-process surfaces) |
+| **Key invariant** | `MCP ≡ in-process surfaces` for core operations; spec lifecycle is agent panel + kask panel + QA only |
+| **Anti-pattern** | Testing only one surface and assuming the others work; testing the deleted CLI/API surfaces |
+
+> **Note (v0.31.0):** The old P3 "API surface equivalence" (`CLI ≡ API ≡ MCP`) is dead. The standalone CLI and HTTP API are deleted. The new equivalence is `MCP ≡ in-process surfaces` (agent panel, kask panel D10, kask admin CLI).
 
 ### 5.4 Composition (REQ-COM-*)
 
@@ -202,11 +207,11 @@ Implementation-coupled tests are not forbidden — they exist because some code 
 ### 5.8 Lifecycle (REQ-LIF-*)
 
 | Strategy | Details |
-|----------|---------|
-| **Primary seam** | `main()` entry point, migration functions, bootstrap sequence |
-| **Test type** | Integration: bootstrap sequence, schema migration |
+|----------|--------|
+| **Primary seam** | zed-kask composition root (`crates/zed/src/main.rs`), migration functions, bootstrap sequence |
+| **Test type** | Integration: bootstrap sequence, schema migration, D1–D10 wiring |
 | **Key invariant** | Forward-only evolution — no rollback paths |
-| **Anti-pattern** | Testing CLI argument parsing in isolation when the real risk is bootstrap ordering |
+| **Anti-pattern** | Testing CLI argument parsing in isolation when the real risk is composition-root wiring ordering |
 
 ### 5.9 Curation (REQ-CUR-*)
 

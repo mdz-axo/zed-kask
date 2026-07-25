@@ -56,7 +56,6 @@ Signals are compared against set-points during `compare()` — the default imple
 | `VarietyDeficit` | `AboveSetPoint` | `Escalate` to Curation |
 | `ErrorRate` | `AboveSetPoint` | `CircuitBreak` on Inference |
 | `ConnectorLatency` | `AboveSetPoint` | `Throttle` |
-| `CommunicationQueueDepth` | `AboveSetPoint` | `Throttle` (backpressure) |
 | `WalletBalanceRatio` | `BelowSetPoint` | `Escalate` to Curation (critical if zero) |
 | `WalletKeyHealth` | `AboveSetPoint` | `Escalate` (informational) |
 | `SeamCoverage` | `BelowSetPoint` | `Escalate` (critical if >5pp drop) |
@@ -71,7 +70,9 @@ The **act** phase dispatches these actions to their target loops, and **verify_i
 
 `SetPoints` (`crates/hkask-regulation/src/set_points.rs:139`) is the homeostatic reference model. It defines 25 configurable thresholds across four categories:
 
-**Resource set-points:** `gas_min_remaining` (default 0.2), `variety_max_deficit` (100), `error_rate_max` (0.3), `connector_latency_max_secs` (30.0), `communication_backpressure_threshold`.
+**Resource set-points:** `gas_min_remaining` (default 0.2), `variety_max_deficit` (100), `error_rate_max` (0.3), `connector_latency_max_secs` (30.0).
+
+> **Removed:** The `communication_backpressure_threshold` set-point and the `CommunicationQueueDepth` signal metric belonged to the deleted `hkask-communication` Matrix transport. zed-kask has no communication queue; these are no longer present in `SetPoints`.
 
 **Outcome set-points:** `outcome_warning_threshold` (0.50), `outcome_critical_threshold` (0.25) — when the success rate of regulatory actions drops below these thresholds, the Regulation escalates.
 
@@ -93,7 +94,7 @@ The `ActionType` enum (`crates/hkask-types/src/loops/actions.rs:195`, re-exporte
 
 | ActionType | When it fires | Target |
 |-----------|---------------|--------|
-| `Throttle` | Energy low, connector latency high, queue depth exceeds backpressure | `Inference` or `Cybernetics` |
+| `Throttle` | Energy low, connector latency high | `Inference` or `Cybernetics` |
 | `Escalate` | Variety deficit exceeded, wallet balance low, key unhealthy, seam degraded, tool reliability low | `Curation` |
 | `Calibrate` | Thresholds need adjustment based on observed error rates | `Cybernetics` (self-calibration) |
 | `CircuitBreak` | Error rate exceeds `error_rate_max` | `Inference` |
@@ -606,6 +607,8 @@ If no branch condition matches, `default_next` is used. If neither is set, the s
 
 The classification service (`hkask-services-runtime`) is the decision engine for all QA operations. Classifier configs are stored in `$HKASK_USERPOD_REGISTRY_PATH/classify/` as YAML files. Each config's `model:` field is intentionally empty — all classifiers defer to the canonical model resolved from `HKASK_CLASSIFIER_MODEL` (default `DI/Qwen/Qwen3-235B-A22B-Instruct-2507`, DeepInfra) with temperature 0.0.
 
+> **Routing note:** In zed-kask, the classifier's inference calls route through the in-process guard layer (D4) — `LanguageModelInferencePort` (in `kask_bridge`, over zed's `LanguageModelRegistry`) wrapped by `GuardedInferencePort` — **not** through the deleted `InferenceRouter` in `hkask-inference`. `hkask-inference` is kept only for MCP-server-internal use.
+
 The `ClassifyResponse` struct expected from the LLM:
 
 ```json
@@ -660,7 +663,7 @@ flowchart TD
     LOAD["load_manifest() + validate()"]
     RUN["run_script()\nwalk steps by ordinal"]
     CMD["run_command\nshell out (5-min timeout)"]
-    CLS["classify\nGemma 4 26B via DeepInfra"]
+    CLS["classify\nQwen3-235B via DeepInfra\n(routed through GuardedInferencePort, D4)"]
     LOOP["loop\nretry with max_iterations"]
     BRANCH["branch to ordinal\nor advance linearly"]
     REPORT["QaScriptReport"]
@@ -677,8 +680,8 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-005
-verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_date: 2026-07-24
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs, crates/hkask-guard/src/guarded_inference.rs, crates/kask_bridge/src/inference_port.rs
 status: VERIFIED
 -->
 
@@ -751,8 +754,8 @@ classDiagram
     class SetPoints {
         +variety_max_deficit: u32
         +error_rate_max: f64
-        +energy_min_remaining_ratio: f64
-        +communication_backpressure: u64
+        +gas_min_remaining: f64
+        +connector_latency_max_secs: f64
     }
 
     class GasBudgetManager {
@@ -913,7 +916,7 @@ After extraction, Regulation core retains: `CyberneticsLoop`, `RegulationLedger`
 **Verified against:** `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/runtime.rs`  
 last-verified-against: "3d1a876f45e3ce64864c3453f1e71d75b2f14376"
 
-> **v0.32.0 update:** Added `SetPointCalibrator` (self-tuning regulation thresholds via RegulationArchive replay) and contract violation path to CurationLoop.
+> **v0.31.0 update:** Added `SetPointCalibrator` (self-tuning regulation thresholds via RegulationArchive replay) and contract violation path to CurationLoop.
 
 ```mermaid
 flowchart TD
@@ -946,9 +949,9 @@ flowchart TD
 
     subgraph "Set Points"
         SP1[guard_violation_rate_max]
-        SP2[energy_budget]
-        SP3[convergence_threshold]
-        SP4[variety_ceiling]
+        SP2[gas_min_remaining]
+        SP3[stagnation_thresholds]
+        SP4[variety_max_deficit]
     end
 
     subgraph "Sensors"
@@ -986,8 +989,8 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-007
-verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_date: 2026-07-24
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-regulation/src/set_points.rs, crates/hkask-pods/src/curator_agent/mod.rs
 status: VERIFIED
 -->
 
@@ -1086,9 +1089,6 @@ flowchart TD
 
             CL{ConnectorLatency<br/>above set-point?}
             CL_ACT[Throttle → Cybernetics loop]
-
-            CQD{CommunicationQueueDepth<br/>above set-point?}
-            CQD_ACT[Throttle → Cybernetics loop]
 
             WBR{WalletBalanceRatio<br/>below set-point?}
             WBR_SEV{Balance = 0?}
@@ -1198,13 +1198,8 @@ flowchart TD
 
     %% ConnectorLatency
     CL -->|"Yes"| CL_ACT
-    CL -->|"No"| CQD
+    CL -->|"No"| WBR
     CL_ACT --> SL
-
-    %% CommunicationQueueDepth
-    CQD -->|"Yes"| CQD_ACT
-    CQD -->|"No"| WBR
-    CQD_ACT --> SL
 
     %% WalletBalanceRatio
     WBR -->|"Yes"| WBR_SEV
@@ -1286,7 +1281,7 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-008
-verified_date: 2026-07-12
+verified_date: 2026-07-24
 verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
 status: VERIFIED
 -->
@@ -1303,7 +1298,7 @@ status: VERIFIED
 | VarietyDeficit / Escalate | `cybernetics_loop.rs:905-919` |
 | ErrorRate / CircuitBreak | `cybernetics_loop.rs:920-932` |
 | ConnectorLatency / Throttle | `cybernetics_loop.rs:933-947` |
-| CommunicationQueueDepth / Throttle | `cybernetics_loop.rs:948-963` |
+| ~~CommunicationQueueDepth / Throttle~~ | ~~`cybernetics_loop.rs:948-963`~~ (removed — Matrix transport deleted) |
 | WalletBalanceRatio / Escalate | `cybernetics_loop.rs:964-985` |
 | WalletKeyHealth / Escalate | `cybernetics_loop.rs:986-999` |
 | SeamCoverage (both directions) | `cybernetics_loop.rs:1000-1059` |
@@ -1328,7 +1323,7 @@ status: VERIFIED
 | VarietyDeficit | Escalate → Calibrate → OverrideEnergyBudget |
 | ErrorRate | CircuitBreak → Calibrate → Escalate |
 | ConnectorLatency | Throttle → Calibrate → Escalate |
-| CommunicationQueueDepth | Throttle → Escalate |
+| CommunicationQueueDepth | ~~Throttle → Escalate~~ (removed — Matrix transport deleted) |
 | All others | Empty — escalate on plateau |
 
 **ActionDecision thresholds (classify_decision, line 1748):**

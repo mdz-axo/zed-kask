@@ -107,6 +107,11 @@ HKASK_FUSION_JUDGE_MODEL=DI/deepseek-v4-pro
 HKASK_FUSION_PANEL_MODELS=OR/auto,KC/anthropic/claude-sonnet-4.5,DI/qwen/qwen3
 ```
 
+> **In-process routing note:** These prefixes route through the in-process
+> `LanguageModelInferencePort`/`GuardedInferencePort` (D4) over zed's
+> `LanguageModelRegistry`, not the deleted standalone `InferenceRouter`. The
+> prefix only selects which registered provider backend zed dispatches to.
+
 If a panel model fails to resolve or generate, the orchestrator logs a warning at `reg.inference` and drops it from the round. If **all** panel models fail, the orchestrator returns `InferenceError::Generation("All panel models failed")`.
 
 ---

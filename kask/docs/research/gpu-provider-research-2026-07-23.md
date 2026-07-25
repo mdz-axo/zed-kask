@@ -1,3 +1,13 @@
+---
+title: "GPU Provider Research — 2026-07-23"
+audience: [ml-engineers, developers]
+last_updated: 2026-07-23
+version: "0.31.0"
+status: "Active"
+domain: "Training"
+mds_categories: [domain]
+---
+
 # GPU Provider Research for H100+ Training — 2026-07-23
 
 > **Requirement**: H100 or better GPU, SSH access, API for programmatic

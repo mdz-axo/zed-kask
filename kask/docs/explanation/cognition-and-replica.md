@@ -61,22 +61,23 @@ Five design questions were evaluated:
 flowchart TD
     MANIFEST["manifest.yaml\nfusion: { mode, panel, judge, ... }"]
     EXEC["ManifestExecutor\nsets params.fusion_config"]
-    ROUTER["InferenceRouter\nchecks fusion_config\nbefore global"]
+    GUARD["GuardedInferencePort\n(D4) wraps LanguageModelInferencePort\n(D8) — scan_input / scan_output\nat every LLM boundary"]
+    ROUTER["LanguageModelInferencePort\nresolves fusion_config before\nglobal LanguageModelRegistry"]
     ORCH["FusionOrchestrator"]
     PANEL["Panel Models\n(N parallel)"]
     JUDGE["Judge Model\nsynthesis"]
     OUTPUT["Fused output"]
 
-    MANIFEST --> EXEC --> ROUTER --> ORCH
+    MANIFEST --> EXEC --> GUARD --> ROUTER --> ORCH
     ORCH -->|"dispatch N models"| PANEL
     PANEL -->|"N perspectives"| JUDGE
     JUDGE -->|"synthesis"| OUTPUT
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-001
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
-status: VERIFIED
+verified_date: 2026-07-24
+verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs, kask/crates/kask_bridge/src/inference_port.rs (LanguageModelInferencePort over zed LanguageModel, D8), kask/crates/hkask-guard/src/guarded_inference.rs (GuardedInferencePort wraps InferencePort, D4)
+status: VERIFIED (v2 — InferenceRouter node replaced by GuardedInferencePort over LanguageModelInferencePort; reflects in-process guard-layer routing, not the old standalone InferenceRouter)
 -->
 
 ### Implications

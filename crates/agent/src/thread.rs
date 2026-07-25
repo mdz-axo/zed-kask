@@ -3419,12 +3419,18 @@ impl Thread {
     pub(crate) fn enqueue_deferred_tool_result(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        owning_message_ix: usize,
+        tool_name: Arc<str>,
         receiver: oneshot::Receiver<Result<LanguageModelToolResult>>,
     ) {
-        log::debug!("Enqueued deferred tool result for {tool_use_id}");
+        log::debug!(
+            "Enqueued deferred tool result for {tool_use_id} at message {owning_message_ix}"
+        );
         self.deferred_tool_results.push(DeferredToolResult {
             receiver: Some(Box::pin(receiver)),
             tool_use_id,
+            owning_message_ix,
+            tool_name,
         });
     }
 
@@ -3457,6 +3463,8 @@ impl Thread {
                     };
                     completed.push(CompletedDeferredResult {
                         tool_use_id: deferred.tool_use_id,
+                        owning_message_ix: deferred.owning_message_ix,
+                        tool_name: deferred.tool_name,
                         result,
                     });
                 }
@@ -3469,9 +3477,13 @@ impl Thread {
         completed
     }
 
-    /// Inject completed deferred tool results as a synthetic user message
-    /// containing the tool results. Returns true if any results were injected
-    /// (which means the model should be called again to see them).
+    /// Inject completed deferred tool results into the original agent
+    /// message that contains the corresponding `ToolUse` block. This keeps
+    /// the `tool_use` and `tool_result` in the same `AgentMessage`, which
+    /// `to_request` serializes as an assistant message (with `tool_use`)
+    /// followed by a user message (with `tool_result`) — the API-compliant
+    /// shape. Returns true if any results were injected (which means the
+    /// model should be called again to see them).
     fn inject_completed_deferred_results(
         &mut self,
         event_stream: &ThreadEventStream,
@@ -3482,61 +3494,83 @@ impl Thread {
             return false;
         }
 
-        let mut tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult> =
-            IndexMap::default();
+        let mut injected_any = false;
         for result in completed {
-            match result.result {
-                Ok(tool_result) => {
-                    log::debug!("Deferred tool result completed for {}", result.tool_use_id);
-                    // Emit a tool-call update so the UI reflects completion.
-                    event_stream.update_tool_call_fields(
-                        &scoped_tool_call_id(self.messages.len(), &result.tool_use_id),
-                        acp::ToolCallUpdateFields::new()
-                            .status(if tool_result.is_error {
-                                acp::ToolCallStatus::Failed
-                            } else {
-                                acp::ToolCallStatus::Completed
-                            })
-                            .raw_output(tool_result.output.clone()),
-                        None,
-                    );
-                    tool_results.insert(result.tool_use_id, tool_result);
-                }
+            let tool_result = match result.result {
+                Ok(tool_result) => tool_result,
                 Err(error) => {
                     log::warn!(
                         "Deferred tool result failed for {}: {error}",
                         result.tool_use_id
                     );
-                    let error_result = LanguageModelToolResult {
+                    LanguageModelToolResult {
                         tool_use_id: result.tool_use_id.clone(),
-                        tool_name: Arc::from("spawn_agent"),
+                        tool_name: result.tool_name.clone(),
                         is_error: true,
                         content: vec![LanguageModelToolResultContent::Text(Arc::from(
                             error.to_string(),
                         ))],
                         output: None,
-                    };
-                    tool_results.insert(result.tool_use_id, error_result);
+                    }
                 }
+            };
+
+            log::debug!(
+                "Injecting deferred tool result for {} into message {}",
+                result.tool_use_id,
+                result.owning_message_ix
+            );
+
+            // Emit a tool-call update so the UI reflects completion, using
+            // the *original* owning message index for the scoped ID.
+            event_stream.update_tool_call_fields(
+                &scoped_tool_call_id(result.owning_message_ix, &result.tool_use_id),
+                acp::ToolCallUpdateFields::new()
+                    .status(if tool_result.is_error {
+                        acp::ToolCallStatus::Failed
+                    } else {
+                        acp::ToolCallStatus::Completed
+                    })
+                    .raw_output(tool_result.output.clone()),
+                None,
+            );
+
+            // Inject the result into the original agent message's
+            // `tool_results` map, replacing the placeholder. This ensures
+            // `to_request` emits `tool_use` + `tool_result` in the correct
+            // API-compliant order.
+            let message_ix = result.owning_message_ix;
+            if message_ix < self.messages.len() {
+                let message = &mut self.messages[message_ix];
+                if let Some(message) = Arc::get_mut(message) {
+                    if let Message::Agent(agent_message) = message {
+                        agent_message
+                            .tool_results
+                            .insert(result.tool_use_id, tool_result);
+                        injected_any = true;
+                    } else {
+                        log::warn!(
+                            "Deferred result target message {message_ix} is not an AgentMessage"
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "Deferred result target message {message_ix} Arc is shared — cannot mutate"
+                    );
+                }
+            } else {
+                log::warn!(
+                    "Deferred result target message {message_ix} is out of range (messages: {})",
+                    self.messages.len()
+                );
             }
         }
 
-        if tool_results.is_empty() {
-            return false;
+        if injected_any {
+            self.updated_at = Utc::now();
+            cx.notify();
         }
-
-        // Inject as a synthetic agent message (empty content, just tool results)
-        // followed by the tool results as a user message. This mirrors how
-        // `AgentMessage::to_request` produces an assistant message with
-        // tool_use blocks followed by a user message with tool_result blocks.
-        // Here we only need the user message since the tool_use was already
-        // delivered in the original agent message.
-        let mut agent_message = AgentMessage::default();
-        agent_message.tool_results = tool_results;
-        self.messages.push(Arc::new(Message::Agent(agent_message)));
-        self.updated_at = Utc::now();
-        cx.notify();
-        true
+        injected_any
     }
 
     fn process_tool_result(
@@ -4597,7 +4631,7 @@ impl Thread {
                 candidates,
             };
             let selected = router.select_tools(&context);
-            if !selected.is_empty() {
+            if let Some(selected) = selected {
                 tools.retain(|name, _| selected.contains(name));
             }
         }
@@ -5207,12 +5241,29 @@ fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) 
             continue;
         }
 
-        // Check if any active path matches any glob.
+        // Compute paths relative to this worktree's root, so that
+        // user-authored relative globs (e.g. `src/**/*.rs`) match.
+        // Absolute globs (e.g. `**/*.rs`) also match relative paths.
+        let worktree_abs = worktree.abs_path.as_ref();
+        let relative_paths: Vec<String> = active_paths
+            .iter()
+            .filter_map(|abs| {
+                std::path::Path::new(abs)
+                    .strip_prefix(worktree_abs)
+                    .ok()
+                    .map(|rel| rel.to_string_lossy().into_owned())
+            })
+            .collect();
+
+        // Check if any path (absolute or relative) matches any glob.
         let matched = frontmatter.globs.iter().any(|pattern| {
             if let Ok(matcher) = globset::Glob::new(pattern) {
                 let matcher = matcher.compile_matcher();
+                // Match against both absolute and relative paths.
                 active_paths.iter().any(|path| matcher.is_match(path))
+                    || relative_paths.iter().any(|rel| matcher.is_match(rel))
             } else {
+                log::warn!("Invalid glob pattern in rules frontmatter: {pattern}");
                 false
             }
         });
@@ -5439,12 +5490,22 @@ pub(crate) struct DeferredToolResult {
     /// The tool use ID this result corresponds to. Used for logging and
     /// telemetry; the `LanguageModelToolResult` itself also carries the ID.
     pub tool_use_id: LanguageModelToolUseId,
+    /// The index in `Thread.messages` of the agent message that contains the
+    /// original `ToolUse` block. The deferred result is injected into this
+    /// message's `tool_results` map so that `to_request` emits the
+    /// `tool_use` and `tool_result` in the correct API-compliant order.
+    pub owning_message_ix: usize,
+    /// The tool name (e.g. `"spawn_agent"`). Used when synthesizing an error
+    /// result if the deferred task fails.
+    pub tool_name: Arc<str>,
 }
 
 /// A deferred tool result that has completed and is ready to be injected into
 /// the conversation as a synthetic user message.
 struct CompletedDeferredResult {
     tool_use_id: LanguageModelToolUseId,
+    owning_message_ix: usize,
+    tool_name: Arc<str>,
     result: Result<LanguageModelToolResult, anyhow::Error>,
 }
 
@@ -6187,15 +6248,22 @@ pub struct ToolCallEventStream {
 impl ToolCallEventStream {
     /// Enqueue a deferred tool result on the parent thread. The receiver
     /// will be polled on each outer-loop iteration; when it completes, the
-    /// result is injected as a synthetic user message. Used by non-blocking
-    /// tools (e.g. `spawn_agent`) that return an immediate placeholder and
-    /// deliver the real result later.
+    /// result is injected into the original agent message's `tool_results`
+    /// map, replacing the placeholder. Used by non-blocking tools (e.g.
+    /// `spawn_agent`) that return an immediate placeholder and deliver the
+    /// real result later.
+    ///
+    /// `owning_message_ix` is the index of the agent message containing the
+    /// original `ToolUse` block. `tool_name` is used for error synthesis if
+    /// the deferred task fails.
     ///
     /// Returns `true` if the deferred result was successfully enqueued,
     /// `false` if the parent thread is no longer alive.
     #[allow(dead_code)]
     pub(crate) fn enqueue_deferred_result(
         &self,
+        owning_message_ix: usize,
+        tool_name: Arc<str>,
         receiver: oneshot::Receiver<Result<LanguageModelToolResult>>,
         cx: &mut App,
     ) -> bool {
@@ -6206,7 +6274,12 @@ impl ToolCallEventStream {
             return false;
         };
         thread.update(cx, |thread, _cx| {
-            thread.enqueue_deferred_tool_result(self.tool_use_id.clone(), receiver);
+            thread.enqueue_deferred_tool_result(
+                self.tool_use_id.clone(),
+                owning_message_ix,
+                tool_name,
+                receiver,
+            );
         });
         true
     }
@@ -9575,49 +9648,99 @@ mod tests {
     async fn test_deferred_tool_result_appears_in_next_request(cx: &mut TestAppContext) {
         let (thread, event_stream) = setup_thread_for_test(cx).await;
 
-        // Enqueue a deferred tool result with an already-completed receiver.
+        // Create an agent message with a ToolUse block and a placeholder
+        // tool_result, simulating what happens when spawn_agent returns a
+        // placeholder immediately.
         let tool_use_id = LanguageModelToolUseId::from("test-deferred-id");
-        let (tx, rx) = oneshot::channel();
-        let tool_result = LanguageModelToolResult {
+        let tool_name: Arc<str> = Arc::from("test_tool");
+        let placeholder_result = LanguageModelToolResult {
             tool_use_id: tool_use_id.clone(),
-            tool_name: Arc::from("test_tool"),
+            tool_name: tool_name.clone(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                "placeholder",
+            ))],
+            output: None,
+        };
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.clone(),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(serde_json::Value::Object(
+                serde_json::Map::new(),
+            )),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let mut agent_message = AgentMessage::default();
+        agent_message
+            .content
+            .push(AgentMessageContent::ToolUse(tool_use));
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(tool_use_id.clone(), placeholder_result);
+        agent_message.tool_results = tool_results;
+
+        let owning_message_ix = thread.update(cx, |thread, cx| {
+            thread
+                .messages
+                .push(Arc::new(Message::Agent(agent_message)));
+            cx.notify();
+            thread.messages.len() - 1
+        });
+
+        // Enqueue a deferred result with an already-completed receiver.
+        let (tx, rx) = oneshot::channel();
+        let real_result = LanguageModelToolResult {
+            tool_use_id: tool_use_id.clone(),
+            tool_name: tool_name.clone(),
             is_error: false,
             content: vec![LanguageModelToolResultContent::Text(Arc::from(
                 "deferred result content",
             ))],
             output: None,
         };
-        tx.send(Ok(tool_result)).ok();
+        tx.send(Ok(real_result)).ok();
 
         let message_count_before = thread.read_with(cx, |thread, _| thread.messages.len());
 
         // Enqueue and inject in one update.
         let injected = thread.update(cx, |thread, cx| {
-            thread.enqueue_deferred_tool_result(tool_use_id.clone(), rx);
+            thread.enqueue_deferred_tool_result(
+                tool_use_id.clone(),
+                owning_message_ix,
+                tool_name.clone(),
+                rx,
+            );
             thread.inject_completed_deferred_results(&event_stream, cx)
         });
 
         assert!(injected, "deferred result should have been injected");
 
+        // No new message should have been added — the result is injected
+        // into the existing agent message.
         let message_count_after = thread.read_with(cx, |thread, _| thread.messages.len());
         assert_eq!(
-            message_count_after,
-            message_count_before + 1,
-            "one synthetic agent message should have been added"
+            message_count_after, message_count_before,
+            "no new message should be added — result injected into existing message"
         );
 
-        // Verify the injected message contains the tool result.
-        let last_message = thread.read_with(cx, |thread, _| thread.messages.last().cloned());
-        let last_message = last_message.expect("should have a message");
-        let agent_message = last_message
-            .as_agent_message()
-            .expect("last message should be an agent message");
+        // Verify the original message's tool_result was replaced.
+        let result_text = thread.read_with(cx, |thread, _| {
+            let message = &thread.messages[owning_message_ix];
+            let agent_message = message.as_agent_message().expect("should be agent message");
+            let result = agent_message
+                .tool_results
+                .get(&tool_use_id)
+                .expect("should have result");
+            match &result.content[0] {
+                LanguageModelToolResultContent::Text(text) => text.to_string(),
+                _ => "not text".to_string(),
+            }
+        });
         assert_eq!(
-            agent_message.tool_results.len(),
-            1,
-            "should contain one tool result"
+            result_text, "deferred result content",
+            "placeholder should have been replaced with the real result"
         );
-        assert!(agent_message.tool_results.contains_key(&tool_use_id));
     }
 
     #[gpui::test]
@@ -9630,7 +9753,7 @@ mod tests {
         let (_tx, rx) = oneshot::channel();
 
         thread.update(cx, |thread, cx| {
-            thread.enqueue_deferred_tool_result(tool_use_id.clone(), rx);
+            thread.enqueue_deferred_tool_result(tool_use_id.clone(), 0, Arc::from("test_tool"), rx);
             let injected = thread.inject_completed_deferred_results(&event_stream, cx);
             assert!(!injected, "pending result should not be injected");
         });
@@ -9648,7 +9771,7 @@ mod tests {
         let (_tx, rx) = oneshot::channel();
 
         thread.update(cx, |thread, cx| {
-            thread.enqueue_deferred_tool_result(tool_use_id, rx);
+            thread.enqueue_deferred_tool_result(tool_use_id, 0, Arc::from("test_tool"), rx);
             assert_eq!(thread.deferred_tool_results.len(), 1);
             thread.cancel(cx).detach();
             assert_eq!(
