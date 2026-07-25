@@ -12,6 +12,7 @@ mod context_injector;
 mod fusion_model;
 mod identity;
 mod inference;
+mod inference_ipc_server;
 mod memory;
 mod settings;
 mod skill_executor;
@@ -27,6 +28,7 @@ pub use identity::{
     ProvisionedUserpod, provision_userpod, userpod_name_from_username, webid_from_username,
 };
 pub use inference::LanguageModelInferencePort;
+pub use inference_ipc_server::InferenceIpcServer;
 pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
 pub use settings::KaskSettings;
 pub use skill_executor::BridgeManifestExecutor;

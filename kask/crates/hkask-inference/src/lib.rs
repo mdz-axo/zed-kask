@@ -52,6 +52,7 @@ pub mod embedding_router;
 pub mod fal_backend;
 pub mod fal_workflow;
 pub mod fusion_orchestrator;
+pub mod inference_ipc_client;
 pub mod inference_router;
 pub mod kilocode_backend;
 pub mod model_constants;
@@ -67,6 +68,7 @@ pub use config::{
     AlgoMethod, FusionConfig, FusionMode, FusionSkill, InferenceConfig, ProviderConfig, ProviderId,
 };
 pub use embedding_router::EmbeddingRouter;
+pub use inference_ipc_client::InferenceIpcClient;
 pub use inference_router::InferenceRouter;
 pub use ollama_registry::{
     LocalAdapter, ModelFrom, ModelfileSpec, OllamaRegistry, RegisteredModel, RegistryError,

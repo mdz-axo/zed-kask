@@ -153,6 +153,7 @@ impl TemplateCrateLoader {
     pub(crate) fn resolve_sha(&self, _crate_name: &str) -> Result<String, InfrastructureError> {
         use std::process::Command;
 
+        #[allow(clippy::disallowed_methods)]
         let output = Command::new("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(&self.base_path)

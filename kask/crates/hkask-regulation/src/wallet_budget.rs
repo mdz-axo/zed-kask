@@ -210,7 +210,6 @@ impl WalletBackedBudget {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use hkask_types::GAS_PER_RJOULE;
 
     #[test]

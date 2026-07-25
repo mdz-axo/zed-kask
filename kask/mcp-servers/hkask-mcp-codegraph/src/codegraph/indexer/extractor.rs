@@ -75,11 +75,8 @@ impl<'a> Extractor<'a> {
             "&&" | "||" => {
                 self.cyclomatic += 1;
             }
-            "return_expression" | "break_expression" | "continue_expression" => {
-                // Only count early exits (not at depth 0 of function body)
-                if depth > 1 {
-                    self.cognitive += 1;
-                }
+            "return_expression" | "break_expression" | "continue_expression" if depth > 1 => {
+                self.cognitive += 1;
             }
             _ => {}
         }

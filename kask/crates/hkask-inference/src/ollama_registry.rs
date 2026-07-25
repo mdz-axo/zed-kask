@@ -228,6 +228,7 @@ impl OllamaRegistry {
         std::fs::write(&modelfile_path, build_modelfile(spec))
             .map_err(|e| RegistryError::Io(e.to_string()))?;
 
+        #[allow(clippy::disallowed_methods)]
         let output = Command::new(&self.ollama_bin)
             .arg("create")
             .arg(&spec.name)
@@ -302,6 +303,7 @@ impl OllamaRegistry {
         if name.is_empty() {
             return Err(RegistryError::InvalidSpec("name must be non-empty".into()));
         }
+        #[allow(clippy::disallowed_methods)]
         let output = Command::new(&self.ollama_bin)
             .arg("rm")
             .arg(name)

@@ -391,7 +391,6 @@ fn render_data_service_row(
             .button_tab_index(0)
             .on_click({
                 let provider = provider.clone();
-                let credential_url = credential_url.clone();
                 move |_, _, cx| {
                     delete_credential(&provider, &credential_url, cx).detach();
                 }
@@ -401,7 +400,6 @@ fn render_data_service_row(
         let input_id = format!("kask-{key}-api-key-input");
         let aria_label = format!("{label} API Key");
         let provider = provider.clone();
-        let credential_url = credential_url.clone();
         v_flex()
             .gap_2()
             .child(

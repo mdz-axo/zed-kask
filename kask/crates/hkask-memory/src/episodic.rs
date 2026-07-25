@@ -187,7 +187,7 @@ impl EpisodicMemory {
             .collect();
 
         // Sort by recency (most recent first) — temporal attention (2a.2)
-        filtered.sort_by(|a, b| b.observed_at.cmp(&a.observed_at));
+        filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
 
         let deduped = recall_dedup::dedup_h_mems(filtered);
 

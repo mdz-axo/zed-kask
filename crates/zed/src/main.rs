@@ -197,6 +197,14 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
+/// The Unix socket path for the inference IPC bridge.
+///
+/// Set by the model-dependent kask wiring block after the `GuardedInferencePort`
+/// is constructed. Read by the deferred MCP server launch task to pass the
+/// socket path to MCP server child processes via the `HKASK_INFERENCE_SOCKET`
+/// env var.
+static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
+
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
 
@@ -894,7 +902,15 @@ fn main() {
 
                 // Launch MCP servers with the resolved userpod identity.
                 if !servers_to_start_clone.is_empty() {
-                    let mcp_env = kask_settings.mcp_env(&userpod_name);
+                    let mut mcp_env = kask_settings.mcp_env(&userpod_name);
+                    // Pass the inference IPC socket path so MCP servers can
+                    // route inference through zed's LanguageModelRegistry.
+                    if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
+                        mcp_env.insert(
+                            hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+                            socket_path.clone(),
+                        );
+                    }
                     for server_id in &servers_to_start_clone {
                         let binary = format!("hkask-mcp-{server_id}");
                         mcp_runtime_for_deferred
@@ -1128,6 +1144,34 @@ fn main() {
 
                 let panel_inference_port = guarded_inference.clone();
                 let panel_tool_port = tool_port.clone();
+
+                // Start the inference IPC server so MCP server child processes
+                // can route inference through zed's LanguageModelRegistry (with
+                // fusion, guard, and zed's configured API keys) instead of
+                // constructing their own InferenceRouter with separate keys.
+                match kask_bridge::InferenceIpcServer::start(
+                    guarded_inference.clone(),
+                    cx,
+                ) {
+                    Ok(ipc_server) => {
+                        let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
+                        let _ = INFERENCE_SOCKET_PATH.set(socket_path.clone());
+                        log::info!(
+                            "hKask inference IPC server started at {socket_path} — \
+                             MCP servers will route inference through zed"
+                        );
+                        // Keep the server alive for the lifetime of the process.
+                        // It's stored in a detached task — the socket is cleaned
+                        // up on drop, but we don't drop it until process exit.
+                        std::mem::forget(ipc_server);
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to start inference IPC server: {e} — \
+                             MCP servers will fall back to InferenceRouter with env-var keys"
+                        );
+                    }
+                }
 
                 let executor = std::sync::Arc::new(
                     kask_bridge::BridgeManifestExecutor::new(
