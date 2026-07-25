@@ -119,14 +119,8 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
         FusionSkill::RefactorServiceLayer => {
             "Refactor Service Layer: Strangler fig pattern — migrate one domain at a time, \
              both surfaces functional at every step. Deep-module discipline for extracted \
-             services. Vertical tracer-bullet TDD. Delete only after full verification."
-        }
-        FusionSkill::Review | FusionSkill::SelfCritiqueRevision => {
-            "Self-Critique Revision: Generate draft, critique against quality criteria, revise
-             based on critique. Iterative cycle — do not accept the first draft. Each revision
-             must address specific critique findings. For reasoning audits, use quality_criteria:
-             [contradictions, unsupported_claims, logical_gaps, calibration]. (The former `review`
-             skill has been merged into self-critique-revision.)"
+             services. Vertical tracer-bullet TDD. Delete only after full verification.\
+             Includes the migration-strategy phase (formerly the standalone strangler-fig skill)."
         }
     }
 }

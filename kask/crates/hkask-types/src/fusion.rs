@@ -109,8 +109,6 @@ pub enum FusionSkill {
     PragmaticSemantics,
     #[serde(rename = "pragmatic-cybernetics")]
     PragmaticCybernetics,
-    #[serde(rename = "pragmatic-laziness")]
-    PragmaticLaziness,
     #[serde(rename = "coding-guidelines")]
     CodingGuidelines,
     #[serde(rename = "deep-module")]
@@ -139,16 +137,11 @@ pub enum FusionSkill {
     Metacognition,
     #[serde(rename = "refactor-service-layer")]
     RefactorServiceLayer,
-    #[serde(rename = "review")]
-    Review,
-    #[serde(rename = "self-critique-revision")]
-    SelfCritiqueRevision,
 }
 
 crate::enum_snake_str!(FusionSkill, {
     PragmaticSemantics => "pragmatic-semantics",
     PragmaticCybernetics => "pragmatic-cybernetics",
-    PragmaticLaziness => "pragmatic-laziness",
     CodingGuidelines => "coding-guidelines",
     DeepModule => "deep-module",
     Essentialist => "essentialist",
@@ -163,8 +156,6 @@ crate::enum_snake_str!(FusionSkill, {
     ImproveCodebaseArchitecture => "improve-codebase-architecture",
     Metacognition => "metacognition",
     RefactorServiceLayer => "refactor-service-layer",
-    Review => "review",
-    SelfCritiqueRevision => "self-critique-revision",
 });
 
 /// Configuration for fusion multi-model deliberation.

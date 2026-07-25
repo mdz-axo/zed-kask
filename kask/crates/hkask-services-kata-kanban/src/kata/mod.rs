@@ -337,7 +337,7 @@ impl KataEngine {
         let kata_manifest_name = match selected {
             "improvement" => "kata-improvement.yaml",
             "coaching" => "kata-coaching.yaml",
-            _ => "kata-starter.yaml",
+            _ => "kata-improvement.yaml", // kata-starter folded into kata-improvement as beginner_mode
         };
 
         // P9: Regulation span
@@ -660,7 +660,6 @@ mod tests {
         let template_dirs = [
             "registry/templates/kata-improvement",
             "registry/templates/kata-coaching",
-            "registry/templates/kata-starter",
         ];
 
         let mut checked = 0;

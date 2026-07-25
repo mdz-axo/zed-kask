@@ -234,14 +234,21 @@ clone_repo() {
         return 0
     fi
 
-    if [ -f "Cargo.toml" ] && grep -q "name = \"zed\"" Cargo.toml 2>/dev/null; then
+    # The root workspace Cargo.toml is a pure [workspace] manifest — the
+    # `zed` package lives in crates/zed/Cargo.toml, so `grep 'name = "zed"'`
+    # on the root fails. Identify the repo root by [workspace] + crates/zed/.
+    if [ -f "Cargo.toml" ] && grep -q '\[workspace\]' Cargo.toml 2>/dev/null && [ -d "crates/zed" ]; then
         HKASK_SOURCE_DIR="$(pwd)"
         log "Running from within hKask repo: $HKASK_SOURCE_DIR"
         return 0
     fi
 
-    if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/../../Cargo.toml" ]; then
-        HKASK_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    # Script lives at <root>/kask/scripts/build/install.sh, so the root
+    # workspace is three levels up (../../..), not two (../..). Going up only
+    # two lands in kask/ — a sub-workspace that inherits deps from the root
+    # and cannot build in isolation.
+    if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/../../../Cargo.toml" ]; then
+        HKASK_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
         log "Detected repo from script location: $HKASK_SOURCE_DIR"
         return 0
     fi
