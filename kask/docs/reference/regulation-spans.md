@@ -84,38 +84,23 @@ Core spans used across 2+ crates. This is the foundational enum implementing `Ob
 > server (Matrix/TTS) was deleted; comms/voip/CRDT are now owned by zed-kask upstream and do not
 > emit `reg.tool.communication.*` spans.
 
-### 3.2 AcpSpan — Agent Client Protocol
+### 3.2 AcpSpan — Agent Client Protocol (DELETED)
 
-**File:** `crates/hkask-regulation/src/acp_span.rs`
+> **DELETED (2026-07-25 cleanup):** The `acp_span` module was deleted in the 2026-07-25 cleanup. The `AcpSpan` variants (`reg.acp.userpod.memory_size`, `reg.acp.ide.connection_state`) are no longer emitted. See `zed-host-architecture-plan.md` for the current module inventory.
 
-| Variant | Namespace | Meaning | Emitted When |
-|---|---|---|---|
-| `AcpUserPodMemorySize` | `reg.acp.userpod.memory_size` | UserPod memory size reported via ACP | [INFERRED] On userpod state sync or ACP handshake |
-| `AcpIdeConnectionState` | `reg.acp.ide.connection_state` | IDE connection state change | [INFERRED] IDE client connects or disconnects |
+**File (deleted):** `crates/hkask-regulation/src/acp_span.rs`
 
-### 3.3 ClassifySpan — Classification Operations
+### 3.3 ClassifySpan — Classification Operations (DELETED)
 
-**File:** `crates/hkask-regulation/src/classify_span.rs`
+> **DELETED (2026-07-25 cleanup):** The `classify_span` module was deleted in the 2026-07-25 cleanup. The `ClassifySpan` variants (`reg.classify.dual_fidelity`, `reg.classify.drift`) are no longer emitted.
 
-| Variant | Namespace | Meaning | Emitted When |
-|---|---|---|---|
-| `ClassifyDualFidelity` | `reg.classify.dual_fidelity` | Dual-fidelity classification decision | [INFERRED] High-fidelity vs. low-fidelity classification mode selected |
-| `ClassifyDrift` | `reg.classify.drift` | Classification drift detected | [INFERRED] Model output distribution shifts beyond threshold |
+**File (deleted):** `crates/hkask-regulation/src/classify_span.rs`
 
-### 3.4 ContractSpan — Spec Contract Lifecycle
+### 3.4 ContractSpan — Spec Contract Lifecycle (DELETED)
 
-**File:** `crates/hkask-regulation/src/contract_span.rs`
+> **DELETED (2026-07-25 cleanup):** The `contract_span` and `contract_events` modules were deleted in the 2026-07-25 cleanup. The `ContractSpan` variants (`reg.contract.proposed`, `reg.contract.accepted`, `reg.contract.rejected`, `reg.contract.violated`) are no longer emitted.
 
-Emitted through `emit_contract_*()` functions in `crates/hkask-regulation/src/contract_events.rs`. All events use `CyclePhase::Act` and are persisted via `RegulationSink`.
-
-| Variant | Namespace | Meaning | Emitted When |
-|---|---|---|---|
-| `ContractProposed` | `reg.contract.proposed` | UserPod proposes a spec contract | Phase B2–B4: userpod submits contract for human review |
-| `ContractAccepted` | `reg.contract.accepted` | Human accepts the contract | Phase B3: reviewer approves the proposed contract |
-| `ContractRejected` | `reg.contract.rejected` | Human rejects the contract | Phase B3: reviewer rejects with a reason |
-| `ContractViolated` | `reg.contract.violated` | Contract violation during testing | Test harness detects contract non-conformance |
-
-**Algedonic threshold:** Contract violations feed into contract quality metrics. No direct threshold on individual violations — aggregated into contract coverage and quality scores.
+**File (deleted):** `crates/hkask-regulation/src/contract_span.rs` · `crates/hkask-regulation/src/contract_events.rs`
 
 ### 3.5 InfraSpan — Infrastructure Spans
 
@@ -140,7 +125,7 @@ Cross-subsystem spans used by curator, governance, and wallet components.
 
 **File:** `crates/hkask-regulation/src/qa_span.rs`
 
-Emitted by the QA test harness (`crates/hkask-test-harness/src/qa_script.rs`) and qa-script-builder.
+Emitted by the QA test harness (`qa_script::run_script()`) and qa-script-builder.
 
 | Variant | Namespace | Meaning | Emitted When |
 |---|---|---|---|
@@ -150,28 +135,17 @@ Emitted by the QA test harness (`crates/hkask-test-harness/src/qa_script.rs`) an
 
 **Algedonic threshold:** `QaRepairExhausted` is a strong signal of quality degradation. [INFERRED] Accumulated exhausted repairs escalate to Curator.
 
-### 3.7 SeamSpan — Architecture Seams
+### 3.7 SeamSpan — Architecture Seams (DELETED)
 
-**File:** `crates/hkask-regulation/src/seam_span.rs`
+> **DELETED (2026-07-25 cleanup):** The `seam_span` and `seam_watcher` modules were deleted in the 2026-07-25 cleanup. The `SeamSpan` variants (`reg.architecture.seam.coverage`, `reg.architecture.seam.drift`) are no longer emitted.
 
-Monitors architectural seam health — the boundaries where Strangler Fig migration patterns occur.
+**File (deleted):** `crates/hkask-regulation/src/seam_span.rs`
 
-| Variant | Namespace | Meaning | Emitted When |
-|---|---|---|---|
-| `ArchitectureSeamCoverage` | `reg.architecture.seam.coverage` | Seam coverage measurement | Seam watcher (`seam_watcher.rs`) evaluates coverage of a seam boundary |
-| `ArchitectureSeamDrift` | `reg.architecture.seam.drift` | Seam drift detected | Implementation diverges from the seam definition |
+### 3.8 SloSpan — SLO Evaluation (DELETED)
 
-**Algedonic threshold:** Seam drift triggers warnings. Coverage below a configurable `seam_coverage_min` set-point triggers critical alerts.
+> **DELETED (2026-07-25 cleanup):** The `slo_span` and `slo_manager` modules were deleted in the 2026-07-25 cleanup. The `SloSpan` variant (`reg.slo.evaluated`) is no longer emitted. SLO breach escalations (`reg.slo.breach_escalated`) are also no longer emitted.
 
-### 3.8 SloSpan — SLO Evaluation
-
-**File:** `crates/hkask-regulation/src/slo_span.rs`
-
-| Variant | Namespace | Meaning | Emitted When |
-|---|---|---|---|
-| `SloEvaluated` | `reg.slo.evaluated` | SLO metric evaluated | SloManager evaluates a service-level objective against its window |
-
-**Algedonic threshold:** SLO breach escalations are handled by `RegulationLedger` via `reg.slo.breach_escalated` (emitted as a tracing event, not a typed span variant). Severity is `Critical` if the SLO's `Severity` field is `Critical`.
+**File (deleted):** `crates/hkask-regulation/src/slo_span.rs`
 
 
 ### 3.9 Skill Spans
@@ -246,11 +220,11 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 
 ### 3.10 Wallet Spans
 
-**File:** `crates/hkask-wallet/src/reg_span.rs`
+**File:** `crates/hkask-regulation/src/wallet_manager.rs` (replaces deleted `crates/hkask-wallet/src/reg_span.rs`)
 
 14 variants covering wallet lifecycle: `Balance`, `Deposit`, `DepositShielded`, `Withdrawal`, `Conversion`, `KeyIssued`, `KeyRevoked`, `KeyExpired`, `KeyExhausted`, `ChainError`, `Created`, `Draw`, `Spend`, `Exhausted`.
 
-All namespaced under `reg.wallet.*`. Emitted through `crates/hkask-wallet/src/manager/reg.rs` which bridges wallet operations to the Regulation event sink.
+All namespaced under `reg.wallet.*`. Emitted through `crates/hkask-regulation/src/wallet_manager.rs` which bridges wallet operations to the Regulation event sink. The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup; `gas_per_rjoule` now lives in `regulation::WalletManager` which implements `WalletBudgetPort`. Wallet types live in `hkask-types`.
 
 ### 3.11 ApiRequestSpan — API Metering (DELETED)
 
@@ -300,13 +274,13 @@ Spans are emitted through two mechanisms:
 
 1. **Tracing path** (`ObservableSpan::emit()` / `RegulationSpan::emit()`): writes `tracing::info!(target: "regulation", reg_domain = …, operation = …, "Regulation")`. Used by `RegulationSpan` variants and by domain-span enums that delegate to `ObservableSpan`.
 
-2. **ν-event path**: constructs `RegulationRecord` with a `Span` (namespace + path), `CyclePhase`, observation JSON, and optional regulation/outcome metadata; persists via `RegulationSink::persist()`. Used by contract events, seam watcher, wallet Regulation manager, governed inference/tool, cybernetics loop, and consent manager.
+2. **ν-event path**: constructs `RegulationRecord` with a `Span` (namespace + path), `CyclePhase`, observation JSON, and optional regulation/outcome metadata; persists via `RegulationSink::persist()`. Used by wallet Regulation manager, governed inference/tool, cybernetics loop, and consent manager. (The deleted contract events and seam watcher no longer emit through this path.)
 
 ### 4.2 Storage
 
 RegulationRecords are persisted to a `RegulationArchive` (SQLite-backed) via the `LedgerStoragePort` trait. The store supports:
 
-- **`query_algedonic()`** — filtered queries by span category, time window, and agent. Used by `GasReport` to aggregate gas consumption per tool/agent.
+- **`query_algedonic()`** — filtered queries by span category, time window, and agent. Used to aggregate gas consumption per tool/agent.
 
 ### 4.3 Query
 

@@ -26,7 +26,6 @@ use project::{AgentId, Project};
 
 use crate::{
     CURATOR_AGENT_ID, NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates,
-    tools::CuratorStatusTool,
 };
 
 /// The Curator's static context — appended to the system prompt.

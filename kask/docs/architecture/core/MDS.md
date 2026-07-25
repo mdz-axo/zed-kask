@@ -32,13 +32,12 @@ The ontology is re-anchored to the **29 surviving hKask crates** compiled in-pro
 |--------|-------|-------------|---------------|
 | `HumanUser` | zed account (replaces deleted `hkask-identity` user store) | Human identity, role, provider link — owned by zed-kask, not a parallel hKask identity store | P1 |
 | `UserPod` | `hkask-types` | Agent identity with persona, voice, wallet link | P6 |
-| `AgentPod` | `hkask-pods` | Runtime container for a userpod (Inactive\|Active\|ServerMode) | P1 |
-| `Wallet` | `hkask-wallet` | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer | P9 |
-| `ApiKey` | `hkask-wallet` | Scoped API key with spending limits and expiry | P1 |
+| Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a userpod (Inactive\|Active\|ServerMode) — pod abstraction deleted in 2026-07-25 cleanup | P1 |
+| `Wallet` | `hkask-regulation::WalletManager` (replaces deleted `hkask-wallet`) | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer. `gas_per_rjoule` now lives in `regulation::WalletManager` which implements `WalletBudgetPort`. | P9 |
+| `ApiKey` | `hkask-types` (wallet types; replaces deleted `hkask-wallet`) | Scoped API key with spending limits and expiry | P1 |
 | `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
 | `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, gas budgets | P9 |
 | `GasBudget` | `hkask-regulation` | Per-agent gas budget with cap, replenish rate, hold-settle pattern | P9 |
-| `CircuitBreaker` | `hkask-regulation` | Failure-gating state machine for external service calls | P9 |
 | `KaskCore` | `kask_bridge` (D8) | In-process handle that MCP servers and zed-kask surfaces use to reach hKask primitives (replaces the deleted `AgentService` orchestration layer) | P5 |
 
 ### 1.2 Kata-Kanban Domain
@@ -96,7 +95,7 @@ The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkas
 | `hkask-services-chat` | zed's agent panel (`crates/agent`, `agent_ui`) — zed owns chat |
 | `hkask-services-onboarding` | zed's first-launch flow — zed owns onboarding |
 | `hkask-services-skill` | `hkask-templates` / `ManifestExecutor` (D1) — skill execution is native, no service layer |
-| `hkask-services-wallet` | In-process wallet primitives (`hkask-wallet` + `hkask-ledger`); no service layer — consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly |
+| `hkask-services-wallet` | In-process wallet primitives (`hkask-regulation::WalletManager` + `hkask-ledger`); no service layer — consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly (`hkask-wallet` deleted; `gas_per_rjoule` moved to `regulation::WalletManager`) |
 
 Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve at T3.0):
 
@@ -108,7 +107,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 | `hkask-services-corpus` | Content corpus: discovery + embed | `P{N}-svc-corpus-*` | 30 | ✅ Realigned |
 | `hkask-services-kata-kanban` | Toyota Kata + Kanban board coordination | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ⚠️ Migration in progress |
 | `hkask-services-runtime` | Runtime services: classify + guard + provider_intel (daemon_impl module deleted) | `P{N}-svc-runtime-*` | 13 | ✅ Realigned |
-| `hkask-services-self-heal` | Cross-domain self-healing coordination | — | — | ✅ Realigned |
+| ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
 | `hkask-services-inference` | Inference orchestration scaffolding | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
 | `hkask-inference` | Inference routing primitives (InferenceRouter, EmbeddingRouter, ProviderId) — reads API keys from zed `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
 
@@ -552,39 +551,39 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | **Regulation** | `ledger()`, `cybernetics()`, `loops()`, `energy()`, `tool_stats()` | `hkask-regulation` handles |
 | **Memory** | `build_per_agent_memory(db, sink)`, `per_agent_memory(agent)`, `consolidate_agent_memory(agent, request)`, `consolidation_status_for(agent)` | `hkask-memory` handles — single OCAP-gated, consent-checked consolidation entry point |
 | **Templates** | `templates()`, `manifest_executor()` | `hkask-templates` — skill execution (D1) |
-| **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-wallet` primitives — no service layer; consumers compose directly |
-| **Identity** | `webid()` | WebID for the active pod |
+| **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-regulation::WalletManager` primitives (replaces deleted `hkask-wallet`) — no service layer; consumers compose directly. `gas_per_rjoule` now lives in `regulation::WalletManager` which implements `WalletBudgetPort`. |
+| **Identity** | `webid()` | WebID for the active user/curator data directory |
 | **Inference** | `inference_port()`, `gas_remaining()`, `gas_cap()` | `hkask-inference` — reads API keys from zed `CredentialsProvider` (D9b) |
 | **Guard** | `governed_tool(webid)`, `guard_strategy()` | `hkask-guard` (D4) — Magna Carta floor in the inference path |
 
-**Design rationale:** `KaskCore` groups domain-coherent infrastructure into deep modules (Ousterhout). Cross-cutting concerns (gas, governed tool, per-agent memory consolidation) remain direct methods because they span multiple sub-systems or require coordination logic. The deleted `AgentService`'s nested sub-context structs (`InfraContext`, `GovernanceContext`, `RegulationContext`, `StorageContext`) are absorbed into `KaskCore`'s grouped accessors — the daemon/Matrix/a2a fields that existed only for the deleted standalone surfaces are **removed**.
+**Design rationale:** `KaskCore` groups domain-coherent infrastructure into deep modules (Ousterhout). Cross-cutting concerns (gas, governed tool, per-agent memory consolidation) remain direct methods because they span multiple sub-systems or require coordination logic. The deleted `AgentService`'s nested sub-context structs (`InfraContext`, `GovernanceContext`, `StorageContext`) are absorbed into `KaskCore`'s grouped accessors — the daemon/Matrix/a2a fields that existed only for the deleted standalone surfaces are **removed**. The `RegulationContext` struct was also deleted in the 2026-07-25 cleanup.
 
 ### Crate-to-Domain Mappings (surviving crates only)
 
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
 | `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `UserPod` |
-| `hkask-storage` | Domain, Lifecycle | `hMem`, `SpecStore`, `WalletStore`, per-pod SQLCipher private sphere |
+| `hkask-storage` | Domain, Lifecycle | `hMem`, `SpecStore`, `WalletStore`, per-user SQLCipher private sphere |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
-| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CircuitBreaker`, `CyberneticsLoop`, variety/algedonic |
+| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CyberneticsLoop`, variety/algedonic, `WalletManager` (implements `WalletBudgetPort`; `gas_per_rjoule` tracking) |
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
-| `hkask-pods` | Domain | `AgentPod`, Curator, deployment |
+| ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
 | `hkask-capability` | Trust | OCAP — sovereignty enforcement, capability tokens |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Storage backend → zed `CredentialsProvider` (D9b) |
-| `hkask-wallet` | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — in-process, no service layer |
+| ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` moved to `regulation::WalletManager` which implements `WalletBudgetPort`; wallet types live in `hkask-types` |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `InferenceRouter`, `EmbeddingRouter`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-goal` | Domain | Goal analysis, completion verification |
 | `hkask-condenser` | Curation | Context condensation |
-| `hkask-git-cas` | Lifecycle | Content-addressed storage over git |
+| ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |
 | `hkask-bridge-dublincore` | Curation | Dublin Core metadata bridging |
-| `hkask-test-harness` | (test infra) | Test infrastructure |
+| ~~`hkask-test-harness`~~ (deleted) | (test infra) | Test infrastructure — deleted in 2026-07-25 cleanup; `ExpectProposal` moved to `hkask-types` |
 | `hkask-mcp` | Composition | MCP governance |
 | `hkask-services-core` | Domain | Foundation: config, error types, settings (dissolves at T3.0) |
-| `hkask-services-self-heal` | Lifecycle | Cross-domain self-healing coordination (dissolves at T3.0) |
+| ~~`hkask-services-self-heal`~~ (deleted) | Lifecycle | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup |
 | `hkask-services-inference` | Composition | Inference orchestration scaffolding (dissolves at T3.0) |
 | `hkask-services-kata-kanban` | Domain, Curation | `KataEngine`, `KataManifest`, `Board`, `Task`, Kanban coordination |
 | `hkask-services-runtime` | Lifecycle | `ClassifyService`, guard, provider_intel (daemon_impl deleted; dissolves at T3.0) |
@@ -613,11 +612,9 @@ graph TD
         MEM[hkask-memory]
         REG[hkask-regulation]
         TEMPLATES[hkask-templates]
-        PODS[hkask-pods]
         GUARD[hkask-guard]
         CAP[hkask-capability]
         KS[hkask-keystore trimmed]
-        WALLET[hkask-wallet]
         LEDGER[hkask-ledger]
         INF[hkask-inference]
         SVCS[services-* scaffolding]

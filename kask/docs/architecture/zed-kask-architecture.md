@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Integrated Architecture — Composition Root"
 audience: [architects, developers, contributors]
-last_updated: 2026-07-24
+last_updated: 2026-07-25
 version: "0.31.0"
 status: "Active"
 domain: "architecture"
@@ -12,7 +12,9 @@ mds_categories: [composition, trust, lifecycle]
 
 The zed-kask fork integrates hKask into the Zed editor as a native in-process agent platform. This diagram shows the composition root — the dependency injection wiring at startup (`crates/zed/src/main.rs`) that connects zed's editor surfaces to hKask's agent runtime via the `kask_bridge` seam (D8).
 
-The architecture follows a strict dependency invariant: **no hKask crate depends on a zed crate**. The `kask_bridge` crate is the sole bidirectional seam, adapting zed's `LanguageModel`, `CredentialsProvider`, and `ThreadMemoryPort` traits into hKask's `InferencePort`, `keyring` crate, and `MemoryPort` interfaces. All ten integration seams (D1–D10) are wired at the composition root before the editor event loop begins.
+The architecture follows a strict dependency invariant: **no hKask crate depends on a zed crate**. The `kask_bridge` crate is the sole bidirectional seam, adapting zed's `LanguageModel` and `ThreadMemoryPort` traits into hKask's `InferencePort` and `MemoryPort` interfaces. Sovereignty keys (a2a_secret, db_passphrase, ocap_secret) are accessed via the `keyring` crate directly — no async bridge, no `SecretsPort` adapter. API keys for inference providers are handled by zed's own `CredentialsProvider` through the `LanguageModelRegistry`. All ten integration seams (D1–D10) are wired at the composition root.
+
+## Composition Root Diagram
 
 ```mermaid
 flowchart TD
@@ -20,7 +22,7 @@ flowchart TD
         Editor["crates/workspace<br/>Editor, Git, Collab"]
         AgentPanel["crates/agent + agent_ui<br/>Agent Panel, Thread Store"]
         LM["crates/language_model*<br/>Inference Routing"]
-        CredProv["crates/credentials_provider<br/>Provider Keystore"]
+        CredProv["crates/credentials_provider<br/>Provider Keystore (zed's own)"]
         ContextServer["crates/context_server<br/>MCP stdio Transport"]
         SettingsUI["crates/settings_ui<br/>Kask Settings Page (D9c)"]
         KaskPanel["crates/kask_panel<br/>Dockable Panel (D10)"]
@@ -28,37 +30,35 @@ flowchart TD
 
     subgraph Bridge["kask_bridge (D8 — sole bidirectional seam)"]
         BridgeInf["LanguageModelInferencePort<br/>InferencePort over LanguageModel"]
-        BridgeSec["Credentialskeyring crate<br/>keyring crate over CredentialsProvider"]
         BridgeMem["BridgeMemoryPort<br/>MemoryPort over ThreadMemoryPort"]
         BridgeExec["BridgeManifestExecutor<br/>Skill execution adapter"]
         BridgeTool["BridgeToolPort<br/>ToolPort over McpRuntime"]
+        Identity["identity.rs<br/>provision_userpod() — derives userpod<br/>from Zed login username"]
     end
 
     subgraph Guard["Guard Layer (D4)"]
         GuardedInf["GuardedInferencePort<br/>ContentGuard::mandatory()<br/>Injection + secret scanning"]
     end
 
-    subgraph HKask["hKask Crates (29 — compiled in-process)"]
+    subgraph HKask["hKask Crates (24 — compiled in-process)"]
         Templates["hkask-templates<br/>ManifestExecutor + Registry<br/>Skill execution (D1)"]
         Guard2["hkask-guard<br/>Content guard rules"]
         Capability["hkask-capability<br/>OCAP enforcement"]
-        Keystore["hkask-keystore<br/>Sovereignty crypto (D5)"]
-        Regulation["hkask-regulation<br/>Cybernetic nervous system"]
+        Keystore["hkask-keystore<br/>Sovereignty crypto (D5)<br/>keyring crate directly"]
+        Regulation["hkask-regulation<br/>Cybernetic nervous system<br/>WalletManager (gas/rJoule)"]
         Memory["hkask-memory<br/>Semantic + episodic memory"]
-        Wallet["hkask-wallet + hkask-ledger<br/>rJoule energy budget"]
-        Pods["hkask-pods<br/>Curator + UserPod"]
+        Ledger["hkask-ledger<br/>Double-entry accounting"]
         Storage["hkask-storage<br/>SQLCipher private sphere"]
     end
 
-    subgraph MCP["MCP Servers (11 — in-process, stdio)"]
+    subgraph MCP["MCP Servers (10 — in-process, stdio)"]
         Codegraph["codegraph"]
         Companies["companies"]
         Condenser["condenser"]
+        Corpus["corpus"]
         Curator["curator"]
-        Docproc["docproc"]
         KataKanban["kata-kanban"]
-        Media["media"]
-        Replica["replica"]
+        MediaSrv["media"]
         Research["research"]
         Scenarios["scenarios"]
         Training["training"]
@@ -70,26 +70,31 @@ flowchart TD
     end
 
     %% Composition root wiring (numbered = startup order)
-    CredProv -->|"1. keyring crate directly"| BridgeSec
-    BridgeSec --> Keystore
-    Keystore -->|"2. resolve_a2a_secret()"| BridgeSec
+    %% Phase 1: Early wiring (before AppState::set_global)
+    Keystore -->|"1. resolve_a2a_secret()<br/>via keyring crate"| Keystore
+    Keystore -->|"2. resolve_db_passphrase()<br/>via keyring crate"| Keystore
+    BridgeMem -->|"3. set_memory_port()<br/>logging (no-op) — upgraded later"| AgentPanel
 
-    ContextServer -->|"3. McpRuntime"| BridgeTool
-    BridgeTool --> MCP
-
-    LM -->|"4-5. LanguageModelRegistry"| BridgeInf
-    BridgeInf -->|"6. wrap"| GuardedInf
+    %% Phase 2: Model-dependent wiring (after language_model::init)
+    LM -->|"4. LanguageModelRegistry"| BridgeInf
+    BridgeInf -->|"5. wrap"| GuardedInf
     Guard2 --> GuardedInf
+
+    ContextServer -->|"6. McpRuntime"| BridgeTool
+    BridgeTool --> MCP
 
     GuardedInf -->|"7. BridgeManifestExecutor"| BridgeExec
     BridgeTool --> BridgeExec
     BridgeExec -->|"8. set_manifest_executor()"| AgentPanel
 
-    AgentPanel -->|"9. Thread turn completion"| BridgeMem
-    BridgeMem --> Memory
+    %% Phase 3: Deferred provisioning (after Zed user resolves)
+    Identity -->|"9. provision_userpod()<br/>username → dirs + passphrase"| Keystore
+    Keystore -->|"10. RealMemoryPort::new()"| BridgeMem
+    BridgeMem -->|"11. set_memory_port()<br/>upgrade: logging → real"| AgentPanel
+    Identity -->|"12. mcp_env(userpod_name)<br/>HKASK_MCP_HOST + HKASK_USERPOD_NAME"| MCP
 
-    KaskPanel -->|"10. set_tool_invoker()"| BridgeTool
-    KaskPanel -->|"10. set_scoped_inference()"| GuardedInf
+    KaskPanel -->|"set_tool_invoker()"| BridgeTool
+    KaskPanel -->|"set_scoped_inference()"| GuardedInf
 
     BridgeExec --> Templates
     Templates --> SkillReg
@@ -97,20 +102,46 @@ flowchart TD
 
     GuardedInf --> Capability
     GuardedInf --> Regulation
-    BridgeExec --> Wallet
-    BridgeExec --> Pods
     BridgeExec --> Storage
+    BridgeExec --> Ledger
 
-    SettingsUI -->|"KaskSettings"| BridgeSec
+    SettingsUI -->|"KaskSettings"| BridgeExec
     SettingsUI -->|"per-server toggles"| ContextServer
 ```
 
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-ARCH-001
-verified_date: 2026-07-24
-verified_against: kask/docs/architecture/zed-host-architecture-plan.md (§6 composition root, D1-D10 status table); kask/crates/kask_bridge/src/lib.rs; kask/crates/zed/src/main.rs
-status: VERIFIED
--->
+## Startup Sequence
+
+The composition root runs in three phases:
+
+### Phase 1 — Early wiring (before `AppState::set_global`)
+
+Runs inside `app.run()` before the workspace is created. No dependencies on `LanguageModelRegistry` or `UserStore`.
+
+1. **Resolve `a2a_secret`** — `hkask_keystore::keychain::resolve_a2a_secret()` via the `keyring` crate (synchronous OS keychain I/O). Falls back to empty vec on first run.
+2. **Install logging memory port** — `set_memory_port(BridgeMemoryPort(LoggingMemoryPort))`. No-op until the Zed user resolves. Uses `Mutex` (not `OnceLock`) so the port can be replaced later.
+
+### Phase 2 — Model-dependent wiring (after `language_models::init`)
+
+Runs after `language_model::init(cx)` and `language_models::init()` so that `LanguageModelRegistry::read_global(cx)` is available.
+
+3. **Construct `LanguageModelInferencePort`** — wraps zed's default `LanguageModel`.
+4. **Wrap with `GuardedInferencePort`** — mandatory content guard (injection scanning, secret redaction).
+5. **Construct `BridgeManifestExecutor`** — skill cascade executor with guarded inference + tool port + a2a_secret.
+6. **Wire kask panel** — `set_tool_invoker()` and `set_scoped_inference()` for the dockable Kask Panel (D10).
+7. **Wire thread condenser** — compresses tool results before they enter message history.
+
+### Phase 3 — Deferred provisioning (after Zed user resolves)
+
+A spawned task watches `UserStore::current_user()`. When the Zed user logs in:
+
+8. **Derive userpod name** — `userpod_name_from_username(User::username)` → `sanitize_name()` → filesystem-safe name.
+9. **Provision userpod** — `provision_userpod(username)`:
+   - Create directory structure (`~/.local/share/hkask/userpods/{username}/`)
+   - Ensure DB passphrase exists (auto-generate random English word if none, stored in OS keychain via `keyring` crate)
+   - Return resolved DB path and passphrase
+10. **Upgrade memory port** — `RealMemoryPort::new(db_path, passphrase, webid, ...)` → `set_memory_port(BridgeMemoryPort(RealMemoryPort))`. Replaces the logging port from Phase 1.
+11. **Wire context injector** — if `kask.memory.auto_inject` is enabled, injects recalled memories into prompts before inference.
+12. **Launch MCP servers** — starts the 10 `hkask-mcp-*` child processes with `HKASK_MCP_HOST` and `HKASK_USERPOD_NAME` env vars set from the sanitized username.
 
 ## Dependency Invariant
 
@@ -120,41 +151,37 @@ The governing architectural constraint: **hKask crates never depend on zed crate
 flowchart LR
     Zed["zed crates<br/>(editor, agent, language_model)"]
     Bridge["kask_bridge<br/>(D8 — adapters)"]
-    HKask["hKask crates<br/>(29 crates)"]
+    HKask["hKask crates<br/>(24 crates)"]
 
     Zed -->|"depends on"| Bridge
     Bridge -->|"depends on"| HKask
     HKask -.->|"NEVER depends on"| Zed
 ```
 
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-ARCH-002
-verified_date: 2026-07-24
-verified_against: kask/docs/architecture/zed-host-architecture-plan.md §13.1 (governing invariant); kask/Cargo.toml (workspace deps)
-status: VERIFIED
--->
+## Keystore Design
 
-## Integration Seams (D1–D10)
+The `hkask-keystore` crate uses the `keyring` crate directly for all OS keychain access — synchronous, no async bridge, no runtime dependency. This replaces the deleted `SecretsPort` adapter, which bridged async `CredentialsProvider` calls to sync keystore reads and was fundamentally broken on GPUI threads (deadlocks and panics from `block_in_place` / `block_on` on a single-threaded executor).
 
-All ten integration seams are wired at the composition root in `crates/zed/src/main.rs` before the editor event loop begins. Each seam is an additive divergence point — zed's code is modified only at the seam, everything else stays byte-identical to upstream.
+**What lives where:**
 
-| Seam | Surface | What It Does |
-|------|---------|-------------|
-| D1 | Skill execution | `SkillTool` has optional `SkillManifestExecutor`; `BridgeManifestExecutor` connects zed's agent panel to hKask's `ManifestExecutor` + skill registry (51 skills). |
-| D2 | Curator agent | `Curator` variant in `agent_ui::Agent` enum; native agent selectable in Agent Panel. |
-| D3 | Tools in-process | `BridgeToolPort` wraps `McpRuntime`; MCP servers run as child processes (stdio). OCAP/gas/spans enforced. |
-| D4 | Guard layer | `GuardedInferencePort` wraps `InferencePort`; `hkask-guard` scans inputs (injection, role override) and outputs (secret redaction). |
-| D5 | Sovereignty keys | `hkask-keystore` crypto-derivation over `keyring` crate/`CredentialsProvider`; kask namespace (`kask://credentials/<key>`). |
-| D6 | Thread → memory | `BridgeMemoryPort` adapts `ThreadMemoryPort` → `MemoryPort`; thread turn completion ingests into hKask memory. |
-| D7 | App-identity | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, bundle IDs `dev.zed-kask.*`. |
-| D8 | Bridge + adapters | `kask_bridge` crate: `InferencePort`, `keyring` crate, `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
-| D9a/b/c | Settings + credentials + UI | `KaskSettings` in settings.json; `keyring` crate over `CredentialsProvider`; settings UI page with 5 sub-pages. |
-| D10 | Kask panel | Native GPUI dockable panel; `/tool args` direct invocation (OCAP-gated); scoped inference with selected server's tools. |
+| Concern | Mechanism | Where |
+|---|---|---|
+| API keys (DeepInfra, Together, OpenRouter, etc.) | zed's `CredentialsProvider` via `LanguageModelRegistry` | zed crates (upstream) |
+| Sovereignty keys (a2a_secret, db_passphrase, ocap_secret) | `keyring` crate (synchronous OS keychain) | `hkask-keystore` |
+| DB passphrase auto-generation | Random English word (8+ letters), stored in keychain on first run | `kask_bridge::identity::provision_userpod()` |
+| Data-service API keys (EODHD, FMP, etc.) | zed's `CredentialsProvider` under `kask://credentials/<key>` namespace | Settings UI → `CredentialsProvider` |
 
-## Cross-References
+## Divergence Map (D1–D10)
 
-- [zed-host-architecture-plan.md](zed-host-architecture-plan.md) — canonical architecture document with full D1–D10 status, essentialist split, and composition root details.
-- [PRINCIPLES.md](core/PRINCIPLES.md) — architecture principles P1–P12 governing the design.
-- [magna-carta.md](core/magna-carta.md) — the 4 sovereignty principles enforced by the guard layer (D4) and OCAP (D3).
-- [skills/README.md](../reference/skills/README.md) — skill registry (51 skills + 3 templates + 1 bundle).
-- [mcp-servers/README.md](../reference/mcp-servers/README.md) — 11 in-process MCP servers.
+| D | Surface | Status | Mechanism |
+|---|---|---|---|
+| D1 | Skill execution | ✅ | `BridgeManifestExecutor` wraps `InferencePort` + `ToolPort` + registry paths |
+| D2 | Curator agent | ✅ | `Agent::Curator` variant in `agent_ui`; native in-process agent |
+| D3 | Tools in-process | ✅ | `BridgeToolPort` wraps `McpRuntime` (OCAP/gas/spans); MCP servers as child processes |
+| D4 | Guard layer | ✅ | `GuardedInferencePort` wraps `InferencePort`; `ContentGuard::mandatory()` |
+| D5 | Sovereignty keys | ✅ | `keyring` crate directly (no `SecretsPort` adapter); DB passphrase auto-provisioned |
+| D6 | Thread → memory | ✅ | `BridgeMemoryPort` over `RealMemoryPort`; logging → real upgrade on user resolve |
+| D7 | App-identity | ✅ | `APP_NAME`→`Zed-Kask`, binary `zed-kask`, bundle IDs `dev.zed-kask.*` |
+| D8 | Bridge + adapters | ✅ | `kask_bridge` crate: `InferencePort`, `MemoryPort`, `ManifestExecutor`, `ToolPort`, `KaskSettings`, `provision_userpod` |
+| D9 | Settings + credentials | ✅ | `KaskSettings` struct + `"kask"` section in settings.json; settings UI page |
+| D10 | Kask panel | ✅ | Native GPUI `Panel` in right dock; gear icon; View menu entry; tool invoker + scoped inference |
