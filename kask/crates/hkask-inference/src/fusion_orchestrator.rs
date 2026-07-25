@@ -69,7 +69,7 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
              quality gate and convergence check. Express uncertainty as calibrated \
              probability ranges, not binary predictions."
         }
-        FusionSkill::MCDA => {
+        FusionSkill::Mcda => {
             "Multi-Criteria Decision Analysis: Identify criteria, weight and score \
              alternatives, check for compensation masking. Perform sensitivity analysis. \
              Prefer robust options that perform well across weight ranges."

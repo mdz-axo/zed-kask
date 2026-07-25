@@ -13,6 +13,7 @@ pub mod event;
 pub mod fusion;
 pub mod goal;
 pub mod id;
+pub mod inference_ipc;
 
 pub mod keychain_keys;
 pub mod loops;

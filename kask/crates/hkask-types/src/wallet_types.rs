@@ -1,7 +1,7 @@
 //! Wallet types — Hedera-only wallet value types.
 //!
 //! These types are needed by hkask-storage (WalletStore) which sits below
-//! hkask-wallet in the dependency chain. The hkask-wallet crate re-exports
+//! the wallet crate in the dependency chain. The the wallet crate crate re-exports
 //! them so downstream code can use `hkask_wallet::RJoule` etc.
 //!
 //! # Epistemic frame (pragmatic-semantics)

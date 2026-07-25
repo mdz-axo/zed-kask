@@ -13,7 +13,6 @@ pub mod inference_types;
 pub mod memory_port;
 pub mod registry;
 pub mod regulation;
-pub mod secrets_port;
 pub mod wallet_budget_port;
 
 pub use embedding::EmbeddingGenerationError;

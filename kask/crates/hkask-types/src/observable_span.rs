@@ -17,7 +17,7 @@
 //! ```text
 //! ObservableSpan (trait)
 //!   ├── RegulationSpan (canonical Regulation spans — hkask-types)
-//!   ├── WalletSpan (future: wallet-specific spans — hkask-wallet)
+//!   ├── WalletSpan (future: wallet-specific spans — the wallet crate)
 //!   └── ... (per-domain span enums)
 //! ```rust,no_run
 //!

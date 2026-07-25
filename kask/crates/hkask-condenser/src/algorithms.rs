@@ -285,33 +285,25 @@ pub fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
         Some(OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Golem,
             ..
-        }) => {
-            if line.contains("character")
-                || line.contains("narrative")
-                || line.contains("scene")
-                || line.contains("event")
-            {
-                0.3
-            } else {
-                0.0
-            }
+        }) if line.contains("character")
+            || line.contains("narrative")
+            || line.contains("scene")
+            || line.contains("event") =>
+        {
+            0.3
         }
         Some(OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::MlSchema,
             ..
-        }) => {
-            if line.contains("accuracy")
-                || line.contains("loss")
-                || line.contains("epoch")
-                || line.contains("learning_rate")
-                || line.contains("batch")
-                || line.contains("evaluation")
-                || line.chars().any(|c| c.is_ascii_digit())
-            {
-                0.3
-            } else {
-                0.0
-            }
+        }) if line.contains("accuracy")
+            || line.contains("loss")
+            || line.contains("epoch")
+            || line.contains("learning_rate")
+            || line.contains("batch")
+            || line.contains("evaluation")
+            || line.chars().any(|c| c.is_ascii_digit()) =>
+        {
+            0.3
         }
         _ => 0.0,
     };

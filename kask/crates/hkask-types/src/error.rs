@@ -45,7 +45,7 @@ impl std::fmt::Display for DatabaseErrorKind {
 
 // DbProvider — Database provider enum (moved from hkask-database::types)
 //
-// Relocated to break the circular dependency: hkask-storage -> hkask-wallet-types
+// Relocated to break the circular dependency: hkask-storage -> the wallet types crate
 // -> hkask-database -> hkask-storage. DbError/DbProvider are pure types with no
 // external deps beyond thiserror + serde (already in hkask-types).
 

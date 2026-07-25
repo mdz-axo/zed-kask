@@ -120,7 +120,7 @@ pub enum FusionSkill {
     #[serde(rename = "superforecasting")]
     Superforecasting,
     #[serde(rename = "mcda")]
-    MCDA,
+    Mcda,
     #[serde(rename = "tdd")]
     TestDrivenDevelopment,
     #[serde(rename = "bug-hunt")]
@@ -153,7 +153,7 @@ crate::enum_snake_str!(FusionSkill, {
     DeepModule => "deep-module",
     Essentialist => "essentialist",
     Superforecasting => "superforecasting",
-    MCDA => "mcda",
+    Mcda => "mcda",
     TestDrivenDevelopment => "tdd",
     BugHunt => "bug-hunt",
     Diagnose => "diagnose",
