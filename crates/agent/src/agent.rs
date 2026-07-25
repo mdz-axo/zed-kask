@@ -485,11 +485,8 @@ fn parse_rules_frontmatter(raw_text: String) -> (String, Option<RuleFrontmatter>
     let after_open = after_open.strip_prefix('\n').unwrap_or(after_open);
 
     // Handle empty frontmatter: `---\n---` (no YAML between fences).
-    if after_open.starts_with("---") {
-        let body = after_open[3..]
-            .strip_prefix('\n')
-            .unwrap_or(&after_open[3..])
-            .trim();
+    if let Some(after_close) = after_open.strip_prefix("---") {
+        let body = after_close.strip_prefix('\n').unwrap_or(after_close).trim();
         return (body.to_string(), Some(RuleFrontmatter::default()));
     }
 
@@ -2745,13 +2742,21 @@ pub trait ContextInjector: Send + Sync {
         >,
     >;
 
-    /// Retrieve static context for the thread — loaded once per session and
-    /// included in the system prompt (not retrieved per-turn). Returns a
-    /// string that will be rendered after the project context section.
+    /// Retrieve static context for the thread — intended to be loaded once
+    /// per session and included in the system prompt (not retrieved per-turn).
+    /// Returns a string that will be rendered after the project context section.
+    ///
+    /// This is an async method because the underlying memory recall may need
+    /// to await on the GPUI or tokio executor. The caller (`run_turn_internal`)
+    /// awaits this once on the first `render_system_prompt` and caches the
+    /// result on `Thread.static_context`.
     ///
     /// Default implementation returns `None` (I2 — upstream Zed compatibility).
-    fn inject_static_context(&self, _thread_id: &str) -> Option<String> {
-        None
+    fn inject_static_context<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
+        Box::pin(async move { None })
     }
 }
 
@@ -4405,6 +4410,30 @@ mod internal_tests {
         let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
         assert!(frontmatter.is_none(), "invalid frontmatter should be None");
         assert!(!text.is_empty());
+    }
+
+    #[test]
+    fn test_parse_rules_frontmatter_handles_empty_frontmatter() {
+        // Empty frontmatter: `---\n---\nbody` — no YAML between fences.
+        let input = "---\n---\nUse strict mode.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("empty frontmatter should parse");
+        assert!(
+            frontmatter.always_apply,
+            "empty frontmatter defaults to always_apply: true"
+        );
+        assert!(frontmatter.globs.is_empty());
+        assert_eq!(text, "Use strict mode.");
+    }
+
+    #[test]
+    fn test_parse_rules_frontmatter_handles_empty_frontmatter_no_body() {
+        // Empty frontmatter with no body: `---\n---`
+        let input = "---\n---";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("empty frontmatter should parse");
+        assert!(frontmatter.always_apply);
+        assert!(text.is_empty(), "body should be empty");
     }
 
     #[test]

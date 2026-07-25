@@ -1324,6 +1324,11 @@ pub struct Thread {
     /// changes, the new render is stored and a telemetry event is emitted so
     /// cache-bust events are observable.
     cached_system_prompt: Option<CachedSystemPrompt>,
+    /// Cached filtered `ProjectContext` and a digest of its filtering inputs
+    /// (open-file paths + mentioned paths). Avoids re-cloning and re-filtering
+    /// `ProjectContext` on every `render_system_prompt` call when the inputs
+    /// haven't changed.
+    cached_filtered_context: Option<CachedFilteredContext>,
     /// Static context loaded once per session via `ContextInjector::inject_static_context`.
     /// Rendered in the system prompt after the project context section. Included
     /// in the system-prompt digest (I1). `None` when no `ContextInjector` is set
@@ -1343,6 +1348,14 @@ pub struct Thread {
 struct CachedSystemPrompt {
     digest: [u8; 32],
     prompt: SharedString,
+}
+
+/// Cached filtered `ProjectContext` with a digest of the filtering inputs.
+/// When the digest matches, the cached context is reused — avoiding the
+/// `ProjectContext::clone` + `filter_conditional_rules` cost on every render.
+struct CachedFilteredContext {
+    filter_digest: [u8; 32],
+    context: ProjectContext,
 }
 
 impl Thread {
@@ -1480,6 +1493,7 @@ impl Thread {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             cached_system_prompt: None,
+            cached_filtered_context: None,
             static_context: None,
             deferred_tool_results: Vec::new(),
         }
@@ -1867,6 +1881,7 @@ impl Thread {
                 &db_thread.sandbox_grants,
             ))),
             cached_system_prompt: None,
+            cached_filtered_context: None,
             static_context: None,
             deferred_tool_results: Vec::new(),
         }
@@ -2935,6 +2950,27 @@ impl Thread {
                 intent = CompletionIntent::ToolResults;
             }
 
+            // Load static context lazily on the first iteration. This is
+            // async because the underlying memory recall may need to await on
+            // the GPUI or tokio executor. The result is cached on `Thread` for
+            // the rest of the session.
+            if this
+                .read_with(cx, |this, _| this.static_context.is_none())
+                .unwrap_or(false)
+            {
+                if let Some(injector) = crate::context_injector() {
+                    let thread_id = this
+                        .read_with(cx, |this, _| this.id.to_string())
+                        .unwrap_or_default();
+                    if !thread_id.is_empty() {
+                        let static_context = injector.inject_static_context(&thread_id).await;
+                        this.update(cx, |this, _cx| {
+                            this.static_context = static_context.map(SharedString::from);
+                        })?;
+                    }
+                }
+            }
+
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
@@ -3222,6 +3258,23 @@ impl Thread {
                     }
                 })?;
             } else if end_turn {
+                // Don't end the turn if there are pending deferred tool
+                // results. The outer loop will drain them on the next
+                // iteration. Use a short GPUI timer to yield control so
+                // deferred tasks can make progress without busy-spinning.
+                let has_pending_deferred =
+                    this.read_with(cx, |this, _| !this.deferred_tool_results.is_empty())?;
+                if has_pending_deferred {
+                    log::debug!("Turn has pending deferred results, waiting for completion");
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    if *cancellation_rx.borrow() {
+                        return Ok(());
+                    }
+                    intent = CompletionIntent::ToolResults;
+                    continue;
+                }
                 return Ok(());
             } else {
                 let end_at_boundary =
@@ -3435,9 +3488,9 @@ impl Thread {
     }
 
     /// Poll all deferred tool results and return those that have completed.
-    /// Completed entries are removed from `deferred_tool_results`. Uses
-    /// `now_or_never` so this is non-blocking — incomplete tasks stay in the
-    /// queue for the next iteration.
+    /// Completed entries are removed from `deferred_tool_results`. Uses a
+    /// noop waker to poll receivers non-blockingly — incomplete tasks stay
+    /// in the queue for the next iteration.
     fn drain_completed_deferred_results(&mut self) -> Vec<CompletedDeferredResult> {
         if self.deferred_tool_results.is_empty() {
             return Vec::new();
@@ -3541,21 +3594,26 @@ impl Thread {
             // API-compliant order.
             let message_ix = result.owning_message_ix;
             if message_ix < self.messages.len() {
-                let message = &mut self.messages[message_ix];
-                if let Some(message) = Arc::get_mut(message) {
-                    if let Message::Agent(agent_message) = message {
+                // Clone the AgentMessage from the stored Arc, modify the
+                // clone, and replace the Arc. This avoids needing `Clone`
+                // on `Message` itself — we only clone the `AgentMessage`,
+                // which does derive `Clone`.
+                let needs_replacement = matches!(&*self.messages[message_ix], Message::Agent(_));
+                if needs_replacement {
+                    if let Message::Agent(mut agent_message) =
+                        (*self.messages[message_ix]).clone()
+                    {
                         agent_message
                             .tool_results
                             .insert(result.tool_use_id, tool_result);
+                        self.messages[message_ix] =
+                            Arc::new(Message::Agent(agent_message));
                         injected_any = true;
-                    } else {
-                        log::warn!(
-                            "Deferred result target message {message_ix} is not an AgentMessage"
-                        );
                     }
                 } else {
+                } else {
                     log::warn!(
-                        "Deferred result target message {message_ix} Arc is shared — cannot mutate"
+                        "Deferred result target message {message_ix} is not an AgentMessage"
                     );
                 }
             } else {
@@ -4768,16 +4826,8 @@ impl Thread {
         let is_linux = cfg!(target_os = "linux");
         let is_windows = cfg!(target_os = "windows");
 
-        // Load static context lazily on first render. Once loaded, it's
-        // cached on the Thread for the session.
-        if self.static_context.is_none() {
-            if let Some(injector) = crate::context_injector() {
-                let thread_id = self.id.to_string();
-                self.static_context = injector
-                    .inject_static_context(&thread_id)
-                    .map(SharedString::from);
-            }
-        }
+        // Static context is loaded async in `run_turn_internal` and cached
+        // on `self.static_context`. Here we just read the cached value.
         let static_context = self.static_context.clone();
 
         // Apply conditional-rules scoping: filter out rules files whose
@@ -4785,16 +4835,38 @@ impl Thread {
         // match any open file or mentioned path. This is done on a clone of
         // the ProjectContext so the stored entity is unchanged — the filter
         // is per-render, reflecting the current open-file state.
-        let filtered_project_context = {
+        //
+        // Optimization: compute a cheap digest of the filtering inputs
+        // (open-file paths + mentioned paths) and reuse the cached filtered
+        // context when they haven't changed. This avoids the
+        // `ProjectContext::clone` + `filter_conditional_rules` cost on
+        // every render when the open-file set is stable.
+        let open_paths = self.collect_open_file_paths(cx);
+        let mentioned_paths = self.collect_mentioned_paths();
+        let filter_digest = filter_inputs_digest(&open_paths, &mentioned_paths);
+        let filtered_project_context = if self
+            .cached_filtered_context
+            .as_ref()
+            .is_some_and(|cached| cached.filter_digest == filter_digest)
+        {
+            self.cached_filtered_context
+                .as_ref()
+                .expect("checked above")
+                .context
+                .clone()
+        } else {
             let context = self.project_context.read(cx);
-            let open_paths = self.collect_open_file_paths(cx);
-            let mentioned_paths = self.collect_mentioned_paths();
             let all_paths: Vec<&str> = open_paths
                 .iter()
                 .map(|s| s.as_str())
                 .chain(mentioned_paths.iter().map(|s| s.as_str()))
                 .collect();
-            filter_conditional_rules(context.clone(), &all_paths)
+            let filtered = filter_conditional_rules(context.clone(), &all_paths);
+            self.cached_filtered_context = Some(CachedFilteredContext {
+                filter_digest,
+                context: filtered.clone(),
+            });
+            filtered
         };
 
         // Compute a digest of the inputs that affect the rendered system
@@ -5218,9 +5290,30 @@ fn set_cache_breakpoints(messages: &mut [LanguageModelRequestMessage]) {
 /// are excluded unless a path in `active_paths` matches one of the globs.
 ///
 /// `alwaysApply: true` rules and rules without frontmatter are always
-/// included (I2 — upstream Zed compatibility).
+/// included. When frontmatter is absent (upstream Zed), all rules pass
+/// through unchanged. When frontmatter is present with `alwaysApply: false`,
+/// the rule is filtered by glob match — this is new behavior not present
+/// in upstream Zed.
 ///
 /// Glob matching uses `globset` for correctness with patterns like `**/*.rs`.
+/// Compute a cheap SHA-256 digest of the conditional-rules filtering
+/// inputs (open-file paths + mentioned paths). Used to avoid re-cloning
+/// and re-filtering `ProjectContext` when the inputs haven't changed.
+fn filter_inputs_digest(open_paths: &[String], mentioned_paths: &[String]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"open_paths:");
+    for path in open_paths {
+        hasher.update(path.as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.update(b"mentioned_paths:");
+    for path in mentioned_paths {
+        hasher.update(path.as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.finalize().into()
+}
+
 fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) -> ProjectContext {
     // Build a globset for each conditional rule. If any active path matches,
     // the rule is kept; otherwise it's filtered out.

@@ -95,7 +95,7 @@ pub struct WorktreeContext {
 /// is true (or frontmatter is absent), the rules are always included in the
 /// system prompt. When false with non-empty `globs`, the rules are only
 /// included if a file matching one of the globs is open or mentioned.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RuleFrontmatter {
     /// File globs that activate this rule. Empty means "always apply".
     #[serde(default)]
@@ -103,6 +103,15 @@ pub struct RuleFrontmatter {
     /// When true, the rule is always included regardless of `globs`.
     #[serde(default = "default_always_apply", rename = "alwaysApply")]
     pub always_apply: bool,
+}
+
+impl Default for RuleFrontmatter {
+    fn default() -> Self {
+        Self {
+            globs: Vec::new(),
+            always_apply: true,
+        }
+    }
 }
 
 fn default_always_apply() -> bool {

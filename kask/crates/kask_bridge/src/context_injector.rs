@@ -109,26 +109,17 @@ impl ContextInjector for BridgeContextInjector {
         })
     }
 
-    fn inject_static_context(&self, thread_id: &str) -> Option<String> {
-        // Load a session-scoped memory block: high-confidence memories
-        // that provide architectural context for the session. This is the
-        // "Memory Bank" pattern — loaded once per session, included in the
-        // system prompt (not retrieved per-turn).
-        //
-        // We use a broad recall with a high confidence threshold to get
-        // the most stable, high-signal memories. The thread_id is used as
-        // the query to bias toward memories from this session's context.
+    fn inject_static_context<'a>(
+        &'a self,
+        thread_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
         let memory_port = self.memory_port.clone();
         let thread_id = thread_id.to_string();
         let static_limit = (self.recall_limit * 2) as usize;
         let static_min_confidence = (self.recall_min_confidence + 0.1).min(1.0);
 
-        // This is a sync trait method, so we can't await. Use
-        // `futures::executor::block_on` to run the async recall.
-        // This is acceptable because `inject_static_context` is called
-        // once per session (on first `render_system_prompt`), not per-turn.
-        let snippets = futures::executor::block_on(async move {
-            match memory_port.recall_context(&thread_id, static_limit).await {
+        Box::pin(async move {
+            let snippets = match memory_port.recall_context(&thread_id, static_limit).await {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(
@@ -138,32 +129,32 @@ impl ContextInjector for BridgeContextInjector {
                     );
                     Vec::new()
                 }
+            };
+
+            let filtered: Vec<_> = snippets
+                .into_iter()
+                .filter(|s| s.confidence >= static_min_confidence)
+                .collect();
+
+            if filtered.is_empty() {
+                return None;
             }
-        });
 
-        let filtered: Vec<_> = snippets
-            .into_iter()
-            .filter(|s| s.confidence >= static_min_confidence)
-            .collect();
-
-        if filtered.is_empty() {
-            return None;
-        }
-
-        let mut context_text = String::from("Session memory context:\n\n");
-        for (i, snippet) in filtered.iter().enumerate() {
-            if i > 0 {
-                context_text.push_str("\n---\n\n");
+            let mut context_text = String::from("Session memory context:\n\n");
+            for (i, snippet) in filtered.iter().enumerate() {
+                if i > 0 {
+                    context_text.push_str("\n---\n\n");
+                }
+                context_text.push_str(&snippet.text);
             }
-            context_text.push_str(&snippet.text);
-        }
 
-        tracing::info!(
-            target: "reg.memory",
-            injected_count = filtered.len(),
-            "Injecting static memory context into system prompt"
-        );
+            tracing::info!(
+                target: "reg.memory",
+                injected_count = filtered.len(),
+                "Injecting static memory context into system prompt"
+            );
 
-        Some(context_text)
+            Some(context_text)
+        })
     }
 }
