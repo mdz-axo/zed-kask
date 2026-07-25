@@ -1,23 +1,23 @@
-//! Identity resolution — derives the hKask userpod name from the Zed login.
+//! Identity resolution — derives the hKask agent name from the Zed login.
 //!
-//! The userpod name is the sanitized `User::username` from the Zed account
+//! The agent name is the sanitized `User::username` from the Zed account
 //! (the GitHub-style login, e.g. `mdz-axo`). This collapses the former
-//! interactive onboarding step into a lookup: the userpod identity
+//! interactive onboarding step into a lookup: the agent identity
 //! is derived from the Zed session, not entered separately.
 //!
 //! Convention:
-//! - `User::username` (SharedString) → `sanitize_name()` → userpod name
-//! - `WebID::for_userpod_name(&sanitized)` → deterministic WebID
-//! - `agent_paths::userpod_dir(&sanitized)` → filesystem paths
+//! - `User::username` (SharedString) → `sanitize_name()` → agent name
+//! - `WebID::for_agent_name(&sanitized)` → deterministic WebID
+//! - `agent_paths::agent_dir(&sanitized)` → filesystem paths
 //!
-//! When the user is not yet logged in, `resolve_userpod_name` returns `None`
-//! and the caller defers userpod-dependent wiring until the session arrives.
+//! When the user is not yet logged in, `agent_name_from_username` returns `None`
+//! and the caller defers agent-dependent wiring until the session arrives.
 //!
 //! ## Provisioning
 //!
-//! `provision_userpod` handles first-run setup as a set of lookups and
+//! `provision_agent` handles first-run setup as a set of lookups and
 //! directory creation — no interactive onboarding:
-//! 1. Create the userpod directory structure (`ensure_userpod_dirs`)
+//! 1. Create the agent directory structure (`ensure_agent_dirs`)
 //! 2. Ensure a DB passphrase exists in the keychain (auto-generate a random
 //!    English word if none exists — the user can change it later)
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
@@ -26,7 +26,7 @@ use hkask_keystore::Keychain;
 use hkask_types::keychain_keys::KEY_DB_PASSPHRASE;
 use hkask_types::{WebID, agent_paths::sanitize_name};
 
-/// Derive the userpod name from a Zed `User::username`.
+/// Derive the agent name from a Zed `User::username`.
 ///
 /// The username is the stable, lowercase, GitHub-style handle from the Zed
 /// account. We sanitize it for filesystem use (replaces `/ \ : * ? " < > | ( )`
@@ -34,7 +34,7 @@ use hkask_types::{WebID, agent_paths::sanitize_name};
 /// a `WebID` persona.
 ///
 /// Returns `None` if the username is empty after sanitization.
-pub fn userpod_name_from_username(username: &str) -> Option<String> {
+pub fn agent_name_from_username(username: &str) -> Option<String> {
     let sanitized = sanitize_name(username);
     if sanitized.is_empty() || sanitized == "unnamed" {
         None
@@ -46,9 +46,9 @@ pub fn userpod_name_from_username(username: &str) -> Option<String> {
 /// Derive the `WebID` for a Zed username.
 ///
 /// Deterministic: the same username always produces the same WebID
-/// (via `WebID::for_userpod_name` in the `"hkask"` namespace).
+/// (via `WebID::for_agent_name` in the `"hkask"` namespace).
 pub fn webid_from_username(username: &str) -> Option<WebID> {
-    userpod_name_from_username(username).map(|name| WebID::for_userpod_name(&name))
+    agent_name_from_username(username).map(|name| WebID::for_agent_name(&name))
 }
 
 /// A curated list of common English words, each 8+ letters.
@@ -177,24 +177,24 @@ fn random_passphrase_word() -> String {
         .to_string()
 }
 
-/// The result of provisioning a userpod — everything needed to construct
+/// The result of provisioning an agent — everything needed to construct
 /// a `RealMemoryPort` directly, without going through `from_env()`.
-pub struct ProvisionedUserpod {
+pub struct ProvisionedAgent {
     /// Absolute path to the memory database file.
     pub db_path: String,
     /// SQLCipher passphrase (stored in the keychain).
     pub passphrase: String,
-    /// The userpod's WebID, derived from the username.
+    /// The agent's WebID, derived from the username.
     pub webid: WebID,
 }
 
-/// Provision a userpod for the given Zed username.
+/// Provision an agent for the given Zed username.
 ///
 /// This is the "onboarding that disappeared" — a set of lookups and
 /// directory creation, no interactive prompts:
 ///
-/// 1. Derive the userpod name from the username (sanitize for filesystem).
-/// 2. Create the userpod directory structure on disk (idempotent).
+/// 1. Derive the agent name from the username (sanitize for filesystem).
+/// 2. Create the agent directory structure on disk (idempotent).
 /// 3. Resolve the DB passphrase from the keychain; if none exists, generate
 ///    a random English word (8+ letters) and store it. The user can change
 ///    it later via the keychain or `HKASK_DB_PASSPHRASE` env var.
@@ -209,25 +209,25 @@ pub struct ProvisionedUserpod {
 /// - The username sanitizes to empty
 /// - Directory creation fails (filesystem error)
 /// - Keychain read or write fails (OS keychain unavailable)
-pub fn provision_userpod(username: &str) -> Result<ProvisionedUserpod, String> {
-    let userpod_name = userpod_name_from_username(username).ok_or_else(|| {
-        format!("Username '{username}' sanitized to empty — cannot provision userpod")
+pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, String> {
+    let agent_name = agent_name_from_username(username).ok_or_else(|| {
+        format!("Username '{username}' sanitized to empty — cannot provision agent")
     })?;
 
-    let webid = WebID::for_userpod_name(&userpod_name);
+    let webid = WebID::for_agent_name(&agent_name);
 
-    // 1. Create the userpod directory structure (idempotent).
+    // 1. Create the agent directory structure (idempotent).
     //    Resolve against the hKask data directory so paths are absolute.
     let data_dir = hkask_services_core::config::resolve_data_dir();
-    let userpod_root = data_dir.join(hkask_types::agent_paths::userpod_dir(&userpod_name));
-    std::fs::create_dir_all(&userpod_root)
-        .map_err(|e| format!("Failed to create userpod dir {userpod_root:?}: {e}"))?;
-    for sub in hkask_types::agent_paths::USERPOD_SUBDIRS {
-        std::fs::create_dir_all(userpod_root.join(sub))
-            .map_err(|e| format!("Failed to create userpod subdir {sub}: {e}"))?;
+    let agent_root = data_dir.join(hkask_types::agent_paths::agent_dir(&agent_name));
+    std::fs::create_dir_all(&agent_root)
+        .map_err(|e| format!("Failed to create agent dir {agent_root:?}: {e}"))?;
+    for sub in hkask_types::agent_paths::AGENT_SUBDIRS {
+        std::fs::create_dir_all(agent_root.join(sub))
+            .map_err(|e| format!("Failed to create agent subdir {sub}: {e}"))?;
     }
 
-    let db_path = userpod_root.join("memory.db").to_string_lossy().to_string();
+    let db_path = agent_root.join("memory.db").to_string_lossy().to_string();
 
     // 2. Ensure a DB passphrase exists in the keychain.
     //    If the env var is set, use that (user override).
@@ -243,9 +243,9 @@ pub fn provision_userpod(username: &str) -> Result<ProvisionedUserpod, String> {
         resolve_or_create_passphrase()?
     };
 
-    tracing::info!("Userpod provisioned: name={userpod_name}, db={db_path}, webid={webid:?}");
+    tracing::info!("Agent provisioned: name={agent_name}, db={db_path}, webid={webid:?}");
 
-    Ok(ProvisionedUserpod {
+    Ok(ProvisionedAgent {
         db_path,
         passphrase,
         webid,
@@ -287,11 +287,11 @@ mod tests {
     #[test]
     fn github_style_username_passes_through() {
         assert_eq!(
-            userpod_name_from_username("mdz-axo").as_deref(),
+            agent_name_from_username("mdz-axo").as_deref(),
             Some("mdz-axo")
         );
         assert_eq!(
-            userpod_name_from_username("octocat").as_deref(),
+            agent_name_from_username("octocat").as_deref(),
             Some("octocat")
         );
     }
@@ -299,21 +299,21 @@ mod tests {
     #[test]
     fn spaces_become_dashes() {
         assert_eq!(
-            userpod_name_from_username("Jacques Zuck").as_deref(),
+            agent_name_from_username("Jacques Zuck").as_deref(),
             Some("Jacques-Zuck")
         );
     }
 
     #[test]
     fn path_traversal_rejected() {
-        assert_eq!(userpod_name_from_username(".."), None);
-        assert_eq!(userpod_name_from_username("."), None);
+        assert_eq!(agent_name_from_username(".."), None);
+        assert_eq!(agent_name_from_username("."), None);
     }
 
     #[test]
     fn empty_rejected() {
-        assert_eq!(userpod_name_from_username(""), None);
-        assert_eq!(userpod_name_from_username("   "), None);
+        assert_eq!(agent_name_from_username(""), None);
+        assert_eq!(agent_name_from_username("   "), None);
     }
 
     #[test]

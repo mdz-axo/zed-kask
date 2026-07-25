@@ -1,10 +1,10 @@
-//! WebID — Unique identifier for agents (bots and userpods).
+//! WebID — Unique identifier for agents.
 
 use uuid::Uuid;
 
 use super::core::BotID;
 
-/// WebID — Unique identifier for agents (bots and userpods)
+/// WebID — Unique identifier for agents
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct WebID(Uuid);
 
@@ -32,15 +32,15 @@ impl WebID {
 
     /// Convenience method: derive a WebID for an agent by name.
     ///
-    /// Equivalent to `WebID::from_persona(userpod_name.as_bytes())`.
+    /// Equivalent to `WebID::from_persona(agent_name.as_bytes())`.
     /// This is the canonical derivation for agent-name → WebID mapping
     /// used across CLI, API, REPL, and AgentService.
     ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  agent_name is non-empty
     /// post: returns a WebID deterministically derived from the agent name
-    pub fn for_userpod_name(userpod_name: &str) -> Self {
-        Self::from_persona(userpod_name.as_bytes())
+    pub fn for_agent_name(agent_name: &str) -> Self {
+        Self::from_persona(agent_name.as_bytes())
     }
 
     /// Derive WebID deterministically from persona using UUID v5

@@ -234,7 +234,6 @@ impl CorpusServer {
     ) {
         tracing::debug!(
             target: "hkask.mcp.docproc.memory",
-            userpod = %self.userpod,
             tool = %tool,
             input = %input_summary,
             outcome = %outcome,
@@ -626,7 +625,7 @@ impl rmcp::ServerHandler for CorpusServer {}
 // ── Entry point ────────────────────────────────────────────────────────────
 
 /// Run the corpus MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Resolve the inference port once, before entering the sync server-construction
     // closure. `resolve_inference_port` is async (it may connect to the zed IPC bridge);
     // the closure passed to `run_server` is sync, so the await must happen here.
@@ -666,7 +665,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
 
                         Ok(CorpusServer::new(
                             ctx.webid,
-                            userpod.clone(),
                             ocr_model,
                             inference_port,
                             ocr_thresholds,

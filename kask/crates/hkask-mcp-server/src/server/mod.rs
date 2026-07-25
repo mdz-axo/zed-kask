@@ -1,6 +1,6 @@
 //! MCP server scaffolding — shared helpers for hKask MCP server binaries.
 //
-//! WebID resolution order: `HKASK_WEBID` → `HKASK_USERPOD_PERSONA` → anonymous.
+//! WebID resolution order: `HKASK_WEBID` → anonymous.
 //! No ambient authority — all identity and credentials flow through `ServerContext`.
 //
 //! ```rust,ignore

@@ -784,11 +784,11 @@ impl KanbanServer {
     ///
     /// Takes a JSON list of ExpectProposal structs (from test-harness
     /// `propose_missing_expect_annotations`) and creates a task per contract gap.
-    /// Owning userpods can claim and resolve these tasks by submitting
+    /// Owning agents can claim and resolve these tasks by submitting
     /// `expect:` annotation PRs (P2 consent required for merge).
     ///
     /// contract: P3-svc-kanban-009
-    /// expect: "I can create kanban tasks from contract expectation gaps so userpods can ground them" \[P3\]
+    /// expect: "I can create kanban tasks from contract expectation gaps so agents can ground them" \[P3\]
     /// \[P5\] Constraining: Essentialism — one batch operation, no individual task editing
     /// pre:  proposals is a non-empty JSON array of ExpectProposal structs
     /// pre:  board_id is a valid board ID
@@ -881,7 +881,7 @@ pub fn default_columns() -> Vec<hkask_services_kata_kanban::ColumnDef> {
 }
 
 /// Run the kanban MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-kata-kanban",
         env!("CARGO_PKG_VERSION"),
@@ -893,7 +893,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                     .get("HKASK_KANBAN_DB")
                     .cloned()
                     .unwrap_or_else(|| {
-                        let relative_path = hkask_types::agent_paths::userpod_kanban_db(&userpod);
+                        let relative_path = hkask_types::agent_paths::userpod_kanban_db("curator");
                         let default_path =
                             hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
                         if let Some(parent) = default_path.parent() {
@@ -902,7 +902,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                         tracing::info!(
                             target: "hkask.mcp.kata_kanban",
                             path = %default_path.display(),
-                            userpod = %userpod,
                             "Using default per-agent kanban database"
                         );
                         default_path.to_string_lossy().to_string()
@@ -915,7 +914,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                     // the computed kanban_db_path is actually used for persistence.
                     // This is NOT encrypted; users should set HKASK_DB_PASSPHRASE
                     // for production deployments.
-                    let default_key = format!("__k4nb4n__{}__d3f4ult__", userpod);
+                    let default_key = "__k4nb4n__curator__d3f4ult__".to_string();
                     hkask_storage::Database::open(&kanban_db_path, &default_key)
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                 };
@@ -935,7 +934,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                     )
                     .expect("DDL batch must succeed");
                 let service = KanbanService::new(store);
-                Ok(KanbanServer::new(ctx.webid, userpod.clone(), service))
+                Ok(KanbanServer::new(ctx.webid, service))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),
@@ -945,7 +944,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
         vec![
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_KANBAN_DB",
-                "Path to per-agent kanban database file (defaults to agents/{userpod}/kanban.db)",
+                "Path to per-agent kanban database file (defaults to agents/curator/kanban.db)",
             ),
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_DB_PASSPHRASE",

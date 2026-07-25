@@ -116,7 +116,6 @@ impl CorpusServer {
         });
         tracing::debug!(
             target: "hkask.mcp.docproc.reg",
-            userpod = %self.userpod,
             detail = ?data,
             "Pipeline outcome recorded (no daemon — in-process only)",
         );

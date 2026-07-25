@@ -334,7 +334,6 @@ impl ScenariosServer {
         self.check_sequence(tool);
         tracing::debug!(
             target: "hkask.mcp.scenarios.memory",
-            userpod = %self.userpod,
             tool = %tool,
             input = %input_summary,
             outcome = %outcome,
@@ -1794,14 +1793,13 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-scenarios",
         SERVER_VERSION,
         |_ctx| {
             Ok(ScenariosServer::new(
                 hkask_types::WebID::new(),
-                userpod.clone(),
                 std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
                     std::env::var("HKASK_SCENARIOS_DATA")
                         .ok()

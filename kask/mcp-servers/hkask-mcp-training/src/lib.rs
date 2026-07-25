@@ -54,7 +54,7 @@
 //!
 //! # Environment Variables
 //!
-//! - `HKASK_TRAINING_DB` — Path to per-agent training database for job/adapter/QA storage (defaults to `agents/{userpod}/training.db`)
+//! - `HKASK_TRAINING_DB` — Path to per-agent training database for job/adapter/QA storage (defaults to `agents/curator/training.db`)
 //! - `HKASK_DB_PASSPHRASE` — Passphrase for the database (resolved via credentials or keystore)
 //! - `HKASK_TRAINING_CACHE_DIR` — Dataset cache directory
 //! - `RUNPOD_API_KEY` — Runpod API key
@@ -290,7 +290,7 @@ impl TrainingServer {
 // ── Entry point ───────────────────────────────────────────────────────────
 
 /// Run the training MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Host selection: auto-detect from env vars, or use HKASK_TRAINING_HOST.
     // DeepInfra is preferred when DI_API_KEY is set (B200 at $3.69/hr).
     // Nebius is used when NEBIUS_PROJECT_ID is set (H100 at $3.85/hr).
@@ -312,7 +312,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
 
     let cache_dir = PathBuf::from(
         std::env::var("HKASK_TRAINING_CACHE_DIR").unwrap_or_else(|_| {
-            hkask_types::agent_paths::userpod_adapters_dir(&userpod)
+            hkask_types::agent_paths::userpod_adapters_dir("curator")
                 .to_string_lossy()
                 .to_string()
         }),
@@ -334,7 +334,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                     .get("HKASK_TRAINING_DB")
                     .cloned()
                     .unwrap_or_else(|| {
-                        let relative = hkask_types::agent_paths::userpod_training_db(&userpod);
+                        let relative = hkask_types::agent_paths::userpod_training_db("curator");
                         hkask_types::agent_paths::resolve_under_data_dir(&relative)
                             .to_string_lossy()
                             .to_string()
@@ -428,7 +428,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
 
                 Ok(TrainingServer::new(
                     ctx.webid,
-                    userpod.clone(),
                     semantic,
                     host,
                     host_config.host,
@@ -485,7 +484,7 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
             ),
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_TRAINING_DB",
-                "Path to per-agent training database for job/adapter/QA storage (defaults to agents/{userpod}/training.db)",
+                "Path to per-agent training database for job/adapter/QA storage (defaults to agents/curator/training.db)",
             ),
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_DB_PASSPHRASE",

@@ -25,7 +25,7 @@ pub use fusion_model::{
     discover_favorites, resolve_fusion_models, should_auto_discover,
 };
 pub use identity::{
-    ProvisionedUserpod, provision_userpod, userpod_name_from_username, webid_from_username,
+    ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
 };
 pub use inference::LanguageModelInferencePort;
 pub use inference_ipc_server::InferenceIpcServer;

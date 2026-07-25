@@ -6,11 +6,5 @@
 
 #[tokio::main]
 async fn main() -> Result<(), hkask_mcp_server::McpError> {
-    let boot = hkask_mcp_server::bootstrap_mcp_server(
-        "scenarios",
-        "hkask.mcp.scenarios",
-        "HKASK_MCP_HOST",
-    )
-    .await?;
-    hkask_mcp_scenarios::run(boot.userpod).await
+    hkask_mcp_scenarios::run().await
 }

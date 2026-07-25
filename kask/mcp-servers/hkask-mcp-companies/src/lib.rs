@@ -287,7 +287,6 @@ impl CompaniesServer {
     ) {
         tracing::debug!(
             target: "hkask.mcp.companies.memory",
-            userpod = %self.userpod,
             tool = %tool,
             input = %input_summary,
             outcome = %outcome,
@@ -318,7 +317,7 @@ impl rmcp::ServerHandler for CompaniesServer {}
 // ── Entry point ─────────────────────────────────────────────────────
 
 /// Run the companies MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-companies",
         env!("CARGO_PKG_VERSION"),
@@ -338,7 +337,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
             let brave_api_key = ctx.credentials.get("HKASK_BRAVE_API_KEY").cloned();
             Ok(CompaniesServer::new(
                 ctx.webid,
-                userpod.clone(),
                 reqwest::Client::new(),
                 fmp_api_key,
                 eodhd_api_key,

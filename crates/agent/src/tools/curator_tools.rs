@@ -117,7 +117,7 @@ impl AgentTool for CuratorStatusTool {
                     return Ok(CuratorStatusOutput {
                         status: "ok".to_string(),
                         regulation_effectiveness: effectiveness,
-                        escalation_count: deficit.map(|_| 0), // escalations not tracked separately yet
+                        escalation_count: None, // escalations not tracked yet — no escalation queue wired
                         critical_alerts: critical,
                         variety_counters: if input.include_variety {
                             deficit.map(|d| vec![("overall".to_string(), d)])

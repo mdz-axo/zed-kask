@@ -497,8 +497,9 @@ impl Agent {
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
-            // The Curator uses a dedicated server with its own system prompt
-            // that reflects its role as a cybernetic regulator.
+            // The Curator overlays curator context and tools on top of
+            // the Zed Agent — same system prompt, same coding tools, plus
+            // metacognition and regulatory surface.
             Self::Curator => Rc::new(agent::CuratorAgentServer::new(fs, thread_store)),
             Self::Custom { id: name } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))

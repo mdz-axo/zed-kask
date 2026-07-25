@@ -48,7 +48,6 @@ impl CuratorServer {
                 "status": "ok",
                 "server": SERVER_NAME,
                 "curator_webid": self.webid.to_string(),
-                "userpod": self.userpod,
                 "stores": {
                     "escalation_queue": self.escalation_queue.is_some(),
                     "regulation_store": self.regulation_store.is_some(),
@@ -116,7 +115,7 @@ impl CuratorServer {
             };
             let events: Arc<dyn RegulationSink> =
                 Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            match governance::resolve_direct(queue.as_ref(), &events, &req.id, &self.userpod) {
+            match governance::resolve_direct(queue.as_ref(), &events, &req.id, "curator") {
                 Ok(()) => Ok(json!({"resolved": true, "id": req.id})),
                 Err(e) => Err(McpToolError::internal(format!("{e}"))),
             }
@@ -142,7 +141,7 @@ impl CuratorServer {
             };
             let events: Arc<dyn RegulationSink> =
                 Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            match governance::dismiss_direct(queue.as_ref(), &events, &req.id, &self.userpod) {
+            match governance::dismiss_direct(queue.as_ref(), &events, &req.id, "curator") {
                 Ok(()) => Ok(json!({"dismissed": true, "id": req.id})),
                 Err(e) => Err(McpToolError::internal(format!("{e}"))),
             }
@@ -429,7 +428,7 @@ impl CuratorServer {
 
 // ── Server startup ─────────────────────────────────────────────────────
 
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         SERVER_NAME,
         env!("CARGO_PKG_VERSION"),
@@ -438,7 +437,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
                 open_curator_stores(&ctx);
             Ok(CuratorServer::new(
                 ctx.webid,
-                userpod.clone(),
                 escalation_queue,
                 regulation_store,
                 episodic,

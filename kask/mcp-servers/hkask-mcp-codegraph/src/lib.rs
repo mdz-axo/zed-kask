@@ -390,7 +390,7 @@ impl CodeGraphServer {
     }
 }
 
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     let db_path = std::env::var("HKASK_CODEGRAPH_DB").ok();
     run_server(
         "hkask-mcp-codegraph",
@@ -417,7 +417,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
             let pipeline = IndexPipeline::new(store);
             Ok(CodeGraphServer::new(
                 webid,
-                userpod.clone(),
                 CapabilityTier::detect(&std::collections::HashMap::new()),
                 Arc::new(Mutex::new(pipeline)),
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),

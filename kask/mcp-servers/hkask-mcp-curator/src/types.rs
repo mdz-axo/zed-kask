@@ -50,8 +50,8 @@ pub struct TokenListRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct UserPodStatusRequest {
-    pub userpod_name: Option<String>,
+pub struct AgentStatusRequest {
+    pub agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -31,9 +31,12 @@ use std::time::Duration;
 
 use hkask_types::curator::EscalationSeverity;
 use hkask_types::regulation::{LedgerHealth, RegulationHealth};
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
+use tokio::sync::RwLock as TokioRwLock;
+use tokio::sync::mpsc;
 
 use crate::runtime::RegulationLedger;
+use crate::types::loops::CurationInput;
 
 /// Default tick interval for the metacognition loop (30 seconds).
 pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -108,24 +111,47 @@ impl Default for MetacognitionConfig {
 /// or `CurationLoop`. It reads directly from `RegulationLedger` which is already
 /// wired in zed-kask's composition root.
 pub struct MetacognitionLoop {
-    ledger: Arc<RwLock<RegulationLedger>>,
+    ledger: Arc<TokioRwLock<RegulationLedger>>,
     config: MetacognitionConfig,
     last_snapshot: RwLock<Option<HealthSnapshot>>,
+    /// Optional channel to receive alerts FROM the CyberneticsLoop.
+    /// The CyberneticsLoop sends `CurationInput::Alert` when its algedonic
+    /// manager detects variety deficits. The metacognition loop logs and
+    /// forwards these to the user via the `curator_status` tool.
+    alert_rx: Option<tokio::sync::Mutex<mpsc::UnboundedReceiver<CurationInput>>>,
 }
 
 impl MetacognitionLoop {
     /// Create a new metacognition loop.
-    pub fn new(ledger: Arc<RwLock<RegulationLedger>>) -> Self {
+    pub fn new(ledger: Arc<TokioRwLock<RegulationLedger>>) -> Self {
         Self::with_config(ledger, MetacognitionConfig::default())
     }
 
     /// Create with custom configuration.
-    pub fn with_config(ledger: Arc<RwLock<RegulationLedger>>, config: MetacognitionConfig) -> Self {
+    pub fn with_config(
+        ledger: Arc<TokioRwLock<RegulationLedger>>,
+        config: MetacognitionConfig,
+    ) -> Self {
         Self {
             ledger,
             config,
             last_snapshot: RwLock::new(None),
+            alert_rx: None,
         }
+    }
+
+    /// Wire a channel to receive alerts FROM the CyberneticsLoop.
+    ///
+    /// The CyberneticsLoop sends `CurationInput::Alert` when its algedonic
+    /// manager detects variety deficits. The metacognition loop receives
+    /// these alerts, logs them, and includes them in health snapshots.
+    ///
+    /// This closes the feedback loop: CyberneticsLoop senses → alerts →
+    /// MetacognitionLoop receives → logs + surfaces to user via
+    /// `curator_status` tool → user adjusts → CyberneticsLoop re-senses.
+    pub fn with_alert_receiver(mut self, rx: mpsc::UnboundedReceiver<CurationInput>) -> Self {
+        self.alert_rx = Some(tokio::sync::Mutex::new(rx));
+        self
     }
 
     /// Run the loop as a background task. This method blocks (runs forever)
@@ -166,7 +192,7 @@ impl MetacognitionLoop {
         self.act(&snapshot, &alerts).await;
 
         // Store the snapshot for external queries.
-        *self.last_snapshot.write().await = Some(snapshot);
+        *self.last_snapshot.write() = Some(snapshot);
     }
 
     /// Compare the snapshot against thresholds and produce alerts.
@@ -224,7 +250,7 @@ impl MetacognitionLoop {
         alerts
     }
 
-    /// Act on the snapshot and alerts — log, emit spans, issue directives.
+    /// Act on the snapshot and alerts — log, drain incoming CyberneticsLoop alerts.
     async fn act(&self, snapshot: &HealthSnapshot, alerts: &[EscalationAlert]) {
         // Log the health snapshot
         tracing::info!(
@@ -237,7 +263,7 @@ impl MetacognitionLoop {
             "Curator metacognition tick"
         );
 
-        // Log each alert
+        // Log each alert produced by the metacognition loop's own threshold checks.
         for alert in alerts {
             match alert.severity {
                 EscalationSeverity::Critical => {
@@ -247,7 +273,7 @@ impl MetacognitionLoop {
                         value = alert.value,
                         threshold = alert.threshold,
                         message = %alert.message,
-                        "CRITICAL escalation alert"
+                        "CRITICAL metacognition escalation alert"
                     );
                 }
                 EscalationSeverity::Warning => {
@@ -257,7 +283,7 @@ impl MetacognitionLoop {
                         value = alert.value,
                         threshold = alert.threshold,
                         message = %alert.message,
-                        "Escalation alert"
+                        "Metacognition escalation alert"
                     );
                 }
                 EscalationSeverity::Info => {
@@ -270,21 +296,39 @@ impl MetacognitionLoop {
                 }
             }
         }
+
+        // Drain incoming alerts from the CyberneticsLoop (close the loop).
+        // These are alerts the CyberneticsLoop's algedonic manager produced
+        // during its own tick cycle — forwarded to the metacognition loop
+        // for observability and user-facing surfacing.
+        if let Some(ref rx) = self.alert_rx {
+            let mut rx_guard = rx.lock().await;
+            while let Ok(input) = rx_guard.try_recv() {
+                if let CurationInput::Alert(alert) = input {
+                    tracing::warn!(
+                        target: "reg.curator.metacognition",
+                        domain = %alert.domain,
+                        deficit = alert.deficit,
+                        threshold = alert.threshold,
+                        severity = ?alert.severity,
+                        message = %alert.message,
+                        "CyberneticsLoop algedonic alert received"
+                    );
+                }
+            }
+        }
     }
 
     /// Get the last health snapshot (if any).
     pub async fn last_snapshot(&self) -> Option<HealthSnapshot> {
-        self.last_snapshot.read().await.clone()
+        self.last_snapshot.read().clone()
     }
 
     /// Get the last health snapshot synchronously (blocking RwLock read).
     ///
-    /// This is safe to call from a sync context — the RwLock is a parking_lot
-    /// RwLock which doesn't require an async runtime.
+    /// Uses `parking_lot::RwLock::read()` which parks the current thread
+    /// until the lock is available. Safe to call from a sync context.
     pub fn last_snapshot_blocking(&self) -> Option<HealthSnapshot> {
-        self.last_snapshot
-            .try_read()
-            .ok()
-            .and_then(|guard| guard.clone())
+        self.last_snapshot.read().clone()
     }
 }

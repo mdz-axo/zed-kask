@@ -243,7 +243,7 @@ impl McpRuntime {
     /// and registers the discovered tools in the runtime.
     ///
     /// `extra_env` is a map of environment variables to set on the child
-    /// process (e.g., `HKASK_MCP_HOST`). These override inherited env vars.
+    /// process. These override inherited env vars.
     ///
     /// If a server with the same ID is already connected, returns `Ok(())`.
     #[allow(private_interfaces)]

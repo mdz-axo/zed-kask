@@ -491,14 +491,8 @@ impl KaskSettings {
     /// at startup. Called by the composition root before `start_server_with_env`.
     /// Only non-empty/non-default values are included — MCP servers have their
     /// own fallback defaults for unset env vars.
-    ///
-    /// `userpod_name` is the sanitized Zed username — sets `HKASK_MCP_HOST`
-    /// (used by `bootstrap_mcp_server` for P12 host identity) and
-    /// `HKASK_USERPOD_NAME` (used by MCP server transport for WebID resolution).
-    pub fn mcp_env(&self, userpod_name: &str) -> std::collections::HashMap<String, String> {
+    pub fn mcp_env(&self) -> std::collections::HashMap<String, String> {
         let mut env = std::collections::HashMap::new();
-        env.insert("HKASK_MCP_HOST".to_string(), userpod_name.to_string());
-        env.insert("HKASK_USERPOD_NAME".to_string(), userpod_name.to_string());
 
         // ── Condenser ──
         if !self.condenser.persona_keywords.is_empty() {

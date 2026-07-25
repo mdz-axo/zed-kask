@@ -62,7 +62,6 @@ impl ResearchServer {
     ) {
         tracing::debug!(
             target: "hkask.mcp.research.memory",
-            userpod = %self.userpod,
             tool = %tool,
             input = %input_summary,
             outcome = %outcome,
@@ -780,7 +779,7 @@ impl ResearchServer {
 // ── Entry point ──
 
 /// Run the research MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
     let dotenv = hkask_mcp_server::load_dotenv();
@@ -823,7 +822,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
 
             Ok(ResearchServer::new(
                 ctx.webid,
-                userpod.clone(),
                 Arc::new(pool),
                 Arc::new(ResponseCache::new(
                     cache_max,

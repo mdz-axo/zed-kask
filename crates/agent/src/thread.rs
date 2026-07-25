@@ -1339,6 +1339,10 @@ pub struct Thread {
     /// default Zed Agent prompt. When `None`, the standard `system_prompt.hbs`
     /// template is rendered.
     system_prompt_override: Option<SharedString>,
+    /// Static context set by the agent (e.g., Curator overlay). Kept separate
+    /// from the injected `static_context` so both can coexist — the Curator
+    /// context is merged with memory-recall context in `render_system_prompt`.
+    agent_static_context: Option<SharedString>,
     /// Tool results that are delivered asynchronously, after the immediate
     /// tool-result slot has been flushed. The outer turn loop drains completed
     /// entries at the top of each iteration and injects them as a synthetic
@@ -1501,6 +1505,7 @@ impl Thread {
             cached_filtered_context: None,
             static_context: None,
             system_prompt_override: None,
+            agent_static_context: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -1891,6 +1896,7 @@ impl Thread {
             cached_filtered_context: None,
             static_context: None,
             system_prompt_override: None,
+            agent_static_context: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -2094,8 +2100,12 @@ impl Thread {
     /// This is NOT an override — the system prompt template is still rendered.
     /// The static context is rendered after the project context section.
     /// Used by the Curator overlay to inject regulatory context.
+    ///
+    /// This is stored separately from the memory-injected `static_context`
+    /// so both can coexist. In `render_system_prompt`, the agent context is
+    /// concatenated with the injected context.
     pub fn set_static_context(&mut self, context: SharedString, cx: &mut Context<Self>) {
-        self.static_context = Some(context);
+        self.agent_static_context = Some(context);
         self.cached_system_prompt = None; // bust the cache
         cx.notify();
     }
@@ -4854,7 +4864,17 @@ impl Thread {
 
         // Static context is loaded async in `run_turn_internal` and cached
         // on `self.static_context`. Here we just read the cached value.
-        let static_context = self.static_context.clone();
+        // Merge agent static context (e.g., Curator overlay) with the
+        // injected static context (e.g., memory recall). Both are rendered
+        // in the system prompt's "Session Context" section.
+        let static_context = match (&self.agent_static_context, &self.static_context) {
+            (Some(agent_ctx), Some(injected_ctx)) => Some(SharedString::from(format!(
+                "{agent_ctx}\n\n---\n\n{injected_ctx}"
+            ))),
+            (Some(agent_ctx), None) => Some(agent_ctx.clone()),
+            (None, Some(injected_ctx)) => Some(injected_ctx.clone()),
+            (None, None) => None,
+        };
 
         // Apply conditional-rules scoping: filter out rules files whose
         // frontmatter specifies `alwaysApply: false` with globs that don't

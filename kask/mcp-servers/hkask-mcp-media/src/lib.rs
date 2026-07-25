@@ -1342,7 +1342,7 @@ impl MediaServer {
 impl rmcp::ServerHandler for MediaServer {}
 
 /// Run the media MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
     // Build the inference router for vision LLM tasks.
@@ -1368,7 +1368,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::ServerContext| {
             Ok(MediaServer::new(
                 ctx.webid,
-                userpod.clone(),
                 inference.clone(),
                 Arc::new(Mutex::new(None)),
                 gallery_store.clone(),

@@ -92,7 +92,6 @@ impl CondenserServer {
     ) {
         tracing::debug!(
             target: "hkask.mcp.condenser.memory",
-            userpod = %self.userpod,
             tool = %tool,
             input = %input_summary,
             outcome = %outcome,
@@ -469,7 +468,7 @@ pub struct SaliencyRequest {
 }
 
 /// Run the condenser MCP server (used by binary target).
-pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     let inference_port: Arc<dyn InferencePort> = hkask_inference::resolve_inference_port().await;
 
     hkask_mcp_server::run_server(
@@ -547,7 +546,6 @@ pub async fn run(userpod: String) -> Result<(), hkask_mcp_server::McpError> {
 
                 Ok(CondenserServer::new(
                     ctx.webid,
-                    userpod.clone(),
                     Mutex::new(CondenserEngine::new()),
                     episodic,
                     semantic,

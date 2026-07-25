@@ -7,8 +7,5 @@
 
 #[tokio::main]
 async fn main() -> Result<(), hkask_mcp_server::McpError> {
-    let boot =
-        hkask_mcp_server::bootstrap_mcp_server("research", "hkask.mcp.research", "HKASK_MCP_HOST")
-            .await?;
-    hkask_mcp_research::run(boot.userpod).await
+    hkask_mcp_research::run().await
 }

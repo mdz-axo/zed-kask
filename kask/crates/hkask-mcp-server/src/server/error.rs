@@ -18,16 +18,6 @@ pub enum McpError {
     #[error("{0} set but HKASK_DB_PASSPHRASE missing")]
     DatabasePassphrase(String),
 
-    #[error(
-        "UserPod '{userpod}' is not authenticated. Enter the userpod's passphrase in the hKask terminal."
-    )]
-    Auth { userpod: String },
-
-    #[error(
-        "UserPod '{userpod}' is not assigned to the {role} MCP role. Use 'kask pod assign {userpod} {role}' to grant this role."
-    )]
-    RoleAssignment { userpod: String, role: String },
-
     #[error("Unexpected {context} response: {detail}")]
     UnexpectedResponse { context: String, detail: String },
 
@@ -35,9 +25,6 @@ pub enum McpError {
         "Missing required credentials: {missing}. Set them via environment variables or hkask-keystore."
     )]
     MissingCredentials { missing: String },
-
-    #[error("MCP host identity is required: set {env_var}")]
-    MissingHostIdentity { env_var: String },
 
     #[error("Storage error: {0}")]
     Storage(#[from] hkask_storage::DatabaseError),

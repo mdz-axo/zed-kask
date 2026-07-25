@@ -3,7 +3,6 @@
 //!
 //! Provides the lightweight layer that all hKask MCP servers depend on:
 //! - Server scaffolding (McpToolError, ServerContext, CredentialRequirement, run_stdio_server)
-//! - Startup identity verification (P12 host identity)
 //! - URL validation, identifier validation, HTTP helpers
 //! - Macros: validate_field!, impl_tool_context!, mcp_server!
 
@@ -74,57 +73,6 @@ where
     run_stdio_server_with_preloaded(name, version, factory, credentials, preloaded).await
 }
 
-/// Result of the standard MCP server bootstrap flow.
-///
-/// All MCP server binaries use this. The userpod identity is passed to the
-/// server's `run()` function.
-#[must_use = "bootstrap result must be passed to the server's run() function"]
-pub struct MCPBootstrap {
-    pub userpod: String,
-}
-
-/// Standard MCP server bootstrap: resolve host identity from env.
-///
-/// Every hKask MCP server binary follows this pattern:
-/// 1. Load `.env`
-/// 2. Resolve the userpod identity from the host env var
-///
-/// After calling this, pass `userpod` to the server's `run()` function.
-///
-/// # Arguments
-/// - `server_name` — short name for logging (e.g. "corpus")
-/// - `target` — tracing target for log messages (e.g. "hkask.mcp.corpus")
-/// - `host_env_var` — environment variable for the userpod identity
-///   (defaults to `"HKASK_MCP_HOST"` for most servers)
-///
-/// expect: "Every MCP action has an authenticated host identity."
-/// \[P12\] Motivating: every action has an authenticated author.
-/// pre: `host_env_var` names a non-empty host identity environment variable.
-/// post: returns an error when the host identity is absent.
-/// \[P1\] Constraining: User Sovereignty — anonymous agency is never synthesized.
-#[must_use = "MCPBootstrap must be passed to the server's run() function"]
-pub async fn bootstrap_mcp_server(
-    server_name: &str,
-    target: &str,
-    host_env_var: &str,
-) -> Result<MCPBootstrap, McpError> {
-    let userpod = std::env::var(host_env_var)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| McpError::MissingHostIdentity {
-            env_var: host_env_var.to_string(),
-        })?;
-
-    tracing::info!(
-        target,
-        server = server_name,
-        userpod = %userpod,
-        "MCP server bootstrapped",
-    );
-
-    Ok(MCPBootstrap { userpod })
-}
-
 /// Macro to validate an identifier field and return early on error.
 ///
 /// Eliminates the repeated 3-line pattern:
@@ -149,8 +97,8 @@ macro_rules! validate_field {
 
 /// Generate a `ToolContext` impl for an MCP server struct.
 ///
-/// Assumes the struct has `webid: WebID` and `userpod: String` fields —
-/// the standard pattern for all hKask MCP servers.
+/// Assumes the struct has a `webid: WebID` field — the standard pattern
+/// for all hKask MCP servers.
 ///
 /// Usage:
 /// ```ignore
@@ -166,10 +114,9 @@ macro_rules! impl_tool_context {
             fn record_tool_outcome(&self, tool: &str, outcome: &str) {
                 tracing::debug!(
                     target: "reg.memory",
-                    userpod = %self.userpod,
                     tool = %tool,
                     outcome = %outcome,
-                    "Tool outcome recorded (no daemon — in-process only)",
+                    "Tool outcome recorded (in-process only)",
                 );
             }
         }
@@ -178,9 +125,9 @@ macro_rules! impl_tool_context {
 
 /// Define an MCP server struct with standard fields + constructor.
 ///
-/// Generates the struct with mandatory `webid`, `userpod`
-/// fields plus any domain-specific fields, a `new()` constructor, and
-/// a `ToolContext` impl via `impl_tool_context!`.
+/// Generates the struct with a mandatory `webid` field plus any
+/// domain-specific fields, a `new()` constructor, and a `ToolContext` impl
+/// via `impl_tool_context!`.
 ///
 /// # Example
 /// ```ignore
@@ -190,7 +137,7 @@ macro_rules! impl_tool_context {
 /// });
 /// ```
 ///
-/// Expands to a struct with `webid, userpod, inference_port, skills`.
+/// Expands to a struct with `webid, inference_port, skills`.
 #[macro_export]
 macro_rules! mcp_server {
     // Variant with custom fields
@@ -207,8 +154,6 @@ macro_rules! mcp_server {
         $vis struct $name {
             /// Agent identity for capability tokens and ownership.
             pub webid: hkask_types::WebID,
-            /// UserPod identity serving this MCP server.
-            pub userpod: String,
             $(
                 $(#[$field_meta])*
                 $field_vis $field : $ty
@@ -219,10 +164,9 @@ macro_rules! mcp_server {
             #[allow(clippy::too_many_arguments)]
             pub fn new(
                 webid: hkask_types::WebID,
-                userpod: String,
                 $($field : $ty),*
             ) -> Self {
-                Self { webid, userpod, $($field),* }
+                Self { webid, $($field),* }
             }
         }
 
@@ -238,16 +182,11 @@ macro_rules! mcp_server {
         $vis struct $name {
             /// Agent identity for capability tokens and ownership.
             pub webid: hkask_types::WebID,
-            /// UserPod identity serving this MCP server.
-            pub userpod: String,
         }
 
         impl $name {
-            pub fn new(
-                webid: hkask_types::WebID,
-                userpod: String,
-            ) -> Self {
-                Self { webid, userpod }
+            pub fn new(webid: hkask_types::WebID) -> Self {
+                Self { webid }
             }
         }
 
@@ -257,25 +196,8 @@ macro_rules! mcp_server {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn bootstrap_rejects_missing_host_identity() {
-        let err = match bootstrap_mcp_server(
-            "test-server",
-            "hkask.mcp.test",
-            "HKASK_TEST_MISSING_BOOTSTRAP_HOST",
-        )
-        .await
-        {
-            Ok(_) => panic!("missing host identity must prevent bootstrap"),
-            Err(err) => err,
-        };
-
-        assert!(matches!(
-            err,
-            McpError::MissingHostIdentity { env_var }
-                if env_var == "HKASK_TEST_MISSING_BOOTSTRAP_HOST"
-        ));
-    }
+    // bootstrap_mcp_server and MCPBootstrap were removed along with the
+    // HKASK_MCP_HOST / userpod identity concept. MCP servers now derive
+    // agent identity solely from ServerContext.webid (resolved in transport.rs
+    // from HKASK_WEBID or anonymous fallback).
 }

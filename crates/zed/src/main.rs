@@ -539,9 +539,16 @@ fn main() {
         let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
             hkask_regulation::RegulationLedger::default(),
         ));
+
+        // Create the alert channel: CyberneticsLoop sends alerts →
+        // MetacognitionLoop receives them. This closes the feedback loop.
+        let (alert_tx, alert_rx) = tokio::sync::mpsc::unbounded_channel();
+
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
-            hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone()),
+            hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
+                .with_alerts_channel(alert_tx),
         ));
+        let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
             std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
         let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
@@ -552,14 +559,37 @@ fn main() {
         );
         log::info!("hKask regulation system wired — tool invocations are governed");
 
+        // Run the CyberneticsLoop's tick cycle on a background task.
+        // Without this, the RegulationLedger stays empty — no variety
+        // counters, no regulation health, no algedonic alerts. The
+        // metacognition loop would be sensing a dead system.
+        //
+        // The tick interval (10s) matches the Curation loop cadence from
+        // the legacy hKask LoopScheduler.
+        let cybernetics_loop_for_tick = cybernetics_loop_for_tick.clone();
+        cx.background_spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.tick().await; // skip the first immediate tick
+            loop {
+                interval.tick().await;
+                let loop_guard = cybernetics_loop_for_tick.read().await;
+                use hkask_regulation::RegulationLoop;
+                loop_guard.tick().await;
+            }
+        })
+        .detach();
+        log::info!("CyberneticsLoop tick cycle started (10s interval)");
+
         // Curator metacognition loop — runs sense→compare→compute→act cycles
-        // on a background task. Reads from RegulationLedger (already wired)
-        // and emits health snapshots + escalation alerts.
+        // on a background task. Reads from RegulationLedger (populated by
+        // the CyberneticsLoop tick above) and receives alerts from the
+        // CyberneticsLoop via the alert channel.
         //
         // This is a self-contained implementation in hkask-regulation that
         // doesn't need hkask-pods. It reads directly from RegulationLedger.
         let metacognition_loop = std::sync::Arc::new(
-            hkask_regulation::MetacognitionLoop::new(regulation_ledger),
+            hkask_regulation::MetacognitionLoop::new(regulation_ledger)
+                .with_alert_receiver(alert_rx),
         );
         let metacog_loop = metacognition_loop.clone();
         cx.background_spawn(async move {
@@ -631,8 +661,8 @@ fn main() {
 
         // Determine which kask MCP servers to auto-launch based on KaskSettings.
         // The actual launch is deferred until the Zed user resolves (see the
-        // deferred task below) so MCP servers get the correct userpod identity
-        // via HKASK_MCP_HOST / HKASK_USERPOD_NAME env vars.
+        // deferred task below) so MCP servers can route inference through zed's
+        // LanguageModelRegistry via the IPC socket.
         let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx);
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
             BUILT_IN_MCP_SERVERS
@@ -803,11 +833,10 @@ fn main() {
 
         // D6/D11/MCP-launch (deferred): Wait for the Zed user to resolve, then
         // replace the logging memory port with a real one, wire the context
-        // injector, and launch MCP servers with the correct userpod identity.
+        // injector, and launch MCP servers.
         //
-        // The userpod name is derived from User::username (the GitHub-style
-        // login from the Zed account) via sanitize_name(). This collapses the
-        // former `kask login <name>` onboarding into a lookup.
+        // The agent name is derived from User::username (the GitHub-style
+        // login from the Zed account) via sanitize_name().
         //
         // If the user is already logged in (session restored), the upgrade
         // happens immediately on the first watch tick. If not, the task waits
@@ -835,15 +864,15 @@ fn main() {
                 };
 
                 let username = user.username.to_string();
-                let Some(userpod_name) = kask_bridge::userpod_name_from_username(&username) else {
+                let Some(agent_name) = kask_bridge::agent_name_from_username(&username) else {
                     log::warn!("Zed username '{username}' sanitized to empty — kask memory stays in logging mode");
                     return;
                 };
 
-                log::info!("Zed user resolved — kask userpod name: {userpod_name}");
+                log::info!("Zed user resolved — kask agent name: {agent_name}");
 
-                // D6: Provision the userpod and replace the logging memory port
-                // with a real one. `provision_userpod` handles first-run setup
+                // D6: Provision the agent's storage and replace the logging memory port
+                // with a real one. `provision_agent` handles first-run setup
                 // as lookups and directory creation — no interactive onboarding.
                 //
                 // The keystore uses the `keyring` crate directly
@@ -854,12 +883,12 @@ fn main() {
                 let username_for_provision = username.clone();
 
                 let provision_result = cx.background_spawn(async move {
-                    kask_bridge::provision_userpod(&username_for_provision)
+                    kask_bridge::provision_agent(&username_for_provision)
                 }).await;
 
                 match provision_result {
                     Ok(provisioned) => {
-                        let kask_bridge::ProvisionedUserpod { db_path, passphrase, webid: user_webid } = provisioned;
+                        let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: user_webid } = provisioned;
                         match kask_bridge::RealMemoryPort::new(
                             &db_path,
                             &passphrase,
@@ -877,7 +906,7 @@ fn main() {
                                 agent::set_memory_port(Some(bridge));
                                 log::info!(
                                     "hKask memory port upgraded to RealMemoryPort \
-                                     (userpod: {userpod_name}, db: {db_path})"
+                                     (agent: {agent_name}, db: {db_path})"
                                 );
 
                                 // D11: Wire the context injector now that the real memory port exists.
@@ -895,7 +924,7 @@ fn main() {
                                         ),
                                     );
                                     agent::set_context_injector(Some(injector));
-                                    log::info!("hKask context injector wired (userpod: {userpod_name})");
+                                    log::info!("hKask context injector wired (agent: {agent_name})");
                                 }
 
                                 // Wire the lazy tool router. The router narrows
@@ -909,7 +938,7 @@ fn main() {
                             }
                             Err(e) => {
                                 log::warn!(
-                                    "Failed to open memory DB at {db_path} for {userpod_name}: {e} \
+                                    "Failed to open memory DB at {db_path} for {agent_name}: {e} \
                                      — staying in logging mode"
                                 );
                             }
@@ -917,15 +946,15 @@ fn main() {
                     }
                     Err(e) => {
                         log::warn!(
-                            "Failed to provision userpod for {userpod_name}: {e} \
+                            "Failed to provision agent storage for {agent_name}: {e} \
                              — staying in logging mode"
                         );
                     }
                 }
 
-                // Launch MCP servers with the resolved userpod identity.
+                // Launch MCP servers.
                 if !servers_to_start_clone.is_empty() {
-                    let mut mcp_env = kask_settings.mcp_env(&userpod_name);
+                    let mut mcp_env = kask_settings.mcp_env();
                     // Pass the inference IPC socket path so MCP servers can
                     // route inference through zed's LanguageModelRegistry.
                     if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
@@ -947,7 +976,7 @@ fn main() {
                             .start_server_with_env(server_id, &binary, mcp_env.clone())
                             .await
                         {
-                            Ok(()) => log::info!("Kask MCP server '{server_id}' started (userpod: {userpod_name})"),
+                            Ok(()) => log::info!("Kask MCP server '{server_id}' started"),
                             Err(e) => log::warn!(
                                 "Kask MCP server '{server_id}' failed to start: {e} \
                                  — set HKASK_MCP_{}_BIN to the binary path",
@@ -1033,7 +1062,7 @@ fn main() {
         //
         // The a2a_secret and logging memory port were wired earlier
         // (before AppState::set_global) because they don't depend on the language
-        // model registry and are needed by the deferred userpod provisioning task.
+        // model registry and are needed by the deferred agent provisioning task.
         {
             let async_cx = cx.to_async();
             let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
@@ -1209,7 +1238,7 @@ fn main() {
                 log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
 
                 if kask_settings.memory.auto_inject {
-                    log::info!("hKask context injection enabled — injector will be wired after userpod resolves");
+                    log::info!("hKask context injection enabled — injector will be wired after agent resolves");
                 } else {
                     log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
                 }
