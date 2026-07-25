@@ -234,10 +234,10 @@ mod tests {
     use super::*;
     use chrono::Duration as ChronoDuration;
     use hkask_storage::RegulationArchive;
+    use hkask_types::GAS_PER_RJOULE;
     use hkask_types::RegulationSink;
     use hkask_types::WebID;
     use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
-    use hkask_types::GAS_PER_RJOULE;
     use std::sync::Mutex;
 
     /// A test event sink that captures the last persisted event.
@@ -273,7 +273,7 @@ mod tests {
 
     fn make_wallet_manager() -> Arc<dyn WalletBudgetPort> {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = Arc::new(hkask_storage::WalletStore::from_driver(driver));
+        let store = Arc::new(crate::agent_wallet_store::WalletStore::from_driver(driver));
         let manager = WalletManager::new(store);
         Arc::new(manager)
     }

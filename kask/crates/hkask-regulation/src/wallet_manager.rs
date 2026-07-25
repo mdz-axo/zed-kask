@@ -7,9 +7,12 @@ use crate::agent_wallet_store::{AgentWalletError, WalletStore};
 use crate::energy::{GasCost, GasError};
 use crate::well::WellManager;
 use hkask_types::WebID;
-use hkask_types::{RJoule, WalletBudgetPort, WalletBudgetError, WalletId, id::ApiKeyId, ApiKeyCapability, Encumbrance};
-use std::sync::atomic::{AtomicU64, Ordering};
+use hkask_types::{
+    ApiKeyCapability, Encumbrance, RJoule, WalletBudgetError, WalletBudgetPort, WalletId,
+    id::ApiKeyId,
+};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 impl From<AgentWalletError> for GasError {
@@ -195,7 +198,10 @@ impl WalletBudgetPort for WalletManager {
         None
     }
 
-    fn get_balance(&self, _wallet_id: WalletId) -> Result<hkask_types::WalletBalance, WalletBudgetError> {
+    fn get_balance(
+        &self,
+        _wallet_id: WalletId,
+    ) -> Result<hkask_types::WalletBalance, WalletBudgetError> {
         Err(WalletBudgetError::Wallet(
             "regulation wallet tracks per-agent balances, not per-wallet-id".into(),
         ))
@@ -207,6 +213,24 @@ impl WalletBudgetPort for WalletManager {
 
     fn set_gas_per_rjoule(&self, rate: u64) {
         self.gas_per_rjoule.store(rate, Ordering::Relaxed);
+    }
+
+    fn consume(&self, _key_id: ApiKeyId, _gas_rj: RJoule) -> Result<(), WalletBudgetError> {
+        Err(WalletBudgetError::Wallet(
+            "API key encumbrance accounting not available — regulation wallet tracks per-agent gas balances".into(),
+        ))
+    }
+
+    fn settle_rjoules(
+        &self,
+        _wallet_id: WalletId,
+        _reserved_rj: RJoule,
+        _actual_rj: RJoule,
+    ) -> Result<(), WalletBudgetError> {
+        Err(WalletBudgetError::Wallet(
+            "rJoule settlement not available — regulation wallet settles via per-agent gas spend"
+                .into(),
+        ))
     }
 }
 

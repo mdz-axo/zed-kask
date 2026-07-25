@@ -27,5 +27,5 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 [dev-dependencies]
 hkask-test-harness = { path = "../hkask-test-harness" }
 hkask-storage = { path = "../hkask-storage" }
-hkask-wallet = { path = "../hkask-wallet" }
 proptest = "1"
+tokio = { workspace = true, features = ["macros", "rt"] }

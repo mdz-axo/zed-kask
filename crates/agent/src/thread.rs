@@ -1717,7 +1717,7 @@ impl Thread {
             let tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 tool_call_id.clone(),
-                message_ix,
+                owning_message_ix,
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,

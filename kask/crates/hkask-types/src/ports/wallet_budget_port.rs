@@ -2,7 +2,7 @@
 //!
 //! Regulation depends on this port trait instead of concrete `WalletManager`.
 //! This inverts the dependency per hexagonal architecture: Regulation defines
-//! the interface it needs, and `hkask-wallet` implements it.
+//! the interface it needs, and `regulation::WalletManager` implements it.
 //!
 //! Per Conant-Ashby (Good Regulator theorem): the regulator must model
 //! the system it regulates. This port IS the regulator's model of the
@@ -33,7 +33,7 @@ pub enum WalletBudgetError {
 /// - Retrieve API key capabilities
 /// - Read and adjust the gas→rJoule conversion rate
 ///
-/// Implementations: `hkask_wallet::WalletManager` implements this trait.
+/// Implementations: `hkask_regulation::wallet_manager::WalletManager` implements this trait.
 /// Regulation holds `Arc<dyn WalletBudgetPort>` instead of `Arc<WalletManager>`.
 pub trait WalletBudgetPort: Send + Sync {
     /// Convert gas units to rJoule using the current conversion rate.
