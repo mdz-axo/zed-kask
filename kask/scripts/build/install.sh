@@ -234,7 +234,7 @@ clone_repo() {
         return 0
     fi
 
-    if [ -f "Cargo.toml" ] && grep -q "hkask-cli" Cargo.toml 2>/dev/null; then
+    if [ -f "Cargo.toml" ] && grep -q "name = \"zed\"" Cargo.toml 2>/dev/null; then
         HKASK_SOURCE_DIR="$(pwd)"
         log "Running from within hKask repo: $HKASK_SOURCE_DIR"
         return 0
@@ -270,19 +270,15 @@ clone_repo() {
 }
 
 # MCP server binaries that kask spawns as child processes.
-# Must stay in sync with crates/hkask-mcp/src/lib.rs BUILTIN_SERVERS (canonical registry).
+# Must stay in sync with crates/hkask-mcp-server/src/lib.rs BUILTIN_SERVERS (canonical registry).
 MCP_SERVERS=(
-    "hkask-mcp-memory"
     "hkask-mcp-condenser"
     "hkask-mcp-research"
     "hkask-mcp-companies"
-    "hkask-mcp-communication"
     "hkask-mcp-media"
     "hkask-mcp-corpus"
     "hkask-mcp-training"
     "hkask-mcp-kata-kanban"
-    "hkask-mcp-skill"
-    "hkask-mcp-filesystem"
     "hkask-mcp-curator"
     "hkask-mcp-codegraph"
     "hkask-mcp-scenarios"
@@ -303,7 +299,7 @@ build_hkask() {
         log "Building in debug mode..."
     fi
 
-    local package_args=(--package hkask-cli)
+    local package_args=(--package zed)
     for server in "${MCP_SERVERS[@]}"; do
         package_args+=(--package "$server")
     done
@@ -329,8 +325,8 @@ install_binary() {
         profile_dir="$workspace_root/target/debug"
     fi
 
-    if [ ! -x "$profile_dir/kask" ]; then
-        log_error "Built CLI binary not found: $profile_dir/kask"
+    if [ ! -x "$profile_dir/zed-kask" ]; then
+        log_error "Built CLI binary not found: $profile_dir/zed-kask"
         return 1
     fi
     for server in "${MCP_SERVERS[@]}"; do
@@ -341,13 +337,13 @@ install_binary() {
     done
 
     # Install CLI binary
-    cp "$profile_dir/kask" "$BIN_DIR/kask"
-    chmod +x "$BIN_DIR/kask"
+    cp "$profile_dir/zed-kask" "$BIN_DIR/zed-kask"
+    chmod +x "$BIN_DIR/zed-kask"
 
     # Strip debug symbols (reduces binary size ~60%, non-fatal if missing)
     if command -v strip &> /dev/null; then
-        strip "$BIN_DIR/kask" 2>/dev/null || true
-        log "Stripped debug symbols from kask"
+        strip "$BIN_DIR/zed-kask" 2>/dev/null || true
+        log "Stripped debug symbols from zed-kask"
     fi
 
     # Install MCP server binaries
@@ -373,8 +369,8 @@ install_binary() {
 add_to_path() {
     # Strategy 1: symlink into /usr/local/bin (already in PATH on all Linux)
     if [ -w "$SYSTEM_BIN" ] || [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
-        log "Creating symlink at $SYSTEM_BIN/kask → $BIN_DIR/kask"
-        if ln -sf "$BIN_DIR/kask" "$SYSTEM_BIN/kask" 2>/dev/null; then
+        log "Creating symlink at $SYSTEM_BIN/zed-kask → $BIN_DIR/zed-kask"
+        if ln -sf "$BIN_DIR/zed-kask" "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
             log_success "kask linked into $SYSTEM_BIN (system PATH)"
             return 0
         fi
@@ -382,7 +378,7 @@ add_to_path() {
         log_warning "Cannot write to $SYSTEM_BIN, falling back to shell config"
     elif command -v sudo &> /dev/null; then
         log "Creating system symlink (requires sudo)..."
-        if sudo ln -sf "$BIN_DIR/kask" "$SYSTEM_BIN/kask" 2>/dev/null; then
+        if sudo ln -sf "$BIN_DIR/zed-kask" "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
             log_success "kask linked into $SYSTEM_BIN (system PATH)"
             return 0
         fi
@@ -597,14 +593,14 @@ verify_installation() {
     log "Verifying installation..."
 
     # Check the binary file exists
-    if [ ! -f "$BIN_DIR/kask" ]; then
-        log_error "Binary not found at $BIN_DIR/kask"
+    if [ ! -f "$BIN_DIR/zed-kask" ]; then
+        log_error "Binary not found at $BIN_DIR/zed-kask"
         return 1
     fi
 
     local version
-    version=$("$BIN_DIR/kask" --version 2>&1 || echo "unknown")
-    log "CLI: $BIN_DIR/kask ($version)"
+    version=$("$BIN_DIR/zed-kask" --version 2>&1 || echo "unknown")
+    log "CLI: $BIN_DIR/zed-kask ($version)"
 
     # Check MCP server binaries
     local mcp_count=0
@@ -621,8 +617,8 @@ verify_installation() {
     fi
 
     # Check symlink in /usr/local/bin
-    if [ -L "$SYSTEM_BIN/kask" ]; then
-        log "Symlink: $SYSTEM_BIN/kask → $(readlink "$SYSTEM_BIN/kask")"
+    if [ -L "$SYSTEM_BIN/zed-kask" ]; then
+        log "Symlink: $SYSTEM_BIN/zed-kask → $(readlink "$SYSTEM_BIN/zed-kask")"
     fi
 
     # Check if kask is reachable via PATH
@@ -654,15 +650,15 @@ uninstall_hkask() {
     log "Uninstalling hKask..."
 
     # Remove system symlink
-    if [ -L "$SYSTEM_BIN/kask" ]; then
-        sudo rm -f "$SYSTEM_BIN/kask" 2>/dev/null || rm -f "$SYSTEM_BIN/kask" 2>/dev/null || true
-        log "Removed symlink: $SYSTEM_BIN/kask"
+    if [ -L "$SYSTEM_BIN/zed-kask" ]; then
+        sudo rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null || rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null || true
+        log "Removed symlink: $SYSTEM_BIN/zed-kask"
     fi
 
     # Remove CLI binary and MCP server binaries
-    if [ -f "$BIN_DIR/kask" ]; then
-        rm -f "$BIN_DIR/kask"
-        log "Removed $BIN_DIR/kask"
+    if [ -f "$BIN_DIR/zed-kask" ]; then
+        rm -f "$BIN_DIR/zed-kask"
+        log "Removed $BIN_DIR/zed-kask"
     fi
     for server in "${MCP_SERVERS[@]}"; do
         if [ -f "$BIN_DIR/$server" ]; then

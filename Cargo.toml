@@ -301,7 +301,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-training",
     "kask/mcp-servers/hkask-mcp-companies",
-    "kask/mcp-servers/hkask-mcp-corpus",
+    "kask/mcp-servers/hkask-mcp-corpus", ".sandbox-sed-wording",
 ]
 default-members = ["crates/zed"]
 

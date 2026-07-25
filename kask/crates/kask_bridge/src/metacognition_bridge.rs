@@ -25,16 +25,10 @@ impl BridgeMetacognitionProvider {
 
 impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
     fn health_snapshot_json(&self) -> Task<Option<serde_json::Value>> {
-        let loop_ = self.loop_.clone();
-        // The MetacognitionLoop's `last_snapshot()` is async, but it just
-        // reads from an RwLock — it's effectively instant. We use
-        // `Task::ready` with the result of a blocking read.
-        //
-        // Since `last_snapshot()` returns a future that completes immediately
-        // (it's just an RwLock read), we can use `Task::ready` by first
-        // computing the value synchronously.
-        let snapshot = loop_.last_snapshot_blocking();
-        let result = snapshot.map(|s| {
+        // `last_snapshot_blocking` uses a parking_lot RwLock read — it parks
+        // the thread briefly if the metacognition loop is mid-write, then
+        // returns. Safe to call synchronously from `Task::ready`.
+        let result = self.loop_.last_snapshot_blocking().map(|s| {
             json!({
                 "timestamp": s.timestamp.to_rfc3339(),
                 "variety_deficit": s.variety_deficit,

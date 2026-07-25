@@ -566,7 +566,6 @@ fn main() {
         //
         // The tick interval (10s) matches the Curation loop cadence from
         // the legacy hKask LoopScheduler.
-        let cybernetics_loop_for_tick = cybernetics_loop_for_tick.clone();
         cx.background_spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             interval.tick().await; // skip the first immediate tick
