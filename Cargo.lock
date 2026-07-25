@@ -9779,7 +9779,6 @@ dependencies = [
  "futures-util",
  "hex",
  "hkask-capability",
- "hkask-goal",
  "proptest 1.11.0",
  "rusqlite",
  "serde",

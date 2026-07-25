@@ -70,11 +70,24 @@ pub use visibility::{Confidence, Dimension, Visibility};
 
 pub use ports::*;
 pub use wallet_types::{
-    ApiKeyCapability, ApiKeyMaterial, ChainId, DepositAddress, DepositReference, Encumbrance,
-    EncumbranceStatus, GAS_PER_RJOULE, PriceFeedConfig, PrivacyMode, RJ_PER_USDC, RJoule,
-    RateLimitConfig, TransactionType, TxHash, WalletBalance, WalletConfig, WalletError,
-    WalletTransaction,
+    ApiKeyCapability, ChainId, DepositAddress, DepositReference, Encumbrance, EncumbranceStatus,
+    GAS_PER_RJOULE, PrivacyMode, RJoule, RateLimitConfig, TransactionType, WalletBalance,
+    WalletConfig, WalletError, WalletTransaction,
 };
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HMemEntry {
+    pub id: String,
+    pub entity: String,
+    pub attribute: String,
+    pub value: serde_json::Value,
+    pub valid_from: String,
+    pub valid_to: Option<String>,
+    pub confidence: f64,
+    pub perspective: String,
+    pub visibility: String,
+    pub dimension: Option<String>,
+}
 
 /// A proposal template for a contract missing its user-facing `expect:` annotation.
 /// UserPods use this to compose and submit contract grounding proposals.

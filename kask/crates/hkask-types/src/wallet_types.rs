@@ -63,17 +63,6 @@ impl FromStr for PrivacyMode {
     }
 }
 
-// ── TxHash ─────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TxHash(pub String);
-
-impl fmt::Display for TxHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 // ── DepositAddress ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,9 +105,6 @@ impl fmt::Display for DepositReference {
 /// This is the authoritative conversion constant for the system.
 pub const GAS_PER_RJOULE: u64 = 250_000;
 
-/// rJoules per 1 USDC (1 rJ = 1 USDC = $1.00).
-pub const RJ_PER_USDC: u64 = 1;
-
 // ── RJoule — stable value unit ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -150,34 +136,6 @@ impl fmt::Display for RJoule {
     }
 }
 
-// ── PriceFeedConfig ────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PriceFeedConfig {
-    Static,
-    Eodhd,
-    CoinGecko,
-    Composite {
-        sources: Vec<String>,
-        #[serde(default = "default_price_cache_ttl")]
-        cache_ttl_secs: u64,
-    },
-}
-
-fn default_price_cache_ttl() -> u64 {
-    30
-}
-
-impl Default for PriceFeedConfig {
-    fn default() -> Self {
-        PriceFeedConfig::Composite {
-            sources: vec!["eodhd".to_string(), "coingecko".to_string()],
-            cache_ttl_secs: 30,
-        }
-    }
-}
-
 // ── WalletConfig ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,18 +144,15 @@ pub struct WalletConfig {
     pub gas_per_rjoule: u64,
     pub min_deposit_usdc_micro: u64,
     pub enabled_chains: Vec<ChainId>,
-    #[serde(default)]
-    pub price_feed: PriceFeedConfig,
 }
 
 impl Default for WalletConfig {
     fn default() -> Self {
         Self {
-            rj_per_usdc: RJ_PER_USDC,
+            rj_per_usdc: 1,
             gas_per_rjoule: GAS_PER_RJOULE,
             min_deposit_usdc_micro: 1_000_000,
             enabled_chains: vec![ChainId::Hedera],
-            price_feed: PriceFeedConfig::default(),
         }
     }
 }
@@ -376,24 +331,6 @@ impl ApiKeyCapability {
 
     pub fn remaining_rj(&self) -> RJoule {
         self.spending_limit_rj.saturating_sub(self.spent_rj)
-    }
-}
-
-// ── ApiKeyMaterial ─────────────────────────────────────────────────────────────
-
-pub struct ApiKeyMaterial {
-    pub key_id: ApiKeyId,
-    pub private_key_hex: String,
-    pub capability: ApiKeyCapability,
-}
-
-impl fmt::Debug for ApiKeyMaterial {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ApiKeyMaterial")
-            .field("key_id", &self.key_id)
-            .field("private_key_hex", &"[REDACTED]")
-            .field("capability", &self.capability)
-            .finish()
     }
 }
 

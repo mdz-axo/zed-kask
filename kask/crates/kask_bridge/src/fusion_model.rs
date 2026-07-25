@@ -626,3 +626,66 @@ fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
     use settings::Settings as _;
     crate::settings::KaskSettings::get_global(cx).clone()
 }
+
+// ── Favorites Discovery ─────────────────────────────────────────────────────
+
+/// Discover "favorite" models from OpenRouter that pass the price and
+/// intelligence thresholds.
+///
+/// This is a thin wrapper over `OpenRouterBackend::discover_favorites` that
+/// constructs the backend from the OpenRouter API key (env var or keychain).
+/// The `/v1/models` endpoint is public, so this works even without an API key
+/// — the key is only sent to personalize results.
+///
+/// Returns provider-prefixed model IDs (e.g. `"OR/z-ai/glm-5.2"`) sorted by
+/// intelligence index descending. On any error, returns an empty vec.
+///
+/// Used by the composition root to auto-populate the fusion panel when
+/// `kask.fusion.panel_models` is empty or set to `"auto"`.
+pub async fn discover_favorites(
+    openrouter_api_key: &str,
+    max_price_per_m: f64,
+    min_intelligence_index: f64,
+) -> Vec<hkask_inference::openrouter_backend::FavoriteModel> {
+    use hkask_inference::config::InferenceConfig;
+    use hkask_inference::openrouter_backend::OpenRouterBackend;
+
+    // Construct a minimal config — only the OpenRouter fields matter for
+    // discovery. The base URL defaults to `https://openrouter.ai/api`.
+    let config = InferenceConfig {
+        openrouter_api_key: openrouter_api_key.to_string(),
+        ..Default::default()
+    };
+
+    let client = match config.build_client() {
+        Ok(c) => std::sync::Arc::new(c),
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.fusion",
+                error = %e,
+                "Failed to build HTTP client for favorites discovery"
+            );
+            return Vec::new();
+        }
+    };
+
+    // OpenRouterBackend::new requires a non-empty API key, but the /v1/models
+    // endpoint is public. Use new_public so discovery works even without a key.
+    let backend = OpenRouterBackend::new_public(
+        &config.openrouter_base_url,
+        &config.openrouter_api_key,
+        client,
+    );
+
+    backend
+        .discover_favorites(max_price_per_m, min_intelligence_index)
+        .await
+}
+
+/// Check whether the fusion panel should use auto-discovery.
+///
+/// Returns `true` when `panel_models` is empty or set to `"auto"` (case-insensitive).
+pub fn should_auto_discover(panel_models: &str) -> bool {
+    let trimmed = panel_models.trim().to_lowercase();
+    trimmed.is_empty() || trimmed == "auto"
+}

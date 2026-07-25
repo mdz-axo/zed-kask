@@ -26,7 +26,7 @@ use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, channel::oneshot, future};
+use futures::{FutureExt, StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
@@ -1011,7 +1011,57 @@ fn main() {
                 // the single configured default model.
                 let fusion_config = kask_settings.fusion.to_fusion_config();
                 let fusion_model: Option<Arc<dyn language_model::LanguageModel>> =
-                    if let Some(ref fc) = fusion_config {
+                    if let Some(mut fc) = fusion_config {
+                        // Auto-discover: when panel_models is empty or "auto",
+                        // query OpenRouter for models passing the price/intelligence
+                        // thresholds and use them as the panel.
+                        if kask_bridge::should_auto_discover(&kask_settings.fusion.panel_models) {
+                            log::info!(
+                                "hKask fusion: auto-discovering panel models from OpenRouter \
+                                 (max_price=${}/M, min_ia={})",
+                                kask_settings.fusion.openrouter_max_price,
+                                kask_settings.fusion.openrouter_min_intelligence
+                            );
+                            let or_api_key = std::env::var("OR_API_KEY").unwrap_or_default();
+                            let max_price = kask_settings.fusion.openrouter_max_price;
+                            let min_ia = kask_settings.fusion.openrouter_min_intelligence;
+                            let discovery_task = cx.background_spawn(async move {
+                                kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
+                            });
+                            // Block on the foreground executor with a 5s timeout.
+                            // Discovery is best-effort — on timeout, fall back to kask_default panel.
+                            let result = cx.foreground_executor().block_on(async {
+                                let timeout = cx.background_executor().timer(std::time::Duration::from_secs(5));
+                                futures::select_biased! {
+                                    favs = discovery_task.fuse() => favs,
+                                    _ = timeout.fuse() => {
+                                        log::warn!(
+                                            "hKask fusion: OpenRouter discovery timed out after 5s — \
+                                             falling back to kask_default panel"
+                                        );
+                                        Vec::new()
+                                    }
+                                }
+                            });
+                            if !result.is_empty() {
+                                let panel_names: Vec<String> = result.iter()
+                                    .map(|f| f.prefixed_id.clone())
+                                    .collect();
+                                log::info!(
+                                    "hKask fusion: discovered {} favorites — {:?}",
+                                    panel_names.len(),
+                                    panel_names
+                                );
+                                if let Some(panel) = hkask_types::fusion::NonEmptyVec::from_vec(panel_names) {
+                                    fc.panel = panel;
+                                }
+                            } else {
+                                log::info!(
+                                    "hKask fusion: no favorites discovered — using kask_default panel"
+                                );
+                            }
+                        }
+
                         let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
                         if fc.judge.to_lowercase() != "algo" {
                             names.push(fc.judge.clone());

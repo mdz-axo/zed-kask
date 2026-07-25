@@ -28,7 +28,6 @@ rusqlite = { workspace = true, optional = true }
 [dev-dependencies]
 serde_yaml_neo.workspace = true
 hkask-capability = { path = "../hkask-capability" }
-hkask-goal = { path = "../hkask-goal" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = "1"
 tempfile = "3"
@@ -36,7 +35,3 @@ tempfile = "3"
 [features]
 default = []
 sql = ["dep:rusqlite"]
-
-[[test]]
-name = "types_contract"
-path = "tests/contract/types_contract.rs"

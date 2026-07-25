@@ -129,6 +129,20 @@ impl OpenRouterBackend {
         })
     }
 
+    /// Construct a backend for public-endpoint discovery (no API key required).
+    ///
+    /// The `/v1/models` endpoint is public — this constructor allows
+    /// favorites discovery without an API key. When a key is provided, it's
+    /// sent as a Bearer token to personalize results, but it's not required.
+    #[must_use]
+    pub fn new_public(base_url: &str, api_key: &str, client: Arc<reqwest::Client>) -> Self {
+        Self {
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+            client,
+        }
+    }
+
     /// Send a chat completion request to OpenRouter.
     ///
     /// expect: "The system regulates text/image/speech generation through provider membranes"
