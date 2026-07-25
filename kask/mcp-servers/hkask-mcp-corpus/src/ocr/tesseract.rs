@@ -55,6 +55,7 @@ impl OcrExecutor for TesseractExecutor {
         if *backend != OcrBackend::Tesseract {
             return false;
         }
+        #[allow(clippy::disallowed_methods)]
         Command::new("tesseract")
             .arg("--version")
             .output()
@@ -112,6 +113,7 @@ impl OcrExecutor for TesseractExecutor {
 
         // Run tesseract with TSV output (tessedit_create_tsv=1).
         // With this config, tesseract produces only .tsv, not .txt.
+        #[allow(clippy::disallowed_methods)]
         let output = cmd.output().map_err(|e| tesseract_error(&e.to_string()))?;
 
         if !output.status.success() {
@@ -214,6 +216,7 @@ mod tests {
 
     /// Check if tesseract is available on this system.
     fn tesseract_available() -> bool {
+        #[allow(clippy::disallowed_methods)]
         Command::new("tesseract")
             .arg("--version")
             .output()

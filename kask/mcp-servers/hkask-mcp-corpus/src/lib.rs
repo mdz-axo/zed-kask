@@ -209,8 +209,7 @@ impl CorpusServer {
             .index
             .lock()
             .expect("Failed to lock index for passage indexing");
-        for (i, ((entity_ref, passage_text), embedding)) in
-            passages.iter().zip(vectors).enumerate()
+        for (i, ((entity_ref, passage_text), embedding)) in passages.iter().zip(vectors).enumerate()
         {
             index.push(IndexedPassage {
                 text: passage_text.clone(),
@@ -862,12 +861,12 @@ mod tests {
             for t in ["pdftoppm", "pdftocairo", "pdfunite", "ps2pdf", "python3"] {
                 // `output()` fails only if the binary is not found; the arg
                 // value is irrelevant for an existence probe.
-                if std::process::Command::new(t)
+                #[allow(clippy::disallowed_methods)]
+                let ok = std::process::Command::new(t)
                     .arg("--version")
-                    #[allow(clippy::disallowed_methods)]
                     .output()
-                    .is_err()
-                {
+                    .is_ok();
+                if !ok {
                     return false;
                 }
             }

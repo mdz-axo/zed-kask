@@ -442,7 +442,7 @@ impl CorpusServer {
             // input). The 10% threshold is conservative: any sustained failure
             // rate above it indicates the pipeline should not be trusted to
             // produce training data without operator review. (M1 fix.)
-            let failure_pct = if total == 0 { 0 } else { (f * 100) / total };
+            let failure_pct = (f * 100).saturating_div(total);
             let outcome = if failure_pct >= DEGRADED_FAILURE_THRESHOLD {
                 "degraded"
             } else {

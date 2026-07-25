@@ -463,8 +463,9 @@ impl CorpusServer {
 
             // Phase 4: Re-embed consolidated chunks
             let mut embedded_count = 0usize;
-            if !reembed_texts.is_empty() && self.embedding_router.is_some() {
-                let emb_router = self.embedding_router.as_ref().unwrap();
+            if !reembed_texts.is_empty()
+                && let Some(emb_router) = self.embedding_router.as_ref()
+            {
                 let emb_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
 

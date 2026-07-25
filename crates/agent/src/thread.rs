@@ -1334,6 +1334,11 @@ pub struct Thread {
     /// in the system-prompt digest (I1). `None` when no `ContextInjector` is set
     /// or when it returns `None` (I2 — upstream Zed compatibility).
     static_context: Option<SharedString>,
+    /// When set, overrides the default system prompt template. Used by the
+    /// Curator agent to inject its own persona/system prompt instead of the
+    /// default Zed Agent prompt. When `None`, the standard `system_prompt.hbs`
+    /// template is rendered.
+    system_prompt_override: Option<SharedString>,
     /// Tool results that are delivered asynchronously, after the immediate
     /// tool-result slot has been flushed. The outer turn loop drains completed
     /// entries at the top of each iteration and injects them as a synthetic
@@ -1495,6 +1500,7 @@ impl Thread {
             cached_system_prompt: None,
             cached_filtered_context: None,
             static_context: None,
+            system_prompt_override: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -1884,6 +1890,7 @@ impl Thread {
             cached_system_prompt: None,
             cached_filtered_context: None,
             static_context: None,
+            system_prompt_override: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -2067,6 +2074,19 @@ impl Thread {
         if let Some(model) = resolved {
             self.set_model(model, cx);
         }
+    }
+
+    /// Set a custom system prompt that overrides the default template.
+    ///
+    /// Used by the Curator agent to inject its own persona. When set,
+    /// `render_system_prompt` returns this string directly instead of
+    /// rendering `system_prompt.hbs`. The project context, tools list,
+    /// and other dynamic sections are NOT included — the override is the
+    /// complete system prompt.
+    pub fn set_system_prompt_override(&mut self, prompt: SharedString, cx: &mut Context<Self>) {
+        self.system_prompt_override = Some(prompt);
+        self.cached_system_prompt = None; // bust the cache
+        cx.notify();
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
@@ -4807,6 +4827,12 @@ impl Thread {
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> SharedString {
+        // If a system prompt override is set (e.g., by the Curator agent),
+        // return it directly — no template rendering.
+        if let Some(ref override_prompt) = self.system_prompt_override {
+            return override_prompt.clone();
+        }
+
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let model_name = self.model().map(|m| m.name().0.to_string());
         let date = Local::now().format("%Y-%m-%d").to_string();

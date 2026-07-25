@@ -445,7 +445,7 @@ impl CorpusServer {
                 "output": output,
             });
             // B5 fix: report degraded outcome when failure rate exceeds threshold.
-            let failure_pct = if total == 0 { 0 } else { (failed * 100) / total };
+            let failure_pct = (failed * 100).saturating_div(total);
             let outcome = if failure_pct >= DEGRADED_FAILURE_THRESHOLD {
                 "degraded"
             } else {
@@ -1088,11 +1088,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
         // The old code unconditionally reported "success", masking silent batch
         // drops that created holes in the embedding index — holes that degrade
         // the KNN scaffold used by build_prompts.
-        let failure_pct = if total == 0 {
-            0
-        } else {
-            (failed * 100) / total
-        };
+        let failure_pct = (failed * 100).saturating_div(total);
         let outcome = if failure_pct >= DEGRADED_FAILURE_THRESHOLD {
             "degraded"
         } else {

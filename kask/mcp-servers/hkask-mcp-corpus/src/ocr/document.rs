@@ -49,6 +49,7 @@ pub struct CrossValidation {
 /// Errors that occur during pipeline execution. Collected per-page;
 /// no error aborts the whole pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::enum_variant_names)]
 pub enum PipelineError {
     /// Decimation (PDF → images) failed.
     DecimationFailed(String),

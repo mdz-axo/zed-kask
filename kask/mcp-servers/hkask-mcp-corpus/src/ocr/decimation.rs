@@ -46,6 +46,7 @@ pub async fn pdf_to_images(pdf_path: &Path, dpi: u32) -> Result<Vec<DynamicImage
     let prefix = temp_dir.path().join("page");
 
     // Invoke pdftoppm
+    #[allow(clippy::disallowed_methods)]
     let output = Command::new("pdftoppm")
         .arg("-png")
         .arg("-r")
@@ -164,6 +165,7 @@ pub async fn pdf_to_images_for_pages(
     })?;
     let prefix = temp_dir.path().join("page");
 
+    #[allow(clippy::disallowed_methods)]
     let output = Command::new("pdftoppm")
         .arg("-png")
         .arg("-r")
@@ -337,7 +339,7 @@ fn otsu_binarize(image: &mut DynamicImage) {
     // Apply binary threshold inline (pixels > otsu_level → 255, else → 0).
     // Inlined from imageproc::contrast::threshold to drop the imageproc dep,
     // which pulls rayon, ttf-parser, ab_glyph, and num-complex.
-    let level = otsu_level as u8;
+    let level = otsu_level;
     let mut binarized = gray.clone();
     for px in binarized.iter_mut() {
         *px = if *px > level { 255 } else { 0 };
@@ -427,6 +429,7 @@ mod tests {
 
     /// Check if pdftoppm is available on this system.
     fn pdftoppm_available() -> bool {
+        #[allow(clippy::disallowed_methods)]
         Command::new("pdftoppm")
             .arg("-v")
             .output()
