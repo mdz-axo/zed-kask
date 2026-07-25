@@ -20,14 +20,14 @@ The companies server is a builtin in-process MCP server registered inside the ze
 
 1. Build zed-kask: `cargo build --release` (see the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for build and integration details).
 2. Obtain API keys from Financial Modeling Prep and EOD Historical Data.
-3. Configure the credentials through zed-kask's `CredentialsProvider` (D9) under the kask namespace — the companies server reads them at in-process startup via the `keyring` crate adapter:
+3. Configure the credentials via **Settings → Kask → Data Services** (recommended — keys are stored in the system keychain and injected automatically), or via environment variables:
 
 ```
 HKASK_FMP_API_KEY=your_fmp_key
 HKASK_EODHD_API_KEY=your_eodhd_key
 ```
 
-4. Optional research providers (enable `research_search`):
+4. Optional research providers (enable `research_search`) — also configurable via Settings → Kask → Data Services:
 
 ```
 HKASK_EXA_API_KEY=your_exa_key
@@ -278,7 +278,7 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 | `invalid_argument: symbol must be ...` | Symbol exceeds 32 chars or contains invalid characters | Use a valid exchange symbol; international symbols are supported (e.g. `VOD.L`) |
 | Provider returns stale data | Provider flagged chronically stale (>90 days) | Call `result_feedback` with a low score to update the `LearningState`; the flaky override reroutes future calls |
 | `forecast task failed` | Portfolio SQLite error or owner mismatch | Verify the `forecast_id` belongs to the authenticated owner; forecasts are owner-scoped |
-| `research_search` returns empty | No research provider keys configured | Export at least one of `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_BRAVE_API_KEY` |
+| `research_search` returns empty | No research provider keys configured | Set at least one of `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_BRAVE_API_KEY` via Settings → Kask → Data Services or env vars |
 
 ## Cross-links
 

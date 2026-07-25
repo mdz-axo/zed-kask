@@ -35,7 +35,7 @@ Never author `SKILL.md` directly. Build the registry crate first, then derive th
 - `skill-discovery` — Detect capability gaps, search catalog, evaluate candidates, guide installation.
 
 ### Ensemble / Coaching (Multi-agent interaction)
-- `kata` bundle, `kata-coaching`, `improv` — Toyota Kata dialogues.
+- `kata-coaching`, `kata-improvement`, `improv` — Toyota Kata dialogues.
 
 For the current skill catalog, see `kask/registry/manifests/`.
 

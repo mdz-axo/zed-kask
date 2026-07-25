@@ -148,6 +148,13 @@ status: VERIFIED (v2 — daemon record_experience annotated as dead no-op; threa
 
 ## Configuration
 
+API keys can be configured in two ways:
+
+1. **Settings UI** (recommended): Settings → Kask → Data Services. Keys are
+   stored in the system keychain and injected as env vars when the MCP server
+   starts.
+2. **Environment variables**: Set the vars below in your shell or `.env` file.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `HKASK_FMP_API_KEY` | Yes | Financial Modeling Prep API key |

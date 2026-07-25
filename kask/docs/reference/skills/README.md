@@ -28,7 +28,7 @@ last-verified-against: "b922e9529"
 ## Open issues in this registry (2026-07-17)
 
 - **SKILL.md derivation is not wired.** No `skill-translator` code or CLI command exists; the `skill-maintenance-reverse.j2` template is the only derivation path and must be invoked as a skill by an agent. Existing SKILL.md files may be hand-maintained (a P5.1 drift risk).
-- **Count reconciliation:** the filesystem has 92 registry manifests (43 category=skill, 49 non-skill). 82 template crates under `registry/templates/`; 47 SKILL.md directories under `.agents/skills/`. Of the 47 SKILL.md directories, 6 have no FlowDef manifest (template-only or non-skill: `gpui-test`, `lint-creator`, `lora-training`, `qa-script-builder`, `skill-router`, `zed-cherry-pick`). Of those 6, three are catalogued here as `Template` type (`lora-training`, `qa-script-builder`, `skill-router`); the other three (`gpui-test`, `lint-creator`, `zed-cherry-pick`) are Zed-project-local skills not surfaced in this hKask registry catalog. The kata bundle is a registry manifest composing kata-coaching and kata-improvement (kata-starter folded into kata-improvement) — not a separate `.agents/skills/` directory. Total catalogued: 46 (42 skills + 3 templates + 1 bundle).
+- **Count reconciliation:** the filesystem has 89 registry manifests (39 category=skill, 50 non-skill). 78 template crates under `registry/templates/`; 42 SKILL.md directories under `.agents/skills/`. Of the 42 SKILL.md directories, 3 have no FlowDef manifest (template-only or non-skill: `gpui-test`, `lora-training`, `skill-router`). Of those 3, two are catalogued here as `Template` type (`lora-training`, `skill-router`); the other one (`gpui-test`) is a Zed-project-local skill not surfaced in this hKask registry catalog. Total catalogued: 41 (39 skills + 2 templates).
 
 ---
 
@@ -40,7 +40,7 @@ last-verified-against: "b922e9529"
 
 ---
 
-## Core Development (8 skills)
+## Core Development (9 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -51,7 +51,7 @@ last-verified-against: "b922e9529"
 | `refactor-architecture` | Skill | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity. Merged from improve-codebase-architecture + refactor-service-layer + strangler-fig. | `registry/manifests/refactor-architecture.yaml` · `registry/templates/refactor-architecture/` |
 | `idiomatic-rust` | Skill | Type-driven Rust design through Graydon Hoare's principles | `registry/manifests/idiomatic-rust.yaml` · `registry/templates/idiomatic-rust/` |
 | `task-breakdown` | Skill | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing | `registry/manifests/task-breakdown.yaml` · `registry/templates/task-breakdown/` |
-| `codegraph` | Skill | Code understanding: discover, map, query, and assemble context from the code graph (includes context-expansion mode folded from zoom-out) | `registry/manifests/codegraph.yaml` · `registry/templates/codegraph/` |
+| `graph-audit` | Skill | Unified graph analysis: code mode (query/traverse/analyze code graph via MCP), semantic mode (domain-agnostic graph health), dual mode (extract code graph then audit it). Includes context-expansion mode (folded from zoom-out). Merged from codegraph + semantic-graph-audit. | `registry/manifests/graph-audit.yaml` · `registry/templates/graph-audit/` |
 | `diataxis-diagram` | Skill | Generate Mermaid diagrams from code using Diataxis methodology | `registry/manifests/diataxis-diagram.yaml` · `registry/templates/diataxis-diagram/` |
 
 ---
@@ -70,18 +70,17 @@ last-verified-against: "b922e9529"
 
 ---
 
-## Kata & Coaching (3 skills + kata composition)
+## Kata & Coaching (3 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
-| `kata` | Composition | Toyota Kata system — composes improvement + coaching (realized by `KataEngine` routing; no standalone manifest file). kata-starter folded into kata-improvement as beginner_mode. | *(no file — routes to the two kata skills)* |
 | `kata-coaching` | Skill | 5-question Coaching Kata dialogue | `registry/manifests/kata-coaching.yaml` · `registry/templates/kata-coaching/` |
 | `kata-improvement` | Skill | 4-step Improvement Kata PDCA pattern (includes beginner_mode drills folded from kata-starter) | `registry/manifests/kata-improvement.yaml` · `registry/templates/kata-improvement/` |
 | `improv` | Skill | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) | `registry/manifests/improv.yaml` · `registry/templates/improv/` |
 
 ---
 
-## Meta & Maintenance (6 skills + 1 template)
+## Meta & Maintenance (5 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -104,7 +103,7 @@ last-verified-against: "b922e9529"
 
 ---
 
-## Specialized (10 skills + 2 templates)
+## Specialized (11 skills + 1 template)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -118,8 +117,6 @@ last-verified-against: "b922e9529"
 | `caveman` | Skill | Multi-mode text compression (TTbS stage in stt-tts pipeline) | `registry/manifests/caveman.yaml` · `registry/templates/caveman/` |
 | `logo-builder` | Skill | Pragmatic logo design (Improvement Kata: Martin MVB → Bokhua gates → Peters iterative refinement) | `registry/manifests/logo-builder.yaml` · `registry/templates/logo-builder/` |
 | `media-workflow` | Skill | Multi-step Fal.ai media pipeline composition and execution (Improvement Kata) | `registry/manifests/media-workflow.yaml` · `registry/templates/media-workflow/` |
-| `qa-script-builder` | Template | Design autonomous QA pipeline manifests (one-shot, not PDCA) | `registry/templates/qa-script-builder/manifest.yaml` (no FlowDef manifest) |
-| `semantic-graph-audit` | Skill | Domain-agnostic semantic dependency graph analysis | `registry/manifests/semantic-graph-audit.yaml` · `registry/templates/semantic-graph-audit/` |
 | `wardley-mapper` | Skill | Generic Wardley mapping: inventory components, classify evolution, map value chain, derive strategy | `registry/manifests/wardley-mapper.yaml` · `registry/templates/wardley-mapper/` |
 | `lora-training` | Template | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit. Stateless `KnowAct` templates (advisory; not a PDCA loop, cannot bind as `process_manifest`) | `registry/templates/lora-training/manifest.yaml` (no FlowDef manifest) · `registry/templates/lora-training/` |
 
@@ -130,14 +127,14 @@ last-verified-against: "b922e9529"
 | Category | Count | Types |
 |----------|-------|-------|
 | Guardrails | 1 | Skill |
-| Core Development | 8 | Skills |
+| Core Development | 9 | Skills |
 | Reasoning & Analysis | 7 | Skills |
-| Kata & Coaching | 3 skills + 1 composition | Skills + Composition |
-| Meta & Maintenance | 6 skills + 1 template | Skills + Template |
+| Kata & Coaching | 3 | Skills |
+| Meta & Maintenance | 5 | Skills |
 | Security & Posture | 3 | Skills |
-| Specialized | 10 skills + 2 templates | Skills + Template |
-| **Catalogued here** | **40 skills + 3 templates + 1 bundle** | **44 capabilities** |
+| Specialized | 11 skills + 1 template | Skills + Template |
+| **Catalogued here** | **39 skills + 2 templates** | **41 capabilities** |
 
-> **Filesystem reality:** `registry/templates/` contains 82 template directories; `registry/manifests/` contains 92 FlowDef manifests (43 category=skill, 49 non-skill). `.agents/skills/` contains 47 SKILL.md directories (41 with a corresponding skill-category FlowDef manifest, 6 template-only or non-skill: `gpui-test`, `lint-creator`, `lora-training`, `qa-script-builder`, `skill-router`, `zed-cherry-pick`). Of those 6, three are catalogued here as `Template` type (`lora-training`, `qa-script-builder`, `skill-router`); the other three (`gpui-test`, `lint-creator`, `zed-cherry-pick`) are Zed-project-local skills not surfaced in this hKask registry catalog. The kata bundle is a registry manifest composing kata-coaching and kata-improvement (kata-starter folded into kata-improvement) — not a separate `.agents/skills/` directory.
+> **Filesystem reality:** `registry/templates/` contains 78 template directories; `registry/manifests/` contains 89 FlowDef manifests (39 category=skill, 50 non-skill). `.agents/skills/` contains 42 SKILL.md directories (39 with a corresponding skill-category FlowDef manifest, 3 template-only or non-skill: `gpui-test`, `lora-training`, `skill-router`). Of those 3, two are catalogued here as `Template` type (`lora-training`, `skill-router`); the other one (`gpui-test`) is a Zed-project-local skill not surfaced in this hKask registry catalog.
 >
-> **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).
+> **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist), `handoff` (session handoff — low value, replaced by native Zed session persistence), `qa-script-builder` (no consumers — dead code), `kata` bundle (dead code — `KataEngine::run_bundle` never called; `kata-coaching` and `kata-improvement` work independently). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).

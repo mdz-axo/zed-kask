@@ -675,7 +675,9 @@ fn write_credential(
     let value = value.to_string();
     // Mark as written immediately so the UI shows "Configured" on next render.
     // The keychain write is async; the session cache bridges the gap.
+    // `refresh_windows` triggers a re-render so the "Configured" card appears.
     mark_recently_written(&url);
+    cx.refresh_windows();
     cx.spawn(async move |cx| {
         let _ = provider
             .write_credentials(&url, "kask", value.as_bytes(), cx)
@@ -689,6 +691,7 @@ fn delete_credential(provider: &Arc<dyn CredentialsProvider>, url: &str, cx: &mu
     let url = url.to_string();
     // Remove from session cache so the UI shows the input field again.
     unmark_recently_written(&url);
+    cx.refresh_windows();
     cx.spawn(async move |cx| {
         let _ = provider.delete_credentials(&url, cx).await.log_err();
     })
@@ -821,6 +824,7 @@ fn render_inference_provider_row(
                     // Remove from session cache so the UI shows the input field.
                     unmark_recently_written(&url1);
                     unmark_recently_written(&url2);
+                    cx.refresh_windows();
                     cx.spawn(async move |cx| {
                         let _ = provider.delete_credentials(&url1, cx).await.log_err();
                         let _ = provider.delete_credentials(&url2, cx).await.log_err();
@@ -901,7 +905,7 @@ fn render_inference_provider_row(
                                     // Mark both URLs as written so the UI shows "Configured".
                                     mark_recently_written(&url1);
                                     mark_recently_written(&url2);
-                                    cx.notify();
+                                    cx.refresh_windows();
                                     cx.spawn(async move |cx| {
                                         // Write under the api_url (for zed's OpenAI-compatible provider).
                                         let _ = provider

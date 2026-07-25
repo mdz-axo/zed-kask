@@ -22,3 +22,4 @@ editor.workspace = true
 language.workspace = true
 text.workspace = true
 serde_json.workspace = true
+project.workspace = true
