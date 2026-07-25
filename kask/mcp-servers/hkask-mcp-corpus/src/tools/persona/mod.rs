@@ -269,7 +269,10 @@ impl CorpusServer {
     #[tool(
         description = "Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid."
     )]
-    pub async fn corpus_build_persona(&self, Parameters(params): Parameters<BuildRequest>) -> String {
+    pub async fn corpus_build_persona(
+        &self,
+        Parameters(params): Parameters<BuildRequest>,
+    ) -> String {
         let config_path = PathBuf::from(&params.config_path);
 
         execute_tool(self, "corpus_build_persona", async {
@@ -728,10 +731,7 @@ impl CorpusServer {
     }
 
     #[tool(description = "Manage the registry of built author replicas.")]
-    pub async fn corpus_registry(
-        &self,
-        Parameters(params): Parameters<RegistryRequest>,
-    ) -> String {
+    pub async fn corpus_registry(&self, Parameters(params): Parameters<RegistryRequest>) -> String {
         execute_tool(self, "corpus_registry", async {
             let db = Database::open(&params.db_path, &params.passphrase)
                 .map_err(|e| McpToolError::internal(e.to_string()))?;

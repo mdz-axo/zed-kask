@@ -101,8 +101,7 @@ impl SecretsPort for CredentialsSecretsPort {
     fn read<'a>(
         &'a self,
         key: &'a str,
-    ) -> hkask_types::SecretsFuture<'a, Result<Option<String>, hkask_types::SecretsError>>
-    {
+    ) -> hkask_types::SecretsFuture<'a, Result<Option<String>, hkask_types::SecretsError>> {
         let (tx_reply, rx_reply) = oneshot::channel();
         let key = key.to_string();
         async move {

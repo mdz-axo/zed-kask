@@ -1332,7 +1332,8 @@ pub(crate) fn render_codegraph_page(
         "Database Path",
         "(in-memory)",
         db_path,
-        "codegraph", "db_path",
+        "codegraph",
+        "db_path",
     );
 
     v_flex()
@@ -1395,14 +1396,16 @@ pub(crate) fn render_companies_page(
         "Chronic Staleness Days",
         "0",
         staleness_days,
-        "companies", "chronic_staleness_days",
+        "companies",
+        "chronic_staleness_days",
     );
     let fermi_input = kask_string_input(
         "kask-companies-fermi-defaults",
         "Fermi Defaults (JSON)",
         "{\"growth\": [...], \"margin\": [...]}",
         fermi_defaults,
-        "companies", "fermi_defaults",
+        "companies",
+        "fermi_defaults",
     );
 
     v_flex()
@@ -1476,14 +1479,16 @@ pub(crate) fn render_corpus_page(
         "Embedding Model",
         "DI/Qwen/Qwen3-Embedding-0.6B",
         embedding_model,
-        "corpus", "embedding_model",
+        "corpus",
+        "embedding_model",
     );
     let template_root_input = kask_string_input(
         "kask-corpus-template-root",
         "Template Root",
         "registry",
         template_root,
-        "corpus", "template_root",
+        "corpus",
+        "template_root",
     );
 
     v_flex()
@@ -1557,28 +1562,32 @@ pub(crate) fn render_media_page(
         "TTS Model",
         "FA/qwen-3-tts",
         tts_model,
-        "media", "tts_model",
+        "media",
+        "tts_model",
     );
     let stt_input = kask_string_input(
         "kask-media-stt-model",
         "STT Model",
         "FA/wizper",
         stt_model,
-        "media", "stt_model",
+        "media",
+        "stt_model",
     );
     let vision_input = kask_string_input(
         "kask-media-vision-model",
         "Vision Model",
         "KC/qwen/qwen3-vl-235b-a22b-instruct",
         vision_model,
-        "media", "vision_model",
+        "media",
+        "vision_model",
     );
     let image_gen_input = kask_string_input(
         "kask-media-image-gen-model",
         "Image Generation Model",
         "FA/flux-2",
         image_gen_model,
-        "media", "image_gen_model",
+        "media",
+        "image_gen_model",
     );
 
     v_flex()
@@ -1673,7 +1682,8 @@ pub(crate) fn render_scenarios_page(
         "Data Directory",
         "(in-memory)",
         data_dir,
-        "scenarios", "data_dir",
+        "scenarios",
+        "data_dir",
     );
 
     v_flex()
@@ -1735,14 +1745,16 @@ pub(crate) fn render_training_page(
         "Training Host",
         "deepinfra | nebius | runpod",
         host,
-        "training", "host",
+        "training",
+        "host",
     );
     let cache_dir_input = kask_string_input(
         "kask-training-cache-dir",
         "Cache Directory",
         "(userpod adapters dir)",
         cache_dir,
-        "training", "cache_dir",
+        "training",
+        "cache_dir",
     );
 
     v_flex()

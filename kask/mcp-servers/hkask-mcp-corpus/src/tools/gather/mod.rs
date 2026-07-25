@@ -78,10 +78,7 @@ impl CorpusServer {
     #[tool(
         description = "Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
     )]
-    pub async fn corpus_discover(
-        &self,
-        Parameters(params): Parameters<DiscoverRequest>,
-    ) -> String {
+    pub async fn corpus_discover(&self, Parameters(params): Parameters<DiscoverRequest>) -> String {
         execute_tool(self, "corpus_discover", async {
             let author_name = params.author_name.clone();
 
