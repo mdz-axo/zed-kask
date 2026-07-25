@@ -12,7 +12,42 @@
 //! settings.json. The non-secret toggles and numeric config live in the `"kask"`
 //! section of settings.json via `KaskSettingsContent`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use collections::HashSet;
+
+/// Session-level cache of credential URLs written during this session.
+/// The keychain read is async, so we can't check it synchronously on render.
+/// Instead, we track URLs we've written and treat them as "configured" until
+/// the process exits. This avoids the input field reappearing after the user
+/// enters a key.
+static RECENTLY_WRITTEN_CREDENTIALS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Check if a credential URL was written during this session.
+fn was_recently_written(url: &str) -> bool {
+    RECENTLY_WRITTEN_CREDENTIALS
+        .lock()
+        .map(|opt| opt.as_ref().is_some_and(|set| set.contains(url)))
+        .unwrap_or(false)
+}
+
+/// Mark a credential URL as written during this session.
+fn mark_recently_written(url: &str) {
+    if let Ok(mut guard) = RECENTLY_WRITTEN_CREDENTIALS.lock() {
+        guard
+            .get_or_insert_with(HashSet::default)
+            .insert(url.to_string());
+    }
+}
+
+/// Remove a credential URL from the session cache (after deletion).
+fn unmark_recently_written(url: &str) {
+    if let Ok(mut guard) = RECENTLY_WRITTEN_CREDENTIALS.lock() {
+        if let Some(set) = guard.as_mut() {
+            set.remove(url);
+        }
+    }
+}
 
 use credentials_provider::CredentialsProvider;
 use gpui::{ReadGlobal as _, ScrollHandle, Task, prelude::*};
@@ -116,6 +151,18 @@ const DATA_SERVICES: &[(&str, &str, &str, &str)] = &[
         "RunPod (GPU cloud for training)",
         "https://runpod.io/",
         "RUNPOD_API_KEY",
+    ),
+    (
+        "runpod_s3_access_key",
+        "RunPod S3 Access Key (adapter storage)",
+        "https://runpod.io/",
+        "RUNPOD_S3_ACCESS_KEY",
+    ),
+    (
+        "runpod_s3_secret",
+        "RunPod S3 Secret (adapter storage)",
+        "https://runpod.io/",
+        "RUNPOD_S3_SECRET",
     ),
     (
         "nebius_project_id",
@@ -394,6 +441,9 @@ pub(crate) fn render_data_services_page(
             "tavily" => data_services.tavily_enabled.unwrap_or(false),
             "brave" => data_services.brave_enabled.unwrap_or(false),
             "runpod" => data_services.runpod_enabled.unwrap_or(false),
+            "runpod_s3_access_key" | "runpod_s3_secret" => {
+                data_services.runpod_enabled.unwrap_or(false)
+            }
             "nebius_project_id" | "nebius_subnet_id" => {
                 data_services.nebius_enabled.unwrap_or(false)
             }
@@ -586,6 +636,9 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
             "tavily" => data_services.tavily_enabled = Some(enabled),
             "brave" => data_services.brave_enabled = Some(enabled),
             "runpod" => data_services.runpod_enabled = Some(enabled),
+            "runpod_s3_access_key" | "runpod_s3_secret" => {
+                data_services.runpod_enabled = Some(enabled);
+            }
             "nebius_project_id" | "nebius_subnet_id" => {
                 data_services.nebius_enabled = Some(enabled);
             }
@@ -598,19 +651,16 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
 /// Check whether a credential is available — either in the keychain or via env var.
 ///
 /// The keychain read is async, so we can't block on it here. We check the env var
-/// synchronously (instant) and treat the keychain as "possibly present" — the user
-/// can always click "Reset Key" if the card shows configured. This avoids a flicker
-/// of "no key" on every render.
-fn has_credential(_provider: &Arc<dyn CredentialsProvider>, _url: &str, env_var: &str) -> bool {
+/// synchronously (instant) and the session-level cache of recently-written URLs.
+fn has_credential(_provider: &Arc<dyn CredentialsProvider>, url: &str, env_var: &str) -> bool {
     // Env-var check is synchronous and instant.
     if std::env::var(env_var).is_ok() {
         return true;
     }
-    // For the keychain, we can't block on the foreground thread. We optimistically
-    // report false and let the user enter the key. A background task could populate
-    // a cached flag, but for a settings page opened on demand, the simpler model is:
-    // the card shows "Configured" only when the env var is set; the keychain key is
-    // entered via the input field and confirmed by the user.
+    // Check the session cache for keys written via the settings UI.
+    if was_recently_written(url) {
+        return true;
+    }
     false
 }
 
@@ -623,6 +673,9 @@ fn write_credential(
     let provider = provider.clone();
     let url = url.to_string();
     let value = value.to_string();
+    // Mark as written immediately so the UI shows "Configured" on next render.
+    // The keychain write is async; the session cache bridges the gap.
+    mark_recently_written(&url);
     cx.spawn(async move |cx| {
         let _ = provider
             .write_credentials(&url, "kask", value.as_bytes(), cx)
@@ -634,6 +687,8 @@ fn write_credential(
 fn delete_credential(provider: &Arc<dyn CredentialsProvider>, url: &str, cx: &mut App) -> Task<()> {
     let provider = provider.clone();
     let url = url.to_string();
+    // Remove from session cache so the UI shows the input field again.
+    unmark_recently_written(&url);
     cx.spawn(async move |cx| {
         let _ = provider.delete_credentials(&url, cx).await.log_err();
     })
@@ -715,7 +770,9 @@ fn render_inference_provider_row(
     credentials_provider: Arc<dyn CredentialsProvider>,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let has_key = kask_bridge::has_provider_api_key(desc);
+    let has_key = kask_bridge::has_provider_api_key(desc)
+        || was_recently_written(&desc.credential_url())
+        || was_recently_written(desc.api_url);
     let provider_id = desc.id;
     let provider_name = desc.name;
     let dashboard_url = desc.dashboard_url;
@@ -761,6 +818,9 @@ fn render_inference_provider_row(
                     let provider = provider.clone();
                     let url1 = desc_api_url.clone();
                     let url2 = desc_credential_url.clone();
+                    // Remove from session cache so the UI shows the input field.
+                    unmark_recently_written(&url1);
+                    unmark_recently_written(&url2);
                     cx.spawn(async move |cx| {
                         let _ = provider.delete_credentials(&url1, cx).await.log_err();
                         let _ = provider.delete_credentials(&url2, cx).await.log_err();
@@ -838,6 +898,10 @@ fn render_inference_provider_row(
                                     let provider = credentials_provider.clone();
                                     let url1 = desc_api_url.clone();
                                     let url2 = desc_credential_url.clone();
+                                    // Mark both URLs as written so the UI shows "Configured".
+                                    mark_recently_written(&url1);
+                                    mark_recently_written(&url2);
+                                    cx.notify();
                                     cx.spawn(async move |cx| {
                                         // Write under the api_url (for zed's OpenAI-compatible provider).
                                         let _ = provider

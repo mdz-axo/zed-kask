@@ -1,14 +1,11 @@
 ---
 name: pragmatic-cybernetics
-visibility: public
-description: "Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loop analysis (5 properties), variety engineering (Ashby's Law), Good Regulator check, and spec drift as cybernetic signal.
-"
+description: Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loop analysis (5 properties), variety engineering (Ashby's Law), Good Regulator check, and spec drift as cybernetic signal.
 ---
 
 # Pragmatic Cybernetics
 
 Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loop analysis (5 properties), variety engineering (Ashby's Law), Good Regulator check, and spec drift as cybernetic signal.
-
 
 ## When to Use
 
@@ -52,13 +49,14 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `cybernetics-analyze-loop.j2` | KnowAct | Analyze a feedback loop on 5 properties: polarity, delay, gain, closure, fidelity. Diagnose broken loops and prescribe remediation.  |
-| `cybernetics-variety-check.j2` | KnowAct | Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies.  |
-| `cybernetics-vsm-map.j2` | KnowAct | Map hKask components to VSM S1–S5. Assess system viability and identify unviable components requiring structural intervention.  |
+| `cybernetics-analyze-loop.j2` | KnowAct | Analyze a feedback loop on 5 properties: polarity, delay, gain, closure, fidelity. Diagnose broken loops and prescribe remediation. |
+| `cybernetics-variety-check.j2` | KnowAct | Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies. |
+| `cybernetics-vsm-map.j2` | KnowAct | Map hKask components to VSM S1–S5. Assess system viability and identify unviable components requiring structural intervention. |
 
 ## Constraints
 
-- `cybernetics-analyze-loop.j2`: Public.
-- `cybernetics-variety-check.j2`: Public.
-- `cybernetics-vsm-map.j2`: Public.
+- `cybernetics-analyze-loop.j2`: Public. Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
+- `cybernetics-variety-check.j2`: Public. Every recommendation must reference a concrete hKask mechanism. Algedonic threshold: deficit > 50 → Warning, > 100 → Critical. Critical status requires explicit escalation directive.
+- `cybernetics-vsm-map.j2`: Public. Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.
+- Convergence check incorporates all three analysis steps (loop analysis, variety assessment, VSM mapping), not just loop analysis alone.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

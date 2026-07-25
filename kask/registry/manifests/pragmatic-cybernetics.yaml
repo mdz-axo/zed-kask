@@ -86,9 +86,12 @@ steps:
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      primary_result: "{{ step_1_result }}"
-      convergence_description: "loop diagnostics are stable for intervention"
-      include_blockers: false
+      primary_result:
+        loop_analysis: "{{ step_1_result }}"
+        variety_assessment: "{{ step_2_result }}"
+        vsm_mapping: "{{ step_3_result }}"
+      convergence_description: "loop diagnostics are stable, variety deficits are addressed, and VSM viability is assessed"
+      include_blockers: true
 
   - ordinal: 5
     action: loop

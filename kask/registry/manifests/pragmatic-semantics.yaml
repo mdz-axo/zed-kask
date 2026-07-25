@@ -75,6 +75,8 @@ steps:
     gas_cap: 4000
     timeout_seconds: 45
     condition: "step_2_result.conflicts_detected | default(false) == true"
+    # When condition is false, step_3_result is undefined. Downstream steps
+    # must use `step_3_result | default({})` to handle the skipped case.
     input_mapping:
       provenance_result: "{{ step_2_result }}"
       classification_result: "{{ step_1_result }}"
@@ -87,9 +89,12 @@ steps:
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      primary_result: "{{ step_1_result }}"
-      convergence_description: "classification is stable for action"
-      include_blockers: false
+      primary_result:
+        classification: "{{ step_1_result }}"
+        provenance: "{{ step_2_result }}"
+        conflict_resolution: "{{ step_3_result | default({}) }}"
+      convergence_description: "classification is stable, provenance is verified, and conflicts are resolved"
+      include_blockers: true
 
   - ordinal: 5
     action: loop

@@ -101,7 +101,6 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Skill matching for a task | `skill-router` | `skill-discovery` (if gaps found) |
 | Capability gap detection | `skill-discovery` | `skill-router` (after new skill installed) |
 | Multi-agent coaching | `kata-coaching` | `improv` (interaction grammar) |
-| Session handoff | `handoff` | — |
 
 For low-confidence regimes: `metacognition` → `falsifiability` → `improv`. Layered detail lives in the `metacognition` and `pragmatic-semantics` skills.
 

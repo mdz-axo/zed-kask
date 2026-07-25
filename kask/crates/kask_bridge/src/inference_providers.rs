@@ -117,6 +117,8 @@ pub static DATA_SERVICE_CREDENTIALS: &[(&str, &str)] = &[
     ("HKASK_BROWSERBASE_API_KEY", "browserbase"),
     ("RUNPOD_API_KEY", "runpod"),
     ("RUNPOD_TEMPLATE_ID", "runpod_template_id"),
+    ("RUNPOD_S3_ACCESS_KEY", "runpod_s3_access_key"),
+    ("RUNPOD_S3_SECRET", "runpod_s3_secret"),
     ("NEBIUS_PROJECT_ID", "nebius_project_id"),
     ("NEBIUS_SUBNET_ID", "nebius_subnet_id"),
     ("HF_TOKEN", "hf_token"),

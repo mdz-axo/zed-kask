@@ -123,7 +123,9 @@ steps:
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      primary_result: "{{ step_4_result }}"
+      primary_result:
+        verification: "{{ step_4_result }}"
+        gap_analysis: "{{ step_5_result }}"
 
   - ordinal: 7
     action: loop

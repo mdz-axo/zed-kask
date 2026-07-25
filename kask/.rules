@@ -1,0 +1,21 @@
+# kask registry guidelines
+
+## Convergence checks in skill manifests
+
+When writing the `input_mapping` for a convergence-check step (the step that references `shared/convergence-check`), the `primary_result` must incorporate the results of **all** substantive steps in the PDCA loop, not just the first step. A convergence check that only sees `step_1_result` will report convergence while later steps (provenance, conflict resolution, variety assessment, VSM mapping, gap analysis, etc.) may have unresolved findings.
+
+Pattern to use:
+
+```yaml
+input_mapping:
+  primary_result:
+    step_1_output: "{{ step_1_result }}"
+    step_2_output: "{{ step_2_result }}"
+    step_3_output: "{{ step_3_result | default({}) }}"
+  convergence_description: "all analysis phases are stable"
+  include_blockers: true
+```
+
+Exception: if a skill has a single substantive step (e.g., `essentialist` runs one gate-flow template), `primary_result: "{{ step_1_result }}"` is correct. If a skill uses conditional steps with fallbacks (e.g., `refactor-architecture` uses `step_7_result | default(step_3_result)`), the fallback pattern is acceptable as long as it covers the last possible substantive result.
+
+This rule exists because the convergence-gain bug was found in 3 skills (`pragmatic-semantics`, `pragmatic-cybernetics`, `tdd`) where convergence used only an early step's result, allowing the loop to converge while later analysis steps had unresolved findings.

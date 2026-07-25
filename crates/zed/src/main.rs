@@ -672,6 +672,16 @@ fn main() {
         // on the first settings observation.
         kask_bridge::ensure_openai_compatible_entries(&kask_settings_for_mcp, cx);
 
+        // Re-sync `openai_compatible` entries whenever kask settings change so
+        // toggling a provider in the settings UI takes effect immediately
+        // (without requiring a restart). The `language_models` crate's own
+        // `SettingsStore` observer then registers/unregisters the provider.
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let settings = kask_bridge::KaskSettings::get_global(cx).clone();
+            kask_bridge::ensure_openai_compatible_entries(&settings, cx);
+        })
+        .detach();
+
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
             BUILT_IN_MCP_SERVERS
                 .iter()
