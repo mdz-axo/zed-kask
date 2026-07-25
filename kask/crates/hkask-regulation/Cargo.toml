@@ -25,7 +25,6 @@ parking_lot = "0.12"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
-hkask-test-harness = { path = "../hkask-test-harness" }
 hkask-storage = { path = "../hkask-storage" }
 proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }

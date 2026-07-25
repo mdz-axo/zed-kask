@@ -9703,7 +9703,6 @@ dependencies = [
  "hkask-inference",
  "hkask-ledger",
  "hkask-mcp-server",
- "hkask-pods",
  "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",

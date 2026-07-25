@@ -75,7 +75,6 @@ path = "src/main.rs"
 [dev-dependencies]
 rand.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-hkask-test-harness = { path = "../../crates/hkask-test-harness" }
 hkask-services-compose = { path = "../../crates/hkask-services-compose" }
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 tempfile.workspace = true

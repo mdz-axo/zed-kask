@@ -31,7 +31,6 @@ hkask-capability = { path = "../hkask-capability" }
 hkask-goal = { path = "../hkask-goal" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = "1"
-hkask-test-harness = { path = "../hkask-test-harness" }
 tempfile = "3"
 
 [features]

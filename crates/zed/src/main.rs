@@ -816,19 +816,22 @@ fn main() {
                 // with a real one. `provision_userpod` handles first-run setup
                 // as lookups and directory creation — no interactive onboarding.
                 //
-                // Run on a background thread because it does blocking I/O (keychain
-                // access via the SecretsPort adapter, which uses tokio block_in_place
-                // — not safe on the GPUI foreground thread).
+                // Run on the Tokio runtime via Tokio::spawn() because the
+                // SecretsPort adapter uses tokio::task::block_in_place +
+                // Handle::current().block_on() to bridge async credential reads.
+                // This requires a Tokio runtime context, which only exists on
+                // Tokio worker threads — not on GPUI's foreground or background
+                // (smol-based) executors.
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
                 let username_for_provision = username.clone();
 
-                let provision_result = cx.background_spawn(async move {
+                let provision_result = Tokio::spawn(cx, async move {
                     kask_bridge::provision_userpod(&username_for_provision)
                 }).await;
 
-                match provision_result {
+                match provision_result.unwrap_or_else(|e| Err(format!("Tokio task failed: {e}"))) {
                     Ok(provisioned) => {
                         let kask_bridge::ProvisionedUserpod { db_path, passphrase, webid: user_webid } = provisioned;
                         match kask_bridge::RealMemoryPort::new(
