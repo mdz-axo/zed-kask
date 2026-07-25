@@ -10,7 +10,6 @@ hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
 hkask-types = { path = "../../crates/hkask-types" }
 hkask-services-kata-kanban = { path = "../../crates/hkask-services-kata-kanban" }
 hkask-storage = { path = "../../crates/hkask-storage" }
-hkask-test-harness = { path = "../../crates/hkask-test-harness" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 
 

@@ -67,6 +67,10 @@ pub struct KaskSettings {
     /// Training MCP server configuration.
     #[serde(default)]
     pub training: KaskTrainingSettings,
+
+    /// Multi-model fusion inference configuration.
+    #[serde(default)]
+    pub fusion: KaskFusionSettings,
 }
 
 /// MCP server load configuration.
@@ -341,9 +345,142 @@ pub struct KaskTrainingSettings {
     pub cache_dir: String,
 }
 
+/// Multi-model fusion inference configuration (the `"kask.fusion"` section).
+///
+/// When `enabled` is true, the Curator and the kask panel route inference
+/// through a panel of models judged by `judge_model` according to `mode`.
+/// Mirrors `hkask_types::FusionConfig` but lives in the non-secret settings
+/// layer so users can edit it in the settings UI.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskFusionSettings {
+    /// Master toggle. When false, fusion is disabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Judge/fuser model (provider-prefixed, e.g. `"KC/z-ai/glm-5.2"`).
+    /// When empty, defers to `FusionConfig::kask_default()`.
+    #[serde(default)]
+    pub judge_model: String,
+
+    /// Comma-separated panel models (provider-prefixed). When empty, defers
+    /// to `FusionConfig::kask_default()` or auto-discovery (Slice 4).
+    #[serde(default)]
+    pub panel_models: String,
+
+    /// Judge deliberation mode: `"synthesis"` | `"best-of-n"` | `"critique"` |
+    /// `"deliberation"` | `"pi"` | `"algo"`. When empty, defaults to `"synthesis"`.
+    #[serde(default = "default_fusion_mode")]
+    pub mode: String,
+
+    /// Algo merge strategy when `mode == "algo"`: `"merge"` | `"vote"`.
+    /// When empty, defaults to `"merge"`.
+    #[serde(default = "default_algo_method")]
+    pub algo_method: String,
+
+    /// Comma-separated skill anchors (e.g. `"pragmatic-semantics,coding-guidelines"`).
+    /// Each must match a `FusionSkill` serde rename.
+    #[serde(default)]
+    pub skills: String,
+
+    /// Max rounds for `deliberation` mode. Default 5.
+    #[serde(default = "default_max_rounds")]
+    pub max_rounds: u32,
+
+    /// OpenRouter auto-discovery max prompt price per million tokens (USD).
+    /// Default 1.0. Used by Slice 4 to filter candidate panel models.
+    #[serde(default = "default_openrouter_max_price")]
+    pub openrouter_max_price: f64,
+
+    /// OpenRouter auto-discovery minimum intelligence index.
+    /// Default 40.0. Used by Slice 4 to filter candidate panel models.
+    #[serde(default = "default_openrouter_min_intelligence")]
+    pub openrouter_min_intelligence: f64,
+}
+
+fn default_fusion_mode() -> String {
+    "synthesis".to_string()
+}
+
+fn default_algo_method() -> String {
+    "merge".to_string()
+}
+
+fn default_max_rounds() -> u32 {
+    5
+}
+
+fn default_openrouter_max_price() -> f64 {
+    1.0
+}
+
+fn default_openrouter_min_intelligence() -> f64 {
+    40.0
+}
+
 impl Settings for KaskSettings {
     fn from_settings(s: &settings_content::SettingsContent) -> Self {
         s.kask.clone().map(|c| c.into()).unwrap_or_default()
+    }
+}
+
+impl KaskFusionSettings {
+    /// Convert the settings-layer representation into the runtime `FusionConfig`.
+    ///
+    /// Returns `None` when fusion is disabled (`enabled == false`) or when the
+    /// panel models string fails to parse into a non-empty panel.
+    ///
+    /// When `judge_model` or `panel_models` are empty, falls back to
+    /// `FusionConfig::kask_default()` so users can enable fusion with just the
+    /// master toggle and get sensible defaults.
+    #[must_use]
+    pub fn to_fusion_config(&self) -> Option<hkask_types::fusion::FusionConfig> {
+        if !self.enabled {
+            return None;
+        }
+
+        // Parse mode (fall back to synthesis on unknown values).
+        let mode = self
+            .mode
+            .parse::<hkask_types::fusion::FusionMode>()
+            .unwrap_or_default();
+
+        // Parse algo method (fall back to merge on unknown values).
+        let algo_method = self
+            .algo_method
+            .parse::<hkask_types::fusion::AlgoMethod>()
+            .unwrap_or_default();
+
+        // Parse skills — silently drop unknown anchors.
+        let skills: Vec<hkask_types::fusion::FusionSkill> = self
+            .skills
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+
+        // Start from kask_default so empty judge/panel fields get sensible
+        // defaults rather than producing an invalid config.
+        let mut config = hkask_types::fusion::FusionConfig::kask_default();
+        if !self.judge_model.trim().is_empty() {
+            config.judge = self.judge_model.trim().to_string();
+        }
+        if !self.panel_models.trim().is_empty() {
+            let panel: Vec<String> = self
+                .panel_models
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if let Some(non_empty) = hkask_types::fusion::NonEmptyVec::from_vec(panel) {
+                config.panel = non_empty;
+            }
+        }
+        config.mode = mode;
+        config.algo_method = algo_method;
+        config.skills = skills;
+        config.max_rounds = self.max_rounds;
+        Some(config)
     }
 }
 
@@ -598,6 +735,20 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .map(|t| KaskTrainingSettings {
                     host: t.host.unwrap_or_default(),
                     cache_dir: t.cache_dir.unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+            fusion: c
+                .fusion
+                .map(|f| KaskFusionSettings {
+                    enabled: f.enabled.unwrap_or(false),
+                    judge_model: f.judge_model.unwrap_or_default(),
+                    panel_models: f.panel_models.unwrap_or_default(),
+                    mode: f.mode.unwrap_or_else(|| "synthesis".to_string()),
+                    algo_method: f.algo_method.unwrap_or_else(|| "merge".to_string()),
+                    skills: f.skills.unwrap_or_default(),
+                    max_rounds: f.max_rounds.unwrap_or(5),
+                    openrouter_max_price: f.openrouter_max_price.unwrap_or(1.0),
+                    openrouter_min_intelligence: f.openrouter_min_intelligence.unwrap_or(40.0),
                 })
                 .unwrap_or_default(),
         }

@@ -19,6 +19,41 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+/// A simple flat-cost energy estimator.
+///
+/// All tool invocations cost the same flat amount. This is the default
+/// when no calibrated estimator is available. The cost is conservative
+/// (10 gas per call) — enough to prevent runaway loops without
+/// requiring per-tool calibration data.
+#[derive(Debug, Clone, Copy)]
+pub struct FlatEnergyEstimator {
+    cost: u64,
+}
+
+impl FlatEnergyEstimator {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { cost: 10 }
+    }
+
+    #[must_use]
+    pub fn with_cost(cost: u64) -> Self {
+        Self { cost }
+    }
+}
+
+impl Default for FlatEnergyEstimator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl hkask_regulation::EnergyEstimator for FlatEnergyEstimator {
+    fn estimate_cost(&self, _server: &str, _tool: &str, _args: &Value) -> u64 {
+        self.cost
+    }
+}
+
 /// MCP tool definition
 #[derive(Debug, Clone)]
 pub struct McpTool {

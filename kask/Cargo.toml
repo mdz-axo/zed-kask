@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     # Core crates
     "crates/hkask-services-core",
-    "crates/hkask-services-self-heal",
     "crates/hkask-goal",
     "crates/hkask-services-inference",
 
@@ -34,7 +33,6 @@ members = [
     "crates/hkask-mcp-server",
     "crates/hkask-mcp",
 
-    "crates/hkask-test-harness",
     # MCP servers
     "mcp-servers/hkask-mcp-condenser",
     "mcp-servers/hkask-mcp-research",

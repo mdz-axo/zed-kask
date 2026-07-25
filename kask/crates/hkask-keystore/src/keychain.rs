@@ -118,9 +118,7 @@ impl Keychain {
     pub fn store_by_key(&self, key: &str, secret: &str) -> Result<(), KeychainError> {
         if let Some(port) = crate::secrets_port() {
             info!(target: "reg.keystore", operation = "store_by_key_via_secrets_port", "REG");
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(port.write(key, secret))
-            });
+            let result = futures::executor::block_on(port.write(key, secret));
             return result.map_err(|e| KeychainError::Platform(format!("SecretsPort error: {e}")));
         }
 
@@ -143,9 +141,7 @@ impl Keychain {
     pub fn retrieve_by_key(&self, key: &str) -> Result<String, KeychainError> {
         if let Some(port) = crate::secrets_port() {
             info!(target: "reg.keystore", operation = "retrieve_by_key_via_secrets_port", "REG");
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(port.read(key))
-            });
+            let result = futures::executor::block_on(port.read(key));
             return result
                 .map_err(|e| KeychainError::Platform(format!("SecretsPort error: {e}")))?
                 .ok_or_else(|| {
@@ -172,9 +168,7 @@ impl Keychain {
     pub fn delete_by_key(&self, key: &str) -> Result<(), KeychainError> {
         if let Some(port) = crate::secrets_port() {
             info!(target: "reg.keystore", operation = "delete_by_key_via_secrets_port", "REG");
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(port.delete(key))
-            });
+            let result = futures::executor::block_on(port.delete(key));
             return result.map_err(|e| KeychainError::Platform(format!("SecretsPort error: {e}")));
         }
 
@@ -349,9 +343,7 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
             // (standalone MCP server child processes), fall back to the keyring crate.
             if let Some(port) = crate::secrets_port() {
                 info!(target: "reg.keystore", operation = "resolve_keychain_via_secrets_port", key_name = %key_name, "REG");
-                let result = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(port.read(key_name))
-                });
+                let result = futures::executor::block_on(port.read(key_name));
                 return match result {
                     Ok(Some(secret)) => Ok(Zeroizing::new(secret.into_bytes())),
                     Ok(None) => Err(KeychainError::NotFound(NotFound {

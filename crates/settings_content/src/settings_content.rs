@@ -1533,6 +1533,10 @@ pub struct KaskSettingsContent {
     /// Training MCP server configuration.
     #[serde(default)]
     pub training: Option<KaskTrainingSettingsContent>,
+
+    /// Multi-model fusion inference configuration.
+    #[serde(default)]
+    pub fusion: Option<KaskFusionSettingsContent>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -1619,4 +1623,32 @@ pub struct KaskScenariosSettingsContent {
 pub struct KaskTrainingSettingsContent {
     pub host: Option<String>,
     pub cache_dir: Option<String>,
+}
+
+/// Multi-model fusion inference configuration (the `"kask.fusion"` section).
+///
+/// When enabled, the Curator and the kask panel route inference through a
+/// panel of models judged by `judge_model` according to `mode`. See
+/// `hkask_types::fusion::FusionConfig` for the runtime type.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskFusionSettingsContent {
+    /// Master toggle. When `false`, fusion is disabled even if other fields are set.
+    pub enabled: Option<bool>,
+    /// Judge/fuser model (provider-prefixed, e.g. `"KC/z-ai/glm-5.2"`).
+    pub judge_model: Option<String>,
+    /// Comma-separated panel models (provider-prefixed). Empty defers to defaults.
+    pub panel_models: Option<String>,
+    /// Judge deliberation mode: `"synthesis"` | `"best-of-n"` | `"critique"` |
+    /// `"deliberation"` | `"pi"` | `"algo"`.
+    pub mode: Option<String>,
+    /// Algo merge strategy when `mode == "algo"`: `"merge"` | `"vote"`.
+    pub algo_method: Option<String>,
+    /// Comma-separated skill anchors (e.g. `"pragmatic-semantics,coding-guidelines"`).
+    pub skills: Option<String>,
+    /// Max rounds for `deliberation` mode.
+    pub max_rounds: Option<u32>,
+    /// OpenRouter auto-discovery max prompt price per million tokens (USD).
+    pub openrouter_max_price: Option<f64>,
+    /// OpenRouter auto-discovery minimum intelligence index.
+    pub openrouter_min_intelligence: Option<f64>,
 }

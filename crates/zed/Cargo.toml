@@ -73,6 +73,7 @@ hkask-mcp = { path = "../../kask/crates/hkask-mcp" }
 hkask-guard = { path = "../../kask/crates/hkask-guard" }
 hkask-capability = { path = "../../kask/crates/hkask-capability" }
 hkask-types = { path = "../../kask/crates/hkask-types" }
+hkask-regulation = { path = "../../kask/crates/hkask-regulation" }
 zed_credentials_provider.workspace = true
 ed25519-dalek.workspace = true
 kask_panel.workspace = true
@@ -138,6 +139,7 @@ acp_thread.workspace = true
 action_log = { workspace = true, optional = true }
 agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
+tokio.workspace = true
 rayon.workspace = true
 
 edit_prediction.workspace = true

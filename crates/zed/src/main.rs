@@ -522,28 +522,38 @@ fn main() {
         // can read KaskSettings to determine which servers to load.
         //
         // The regulation system (CyberneticsLoop, RegulationLedger, gas budgets,
-        // OCAP verification) is NOT wired here — tool invocations are
-        // ungoverned. To wire it, construct a CyberneticsLoop + RegulationLedger
-        // + EnergyEstimator + RegulationSink and call McpRuntime::with_governance().
-        log::info!("hKask regulation system NOT wired — tool invocations are ungoverned");
-        let mcp_runtime = std::sync::Arc::new(hkask_mcp::McpRuntime::new());
+        // OCAP verification) is wired here so all tool invocations are
+        // governed. The CyberneticsLoop runs sense→compare→compute→act
+        // cycles on background tasks; the RegulationLedger tracks variety
+        // and algedonic alerts; the FlatEnergyEstimator provides conservative
+        // per-call gas costs; the NoopEventSink discards Regulation spans
+        // (replace with a persistent sink when available).
+        let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
+            hkask_regulation::RegulationLedger::default(),
+        ));
+        let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
+            hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone()),
+        ));
+        let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
+            std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
+        let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
+            std::sync::Arc::new(hkask_regulation::NoopEventSink);
+        let mcp_runtime = std::sync::Arc::new(
+            hkask_mcp::McpRuntime::new()
+                .with_governance(cybernetics_loop, event_sink, energy_estimator),
+        );
+        log::info!("hKask regulation system wired — tool invocations are governed");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
             mcp_runtime.clone(),
         ));
 
-        // D5: Resolve the a2a_secret BEFORE injecting the SecretsPort.
+        // D5: a2a_secret for OCAP delegation token minting.
         //
-        // The SecretsPort adapter sends credential requests to a GPUI foreground
-        // task via a channel. If we inject it first and then call resolve_a2a_secret()
-        // on the main thread, the SecretsPort adapter uses block_in_place +
-        // Handle::current().block_on() to wait for the GPUI task's reply — but the
-        // GPUI task can't run because the main thread is blocked. Deadlock.
-        //
-        // By resolving before injection, the keychain read falls back to the
-        // `keyring` crate directly (synchronous platform I/O, no channel, no
-        // deadlock). The SecretsPort is injected afterward for all subsequent
-        // reads (which happen on background tasks, not the main thread).
+        // Resolved before SecretsPort injection so the first read uses the
+        // `keyring` crate directly (synchronous). After injection, subsequent
+        // reads go through the SecretsPort adapter (which uses
+        // futures::executor::block_on — safe from any thread context).
         //
         // Hoisted out of the block below so it's in scope for the model-dependent
         // wiring block after language_models::init().
@@ -816,22 +826,19 @@ fn main() {
                 // with a real one. `provision_userpod` handles first-run setup
                 // as lookups and directory creation — no interactive onboarding.
                 //
-                // Run on the Tokio runtime via Tokio::spawn() because the
-                // SecretsPort adapter uses tokio::task::block_in_place +
-                // Handle::current().block_on() to bridge async credential reads.
-                // This requires a Tokio runtime context, which only exists on
-                // Tokio worker threads — not on GPUI's foreground or background
-                // (smol-based) executors.
+                // The SecretsPort adapter now uses futures::executor::block_on
+                // (not tokio::task::block_in_place), so it's safe from any thread
+                // context — including GPUI's background executor.
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
                 let username_for_provision = username.clone();
 
-                let provision_result = Tokio::spawn(cx, async move {
+                let provision_result = cx.background_spawn(async move {
                     kask_bridge::provision_userpod(&username_for_provision)
                 }).await;
 
-                match provision_result.unwrap_or_else(|e| Err(format!("Tokio task failed: {e}"))) {
+                match provision_result {
                     Ok(provisioned) => {
                         let kask_bridge::ProvisionedUserpod { db_path, passphrase, webid: user_webid } = provisioned;
                         match kask_bridge::RealMemoryPort::new(

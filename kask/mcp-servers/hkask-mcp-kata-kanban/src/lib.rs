@@ -809,7 +809,7 @@ impl KanbanServer {
                 Err(e) => return Err(McpToolError::invalid_argument(format!("invalid board_id: {e}"))),
             };
 
-            let proposals: Vec<hkask_test_harness::ExpectProposal> =
+            let proposals: Vec<hkask_types::ExpectProposal> =
                 match serde_json::from_str(&proposals_json) {
                     Ok(p) => p,
                     Err(e) => return Err(McpToolError::invalid_argument(format!("invalid proposals JSON: {e}"))),

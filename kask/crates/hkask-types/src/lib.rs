@@ -75,3 +75,19 @@ pub use wallet_types::{
     RateLimitConfig, TransactionType, TxHash, WalletBalance, WalletConfig, WalletError,
     WalletTransaction,
 };
+
+/// A proposal template for a contract missing its user-facing `expect:` annotation.
+/// UserPods use this to compose and submit contract grounding proposals.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExpectProposal {
+    pub crate_name: String,
+    pub contract_id: String,
+    pub function: String,
+    pub file: String,
+    pub line: usize,
+    pub pre: String,
+    pub post: String,
+    pub expect_template: String,
+    pub suggested_goal_principle: String,
+    pub existing_constraining_principles: Vec<String>,
+}
