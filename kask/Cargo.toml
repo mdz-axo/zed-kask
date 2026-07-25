@@ -30,7 +30,7 @@ members = [
     "crates/hkask-pods",
     "crates/hkask-keystore",
     "crates/hkask-ledger",
-    "crates/hkask-wallet",
+
     "crates/hkask-mcp-server",
     "crates/hkask-mcp",
 

@@ -199,19 +199,17 @@ impl AgentTool for SpawnAgentTool {
             let tool_name: Arc<str> = Arc::from(SpawnAgentTool::NAME);
             let receiver = subagent.send_streaming(input.message, tool_use_id, cx);
 
-            // The owning message index is the current messages length — the
-            // agent message containing this tool_use is about to be flushed
-            // at this index.
-            let owning_message_ix = cx.update(|cx| {
-                // The pending message will be flushed at this index.
-                // We need the thread's current message count.
-                event_stream.enqueue_deferred_result(
-                    0, // placeholder — will be corrected by the caller
-                    tool_name.clone(),
-                    receiver,
-                    cx,
-                )
+            let enqueued = cx.update(|cx| {
+                event_stream.enqueue_deferred_result(tool_name.clone(), receiver, cx)
             });
+
+            if !enqueued {
+                return Err(SpawnAgentToolOutput::Error {
+                    session_id: Some(session_info.session_id.clone()),
+                    error: "Parent thread no longer exists".to_string(),
+                    session_info: Some(session_info),
+                });
+            }
 
             // Return an immediate placeholder result. The real result will
             // be delivered as a deferred tool result, replacing this
