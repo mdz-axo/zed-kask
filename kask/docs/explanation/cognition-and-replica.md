@@ -681,8 +681,8 @@ sequenceDiagram
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-005
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
+verified_date: 2026-07-24
+verified_against: crates/hkask-memory/src/episodic.rs, crates/hkask-memory/src/consolidation_service.rs, crates/hkask-mcp-server/src/server/tool_span.rs (in-process experience callback, D6)
 status: VERIFIED
 -->
 

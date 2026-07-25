@@ -1,7 +1,7 @@
 ---
 title: "Training and Adapters"
 audience: [operators, developers, ml-engineers]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Training"
@@ -10,7 +10,7 @@ mds_categories: [domain, lifecycle]
 
 # Training and Adapters
 
-Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the `kask adapter` CLI commands. hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs.
+Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the in-process training MCP server. hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed in-process via the training MCP server (one of the 11 builtin in-process MCP servers registered inside zed-kask, D1–D3).
 
 ---
 
@@ -31,7 +31,7 @@ All training scripts live in the HuggingFace repo `Axolotl-Partners/rust-adapter
 
 ### Current Limitations
 
-The generic CLI commands `kask docproc ingest`, `kask training create-dataset`, `kask training start`, and `kask training status` are **not implemented CLI commands**. Do not use them. Training is driven by the HF-hosted scripts (curl-piped to RunPod pods) and the `kask adapter` lifecycle commands described below.
+The generic CLI commands `kask docproc ingest`, `kask training create-dataset`, `kask training start`, and `kask training status` were **not implemented CLI commands** and have been removed entirely. Training is driven by the HF-hosted scripts (curl-piped to RunPod pods) and the in-process training MCP server for adapter lifecycle management (described below).
 
 ---
 
@@ -170,39 +170,44 @@ On failure:
 
 ---
 
-## Adapter Lifecycle via CLI
+## Adapter Lifecycle via the Training MCP Server
 
-The `kask adapter` commands manage trained adapter deployment to cloud inference providers. These commands delegate to the training MCP server.
+Adapter deployment and lifecycle management is performed in-process through the **training** MCP server (one of the 11 builtin in-process MCP servers, D1–D3). The former `kask adapter list/deploy/status/teardown` CLI commands have been removed; invoke the equivalent MCP tools from the zed-kask agent panel or kask panel (D10).
 
 ### List Trained Adapters
 
-```bash
-kask adapter list
-kask adapter list --skill <skill-name>
+Invoke the adapter-listing tool from the agent panel:
+
+```
+tool: adapter_list
+arguments: {"skill": "<optional-skill-name>"}
 ```
 
 ### Deploy an Adapter
 
 Deploy an adapter to a cloud inference provider:
 
-```bash
-kask adapter deploy <adapter-name> --provider together
+```
+tool: adapter_deploy
+arguments: {"adapter_name": "<adapter-name>", "provider": "together"}
 ```
 
-The `--provider` flag accepts `together` (default) or `runpod`.
+The `provider` field accepts `together` (default) or `runpod`.
 
 ### Check Deployment Status
 
-```bash
-kask adapter status <deployment_id>
+```
+tool: adapter_status
+arguments: {"deployment_id": "<deployment_id>"}
 ```
 
-Use the deployment ID returned by the `deploy` command.
+Use the deployment ID returned by the `adapter_deploy` tool.
 
 ### Tear Down a Deployed Endpoint
 
-```bash
-kask adapter teardown <deployment_id>
+```
+tool: adapter_teardown
+arguments: {"deployment_id": "<deployment_id>"}
 ```
 
 This removes the deployed inference endpoint and releases associated resources.
@@ -215,7 +220,7 @@ This removes the deployed inference endpoint and releases associated resources.
 - [Unsloth Qwen3.5 Fine-tuning Guide](https://unsloth.ai/docs/models/qwen3.5/fine-tune) — QLoRA not recommended for Qwen3.5/3.6
 - [QwenLM Qwen3 Training with Unsloth](https://github.com/QwenLM/Qwen3/blob/main/docs/source/training/unsloth.md) — 75% reasoning / 25% non-reasoning dataset ratio
 - [Qwen3.6 Training Reference](#qwen36-training-hyperparameters-merged-from-qwen36-training-hyperparametersmd) — Full hyperparameter rationale and literature survey
-- [Replica, Corpus, and Training Readiness](../status/userpod-corpus-training-readiness.md) — Verified state of training paths
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D3 in-process MCP server registration (training server)
 ---
 
 ## Qwen3.6 Training Hyperparameters
@@ -256,7 +261,7 @@ verified_against: corpus/chunks/chunks.jsonl; corpus/chunks/tagged_chunks.jsonl;
 status: VERIFIED
 -->
 
-The operational assessment and remediation sequence are in [Replica, Corpus, and Training Readiness](../status/userpod-corpus-training-readiness.md).
+The operational assessment and remediation sequence is documented in the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (D1–D10 integration seams).
 
 
 ### Replica Pipeline Dispatch
@@ -266,7 +271,7 @@ The operational assessment and remediation sequence are in [Replica, Corpus, and
 
 # Corpus Pipeline Dispatch Flowchart
 
-> **Note:** `corpus_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via `kask mcp invoke`.
+> **Note:** `corpus_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via the in-process corpus MCP server (D1–D3), invoked from the agent panel or kask panel (D10). The former `kask mcp invoke` CLI has been removed.
 
 The historical flowchart below is retained for reference. It shows the former executable boundary of `corpus_pipeline_run`.
 
@@ -294,7 +299,7 @@ flowchart TD
 ```
 `execute_tool` wraps the MCP call with a tool span and records success or error against the caller's WebID. That is observability, not authorization: per [P4 — Clear Boundaries](../architecture/core/PRINCIPLES.md#p4--clear-boundaries-ocap), operators must not treat this dispatcher as a replacement for an OCAP check. The checkpoint/result path supports [P9 — Homeostatic Self-Regulation](../architecture/core/PRINCIPLES.md#p9--homeostatic-self-regulation) by retaining the last step outcome for inspection and retry.
 
-The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-researcher.yaml`](../../corpus/pipeline-capabilities-researcher.yaml); all its `docproc_*` and `training_*` steps are now dispatched by `kask mcp invoke` against the unified `hkask-mcp-corpus` server. See also [Replica, Corpus, and Training Readiness](../status/userpod-corpus-training-readiness.md) and [the corpus server reference](../reference/mcp-servers/README.md).
+The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-researcher.yaml`](../../corpus/pipeline-capabilities-researcher.yaml); all its `docproc_*` and `training_*` steps are now dispatched in-process against the unified `hkask-mcp-corpus` server. See also [the corpus server reference](../reference/mcp-servers/README.md).
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-003

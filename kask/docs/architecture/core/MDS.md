@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-07-12
+last_updated: 2026-07-24
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -14,7 +14,9 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Supersedes:** The previous 9-category DDMVSS. All MDS references in the codebase should be updated.
 
-**Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md), [`FUNCTIONAL_SPECIFICATION.md`](FUNCTIONAL_SPECIFICATION.md)
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 29 surviving hKask crates and 11 MCP servers are listed in the architecture plan §2.2/§2.4.
+
+**Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
 ---
 
@@ -22,19 +24,22 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 The domain ontology is grounded in **Ontology Design Pattern (ODP) methodology** as described by Norouzi et al. (2025, arXiv:2509.23776): compact, requirement-driven extraction patterns rather than navigating entire complex ontologies.[^norouzi-odp]
 
+The ontology is re-anchored to the **29 surviving hKask crates** compiled in-process inside zed-kask (see [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2.2). Deleted crates are not referenced as current; where a deleted crate's job moved to a zed-kask surface, the entity is mapped to that surface.
+
 ### 1.1 Core Entities
 
-| Entity | Crate | Description | Goal Principle |
+| Entity | Crate / Surface | Description | Goal Principle |
 |--------|-------|-------------|---------------|
-| `HumanUser` | `hkask-storage` | Human identity with WebID, role (Admin\|Member), OAuth provider link | P1 |
+| `HumanUser` | zed account (replaces deleted `hkask-identity` user store) | Human identity, role, provider link — owned by zed-kask, not a parallel hKask identity store | P1 |
 | `UserPod` | `hkask-types` | Agent identity with persona, voice, wallet link | P6 |
 | `AgentPod` | `hkask-pods` | Runtime container for a userpod (Inactive\|Active\|ServerMode) | P1 |
-| `Wallet` | `hkask-wallet` | rJoule balance, encumbrance, multi-chain deposits | P9 |
+| `Wallet` | `hkask-wallet` | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer | P9 |
 | `ApiKey` | `hkask-wallet` | Scoped API key with spending limits and expiry | P1 |
 | `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
 | `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, gas budgets | P9 |
 | `GasBudget` | `hkask-regulation` | Per-agent gas budget with cap, replenish rate, hold-settle pattern | P9 |
 | `CircuitBreaker` | `hkask-regulation` | Failure-gating state machine for external service calls | P9 |
+| `KaskCore` | `kask_bridge` (D8) | In-process handle that MCP servers and zed-kask surfaces use to reach hKask primitives (replaces the deleted `AgentService` orchestration layer) | P5 |
 
 ### 1.2 Kata-Kanban Domain
 
@@ -80,24 +85,32 @@ The domain ontology is grounded in **Ontology Design Pattern (ODP) methodology**
 
 **Key contracts:** 44 pub fns with `expect:` + `[P{N}]` annotations
 
-### 1.4 Service Layer Subsystems
+### 1.4 Service Layer Subsystems (in-process)
 
-**Crate:** `hkask-services-core` + 10 specialized subcrates | **Goal Principle:** P5 (Essentialism) — thin orchestration layer, delegates to domain crates
+**Crate:** `hkask-services-core` + surviving specialized subcrates | **Goal Principle:** P5 (Essentialism) — thin scaffolding the in-process MCP servers depend on until the T3.0 refactor lands, at which point MCP servers take direct `KaskCore` handles and these dissolve.
+
+The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
+
+| Deleted subcrate | Job moved to |
+|------------------|--------------|
+| `hkask-services-chat` | zed's agent panel (`crates/agent`, `agent_ui`) — zed owns chat |
+| `hkask-services-onboarding` | zed's first-launch flow — zed owns onboarding |
+| `hkask-services-skill` | `hkask-templates` / `ManifestExecutor` (D1) — skill execution is native, no service layer |
+| `hkask-services-wallet` | In-process wallet primitives (`hkask-wallet` + `hkask-ledger`); no service layer — consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly |
+
+Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve at T3.0):
 
 | Subcrate | Domain | Contract Prefix | Count | Status |
 |----------|--------|----------------|-------|--------|
 | `hkask-services-core` | Foundation: config, error types, settings | — | — | ✅ Decomposed |
-| `hkask-services-chat` | Chat orchestration | — | — | ✅ Decomposed |
 | `hkask-services-compose` | Template composition | — | — | ✅ Decomposed |
-| `hkask-services-context` | Service context and contract monitoring | `P{N}-svc-context-*` | 31 | ✅ Realigned |
+| `hkask-services-context` | Service context and contract monitoring (stripped: identity/communication/matrix/daemon modules deleted; governance + guards kept) | `P{N}-svc-context-*` | 31 | ✅ Realigned |
 | `hkask-services-corpus` | Content corpus: discovery + embed | `P{N}-svc-corpus-*` | 30 | ✅ Realigned |
-| `hkask-services-chat` (metacognition) + `hkask-services-context` (escalation CRUD) | Curation services | — | — | ✅ Deleted 2026-07-11 |
 | `hkask-services-kata-kanban` | Toyota Kata + Kanban board coordination | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ⚠️ Migration in progress |
-| `hkask-services-onboarding` | Onboarding services | — | — | ✅ Decomposed |
-| `hkask-services-runtime` | Runtime services: classify + daemon | `P{N}-svc-runtime-*` | 13 | ✅ Realigned |
-| `hkask-services-skill` | Skill management | — | — | ✅ Decomposed |
-| `hkask-services-wallet` | Wallet/Payments | — | — | ✅ Decomposed |
-| `hkask-inference` | Inference orchestration | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
+| `hkask-services-runtime` | Runtime services: classify + guard + provider_intel (daemon_impl module deleted) | `P{N}-svc-runtime-*` | 13 | ✅ Realigned |
+| `hkask-services-self-heal` | Cross-domain self-healing coordination | — | — | ✅ Realigned |
+| `hkask-services-inference` | Inference orchestration scaffolding | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
+| `hkask-inference` | Inference routing primitives (InferenceRouter, EmbeddingRouter, ProviderId) — reads API keys from zed `CredentialsProvider` (D9b) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
 
 ---
 
@@ -142,11 +155,11 @@ Curation decisions (Accept/Revise/Reject) are made by the Curator or human — n
 
 ## 4. Spec Operations & QA Integration
 
-Specifications are managed through CLI and API surfaces, plus QA validation. MCP does not expose spec capture/list/validate/cultivate; it only surfaces spec drift via the Curator server.
+Specifications are managed through in-process surfaces plus QA validation. The standalone `hkask-cli` `kask spec` subcommands and the `hkask-api` REST endpoints are **deleted**. Spec capture/list/validate/cultivate now run through the in-process `kask` admin CLI and the curator MCP server; MCP does not expose spec capture/list/validate/cultivate beyond surfacing spec drift via the Curator server.
 
-### 4.1 CLI Surface (`kask spec`)
+### 4.1 In-Process CLI Surface (`kask spec`)
 
-Thin passthrough to `SpecStore` in `hkask-storage`. No intermediate service layer — the CLI builds `Spec` domain objects and persists them directly.
+Thin passthrough to `SpecStore` in `hkask-storage`. No intermediate service layer — the in-process `kask` admin CLI builds `Spec` domain objects and persists them directly. (This is **not** the deleted `hkask-cli` — it is the slimmer zed-kask `kask` admin CLI for backup/wallet/repair/admin, which also exposes spec operations.)
 
 | Command | Operation | Delegate |
 |---------|-----------|----------|
@@ -156,17 +169,15 @@ Thin passthrough to `SpecStore` in `hkask-storage`. No intermediate service laye
 | `kask spec cultivate` | Validate + display per-category coherence requirements | Curator agent |
 | `kask spec render` | Render a spec through a Jinja2 template | `minijinja` + `SpecStore::load()` |
 
-### 4.2 API Surface
+### 4.2 In-Process Surface (no HTTP API)
 
-REST endpoints in `hkask-api` read and write specs directly through `AgentService::spec_store()`. Same `SpecStore` backend, same domain types, no service-layer intermediary.
+The deleted `hkask-api` REST endpoints (`GET /api/specs`, `POST /api/specs/capture`, etc.) are **removed**. There is no standalone HTTP API server in zed-kask. Spec reads/writes go through the in-process `SpecStore` directly, invoked by:
 
-| Endpoint | Operation |
-|----------|----------|
-| `GET /api/specs` | List specs with optional category filter |
-| `GET /api/specs/{id}` | Get spec detail with requirements |
-| `POST /api/specs/capture` | Capture a spec from description + context |
-| `GET /api/specs/coherence` | Category coverage ratio across all specs |
-| `GET /api/specs/{id}/writing-quality` | Structural quality check (name, criteria, completeness) |
+- the `kask` admin CLI (above),
+- the curator MCP server (for drift surfacing),
+- zed-kask surfaces (kask panel) that hold an in-process handle.
+
+All consumers share the same `SpecStore` backend and the same `Spec` / `GoalSpec` / `SpecCategory` / `SpecId` domain types from `hkask-storage::spec_types` — no service-layer intermediary, no HTTP transport.
 
 ### 4.3 QA Integration (planned)
 
@@ -189,11 +200,11 @@ The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as th
 
 ### 4.5 The Spec Store
 
-The canonical persistence surface is `hkask_storage::SpecStore` (implemented by `SqliteSpecStore`). All spec operations — CLI, API, and QA — read and write through this single interface. Domain types (`Spec`, `GoalSpec`, `SpecCategory`, `SpecId`) live in `hkask-storage::spec_types`.
+The canonical persistence surface is `hkask_storage::SpecStore` (implemented by `SqliteSpecStore`). All spec operations — in-process CLI, curator MCP, and QA — read and write through this single interface. Domain types (`Spec`, `GoalSpec`, `SpecCategory`, `SpecId`) live in `hkask-storage::spec_types`.
 
 ```
-CLI ──→ SpecStore ──→ SQLite
-API ──→ SpecStore ──→ SQLite
+kask CLI ──→ SpecStore ──→ SQLite
+Curator MCP ──→ SpecStore ──→ SQLite
 QA  ──→ SpecStore ──→ SQLite  (spec-check)
      ──→ DefaultSpecCurator  (validation)
 ```
@@ -320,15 +331,15 @@ domain_anchor: hkask
 verb_inventory:
   - verb: invoke_tool
     resource: McpServer
-    interface: [mcp, cli, api]
+    interface: [mcp, cli, in_process]
   - verb: render_template
     resource: Template
-    interface: [mcp, cli, api]
+    interface: [mcp, cli, in_process]
 
 interface_equivalence:
   mcp: true
   cli: true
-  api: true
+  in_process: true
   equivalent: true  # All three exercise same functional core
 
 registry:
@@ -340,6 +351,8 @@ ocap_policy:
   attenuation_max: 7
   token_ttl_seconds: 3600
 ```
+
+> **Note:** The `api` interface column from the pre-fork template is **removed** (the standalone `hkask-api` HTTP server is deleted). It is replaced by `in_process`, reflecting zed-kask's in-process composition root. MCP and CLI remain as equivalent surfaces to the same functional core.
 
 ### 7.3 Trust Spec Template
 
@@ -365,6 +378,7 @@ keystore:
   encryption: AES-256-GCM
   key_derivation: Argon2id + HKDF-SHA256
   storage: OS_keychain + SQLCipher
+  sovereignty_backend: zed CredentialsProvider (kask namespace, D9b)
 ```
 
 ### 7.4 Lifecycle Spec Template
@@ -375,7 +389,7 @@ category: lifecycle
 domain_anchor: hkask
 
 bootstrap:
-  sequence: [resolve_secrets, open_databases, build_service_context, start_loops]
+  sequence: [resolve_secrets, open_databases, build_kask_core, start_loops]
 
 evolution:
   versioning: git_sha_only
@@ -409,6 +423,8 @@ persistence:
     - name: semantic
       visibility: public
 ```
+
+> **Note:** The bootstrap sequence's `build_service_context` step is renamed `build_kask_core` to reflect the in-process `KaskCore` composition root (replacing the deleted `AgentService` orchestration layer). No daemon, no Matrix transport, no HTTP server in the bootstrap path.
 
 ### 7.5 Curation Spec Template
 
@@ -513,145 +529,145 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ---
 
-*MDS v0.31.0 — five categories, SpecStore + QA. Five thin service passthroughs removed (contacts, scheduler, goal, pod, spec).*
+*MDS v0.31.0 — five categories, SpecStore + QA. Re-anchored to the 29 surviving hKask crates compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology.*
 
 ---
 
-## AgentService Specification
+## KaskCore Composition Root (replaces the deleted AgentService specification)
 
-> **Incorporated from:** docs/specifications/specs/MDS-agent-service.md
+> **Supersedes:** the pre-fork `AgentService Specification` (incorporated from `docs/specifications/specs/MDS-agent-service.md`). The standalone `AgentService` orchestration layer, the `hkask-cli` `ReplState` wrapper, and the `hkask-api` `ApiState` wrapper are **deleted**. In zed-kask, the in-process composition root is `KaskCore`, exposed via `kask_bridge` (D8).
 
-**Purpose:** Specification for the condensed service layer architecture. `AgentService` is the canonical service layer that owns all shared infrastructure. Both CLI and API surfaces compose an `AgentService` instance and add only presentation-specific state.
+**Purpose:** `KaskCore` is the in-process handle that zed-kask surfaces (kask panel, `kask` admin CLI) and MCP servers use to reach hKask primitives. It owns shared infrastructure (storage, regulation, memory, templates, wallet primitives) and exposes them through a small interface. There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
 
 ### Bounded Context
 
-`AgentService` is the **single source of truth** for all shared infrastructure in hKask. **Boundary:** In-process only. MCP servers do NOT depend on `AgentService` (P1 Prohibition — out-of-process isolation).
+`KaskCore` is the **single in-process source of truth** for shared hKask infrastructure inside zed-kask. **Boundary:** In-process only. MCP servers reach it via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach it via the guard layer (D4) and the in-process transport (D1–D3).
 
-All 9 fields are **private** and exposed through **20 public methods** grouped by concern. Four nested sub-context structs (`InfraContext`, `GovernanceContext`, `RegulationContext`, `StorageContext`) consolidate domain-coherent infrastructure; the remaining 5 fields hold cross-cutting state (WebID, curator signal, config, inference loop, governed tool).
+### Public Surface (grouped by concern)
 
-#### Sub-Contexts
+| Group | Members | Notes |
+|-------|---------|-------|
+| **Construction** | `KaskCore::build(config)` | Assembles storage, regulation, memory, templates, wallet primitives, MCP runtime |
+| **Storage** | `storage()`, `spec_store()` | `hkask-storage` handles (SQLCipher-encrypted) |
+| **Regulation** | `ledger()`, `cybernetics()`, `loops()`, `energy()`, `tool_stats()` | `hkask-regulation` handles |
+| **Memory** | `build_per_agent_memory(db, sink)`, `per_agent_memory(agent)`, `consolidate_agent_memory(agent, request)`, `consolidation_status_for(agent)` | `hkask-memory` handles — single OCAP-gated, consent-checked consolidation entry point |
+| **Templates** | `templates()`, `manifest_executor()` | `hkask-templates` — skill execution (D1) |
+| **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-wallet` primitives — no service layer; consumers compose directly |
+| **Identity** | `webid()` | WebID for the active pod |
+| **Inference** | `inference_port()`, `gas_remaining()`, `gas_cap()` | `hkask-inference` — reads API keys from zed `CredentialsProvider` (D9b) |
+| **Guard** | `governed_tool(webid)`, `guard_strategy()` | `hkask-guard` (D4) — Magna Carta floor in the inference path |
 
-| Sub-Context | Field | Contains |
-|-------------|-------|----------|
-| `InfraContext` | `infra` | `inference`, `episodic`, `semantic`, `mcp` (McpRuntime), `pods` (ActivePods), `wallet`, `daemon`, `matrix`, `seams` (SeamWatcher), `wallet_gas` |
-| `GovernanceContext` | `governance` | `checker` (CapabilityChecker), `consent` (ConsentManager), `dispatcher` (McpDispatcher), `a2a` (A2ARuntime), `escalations` (EscalationQueue), `events`, `curation_tx` |
-| `RegulationContext` | `ledger` | `runtime` (RegulationLedger), `cybernetics` (CyberneticsLoop), `loops` (LoopScheduler), `events` (RegulationSink), `energy` (CalibratedEnergyEstimator), `tool_stats` (ToolStats) |
+**Design rationale:** `KaskCore` groups domain-coherent infrastructure into deep modules (Ousterhout). Cross-cutting concerns (gas, governed tool, per-agent memory consolidation) remain direct methods because they span multiple sub-systems or require coordination logic. The deleted `AgentService`'s nested sub-context structs (`InfraContext`, `GovernanceContext`, `RegulationContext`, `StorageContext`) are absorbed into `KaskCore`'s grouped accessors — the daemon/Matrix/a2a fields that existed only for the deleted standalone surfaces are **removed**.
 
-#### Public Methods (20)
-
-| Method | Returns | Group |
-|--------|---------|-------|
-| `build(config)` | `Result<Self, ServiceError>` (async) | Construction |
-| `infra()` | `&InfraContext` | Context accessor |
-| `governance()` | `&GovernanceContext` | Context accessor |
-| `ledger()` | `&RegulationContext` | Context accessor |
-| `storage()` | `&StorageContext` | Context accessor |
-| `config()` | `&ServiceConfig` | Identity |
-| `webid()` | `&WebID` | Identity |
-| `identity()` | `(&WebID, &Arc<A2ARuntime>)` | Identity |
-| `seam_summary()` | `Option<SeamSummary>` (async) | Regulation / Infra |
-| `curator_ready()` | `Result<(), String>` (async, `&mut self`) | Regulation / Infra |
-| `governed_tool(webid)` | `Arc<GovernedTool<RawMcpToolPort>>` | Regulation / Infra |
-| `inference_loop()` | `Option<&Arc<InferenceLoop>>` | Regulation / Infra |
-| `set_inference_loop(il)` | `()` (`&mut self`) | Regulation / Infra |
-| `inference_port()` | `Option<Arc<dyn InferencePort>>` | Regulation / Infra |
-| `gas_remaining()` | `Option<u64>` | Regulation / Infra |
-| `gas_cap()` | `Option<u64>` | Regulation / Infra |
-| `build_per_agent_memory(db, sink)` | `PerAgentMemory` (assoc. fn) | Memory |
-| `per_agent_memory(agent_name)` | `Result<PerAgentMemory, ServiceError>` | Memory |
-| `consolidate_agent_memory(agent_name, request)` | `Result<ConsolidationOutcome, ServiceError>` | Memory |
-| `consolidation_status_for(agent_name)` | `Result<(usize, usize, usize), ServiceError>` | Memory |
-
-**Design rationale:** The nested sub-context pattern groups domain-coherent infrastructure into deep modules (Ousterhout) — callers access a sub-context once and navigate its public fields, rather than calling individual accessors for every field. Cross-cutting concerns (gas, governed tool, per-agent memory consolidation) remain direct methods on `AgentService` because they span multiple sub-contexts or require coordination logic.
-
-### Service Layer Contracts
-
-| Subcrate | Domain | Contract Prefix | Count | Status |
-|----------|--------|----------------|-------|--------|
-| `hkask-services-core` | Foundation: config, error types, settings | — | — | Decomposed |
-| `hkask-services-chat` | Chat orchestration | — | — | Decomposed |
-| `hkask-services-compose` | Template composition | — | — | Decomposed |
-| `hkask-services-context` | Service context and contract monitoring | `P{N}-svc-context-*` | 31 | Realigned |
-| `hkask-services-corpus` | Content corpus: discovery + embed | `P{N}-svc-corpus-*` | 30 | Realigned |
-| `hkask-services-chat` + `hkask-services-context` | Curation services | — | — | Deleted — moved to chat + context |
-| `hkask-services-kata-kanban` | Toyota Kata + Kanban board coordination | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | Migration in progress |
-| `hkask-services-onboarding` | Onboarding services | — | — | Decomposed |
-| `hkask-services-runtime` | Runtime services: classify + daemon | `P{N}-svc-runtime-*` | 13 | Realigned |
-| `hkask-services-skill` | Skill management | — | — | Decomposed |
-| `hkask-services-wallet` | Wallet/Payments | — | — | Decomposed |
-| `hkask-inference` | Inference orchestration | `P{N}-svc-inference-*` | 7 | Realigned |
-
-### Crate-to-Domain Mappings
+### Crate-to-Domain Mappings (surviving crates only)
 
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
-| `hkask-services-core` | Domain | `ServiceConfig`, error types, settings |
-| `hkask-services-chat` | Composition | Chat orchestration, message routing |
-| `hkask-services-compose` | Composition | Template composition, rendering |
-| `hkask-services-context` | Lifecycle | `ContextService`, contract monitoring |
-| `hkask-services-corpus` | Domain | `CorpusService`, embedding pipelines |
-| `hkask-services-chat` (metacognition) + `hkask-services-context` (escalation CRUD) | Curation | Curation services, coherence checks — deleted 2026-07-11 |
+| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `UserPod` |
+| `hkask-storage` | Domain, Lifecycle | `hMem`, `SpecStore`, `WalletStore`, per-pod SQLCipher private sphere |
+| `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
+| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CircuitBreaker`, `CyberneticsLoop`, variety/algedonic |
+| `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
+| `hkask-pods` | Domain | `AgentPod`, Curator, deployment |
+| `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
+| `hkask-capability` | Trust | OCAP — sovereignty enforcement, capability tokens |
+| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Storage backend → zed `CredentialsProvider` (D9b) |
+| `hkask-wallet` | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — in-process, no service layer |
+| `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
+| `hkask-inference` | Composition | `InferenceRouter`, `EmbeddingRouter`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) |
+| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
+| `hkask-forecast` | Domain | Forecast domain logic |
+| `hkask-goal` | Domain | Goal analysis, completion verification |
+| `hkask-condenser` | Curation | Context condensation |
+| `hkask-git-cas` | Lifecycle | Content-addressed storage over git |
+| `hkask-bridge-dublincore` | Curation | Dublin Core metadata bridging |
+| `hkask-test-harness` | (test infra) | Test infrastructure |
+| `hkask-mcp` | Composition | MCP governance |
+| `hkask-services-core` | Domain | Foundation: config, error types, settings (dissolves at T3.0) |
+| `hkask-services-self-heal` | Lifecycle | Cross-domain self-healing coordination (dissolves at T3.0) |
+| `hkask-services-inference` | Composition | Inference orchestration scaffolding (dissolves at T3.0) |
 | `hkask-services-kata-kanban` | Domain, Curation | `KataEngine`, `KataManifest`, `Board`, `Task`, Kanban coordination |
-| `hkask-services-onboarding` | Lifecycle | Onboarding workflows, agent setup |
-| `hkask-services-runtime` | Lifecycle | `ClassifyService`, `DaemonService` |
-| `hkask-services-skill` | Composition | Skill management, capability registry |
-| `hkask-services-wallet` | Trust | Wallet service, payment processing |
-| `hkask-inference` | Composition | Inference orchestration, provider routing |
+| `hkask-services-runtime` | Lifecycle | `ClassifyService`, guard, provider_intel (daemon_impl deleted; dissolves at T3.0) |
+| `hkask-services-corpus` | Domain | `CorpusService`, embedding pipelines (dissolves at T3.0) |
+| `hkask-services-context` | Lifecycle | `ContextService`, contract monitoring (stripped; dissolves at T3.0) |
+| `hkask-services-compose` | Composition | Template composition (dissolves at T3.0) |
+| `kask_bridge` | Composition | D8 — in-process bridge exposing `KaskCore` to MCP servers and zed-kask surfaces |
+| 11 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, curator, docproc, kata-kanban, media, replica, research, scenarios, training |
+
+> **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (→ in-process wallet primitives), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
 
 ### Dependency Direction
 
 ```mermaid
 graph TD
-    CLI["hkask-cli"]
-    API["hkask-api"]
-    subgraph SERVICES["hkask services subcrates"]
-        CORE[core]
-        CHAT[chat]
-        COMPOSE[compose]
-        CONTEXT[context]
-        CORPUS[corpus]
-        CURATOR[curator]
-        KATA[kata-kanban]
-        ONBOARD[onboarding]
-        RUNTIME[runtime]
-        SKILL[skill]
-        WALLET[wallet]
+    ZEDSURF["zed-kask surfaces<br/>(kask panel, kask admin CLI, agent panel)"]
+    subgraph BRIDGE["kask_bridge (D8)"]
+        KC[KaskCore]
     end
-    CLI --> SERVICES
-    API --> SERVICES
-    SERVICES --> AGENTS[hkask-pods]
-    SERVICES --> Regulation[hkask-regulation]
-    SERVICES --> MEM[hkask-memory]
-    SERVICES --> TEMPLATES[hkask-templates]
-    SERVICES --> TYPES[hkask-types]
-    SERVICES --> STORAGE[hkask-storage]
+    subgraph MCP["11 MCP servers (in-process)"]
+        MSRV[servers]
+    end
+    subgraph HKASK["hKask domain crates"]
+        TYPES[hkask-types]
+        STORE[hkask-storage]
+        MEM[hkask-memory]
+        REG[hkask-regulation]
+        TEMPLATES[hkask-templates]
+        PODS[hkask-pods]
+        GUARD[hkask-guard]
+        CAP[hkask-capability]
+        KS[hkask-keystore trimmed]
+        WALLET[hkask-wallet]
+        LEDGER[hkask-ledger]
+        INF[hkask-inference]
+        SVCS[services-* scaffolding]
+    end
+    subgraph ZED["zed-kask (host)"]
+        CRED[CredentialsProvider D9b]
+        LM[language_model / inference routing]
+        AGENT[agent / agent_ui]
+    end
+
+    ZEDSURF --> KC
+    MSRV --> KC
+    KC --> HKASK
+    KS -.->|"storage backend"| CRED
+    INF -.->|"API keys"| CRED
+    HKASK --> TYPES
+    HKASK --> STORE
+    AGENT -.->|"chat / agent panel"| ZEDSURF
+    LM -.->|"inference routing"| ZEDSURF
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-07-12
-verified_against: crates/hkask-services-context/src/context_impl.rs
+verified_date: 2026-07-24
+verified_against: kask/docs/architecture/zed-host-architecture-plan.md, kask/crates/hkask-services-context/src/context_impl.rs
 status: VERIFIED
 -->
 
-Domain crates **never** depend on service layer subcrates. MCP servers **never** depend on service layer subcrates for orchestration (P1 Prohibition).
+Domain crates **never** depend on service-layer subcrates. MCP servers **never** link zed-kask crates directly — they reach `KaskCore` via `kask_bridge` (D8), preserving the P1 out-of-process isolation boundary at the MCP seam. zed-kask surfaces reach `KaskCore` through the guard layer (D4) and in-process transport (D1–D3).
 
 ### OCAP Boundaries
 
 | Boundary | Enforcement | Principle |
 |----------|-------------|-----------|
-| Tool invocation | `CapabilityChecker` gating via `governed_tool` | P4 |
+| Tool invocation | `CapabilityChecker` gating via `governed_tool` (D4 guard layer) | P4 |
 | Inference calls | `governed_inference` membrane with gas budget checks | P4 |
-| MCP server isolation | Out-of-process; no `AgentService` dependency | P1 |
+| MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
 | Capability attenuation | Max depth limit, TTL expiry on tokens | P4 |
+| Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage in zed `CredentialsProvider` kask namespace (D5/D9b) | P1 |
 
 ### Bootstrap Sequence
 
-1. `AgentService::build(config)` assembles all shared infrastructure
-2. Per-agent memory created via `build_per_agent_memory(db)`
-3. Consolidation is routed through `AgentService::consolidate_agent_memory(agent_name, request)` — the single OCAP-gated, consent-checked entry point
-4. CLI surface wraps with `ReplState` (= `AgentService` + REPL fields)
-5. API surface wraps with `ApiState` (= `Arc<AgentService>` + HTTP fields)
+1. `KaskCore::build(config)` assembles shared hKask infrastructure (storage, regulation, memory, templates, wallet primitives, MCP runtime).
+2. Sovereignty keys are resolved from zed's `CredentialsProvider` kask namespace (D5/D9b) via the trimmed `hkask-keystore`.
+3. Per-agent memory is created via `KaskCore::build_per_agent_memory(db)`.
+4. Consolidation is routed through `KaskCore::consolidate_agent_memory(agent_name, request)` — the single OCAP-gated, consent-checked entry point.
+5. zed-kask surfaces (kask panel, `kask` admin CLI) hold a `KaskCore` handle directly.
+6. MCP servers receive a `KaskCore` handle via `kask_bridge` (D8).
+
+> **Removed from the pre-fork bootstrap:** the `ReplState` (= `AgentService` + REPL fields) and `ApiState` (= `Arc<AgentService>` + HTTP fields) wrappers, the daemon handler, and the Matrix transport. None of these have successors in zed-kask — their jobs either moved to zed-kask surfaces (chat → agent panel) or were deleted (HTTP API, Matrix, daemon).
 
 ### Interface Equivalence
 
-Both CLI and API surfaces use identical `AgentService` accessors and the same `consolidate_agent_memory` entry point. All 20 public methods are equivalent across surfaces — surface-specific state (daemon handler, Matrix transport) is accessed via the `infra()` sub-context, not through dedicated accessor methods.
+The `kask` admin CLI, the curator MCP server, and zed-kask surfaces (kask panel) all use identical `KaskCore` accessors and the same `consolidate_agent_memory` entry point. All public methods are equivalent across surfaces — surface-specific state is composed at the surface, not threaded through `KaskCore`. The deleted `hkask-api` REST surface and `hkask-cli` REPL surface have no successors; their spec operations are absorbed by the in-process `kask` admin CLI and the curator MCP server.

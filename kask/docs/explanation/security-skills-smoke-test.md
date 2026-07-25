@@ -1,27 +1,51 @@
+---
+title: "Security Skills — Execution Smoke Test Procedure"
+audience: [operators, developers, security-engineers]
+last_updated: 2026-07-24
+version: "0.31.0"
+status: "Active"
+domain: "Security"
+mds_categories: [domain, trust, lifecycle, curation]
+---
+
 # Security Skills — Execution Smoke Test Procedure
 
 This document describes how to manually smoke-test the security skills
-against test fixtures. These tests require a running hKask instance with
-LLM access — they are NOT CI gates.
+against test fixtures. These tests require a running zed-kask editor
+session with hKask compiled in-process and LLM access — they are NOT CI
+gates.
 
 ## Prerequisites
 
-1. hKask installed and initialized (`kask init` completed)
-2. LLM inference configured (`HKASK_INFERENCE_*` env vars or keystore)
-3. Regulation MCP server running (`kask mcp start regulation` or auto-started)
-4. Working directory: hKask project root
+1. zed-kask built and running (`cargo build --release` then launch the
+   editor). hKask is compiled in-process; there is no `kask init` step.
+2. LLM inference configured through zed-kask's `CredentialsProvider`
+   (D9) — the guard layer (D4) routes inference requests to the
+   configured provider.
+3. The Regulation layer runs in-process (`hkask-regulation`); the
+   former `kask mcp start regulation` standalone CLI has been removed.
+   Regulation spans are emitted and queried in-process.
+4. Working directory: zed-kask project root (the hKask workspace under
+   `kask/`).
 
 ## Test Fixtures
 
 ### Fixture 1: Supply Chain Audit (supply-chain-sentinel)
 
-**Setup:** The hKask project itself is the test fixture — it has `Cargo.toml`,
-`Cargo.lock`, and `deny.toml`.
+**Setup:** The zed-kask project itself is the test fixture — it has
+`Cargo.toml`, `Cargo.lock`, and `deny.toml`.
 
 **Procedure:**
-```bash
-# Run the supply-chain-sentinel skill against the hKask workspace
-kask skill run supply-chain-sentinel --surface cargo --userpod-host test-auditor
+
+Invoke the `supply-chain-sentinel` skill from the zed-kask agent panel
+(native agent, D2) or via the kask panel (D10). The skill executes
+in-process through the `ManifestExecutor` (D1); there is no `kask skill
+run` CLI. Supply the surface and userpod-host as context:
+
+```
+skill: supply-chain-sentinel
+surface: cargo
+userpod_host: test-auditor
 ```
 
 **Expected output:**
@@ -35,20 +59,25 @@ kask skill run supply-chain-sentinel --surface cargo --userpod-host test-auditor
 2. `manifest_paths` includes `Cargo.toml` and `Cargo.lock`
 3. `defense_layers_present` includes at least `dependency_pinning` and `sbom_presence`
 4. `userpod_host` is present in all outputs
-5. `reg.supply_chain.*` spans are emitted (check via `reg_query_spans` MCP tool)
+5. `reg.supply_chain.*` spans are emitted (query via the in-process `reg_query_spans` tool exposed through the kask panel or agent panel)
 6. No synthetic findings — every finding references a real `Cargo.toml` line
 
 ### Fixture 2: Runtime Posture Monitor (runtime-posture-monitor)
 
-**Setup:** Requires a running hKask instance with Regulation telemetry.
+**Setup:** Requires a running zed-kask session with Regulation telemetry.
 
 **Procedure:**
-```bash
-# 1. Generate some Regulation telemetry (run any kask command that emits spans)
-kask skill audit  # emits hkask.* performative spans
 
-# 2. Run the runtime-posture-monitor skill
-kask skill run runtime-posture-monitor --signal all --userpod-host test-monitor
+1. Generate some Regulation telemetry by running any agent task that
+   emits spans (e.g., invoke a skill or run an agent panel session —
+   these emit `hkask.*` performative spans in-process).
+
+2. Invoke the `runtime-posture-monitor` skill from the agent panel:
+
+```
+skill: runtime-posture-monitor
+signal: all
+userpod_host: test-monitor
 ```
 
 **Expected output:**
@@ -61,7 +90,7 @@ kask skill run runtime-posture-monitor --signal all --userpod-host test-monitor
 1. The skill produces JSON output (not an error)
 2. `signal_sources` includes at least one `reg.*` or `hkask.*` target
 3. `userpod_host` is present in all outputs
-4. `reg.runtime.*` spans are emitted (check via `reg_query_spans` MCP tool)
+4. `reg.runtime.*` spans are emitted (query via the in-process `reg_query_spans` tool)
 5. No synthetic signals — every finding references a real span target + timestamp
 
 ### Fixture 3: Attack Taxonomy Mapper (attack-taxonomy-mapper)
@@ -70,9 +99,13 @@ kask skill run runtime-posture-monitor --signal all --userpod-host test-monitor
 in `security/regressions/` as `surface: supply-chain` entries.
 
 **Procedure:**
-```bash
-# Run the attack-taxonomy-mapper skill
-kask skill run attack-taxonomy-mapper --source all --userpod-host test-mapper
+
+Invoke the `attack-taxonomy-mapper` skill from the agent panel:
+
+```
+skill: attack-taxonomy-mapper
+source: all
+userpod_host: test-mapper
 ```
 
 **Expected output:**
@@ -87,16 +120,20 @@ kask skill run attack-taxonomy-mapper --source all --userpod-host test-mapper
 3. Each mapping includes `osc_r_tactic` and `osc_r_technique` (verified names)
 4. No invented OSC&R categories — all mapped to existing entries in `github.com/pbom-dev/OSCAR`
 5. `userpod_host` is present in all outputs
-6. `reg.taxonomy.*` spans are emitted (check via `reg_query_spans` MCP tool)
+6. `reg.taxonomy.*` spans are emitted (query via the in-process `reg_query_spans` tool)
 
 ### Fixture 4: Kali Audit (kali-audit)
 
-**Setup:** The hKask project itself is the test fixture.
+**Setup:** The zed-kask project itself is the test fixture.
 
 **Procedure:**
-```bash
-# Run the kali-audit skill against the hKask codebase
-kask skill run kali-audit --surface code --userpod-host test-auditor
+
+Invoke the `kali-audit` skill from the agent panel:
+
+```
+skill: kali-audit
+surface: code
+userpod_host: test-auditor
 ```
 
 **Expected output:**
@@ -114,40 +151,57 @@ kask skill run kali-audit --surface code --userpod-host test-auditor
 
 ## Automated Smoke Test (Future)
 
-When the `kask skill run` command supports automated execution (rendering
-templates + calling LLM + validating output), the above fixtures can be
-automated as integration tests. The validation steps would become assertions
-in a Rust test file.
+When skill execution supports automated invocation (rendering templates +
+calling the LLM + validating output) from a test harness, the above
+fixtures can be automated as integration tests. The validation steps
+would become assertions in a Rust test file.
 
-Current limitation: `kask skill run` renders templates but does not
-automatically call the LLM or validate output. The agent (or a human) must
-read the rendered template, execute the instructions, and verify the output
-matches the contract.
+Current limitation: in-process skill execution renders templates and
+calls the LLM, but does not automatically validate output against the
+contract. The agent (or a human) must read the rendered output and
+verify it matches the contract.
 
 ## Running the Smoke Tests
 
-To run all smoke tests manually:
+To run all smoke tests, invoke each skill from the zed-kask agent panel
+or kask panel (D10) with the context below. There is no standalone `kask
+skill run` CLI — skills execute in-process through the `ManifestExecutor`
+(D1).
 
-```bash
+```
 # 1. Supply chain audit
-kask skill run supply-chain-sentinel --surface cargo --userpod-host smoke-test
+skill: supply-chain-sentinel
+surface: cargo
+userpod_host: smoke-test
 
-# 2. Runtime posture monitor (requires running instance)
-kask skill run runtime-posture-monitor --signal all --userpod-host smoke-test
+# 2. Runtime posture monitor (requires running session)
+skill: runtime-posture-monitor
+signal: all
+userpod_host: smoke-test
 
 # 3. Attack taxonomy mapper (requires supply-chain findings)
-kask skill run attack-taxonomy-mapper --source all --userpod-host smoke-test
+skill: attack-taxonomy-mapper
+source: all
+userpod_host: smoke-test
 
 # 4. Kali audit
-kask skill run kali-audit --surface code --userpod-host smoke-test
+skill: kali-audit
+surface: code
+userpod_host: smoke-test
 ```
 
-Check Regulation span emissions:
-```bash
-# Query Regulation spans emitted by the smoke tests
-kask mcp call regulation reg_query_spans '{"namespace": "reg.supply_chain", "since_hours": 1.0, "limit": 50}'
-kask mcp call regulation reg_query_spans '{"namespace": "reg.runtime", "since_hours": 1.0, "limit": 50}'
-kask mcp call regulation reg_query_spans '{"namespace": "reg.taxonomy", "since_hours": 1.0, "limit": 50}'
+Check Regulation span emissions by querying the in-process
+`reg_query_spans` tool (exposed through the kask panel or agent panel):
+
+```
+tool: reg_query_spans
+arguments: {"namespace": "reg.supply_chain", "since_hours": 1.0, "limit": 50}
+
+tool: reg_query_spans
+arguments: {"namespace": "reg.runtime", "since_hours": 1.0, "limit": 50}
+
+tool: reg_query_spans
+arguments: {"namespace": "reg.taxonomy", "since_hours": 1.0, "limit": 50}
 ```
 
 ## What the Smoke Tests Catch
@@ -166,5 +220,5 @@ cannot:
    (e.g., `reg_query_spans` for runtime-posture-monitor)
 
 These are the most valuable tests but also the most expensive — they require
-LLM calls, a running instance, and manual output validation. They are
+LLM calls, a running editor session, and manual output validation. They are
 recommended as a pre-release checklist, not a CI gate.

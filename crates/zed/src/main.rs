@@ -620,7 +620,7 @@ fn main() {
                 agent::set_manifest_executor(Some(executor));
                 log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
 
-                // D6: The LazyMemoryPort was installed above (before this block)
+                // D6: The logging memory port was installed above (before this block)
                 // so it is always available. The upgrade to RealMemoryPort happens
                 // in the deferred task after the Zed user resolves.
 
