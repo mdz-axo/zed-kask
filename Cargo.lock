@@ -9182,7 +9182,6 @@ dependencies = [
  "argon2",
  "dirs 6.0.0",
  "ed25519-dalek",
- "futures 0.3.32",
  "hex",
  "hkask-types",
  "hmac",
@@ -11063,6 +11062,7 @@ dependencies = [
  "settings_content",
  "tokio",
  "tracing",
+ "ui",
 ]
 
 [[package]]

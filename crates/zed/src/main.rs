@@ -1028,9 +1028,57 @@ fn main() {
 
             let model_registry = language_model::LanguageModelRegistry::read_global(cx);
             if let Some(configured) = model_registry.default_model() {
+                let kask_settings = kask_bridge::KaskSettings::get_global(cx);
+
+                // Fusion: when enabled, construct a FusionLanguageModel that
+                // delegates to hKask's fusion orchestrator. The fusion model
+                // wraps the panel + judge models resolved from the registry.
+                // When fusion is disabled (or construction fails), fall back to
+                // the single configured default model.
+                let fusion_config = kask_settings.fusion.to_fusion_config();
+                let fusion_model: Option<Arc<dyn language_model::LanguageModel>> =
+                    if let Some(ref fc) = fusion_config {
+                        let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
+                        if fc.judge.to_lowercase() != "algo" {
+                            names.push(fc.judge.clone());
+                        }
+                        let resolved = kask_bridge::resolve_fusion_models(
+                            model_registry,
+                            &names,
+                            cx,
+                        );
+                        match kask_bridge::FusionLanguageModel::new(
+                            fc.clone(),
+                            resolved,
+                            async_cx.clone(),
+                        ) {
+                            Some(m) => {
+                                log::info!(
+                                    "hKask fusion enabled — mode: {}, judge: {}, panel: {:?}",
+                                    fc.mode.as_str(),
+                                    fc.judge,
+                                    fc.panel.iter().collect::<Vec<_>>()
+                                );
+                                Some(Arc::new(m))
+                            }
+                            None => {
+                                log::warn!(
+                                    "hKask fusion config present but construction failed — falling back to single model"
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        log::info!("hKask fusion disabled (kask.fusion.enabled = false)");
+                        None
+                    };
+
+                let inference_model: Arc<dyn language_model::LanguageModel> =
+                    fusion_model.unwrap_or_else(|| configured.model.clone());
+
                 let (inference_port, inference_task) =
                     kask_bridge::LanguageModelInferencePort::new(
-                        configured.model.clone(),
+                        inference_model.clone(),
                         async_cx.clone(),
                     );
                 inference_task.detach();
@@ -1059,7 +1107,6 @@ fn main() {
                 agent::set_manifest_executor(Some(executor));
                 log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
 
-                let kask_settings = kask_bridge::KaskSettings::get_global(cx);
                 if kask_settings.memory.auto_inject {
                     log::info!("hKask context injection enabled — injector will be wired after userpod resolves");
                 } else {

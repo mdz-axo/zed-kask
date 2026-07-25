@@ -20,7 +20,10 @@ mod tool_port;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
-pub use fusion_model::{FUSION_MODEL_ID, FUSION_PROVIDER_ID, FusionLanguageModel};
+pub use fusion_model::{
+    FUSION_MODEL_ID, FUSION_PROVIDER_ID, FusionLanguageModel, FusionLanguageModelProvider,
+    resolve_fusion_models,
+};
 pub use identity::{
     ProvisionedUserpod, provision_userpod, userpod_name_from_username, webid_from_username,
 };

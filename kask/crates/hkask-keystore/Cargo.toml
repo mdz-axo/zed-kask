@@ -9,7 +9,6 @@ description = "OS keychain integration and AES-256-GCM encryption for hKask"
 hkask-types = { path = "../hkask-types" }
 keyring.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-futures = { workspace = true }
 aes-gcm.workspace = true
 argon2.workspace = true
 hmac.workspace = true

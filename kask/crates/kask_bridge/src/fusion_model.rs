@@ -58,7 +58,7 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt, stream};
-use gpui::{App, AsyncApp};
+use gpui::{App, AppContext, AsyncApp, Entity};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,
@@ -427,4 +427,201 @@ impl InferencePort for MultiModelInferencePort {
             }
         }
     }
+}
+
+// ── Model Resolution ─────────────────────────────────────────────────────────
+
+/// Resolve provider-prefixed model names from the `LanguageModelRegistry`.
+///
+/// Each name in `model_names` is resolved to an `Arc<dyn LanguageModel>`.
+/// The key in the returned map is the original name string (so the fusion
+/// orchestrator can route by name).
+///
+/// Resolution strategy:
+/// 1. If the name contains `/`, split on the first `/` to get
+///    `(provider_id, model_id)` and look up the provider.
+/// 2. Search the provider's models for one whose `id()` or `telemetry_id()`
+///    matches the model part.
+/// 3. If no prefix or no match, search all providers' models by
+///    `telemetry_id()`.
+///
+/// Models that can't be resolved are silently skipped (with a warning).
+#[must_use]
+pub fn resolve_fusion_models(
+    registry: &language_model::LanguageModelRegistry,
+    model_names: &[String],
+    cx: &App,
+) -> HashMap<String, Arc<dyn LanguageModel>> {
+    let mut resolved: HashMap<String, Arc<dyn LanguageModel>> = HashMap::new();
+
+    for name in model_names {
+        if let Some(model) = resolve_model(registry, name, cx) {
+            resolved.insert(name.clone(), model);
+        } else {
+            tracing::warn!(
+                target: "reg.fusion",
+                model_name = %name,
+                "Could not resolve model from LanguageModelRegistry — dropped from fusion"
+            );
+        }
+    }
+
+    resolved
+}
+
+/// Resolve a single provider-prefixed model name.
+fn resolve_model(
+    registry: &language_model::LanguageModelRegistry,
+    prefixed_name: &str,
+    cx: &App,
+) -> Option<Arc<dyn LanguageModel>> {
+    // Try to split on the first `/` to get provider/model.
+    if let Some((provider_id_str, model_id)) = prefixed_name.split_once('/') {
+        let provider_id = LanguageModelProviderId(provider_id_str.to_string().into());
+        if let Some(provider) = registry.provider(&provider_id) {
+            // The model ID after the prefix may itself contain a `/` (e.g.
+            // "anthropic/claude-sonnet-4.5" under provider "OR"). Search the
+            // provider's models for a match on id or telemetry_id.
+            for model in provider.provided_models(cx) {
+                if model.id().0.as_ref() == model_id || model.telemetry_id() == prefixed_name {
+                    return Some(model);
+                }
+            }
+        }
+    }
+
+    // No prefix or prefix match failed — search all providers by telemetry_id.
+    registry
+        .available_models(cx)
+        .find(|m| m.telemetry_id() == prefixed_name)
+}
+
+// ── FusionLanguageModelProvider ───────────────────────────────────────────────
+
+use gpui::Entity;
+use language_model::{LanguageModelProvider, LanguageModelProviderState, ProviderSettingsView};
+use ui::{IconName, IconOrSvg};
+
+/// Observable state for the fusion provider.
+///
+/// Notifies when settings change so the registry can re-enumerate models.
+pub struct FusionProviderState {
+    _settings_subscription: gpui::Subscription,
+}
+
+impl FusionProviderState {
+    fn new(cx: &mut gpui::Context<Self>) -> Self {
+        Self {
+            _settings_subscription: cx.observe_global::<settings::SettingsStore>(|_, cx| {
+                cx.notify();
+            }),
+        }
+    }
+}
+
+/// A `LanguageModelProvider` that exposes the fusion model in zed's model picker.
+///
+/// When `kask.fusion.enabled == true`, this provider returns a single
+/// `FusionLanguageModel` in `provided_models`. When fusion is disabled, it
+/// returns an empty list (so it doesn't appear in the picker).
+///
+/// The fusion model is constructed at provider construction time (when
+/// `AsyncApp` is available) and held for the lifetime of the provider.
+/// If the fusion config changes, the user must restart Zed for the new
+/// config to take effect (a limitation we accept for Slice 3 — dynamic
+/// reconfiguration is a future enhancement).
+pub struct FusionLanguageModelProvider {
+    state: Entity<FusionProviderState>,
+    model: Option<Arc<FusionLanguageModel>>,
+}
+
+impl FusionLanguageModelProvider {
+    /// Construct the provider.
+    ///
+    /// Reads `kask.fusion` from settings. When enabled, resolves the panel
+    /// and judge models from the registry and constructs a
+    /// `FusionLanguageModel`. When disabled or construction fails, `model`
+    /// is `None` and the provider returns no models.
+    pub fn new(cx: &mut App) -> Self {
+        let state = cx.new(|cx| FusionProviderState::new(cx));
+
+        let kask_settings = kask_bridge_settings(cx);
+        let model = kask_settings
+            .fusion
+            .to_fusion_config()
+            .and_then(|fc| {
+                let registry = language_model::LanguageModelRegistry::read_global(cx);
+                let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
+                if fc.judge.to_lowercase() != "algo" {
+                    names.push(fc.judge.clone());
+                }
+                let resolved = resolve_fusion_models(registry, &names, cx);
+                FusionLanguageModel::new(fc, resolved, cx.to_async())
+            })
+            .map(Arc::new);
+
+        Self { state, model }
+    }
+}
+
+impl LanguageModelProviderState for FusionLanguageModelProvider {
+    type ObservableEntity = FusionProviderState;
+
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+}
+
+impl LanguageModelProvider for FusionLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(FUSION_PROVIDER_ID.into())
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName("Kask Fusion".into())
+    }
+
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::Sparkle)
+    }
+
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.model.clone().map(|m| m as Arc<dyn LanguageModel>)
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
+    }
+
+    fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        self.model
+            .clone()
+            .map(|m| vec![m as Arc<dyn LanguageModel>])
+            .unwrap_or_default()
+    }
+
+    fn is_authenticated(&self, _cx: &App) -> bool {
+        // Fusion is "authenticated" when it has a model — i.e., when fusion
+        // is enabled and construction succeeded.
+        self.model.is_some()
+    }
+
+    fn authenticate(
+        &self,
+        _cx: &mut App,
+    ) -> gpui::Task<Result<(), language_model::AuthenticateError>> {
+        // No authentication needed — fusion uses the underlying panel models'
+        // credentials.
+        gpui::Task::ready(Ok(()))
+    }
+
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        None
+    }
+}
+
+/// Helper to read `KaskSettings` from the settings store.
+fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
+    use settings::Settings as _;
+    crate::settings::KaskSettings::get_global(cx).clone()
 }

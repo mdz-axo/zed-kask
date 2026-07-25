@@ -116,12 +116,6 @@ impl Keychain {
     /// pre:  key is non-empty, secret is non-empty
     /// post: secret stored in OS keychain under service_name + key (or via SecretsPort if injected)
     pub fn store_by_key(&self, key: &str, secret: &str) -> Result<(), KeychainError> {
-        if let Some(port) = crate::secrets_port() {
-            info!(target: "reg.keystore", operation = "store_by_key_via_secrets_port", "REG");
-            let result = futures::executor::block_on(port.write(key, secret));
-            return result.map_err(|e| KeychainError::Platform(format!("SecretsPort error: {e}")));
-        }
-
         let entry = Entry::new(&self.service_name, key)
             .map_err(|e| KeychainError::Platform(e.to_string()))?;
 
@@ -139,19 +133,6 @@ impl Keychain {
     /// pre:  key is non-empty
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
     pub fn retrieve_by_key(&self, key: &str) -> Result<String, KeychainError> {
-        if let Some(port) = crate::secrets_port() {
-            info!(target: "reg.keystore", operation = "retrieve_by_key_via_secrets_port", "REG");
-            let result = futures::executor::block_on(port.read(key));
-            return result
-                .map_err(|e| KeychainError::Platform(format!("SecretsPort error: {e}")))?
-                .ok_or_else(|| {
-                    KeychainError::NotFound(NotFound {
-                        entity_type: "secret".to_string(),
-                        id: format!("keychain key '{}' not found via SecretsPort", key),
-                    })
-                });
-        }
-
         let entry = Entry::new(&self.service_name, key)
             .map_err(|e| KeychainError::Platform(e.to_string()))?;
 
@@ -166,12 +147,6 @@ impl Keychain {
     /// pre:  key is non-empty
     /// post: secret removed from OS keychain (or via SecretsPort if injected)
     pub fn delete_by_key(&self, key: &str) -> Result<(), KeychainError> {
-        if let Some(port) = crate::secrets_port() {
-            info!(target: "reg.keystore", operation = "delete_by_key_via_secrets_port", "REG");
-            let result = futures::executor::block_on(port.delete(key));
-            return result.map_err(|e| KeychainError::Platform(format!("SecretsPort error: {e}")));
-        }
-
         let entry = Entry::new(&self.service_name, key)
             .map_err(|e| KeychainError::Platform(e.to_string()))?;
 
@@ -337,24 +312,6 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
             Ok(Zeroizing::new(value.into_bytes()))
         }
         SecretRef::Keychain(key_name) => {
-            // D5: When a SecretsPort is injected (zed-kask composition root),
-            // route keychain reads through it (backed by zed's CredentialsProvider
-            // in the kask://credentials/<key> namespace). When no port is injected
-            // (standalone MCP server child processes), fall back to the keyring crate.
-            if let Some(port) = crate::secrets_port() {
-                info!(target: "reg.keystore", operation = "resolve_keychain_via_secrets_port", key_name = %key_name, "REG");
-                let result = futures::executor::block_on(port.read(key_name));
-                return match result {
-                    Ok(Some(secret)) => Ok(Zeroizing::new(secret.into_bytes())),
-                    Ok(None) => Err(KeychainError::NotFound(NotFound {
-                        entity_type: "secret".to_string(),
-                        id: format!("keychain key '{}' not found via SecretsPort", key_name),
-                    })),
-                    Err(e) => Err(KeychainError::Platform(format!("SecretsPort error: {e}"))),
-                };
-            }
-
-            // Fallback: keyring crate (standalone MCP server child processes).
             // Guard against concurrent libdbus SIGABRT from multiple processes
             // hitting the OS keyring simultaneously (e.g., kask mcp invoke spawns
             // all MCP servers at once, each calling InferenceConfig::from_env()).
