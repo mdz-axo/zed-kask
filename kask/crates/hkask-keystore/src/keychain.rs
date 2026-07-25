@@ -114,7 +114,7 @@ impl Keychain {
     ///
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  key is non-empty, secret is non-empty
-    /// post: secret stored in OS keychain under service_name + key (or via SecretsPort if injected)
+    /// post: secret stored in OS keychain under service_name + key
     pub fn store_by_key(&self, key: &str, secret: &str) -> Result<(), KeychainError> {
         let entry = Entry::new(&self.service_name, key)
             .map_err(|e| KeychainError::Platform(e.to_string()))?;
@@ -145,7 +145,7 @@ impl Keychain {
     ///
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  key is non-empty
-    /// post: secret removed from OS keychain (or via SecretsPort if injected)
+    /// post: secret removed from OS keychain
     pub fn delete_by_key(&self, key: &str) -> Result<(), KeychainError> {
         let entry = Entry::new(&self.service_name, key)
             .map_err(|e| KeychainError::Platform(e.to_string()))?;

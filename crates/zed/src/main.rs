@@ -549,11 +549,7 @@ fn main() {
         ));
 
         // D5: a2a_secret for OCAP delegation token minting.
-        //
-        // Resolved before SecretsPort injection so the first read uses the
-        // `keyring` crate directly (synchronous). After injection, subsequent
-        // reads go through the SecretsPort adapter (which uses
-        // futures::executor::block_on — safe from any thread context).
+        // Resolved via the `keyring` crate (synchronous OS keychain I/O).
         //
         // Hoisted out of the block below so it's in scope for the model-dependent
         // wiring block after language_models::init().
@@ -562,8 +558,6 @@ fn main() {
             .unwrap_or_default();
 
         {
-            let async_cx = cx.to_async();
-
             // D6 (early): Install a logging memory port now so the global hook
             // is set before any thread completes a turn. The port starts as a
             // no-op (BridgeMemoryPort wrapping LoggingMemoryPort) and is replaced
@@ -580,29 +574,10 @@ fn main() {
             agent::set_memory_port(Some(bridge_memory));
             log::info!("hKask memory port wired (logging) — will upgrade when Zed user resolves");
 
-            // D5: SecretsPort is NOT injected in the main process.
-            //
-            // The SecretsPort adapter bridges async CredentialsProvider calls
-            // to sync keystore reads. On the GPUI main thread, this creates a
-            // sync→async bridge that deadlocks: block_on blocks the foreground
-            // thread, but the CredentialsProvider receiver task also needs the
-            // foreground thread to run.
-            //
-            // Instead, the main process uses the `keyring` crate directly
-            // (synchronous OS keychain I/O) for all keystore reads/writes.
-            // The SecretsPort is only needed by MCP server child processes,
-            // which run on Tokio and can safely use block_in_place.
-            //
-            // The SecretsPort adapter is still constructed (for future use by
-            // MCP servers that share the process) but not injected into the
-            // global keystore hook.
-            //
-            // API keys for inference providers are read via zed's own
-            // CredentialsProvider through the LanguageModelRegistry, not through
-            // the kask keystore. The kask keystore only handles sovereignty
-            // keys (a2a_secret, db_passphrase, ocap_secret) which are stored
-            // in the OS keychain via the `keyring` crate.
-            log::info!("hKask keystore uses keyring crate directly (no SecretsPort injection — avoids GPUI deadlock)");
+            // D5: Keystore uses the `keyring` crate directly for all
+            // sovereignty key reads/writes (synchronous OS keychain I/O).
+            // API keys for inference providers are handled by zed's own
+            // CredentialsProvider through the LanguageModelRegistry.
 
             // D3: McpRuntime is constructed above (before the block) so it's
             // available for both the manifest executor and the post-settings
@@ -610,9 +585,9 @@ fn main() {
             //
             // The model-dependent wiring (manifest executor, guard, panel) is
             // deferred to after language_model::init() — see the block after
-            // language_models::init() below. The SecretsPort, a2a_secret, and
-            // logging memory port are wired here (early) because they don't
-            // depend on the language model registry.
+            // language_models::init() below. The a2a_secret and logging memory
+            // port are wired here (early) because they don't depend on the
+            // language model registry.
         }
 
         if let Some(app_commit_sha) = app_commit_sha {
@@ -840,9 +815,8 @@ fn main() {
                 // with a real one. `provision_userpod` handles first-run setup
                 // as lookups and directory creation — no interactive onboarding.
                 //
-                // The SecretsPort adapter now uses futures::executor::block_on
-                // (not tokio::task::block_in_place), so it's safe from any thread
-                // context — including GPUI's background executor.
+                // The keystore uses the `keyring` crate directly
+                // (synchronous OS keychain I/O).
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
@@ -1018,7 +992,7 @@ fn main() {
         // This block runs after language_model::init() and language_models::init()
         // so that LanguageModelRegistry::read_global(cx) is available.
         //
-        // The SecretsPort, a2a_secret, and logging memory port were wired earlier
+        // The a2a_secret and logging memory port were wired earlier
         // (before AppState::set_global) because they don't depend on the language
         // model registry and are needed by the deferred userpod provisioning task.
         {
@@ -1028,7 +1002,7 @@ fn main() {
 
             let model_registry = language_model::LanguageModelRegistry::read_global(cx);
             if let Some(configured) = model_registry.default_model() {
-                let kask_settings = kask_bridge::KaskSettings::get_global(cx);
+                let kask_settings = kask_bridge::KaskSettings::get_global(cx).clone();
 
                 // Fusion: when enabled, construct a FusionLanguageModel that
                 // delegates to hKask's fusion orchestrator. The fusion model
@@ -1075,6 +1049,16 @@ fn main() {
 
                 let inference_model: Arc<dyn language_model::LanguageModel> =
                     fusion_model.unwrap_or_else(|| configured.model.clone());
+
+                // Register the fusion provider so it appears in the agent
+                // panel's model picker. When fusion is disabled, the provider
+                // returns no models and doesn't appear in the picker.
+                let fusion_provider =
+                    kask_bridge::FusionLanguageModelProvider::new(cx);
+                language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry.register_provider(Arc::new(fusion_provider), cx);
+                });
+                log::info!("Kask fusion language model provider registered");
 
                 let (inference_port, inference_task) =
                     kask_bridge::LanguageModelInferencePort::new(

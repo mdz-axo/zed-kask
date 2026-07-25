@@ -19,7 +19,6 @@ hkask-services-core = { path = "../hkask-services-core" }
 hkask-condenser = { path = "../hkask-condenser" }
 
 # zed-kask side — the facilities the bridge adapts over
-credentials_provider = { path = "../../../crates/credentials_provider" }
 language_model = { path = "../../../crates/language_model" }
 language_model_core = { path = "../../../crates/language_model_core" }
 gpui = { path = "../../../crates/gpui" }

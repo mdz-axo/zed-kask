@@ -327,74 +327,6 @@ impl InferenceConfig {
         }
     }
 
-    /// Resolve from a `SecretsPort` (zed-kask bridge over `CredentialsProvider`).
-    ///
-    /// API keys are read through the `SecretsPort` (which reads from zed's
-    /// `CredentialsProvider` under `kask://credentials/<key>`), with env var
-    /// fallback for backward compatibility during the transition.
-    ///
-    /// Key mapping: `DI_API_KEY` env var → `SecretsPort::read("di_api_key")`.
-    /// Base URLs and non-secret config still come from env vars.
-    ///
-    /// This is the D9b seam — MCP servers in zed-kask use this constructor so
-    /// they share API keys with zed's provider configuration.
-    pub async fn from_secrets(secrets: &dyn hkask_types::SecretsPort) -> Self {
-        let di = ProviderConfig::from_secrets(secrets, "DI", "https://api.deepinfra.com").await;
-        let tg = ProviderConfig::from_secrets(secrets, "TG", "https://api.together.xyz").await;
-        let or = ProviderConfig::from_secrets(secrets, "OR", "https://openrouter.ai/api").await;
-        let kc =
-            ProviderConfig::from_secrets(secrets, "KC", "https://api.kilo.ai/api/gateway").await;
-        let om = ProviderConfig::from_secrets(secrets, "OM", "http://localhost:11434").await;
-
-        let cline_base_url = std::env::var("CLINE_BASE_URL")
-            .unwrap_or_else(|_| "https://api.cline.bot/api".to_string());
-        let cline_api_key = resolve_secret_or_env(secrets, "cline_api_key", "CLINE_API_KEY").await;
-
-        let fal_base_url =
-            std::env::var("FA_BASE_URL").unwrap_or_else(|_| "https://api.fal.ai".to_string());
-        let fal_media_base_url =
-            std::env::var("FA_MEDIA_BASE_URL").unwrap_or_else(|_| "https://fal.run".to_string());
-        let fal_queue_base_url = std::env::var("FA_QUEUE_BASE_URL")
-            .unwrap_or_else(|_| "https://queue.fal.run".to_string());
-        let fal_api_key = resolve_secret_or_env(secrets, "fa_api_key", "FA_API_KEY").await;
-
-        let openrouter_max_prompt_price_per_m = env_f64("HKASK_OR_MAX_PRICE", 1.0);
-        let openrouter_min_intelligence_index = env_f64("HKASK_OR_MIN_INTELLIGENCE_INDEX", 40.0);
-
-        let fusion = parse_fusion_config();
-
-        Self {
-            default_provider: resolve_default_provider(),
-            deepinfra_base_url: di.base_url,
-            deepinfra_api_key: di.api_key,
-            fal_base_url,
-            fal_media_base_url,
-            fal_queue_base_url,
-            fal_api_key,
-            together_base_url: tg.base_url,
-            together_api_key: tg.api_key,
-            openrouter_base_url: or.base_url,
-            openrouter_api_key: or.api_key,
-            openrouter_max_prompt_price_per_m,
-            openrouter_min_intelligence_index,
-            kilocode_base_url: kc.base_url,
-            kilocode_api_key: kc.api_key,
-            ollama_base_url: om.base_url,
-            ollama_api_key: om.api_key,
-            cline_base_url,
-            cline_api_key,
-            timeout_secs: resolve_config_str("HKASK_HTTP_TIMEOUT_SECS")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(120),
-            pool_max_idle: resolve_config_str("HKASK_HTTP_POOL_MAX_IDLE")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(256),
-            default_model: resolve_config_str("HKASK_DEFAULT_MODEL")
-                .unwrap_or_else(|| "KC/z-ai/glm-5.2".to_string()),
-            fusion,
-        }
-    }
-
     /// Build a reqwest HTTP client with the configured timeout and pool settings.
     ///
     /// expect: "The system resolves inference configuration from the environment"
@@ -459,39 +391,6 @@ fn resolve_api_key(env_name: &str) -> String {
         let key = String::from_utf8_lossy(&zeroizing).into_owned();
         if !key.is_empty() {
             return key;
-        }
-    }
-
-    // Tier 3: Empty string (provider not configured)
-    String::new()
-}
-
-/// Resolve an API key through `SecretsPort` first, then env var fallback.
-///
-/// This is the D9b seam: in zed-kask, the `SecretsPort` is implemented by
-/// `kask_bridge::CredentialsSecretsPort` over zed's `CredentialsProvider`,
-/// so API keys are stored in the OS keychain under `kask://credentials/<key>`
-/// and shared with zed's own provider configuration.
-///
-/// Tier 1: `SecretsPort::read(secret_key)` — zed's `CredentialsProvider`.
-/// Tier 2: Environment variable `env_var` — backward compat / standalone.
-/// Tier 3: Empty string (provider not configured).
-async fn resolve_secret_or_env(
-    secrets: &dyn hkask_types::SecretsPort,
-    secret_key: &str,
-    env_var: &str,
-) -> String {
-    // Tier 1: SecretsPort (zed's CredentialsProvider in zed-kask)
-    if let Ok(Some(val)) = secrets.read(secret_key).await {
-        if !val.is_empty() {
-            return val;
-        }
-    }
-
-    // Tier 2: Environment variable (backward compat / standalone hKask)
-    if let Ok(val) = std::env::var(env_var) {
-        if !val.is_empty() {
-            return val;
         }
     }
 
@@ -614,24 +513,6 @@ impl ProviderConfig {
                 .unwrap_or_else(|_| default_base_url.to_string()),
             api_key: resolve_api_key(&format!("{}_API_KEY", prefix)),
         }
-    }
-
-    /// Resolve base URL from env and API key from `SecretsPort` (D9b seam).
-    ///
-    /// Base URL still comes from `{prefix}_BASE_URL` env var. API key is read
-    /// through `SecretsPort::read("{prefix_lower}_api_key")`, with env var
-    /// `{prefix}_API_KEY` as fallback.
-    pub async fn from_secrets(
-        secrets: &dyn hkask_types::SecretsPort,
-        prefix: &str,
-        default_base_url: &str,
-    ) -> Self {
-        let base_url = std::env::var(format!("{}_BASE_URL", prefix))
-            .unwrap_or_else(|_| default_base_url.to_string());
-        let secret_key = format!("{}_api_key", prefix.to_lowercase());
-        let env_var = format!("{}_API_KEY", prefix);
-        let api_key = resolve_secret_or_env(secrets, &secret_key, &env_var).await;
-        Self { base_url, api_key }
     }
 
     pub fn is_configured(&self) -> bool {

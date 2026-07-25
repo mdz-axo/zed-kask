@@ -9190,7 +9190,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
  "zeroize",
 ]
@@ -11038,7 +11037,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "collections",
- "credentials_provider",
  "futures 0.3.32",
  "futures-util",
  "gpui",

@@ -498,9 +498,10 @@ fn resolve_model(
 
 // ── FusionLanguageModelProvider ───────────────────────────────────────────────
 
-use gpui::Entity;
-use language_model::{LanguageModelProvider, LanguageModelProviderState, ProviderSettingsView};
-use ui::{IconName, IconOrSvg};
+use language_model::{
+    IconOrSvg, LanguageModelProvider, LanguageModelProviderState, ProviderSettingsView,
+};
+use ui::IconName;
 
 /// Observable state for the fusion provider.
 ///
