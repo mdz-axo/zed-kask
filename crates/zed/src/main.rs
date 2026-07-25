@@ -1624,6 +1624,29 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
         })
     }
+
+    fn list_tools(
+        &self,
+        server: &str,
+    ) -> gpui::Task<Result<Vec<kask_panel::ToolDescriptor>, String>> {
+        let runtime = self.tool_port.runtime().clone();
+        let server = server.to_string();
+        self.executor.spawn(async move {
+            let servers = runtime.list_servers().await;
+            let target = servers
+                .into_iter()
+                .find(|s| s.id == server)
+                .ok_or_else(|| format!("server '{server}' not registered"))?;
+            Ok(target
+                .tools
+                .into_iter()
+                .map(|tool| kask_panel::ToolDescriptor {
+                    name: tool.name,
+                    description: tool.description,
+                })
+                .collect())
+        })
+    }
 }
 
 /// Adapter implementing `kask_panel::ScopedInference` via `GuardedInferencePort`.

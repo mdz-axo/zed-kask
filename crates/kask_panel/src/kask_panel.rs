@@ -71,11 +71,23 @@ pub enum KaskMessageRole {
     System,
 }
 
+/// A tool descriptor for the completion provider (name + description).
+#[derive(Clone, Debug)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub description: String,
+}
+
 /// Trait for direct tool invocation (mirrors `hkask_capability::ToolPort`).
 /// The bridge provides the implementation.
 pub trait ToolInvoker: Send + Sync {
     /// Invoke a tool on a specific server. Returns the result as JSON text.
     fn invoke_tool(&self, server: &str, tool: &str, args: Value) -> Task<Result<String, String>>;
+
+    /// List the tools exposed by a specific server (for completion / `/help`).
+    /// Returns an empty vec if the server is not connected or introspection
+    /// is unavailable.
+    fn list_tools(&self, server: &str) -> Task<Result<Vec<ToolDescriptor>, String>>;
 }
 
 /// Trait for scoped inference (mirrors `hkask_types::InferencePort`).
@@ -108,18 +120,43 @@ fn scoped_inference() -> Option<&'static Arc<dyn ScopedInference>> {
 
 // ── Center-pane Item ────────────────────────────────────────────────────
 
+/// A per-server welcome message explaining what the server does and how to
+/// interact with it. Mirrors the deleted hKask TUI's per-window welcome text.
+fn server_welcome(server: &str) -> String {
+    let description = match server {
+        "codegraph" => "code structure query and traversal",
+        "companies" => "company research and filings",
+        "condenser" => "context condensation and summarization",
+        "corpus" => "document corpus and QA generation",
+        "curator" => "regulation cascade and algedonic signals",
+        "kata-kanban" => "improvement kata board and task coordination",
+        "media" => "image generation and media workflows",
+        "research" => "web research and paper search",
+        "scenarios" => "scenario planning and Wardley mapping",
+        "training" => "LoRA training configuration and audit",
+        _ => "MCP server",
+    };
+    format!(
+        "{server} — {description}.\nType /tool_name args for direct invocation, or a natural language message for scoped inference.\nType /help for commands, /tools to list this server's tools."
+    )
+}
+
 /// The kask panel — a center-pane `Item` for per-MCP-server chat + tool invocation.
 pub struct KaskPanel {
     _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     /// Currently selected server (index into `BUILT_IN_MCP_SERVERS`).
     selected_server: usize,
-    /// Conversation messages (user, assistant, tool results).
-    messages: Vec<KaskMessage>,
+    /// Per-server conversation history (preserved when switching servers).
+    conversations: std::collections::HashMap<usize, Vec<KaskMessage>>,
     /// The message input editor.
     input_editor: Entity<Editor>,
     /// Whether a request is in progress.
     busy: bool,
+    /// Spinner frame counter (animated while `busy`).
+    spinner_frame: u8,
+    /// Cached tool list for the selected server (for `/tools` and completion).
+    cached_tools: Option<(usize, Vec<ToolDescriptor>)>,
 }
 
 impl KaskPanel {
@@ -155,13 +192,11 @@ impl KaskPanel {
                 _workspace: workspace.weak_handle(),
                 focus_handle: cx.focus_handle(),
                 selected_server: 0,
-                messages: vec![KaskMessage {
-                    role: KaskMessageRole::System,
-                    content: "Kask Panel — select a server, then type a message or /tool args."
-                        .to_string(),
-                }],
+                conversations: std::collections::HashMap::new(),
                 input_editor,
                 busy: false,
+                spinner_frame: 0,
+                cached_tools: None,
             }
         })
     }
@@ -171,6 +206,26 @@ impl KaskPanel {
             .get(self.selected_server)
             .copied()
             .unwrap_or("none")
+    }
+
+    /// Get the conversation for the currently selected server, initializing
+    /// it with the welcome message on first access.
+    fn current_messages(&mut self) -> &mut Vec<KaskMessage> {
+        let index = self.selected_server;
+        self.conversations.entry(index).or_insert_with(|| {
+            vec![KaskMessage {
+                role: KaskMessageRole::System,
+                content: server_welcome(BUILT_IN_MCP_SERVERS.get(index).copied().unwrap_or("none")),
+            }]
+        })
+    }
+
+    /// Switch to a different server (called by the selector buttons).
+    fn select_server(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.selected_server = index;
+        // Invalidate the tool cache — it's per-server.
+        self.cached_tools = None;
+        cx.notify();
     }
 
     fn submit_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -187,6 +242,19 @@ impl KaskPanel {
         self.input_editor
             .update(cx, |editor, cx| editor.clear(window, cx));
 
+        // Handle slash commands first (/help, /clear, /tools).
+        if text.starts_with('/') {
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            let command = parts
+                .first()
+                .map(|s| s.trim_start_matches('/'))
+                .unwrap_or("");
+            if matches!(command, "help" | "clear" | "tools") {
+                self.handle_slash_command(command, cx);
+                return;
+            }
+        }
+
         // Check if it's a direct tool invocation (/tool_name args).
         if let Some((tool, args)) = parse_tool_invocation(&text) {
             self.invoke_tool(tool, args, cx);
@@ -195,17 +263,125 @@ impl KaskPanel {
         }
     }
 
+    /// Handle `/help`, `/clear`, `/tools` slash commands.
+    fn handle_slash_command(&mut self, command: &str, cx: &mut Context<Self>) {
+        match command {
+            "help" => {
+                self.current_messages().push(KaskMessage {
+                    role: KaskMessageRole::System,
+                    content: "Commands:\n  /help              — show this help\n  /clear             — clear the conversation\n  /tools             — list this server's tools\n  /tool_name args    — direct tool invocation (bypasses LLM)\n  <natural language> — scoped inference (LLM calls the server's tools)".to_string(),
+                });
+                cx.notify();
+            }
+            "clear" => {
+                let server = self.selected_server_name().to_string();
+                self.conversations.insert(
+                    self.selected_server,
+                    vec![KaskMessage {
+                        role: KaskMessageRole::System,
+                        content: format!("Cleared. {server} conversation reset."),
+                    }],
+                );
+                cx.notify();
+            }
+            "tools" => {
+                self.list_tools(cx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Fetch and display the selected server's tool list.
+    fn list_tools(&mut self, cx: &mut Context<Self>) {
+        let server = self.selected_server_name().to_string();
+        let index = self.selected_server;
+
+        // Return cached if available.
+        if let Some((cached_index, tools)) = &self.cached_tools
+            && *cached_index == index
+        {
+            let content = if tools.is_empty() {
+                format!("{server}: no tools discovered (server may not be connected).")
+            } else {
+                let mut lines = format!("{server} tools ({}):", tools.len());
+                for tool in tools {
+                    lines.push_str(&format!("\n  /{} — {}", tool.name, tool.description));
+                }
+                lines
+            };
+            self.current_messages().push(KaskMessage {
+                role: KaskMessageRole::System,
+                content,
+            });
+            cx.notify();
+            return;
+        }
+
+        if let Some(invoker) = tool_invoker() {
+            self.current_messages().push(KaskMessage {
+                role: KaskMessageRole::System,
+                content: format!("Fetching tools from {server}…"),
+            });
+            cx.notify();
+
+            let task = invoker.list_tools(&server);
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(tools) => {
+                            let content = if tools.is_empty() {
+                                format!(
+                                    "{server}: no tools discovered (server may not be connected)."
+                                )
+                            } else {
+                                let mut lines = format!("{server} tools ({}):", tools.len());
+                                for tool in &tools {
+                                    lines.push_str(&format!(
+                                        "\n  /{} — {}",
+                                        tool.name, tool.description
+                                    ));
+                                }
+                                lines
+                            };
+                            this.current_messages().push(KaskMessage {
+                                role: KaskMessageRole::System,
+                                content,
+                            });
+                            this.cached_tools = Some((index, tools));
+                        }
+                        Err(error) => {
+                            this.current_messages().push(KaskMessage {
+                                role: KaskMessageRole::System,
+                                content: format!("Error listing tools: {error}"),
+                            });
+                        }
+                    }
+                    cx.notify();
+                })
+            })
+            .detach();
+        } else {
+            self.current_messages().push(KaskMessage {
+                role: KaskMessageRole::System,
+                content: "Tool invoker not wired — set_tool_invoker() not called.".to_string(),
+            });
+            cx.notify();
+        }
+    }
+
     fn invoke_tool(&mut self, tool: String, args: String, cx: &mut Context<Self>) {
         let server = self.selected_server_name().to_string();
 
-        self.messages.push(KaskMessage {
+        self.current_messages().push(KaskMessage {
             role: KaskMessageRole::User,
             content: format!("/{tool} {args}"),
         });
         self.busy = true;
+        self.spinner_frame = 0;
         cx.notify();
 
-        let args_value = serde_json::from_str(&args).unwrap_or(Value::String(args.clone()));
+        let args_value = parse_args(&args);
 
         if let Some(invoker) = tool_invoker() {
             let task = invoker.invoke_tool(&server, &tool, args_value);
@@ -213,11 +389,18 @@ impl KaskPanel {
                 let result = task.await;
                 this.update(cx, |this, cx| {
                     match result {
-                        Ok(output) => this.messages.push(KaskMessage {
-                            role: KaskMessageRole::Tool,
-                            content: output,
-                        }),
-                        Err(error) => this.messages.push(KaskMessage {
+                        Ok(output) => {
+                            // Try to pretty-print if the output is JSON;
+                            // otherwise show the raw string.
+                            let formatted = serde_json::from_str::<Value>(&output)
+                                .map(|v| format_json_result(&v))
+                                .unwrap_or(output);
+                            this.current_messages().push(KaskMessage {
+                                role: KaskMessageRole::Tool,
+                                content: format!("{tool}\n{formatted}"),
+                            });
+                        }
+                        Err(error) => this.current_messages().push(KaskMessage {
                             role: KaskMessageRole::System,
                             content: format!("Error: {error}"),
                         }),
@@ -228,7 +411,7 @@ impl KaskPanel {
             })
             .detach();
         } else {
-            self.messages.push(KaskMessage {
+            self.current_messages().push(KaskMessage {
                 role: KaskMessageRole::System,
                 content: "Tool invoker not wired — set_tool_invoker() not called.".to_string(),
             });
@@ -240,11 +423,12 @@ impl KaskPanel {
     fn run_scoped_inference(&mut self, prompt: &str, cx: &mut Context<Self>) {
         let server = self.selected_server_name().to_string();
 
-        self.messages.push(KaskMessage {
+        self.current_messages().push(KaskMessage {
             role: KaskMessageRole::User,
             content: prompt.to_string(),
         });
         self.busy = true;
+        self.spinner_frame = 0;
         cx.notify();
 
         if let Some(inference) = scoped_inference() {
@@ -253,11 +437,11 @@ impl KaskPanel {
                 let result = task.await;
                 this.update(cx, |this, cx| {
                     match result {
-                        Ok(output) => this.messages.push(KaskMessage {
+                        Ok(output) => this.current_messages().push(KaskMessage {
                             role: KaskMessageRole::Assistant,
                             content: output,
                         }),
-                        Err(error) => this.messages.push(KaskMessage {
+                        Err(error) => this.current_messages().push(KaskMessage {
                             role: KaskMessageRole::System,
                             content: format!("Inference error: {error}"),
                         }),
@@ -268,7 +452,7 @@ impl KaskPanel {
             })
             .detach();
         } else {
-            self.messages.push(KaskMessage {
+            self.current_messages().push(KaskMessage {
                 role: KaskMessageRole::System,
                 content: "Scoped inference not wired — set_scoped_inference() not called."
                     .to_string(),
@@ -293,8 +477,7 @@ impl KaskPanel {
                     })
                     .label_size(LabelSize::XSmall)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.selected_server = index;
-                        cx.notify();
+                        this.select_server(index, cx);
                     }))
                     .into_any_element()
             })
@@ -319,8 +502,15 @@ impl KaskPanel {
         let border_color = cx.theme().colors().border;
         let bg_color = cx.theme().colors().editor_background;
 
-        let message_elements: Vec<AnyElement> = self
-            .messages
+        // Borrow the conversation for the selected server (read-only).
+        // If it hasn't been initialized yet, show the welcome message inline.
+        let messages: &[KaskMessage] = self
+            .conversations
+            .get(&self.selected_server)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+
+        let message_elements: Vec<AnyElement> = messages
             .iter()
             .map(|msg| {
                 let (color, prefix) = match msg.role {
@@ -340,6 +530,28 @@ impl KaskPanel {
             })
             .collect();
 
+        // Spinner line while busy (mirrors the deleted hKask TUI's `⠋ thinking…`).
+        let spinner_element: Option<AnyElement> = if self.busy {
+            let spinner = match self.spinner_frame % 4 {
+                0 => "⠋",
+                1 => "⠙",
+                2 => "⠹",
+                _ => "⠸",
+            };
+            Some(
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        Label::new(format!("{spinner} working…"))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
         div()
             .id("kask-messages")
             .flex_1()
@@ -352,6 +564,7 @@ impl KaskPanel {
             .border_color(border_color)
             .bg(bg_color)
             .children(message_elements)
+            .children(spinner_element)
     }
 
     fn render_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -371,7 +584,7 @@ impl KaskPanel {
                     .gap_2()
                     .justify_between()
                     .child(
-                        Label::new("Enter to send · /tool args for direct invocation")
+                        Label::new("Enter to send · /tool args · /help · /tools")
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
@@ -388,7 +601,9 @@ impl KaskPanel {
 }
 
 /// Parse a `/tool_name args` invocation from user input.
-/// Returns `Some((tool_name, args_string))` if the input starts with `/`.
+/// Returns `Some((tool_name, args_string))` if the input starts with `/` and
+/// the first token is not a recognized slash command (`/help`, `/clear`).
+/// Slash commands are handled separately in `handle_slash_command`.
 fn parse_tool_invocation(text: &str) -> Option<(String, String)> {
     let text = text.strip_prefix('/')?;
     let mut parts = text.splitn(2, char::is_whitespace);
@@ -397,7 +612,89 @@ fn parse_tool_invocation(text: &str) -> Option<(String, String)> {
     if tool.is_empty() {
         return None;
     }
+    // Don't treat slash commands as tool invocations.
+    if matches!(tool.as_str(), "help" | "clear" | "tools") {
+        return None;
+    }
     Some((tool, args))
+}
+
+/// Parse an args string into a JSON `Value`.
+///
+/// Tries JSON first (for `{...}` inputs), then `key=value` pairs with type
+/// coercion (int / float / bool / string), mirroring the deleted hKask TUI's
+/// `try_direct_tool_invoke` arg parser. Falls back to wrapping the raw string
+/// in `Value::String` if neither applies.
+fn parse_args(args: &str) -> Value {
+    if args.is_empty() {
+        return Value::Object(serde_json::Map::new());
+    }
+    if args.starts_with('{') {
+        return serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_string()));
+    }
+    // key=value pairs with type coercion.
+    let mut map = serde_json::Map::new();
+    for pair in args.split_whitespace() {
+        if let Some((key, value)) = pair.split_once('=') {
+            let coerced = if let Ok(n) = value.parse::<i64>() {
+                Value::from(n)
+            } else if let Ok(f) = value.parse::<f64>() {
+                Value::from(f)
+            } else if value == "true" {
+                Value::from(true)
+            } else if value == "false" {
+                Value::from(false)
+            } else {
+                Value::from(value)
+            };
+            map.insert(key.to_string(), coerced);
+        }
+    }
+    if map.is_empty() {
+        // No `key=value` pairs found — wrap the whole string.
+        Value::String(args.to_string())
+    } else {
+        Value::Object(map)
+    }
+}
+
+/// Format a JSON tool result for display. Pretty-prints objects/arrays,
+/// parses stringified-JSON strings, caps recursion at depth 5, and truncates
+/// output at 5000 chars on a UTF-8-safe boundary.
+///
+/// Ported from the deleted hKask TUI `mcp_scoped.rs::format_json_result`.
+fn format_json_result(value: &Value) -> String {
+    format_json_result_depth(value, 0)
+}
+
+fn format_json_result_depth(value: &Value, depth: u8) -> String {
+    if depth > 5 {
+        return "[...]".to_string();
+    }
+    let result = match value {
+        Value::String(s) => {
+            if depth < 5 {
+                if let Ok(inner) = serde_json::from_str::<Value>(s) {
+                    return format_json_result_depth(&inner, depth + 1);
+                }
+            }
+            s.clone()
+        }
+        Value::Object(_) | Value::Array(_) => {
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+        }
+        _ => value.to_string(),
+    };
+    const MAX_LEN: usize = 5000;
+    if result.len() > MAX_LEN {
+        let mut end = MAX_LEN;
+        while !result.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &result[..end])
+    } else {
+        result
+    }
 }
 
 impl Focusable for KaskPanel {
@@ -458,9 +755,8 @@ impl SerializableItem for KaskPanel {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let workspace_handle = workspace.clone();
         _cx.spawn(async move |cx| {
-            workspace_handle.update_in(cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 KaskPanel::new(workspace, window, cx)
             })
         })
@@ -485,6 +781,17 @@ impl SerializableItem for KaskPanel {
 
 impl Render for KaskPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Ensure the conversation for the selected server is initialized
+        // (lazy welcome message on first render).
+        self.current_messages();
+
+        // Animate the spinner while busy.
+        if self.busy {
+            self.spinner_frame = self.spinner_frame.wrapping_add(1);
+            // Schedule a re-render to keep the spinner animating.
+            cx.notify();
+        }
+
         v_flex()
             .size_full()
             .p_4()
