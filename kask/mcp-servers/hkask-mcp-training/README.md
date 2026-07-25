@@ -88,5 +88,5 @@ and emits the `reg.lora.*` spans the skill's `convergence-check` phase consumes.
 export RUNPOD_API_KEY="your-key"
 export RUNPOD_TEMPLATE_ID="your-template-id"
 # The server starts automatically with kask
-kask chat
+the zed-kask editor
 ```

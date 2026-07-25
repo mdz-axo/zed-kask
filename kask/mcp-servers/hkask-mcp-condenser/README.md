@@ -83,7 +83,7 @@ The `enable_thinking` field is only serialized when `false` — backends that do
 
 ```bash
 # As part of kask (auto-started with other MCP servers)
-kask chat
+the zed-kask editor
 
 # Standalone stdio MCP server
 hkask-mcp-condenser

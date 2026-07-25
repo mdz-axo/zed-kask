@@ -1,7 +1,7 @@
 ---
 title: "Magna Carta — Reference"
 audience: [developers, operators, auditors]
-last_updated: 2026-07-24
+last_updated: 2026-07-25
 version: "0.31.0"
 status: "Active"
 domain: "Core"
@@ -11,17 +11,19 @@ mds_categories: [domain, trust, curation]
 # Magna Carta Reference
 
 The Magna Carta is hKask's charter of liberties. It defines four foundational principles that every
-module, agent, and pod must honour. This document is a **reference**: it states what exists, how it
+module, agent, and user/curator data directory must honour. This document is a **reference**: it states what exists, how it
 is enforced, and how to verify it. It does not explain *why* (see `docs/architecture/core/magna-carta.md`
 for rationale) or *how to fix violations* (see `explanation/sovereignty-and-observability.md`).
 
-> **Hosting note (v0.31.0):** hKask now runs in-process inside zed-kask. The standalone `kask` CLI,
-HTTP API server (`hkask-api`), and daemon process have been **deleted**. Enforcement traces below
-reference the surviving in-process equivalents: `hkask-pods`, `hkask-capability`, `hkask-guard`,
+> **Hosting note (v0.31.0, updated 2026-07-25):** hKask now runs in-process inside zed-kask. The standalone `kask` CLI,
+HTTP API server (`hkask-api`), daemon process, and `hkask-pods` pod abstraction have been **deleted**. Enforcement traces below
+reference the surviving in-process equivalents: `hkask-types::visibility` (sovereignty/consent types), `hkask-capability`, `hkask-guard`,
 `hkask-regulation`, and the guard layer wired into zed-kask's inference path (D4). Where a trace
-previously pointed at `hkask-api::routes::sovereignty` or `hkask-cli::commands::sovereignty`, the
+previously pointed at `hkask-api::routes::sovereignty`, `hkask-cli::commands::sovereignty`, or `hkask-pods::pod::context`, the
 functionality now lives in the in-process sovereignty checker invoked from the agent loop and the
 kask panel (D10). See [`docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md).
+>
+> **P4.1 note:** The pod boundary constraint (P4.1) was structural when the `hkask-pods` pod abstraction existed. With pod abstraction deleted and replaced by user/curator data directories, the equivalent boundary is the per-user data directory isolation enforced by the in-process sovereignty checker and OCAP membranes. The principle's intent (cross-user dispatch is structurally prevented) is preserved.
 
 ## Table of Contents
 
@@ -30,7 +32,7 @@ kask panel (D10). See [`docs/architecture/zed-host-architecture-plan.md`](../arc
 3. [P2 — Affirmative Consent](#p2--affirmative-consent)
 4. [P3 — Generative Space](#p3--generative-space)
 5. [P4 — Clear Boundaries (OCAP)](#p4--clear-boundaries-ocap)
-6. [P4.1 — Pod Boundary Constraint](#p41--pod-boundary-constraint)
+6. [P4.1 — Per-User Boundary Constraint](#p41--per-user-boundary-constraint)
 7. [Audit Commands](#audit-commands)
 8. [Enforcement Trace Summary](#enforcement-trace-summary)
 
@@ -62,12 +64,11 @@ it cannot be violated because the type system prevents it.
 | Artefact | Crate/Module | Role |
 |----------|-------------|------|
 | `DataSovereigntyBoundary` | `hkask-types::curation` | Defines sovereign / shared / public category sets |
-| `SovereigntyChecker` | `hkask-pods::sovereignty` | Runtime gate: `can_access(category, requester)` with consent lookup |
-| `SovereigntyConsent` trait | `hkask-pods::sovereignty` | Pluggable consent port; `DenyAllConsent` is the default |
-| `ConsentManager` | `hkask-pods::consent` | Production implementation: SQLite-backed, Regulation-span-emitting |
-| `PodContext::require_sovereignty()` | `hkask-pods::pod::context` | Called before every data access; fail-closed on missing checker |
+| `SovereigntyChecker` | `hkask-types::visibility` | Runtime gate: `can_access(category, requester)` with consent lookup |
+| `SovereigntyConsent` trait | `hkask-types::visibility` | Pluggable consent port; `DenyAllConsent` is the default |
+| `ConsentManager` | `hkask-types::visibility` | Production implementation: SQLite-backed, Regulation-span-emitting |
+| In-process sovereignty gate | zed-kask agent loop + `hkask-types::visibility` | Called before every data access; fail-closed on missing checker. Replaces the deleted `hkask-pods::pod::context::require_sovereignty()` and `hkask-api::routes::sovereignty` HTTP endpoints |
 | `SovereigntyBoundaryStore` | `hkask-storage::sovereignty` | SQL persistence of user boundaries |
-| In-process sovereignty gate | `hkask-pods::pod::context` + zed-kask agent loop | Replaces the deleted `hkask-api::routes::sovereignty` HTTP endpoints; sovereignty is checked in-process before any data access |
 | Kask panel sovereignty view | `crates/kask_panel` (D10) | Replaces the deleted `hkask-cli::commands::sovereignty` CLI surface; status / grant / revoke / check are exposed through the panel UI |
 
 ### What Happens When Violated
@@ -75,8 +76,8 @@ it cannot be violated because the type system prevents it.
 When `require_sovereignty()` is called without consent:
 
 1. `SovereigntyChecker::can_access()` returns `false` for sovereign data without matching owner + consent, or shared data without consent.
-2. `PodContext::require_sovereignty()` returns `AgentPodError::SovereigntyDenied { category, requester }`.
-3. **If no `SovereigntyChecker` is configured at all**, the pod returns `SovereigntyDenied` immediately — sovereignty fails closed.
+2. The in-process sovereignty gate returns `SovereigntyDenied { category, requester }`.
+3. **If no `SovereigntyChecker` is configured at all**, the gate returns `SovereigntyDenied` immediately — sovereignty fails closed.
 4. The caller (agent loop, tool, or API) receives the error and cannot proceed.
 
 Data categories and their defaults:
@@ -108,7 +109,7 @@ standalone CLI binary.
 #       magna-carta-verifier --principle user_sovereignty --json
 
 # Check a specific access (in-process, via the agent loop)
-#   PodContext::require_sovereignty(category, requester) is called before
+#   The in-process sovereignty gate is called before
 #   every data access; failures surface as SovereigntyDenied errors in the
 #   agent panel and reg.sovereignty spans.
 ```
@@ -126,10 +127,10 @@ standalone CLI binary.
 | Artefact | Crate/Module | Role |
 |----------|-------------|------|
 | `DataSovereigntyBoundary::requires_affirmative_consent` | `hkask-types::curation` | Set to `true` by default (P2 charter) |
-| `ConsentManager::has_consent()` | `hkask-pods::consent` | Fail-closed: `unwrap_or(false)` — storage errors are deny |
-| `SovereigntyConsent::has_consent()` | `hkask-pods::sovereignty` | `DenyAllConsent` impl returns `false` for everything |
-| `DenyAllConsent` | `hkask-pods::sovereignty` | Default port; used until a real `ConsentManager` is wired |
-| `ConsentRecord` | `hkask-pods::consent` | Per-WebID, active/revoked, time-stamped |
+| `ConsentManager::has_consent()` | `hkask-types::visibility` | Fail-closed: `unwrap_or(false)` — storage errors are deny |
+| `SovereigntyConsent::has_consent()` | `hkask-types::visibility` | `DenyAllConsent` impl returns `false` for everything |
+| `DenyAllConsent` | `hkask-types::visibility` | Default port; used until a real `ConsentManager` is wired |
+| `ConsentRecord` | `hkask-types::visibility` | Per-WebID, active/revoked, time-stamped |
 | `SovereigntyBoundaryEntry::requires_affirmative_consent` | `hkask-storage::sovereignty` | Stored as `"required"` / `"open"` in SQL |
 | Regulation spans | `reg.sovereignty` | `consent_granted`, `consent_revoked`, `consent_checked` |
 
@@ -245,9 +246,8 @@ No code path can access resources without going through both gates.
 | `CapabilityChecker` | `hkask-capability::verification::checker` | Verifies signature + trusted-root membership; fail-closed (empty roots reject all) |
 | `GovernedTool<P>` | `hkask-regulation::governed_tool` | Membrane wrapping `ToolPort`: OCAP check → gas reserve → Regulation span → delegate → settle |
 | `GovernedTool::invoke()` | `hkask-regulation::governed_tool` | Step 0: verify token signature; Step 1: exact-match or domain-match capability; Step 2: gas budget; Step 3–5: execute, settle, emit |
-| `PodContext::require_capability()` | `hkask-pods::pod::context` | Verifies token signature + delegated_to match; fail-closed on missing checker |
-| In-process capability gate | `hkask-capability::verification::checker` + zed-kask guard layer (D4) | Replaces the deleted `DaemonClient::capability_query()` from `hkask-mcp::daemon`; capability verification now happens in-process at the GovernedTool membrane and the inference guard layer |
-| `verify_startup_gates()` | `hkask-mcp::startup` | Gate 1 (auth) → Gate 2 (assignment) → Gate 3 (capability per tool); invoked in-process when an MCP server is loaded by zed's `context_server` host |
+| In-process capability gate | `hkask-capability::verification::checker` + zed-kask guard layer (D4) | Verifies token signature + delegated_to match; fail-closed on missing checker. Replaces the deleted `DaemonClient::capability_query()` from `hkask-mcp::daemon` and `PodContext::require_capability()` from `hkask-pods::pod::context`; capability verification now happens in-process at the GovernedTool membrane and the inference guard layer |
+| Startup gates | `hkask-mcp::startup` (deleted) | Gate 1 (auth) → Gate 2 (assignment) → Gate 3 (capability per tool) were invoked in-process when an MCP server was loaded by zed's `context_server` host. The `verify_startup_gates()` function was deleted in the 2026-07-25 cleanup; `bootstrap_mcp_server()` resolves userpod identity only. |
 
 ### Token Properties
 
@@ -281,7 +281,7 @@ Caller → GovernedTool.invoke(server, tool, args, token)
 1. **Invalid token signature** → `ToolPortError::CapabilityDenied("Token failed cryptographic verification")`
 2. **No capability for tool** → `ToolPortError::CapabilityDenied("Token does not authorize tool: X")`
 3. **Gas budget exceeded** → `ToolPortError::EnergyBudgetExceeded(...)`
-4. **No CapabilityChecker configured** → `AgentPodError::CapabilityDenied` (fail-closed)
+4. **No CapabilityChecker configured** → `CapabilityDenied` (fail-closed)
 5. **Gate 1 failure (auth)** → `McpError::Auth` — server refuses to start
 6. **Gate 2 failure (assignment)** → `McpError::RoleAssignment` — server refuses to start
 7. **Gate 3 failure (capability)** → Non-fatal; server starts in degraded mode with denied tools unavailable
@@ -298,15 +298,17 @@ by the in-process kask panel (D10) and the `magna-carta-verifier` skill.
 # Inspect delegation token (kask panel, D10 → Capability tab)
 #   Equivalent in-process call: CapabilityChecker::verify(token) → TokenInfo
 
-# Check active pod's capability bindings (kask panel, D10 → Pod tab)
-#   Equivalent in-process call: PodDeployment::capability_checker().bindings()
+# Check active user's capability bindings (kask panel, D10 → Capability tab)
+#   Equivalent in-process call: CapabilityChecker::verify(token) → TokenInfo
 ```
 
 ---
 
-## P4.1 — Pod Boundary Constraint
+## P4.1 — Per-User Boundary Constraint
 
-> **Exact wording:** "The pod boundary IS the OCAP enforcement perimeter. Tool dispatch cannot cross pod boundaries structurally — a pod has no handle to another pod's MCP servers. `PerPodToolBinding` makes cross-pod dispatch an invalid state."
+> **Exact wording (original, with `hkask-pods` pod abstraction):** "The pod boundary IS the OCAP enforcement perimeter. Tool dispatch cannot cross pod boundaries structurally — a pod has no handle to another pod's MCP servers. `PerPodToolBinding` makes cross-pod dispatch an invalid state."
+>
+> **2026-07-25 update:** The `hkask-pods` pod abstraction (`PodDeployment`, `ActivePods`, `PerPodToolBinding`, `PerPodRegulationLedger`, `PerPodStorage`, `PodContext`) was deleted in the 2026-07-25 cleanup. The equivalent boundary is now the per-user data directory isolation enforced by the in-process sovereignty checker and OCAP membranes. The principle's intent (cross-user dispatch is structurally prevented) is preserved: each user/curator data directory has its own scoped MCP runtime, GovernedTool membrane, and capability checker, with no shared state between directories.
 
 **Prohibition level:** Prohibition (structural — type-enforced).
 
@@ -314,34 +316,32 @@ by the in-process kask panel (D10) and the `magna-carta-verifier` skill.
 
 | Artefact | Crate/Module | Role |
 |----------|-------------|------|
-| `PerPodToolBinding` | `hkask-pods::pod::deployment` | Scoped MCP runtime + GovernedTool per pod |
-| `PerPodRegulationLedger` | `hkask-pods::pod::deployment` | Per-pod variety counters |
-| `PerPodStorage` | `hkask-pods::pod::deployment` | Dedicated SQLCipher file per pod at `{data_dir}/agents/{sanitized_name}/pod.db` |
-| `PodDeployment` | `hkask-pods::pod::deployment` | Complete pod: identity, storage, Regulation, tools, capability checker |
-| `ActivePods` | `hkask-pods::pod::active_pods` | Registry of all pods; no shared state between entries |
+| Per-user MCP runtime | zed-kask `context_server` host + `hkask-mcp` | Scoped MCP runtime + GovernedTool per user/curator data directory |
+| Per-user Regulation ledger | `hkask-regulation::RegulationLedger` | Per-user variety counters |
+| Per-user storage | `hkask-storage` | Dedicated SQLCipher file per user at `{data_dir}/agents/{sanitized_name}/pod.db` |
+| In-process sovereignty gate | `hkask-types::visibility` + zed-kask agent loop | Per-user capability + sovereignty enforcement; no cross-user handle |
 
 ### What Happens When Violated
 
-**Cross-pod dispatch is structurally impossible.** A pod has no reference to another pod's `PerPodToolBinding`,
-`McpRuntime`, or `CapabilityChecker`. The type system enforces this:
+**Cross-user dispatch is structurally impossible.** A user/curator data directory has no reference to another directory's MCP runtime, `McpRuntime`, or `CapabilityChecker`. The type system enforces this:
 
-- Each `PodDeployment` owns its own `PerPodToolBinding` (not `Arc`-shared)
-- `PodContext` is constructed from a single `PodDeployment` — it cannot reach another pod
-- `PodContext::invoke_tool()` routes through the pod's own `governed_tool`, never another pod's
+- Each user/curator data directory owns its own scoped MCP runtime (not `Arc`-shared across users)
+- The in-process sovereignty gate is constructed from a single user's data directory — it cannot reach another user's tools
+- Tool invocation routes through the user's own `governed_tool`, never another user's
 
 ### How to Audit
 
 The deleted `kask pod` CLI has been replaced by the in-process kask panel (D10).
 
 ```bash
-# List all active pods (kask panel, D10 → Pod tab)
-#   Equivalent in-process call: ActivePods::list()
+# List all active user/curator data directories (kask panel, D10 → Users tab)
+#   Equivalent in-process call: enumerate active user data directories
 
-# Inspect a pod's tool bindings (kask panel, D10 → Pod tab → select pod)
-#   Equivalent in-process call: PodDeployment::tool_binding()
+# Inspect a user's tool bindings (kask panel, D10 → Users tab → select user)
+#   Equivalent in-process call: inspect the user's scoped MCP runtime bindings
 
-# Verify Regulation isolation (per-pod variety counters)
-#   Check reg.* spans for pod_id prefix via the kask panel or RegulationLedger::variety()
+# Verify Regulation isolation (per-user variety counters)
+#   Check reg.* spans for user_id prefix via the kask panel or RegulationLedger::variety()
 ```
 
 ---
@@ -409,14 +409,14 @@ The deleted `kask sovereignty` CLI has been replaced by the in-process kask pane
 | P2 (Consent) | Prohibition | `ConsentManager::has_consent()` (`unwrap_or(false)`) | Yes | `reg.sovereignty` |
 | P3 (Generative) | Guardrail | `hkask-guard` (floor); no admin bypass (ceiling) | N/A (guardrail) | `reg.guard` |
 | P4 (OCAP) | Prohibition | `CapabilityChecker::verify()` + `GovernedTool::invoke()` | Yes (empty roots) | `reg.tool` |
-| P4.1 (Pod Boundary) | Prohibition (structural) | `PerPodToolBinding` type isolation | Always (type system) | Per-pod `pod_id` in spans |
+| P4.1 (Per-User Boundary) | Prohibition (structural) | Per-user data directory isolation + scoped MCP runtime | Always (type system) | Per-user `user_id` in spans |
 
 ### Failure Modes
 
 | Scenario | Behaviour | Error |
 |----------|-----------|-------|
-| No `SovereigntyChecker` wired | All access denied | `AgentPodError::SovereigntyDenied` |
-| No `CapabilityChecker` wired | All tool calls denied | `AgentPodError::CapabilityDenied` |
+| No `SovereigntyChecker` wired | All access denied | `SovereigntyDenied` |
+| No `CapabilityChecker` wired | All tool calls denied | `CapabilityDenied` |
 | No `ConsentManager` wired | All consent checks fail | `DenyAllConsent` returns `false` |
 | Storage error in consent check | Consent denied | `unwrap_or(false)` |
 | Token signature invalid | Tool call rejected | `ToolPortError::CapabilityDenied` |

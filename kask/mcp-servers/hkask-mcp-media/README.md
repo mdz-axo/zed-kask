@@ -62,7 +62,7 @@ All models are open-weight. Provider prefixes (`FA/`, `KC/`, etc.) route to the 
 ```bash
 export FA_API_KEY="your-fal-ai-key"
 # The server starts automatically with kask
-kask chat
+the zed-kask editor
 # Or standalone:
 hkask-mcp-media
 ```

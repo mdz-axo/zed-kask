@@ -63,7 +63,7 @@ Part of hKask's code intelligence layer. Indexes the current workspace on first 
 
 ```bash
 # As part of kask (auto-started with other MCP servers)
-kask chat
+the zed-kask editor
 
 # Standalone stdio MCP server
 hkask-mcp-codegraph

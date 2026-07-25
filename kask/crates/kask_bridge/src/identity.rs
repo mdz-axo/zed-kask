@@ -2,7 +2,7 @@
 //!
 //! The userpod name is the sanitized `User::username` from the Zed account
 //! (the GitHub-style login, e.g. `mdz-axo`). This collapses the former
-//! `kask login <name>` onboarding step into a lookup: the userpod identity
+//! interactive onboarding step into a lookup: the userpod identity
 //! is derived from the Zed session, not entered separately.
 //!
 //! Convention:

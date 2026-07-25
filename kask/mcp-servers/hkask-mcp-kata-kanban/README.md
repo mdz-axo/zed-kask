@@ -65,7 +65,7 @@ All tools emit `reg.tool.*` spans through the MCP framework. Kanban board/task o
 
 ```bash
 # The server starts automatically with kask
-kask chat
+the zed-kask editor
 # Or standalone:
 hkask-mcp-kata-kanban
 ```

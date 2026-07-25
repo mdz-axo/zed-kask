@@ -2089,6 +2089,17 @@ impl Thread {
         cx.notify();
     }
 
+    /// Set static context that will be appended to the system prompt.
+    ///
+    /// This is NOT an override — the system prompt template is still rendered.
+    /// The static context is rendered after the project context section.
+    /// Used by the Curator overlay to inject regulatory context.
+    pub fn set_static_context(&mut self, context: SharedString, cx: &mut Context<Self>) {
+        self.static_context = Some(context);
+        self.cached_system_prompt = None; // bust the cache
+        cx.notify();
+    }
+
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
         self.model = ThreadModel::Ready(model.clone());

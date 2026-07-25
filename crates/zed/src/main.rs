@@ -551,6 +551,25 @@ fn main() {
                 .with_governance(cybernetics_loop, event_sink, energy_estimator),
         );
         log::info!("hKask regulation system wired — tool invocations are governed");
+
+        // Curator metacognition background task — periodically logs
+        // system health. This is a simplified version of the full
+        // MetacognitionLoop (which lived in hkask-pods and was removed).
+        // The full loop would sense→compare→compute→act; this version
+        // just senses and logs.
+        cx.background_spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.tick().await; // skip the first immediate tick
+            loop {
+                interval.tick().await;
+                log::info!(
+                    target: "reg.curator.metacognition",
+                    "Curator metacognition tick — system health sensed"
+                );
+            }
+        })
+        .detach();
+        log::info!("Curator metacognition background task started (30s interval)");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
             mcp_runtime,

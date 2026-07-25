@@ -29,7 +29,7 @@ Web search, extraction, and feed-based research MCP server.
 ```bash
 # No API keys required for web search (uses free providers with fallback)
 # The server starts automatically with kask
-kask chat
+the zed-kask editor
 # Or standalone:
 hkask-mcp-research
 ```

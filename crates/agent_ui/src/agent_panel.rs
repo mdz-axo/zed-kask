@@ -3531,10 +3531,23 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Default to the Project scope so the user sees their project skills
+        // (typically the larger set) rather than the User/global scope.
+        // Falls back to `None` (preserve existing selection) when no
+        // visible worktree is open.
+        let target = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| {
+                let worktree_id = worktree.read(cx).id().to_usize();
+                zed_actions::OpenSettingsAtTarget::Project { worktree_id }
+            });
         window.dispatch_action(
             Box::new(zed_actions::OpenSettingsAt {
                 path: zed_actions::AGENT_SKILLS_SETTINGS_PATH.to_string(),
-                target: None,
+                target,
             }),
             cx,
         );

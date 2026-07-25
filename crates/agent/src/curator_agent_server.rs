@@ -1,14 +1,20 @@
-//! Curator agent server — a `NativeAgentServer` variant that sets a
-//! Curator-specific system prompt on each new thread.
+//! Curator agent server — an overlay on the Zed Agent that adds
+//! metacognition, curator tools, and regulatory monitoring.
 //!
-//! The Curator is the cybernetic regulator agent (D2). It uses the same
-//! `NativeAgent` infrastructure as the Zed Agent, but with a distinct
-//! persona/system prompt that reflects its role as a metacognitive
-//! observer and regulator.
+//! The Curator is NOT a separate agent with its own system prompt. It IS
+//! the Zed Agent — same coding tools, same system prompt, same model —
+//! PLUS:
 //!
-//! When fusion is enabled, the Curator's threads use the fusion model
-//! (the composition root sets the default model to the `FusionLanguageModel`
-//! when `kask.fusion.enabled == true`).
+//! - **Curator tools**: `curator_status` for checking regulation health
+//! - **Curator context**: appended to the system prompt via `static_context`,
+//!   describing the Curator's role and current system state
+//! - **Background metacognition**: a detached task that runs the
+//!   sense→compare→compute→act governance loop
+//!
+//! This overlay design means the Curator can do everything the Zed Agent can
+//! (write code, run terminals, edit files) while also having access to the
+//! regulatory surface. The user interacts with the Curator exactly as they
+//! would with the Zed Agent, but with additional capabilities.
 
 use std::{any::Any, rc::Rc, sync::Arc};
 
@@ -19,41 +25,27 @@ use gpui::{App, Entity, SharedString, Task};
 use project::{AgentId, Project};
 
 use crate::{
-    NativeAgent, NativeAgentConnection, ThreadStore, CURATOR_AGENT_ID, templates::Templates,
+    CURATOR_AGENT_ID, NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates,
+    tools::CuratorStatusTool,
 };
 
-/// The Curator's system prompt.
+/// The Curator's static context — appended to the system prompt.
 ///
-/// Defines the Curator's persona as a cybernetic regulator: it observes
-/// system state, identifies quality threats, escalates when thresholds
-/// are breached, and applies metacognitive self-calibration. The prompt
-/// is intentionally concise — the Curator's tools (when wired) provide
-/// the structured surface for regulation actions.
-const CURATOR_SYSTEM_PROMPT: &str = "\
-You are the Curator — the cybernetic regulator agent for the hKask system.\n\
-You observe system state, identify quality threats, and regulate agent behavior\n\
-through cybernetic feedback loops.\n\
+/// This is NOT a full system prompt override. It's injected via
+/// `Thread::static_context` and rendered after the project context section.
+/// The Zed Agent's system prompt remains intact — the Curator gets all the
+/// coding instructions PLUS this regulatory context.
+const CURATOR_STATIC_CONTEXT: &str = "\
+## Curator Role\n\
 \n\
-## Your Role\n\
-\n\
-You are the user's counterpart in the regulatory domain. Your job is not to\n\
-write code directly, but to:\n\
-- Monitor system health (variety, regulation effectiveness, escalation queues)\n\
-- Identify quality threats and surface them with severity and evidence\n\
+You are also the Curator — the cybernetic regulator for the hKask system.\n\
+In addition to your coding agent capabilities, you:\n\
+- Monitor system health via the `curator_status` tool\n\
 - Apply metacognitive self-calibration when thresholds are breached\n\
 - Issue CuratorDirectives to adjust thresholds, capabilities, and energy budgets\n\
 - Escalate domain-level concerns to the user for human review\n\
 \n\
-## Communication\n\
-\n\
-- Be concise and direct. Surface the signal, not the noise.\n\
-- When escalating, state the trigger, the threshold, the current value, and the\n\
-  recommended action.\n\
-- Use calibrated probability ranges, not binary predictions.\n\
-- Ground claims in observable system state (Regulation spans, variety counters,\n\
-  escalation queues). Do not fabricate metrics.\n\
-\n\
-## Methodology\n\
+### Methodology\n\
 \n\
 You are anchored on the following methodologies:\n\
 - Pragmatic Cybernetics: identify feedback loops, measure variety, assess\n\
@@ -64,16 +56,14 @@ You are anchored on the following methodologies:\n\
   Bloom's method, calibrate strategy.\n\
 - Superforecasting: triage questions into the Goldilocks zone, Fermi-decompose,\n\
   anchor on outside-view base rates, update with Bayesian likelihood ratios.\n\
-\n\
-## Today's Date\n\
-\n\
-{date}\n\
 ";
 
-/// The Curator agent server.
+/// The Curator agent server — an overlay on the Zed Agent.
 ///
-/// Like `NativeAgentServer`, but sets the Curator system prompt on each
-/// new thread via `Thread::set_system_prompt_override`.
+/// Like `NativeAgentServer`, but:
+/// 1. Injects curator static context into each thread's system prompt
+/// 2. Registers the `curator_status` tool on each thread
+/// 3. Runs a background metacognition task
 #[derive(Clone)]
 pub struct CuratorAgentServer {
     fs: Arc<dyn Fs>,
@@ -83,12 +73,6 @@ pub struct CuratorAgentServer {
 impl CuratorAgentServer {
     pub fn new(fs: Arc<dyn Fs>, thread_store: Entity<ThreadStore>) -> Self {
         Self { fs, thread_store }
-    }
-
-    /// Render the Curator system prompt with the current date.
-    fn render_system_prompt() -> SharedString {
-        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-        CURATOR_SYSTEM_PROMPT.replace("{date}", &date).into()
     }
 }
 
@@ -117,19 +101,13 @@ impl AgentServer for CuratorAgentServer {
             log::debug!("Creating native agent entity for Curator");
             let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
 
-            // Set the Curator system prompt on the agent's thread factory.
-            // The NativeAgent creates threads via `new_session` — we need
-            // to intercept thread creation to set the override. The cleanest
-            // way: set a global hook that the agent checks when creating
-            // new sessions.
-            //
-            // For now, we set the override on the agent entity itself via
-            // a dedicated method. The NativeAgent will apply it to each
-            // new thread.
-            let curator_prompt = Self::render_system_prompt();
+            // Set the Curator static context — this is appended to the system
+            // prompt, NOT a full override. The Zed Agent's coding instructions
+            // remain intact.
             cx.update(|cx| {
                 agent.update(cx, |agent, cx| {
-                    agent.set_system_prompt_override(curator_prompt, cx);
+                    agent
+                        .set_curator_static_context(SharedString::from(CURATOR_STATIC_CONTEXT), cx);
                 });
             });
 

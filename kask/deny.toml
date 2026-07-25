@@ -10,7 +10,7 @@ no-default-features = false
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive dep of utoipa-axum. Reviewed 2026-07-22 — re-review 2026-10-22." },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of aquamarine→matrix-sdk→hkask-communication; no safe upgrade. Reviewed 2026-07-22 — re-review 2026-10-22." },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of aquamarine. No safe upgrade. Reviewed 2026-07-22 — re-review 2026-10-22. (hkask-communication was deleted; this advisory may be removable if no other dep pulls aquamarine.)" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained but has no safe upgrade; required transitively by current lopdf and imageproc for PDF/font processing. Reviewed 2026-07-22 — re-review 2026-10-22." },
 ]
 

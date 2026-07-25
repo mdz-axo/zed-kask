@@ -188,7 +188,7 @@ DocProc rejects malformed JSON, empty questions or answers, unsupported Bloom le
 
 ```bash
 # The server starts automatically with kask
-kask chat
+the zed-kask editor
 # Or standalone:
 hkask-mcp-corpus
 ```

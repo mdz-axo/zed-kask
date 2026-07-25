@@ -1,7 +1,7 @@
 ---
 title: "Regulation and Loops — Homeostatic Regulation, PDCA Skills, Curator Metacognition, Bug Hunting, QA"
 audience: [architects, developers, operators]
-last_updated: 2026-07-24
+last_updated: 2026-07-25
 version: "0.31.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -9,6 +9,8 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
 
 # Regulation and Loops
+
+> **2026-07-25 cleanup note:** The following regulation modules were deleted in the 2026-07-25 cleanup: `api_metering`, `seam_watcher`, `seam_types`, `seam_span`, `contract_events`, `contract_span`, `acp_span`, `classify_span`, `snapshot_loop`, `circuit_breaker`, `slo_manager`, `slo_types`, `slo_span`, `set_point_calibrator`, `wallet_gas_calibrator`, `wallet_energy_estimator`, `gas_report`, `dynamic_gas_table`, `composite_energy_estimator`, `calibrated_energy_estimator`, `calibrator`, `inference_estimator`, `table_energy_estimator`. The `hkask-pods`, `hkask-wallet`, `hkask-test-harness`, `hkask-services-self-heal`, and `hkask-git-cas` crates were also deleted. The remaining regulation modules are: `cybernetics_loop`, `runtime`, `energy`, `energy_budget_management`, `wallet_manager`, `wallet_budget`, `well`, `dampener`, `strategy_evaluator`, `system_simulator`, `tool_stats`, `sensor_provider`, `regulation_policy`, `set_points`, `algedonic`, `runtime_policy`, `energy_estimator`. The Regulation is now wired into zed's composition root via `McpRuntime::with_governance()` with `RegulationLedger`, `CyberneticsLoop`, `FlatEnergyEstimator`, and `NoopEventSink`. See [`zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) for the current module inventory.
 
 This document consolidates the cybernetic regulation architecture of hKask: the Regulation homeostatic loop, the skill PDCA model, the Curator metacognition layer, the bug-hunting observability methodology, and the QA system that operationalizes observability for automated testing. These five topics share a single theme — feedback loops that sense, compare, compute, act, and verify — and are documented together because they form a single regulatory stack from template-level PDCA to system-level cybernetic control.
 
@@ -58,8 +60,6 @@ Signals are compared against set-points during `compare()` — the default imple
 | `ConnectorLatency` | `AboveSetPoint` | `Throttle` |
 | `WalletBalanceRatio` | `BelowSetPoint` | `Escalate` to Curation (critical if zero) |
 | `WalletKeyHealth` | `AboveSetPoint` | `Escalate` (informational) |
-| `SeamCoverage` | `BelowSetPoint` | `Escalate` (critical if >5pp drop) |
-| `SeamCoverage` | `AboveSetPoint` | `Notify` (positive health signal) |
 | `ToolReliability` | `BelowSetPoint` | `Escalate` to Curation |
 
 Each action is wrapped in a `RegulatoryAction` struct that carries a `target` (which loop receives the action), an `action_type`, typed `RegulatoryActionParams` with a required `reason` field, and an optional `metric_name` for impact verification.
@@ -95,13 +95,13 @@ The `ActionType` enum (`crates/hkask-types/src/loops/actions.rs:195`, re-exporte
 | ActionType | When it fires | Target |
 |-----------|---------------|--------|
 | `Throttle` | Energy low, connector latency high | `Inference` or `Cybernetics` |
-| `Escalate` | Variety deficit exceeded, wallet balance low, key unhealthy, seam degraded, tool reliability low | `Curation` |
+| `Escalate` | Variety deficit exceeded, wallet balance low, key unhealthy, tool reliability low | `Curation` |
 | `Calibrate` | Thresholds need adjustment based on observed error rates | `Cybernetics` (self-calibration) |
 | `CircuitBreak` | Error rate exceeds `error_rate_max` | `Inference` |
 | `AdjustEnergyBudget` | Energy low (within set-point bounds, automatic) | `Cybernetics` |
 | `OverrideEnergyBudget` | Curation overrides set-point bounds (weaker capability) | `Cybernetics` |
 | `ReplenishBudget` | Curator injects gas into an exhausted agent | `Cybernetics` |
-| `Notify` | Positive health signals (seam coverage improved, predictive approach warning) | `Curation` |
+| `Notify` | Positive health signals (predictive approach warning) | `Curation` |
 | `Prune` | Disk space management (StorageGuard Loop 7) | Storage |
 
 The capability hierarchy is deliberate: `AdjustEnergyBudget` and `OverrideEnergyBudget` are distinct because Cybernetics can adjust within its set-point range, but only Curation can override set-points themselves. `ReplenishBudget` is exclusively a Curator capability — the Regulation cannot create energy, only redistribute it.
@@ -110,12 +110,12 @@ The capability hierarchy is deliberate: `AdjustEnergyBudget` and `OverrideEnergy
 
 "Algedonic" (from Greek *algos*, pain, and *hedone*, pleasure) describes the mechanism by which the Regulation communicates threat levels to the Curator. The `AlgedonicManager` (`crates/hkask-regulation/src/algedonic.rs`) classifies alerts by severity:
 
-- **Info:** Positive signals (`Notify` actions, seam coverage improvements)
+- **Info:** Positive signals (`Notify` actions, predictive approach warnings)
 - **Warning:** Deviations that are correctable autonomously (energy below 20% but above 0%, variety deficit elevated but below critical, tool reliability degraded)
-- **Critical:** Deviations requiring Curator intervention (energy at 0%, error rate catastrophic, key completely exhausted, seam coverage drops >5pp)
+- **Critical:** Deviations requiring Curator intervention (energy at 0%, error rate catastrophic, key completely exhausted)
 - **Fatal:** System-level failures requiring human intervention (the Regulation itself is unstable)
 
-The escalation pathway is not just a log line. `Critical` alerts flow through `alerts_tx` (`cybernetics_loop.rs:79`) as `CurationInput` messages to the `CurationLoop`. The Curator's metacognition layer (`crates/hkask-pods/src/curator_agent/metacognition/mod.rs`) receives these as structured problem statements — not raw metrics, but curated alerts with context, options, and fallback behaviors.
+The escalation pathway is not just a log line. `Critical` alerts flow through `alerts_tx` (`cybernetics_loop.rs:79`) as `CurationInput` messages to the `CurationLoop`. The Curator's metacognition layer receives these as structured problem statements — not raw metrics, but curated alerts with context, options, and fallback behaviors.
 
 When the Regulation cannot self-correct — when `verify_impact` returns `Block` decisions for repeated actions, or when the `StagnationDetector` (`cybernetics_loop.rs:93`) detects a regulatory plateau — the escalation moves upward: from Cybernetic self-regulation to Curator metacognitive override, and from Curator to human operator if the Curator cannot resolve the issue within its authority bounds.
 
@@ -144,13 +144,13 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-001
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
 ### Implications
 
-The Regulation is not a log aggregator or a metrics dashboard. It is a closed-loop controller with the authority to change system behavior — throttling inference, opening circuit breakers, adjusting energy budgets, and escalating to the Curator. The `verify_impact` phase is the meta-feedback loop that prevents the Regulation from repeating ineffective actions: when an action is `Block`ed, the substitution ladder tries alternatives, and when all alternatives are exhausted, the plateau escalates to Curation. This is cybernetic regulation in the Conant-Ashby sense — the regulator contains a model of the system (SetPoints, SLOs, ToolStats), compares observations against that model, and acts to close the gap.
+The Regulation is not a log aggregator or a metrics dashboard. It is a closed-loop controller with the authority to change system behavior — throttling inference, opening circuit breakers, adjusting energy budgets, and escalating to the Curator. The `verify_impact` phase is the meta-feedback loop that prevents the Regulation from repeating ineffective actions: when an action is `Block`ed, the substitution ladder tries alternatives, and when all alternatives are exhausted, the plateau escalates to Curation. This is cybernetic regulation in the Conant-Ashby sense — the regulator contains a model of the system (SetPoints, ToolStats), compares observations against that model, and acts to close the gap.
 
 ---
 
@@ -266,7 +266,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-002
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -284,10 +284,10 @@ The Curator is hKask's metacognitive layer — "thinking about thinking." Where 
 
 ### Evidence
 
-The `CuratorAgent` at `crates/hkask-pods/src/curator_agent/mod.rs:44` composes three components:
+The Curator composes three components (the former `CuratorAgent` struct in the deleted `hkask-pods` crate; the metacognition logic now lives in the curator agent module within zed-kask):
 
 ```text
-CuratorAgent
+Curator
 ├── curation_loop: Arc<CurationLoop>      // pure regulatory
 ├── metacognition: Arc<MetacognitionLoop>  // persona: observe & adapt
 └── context: Arc<CuratorContext>           // capability-disciplined access
@@ -297,7 +297,7 @@ The separation between `CurationLoop` (pure regulatory, no persona) and `Metacog
 
 #### The CurationLoop: Sense → Classify → Decide → Act
 
-The Curator's core cycle is the `RegulationLoop` trait implementation on `CurationLoop` at `crates/hkask-pods/src/curation/curation_loop.rs:332`. Its phases:
+The Curator's core cycle is the `RegulationLoop` trait implementation on `CurationLoop`. Its phases:
 
 1. **Sense**: Reads algedonic-significant `RegulationRecord`s from the persistent store using cursor-based review. `last_review_ms` tracks the cursor position; each `sense()` call advances it. Falls back to live Regulation reads if no RegulationRecord store is configured.
 
@@ -305,7 +305,7 @@ The Curator's core cycle is the `RegulationLoop` trait implementation on `Curati
 
 3. **Act**: Issues directives through `CuratorContext` with DAMPEN filtering — repeated identical directives within `dampen_window_secs` (default 60s) are suppressed, preventing directive storms.
 
-The `MetacognitionLoop::sense()` at `crates/hkask-pods/src/curator_agent/metacognition/hloop_impl.rs:27` reads Regulation health, variety counters, alerts, and regulation effectiveness. It builds a `HealthSnapshot` (defined in `config.rs:21`) with:
+The `MetacognitionLoop::sense()` reads Regulation health, variety counters, alerts, and regulation effectiveness. It builds a `HealthSnapshot` with:
 
 - `variety_counters: HashMap<SpanNamespace, u64>` — full variety state per domain
 - `variety_deficit: u64` — total deficit across all domains
@@ -316,31 +316,31 @@ This snapshot is published on a `tokio::sync::watch` channel, making it availabl
 
 #### Semantic Indexing
 
-The Curator builds a searchable model of system history through the `ConsolidationBridge` referenced in `mod.rs:28`. Episodic memory (private, per-agent experiences) is periodically consolidated into semantic memory (public, shared knowledge). The Curator's three-tier pod architecture — `CuratorPod` owns the `SemanticIndex` aggregating Public hMems from all pods — enables the Curator to query cross-agent knowledge without violating per-pod sovereignty.
+The Curator builds a searchable model of system history through the `ConsolidationBridge`. Episodic memory (private, per-agent experiences) is periodically consolidated into semantic memory (public, shared knowledge). The Curator owns the `SemanticIndex` aggregating Public hMems across user/curator data directories — enabling the Curator to query cross-agent knowledge without violating per-user sovereignty.
 
-The `CuratorSync` polling loop opens source pods read-only, inserts Public hMems into the `SemanticIndex` with cursor tracking, and provides merged-lens semantic recall through `PodContext::recall_semantic()`. This is how the Curator "knows what it knows" — it maintains an indexed, searchable model of all public knowledge across all agents, continuously updated as new experiences are published.
+The `CuratorSync` polling loop opens source user/curator data directories read-only, inserts Public hMems into the `SemanticIndex` with cursor tracking, and provides merged-lens semantic recall. This is how the Curator "knows what it knows" — it maintains an indexed, searchable model of all public knowledge across all agents, continuously updated as new experiences are published.
 
 #### Escalation Handling
 
-When the Regulation cannot self-correct, the Curator steps in. `EscalationPolicy::check_conditions()` at `crates/hkask-pods/src/curator_agent/metacognition/escalation.rs:80` evaluates three triggers:
+When the Regulation cannot self-correct, the Curator steps in. `EscalationPolicy::check_conditions()` evaluates three triggers:
 
 - **VarietyDeficit**: Critical if deficit > threshold, Warning if > threshold/2
 - **CriticalAlerts**: Critical if alert count ≥ threshold
 - **BotFailures**: Critical if failure count ≥ threshold
 
-When alerts are produced, `MetacognitionLoop::act()` at `hloop_impl.rs:137` takes action. Template-driven directive issuance: when the LLM produces `restart` or `rebalance` actions, the Curator issues in-process `CuratorDirective`s to the Regulation before posting escalation entries. `adjust_budget` actions issue `CuratorDirective::OverrideEnergyBudget` with an LLM-computed budget value. When escalations exceed `max_concurrent_escalations` (default 3), they are batched into `EscalationBatch` and formatted through the `curator/metacognition-escalate.j2` KnowAct template. The `direct_bot()` A2A-directive path still exists in `loop_body.rs` but degrades gracefully (`a2a()` returns `None`) in zed-kask, where the Matrix transport has been deleted; directives flow in-process through `CuratorContext`.
+When alerts are produced, `MetacognitionLoop::act()` takes action. Template-driven directive issuance: when the LLM produces `restart` or `rebalance` actions, the Curator issues in-process `CuratorDirective`s to the Regulation before posting escalation entries. `adjust_budget` actions issue `CuratorDirective::OverrideEnergyBudget` with an LLM-computed budget value. When escalations exceed `max_concurrent_escalations` (default 3), they are batched into `EscalationBatch` and formatted through the `curator/metacognition-escalate.j2` KnowAct template. The `direct_bot()` A2A-directive path degrades gracefully (`a2a()` returns `None`) in zed-kask, where the Matrix transport has been deleted; directives flow in-process through `CuratorContext`.
 
 The Curator never bypasses OCAP. Every directive is issued through `CuratorContext::issue_directive()`, which verifies `handle.can_write(&DataCategory::Public)` — the Magna Carta Curator Responsibility #1. The Curator can recommend, calibrate, and escalate, but it cannot override sovereignty boundaries.
 
 #### Regulation Effectiveness Tracking
 
-The `verify_impact` phase of the `CyberneticsLoop` produces `ImpactReport` with `ActionDecision::Accept | Stage | Block`. `HealthSnapshot.regulation_effectiveness` at `config.rs:31` tracks the ratio of accepted actions — 1.0 means all regulatory actions were effective, 0.0 means all were blocked or staged.
+The `verify_impact` phase of the `CyberneticsLoop` produces `ImpactReport` with `ActionDecision::Accept | Stage | Block`. `HealthSnapshot.regulation_effectiveness` tracks the ratio of accepted actions — 1.0 means all regulatory actions were effective, 0.0 means all were blocked or staged.
 
 `StagnationDetector` at `crates/hkask-regulation/src/cybernetics_loop.rs:93` tracks repeated ineffectiveness: when the same (metric, action_type) pair fails for `stagnation_threshold` cycles (default 5), it triggers `RegulatoryPlateauDetected` — an escalation to the Curator. Before plateau, substitution ladders are tried: `substitution_after` (default 2 cycles) activates the next action in the ladder. If all alternatives are exhausted, the plateau escalates to Curation.
 
 #### Curator Self-Calibration (reg.meta)
 
-The Curator is its own generative entity for self-management. `MetacognitionLoop::self_calibrate()` (in `loop_body.rs`) runs at the end of each `act()` cycle and adjusts the Curator's own variety-deficit escalation threshold:
+The Curator is its own generative entity for self-management. `MetacognitionLoop::self_calibrate()` runs at the end of each `act()` cycle and adjusts the Curator's own variety-deficit escalation threshold:
 
 - **Generative-first.** When a `ManifestExecutor` is wired, it invokes `curator/metacognition-self-calibrate.j2`, passing in-process `SelfQuality` counters (directives issued, escalations dropped, circuit-breaker trips), current `regulation_effectiveness`, the bounded band, and the last calibration's effectiveness delta. The LLM returns a `new_threshold` + `rationale`.
 - **Rust safety-rail fallback.** `compute_threshold_adjustment` (pure, independently tested) decides raise/lower from the same signals when no executor is wired or the template fails — raise 10% on dropped escalations, lower 5% when the loop is healthy and a cooldown has elapsed.
@@ -350,7 +350,7 @@ The `reg.meta.*` namespace (`hkask-regulation/src/meta_span.rs`) records the Cur
 
 #### The CAT Communication Posture
 
-`MetacognitionLoop` evaluates in-process agent events through `cat::evaluate()` at `crates/hkask-pods/src/curator_agent/cat.rs:24` — a pure-function engagement gate based on Communication Accommodation Theory. In zed-kask, the Curator is a native agent inside the editor (D2); it evaluates agent panel events, thread store updates, and tool invocations rather than Matrix messages. The `convergence_bias` governs: >0.0 speaks when addressed by name, ≥0.7 speaks to any event, =0.0 remains silent.
+`MetacognitionLoop` evaluates in-process agent events through `cat::evaluate()` — a pure-function engagement gate based on Communication Accommodation Theory. In zed-kask, the Curator is a native agent inside the editor (D2); it evaluates agent panel events, thread store updates, and tool invocations rather than Matrix messages. The `convergence_bias` governs: >0.0 speaks when addressed by name, ≥0.7 speaks to any event, =0.0 remains silent.
 
 Before the CAT gate, `condenser/condenser_score_saliency` scores event relevance via ontology graph proximity: persona (charter-anchored), episodic memory (PKO process domain), or semantic memory (DC+BIBO document domain). The score modulates `convergence_bias` — domain-relevant events pull the agent toward stronger engagement. The former Matrix-message evaluation path was removed when the `hkask-communication` crate and Matrix transport were deleted; the CAT gate now consumes the same in-process `RegulationRecord` stream that the CurationLoop senses from.
 
@@ -384,7 +384,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-003
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -398,7 +398,7 @@ The Curator's two-loop architecture (CurationLoop + MetacognitionLoop) means tha
 
 ### Statement
 
-Bug hunting in hKask is not ad-hoc debugging. It is a structured expedition methodology grounded in Weinberg's quality definition ("value to some person who matters"), Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters.[^weinberg] The methodology was validated in two real expeditions against `hkask-wallet` (7 findings) and `hkask-regulation` (6 findings). Each pattern listed below found actual bugs.
+Bug hunting in hKask is not ad-hoc debugging. It is a structured expedition methodology grounded in Weinberg's quality definition ("value to some person who matters"), Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters.[^weinberg] The methodology was validated in two real expeditions against the wallet manager (7 findings) and `hkask-regulation` (6 findings). Each pattern listed below found actual bugs.
 
 ### Evidence
 
@@ -465,11 +465,11 @@ Patterns that actually found bugs in hKask:
 
 **PATTERN: Hardcoded Sentinel** — A field that should carry runtime state is hardcoded. Found in: `WalletManager::shield_assets` — `balance_after: 0` breaks audit trail.
 
-**PATTERN: Documented Gap** — The test name IS the bug report. The developers know about the gap and documented it as a test. Found in: `wallet/` — credit and debit idempotency gaps.
+**PATTERN: Documented Gap** — The test name IS the bug report. The developers know about the gap and documented it as a test. Found in: wallet credit and debit idempotency gaps.
 
 **PATTERN: Implicit Contract Violation** — The function signature implies a constraint but only partially enforces it. Found in: `GasBudget::settle` — checks `actual ≤ remaining` but not `actual ≤ reserved`.
 
-**PATTERN: Fail-Open Default** — Unknown/unexpected states default to permissive. Found in: `CircuitBreaker::state()` — unknown state defaulted to `Closed` (allow all requests).
+**PATTERN: Fail-Open Default** — Unknown/unexpected states default to permissive. Found in (historical expedition): `CircuitBreaker::state()` — unknown state defaulted to `Closed` (allow all requests). The `CircuitBreaker` module has since been deleted in the 2026-07-25 cleanup; the pattern remains documented as a methodology example.
 
 **PATTERN: TOCTOU Without Documentation** — Check and use are separated in time. Found in: `WalletBackedBudget::reserve` — TOCTOU between reserve and settle.
 
@@ -483,7 +483,7 @@ Every finding follows this structure:
   "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
   "confidence": 0.92,
   "location": {
-    "file": "crates/hkask-wallet/src/manager/budget.rs",
+    "file": "crates/hkask-regulation/src/wallet_manager.rs",
     "function": "settle_rjoules",
     "line": 82
   },
@@ -522,7 +522,7 @@ flowchart LR
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-004
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -540,7 +540,7 @@ The hKask QA system operationalizes the feedback-loop methodology of bug hunting
 
 ### Evidence
 
-The QA system runs through `hkask_test_harness::qa_script::run_script()`. Each manifest is a YAML file following the `QaScriptManifest` schema:
+The QA system runs through the QA script runner (`qa_script::run_script()`). Each manifest is a YAML file following the `QaScriptManifest` schema:
 
 ```yaml
 manifest:
@@ -605,7 +605,7 @@ If no branch condition matches, `default_next` is used. If neither is set, the s
 
 #### Classification Service
 
-The classification service (`hkask-services-runtime`) is the decision engine for all QA operations. Classifier configs are stored in `$HKASK_USERPOD_REGISTRY_PATH/classify/` as YAML files. Each config's `model:` field is intentionally empty — all classifiers defer to the canonical model resolved from `HKASK_CLASSIFIER_MODEL` (default `DI/Qwen/Qwen3-235B-A22B-Instruct-2507`, DeepInfra) with temperature 0.0.
+The classification service is the decision engine for all QA operations. Classifier configs are stored in `$HKASK_USERPOD_REGISTRY_PATH/classify/` as YAML files. Each config's `model:` field is intentionally empty — all classifiers defer to the canonical model resolved from `HKASK_CLASSIFIER_MODEL` (default `DI/Qwen/Qwen3-235B-A22B-Instruct-2507`, DeepInfra) with temperature 0.0.
 
 > **Routing note:** In zed-kask, the classifier's inference calls route through the in-process guard layer (D4) — `LanguageModelInferencePort` (in `kask_bridge`, over zed's `LanguageModelRegistry`) wrapped by `GuardedInferencePort` — **not** through the deleted `InferenceRouter` in `hkask-inference`. `hkask-inference` is kept only for MCP-server-internal use.
 
@@ -681,7 +681,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-005
 verified_date: 2026-07-24
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs, crates/hkask-guard/src/guarded_inference.rs, crates/kask_bridge/src/inference_port.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-guard/src/guarded_inference.rs, crates/kask_bridge/src/inference_port.rs
 status: VERIFIED
 -->
 
@@ -716,19 +716,12 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 # Regulation Architecture — Responsibility Clusters and Coupling
 
-This class diagram maps the internal structure of `hkask-regulation` after the StorageGuard extraction and WalletBudgetPort introduction. The Regulation crate previously conflated seven distinct responsibilities; two have been addressed:
-
-- **StorageGuard** — extracted to `hkask-services-context::storage_guard` module (2026-07-11)
-- **Wallet coupling** — resolved via `WalletBudgetPort` trait in `hkask-types` (2026-07-11). Regulation no longer depends on `hkask-wallet`; it depends on the abstract port.
-
-Remaining responsibility clusters still in Regulation:
+This class diagram maps the internal structure of `hkask-regulation` after the 2026-07-25 cleanup. The Regulation crate previously conflated many distinct responsibilities; the deleted modules (SLO management, seam watching, API metering, circuit breaker, snapshot loop, gas report, dynamic gas table, calibrated/composite estimators, set point calibrator, wallet gas calibrator) have been removed. The remaining responsibility clusters in Regulation:
 
 1. **Core Regulation** — `CyberneticsLoop`, `RegulationLedger`, `SetPoints`, `Dampener`, `StagnationDetector`
-2. **Energy/Gas** — `GasBudgetManager`, `GasBudget`, `GasCost`, `GasReport`
-3. **Wallet Budget** — `WalletBackedBudget`, `WalletGasCalibrator` (now via `WalletBudgetPort`, not concrete)
-4. **SLO** — `SloManager`, `SloDataPoint`, `SloDataProvider` (candidate for extraction)
-5. **Seam Watching** — `SeamWatcher`, `SeamDrift`, `SeamSummary` (candidate for extraction)
-6. **Spans** — `AcpSpan`, `ClassifySpan`, `ContractSpan`, `InfraSpan`, `QaSpan`, `SloSpan`, `SeamSpan` (candidate for extraction)
+2. **Energy/Gas** — `GasBudgetManager`, `GasBudget`, `GasCost`
+3. **Wallet Budget** — `WalletBackedBudget` (now via `WalletBudgetPort`, implemented by `regulation::WalletManager`)
+4. **Spans** — `InfraSpan`, `MetaSpan`, `QaSpan` (the only span namespaces that remain)
 
 See also: [Regulation Homeostatic Loop](#regulation-homeostatic-loop--mermaid-flowchart) for the sense→compare→compute→act cycle, and [Regulation Regulation Pipeline](#regulation-regulation-pipeline--5-phase-cybernetic-cycle) for regulation policy dispatch.
 
@@ -776,38 +769,15 @@ classDiagram
         +draw_from_well()
     }
 
-    class WalletGasCalibrator {
-        +wallet_manager: Arc~dyn WalletBudgetPort~~
-        +calibrate()
-    }
-
-    class SloManager {
-        +evaluate()
-        +check_breach()
-    }
-
-    class SeamWatcher {
-        +inventory()
-        +detect_drift()
-    }
-
     class GovernedTool~P~ {
         +port: P
         +energy_estimator: Box~dyn EnergyEstimator~~
-        +circuit_breaker: CircuitBreaker
         +invoke()
     }
 
     class SensorRegistry {
         +sensors: Vec~Box~dyn Sensor~~
         +read_all()
-    }
-
-    class CircuitBreaker {
-        +state: CircuitState
-        +record_success()
-        +record_failure()
-        +allow()
     }
 
     class ToolStats {
@@ -820,28 +790,18 @@ classDiagram
     CyberneticsLoop --> SetPoints : reads
     CyberneticsLoop --> GasBudgetManager : owns
     CyberneticsLoop --> SensorRegistry : owns
-    CyberneticsLoop --> CircuitBreaker : uses
 
     %% Energy cluster
     GasBudgetManager --> GasBudget : manages
 
     %% Wallet coupling — now via port trait (hexagonal)
     CyberneticsLoop --> WalletBackedBudget : owns
-    CyberneticsLoop --> WalletGasCalibrator : owns
     WalletBackedBudget --> WalletBudgetPort : port dep
-    WalletGasCalibrator --> WalletBudgetPort : port dep
-
-    %% SLO cluster
-    CyberneticsLoop --> SloManager : owns
-
-    %% Seam watching — observability, not regulation
-    SeamWatcher ..> CyberneticsLoop : "candidate for extraction"
 
     %% Tool governance
     GovernedTool --> ToolStats : reads
-    GovernedTool --> CircuitBreaker : uses
 
-    %% Port trait — implemented by hkask-wallet, consumed by Regulation
+    %% Port trait — implemented by regulation::WalletManager, consumed by Regulation
     class WalletBudgetPort {
         <<interface>>
         +gas_to_rjoules(gas) RJoule
@@ -867,8 +827,8 @@ classDiagram
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-006
-verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_date: 2026-07-25
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -878,10 +838,7 @@ status: VERIFIED
 |------|------|--------|
 | `CyberneticsLoop → WalletBudgetPort` | Port trait (hexagonal) | ✅ Resolved — Regulation depends on abstract port, not concrete `WalletManager` |
 | `WalletBackedBudget → WalletBudgetPort` | Port trait | ✅ Resolved — uses `Arc<dyn WalletBudgetPort>` |
-| `WalletGasCalibrator → WalletBudgetPort` | Port trait | ✅ Resolved — uses `Arc<dyn WalletBudgetPort>` |
 | `StorageGuardLoop` | Extracted | ✅ Resolved — now in `hkask-services-context::storage_guard` module |
-| `SeamWatcher` in Regulation | Wrong crate | ⬜ Candidate for extraction — seam observability is not regulation |
-| `SloManager` in Regulation | Wrong crate | ⬜ Candidate for extraction — SLO evaluation is independent of the cybernetic loop |
 
 ## Completed Extractions
 
@@ -890,17 +847,13 @@ status: VERIFIED
 | 2a | `StorageGuardLoop` + `StorageGuardConfig` | `hkask-services-context::storage_guard` | ✅ Done 2026-07-11 |
 | — | `WalletBudgetPort` trait | `hkask-types` | ✅ Done 2026-07-11 |
 
-## Remaining Extraction Candidates
+## Deleted in 2026-07-25 Cleanup
 
-| Step | Extract | Target | Lines | Independence |
-|------|---------|--------|-------|-------------|
-| 2b | `SloManager` + `SloDataPoint` + `SloDataProvider` | new slo crate | ~1000 | Depends only on `LedgerObserver` port |
-| 2c | `SeamWatcher` + `SeamDrift` + `SeamSummary` + `SeamTypes` | new seam crate | ~900 | Fully independent — observability |
-| 2d | Span types (`AcpSpan`, `ClassifySpan`, `ContractSpan`, `InfraSpan`, `QaSpan`, `SloSpan`, `SeamSpan`) | new regulation-spans crate | ~800 | Depends on `hkask-types::event` |
-| 2e | Energy/gas (`GasBudget`, `GasCost`, `GasBudgetManager`, `GasReport`, `DynamicGasTable`) | new energy crate | ~1800 | Depends on `hkask-types` |
-| 2f | Estimators (`CalibratedEnergyEstimator`, `CompositeEnergyEstimator`, `TableEnergyEstimator`, `InferenceEstimator`) | new energy-estimators crate | ~1300 | Depends on energy crate |
+The following modules were deleted from `hkask-regulation` in the 2026-07-25 cleanup (see `zed-host-architecture-plan.md` for the current module inventory):
 
-After extraction, Regulation core retains: `CyberneticsLoop`, `RegulationLedger`, `Algedonic`, `Dampener`, `RegulationPolicy`, `GovernedTool`, `GovernedInference`, `Sensor`, `SetPoints`, `StrategyEvaluator`, `SystemSimulator`, `ToolStats`, `WalletBackedBudget`, `WalletGasCalibrator` — all cohesive regulation logic.
+- `api_metering`, `seam_watcher`, `seam_types`, `seam_span`, `contract_events`, `contract_span`, `acp_span`, `classify_span`, `snapshot_loop`, `circuit_breaker`, `slo_manager`, `slo_types`, `slo_span`, `set_point_calibrator`, `wallet_gas_calibrator`, `wallet_energy_estimator`, `gas_report`, `dynamic_gas_table`, `composite_energy_estimator`, `calibrated_energy_estimator`, `calibrator`, `inference_estimator`, `table_energy_estimator`
+
+After cleanup, Regulation core retains: `CyberneticsLoop`, `RegulationLedger`, `Algedonic`, `Dampener`, `RegulationPolicy`, `GovernedTool`, `GovernedInference`, `Sensor`, `SetPoints`, `StrategyEvaluator`, `SystemSimulator`, `ToolStats`, `WalletBackedBudget` — all cohesive regulation logic.
 
 
 ### Regulation Homeostatic Loop
@@ -914,23 +867,31 @@ After extraction, Regulation core retains: `CyberneticsLoop`, `RegulationLedger`
 **Domain ontology tier:** Core  
 **Purpose:** Visualize the Regulation (Cybernetic Nervous System) homeostatic self-regulation loop — the feedback mechanism by which hKask monitors its own health and takes corrective action.  
 **Verified against:** `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/runtime.rs`  
-last-verified-against: "3d1a876f45e3ce64864c3453f1e71d75b2f14376"
+last-verified-against: "2026-07-25"
 
-> **v0.31.0 update:** Added `SetPointCalibrator` (self-tuning regulation thresholds via RegulationArchive replay) and contract violation path to CurationLoop.
+> **v0.31.0 update (2026-07-25):** `SetPointCalibrator`, `SloManager`, `SeamWatcher`, and `ApiMeter` were deleted in the 2026-07-25 cleanup. The diagram below retains the structure but the Sensors subgraph now reflects only the remaining sensor sources.
 
 ```mermaid
 flowchart TD
-    S[Sensors collect data\nSetPoints check thresholds\nSloManager evaluates SLOs]
+    S[Sensors collect data\nSetPoints check thresholds]
     C[CyberneticsLoop::sense\nCompares actual vs target\nComputes variety deficit]
     D{Deviation detected?}
     A[CyberneticsLoop::act\nSelects RegulatoryAction\nApplies corrective action]
     R[GovernedTool / GovernedInference\nExecutes action through\nOCAP membrane]
     O[Observe outcome\nImpactReport generated\nLoopMetrics assessed]
     E[Emit Regulation span\nreg.regulation.* RegulationRecord persisted\nAlgedonic alert if critical]
+    R[GovernedTool / GovernedInference
+Executes action through
+OCAP membrane]
+    O[Observe outcome
+ImpactReport generated
+LoopMetrics assessed]
+    E[Emit Regulation span
+reg.regulation.* RegulationRecord persisted
+Algedonic alert if critical]
     STORE[(RegulationArchive)]
-    CAL[SetPointCalibrator\nQueries regulation events\nAdjusts thresholds within bounds]
-    CUR[CurationLoop\nReads algedonic events\nContract violations included]
-    CTV[Contract Violations\nemit_contract_violated\n→ RegulationArchive]
+    CUR[CurationLoop
+Reads algedonic events]
 
     S --> C
     C --> D
@@ -941,11 +902,7 @@ flowchart TD
     O --> E
     E --> S
     E -->|persist| STORE
-    STORE -->|query every 60 min| CAL
-    CAL -->|adjust| SP1
-    CAL -->|adjust| SP2
     STORE -->|read via cursor| CUR
-    CTV -->|persist| STORE
 
     subgraph "Set Points"
         SP1[guard_violation_rate_max]
@@ -955,18 +912,16 @@ flowchart TD
     end
 
     subgraph "Sensors"
-        SN1[SloManager::evaluate]
-        SN2[SeamWatcher::detect_drift]
         SN3[StorageGuardLoop::check]
-        SN4[ApiMeter::sample]
+        SN5[Pluggable Sensor instances
+EnergyBudgetSensor, VarietySensor,
+ToolReliabilitySensor, WalletKeyHealthSensor]
     end
 
     SP1 --> C
     SP2 --> C
-    SN1 --> S
-    SN2 --> S
     SN3 --> S
-    SN4 --> S
+    SN5 --> S
 
     subgraph "Action Types"
         AT1[AdjustEnergyBudget]
@@ -989,8 +944,8 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-007
-verified_date: 2026-07-24
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-regulation/src/set_points.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_date: 2026-07-25
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-regulation/src/set_points.rs
 status: VERIFIED
 -->
 
@@ -1001,17 +956,13 @@ status: VERIFIED
 | CyberneticsLoop::sense | `crates/hkask-regulation/src/cybernetics_loop.rs` |
 | CyberneticsLoop::act | `crates/hkask-regulation/src/cybernetics_loop.rs` |
 | GovernedTool membrane | `crates/hkask-regulation/src/governed_tool.rs` |
-| SloManager::evaluate | `crates/hkask-regulation/src/slo_manager.rs` |
-| SeamWatcher | `crates/hkask-regulation/src/seam_watcher.rs` |
 | StorageGuardLoop | `crates/hkask-services-context/src/storage_guard.rs` |
 | SetPoints | `crates/hkask-regulation/src/set_points.rs` |
-| SetPointCalibrator | `crates/hkask-regulation/src/set_point_calibrator.rs` |
 | ObservableSpan trait | `crates/hkask-types/src/observable_span.rs` |
 | RegulatoryAction enum | `crates/hkask-types/src/loops/actions.rs` |
 | ImpactReport | `crates/hkask-types/src/loops/core.rs` |
 | Algedonic escalation | `crates/hkask-regulation/src/runtime.rs` |
-| CurationLoop | `crates/hkask-pods/src/curation/curation_loop.rs` |
-| Contract events | `crates/hkask-regulation/src/contract_events.rs` |
+| CurationLoop | curator agent module (in zed-kask) |
 | RegulationArchive | `crates/hkask-storage/src/regulation_store.rs` |
 
 **Cardinality:** 1 CyberneticsLoop runs per AgentService instance. N SetPoints are configured (4 shown). M Sensors feed into the loop. 5 RegulatoryAction types exist in the current codebase (verified against `ActionType` enum).
@@ -1281,8 +1232,8 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-008
-verified_date: 2026-07-24
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_date: 2026-07-25
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -1480,7 +1431,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-009
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -1500,7 +1451,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-010
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -1547,7 +1498,9 @@ status: VERIFIED
 
 ## Description
 
-The Algedonic loop enforces Ashby's Law of Requisite Variety through binary threshold monitoring. The `VarietyTracker` measures state diversity per domain via an exponential moving average (EMA). When the `AlgedonicManager.check()` method detects a deficit exceeding the configured threshold, it generates a `RuntimeAlert` with one of three severities — Info, Warning, or Critical. Critical alerts are automatically escalated (`escalated = true`) and flow through the `CurationLoop` to the `CuratorAgent`, which decides between automatic recalibration (adjusting the threshold via `calibrate_threshold()`) or human escalation. A cooldown `Dampener` prevents alert storms. The `CircuitBreaker` integrates with the algedonic manager for external service failure handling via `check_outcome()`.
+The Algedonic loop enforces Ashby's Law of Requisite Variety through binary threshold monitoring. The `VarietyTracker` measures state diversity per domain via an exponential moving average (EMA). When the `AlgedonicManager.check()` method detects a deficit exceeding the configured threshold, it generates a `RuntimeAlert` with one of three severities — Info, Warning, or Critical. Critical alerts are automatically escalated (`escalated = true`) and flow through the `CurationLoop` to the Curator, which decides between automatic recalibration (adjusting the threshold via `calibrate_threshold()`) or human escalation. A cooldown `Dampener` prevents alert storms.
+
+> **2026-07-25 cleanup note:** The `CircuitBreaker` participant and outcome-quality integration shown in the sequence diagram below were removed when the `circuit_breaker` module was deleted. The diagram retains the variety-monitoring and escalation flow, which remain.
 
 **Key source:** `crates/hkask-regulation/src/algedonic.rs:26-307` (`AlertSeverity`, `RuntimeAlert`, `AlgedonicManager`), `crates/hkask-regulation/src/runtime.rs:52-106` (`VarietyTracker`), `crates/hkask-regulation/src/runtime.rs:191-255` (`VarietyMonitor`), `crates/hkask-regulation/src/runtime.rs:822-858` (`evaluate_and_escalate_slos`).
 
@@ -1574,8 +1527,6 @@ sequenceDiagram
     participant CL as CurationLoop
     participant CA as CuratorAgent
     participant Damp as Dampener
-    participant CB as CircuitBreaker
-    participant Ext as External Service
 
     rect rgb(245, 248, 252)
         Note over VT,Regulation: Variety Monitoring — diversity deficit detection
@@ -1631,31 +1582,6 @@ sequenceDiagram
         end
     end
 
-    rect rgb(255, 248, 240)
-        Note over AM,CB: Outcome Quality Check — CircuitBreaker integration
-
-        CB->>+CB: record_failure(error_kind)
-        CB->>+CB: record_success()
-
-        Regulation->>+AM: check_outcome(domain, success_rate, total_ops)
-
-        alt success_rate < outcome_critical_threshold
-            AM->>+AM: severity = Critical
-            AM->>+AM: error!(target: "reg.outcome", "OUTCOME ALERT - Critical failure rate")
-            AM->>+AM: alerts.push(alert)
-            CB->>+CB: circuit OPEN — stop all calls to External Service
-            Note over Ext: External service calls blocked
-        else success_rate < outcome_warning_threshold
-            AM->>+AM: severity = Warning
-            AM->>+AM: warn!(target: "reg.outcome", "Outcome success rate degraded")
-            AM->>+AM: alerts.push(alert)
-            Note over CB: circuit HALF-OPEN — throttle
-        else success_rate ≥ outcome_warning_threshold
-            AM-->>-Regulation: None (healthy)
-            CB->>+CB: circuit CLOSED — normal operation
-        end
-    end
-
     rect rgb(248, 245, 255)
         Note over AM,CA: Dampener — Alert Cooldown Override
 
@@ -1693,8 +1619,8 @@ sequenceDiagram
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-011
-verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_date: 2026-07-25
+verified_against: crates/hkask-regulation/src/algedonic.rs, crates/hkask-regulation/src/runtime.rs
 status: VERIFIED
 -->
 
@@ -1722,7 +1648,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-012
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -1840,7 +1766,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-013
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -1926,7 +1852,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-Regulation-014
 verified_date: 2026-07-12
-verified_against: crates/hkask-regulation/src/cybernetics_loop.rs, crates/hkask-pods/src/curator_agent/mod.rs
+verified_against: crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 
@@ -1963,22 +1889,22 @@ Regulation effectiveness (accepted/blocked/staged ratio from `RegulationLedger`)
 
 | Node | Crate | Source File |
 |------|-------|-------------|
-| `MetacognitionLoop` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `RegulationLoop::sense` | `hkask-pods` | `src/curator_agent/metacognition/hloop_impl.rs` |
-| `RegulationLoop::compute` | `hkask-pods` | `src/curator_agent/metacognition/hloop_impl.rs` |
-| `RegulationLoop::act` | `hkask-pods` | `src/curator_agent/metacognition/hloop_impl.rs` |
-| `compute_with_templates` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `compute_with_thresholds` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `act_on_throttle` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `act_on_escalate` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `act_on_no_action` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `direct_bot` | `hkask-pods` | `src/curator_agent/metacognition/loop_body.rs` |
-| `EscalationPolicy` | `hkask-pods` | `src/curator_agent/metacognition/escalation.rs` |
-| `HealthSnapshot` | `hkask-pods` | `src/curator_agent/metacognition/config.rs` |
-| `MetacognitionConfig` | `hkask-pods` | `src/curator_agent/metacognition/config.rs` |
-| `CAT evaluate` | `hkask-pods` | `src/curator_agent/cat.rs` |
-| `CuratorAgent` (composition) | `hkask-pods` | `src/curator_agent/mod.rs` |
-| `persist_escalation_with_retry` | `hkask-pods` | `src/curator_agent/metacognition/persistence.rs` |
-| `format_health_status` | `hkask-pods` | `src/curator_agent/metacognition/format.rs` |
+| `MetacognitionLoop` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `RegulationLoop::sense` | zed-kask curator agent | `curator_agent/metacognition/hloop_impl.rs` |
+| `RegulationLoop::compute` | zed-kask curator agent | `curator_agent/metacognition/hloop_impl.rs` |
+| `RegulationLoop::act` | zed-kask curator agent | `curator_agent/metacognition/hloop_impl.rs` |
+| `compute_with_templates` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `compute_with_thresholds` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `act_on_throttle` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `act_on_escalate` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `act_on_no_action` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `direct_bot` | zed-kask curator agent | `curator_agent/metacognition/loop_body.rs` |
+| `EscalationPolicy` | zed-kask curator agent | `curator_agent/metacognition/escalation.rs` |
+| `HealthSnapshot` | zed-kask curator agent | `curator_agent/metacognition/config.rs` |
+| `MetacognitionConfig` | zed-kask curator agent | `curator_agent/metacognition/config.rs` |
+| `CAT evaluate` | zed-kask curator agent | `curator_agent/cat.rs` |
+| `CuratorAgent` (composition) | zed-kask curator agent | `curator_agent/mod.rs` |
+| `persist_escalation_with_retry` | zed-kask curator agent | `curator_agent/metacognition/persistence.rs` |
+| `format_health_status` | zed-kask curator agent | `curator_agent/metacognition/format.rs` |
 
 

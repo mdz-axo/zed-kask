@@ -17,7 +17,7 @@ use crate::visibility::Visibility;
 // ── CuratorHandle — Loop 5 capability handle ────────────────────────────────
 
 /// The Curator's capability handle. Single userpod — the user's
-/// counterpart in `kask chat`. Can read all loop state and write
+/// counterpart in the zed-kask agent panel. Can read all loop state and write
 /// governance/observability policy.
 ///
 /// **Singleton invariant:** There is exactly one Curator per hKask system.
@@ -33,8 +33,8 @@ pub struct CuratorHandle {
 impl CuratorHandle {
     /// Create the system CuratorHandle using the system WebID.
     ///
-    /// The Curator is a singleton — the user's counterpart in `kask chat`.
-    /// This constructor enforces that convention by deriving the ID from
+    /// The Curator is a singleton — the user's counterpart in the zed-kask
+    /// agent panel. This constructor enforces that convention by deriving the ID from
     /// the "curator" persona.
     pub fn system() -> Self {
         Self {

@@ -433,6 +433,12 @@ pub struct NativeAgent {
     /// When set, all new threads created by this agent get this system
     /// prompt override. Used by the Curator agent to inject its own persona.
     system_prompt_override: Option<SharedString>,
+    /// When set, all new threads get this static context appended to the
+    /// system prompt (NOT an override — the Zed Agent prompt stays).
+    /// Used by the Curator overlay to inject regulatory context.
+    curator_static_context: Option<SharedString>,
+    /// Whether to register curator tools on new threads.
+    register_curator_tools: bool,
 }
 
 #[derive(Default)]
@@ -651,6 +657,8 @@ impl NativeAgent {
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
                 system_prompt_override: None,
+                curator_static_context: None,
+                register_curator_tools: false,
             }
         })
     }
@@ -787,6 +795,19 @@ impl NativeAgent {
         self.system_prompt_override = Some(prompt);
     }
 
+    /// Enable the Curator overlay on this agent.
+    ///
+    /// This does NOT override the system prompt. Instead, it:
+    /// 1. Sets `curator_static_context` — appended to the system prompt
+    /// 2. Enables `register_curator_tools` — curator tools added to each thread
+    ///
+    /// The Zed Agent's coding instructions remain intact. The Curator
+    /// gets all coding capabilities PLUS regulatory context and tools.
+    pub fn set_curator_static_context(&mut self, context: SharedString, _cx: &mut Context<Self>) {
+        self.curator_static_context = Some(context);
+        self.register_curator_tools = true;
+    }
+
     pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
         self.sibling_thread_host.clone()
     }
@@ -822,6 +843,20 @@ impl NativeAgent {
         if let Some(ref override_prompt) = self.system_prompt_override {
             thread.update(cx, |thread, cx| {
                 thread.set_system_prompt_override(override_prompt.clone(), cx);
+            });
+        }
+
+        // Apply the Curator overlay: static context + curator tools.
+        // This is NOT a system prompt override — the Zed Agent prompt stays.
+        // The curator context is appended via `static_context`.
+        if let Some(ref curator_context) = self.curator_static_context {
+            thread.update(cx, |thread, cx| {
+                thread.set_static_context(curator_context.clone(), cx);
+            });
+        }
+        if self.register_curator_tools {
+            thread.update(cx, |thread, _cx| {
+                thread.add_tool(CuratorStatusTool);
             });
         }
 
