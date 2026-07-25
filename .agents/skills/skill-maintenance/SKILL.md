@@ -1,13 +1,13 @@
 ---
 name: skill-maintenance
 visibility: public
-description: "Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Pairs with skill-discovery and skill-bundler.
+description: "Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Includes the validate sub-operation (folded from skill-logic-audit): audit .j2 template logic against stated goals via a bounded dual-layer critique cascade. Pairs with skill-discovery and skill-bundler.
 "
 ---
 
 # Skill Maintenance
 
-Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Pairs with skill-discovery and skill-bundler.
+Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills. Includes the validate sub-operation (folded from skill-logic-audit): audit .j2 template logic against stated goals via a bounded dual-layer critique cascade. Pairs with skill-discovery and skill-bundler.
 
 
 ## When to Use

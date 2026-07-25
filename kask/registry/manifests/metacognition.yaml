@@ -8,7 +8,7 @@
 # prior outcomes, detects ellipses (what is missing), rotates perspectives via
 # the Falstaffian engine, and produces a concrete next experiment. The skill
 # improves itself through GEPA (Genetic-Pareto) evolutionary optimization via
-# the gpa-evolution skill, and composes sequential-inquiry, pragmatic-laziness,
+# the gpa-evolution skill, and composes sequential-inquiry
 # and hypothesis-framer for deeper analysis.
 
 manifest:
@@ -22,8 +22,7 @@ manifest:
     missing) via Bloom's method, rotates perspectives via the Falstaffian
     engine, and produces a concrete next experiment (PDCA). Improves itself
     through GEPA evolutionary optimization (gpa-evolution skill). Composes
-    sequential-inquiry for chain-of-thought, pragmatic-laziness for least-
-    action paths, and hypothesis-framer for testable hypotheses. Any
+    sequential-inquiry for chain-of-thought and hypothesis-framer for testable hypotheses. Any
     userpod may invoke this skill.
   functional_role: flowdef
   version: 0.31.0
@@ -102,8 +101,7 @@ inputs:
     description: >
       Perspectives to apply during calibration. Each perspective is a lens:
       "falstaffian" (semantic rotation), "ellipsis" (gap detection),
-      "sequential-inquiry" (chain-of-thought), "pragmatic-laziness"
-      (least-action), "hypothesis-framer" (testable hypotheses). Passed to
+      "sequential-inquiry" (chain-of-thought), "hypothesis-framer" (testable hypotheses). Passed to
       the calibrate template to control which perspectives are applied.
   - name: safety_mode
     type: boolean
@@ -312,10 +310,6 @@ ocap:
     - resource: manifest
       action: execute
       template_id: sequential-inquiry
-      gas_budget: 4000
-    - resource: manifest
-      action: execute
-      template_id: pragmatic-laziness
       gas_budget: 4000
     - resource: manifest
       action: execute

@@ -1537,6 +1537,14 @@ pub struct KaskSettingsContent {
     /// Multi-model fusion inference configuration.
     #[serde(default)]
     pub fusion: Option<KaskFusionSettingsContent>,
+
+    /// Inference provider toggles and API key configuration.
+    ///
+    /// API keys are stored in the keychain under the provider's `api_url`
+    /// (so zed's OpenAI-compatible provider finds them) and mirrored to
+    /// `kask://credentials/<env_var>` for MCP server env injection.
+    #[serde(default)]
+    pub inference_providers: Option<KaskInferenceProvidersSettingsContent>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -1553,6 +1561,23 @@ pub struct KaskDataServiceSettingsContent {
     pub exa_enabled: Option<bool>,
     pub tavily_enabled: Option<bool>,
     pub brave_enabled: Option<bool>,
+    pub runpod_enabled: Option<bool>,
+    pub nebius_enabled: Option<bool>,
+}
+
+/// Inference provider toggles (non-secret — API keys are in the keychain).
+///
+/// When a provider is enabled, an `openai_compatible.<provider_id>` entry is
+/// written to settings.json so zed's OpenAI-compatible provider machinery
+/// registers it in the LLM Providers page and the agent model picker.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskInferenceProvidersSettingsContent {
+    pub deepinfra_enabled: Option<bool>,
+    pub fal_enabled: Option<bool>,
+    pub together_enabled: Option<bool>,
+    pub openrouter_enabled: Option<bool>,
+    pub kilocode_enabled: Option<bool>,
+    pub cline_enabled: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

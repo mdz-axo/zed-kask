@@ -605,9 +605,11 @@ verify_installation() {
         return 1
     fi
 
-    local version
-    version=$("$BIN_DIR/zed-kask" --version 2>&1 || echo "unknown")
-    log "CLI: $BIN_DIR/zed-kask ($version)"
+    # zed-kask is the Zed editor binary — it has no --version flag, so we
+    # report the file size as a sanity check that the binary is non-empty.
+    local binary_size
+    binary_size=$(stat -c%s "$BIN_DIR/zed-kask" 2>/dev/null || echo "unknown")
+    log "CLI: $BIN_DIR/zed-kask (${binary_size} bytes)"
 
     # Check MCP server binaries
     local mcp_count=0
@@ -632,7 +634,7 @@ verify_installation() {
     if command -v kask &> /dev/null; then
         local resolved
         resolved=$(command -v kask)
-        log_success "kask is in PATH: $resolved ($version)"
+        log_success "kask is in PATH: $resolved"
     else
         log_warning "kask command not yet in PATH for this shell session"
         log "The PATH will take effect in new shell sessions. For now:"

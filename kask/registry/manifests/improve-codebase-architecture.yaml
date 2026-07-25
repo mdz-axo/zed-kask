@@ -106,13 +106,13 @@ steps:
   # Phase 4: Decision routing — one of three outcomes.
   # Uses arch-route.j2 with hardcoded decision values for routing logic.
   # Each conditional step passes a different `decision` input to route behavior:
-  # proceed_to_refactor → delegate to strangler-fig or refactor-service-layer
+  # proceed_to_refactor → delegate to refactor-service-layer (includes strangler-fig migration phase)
   # need_more_data → delegate to diagnose for feedback-loop measurement
   # (defer/reject is implicit — the grilling loop surfaces it at Step 3)
 
   - ordinal: 4
     action: select
-    description: Route the deepened design to refactoring execution (strangler-fig or refactor-service-layer).
+    description: Route the deepened design to refactoring execution (refactor-service-layer, which includes the strangler-fig migration-strategy phase).
     renderer: minijinja
     template_ref: improve-codebase-architecture/arch-route
     gas_cap: 4000

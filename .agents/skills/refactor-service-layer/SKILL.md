@@ -1,13 +1,13 @@
 ---
 name: refactor-service-layer
 visibility: public
-description: "Extract a shared service layer from duplicated surface logic using the strangler fig pattern, deep-module discipline, and vertical tracer-bullet TDD. Classifies duplication hotspots, designs deep service modules, migrates one domain at a time with both surfaces functional at every step. Composes improve-codebase-architecture, tdd, coding-guidelines, pragmatic-semantics, zoom-out, and pragmatic-cybernetics.
+description: "Extract a shared service layer from duplicated surface logic using the strangler fig pattern, deep-module discipline, and vertical tracer-bullet TDD. Classifies duplication hotspots, designs deep service modules, migrates one domain at a time with both surfaces functional at every step. Includes the migration-strategy phase (folded from the standalone strangler-fig skill). Composes improve-codebase-architecture, tdd, coding-guidelines, pragmatic-semantics, codegraph (context-expansion), and pragmatic-cybernetics.
 "
 ---
 
 # Refactor Service Layer
 
-Extract a shared service layer from duplicated surface logic using the strangler fig pattern, deep-module discipline, and vertical tracer-bullet TDD. Classifies duplication hotspots, designs deep service modules, migrates one domain at a time with both surfaces functional at every step. Composes improve-codebase-architecture, tdd, coding-guidelines, pragmatic-semantics, zoom-out, and pragmatic-cybernetics.
+Extract a shared service layer from duplicated surface logic using the strangler fig pattern, deep-module discipline, and vertical tracer-bullet TDD. Classifies duplication hotspots, designs deep service modules, migrates one domain at a time with both surfaces functional at every step. Includes the migration-strategy phase (folded from the standalone strangler-fig skill). Composes improve-codebase-architecture, tdd, coding-guidelines, pragmatic-semantics, codegraph (context-expansion), and pragmatic-cybernetics.
 
 
 ## When to Use

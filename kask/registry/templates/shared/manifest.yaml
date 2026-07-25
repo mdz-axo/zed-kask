@@ -21,6 +21,6 @@ templates:
       and `primary_result` (the output to evaluate). Configurable `include_blockers`
       flag adds a `blockers` array to the output for skills that need it (e.g.,
       refactor-service-layer).
-      Used by: pragmatic-semantics, pragmatic-cybernetics, pragmatic-laziness,
+      Used by: pragmatic-semantics, pragmatic-cybernetics,
       refactor-service-layer, coding-guidelines, grill-me,
       improve-codebase-architecture, essentialist.

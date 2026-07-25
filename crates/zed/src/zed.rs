@@ -5608,6 +5608,7 @@ mod tests {
                 "image_viewer",
                 "inline_assistant",
                 "journal",
+                "kask_panel",
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",

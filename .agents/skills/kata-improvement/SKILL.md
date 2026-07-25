@@ -1,13 +1,13 @@
 ---
 name: kata-improvement
 visibility: public
-description: "4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement.
+description: "4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5.
 "
 ---
 
 # Kata Improvement
 
-4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement.
+4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5.
 
 
 ## When to Use
@@ -18,6 +18,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 - When establishing a measurable, time-bounded next target condition.
 - When designing rapid PDCA experiments with testable predictions toward the target.
 - When computing a normalized convergence metric to evaluate the coherence of a PDCA cycle.
+- When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle on a trivial process, or Observation Drill separating facts (IS) from interpretations (OUGHT).
 
 ## Instructions
 

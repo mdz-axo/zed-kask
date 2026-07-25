@@ -217,11 +217,11 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kali-audit manifest: {e}"));
 
-    // 4 select steps + 1 loop step = 5 total.
+    // 5 select steps + 1 loop step = 6 total.
     assert_eq!(
         manifest.steps.len(),
-        5,
-        "expected 5 steps: select-surface → audit → report → convergence-check → loop"
+        6,
+        "expected 6 steps: select-surface → audit → report → taxonomy-map → convergence-check → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -254,20 +254,27 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         Some("kali-audit/report")
     );
 
-    // Verify step 4 is convergence-check.
+    // Verify step 4 is taxonomy-map (folded from attack-taxonomy-mapper).
     assert_eq!(manifest.steps[3].action, "select");
     assert_eq!(
         manifest.steps[3].template_ref.as_deref(),
+        Some("kali-audit/taxonomy-map")
+    );
+
+    // Verify step 5 is convergence-check.
+    assert_eq!(manifest.steps[4].action, "select");
+    assert_eq!(
+        manifest.steps[4].template_ref.as_deref(),
         Some("kali-audit/convergence-check")
     );
 
-    // Verify step 5 is loop.
-    assert_eq!(manifest.steps[4].action, "loop");
+    // Verify step 6 is loop.
+    assert_eq!(manifest.steps[5].action, "loop");
 
-    // Verify convergence field points at step 4.
+    // Verify convergence field points at step 5 (the convergence-check step).
     assert_eq!(
         manifest.convergence.convergence_field,
-        "step_4_result.convergence_metric"
+        "step_5_result.convergence_metric"
     );
 
     // Verify convergence threshold is 0.10 (stricter than bug-hunt's 0.25).

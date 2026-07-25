@@ -71,6 +71,10 @@ pub struct KaskSettings {
     /// Multi-model fusion inference configuration.
     #[serde(default)]
     pub fusion: KaskFusionSettings,
+
+    /// Inference provider toggles (non-secret — API keys are in the keychain).
+    #[serde(default)]
+    pub inference_providers: KaskInferenceProvidersSettings,
 }
 
 /// MCP server load configuration.
@@ -112,6 +116,46 @@ pub struct KaskDataServiceSettings {
     /// Enable Brave Search.
     #[serde(default)]
     pub brave_enabled: bool,
+
+    /// Enable RunPod (GPU cloud for training).
+    #[serde(default)]
+    pub runpod_enabled: bool,
+
+    /// Enable Nebius (GPU cloud for training).
+    #[serde(default)]
+    pub nebius_enabled: bool,
+}
+
+/// Inference provider toggles. API keys are in the keychain, not here.
+///
+/// When a provider is enabled, the composition root writes an
+/// `openai_compatible.<provider_id>` entry to settings.json so zed's
+/// OpenAI-compatible provider machinery registers it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskInferenceProvidersSettings {
+    /// Enable DeepInfra (OpenAI-compatible inference).
+    #[serde(default)]
+    pub deepinfra_enabled: bool,
+
+    /// Enable fal.ai (OpenAI-compatible inference + media).
+    #[serde(default)]
+    pub fal_enabled: bool,
+
+    /// Enable Together AI (OpenAI-compatible inference).
+    #[serde(default)]
+    pub together_enabled: bool,
+
+    /// Enable OpenRouter (unified API for 200+ models).
+    #[serde(default)]
+    pub openrouter_enabled: bool,
+
+    /// Enable KiloCode (unified API for 200+ models + tools).
+    #[serde(default)]
+    pub kilocode_enabled: bool,
+
+    /// Enable Cline (open source unified API for models and tools).
+    #[serde(default)]
+    pub cline_enabled: bool,
 }
 
 /// Curator configuration.
@@ -647,6 +691,8 @@ impl From<KaskSettingsContent> for KaskSettings {
                     exa_enabled: d.exa_enabled.unwrap_or(false),
                     tavily_enabled: d.tavily_enabled.unwrap_or(false),
                     brave_enabled: d.brave_enabled.unwrap_or(false),
+                    runpod_enabled: d.runpod_enabled.unwrap_or(false),
+                    nebius_enabled: d.nebius_enabled.unwrap_or(false),
                 })
                 .unwrap_or_default(),
             curator: c
@@ -743,6 +789,17 @@ impl From<KaskSettingsContent> for KaskSettings {
                     max_rounds: f.max_rounds.unwrap_or(5),
                     openrouter_max_price: f.openrouter_max_price.unwrap_or(1.0),
                     openrouter_min_intelligence: f.openrouter_min_intelligence.unwrap_or(40.0),
+                })
+                .unwrap_or_default(),
+            inference_providers: c
+                .inference_providers
+                .map(|ip| KaskInferenceProvidersSettings {
+                    deepinfra_enabled: ip.deepinfra_enabled.unwrap_or(false),
+                    fal_enabled: ip.fal_enabled.unwrap_or(false),
+                    together_enabled: ip.together_enabled.unwrap_or(false),
+                    openrouter_enabled: ip.openrouter_enabled.unwrap_or(false),
+                    kilocode_enabled: ip.kilocode_enabled.unwrap_or(false),
+                    cline_enabled: ip.cline_enabled.unwrap_or(false),
                 })
                 .unwrap_or_default(),
         }

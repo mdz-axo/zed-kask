@@ -461,7 +461,7 @@ impl Panel for KaskPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        5
+        4
     }
 }
 
