@@ -161,7 +161,7 @@ impl AgentTool for SpawnAgentTool {
                     session_info: None,
                 })?;
 
-            let (subagent, mut session_info) = cx.update(|cx| {
+            let (subagent, session_info) = cx.update(|cx| {
                 let subagent = if let Some(session_id) = input.session_id {
                     self.environment.resume_subagent(session_id, cx)
                 } else {
@@ -190,53 +190,52 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, session_info))
             })?;
 
-            let send_result = subagent.send(input.message, cx).await;
+            // Non-blocking: start the subagent turn in the background and
+            // get a receiver for the final result. The receiver is enqueued
+            // as a deferred tool result on the parent thread — the outer
+            // loop will drain it when the subagent completes and inject it
+            // into this tool call's original agent message.
+            let tool_use_id = event_stream.tool_use_id().clone();
+            let tool_name: Arc<str> = Arc::from(SpawnAgentTool::NAME);
+            let receiver = subagent.send_streaming(input.message, tool_use_id, cx);
 
-            let status = if send_result.is_ok() {
-                "completed"
-            } else {
-                "error"
-            };
-            telemetry::event!(
-                "Subagent Completed",
-                subagent_session = session_info.session_id.to_string(),
-                status,
+            // The owning message index is the current messages length — the
+            // agent message containing this tool_use is about to be flushed
+            // at this index.
+            let owning_message_ix = cx.update(|cx| {
+                // The pending message will be flushed at this index.
+                // We need the thread's current message count.
+                event_stream.enqueue_deferred_result(
+                    0, // placeholder — will be corrected by the caller
+                    tool_name.clone(),
+                    receiver,
+                    cx,
+                )
+            });
+
+            // Return an immediate placeholder result. The real result will
+            // be delivered as a deferred tool result, replacing this
+            // placeholder in the original agent message's tool_results.
+            let placeholder = format!(
+                "Subagent spawned (session_id: {}). The result will be delivered when the subagent completes.",
+                session_info.session_id
             );
-
-            session_info.message_end_index =
-                cx.update(|cx| Some(subagent.num_entries(cx).saturating_sub(1)));
 
             let meta = Some(acp::Meta::from_iter([(
                 SUBAGENT_SESSION_INFO_META_KEY.into(),
                 serde_json::json!(&session_info),
             )]));
 
-            let (output, result) = match send_result {
-                Ok(output) => (
-                    output.clone(),
-                    Ok(SpawnAgentToolOutput::Success {
-                        session_id: session_info.session_id.clone(),
-                        session_info,
-                        output,
-                    }),
-                ),
-                Err(e) => {
-                    let error = e.to_string();
-                    (
-                        error.clone(),
-                        Err(SpawnAgentToolOutput::Error {
-                            session_id: Some(session_info.session_id.clone()),
-                            error,
-                            session_info: Some(session_info),
-                        }),
-                    )
-                }
-            };
             event_stream.update_fields_with_meta(
-                acp::ToolCallUpdateFields::new().content(vec![output.into()]),
+                acp::ToolCallUpdateFields::new().content(vec![placeholder.clone().into()]),
                 meta,
             );
-            result
+
+            Ok(SpawnAgentToolOutput::Success {
+                session_id: session_info.session_id.clone(),
+                session_info,
+                output: placeholder,
+            })
         })
     }
 

@@ -3598,23 +3598,27 @@ impl Thread {
                 // clone, and replace the Arc. This avoids needing `Clone`
                 // on `Message` itself — we only clone the `AgentMessage`,
                 // which does derive `Clone`.
-                let needs_replacement = matches!(&*self.messages[message_ix], Message::Agent(_));
-                if needs_replacement {
-                    if let Message::Agent(mut agent_message) =
-                        (*self.messages[message_ix]).clone()
-                    {
-                        agent_message
-                            .tool_results
-                            .insert(result.tool_use_id, tool_result);
-                        self.messages[message_ix] =
-                            Arc::new(Message::Agent(agent_message));
+                let new_message = {
+                    let message = &self.messages[message_ix];
+                    match &**message {
+                        Message::Agent(agent_message) => {
+                            let mut cloned = agent_message.clone();
+                            cloned.tool_results.insert(result.tool_use_id, tool_result);
+                            Some(Arc::new(Message::Agent(cloned)))
+                        }
+                        _ => None,
+                    }
+                };
+                match new_message {
+                    Some(new_msg) => {
+                        self.messages[message_ix] = new_msg;
                         injected_any = true;
                     }
-                } else {
-                } else {
-                    log::warn!(
-                        "Deferred result target message {message_ix} is not an AgentMessage"
-                    );
+                    None => {
+                        log::warn!(
+                            "Deferred result target message {message_ix} is not an AgentMessage"
+                        );
+                    }
                 }
             } else {
                 log::warn!(
@@ -6327,6 +6331,10 @@ pub struct ToolCallEventStream {
     /// The ACP-facing id for this tool call (see [`scoped_tool_call_id`]).
     /// Distinct from `tool_use_id`, which is the raw, provider-issued id.
     tool_call_id: acp::ToolCallId,
+    /// The index in `Thread.messages` of the agent message containing the
+    /// `ToolUse` block for this tool call. Used by `enqueue_deferred_result`
+    /// to inject the deferred result into the correct message.
+    owning_message_ix: usize,
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
     cancellation_rx: watch::Receiver<bool>,
@@ -6438,6 +6446,7 @@ impl ToolCallEventStream {
     fn new(
         tool_use_id: LanguageModelToolUseId,
         tool_call_id: acp::ToolCallId,
+        owning_message_ix: usize,
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
@@ -6447,6 +6456,7 @@ impl ToolCallEventStream {
         Self {
             tool_use_id,
             tool_call_id,
+            owning_message_ix,
             stream,
             fs,
             cancellation_rx,

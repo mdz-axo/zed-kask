@@ -33,7 +33,7 @@ members = [
     "crates/hkask-wallet",
     "crates/hkask-mcp-server",
     "crates/hkask-mcp",
-    "crates/hkask-git-cas",
+
     "crates/hkask-test-harness",
     # MCP servers
     "mcp-servers/hkask-mcp-condenser",

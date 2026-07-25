@@ -28,7 +28,6 @@ use std::collections::HashSet;
 /// A candidate tool for routing. The name + description pair is what the
 /// router scores — descriptions are available for all tools including MCP
 /// tools via `AnyAgentTool::description()`.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ToolCandidate {
     pub name: SharedString,
@@ -36,7 +35,6 @@ pub struct ToolCandidate {
 }
 
 /// Context for tool selection, built from the current turn's state.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ToolSelectionContext {
     /// The latest user message text, if any.
@@ -54,19 +52,17 @@ pub struct ToolSelectionContext {
 /// "no filtering" (fail-open) — the caller passes all tools through.
 /// This distinguishes "router did not activate" from "router activated
 /// but found no matching tools."
-#[allow(dead_code)]
 pub trait ToolRouter: Send + Sync {
     fn select_tools(&self, context: &ToolSelectionContext) -> Option<Vec<SharedString>>;
 }
 
 /// Lazy keyword-overlap tool router. Only activates when the request is
-/// complex or explicitly tool-directed. For simple messages, returns empty
+/// complex or explicitly tool-directed. For simple messages, returns `None`
 /// (fail-open).
 ///
 /// When activated, scores each tool by keyword overlap between the context
 /// and the tool's description. Tools scoring ≥ the threshold are included.
 /// Always-on tools (spawn_agent, skill, etc.) bypass scoring.
-#[allow(dead_code)]
 pub struct LazyToolRouter {
     /// Tools that are always included when the router activates.
     always_on: HashSet<&'static str>,

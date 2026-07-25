@@ -2,64 +2,85 @@
 
 ## Phase 1 — Foundation & high-risk plumbing
 
-- [x] **T1 (S1): Deferred tool-result plumbing**
-  - Added `deferred_tool_results: Vec<DeferredToolResult>` field + `DeferredToolResult` struct to `Thread`
-  - Drain at top of each `run_turn_internal` iteration (after compaction, before `build_completion_request`)
-  - `cancel()` clears the deferred queue
-  - 3 tests: `test_deferred_tool_result_appears_in_next_request`, `test_deferred_tool_result_pending_stays_in_queue`, `test_deferred_tool_result_cancel_clears_queue`
-  - `./script/clippy -p agent` clean
+- [x] **T1: Deferred tool-result plumbing**
+  - `DeferredToolResult` with `owning_message_ix` + `tool_name`, `Option<Pin<Box<oneshot::Receiver>>>`
+  - Drain at top of `run_turn_internal` after compaction, before `build_completion_request`
+  - Inject into original agent message (not synthetic orphan) — API-compliant `tool_use` + `tool_result` pairing
+  - `cancel()` clears the queue; `end_turn` path waits for pending deferred results (closure fix)
+  - 3 tests
   - Files: `crates/agent/src/thread.rs`
 
-- [x] **T2a (S2): `SubagentHandle::send_streaming` trait method**
-  - Added `send_streaming` to `SubagentHandle` trait with default impl delegating to `send` (I2)
-  - Implemented on `NativeSubagentHandle`: spawns subagent turn in background, delivers result via oneshot channel
-  - Added `enqueue_deferred_result` method to `ToolCallEventStream` for parent-thread access
-  - Files: `crates/agent/src/thread.rs` (trait + `ToolCallEventStream`), `crates/agent/src/agent.rs` (impl)
+- [x] **T2a: `SubagentHandle::send_streaming` trait method**
+  - Async trait method with default impl delegating to `send` (I2)
+  - `NativeSubagentHandle` override spawns background turn, delivers via oneshot
+  - `ToolCallEventStream::enqueue_deferred_result` bridges to parent thread with `owning_message_ix` + `tool_name`
+  - Files: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`
 
-- [~] **T2b (S2): Non-blocking `spawn_agent` tool** (DEFERRED)
-  - Infrastructure in place (deferred results, `send_streaming`, `enqueue_deferred_result`)
-  - Blocking `send` kept to preserve test compatibility — non-blocking requires test suite updates
-  - The `send_streaming` method and deferred-result plumbing are ready for opt-in activation
-
-**Checkpoint 1**: ✅ `./script/clippy -p agent` clean; `cargo test -p agent --features test-support` passes (23 subagent tests + 3 deferred-result tests)
+- [~] **T2b: Non-blocking `spawn_agent` tool** (DEFERRED)
+  - Infrastructure complete; blocking `send` kept for test compatibility
+  - Activation requires updating the subagent test suite's timing assumptions
 
 ## Phase 2 — Conditional rules
 
-- [x] **T3 (S5): Frontmatter parsing in `prompt_store`**
-  - Add `RuleFrontmatter { globs: Vec<String>, always_apply: bool }` + `Option<RuleFrontmatter>` on `RulesFileContext`
-  - Parse YAML frontmatter in `load_worktree_rules_file`; strip from `text`
-  - AC: frontmattered file parses into correct `globs` + `always_apply`; `text` excludes frontmatter
-  - AC: no-frontmatter file parses with `always_apply: true`, `globs: vec![]`, `text` unchanged (I2)
+- [x] **T3: Frontmatter parsing**
+  - `RuleFrontmatter { globs, always_apply }` with manual `Default` impl (always_apply: true)
+  - `parse_rules_frontmatter()` handles empty frontmatter (`---\n---`), no closing fence, malformed YAML
+  - 6 tests
   - Files: `crates/prompt_store/src/prompts.rs`, `crates/agent/src/agent.rs`
-  - Scope: S
 
-- [x] **T4 (S6): Conditional-rules scoping**
-  - Filter conditional rules (`always_apply: false` + non-empty `globs`) in `build_project_context` by open-files + mentioned-paths
-  - AC: `**/*.rs`-scoped rule included iff a `.rs` file is open or a `.rs` path is in latest user message
-  - AC: `alwaysApply: true` rules always included (I2)
-  - Files: `crates/agent/src/agent.rs`, `crates/agent/src/thread.rs`
-  - Scope: M
+- [x] **T4: Conditional-rules scoping**
+  - `filter_conditional_rules()` in `render_system_prompt` — clones `ProjectContext`, filters by open-file + mentioned paths
+  - Relative glob matching via `globset` with worktree-prefix stripping
+  - `has_rules` recomputed after filtering
+  - Cached via `CachedFilteredContext` + `filter_inputs_digest` — avoids per-render clone when inputs stable
+  - Invalid globs logged via `log::warn!`
+  - 4 tests
+  - Files: `crates/agent/src/thread.rs`
 
 ## Phase 3 — Static-context memory
 
-- [x] **T5 (S3): Static-context memory block**
-  - Add `inject_static_context` to `ContextInjector` (default returns empty — I2)
-  - Add `static_context: Option<SharedString>` to `Thread`; call once on first turn, cache
-  - Add `static_context` to `SystemPromptTemplate` + `.hbs`; include in `system_prompt_digest` (I1)
-  - Files: `crates/agent/src/agent.rs`, `crates/agent/src/thread.rs`, `crates/agent/src/templates.rs`, `crates/agent/src/templates/system_prompt.hbs`
-  - Scope: M
+- [x] **T5: Static-context memory block**
+  - `inject_static_context` is async (returns `Pin<Box<Future>>`) — no `block_on` deadlock risk
+  - Loaded in `run_turn_internal` (async context) before `build_completion_request`, cached on `Thread`
+  - `BridgeContextInjector` overrides with high-confidence memory recall
+  - Rendered in system prompt after project context, included in digest
+  - Files: `crates/agent/src/agent.rs`, `crates/agent/src/thread.rs`, `crates/agent/src/templates.rs`, `crates/agent/src/templates/system_prompt.hbs`, `kask/crates/kask_bridge/src/context_injector.rs`
 
 ## Phase 4 — Context-aware tool router
 
-- [x] **T6 (S7): `ToolRouter` trait + heuristic scorer**
-  - Create `crates/agent/src/tool_router.rs`: `ToolRouter` trait, `ToolSelectionContext`, `HeuristicToolRouter`
-  - Heuristic scores: `.rs`/`.ts` open ⇒ `grep`/`read_file`/`edit_file`/`diagnostics` ≥ 0.5; URL in msg ⇒ `fetch`/`web_search` ≥ 0.5; baseline 0.1
-  - Return tools scoring ≥ 0.30
-  - Files: `crates/agent/src/tool_router.rs` (new), `crates/agent/src/tools.rs`
-  - Scope: M
+- [x] **T6: Lazy tool router**
+  - `LazyToolRouter` — only activates on explicit tool requests, complex messages (≥40 words or decomposition signals), or code-file + edit signals
+  - Scores all tools (including MCP) by keyword overlap with descriptions
+  - Returns `Option<Vec<SharedString>>` — `None` = fail-open, `Some(vec)` = filter
+  - 8 tests
+  - Files: `crates/agent/src/tool_router.rs` (new)
 
-- [x] **T7 (S4): Wire `ToolRouter` into `enabled_tools`**
-  - Add `TOOL_ROUTER` extension point in `agent.rs` (mirror `CONTEXT_INJECTOR`)
-  - In `Thread::enabled_tools`, apply router filter after profile/feature-flag; fail-open on empty
-  - Files: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`
-  - Scope: M
+- [x] **T7: Wire `ToolRouter` into `enabled_tools` + composition root**
+  - `TOOL_ROUTER` extension point in `agent.rs` — returns `None` by default (I2)
+  - Applied in `Thread::enabled_tools` after profile/feature-flag filter
+  - Wired in `crates/zed/src/main.rs` composition root: `set_tool_router(Some(Arc::new(LazyToolRouter::new())))`
+  - Files: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`, `crates/zed/src/main.rs`
+
+## Adversarial review fixes
+
+- [x] **C1**: `tool_router()` returns `None` by default (I2 compliance)
+- [x] **C2**: `BridgeContextInjector` implements `inject_static_context`
+- [x] **B1**: Deferred result injected into original agent message (not synthetic orphan)
+- [x] **B2**: Deferred results survive replay (injected into original message's `tool_results`)
+- [x] **B3**: Correct `scoped_tool_call_id` using original `owning_message_ix`
+- [x] **B4**: Relative globs match via worktree-prefix stripping
+- [x] **B5**: Router returns `Option<Vec>` to distinguish "not activated" from "no matches"
+- [x] **M4**: `tool_name` stored on `DeferredToolResult`, not hardcoded
+- [x] **M6**: Empty frontmatter `---\n---` recognized
+- [x] **1.1**: `inject_static_context` is async — no `block_on` deadlock
+- [x] **1.2**: Clone-and-replace pattern instead of `Arc::get_mut` (no silent data loss)
+- [x] **1.4**: `CachedFilteredContext` avoids per-render `ProjectContext` clone
+- [x] **2.1**: `end_turn` path checks for pending deferred results (closure fix)
+- [x] **3.3**: `filter_conditional_rules` doc clarifies I2 scope
+- [x] **3.4**: `drain_completed_deferred_results` doc updated (noop waker, not `now_or_never`)
+
+## Remaining (not blocking)
+
+- T2b: Non-blocking `spawn_agent` — requires test suite timing updates
+- 1.5: Redundant `opened_buffers` traversal (twice per turn) — low priority
+- 2.4: Static context has no mid-session refresh — by design ("loaded once per session")

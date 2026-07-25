@@ -954,6 +954,15 @@ fn main() {
                                     agent::set_context_injector(Some(injector));
                                     log::info!("hKask context injector wired (userpod: {userpod_name})");
                                 }
+
+                                // Wire the lazy tool router. The router narrows
+                                // the tool set on complex or tool-directed requests,
+                                // reducing the tool list the model must reason about
+                                // when hKask's MCP servers expose many tools.
+                                agent::set_tool_router(Some(std::sync::Arc::new(
+                                    agent::tool_router::LazyToolRouter::new(),
+                                )));
+                                log::info!("hKask lazy tool router wired");
                             }
                             Err(e) => {
                                 log::warn!(
