@@ -37,12 +37,15 @@ manifest:
     LoRA/QLoRA configuration via 8-gate refinement (adapter purpose, dataset
     analysis, inference constraint, memory, task distance, quality/cost,
     knowledge preservation, harness capability), audits the operator-selected
-    configuration against 18 phase-aware contract gates (17 original + G-R1
-    runtime alert), reports findings losslessly with regression proposals, and
+    configuration against 19 phase-aware contract gates (17 original + G-R1
+    runtime alert + G-P1 persistence preflight), reports findings losslessly with regression proposals, and
     computes phase-aware convergence. v0.32.0: added preflight-dataset phase
     (G-D0 format compatibility with copy-paste mapping code, mirroring HF's
-    dataset_inspector.py three-state pattern) and G-R1 runtime alert gate
-    (loss spikes, NaN gradients, vanishing loss — mirroring HF trackio alerts).
+    dataset_inspector.py three-state pattern), G-R1 runtime alert gate
+    (loss spikes, NaN gradients, vanishing loss — mirroring HF trackio alerts),
+    and G-P1 persistence preflight (verifies HuggingFace artifact persistence
+    is configured before submit on ephemeral cloud hosts — mirroring HF's
+    "Critical: Saving Results to Hub" checklist).
     losslessly with regression proposals, and computes phase-aware convergence.
     v0.31.0: evolved from template-by-template invocation into a coordinated
     flow with mechanical PDCA loop closure, deeper capability reasoning over

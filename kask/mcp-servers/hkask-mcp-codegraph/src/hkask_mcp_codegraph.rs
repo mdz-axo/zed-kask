@@ -455,17 +455,17 @@ impl CodeGraphServer {
             }
 
             // Resolve API key and base URL from the model prefix.
-            let (api_key, base_url, model_id) = if model.starts_with("DI/") {
+            let (api_key, base_url, model_id) = if let Some(stripped) = model.strip_prefix("DI/") {
                 (
                     std::env::var("DI_API_KEY").unwrap_or_default(),
                     "https://api.deepinfra.com/v1".to_string(),
-                    model[3..].to_string(),
+                    stripped.to_string(),
                 )
-            } else if model.starts_with("OR/") {
+            } else if let Some(stripped) = model.strip_prefix("OR/") {
                 (
                     std::env::var("OR_API_KEY").unwrap_or_default(),
                     "https://openrouter.ai/api/v1".to_string(),
-                    model[3..].to_string(),
+                    stripped.to_string(),
                 )
             } else {
                 return Ok(serde_json::json!({

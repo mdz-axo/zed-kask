@@ -400,11 +400,11 @@ fn classify_complexity(prompt: &str) -> QueryComplexity {
 ///
 /// Returns a slice of the panel to dispatch. When panel sizing is disabled,
 /// returns the full panel.
-fn effective_panel<'a>(
-    panel: &'a [String],
+fn effective_panel(
+    panel: &[String],
     complexity: QueryComplexity,
     panel_sizing_enabled: bool,
-) -> &'a [String] {
+) -> &[String] {
     if !panel_sizing_enabled {
         return panel;
     }
@@ -477,10 +477,7 @@ fn compute_pressure() -> f64 {
 /// - P < 0.3 → full panel
 /// - 0.3 ≤ P < 0.7 → 2 models
 /// - P ≥ 0.7 → 1 model
-fn pressure_adjusted_panel<'a>(
-    panel: &'a [String],
-    pressure_adaptive_enabled: bool,
-) -> &'a [String] {
+fn pressure_adjusted_panel(panel: &[String], pressure_adaptive_enabled: bool) -> &[String] {
     if !pressure_adaptive_enabled {
         return panel;
     }
@@ -1264,18 +1261,17 @@ async fn mode_deliberation(
             // emit an advisory measured-convergence signal. The judge
             // verdict already won — this is an additional observability span.
             if let (Some(gamma), Some(threshold)) = (measured_coherence, fusion.coherence_threshold)
+                && gamma > threshold
             {
-                if gamma > threshold {
-                    info!(
-                        target: "reg.fusion",
-                        fusion_mode = "deliberation",
-                        round = round,
-                        measured_convergence = true,
-                        coherence = gamma,
-                        threshold,
-                        "Measured coherence exceeded threshold (advisory)"
-                    );
-                }
+                info!(
+                    target: "reg.fusion",
+                    fusion_mode = "deliberation",
+                    round = round,
+                    measured_convergence = true,
+                    coherence = gamma,
+                    threshold,
+                    "Measured coherence exceeded threshold (advisory)"
+                );
             }
             let result = InferenceResult {
                 text: payload.unwrap_or_default(),

@@ -652,6 +652,7 @@ mod tests {
             consolidation_cadence_secs,
             confidence_floor,
             last_consolidation: Mutex::new(None),
+            tokio_handle: tokio::runtime::Handle::current(),
         }
     }
 

@@ -11,12 +11,13 @@ description: >
   Training approach selection (G0-G5) precedes harness selection (G6) — the
   harness is selected based on its capability to efficiently process the
   declared dataset and produce the adapter type implied by G0. Audits math,
-  quantization, data/evaluation, forgetting, runtime alert, and harness-method
-  compatibility gates with phase-aware states and evidence. PDCA iteration loop
-  is mechanically closed by the process manifest: preflight-dataset →
-  select-method → audit-config → report → convergence-check → loop, with
-  prior_iteration routing. Emits reg.lora.* spans, plus outcome and
-  operator_feedback spans that close the self-improvement feedback loop.
+  quantization, data/evaluation, forgetting, runtime alert, persistence
+  preflight, and harness-method compatibility gates with phase-aware states
+  and evidence. PDCA iteration loop is mechanically closed by the process
+  manifest: preflight-dataset → select-method → audit-config → report →
+  convergence-check → loop, with prior_iteration routing. Emits reg.lora.*
+  spans, plus outcome and operator_feedback spans that close the
+  self-improvement feedback loop.
 ---
 
 # LoRA Training
@@ -172,12 +173,14 @@ This skill does not train, load, initialize, merge, or evaluate models.
 5. Use exactly one evidence kind:
    `config_value | code_presence | code_absence | runtime_measurement | operator_assertion | not_available`.
    `code_absence` requires a search of the complete declared harness scope.
-6. Apply all 18 gates phase-appropriately: G-M1..G-M5, G-Q1..G-Q6,
-   G-D1..G-D3, G-F1..G-F2, G-H1, and G-R1 (runtime alert). Runtime and
-   post-training passes require supplied measurements; this template never
-   executes those checks. Consume `dataset_profile` from G-D0 for G-D1 dataset
-   size/quality assessment. Consume `runtime_metrics` for G-R1 runtime alert
-   assessment (loss spikes, NaN gradients, vanishing loss) when supplied.
+6. Apply all 19 gates phase-appropriately: G-M1..G-M5, G-Q1..G-Q6,
+   G-D1..G-D3, G-F1..G-F2, G-H1, G-R1 (runtime alert), and G-P1 (persistence
+   preflight). Runtime and post-training passes require supplied measurements;
+   this template never executes those checks. Consume `dataset_profile` from
+   G-D0 for G-D1 dataset size/quality assessment. Consume `runtime_metrics`
+   for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing
+   loss) when supplied. G-P1 verifies HuggingFace artifact persistence is
+   configured before submit on ephemeral cloud hosts.
 7. Inspect initializer-specific preprocessing and persistence according to the
    selected initializer's documented contract. Do not introduce an EVA-specific
    or framework-version-specific refusal rule.

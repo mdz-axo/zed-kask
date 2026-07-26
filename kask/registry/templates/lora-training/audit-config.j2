@@ -166,6 +166,20 @@ STATIC_CONFIG
   [Citation: TRL trainer taxonomy — https://huggingface.co/docs/trl/index;
    Ludwig — https://ludwig.ai/latest/configuration/]
   Runtime enforcement: `lora_validation::validate_harness_compatibility()`.
+- G-P1 Persistence preflight (v0.32.0): verify that training results will
+  be persisted before allowing submit on ephemeral cloud hosts. The
+  persistence contract in hKask is job-level (env vars + artifacts), not
+  config-level: the install script's `huggingface-cli upload` is the actual
+  push-to-Hub, driven by `HKASK_HF_MODEL_REPO` / `HF_TOKEN` env vars and
+  `job.artifacts`.
+  - Runpod host: missing env vars → `refuse` (adapter lost on ephemeral pod).
+  - DeepInfra/Nebius hosts: `warn` (no auto-upload configured today —
+    `job.artifacts` is not set; manual retrieval may be possible but not
+    guaranteed on ephemeral infrastructure).
+  - Local/unknown hosts: `not_applicable`.
+  [Citation: HF huggingface-llm-trainer skill §Critical: Saving Results to
+   Hub — ephemeral environment, must push to Hub]
+  Runtime enforcement: `lora_validation::validate_persistence()`.
 
 HARNESS
 - G-M1 Initialization contract: inspect selected initializer documentation

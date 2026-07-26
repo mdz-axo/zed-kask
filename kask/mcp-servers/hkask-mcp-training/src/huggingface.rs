@@ -347,6 +347,10 @@ pub struct TrainingArtifacts {
 /// the private model repository at `jobs/{job_id}/completion-manifest.json`.
 /// Fetched by `training_status` to detect completion (the pod stays RUNNING for
 /// SSH debugging, so RunPod's desiredStatus alone cannot signal completion).
+///
+/// v0.32.0: extended with `grad_norm`, `current_step`, `total_steps`, and
+/// `alerts` to support G-R1 (runtime alert gate). All new fields are
+/// `#[serde(default)]` for backward compatibility with existing manifests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionManifest {
     pub job_id: String,
@@ -367,6 +371,22 @@ pub struct CompletionManifest {
     /// Final training loss, if available from the harness.
     #[serde(default)]
     pub loss: Option<f64>,
+    /// Final gradient norm, if available from the harness (v0.32.0).
+    /// Consumed by G-R1 (runtime alert gate) for NaN/infinite detection.
+    #[serde(default)]
+    pub grad_norm: Option<f64>,
+    /// Current training step at completion (v0.32.0). Consumed by G-R1 for
+    /// loss-divergence detection (loss > 5.0 after step 100).
+    #[serde(default)]
+    pub current_step: Option<u32>,
+    /// Total training steps (v0.32.0). Used to compute training progress.
+    #[serde(default)]
+    pub total_steps: Option<u32>,
+    /// Runtime alerts from the training loop (v0.32.0). Each alert becomes a
+    /// G-R1 finding with `evidence_kind: runtime_measurement`. Mirrors the
+    /// HF trackio alert pattern.
+    #[serde(default)]
+    pub alerts: Vec<crate::lora_validation::RuntimeAlert>,
     /// Output directory on the pod where the adapter was saved.
     #[serde(default)]
     pub output_dir: Option<String>,

@@ -953,7 +953,7 @@ fn main() {
                             embedding_model,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
-                            gpui_tokio::Tokio::handle(&cx),
+                            gpui_tokio::Tokio::handle_async(&*cx),
                         ) {
                             Ok(real) => {
                                 let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
@@ -1021,8 +1021,9 @@ fn main() {
                     // start_server_with_env uses tokio::process::Command.
                     // Both require a tokio reactor. We're inside a cx.spawn
                     // (GPUI foreground executor), so enter the tokio runtime
-                    // context for the duration of the MCP launch block.
-                    let _tokio_guard = gpui_tokio::Tokio::handle(&cx).enter();
+                    // context for the MCP server launches.
+                    let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
+                    let _tokio_guard = tokio_handle.enter();
                     // kask settings UI writes keys via zed's CredentialsProvider
                     // (under `kask://credentials/<key>`), while MCP servers read
                     // env vars / hKask's Keychain (service "hkask").
@@ -1177,7 +1178,7 @@ fn main() {
                             let max_price = kask_settings.fusion.openrouter_max_price;
                             let min_ia = kask_settings.fusion.openrouter_min_intelligence;
                             let discovery_task = {
-                                let _tokio_guard = gpui_tokio::Tokio::handle(&cx).enter();
+                                let _tokio_guard = gpui_tokio::Tokio::handle_async(&*cx).enter();
                                 cx.background_spawn(async move {
                                     kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
                                 })

@@ -70,14 +70,16 @@ templates:
     lexicon_terms: [audit, verify, gate, contract, evidence, config, harness, escalate]
     description: >
       Read training config, harness, runtime, and post-training evidence.
-      Evaluate the applicable subset of 18 quality gates. v0.31.0: emits
+      Evaluate the applicable subset of 19 quality gates. v0.31.0: emits
       refuse_escalation for refuse findings (algedonic S1→S5 short-circuit)
       and rejects findings with config_value/code_presence/code_absence
       evidence_kind but null config_path/line (no-fiction enforcement,
       mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1
       dataset size/quality assessment. v0.32.0: consumes runtime_metrics for
       G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing
-      loss) when supplied.
+      loss) when supplied. v0.32.0: G-P1 persistence preflight verifies
+      HuggingFace artifact persistence is configured before submit on
+      ephemeral cloud hosts.
 
   - id: lora-training/report
     name: "Synthesize training-config findings and propose regressions"
