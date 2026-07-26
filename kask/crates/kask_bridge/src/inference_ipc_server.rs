@@ -30,7 +30,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::Task;
 use hkask_types::inference_ipc::{
     InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
 };
@@ -46,7 +45,7 @@ pub struct InferenceIpcServer {
     /// The socket path — passed to MCP server child processes via env var.
     socket_path: PathBuf,
     /// The background listener task.
-    _task: Task<()>,
+    _task: tokio::task::JoinHandle<()>,
 }
 
 impl InferenceIpcServer {
@@ -64,20 +63,20 @@ impl InferenceIpcServer {
         // Generate a unique socket path.
         let socket_path = generate_socket_path();
 
-        // Bind the listener on the tokio runtime (background executor).
-        let executor = cx.background_executor();
+        // Bind the listener on the tokio runtime (via gpui_tokio, not GPUI's
+        // background executor — UnixListener::bind and accept require a tokio
+        // reactor, and GPUI's executor is not tokio).
+        let tokio_handle = gpui_tokio::Tokio::handle(cx);
 
         // Use a oneshot channel to get the bind result synchronously.
         let (tx, rx) = std::sync::mpsc::channel();
         let socket_path_for_bind = socket_path.clone();
-        executor
-            .spawn(async move {
-                // Remove any stale socket file.
-                let _ = std::fs::remove_file(&socket_path_for_bind);
-                let result = UnixListener::bind(&socket_path_for_bind);
-                let _ = tx.send(result);
-            })
-            .detach();
+        tokio_handle.spawn(async move {
+            // Remove any stale socket file.
+            let _ = std::fs::remove_file(&socket_path_for_bind);
+            let result = UnixListener::bind(&socket_path_for_bind);
+            let _ = tx.send(result);
+        });
 
         let listener = rx
             .recv()
@@ -87,7 +86,7 @@ impl InferenceIpcServer {
             })?;
 
         let port = inference_port.clone();
-        let task = executor.spawn(async move {
+        let task = tokio_handle.spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {

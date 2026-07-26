@@ -271,14 +271,18 @@ impl GraphStore {
 
     /// Insert or replace an embedding for a symbol in the `symbols_vec` table.
     ///
-    /// The embedding must match the dimension the table was created with
-    /// (see `DEFAULT_EMBEDDING_DIM` / `HKASK_EMBEDDING_DIM`).
+    /// The `symbols_vec` table uses sqlite-vec's `vec0` virtual table format,
+    /// which has an implicit `rowid` (used as the symbol ID) and an `embedding`
+    /// column. The embedding must match the dimension the table was created
+    /// with (see `DEFAULT_EMBEDDING_DIM` / `HKASK_EMBEDDING_DIM`).
     pub fn upsert_embedding(&self, symbol_id: i64, embedding: &[f32]) -> Result<()> {
-        // Serialize the embedding as a JSON array — sqlite-vec accepts this
-        // format for the vec0 virtual table.
+        // sqlite-vec's vec0 table accepts embeddings as JSON arrays or as
+        // packed binary blobs. We use the JSON format for simplicity.
+        // The rowid is the symbol_id — this is how we associate vectors
+        // with symbols for later JOIN queries.
         let embedding_json = serde_json::to_string(embedding)?;
         self.conn.execute(
-            "INSERT OR REPLACE INTO symbols_vec (symbol_id, embedding)
+            "INSERT OR REPLACE INTO symbols_vec (rowid, embedding)
              VALUES (?1, ?2)",
             params![symbol_id, embedding_json],
         )?;

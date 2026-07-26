@@ -497,7 +497,31 @@ fn main() {
         zed_actions::init();
 
         release_channel::init(app_version, cx);
-        gpui_tokio::init(cx);
+
+        // Build the kask tokio runtime and register it as the GPUI-global tokio
+        // runtime via gpui_tokio. This eliminates the split-brain between a
+        // separate "kask_tokio_runtime" and gpui_tokio's own runtime — all
+        // kask async code (CyberneticsLoop, MetacognitionLoop, MCP server
+        // launches, embedding HTTP calls, inference IPC, skill manifest
+        // execution) now routes through Tokio::spawn(cx, ...) /
+        // Tokio::handle(cx), the same pattern zed's own code uses
+        // (livekit_client, extension_host).
+        //
+        // The runtime is multi-threaded with more workers than gpui_tokio's
+        // default 2, because kask drives MCP server I/O, embedding HTTP calls,
+        // and regulation loops concurrently.
+        let kask_tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("kask-tokio")
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("failed to build kask tokio runtime — cannot start regulation loops");
+        let kask_runtime_handle = kask_tokio_runtime.handle().clone();
+        // The runtime is owned by GlobalTokio (registered below) for the
+        // lifetime of the app. Dropping GlobalTokio on app shutdown will
+        // shutdown_background the runtime.
+        gpui_tokio::init_from_handle(cx, kask_runtime_handle);
+        std::mem::forget(kask_tokio_runtime);
 
         // D1 composition root: wire the hKask manifest executor into the SkillTool.
         // After this call, skill activations run the hKask cascade (KnowAct/FlowDef/
@@ -561,34 +585,18 @@ fn main() {
         log::info!("hKask regulation system wired — tool invocations are governed");
 
         // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
-        // a dedicated tokio runtime. GPUI's `background_spawn` uses its own
-        // thread-pool executor (not tokio), so `tokio::time::interval` and
-        // `tokio::sync::RwLock` would panic with "there is no reactor running"
-        // if spawned via `cx.background_spawn`. The kask regulation crates
-        // (hkask-regulation, hkask-mcp) are tokio-native; they need a real
-        // tokio reactor to drive their timers and I/O.
+        // the GPUI-global tokio runtime (registered above via
+        // gpui_tokio::init_from_handle). All kask async code that uses tokio
+        // APIs (timers, I/O, locks, process spawns) must route through
+        // Tokio::spawn(cx, ...) — GPUI's background_spawn uses its own
+        // thread-pool executor, not a tokio reactor, so spawning tokio code
+        // there panics with "there is no reactor running".
         //
-        // The runtime is multi-threaded so both loops can run concurrently
-        // with any MCP server I/O that the governance membrane triggers.
-        // It is detached (never joined) — the loops run for the lifetime of
-        // the process and are cancelled when the runtime is dropped on exit.
-        let kask_tokio_runtime = tokio::runtime::Builder::new_multi_thread()
-            .thread_name("kask-tokio")
-            .enable_all()
-            .build()
-            .expect("failed to build kask tokio runtime — cannot start regulation loops");
-        let kask_runtime_handle = kask_tokio_runtime.handle().clone();
-        // The runtime must outlive the spawn scope. Leak it intentionally —
-        // it is a process-lifetime resource (the loops run forever, and the
-        // MCP server I/O it drives runs until the process exits). Dropping it
-        // would cancel all spawned tasks immediately.
-        std::mem::forget(kask_tokio_runtime);
-
         // CyberneticsLoop tick cycle (10s interval).
         // Without this, the RegulationLedger stays empty — no variety
         // counters, no regulation health, no algedonic alerts. The
         // metacognition loop would be sensing a dead system.
-        kask_runtime_handle.spawn(async move {
+        gpui_tokio::Tokio::spawn(cx, async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             interval.tick().await; // skip the first immediate tick
             loop {
@@ -597,7 +605,8 @@ fn main() {
                 use hkask_regulation::RegulationLoop;
                 loop_guard.tick().await;
             }
-        });
+        })
+        .detach();
         log::info!("CyberneticsLoop tick cycle started (10s interval)");
 
         // Curator metacognition loop — runs sense→compare→compute→act cycles.
@@ -616,9 +625,10 @@ fn main() {
                 .with_alert_receiver(alert_rx),
         );
         let metacog_loop = metacognition_loop.clone();
-        kask_runtime_handle.spawn(async move {
+        gpui_tokio::Tokio::spawn(cx, async move {
             metacog_loop.run().await;
-        });
+        })
+        .detach();
         log::info!("Curator metacognition loop started (30s tick interval)");
 
         // Wire the metacognition provider so the CuratorStatusTool can read
@@ -1003,6 +1013,15 @@ fn main() {
                 if !servers_to_start_clone.is_empty() {
                     // Build the MCP env, including API keys resolved from zed's
                     // keychain. This bridges the two keychain namespaces: the
+                    // kask keystore (hkask_keystore::keychain) and zed's
+                    // CredentialsProvider.
+                    //
+                    // McpRuntime uses tokio::sync::RwLock internally, and
+                    // start_server_with_env uses tokio::process::Command.
+                    // Both require a tokio reactor. We're inside a cx.spawn
+                    // (GPUI foreground executor), so enter the tokio runtime
+                    // context for the duration of the MCP launch block.
+                    let _tokio_guard = gpui_tokio::Tokio::handle(&cx).enter();
                     // kask settings UI writes keys via zed's CredentialsProvider
                     // (under `kask://credentials/<key>`), while MCP servers read
                     // env vars / hKask's Keychain (service "hkask").

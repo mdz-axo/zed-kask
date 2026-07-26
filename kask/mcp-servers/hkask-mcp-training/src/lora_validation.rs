@@ -842,35 +842,37 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
     }
 
     // Detect loss divergence: loss > 5.0 after step 100.
-    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss) {
-        if step > 100 && loss > 5.0 {
-            findings.push(ValidationFinding {
-                gate_id: "G-R1",
-                severity: ValidationSeverity::Refuse,
-                message: format!(
-                    "Loss divergence: loss {:.4} still high after {} steps",
-                    loss, step
-                ),
-                source: "trackio.alert pattern — huggingface-trackio skill §Autonomous ML Experiment Workflow",
-                remediation: "Stop the run, reduce learning rate, or check for dataset/label errors".to_string(),
-            });
-        }
+    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss)
+        && step > 100
+        && loss > 5.0
+    {
+        findings.push(ValidationFinding {
+            gate_id: "G-R1",
+            severity: ValidationSeverity::Refuse,
+            message: format!(
+                "Loss divergence: loss {:.4} still high after {} steps",
+                loss, step
+            ),
+            source: "trackio.alert pattern — huggingface-trackio skill §Autonomous ML Experiment Workflow",
+            remediation: "Stop the run, reduce learning rate, or check for dataset/label errors".to_string(),
+        });
     }
 
     // Detect vanishing loss: |loss| < 1e-8 after step 0.
-    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss) {
-        if step > 0 && loss.abs() < 1e-8 {
-            findings.push(ValidationFinding {
-                gate_id: "G-R1",
-                severity: ValidationSeverity::Warn,
-                message: format!(
-                    "Vanishing loss: loss {:.2e} near zero at step {} — possible gradient collapse",
-                    loss, step
-                ),
-                source: "trackio.alert pattern — huggingface-trackio skill §Alerts",
-                remediation: "Check gradient flow, learning rate, and dataset labels".to_string(),
-            });
-        }
+    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss)
+        && step > 0
+        && loss.abs() < 1e-8
+    {
+        findings.push(ValidationFinding {
+            gate_id: "G-R1",
+            severity: ValidationSeverity::Warn,
+            message: format!(
+                "Vanishing loss: loss {:.2e} near zero at step {} — possible gradient collapse",
+                loss, step
+            ),
+            source: "trackio.alert pattern — huggingface-trackio skill §Alerts",
+            remediation: "Check gradient flow, learning rate, and dataset labels".to_string(),
+        });
     }
 
     // Detect NaN gradient norm.
