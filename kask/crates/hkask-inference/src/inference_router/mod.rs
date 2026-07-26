@@ -635,6 +635,9 @@ mod tests {
                 skills: Vec::new(),
                 max_rounds: 5,
                 algo_method: AlgoMethod::default(),
+                coherence_threshold: None,
+                panel_sizing_enabled: false,
+                pressure_adaptive_enabled: false,
             }),
             ..Default::default()
         }
@@ -710,6 +713,9 @@ mod tests {
                 skills: Vec::new(),
                 max_rounds: 3,
                 algo_method: AlgoMethod::default(),
+                coherence_threshold: None,
+                panel_sizing_enabled: false,
+                pressure_adaptive_enabled: false,
             }),
             system_prompt: None,
             ..Default::default()
@@ -732,6 +738,9 @@ mod tests {
                 skills: Vec::new(),
                 max_rounds: 5,
                 algo_method: AlgoMethod::default(),
+                coherence_threshold: None,
+                panel_sizing_enabled: false,
+                pressure_adaptive_enabled: false,
             }),
             system_prompt: None,
             ..Default::default()
@@ -755,6 +764,9 @@ mod tests {
                 skills: Vec::new(),
                 max_rounds: 5,
                 algo_method: AlgoMethod::default(),
+                coherence_threshold: None,
+                panel_sizing_enabled: false,
+                pressure_adaptive_enabled: false,
             }),
             system_prompt: None,
             ..Default::default()

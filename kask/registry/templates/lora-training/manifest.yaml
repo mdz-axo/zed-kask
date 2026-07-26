@@ -37,6 +37,19 @@ crate:
     select-method → audit-config → report → convergence-check.
 
 templates:
+  - id: lora-training/preflight-dataset
+    name: "Dataset format compatibility preflight with mapping code emission"
+    path: preflight-dataset.j2
+    type: KnowAct
+    lexicon_terms: [detect, validate, format, dataset, mapping, compatibility]
+    description: >
+      v0.32.0: Detect dataset format, check compatibility against the expected
+      format for the selected trainer/method, and emit copy-paste Python mapping
+      code when a fixable column-name mismatch is found. Mirrors HF's
+      dataset_inspector.py three-state pattern (Ready / NeedsMapping /
+      Incompatible). Optional — skipped when dataset_path is absent. This is the
+      runtime-evidence source for G-D0.
+
   - id: lora-training/select-method
     name: "Recommend composable PEFT configuration via 8-gate refinement with capability reasoning"
     path: select-method.j2
@@ -57,12 +70,14 @@ templates:
     lexicon_terms: [audit, verify, gate, contract, evidence, config, harness, escalate]
     description: >
       Read training config, harness, runtime, and post-training evidence.
-      Evaluate the applicable subset of 17 quality gates. v0.31.0: emits
+      Evaluate the applicable subset of 18 quality gates. v0.31.0: emits
       refuse_escalation for refuse findings (algedonic S1→S5 short-circuit)
       and rejects findings with config_value/code_presence/code_absence
       evidence_kind but null config_path/line (no-fiction enforcement,
       mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1
-      dataset size/quality assessment.
+      dataset size/quality assessment. v0.32.0: consumes runtime_metrics for
+      G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing
+      loss) when supplied.
 
   - id: lora-training/report
     name: "Synthesize training-config findings and propose regressions"
@@ -89,5 +104,6 @@ templates:
       0.5 (coverage gap) instead of 1.0 (known risk), graded critical/high
       dimension (0→0.6→0.8→1.0) replaces binary, all-gates-not-applicable
       edge case handled. Distinguish preflight readiness, pending runtime
-      contracts, and post-training verification. Emit reg.lora.convergence
-      span (P9).
+      contracts, and post-training verification. v0.32.0: accepts
+      runtime_metrics for the runtime phase — G-R1 findings feed the runtime
+      dimension when current_phase=runtime. Emit reg.lora.convergence span (P9).

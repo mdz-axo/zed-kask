@@ -2318,6 +2318,12 @@ pub(crate) fn render_fusion_page(
         .openrouter_min_intelligence
         .map(|v| format!("{v}"))
         .unwrap_or_else(|| "40.0".to_string());
+    let coherence_threshold = fusion
+        .coherence_threshold
+        .map(|v| format!("{v}"))
+        .unwrap_or_default();
+    let panel_sizing_enabled = fusion.panel_sizing_enabled.unwrap_or(false);
+    let pressure_adaptive_enabled = fusion.pressure_adaptive_enabled.unwrap_or(false);
 
     let enabled_toggle = SwitchField::new(
         "kask-fusion-enabled",
@@ -2468,6 +2474,90 @@ pub(crate) fn render_fusion_page(
                 }
             });
 
+    // Codette-inspired: coherence threshold for measured convergence.
+    let coherence_threshold_input = SettingsInputField::new("kask-fusion-coherence-threshold")
+        .tab_index(0)
+        .with_initial_text(coherence_threshold)
+        .with_placeholder("0.8")
+        .aria_label("Coherence Threshold")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            let parsed = value.and_then(|t| t.parse::<f64>().ok());
+            SettingsStore::global(cx).update_settings_file(
+                <dyn fs::Fs>::global(cx),
+                move |settings, _| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .fusion
+                        .get_or_insert_default()
+                        .coherence_threshold = parsed;
+                },
+            );
+        });
+
+    // Codette-inspired: panel sizing toggle.
+    let panel_sizing_toggle = SwitchField::new(
+        "kask-fusion-panel-sizing",
+        Some("Panel Sizing"),
+        Some(
+            "When enabled, simple queries dispatch fewer panel models (1 for Simple, \
+             2 for Medium, all for Complex). Reduces cost on simple queries. \
+             Default: off (full panel always)."
+                .into(),
+        ),
+        if panel_sizing_enabled {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+        move |state, _window, cx| {
+            let is_enabled = *state == ToggleState::Selected;
+            SettingsStore::global(cx).update_settings_file(
+                <dyn fs::Fs>::global(cx),
+                move |settings, _| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .fusion
+                        .get_or_insert_default()
+                        .panel_sizing_enabled = Some(is_enabled);
+                },
+            );
+        },
+    );
+
+    // Codette-inspired: pressure-adaptive degradation toggle.
+    let pressure_adaptive_toggle = SwitchField::new(
+        "kask-fusion-pressure-adaptive",
+        Some("Pressure-Adaptive Degradation"),
+        Some(
+            "When enabled, panel size is reduced under high latency pressure \
+             (rolling average of recent dispatch times). Degraded output is \
+             better than hard failure. Default: off."
+                .into(),
+        ),
+        if pressure_adaptive_enabled {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+        move |state, _window, cx| {
+            let is_enabled = *state == ToggleState::Selected;
+            SettingsStore::global(cx).update_settings_file(
+                <dyn fs::Fs>::global(cx),
+                move |settings, _| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .fusion
+                        .get_or_insert_default()
+                        .pressure_adaptive_enabled = Some(is_enabled);
+                },
+            );
+        },
+    );
+
     // Build the mode options as a static hint label (the input is free-text
     // but we list the valid values so users know what to type).
     let mode_hint = FUSION_MODES
@@ -2616,6 +2706,42 @@ pub(crate) fn render_fusion_page(
                 .child(Label::new("Min Intelligence Index"))
                 .child(openrouter_min_intelligence_input),
         )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(SettingsSectionHeader::new("Codette-Inspired Enhancements"))
+                .child(
+                    Label::new(
+                        "Experimental features inspired by the Codette multi-perspective \
+                         reasoning architecture. All are opt-in and disabled by default.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Coherence Threshold"))
+                .child(
+                    Label::new(
+                        "When set (0.0–1.0), the orchestrator computes epistemic tension ξ \
+                         and coherence Γ from panel response embeddings in deliberation \
+                         mode. If Γ exceeds this threshold, an advisory measured-convergence \
+                         signal is emitted. Leave empty to disable. Requires an embedding \
+                         API key (DI_API_KEY or OR_API_KEY).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(coherence_threshold_input),
+        )
+        .child(Divider::horizontal())
+        .child(panel_sizing_toggle)
+        .child(Divider::horizontal())
+        .child(pressure_adaptive_toggle)
         .into_any_element()
 }
 

@@ -37,7 +37,12 @@ manifest:
     LoRA/QLoRA configuration via 8-gate refinement (adapter purpose, dataset
     analysis, inference constraint, memory, task distance, quality/cost,
     knowledge preservation, harness capability), audits the operator-selected
-    configuration against 17 phase-aware contract gates, reports findings
+    configuration against 18 phase-aware contract gates (17 original + G-R1
+    runtime alert), reports findings losslessly with regression proposals, and
+    computes phase-aware convergence. v0.32.0: added preflight-dataset phase
+    (G-D0 format compatibility with copy-paste mapping code, mirroring HF's
+    dataset_inspector.py three-state pattern) and G-R1 runtime alert gate
+    (loss spikes, NaN gradients, vanishing loss — mirroring HF trackio alerts).
     losslessly with regression proposals, and computes phase-aware convergence.
     v0.31.0: evolved from template-by-template invocation into a coordinated
     flow with mechanical PDCA loop closure, deeper capability reasoning over
@@ -195,8 +200,36 @@ inputs:
       intrinsic evaluative feedback signal (e_t) for self-improvement,
       sourced from the operator. When absent, the skill has no operator
       feedback to learn from.
+  - name: runtime_metrics
+    type: object
+    required: false
+    description: >
+      v0.32.0: Runtime metrics from a training job — consumed by G-R1 (runtime
+      alert gate) and the convergence-check's runtime phase. Sourced from the
+      completion manifest or live metric polling (mirrors HF trackio alerts).
+      Includes: current_step, total_steps, loss, grad_norm, alerts (array of
+      {title, level, text, step}). When absent, runtime-phase gates remain
+      `deferred` and G-R1 is `not_applicable` in preflight.
 
 steps:
+  - ordinal: 0
+    action: select
+    description: >
+      v0.32.0: Preflight dataset format compatibility check. Detects the
+      dataset format, checks it against the expected format for the selected
+      trainer/method, and emits copy-paste Python mapping code when a fixable
+      column-name mismatch is found. Mirrors HF's dataset_inspector.py
+      three-state pattern (Ready / NeedsMapping / Incompatible). Optional —
+      skipped when dataset_path is absent.
+    renderer: minijinja
+    template_ref: lora-training/preflight-dataset
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      dataset_path: "{{ dataset_path | default('undetermined') }}"
+      trainer_preference: "{{ trainer_preference | default('undetermined') }}"
+      adapter_purpose: "{{ adapter_purpose | default('undetermined') }}"
+      userpod_host: "{{ userpod_host }}"
   - ordinal: 1
     action: select
     description: >
@@ -205,6 +238,8 @@ steps:
       6 trainers × 3 hosts × cost models) when provider_capabilities is
       supplied. G2 and G3 refine using prior_training_history when supplied
       (Good Regulator). Consumes prior_iteration when present (loop closure).
+      v0.32.0: Consumes step_0_result (preflight-dataset verdict) to gate
+      G-D0 dataset format compatibility before proceeding.
     renderer: minijinja
     template_ref: lora-training/select-method
     gas_cap: 6144
@@ -270,7 +305,9 @@ steps:
       Compute phase-aware convergence metric. v0.31.0: not_evaluated now
       maps to risk 0.5 (coverage gap) instead of 1.0 (known risk), graded
       critical/high dimension replaces binary, all-gates-not-applicable
-      edge case handled.
+      edge case handled. v0.32.0: accepts runtime_metrics for the runtime
+      phase — G-R1 findings (loss spikes, NaN gradients) feed the runtime
+      dimension when current_phase=runtime.
     renderer: minijinja
     template_ref: lora-training/convergence-check
     gas_cap: 4096
@@ -284,6 +321,7 @@ steps:
       existing_regressions: "{{ existing_regressions | default([]) }}"
       proposed_regressions: "{{ step_3_result.proposed_regressions | default([]) }}"
       previous_metric: "{{ prior_iteration.convergence_metric | default(none) }}"
+      runtime_metrics: "{{ runtime_metrics | default({}) }}"
       userpod_host: "{{ userpod_host }}"
     fusion: false
 
@@ -311,6 +349,10 @@ error_handling:
 
 ocap:
   required_capabilities:
+    - resource: template
+      action: render
+      template_id: lora-training/preflight-dataset
+      gas_budget: 2048
     - resource: template
       action: render
       template_id: lora-training/select-method

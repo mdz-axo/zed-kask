@@ -1,0 +1,158 @@
+{# goal: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors the HuggingFace dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). This is the runtime-evidence source for G-D0; it does not execute training. Preserve operator authority: the skill reports the verdict and mapping code; the operator decides whether to apply it. Emit reg.lora.preflight span (P9). No actual training execution; userpod_host mandatory (P12). #}
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- validate
+- format
+- dataset
+- mapping
+- compatibility
+contract:
+  input:
+    dataset_path: string
+    trainer_preference: string
+    adapter_purpose: string
+    userpod_host: string
+  output:
+    verdict: string
+    detected_format: string
+    expected_format: string
+    mapping_code: string
+    findings: array
+    reg_span_emitted: boolean
+energy_cap: 2048
+visibility: Public
+---
+{# Template: lora-training/preflight-dataset.j2 #}
+{# Functional Role: KnowAct — dataset format compatibility preflight #}
+{# Produces: verdict, detected_format, expected_format, mapping_code, findings #}
+{# Design: mirrors HF dataset_inspector.py three-state pattern (Ready/NeedsMapping/Incompatible) #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+INPUT: dataset_path = {{ dataset_path | default("REQUIRED") }} (path to the dataset file)
+INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | reward | grpo | undetermined)
+INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
+INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory authenticated host)
+
+AUTHORITY CONTRACT (P1, P4, P12):
+- This template reports a dataset format verdict and optional mapping code.
+- It does not execute training, load the dataset into memory, or modify files.
+- The operator decides whether to apply the mapping code; the verdict is advisory.
+- The runtime (training_validate_config / training_submit) enforces G-D0 refusals
+  (Incompatible verdict) at submit time. NeedsMapping is a warning, not a block.
+
+DERIVATION RULES (P8 — evidence-backed only):
+
+1. Derive the expected format from trainer_preference (takes precedence) or
+   adapter_purpose (fallback):
+   - trainer_preference=sft or undetermined → ChatML
+   - trainer_preference=dpo → PreferenceDpo
+   - trainer_preference=kto → PreferenceKto
+   - trainer_preference=orpo → PreferenceOrpo
+   - trainer_preference=reward or grpo → ChatML
+   - adapter_purpose=instruction/reasoning/vision/reward_model/undetermined → ChatML
+   - adapter_purpose=preference → PreferenceDpo
+   - If neither is declared (both undetermined), expected_format = "undetermined"
+     and the verdict is "ready" with no findings (cannot check compatibility).
+
+2. The detected_format comes from the runtime's DatasetFormat::detect() — this
+   template does not re-detect; it consumes the runtime-supplied profile.
+   When the runtime profile is unavailable, mark detected_format = "undetermined"
+   and emit a warn finding (cannot evaluate without detection).
+
+3. Verdict logic:
+   - detected == expected → "ready" (no findings)
+   - detected and expected are both SFT formats (ChatML, ShareGPT, Alpaca, RawText)
+     → "ready" (the dataset pipeline auto-normalizes SFT formats)
+   - detected and expected are both preference formats (PreferenceDpo, PreferenceKto,
+     PreferenceOrpo) but differ → "needs_mapping" (emit mapping code)
+   - detected is SFT and expected is preference, or vice versa → "incompatible"
+     (emit refuse finding — cannot use SFT data for preference training)
+   - detected or expected is "undetermined" → "ready" with a warn finding
+     (insufficient evidence to evaluate compatibility)
+
+4. Mapping code (only when verdict = "needs_mapping"):
+   - PreferenceKto → PreferenceDpo: map prompt/completion/label to prompt/chosen/rejected
+   - PreferenceOrpo → PreferenceDpo: extract prompt from chosen's first turn
+   - PreferenceDpo → PreferenceKto: map prompt/chosen/rejected to prompt/completion/label
+     (note: DPO only provides positive examples; KTO needs negatives)
+   - PreferenceDpo → PreferenceOrpo: drop prompt field
+   - PreferenceKto → PreferenceOrpo: map label to chosen/rejected (loses information)
+   - PreferenceOrpo → PreferenceKto: split into positive/negative examples
+   - Emit copy-paste Python following the HF dataset_inspector.py "MAPPING CODE" pattern.
+
+CITATION POLICY (P8):
+- Cite "TRL dataset formats — huggingface.co/docs/trl/main/en/dataset_formats" for
+  expected-format derivation.
+- Cite "HF dataset_inspector.py pattern — huggingface.co/datasets/mcp-tools/skills"
+  for the three-state verdict and mapping-code pattern.
+- Do not force both citations onto every finding.
+
+OCAP BOUNDARY (P4):
+- This template consumes the dataset_path and runtime-supplied profile only.
+- It does not read outside declared workspace paths, load the dataset into memory,
+  execute Python, or call remote services.
+
+Regulation SPAN (P9):
+- Emit `reg.lora.preflight` with verdict, detected_format, expected_format,
+  mapping_code length, finding count, userpod_host, and latency_ms.
+- Namespace is registered in CANONICAL_NAMESPACES.
+
+OUTPUT FORMAT (JSON):
+{
+  "verdict": "ready | needs_mapping | incompatible",
+  "detected_format": "ChatML | ShareGPT | Alpaca | RawText | PreferenceDpo | PreferenceKto | PreferenceOrpo | undetermined",
+  "expected_format": "ChatML | PreferenceDpo | PreferenceKto | PreferenceOrpo | undetermined",
+  "mapping_code": "<python string or empty>",
+  "findings": [
+    {
+      "gate_id": "G-D0",
+      "severity": "warn | refuse | info",
+      "message": "<precise IS/OUGHT statement>",
+      "source": "<citation>",
+      "remediation": "<advisory next action>"
+    }
+  ],
+  "userpod_host": "<mandatory>",
+  "reg_span_emitted": true
+}
+
+5W1H GATE (P5): Who = mandatory userpod host; What = dataset format compatibility
+verdict; Where = declared dataset path; When = before select-method (preflight);
+Why = prevent the #1 cause of training failures (format mismatches); How =
+detect format, derive expected format, compare, emit mapping code. All 6 present.
+
+MINIMAL: One KnowAct; no execution, no training, no model loading.
+EVIDENCE-BACKED ONLY (P8): detected_format comes from runtime detection;
+expected_format comes from declared trainer/purpose. No inference of format
+from filename alone when detection failed.
+OCAP BOUNDARY (P4): Workspace evidence only; no training execution or network call.
+Regulation REGULATION (P9): Emit the registered span unconditionally.
+USERPOD HOST (P12): `userpod_host` is mandatory.
+VISIBILITY (P11): Public output; no hidden preflight controls.
+SAFETY FLOOR (P3.1): Incompatible verdict remains visible as a refuse finding.
+
+SOURCE REFERENCES (P8 — concrete):
+- HF dataset_inspector.py: huggingface.co/datasets/mcp-tools/skills/raw/main/dataset_inspector.py
+  — three-state verdict pattern (✓ READY / ✗ NEEDS MAPPING / ✗ INCOMPATIBLE).
+- TRL dataset formats: huggingface.co/docs/trl/main/en/dataset_formats
+  — expected schema per trainer (SFT: messages; DPO: prompt/chosen/rejected;
+  KTO: prompt/completion/label; ORPO: chosen/rejected).
+- huggingface-llm-trainer skill §Dataset Validation — "50%+ of training failures
+  are due to dataset format issues" (motivation for this gate).
+- Runtime enforcement: `lora_validation::validate_dataset_format()` in
+  hkask-mcp-training/src/lora_validation.rs.
+
+REGISTRY AUTHORITATIVE (P5.1): Registry manifest + `.j2` templates are canonical.
+SKILL.md derived. If conflict, registry wins.
+PUBLIC VISIBILITY: `visibility: public` — no hidden preflight controls.
+NO FABRICATION: detected_format and expected_format come from declared evidence.
+Mapping code is generated only for structurally compatible preference-format
+mismatches; never fabricated for incompatible (SFT↔preference) mismatches.

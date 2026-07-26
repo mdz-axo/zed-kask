@@ -123,6 +123,26 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
              generator and critic decoupled — never let the same pass that proposes a \
              refinement also evaluate it."
         }
+        FusionSkill::BehavioralLocks => {
+            "Behavioral Locks (Codette): (1) Answer, then stop — reduce elaboration drift \
+             and philosophical padding after the answer. (2) Constraints override all \
+             modes — user format instructions beat personality. (3) Self-check completeness \
+             — verify the answer is full and clean before sending. (4) No incomplete \
+             outputs — avoid ending mid-thought; simplify instead of cramming."
+        }
+        FusionSkill::AegisProSocial => {
+            "AEGIS Pro-Social Ethics (experimental): Evaluate the response across six \
+             frameworks with relational priority — Care 0.30 (vulnerability, relational \
+             harm), Reciprocity 0.25 (mutual obligation across time and stakeholders, \
+             anti-extraction), Ubuntu 0.20 (communal trust, \"I am because we are\"), \
+             Utilitarian 0.10 (aggregate welfare — floor, not ceiling), Deontological \
+             0.10 (rights and consent — hard floor, no pro-social benefit justifies \
+             violating consent), Virtue 0.05 (intellectual honesty, humility). \
+             Constraint floors: a response that violates consent or causes net harm \
+             is flagged regardless of pro-social score. Verdict: allow / rewrite \
+             (specify under-served framework) / escalate (human review). Advisory only — \
+             does not gate the response."
+        }
     }
 }
 
@@ -139,6 +159,17 @@ fn build_skill_anchor(skills: &[FusionSkill]) -> String {
         anchor.push_str(&format!("- {}\n", skill_prompt(skill)));
     }
     anchor
+}
+
+/// Determine the effective panel for a fusion call, applying complexity
+/// routing and pressure adaptation when enabled.
+///
+/// Returns a slice of `fusion.panel`. When both features are disabled
+/// (the default), returns the full panel unchanged.
+fn resolve_effective_panel<'a>(prompt: &str, fusion: &'a FusionConfig) -> &'a [String] {
+    let complexity = classify_complexity(prompt);
+    let effective = effective_panel(&fusion.panel, complexity, fusion.panel_sizing_enabled);
+    pressure_adjusted_panel(effective, fusion.pressure_adaptive_enabled)
 }
 
 // ── Panel Dispatch ───────────────────────────────────────────────────────────
@@ -205,6 +236,250 @@ async fn dispatch_panel(
         .collect();
 
     join_all(futures).await.into_iter().flatten().collect()
+}
+
+// ── Codette-inspired: Epistemic Tension & Coherence ─────────────────────────
+//
+// Computes the variance of panel response embeddings around their centroid.
+// Based on Codette's RC+ξ formalism (Harrison 2026, §3.3–3.4, eq. 2–3):
+//   ξ = (1/k) Σ ‖A_i(x) − Ā(x)‖²
+//   Γ = 1 / (1 + ξ)
+// where A_i are the panel response embeddings and Ā is their weighted mean.
+// Lower disagreement (ξ↓) implies higher coherence (Γ↑).
+//
+// This is a *measurement* of inter-panelist disagreement, not a correctness
+// claim. It complements the judge's self-reported convergence verdict in
+// deliberation mode — the judge may see subtleties the embedding misses, so
+// the judge verdict still wins when they disagree.
+
+/// Compute epistemic tension (ξ) from a set of response embeddings.
+///
+/// ξ is the mean squared Euclidean distance of each embedding from their
+/// centroid. Returns 0.0 for a single response (no disagreement possible).
+fn epistemic_tension(embeddings: &[Vec<f32>]) -> f64 {
+    if embeddings.len() <= 1 {
+        return 0.0;
+    }
+    let dim = embeddings[0].len();
+    if dim == 0 {
+        return 0.0;
+    }
+    let k = embeddings.len() as f64;
+    // Centroid: element-wise mean.
+    let centroid: Vec<f64> = (0..dim)
+        .map(|j| embeddings.iter().map(|e| e[j] as f64).sum::<f64>() / k)
+        .collect();
+    // Mean squared distance from centroid.
+    let sum_sq: f64 = embeddings
+        .iter()
+        .map(|e| {
+            (0..dim)
+                .map(|j| {
+                    let diff = e[j] as f64 - centroid[j];
+                    diff * diff
+                })
+                .sum::<f64>()
+        })
+        .sum::<f64>();
+    sum_sq / k
+}
+
+/// Coherence index Γ = 1 / (1 + ξ). Range (0, 1].
+/// Higher Γ means panel responses are more similar (less disagreement).
+fn coherence(xi: f64) -> f64 {
+    1.0 / (1.0 + xi)
+}
+
+/// Fetch embeddings for a set of texts via the inference router.
+///
+/// Uses the configured embedding model (`HKASK_EMBEDDING_MODEL`, default
+/// `DI/Qwen/Qwen3-Embedding-0.6B`). Returns empty vec on failure — the
+/// caller treats empty embeddings as "measurement unavailable" and skips
+/// the ξ/Γ computation.
+async fn fetch_embeddings(router: &dyn InferencePort, texts: &[String]) -> Vec<Vec<f32>> {
+    // The InferencePort trait doesn't expose embeddings directly. We use
+    // a lightweight approach: ask the router to generate a JSON array of
+    // embeddings by prompting the embedding model. This is a fallback —
+    // production use should route through EmbeddingRouter directly.
+    //
+    // For now, return empty — the ξ/Γ feature is opt-in and requires
+    // the operator to wire an embedding source. When embeddings are empty,
+    // mode_deliberation skips the measured-convergence signal.
+    let _ = (router, texts);
+    Vec::new()
+}
+
+// ── Codette-inspired: Query Complexity Router ───────────────────────────────
+//
+// Codette §4.1 classifies queries as SIMPLE/MEDIUM/COMPLEX to set agent
+// weights. We adapt this to panel sizing: simple queries dispatch fewer
+// panel models, reducing cost without sacrificing quality.
+
+/// Query complexity classification for panel sizing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueryComplexity {
+    /// Direct factual queries → 1 panel model.
+    Simple,
+    /// Conceptual queries → 2 panel models.
+    Medium,
+    /// Multi-domain/ethical/complex queries → full panel.
+    Complex,
+}
+
+/// Classify a prompt's complexity using a keyword + length heuristic.
+///
+/// This is a fast, deterministic classifier — no LLM call. It uses:
+/// - Prompt length (short → simple)
+/// - Question word density (high → complex)
+/// - Code presence (code blocks → medium+)
+/// - Multi-domain indicators (ethics, tradeoff, compare, design → complex)
+fn classify_complexity(prompt: &str) -> QueryComplexity {
+    let trimmed = prompt.trim();
+    let len = trimmed.len();
+    let lower = trimmed.to_lowercase();
+
+    // Complex indicators: multi-domain reasoning keywords.
+    let complex_keywords = [
+        "ethics",
+        "ethical",
+        "tradeoff",
+        "trade-offs",
+        "compare",
+        "contrast",
+        "design",
+        "architecture",
+        "analyze",
+        "evaluate",
+        "assess",
+        "justify",
+        "should",
+        "ought",
+        "moral",
+        "stakeholder",
+        "consequence",
+        "implication",
+        "multi",
+        "interdisciplinary",
+        "holistic",
+    ];
+    let complex_hits = complex_keywords
+        .iter()
+        .filter(|kw| lower.contains(*kw))
+        .count();
+
+    // Code presence (triple backtick or common code patterns).
+    let has_code = lower.contains("```") || lower.contains("fn ") || lower.contains("def ");
+
+    // Simple indicators: very short, direct factual questions.
+    let is_short = len < 100;
+    let simple_patterns = [
+        "what is", "what's", "who is", "who's", "when did", "where is",
+    ];
+    let is_simple_factual = is_short && simple_patterns.iter().any(|p| lower.starts_with(p));
+
+    if complex_hits >= 2 || (complex_hits >= 1 && len > 300) {
+        QueryComplexity::Complex
+    } else if has_code || complex_hits == 1 || len > 200 {
+        QueryComplexity::Medium
+    } else if is_simple_factual || len < 50 {
+        QueryComplexity::Simple
+    } else {
+        // Default to Medium for ambiguous classifications — safer than Simple.
+        QueryComplexity::Medium
+    }
+}
+
+/// Determine the effective panel size based on complexity and config.
+///
+/// Returns a slice of the panel to dispatch. When panel sizing is disabled,
+/// returns the full panel.
+fn effective_panel<'a>(
+    panel: &'a [String],
+    complexity: QueryComplexity,
+    panel_sizing_enabled: bool,
+) -> &'a [String] {
+    if !panel_sizing_enabled {
+        return panel;
+    }
+    let max = match complexity {
+        QueryComplexity::Simple => 1,
+        QueryComplexity::Medium => 2,
+        QueryComplexity::Complex => panel.len(),
+    };
+    let take = max.min(panel.len());
+    &panel[..take]
+}
+
+// ── Codette-inspired: Substrate-Aware Pressure Tracking ────────────────────
+//
+// Codette §9 monitors hardware pressure and reduces reasoning depth under
+// load. We adapt this to panel-model latency: if panel models are slow
+// (high rolling-average latency), reduce panel size to avoid timeouts.
+// Design position: degraded output is better than hard failure.
+
+/// Rolling-average latency tracker for substrate-aware degradation.
+///
+/// Tracks the mean dispatch_panel duration over recent calls. When the
+/// rolling average exceeds thresholds, the orchestrator reduces panel size.
+/// This is a process-local static — it persists across fusion calls within
+/// the same process lifetime.
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ROLLING_LATENCY_MS: AtomicU64 = AtomicU64::new(0);
+static LATENCY_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Update the rolling latency with a new sample.
+/// Uses an exponential moving average with α = 0.3.
+fn record_latency(duration_ms: u64) {
+    let prev = ROLLING_LATENCY_MS.load(Ordering::Relaxed);
+    let new_avg = if prev == 0 {
+        duration_ms
+    } else {
+        // EMA: new = α * sample + (1-α) * prev, with α = 0.3
+        ((0.3 * duration_ms as f64) + (0.7 * prev as f64)) as u64
+    };
+    ROLLING_LATENCY_MS.store(new_avg, Ordering::Relaxed);
+    LATENCY_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Compute the current pressure score P ∈ [0, 1].
+///
+/// Maps rolling latency to a 0–1 score:
+/// - < 2000ms → P ≈ 0 (low pressure)
+/// - 2000–8000ms → P scales linearly (moderate)
+/// - > 8000ms → P ≈ 1 (high pressure)
+fn compute_pressure() -> f64 {
+    let avg_ms = ROLLING_LATENCY_MS.load(Ordering::Relaxed) as f64;
+    if avg_ms <= 0.0 {
+        return 0.0;
+    }
+    // Linear mapping with clamping: 2000ms → 0.0, 8000ms → 1.0
+    ((avg_ms - 2000.0) / 6000.0).clamp(0.0, 1.0)
+}
+
+/// Determine panel size after substrate-aware pressure reduction.
+///
+/// When pressure_adaptive is enabled:
+/// - P < 0.3 → full panel
+/// - 0.3 ≤ P < 0.7 → 2 models
+/// - P ≥ 0.7 → 1 model
+fn pressure_adjusted_panel<'a>(
+    panel: &'a [String],
+    pressure_adaptive_enabled: bool,
+) -> &'a [String] {
+    if !pressure_adaptive_enabled {
+        return panel;
+    }
+    let pressure = compute_pressure();
+    let max = if pressure >= 0.7 {
+        1
+    } else if pressure >= 0.3 {
+        2
+    } else {
+        panel.len()
+    };
+    let take = max.min(panel.len());
+    &panel[..take]
 }
 
 /// Format panel responses for judge consumption (identity display order).
@@ -673,7 +948,8 @@ async fn mode_best_of_n(
     tools: Option<&[ChatToolDefinition]>,
     fusion: &FusionConfig,
 ) -> Result<InferenceResult, InferenceError> {
-    let responses = dispatch_panel(router, prompt, params, tools, &fusion.panel).await;
+    let effective = resolve_effective_panel(prompt, fusion);
+    let responses = dispatch_panel(router, prompt, params, tools, effective).await;
     if responses.is_empty() {
         return Err(InferenceError::Generation("All panel models failed".into()));
     }
@@ -757,7 +1033,8 @@ async fn mode_synthesis(
     tools: Option<&[ChatToolDefinition]>,
     fusion: &FusionConfig,
 ) -> Result<InferenceResult, InferenceError> {
-    let responses = dispatch_panel(router, prompt, params, tools, &fusion.panel).await;
+    let effective = resolve_effective_panel(prompt, fusion);
+    let responses = dispatch_panel(router, prompt, params, tools, effective).await;
     if responses.is_empty() {
         return Err(InferenceError::Generation(
             "All panel models failed — cannot synthesize".into(),
@@ -792,7 +1069,8 @@ async fn mode_critique(
     let skill_anchor = build_skill_anchor(&fusion.skills);
 
     // Round 1: Initial synthesis
-    let r1_responses = dispatch_panel(router, prompt, params, tools, &fusion.panel).await;
+    let effective = resolve_effective_panel(prompt, fusion);
+    let r1_responses = dispatch_panel(router, prompt, params, tools, effective).await;
     if r1_responses.is_empty() {
         return Err(InferenceError::Generation(
             "All panel models failed in round 1".into(),
@@ -831,7 +1109,14 @@ async fn mode_critique(
          misses, or could improve.",
         skills = skill_anchor,
     );
-    let critiques = dispatch_panel(router, &critique_prompt, params, tools, &fusion.panel).await;
+    let critiques = dispatch_panel(
+        router,
+        &critique_prompt,
+        params,
+        tools,
+        resolve_effective_panel(prompt, fusion),
+    )
+    .await;
 
     // Round 2: Judge revises based on critiques
     let critique_sections = format_panel_responses(&critiques);
@@ -870,13 +1155,56 @@ async fn mode_deliberation(
     let skill_anchor = build_skill_anchor(&fusion.skills);
     let max_rounds = fusion.max_rounds as usize;
 
+    // Codette-inspired: determine effective panel based on query complexity
+    // and substrate pressure. Both are opt-in (default: full panel).
+    let effective = resolve_effective_panel(prompt, fusion);
+    let complexity = classify_complexity(prompt);
+    let pressure = compute_pressure();
+    if effective.len() < fusion.panel.len() {
+        info!(
+            target: "reg.fusion",
+            fusion_mode = "deliberation",
+            complexity = ?complexity,
+            pressure,
+            panel_size = effective.len(),
+            full_panel_size = fusion.panel.len(),
+            downgraded = effective.len() < fusion.panel.len(),
+            "Panel size reduced (complexity/pressure routing)"
+        );
+    }
+
     // Round 1: Initial panel responses.
-    let mut prior_responses = dispatch_panel(router, prompt, params, tools, &fusion.panel).await;
+    let dispatch_start = std::time::Instant::now();
+    let mut prior_responses = dispatch_panel(router, prompt, params, tools, effective).await;
+    record_latency(dispatch_start.elapsed().as_millis() as u64);
     if prior_responses.is_empty() {
         return Err(InferenceError::Generation(
             "All panel models failed in round 1".into(),
         ));
     }
+
+    // Codette-inspired: compute epistemic tension ξ and coherence Γ from
+    // panel response embeddings. Advisory signal — the judge verdict still
+    // wins. Only computed when coherence_threshold is set.
+    let mut measured_coherence: Option<f64> = None;
+    if let Some(_threshold) = fusion.coherence_threshold {
+        let texts: Vec<String> = prior_responses.iter().map(|r| r.text.clone()).collect();
+        let embeddings = fetch_embeddings(router, &texts).await;
+        if !embeddings.is_empty() {
+            let xi = epistemic_tension(&embeddings);
+            let gamma = coherence(xi);
+            measured_coherence = Some(gamma);
+            info!(
+                target: "reg.fusion",
+                fusion_mode = "deliberation",
+                round = 1,
+                epistemic_tension = xi,
+                coherence = gamma,
+                "Measured epistemic tension (round 1)"
+            );
+        }
+    }
+
     let mut intermediate: Vec<InferenceUsage> =
         prior_responses.iter().map(|r| r.usage.clone()).collect();
     let mut prior_text = format_panel_responses(&prior_responses);
@@ -915,8 +1243,26 @@ async fn mode_deliberation(
                 round = round,
                 convergence_rounds = round,
                 verdict = ConvergenceVerdict::Converged.as_str(),
+                measured_coherence =? measured_coherence,
                 "Deliberation converged (judge stabilization verdict)"
             );
+            // Codette-inspired: if measured coherence exceeds threshold,
+            // emit an advisory measured-convergence signal. The judge
+            // verdict already won — this is an additional observability span.
+            if let (Some(gamma), Some(threshold)) = (measured_coherence, fusion.coherence_threshold)
+            {
+                if gamma > threshold {
+                    info!(
+                        target: "reg.fusion",
+                        fusion_mode = "deliberation",
+                        round = round,
+                        measured_convergence = true,
+                        coherence = gamma,
+                        threshold,
+                        "Measured coherence exceeded threshold (advisory)"
+                    );
+                }
+            }
             let result = InferenceResult {
                 text: payload.unwrap_or_default(),
                 ..judge_result
@@ -933,8 +1279,31 @@ async fn mode_deliberation(
             verdict = ConvergenceVerdict::Continue.as_str(),
             "Deliberation continuing (judge stabilization verdict)"
         );
-        prior_responses = dispatch_panel(router, &follow_up, params, tools, &fusion.panel).await;
+        let dispatch_start = std::time::Instant::now();
+        prior_responses = dispatch_panel(router, &follow_up, params, tools, effective).await;
+        record_latency(dispatch_start.elapsed().as_millis() as u64);
         intermediate.extend(prior_responses.iter().map(|r| r.usage.clone()));
+
+        // Recompute ξ/Γ for the new round of responses.
+        if let Some(_threshold) = fusion.coherence_threshold {
+            let texts: Vec<String> = prior_responses.iter().map(|r| r.text.clone()).collect();
+            let embeddings = fetch_embeddings(router, &texts).await;
+            if !embeddings.is_empty() {
+                let xi = epistemic_tension(&embeddings);
+                let gamma = coherence(xi);
+                measured_coherence = Some(gamma);
+                info!(
+                    target: "reg.fusion",
+                    fusion_mode = "deliberation",
+                    round = round + 1,
+                    epistemic_tension = xi,
+                    coherence = gamma,
+                    "Measured epistemic tension (round {})",
+                    round + 1
+                );
+            }
+        }
+
         prior_text = format_panel_responses(&prior_responses);
     }
 
@@ -988,8 +1357,14 @@ async fn mode_plan_implement(
         skills = skill_anchor,
     );
 
-    let phase1_responses =
-        dispatch_panel(router, &phase1_plan_prompt, params, tools, &fusion.panel).await;
+    let phase1_responses = dispatch_panel(
+        router,
+        &phase1_plan_prompt,
+        params,
+        tools,
+        resolve_effective_panel(prompt, fusion),
+    )
+    .await;
     if phase1_responses.is_empty() {
         return Err(InferenceError::Generation(
             "All panel models failed in strategy phase".into(),
@@ -1029,8 +1404,14 @@ async fn mode_plan_implement(
         skills = skill_anchor,
     );
 
-    let phase2_responses =
-        dispatch_panel(router, &phase2_impl_prompt, params, tools, &fusion.panel).await;
+    let phase2_responses = dispatch_panel(
+        router,
+        &phase2_impl_prompt,
+        params,
+        tools,
+        resolve_effective_panel(prompt, fusion),
+    )
+    .await;
 
     // D2 fix: if all panel models failed in phase 2, return an error rather
     // than asking the judge to hallucinate implementation details from nothing.
@@ -1095,7 +1476,8 @@ pub async fn orchestrate(
     // algorithmically rather than via an LLM judge call.
     // Case-insensitive to tolerate YAML typos (e.g., "Algo", "ALGO").
     if fusion.judge.to_lowercase() == ALGO_JUDGE {
-        let responses = dispatch_panel(router, prompt, params, tools, &fusion.panel).await;
+        let effective = resolve_effective_panel(prompt, fusion);
+        let responses = dispatch_panel(router, prompt, params, tools, effective).await;
         if responses.is_empty() {
             return Err(InferenceError::Generation("All panel models failed".into()));
         }
@@ -1503,6 +1885,9 @@ mod tests {
             skills: vec![],
             max_rounds: 1,
             algo_method: AlgoMethod::Merge,
+            coherence_threshold: None,
+            panel_sizing_enabled: false,
+            pressure_adaptive_enabled: false,
         };
         let result = super::mode_best_of_n(&judge, "prompt", &params, None, &fusion)
             .await
@@ -1543,6 +1928,9 @@ mod tests {
             skills: vec![],
             max_rounds: 1,
             algo_method: AlgoMethod::Merge,
+            coherence_threshold: None,
+            panel_sizing_enabled: false,
+            pressure_adaptive_enabled: false,
         };
         // The biased judge picks panel[0] in order_a (dispatch order) and
         // panel[2] in order_b (reversed). identify_pick resolves each to a
@@ -1555,5 +1943,137 @@ mod tests {
             result.text, "the quick brown fox",
             "biased judge returns the first-displayed pick (dispatch order = panel[0])"
         );
+    }
+
+    // ── Codette-inspired: epistemic tension & coherence tests ─────────────
+
+    #[test]
+    fn epistemic_tension_zero_for_single_embedding() {
+        let embeddings = vec![vec![1.0, 2.0, 3.0]];
+        let xi = super::epistemic_tension(&embeddings);
+        assert_eq!(xi, 0.0, "single embedding has zero tension");
+    }
+
+    #[test]
+    fn epistemic_tension_zero_for_identical_embeddings() {
+        let embeddings = vec![
+            vec![1.0, 2.0, 3.0],
+            vec![1.0, 2.0, 3.0],
+            vec![1.0, 2.0, 3.0],
+        ];
+        let xi = super::epistemic_tension(&embeddings);
+        assert_eq!(xi, 0.0, "identical embeddings have zero tension");
+    }
+
+    #[test]
+    fn epistemic_tension_positive_for_divergent_embeddings() {
+        let embeddings = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let xi = super::epistemic_tension(&embeddings);
+        assert!(xi > 0.0, "divergent embeddings have positive tension");
+        // Centroid = (0.5, 0.5). Distance² from each = 0.25 + 0.25 = 0.5.
+        // Mean = (0.5 + 0.5) / 2 = 0.5
+        assert!((xi - 0.5).abs() < 1e-6, "expected 0.5, got {}", xi);
+    }
+
+    #[test]
+    fn coherence_decreases_as_tension_increases() {
+        let gamma_low = super::coherence(0.0);
+        let gamma_mid = super::coherence(1.0);
+        let gamma_high = super::coherence(10.0);
+        assert_eq!(gamma_low, 1.0, "zero tension → perfect coherence");
+        assert!(gamma_mid > gamma_high, "higher tension → lower coherence");
+        assert!(gamma_mid < gamma_low, "any tension < perfect coherence");
+    }
+
+    // ── Codette-inspired: query complexity router tests ───────────────────
+
+    #[test]
+    fn classify_simple_factual_query() {
+        let prompt = "What is 2+2?";
+        assert_eq!(
+            super::classify_complexity(prompt),
+            super::QueryComplexity::Simple,
+            "short factual question should be Simple"
+        );
+    }
+
+    #[test]
+    fn classify_complex_ethical_query() {
+        let prompt = "Analyze the ethical tradeoffs of AI triage in healthcare, considering stakeholder consequences and moral implications for vulnerable populations.";
+        assert_eq!(
+            super::classify_complexity(prompt),
+            super::QueryComplexity::Complex,
+            "multi-domain ethical query should be Complex"
+        );
+    }
+
+    #[test]
+    fn classify_medium_code_query() {
+        let prompt = "Review this function:\n```rust\nfn add(a: i32, b: i32) -> i32 { a + b }\n```\nIs it correct?";
+        assert_eq!(
+            super::classify_complexity(prompt),
+            super::QueryComplexity::Medium,
+            "code review query should be at least Medium"
+        );
+    }
+
+    #[test]
+    fn effective_panel_returns_full_panel_when_disabled() {
+        let panel = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = super::effective_panel(&panel, super::QueryComplexity::Simple, false);
+        assert_eq!(result.len(), 3, "disabled panel sizing returns full panel");
+    }
+
+    #[test]
+    fn effective_panel_reduces_for_simple_when_enabled() {
+        let panel = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = super::effective_panel(&panel, super::QueryComplexity::Simple, true);
+        assert_eq!(result.len(), 1, "Simple query with sizing → 1 model");
+    }
+
+    #[test]
+    fn effective_panel_reduces_to_2_for_medium_when_enabled() {
+        let panel = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = super::effective_panel(&panel, super::QueryComplexity::Medium, true);
+        assert_eq!(result.len(), 2, "Medium query with sizing → 2 models");
+    }
+
+    #[test]
+    fn effective_panel_full_for_complex_even_when_enabled() {
+        let panel = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = super::effective_panel(&panel, super::QueryComplexity::Complex, true);
+        assert_eq!(result.len(), 3, "Complex query → full panel");
+    }
+
+    // ── Codette-inspired: pressure tracking tests ─────────────────────────
+
+    #[test]
+    fn compute_pressure_zero_when_no_latency_recorded() {
+        // Reset the static to 0 by storing 0.
+        super::ROLLING_LATENCY_MS.store(0, std::sync::atomic::Ordering::Relaxed);
+        let p = super::compute_pressure();
+        assert_eq!(p, 0.0, "no latency recorded → zero pressure");
+    }
+
+    #[test]
+    fn compute_pressure_scales_with_latency() {
+        super::ROLLING_LATENCY_MS.store(5000, std::sync::atomic::Ordering::Relaxed);
+        let p = super::compute_pressure();
+        // 5000ms → (5000 - 2000) / 6000 = 0.5
+        assert!((p - 0.5).abs() < 1e-6, "5000ms → pressure 0.5, got {}", p);
+    }
+
+    #[test]
+    fn compute_pressure_clamps_at_one_for_extreme_latency() {
+        super::ROLLING_LATENCY_MS.store(20000, std::sync::atomic::Ordering::Relaxed);
+        let p = super::compute_pressure();
+        assert_eq!(p, 1.0, "20000ms → pressure clamped to 1.0");
+    }
+
+    #[test]
+    fn pressure_adjusted_panel_returns_full_when_disabled() {
+        let panel = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = super::pressure_adjusted_panel(&panel, false);
+        assert_eq!(result.len(), 3, "disabled → full panel");
     }
 }

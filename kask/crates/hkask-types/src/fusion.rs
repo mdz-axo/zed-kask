@@ -137,6 +137,15 @@ pub enum FusionSkill {
     Metacognition,
     #[serde(rename = "prompt-enhance")]
     PromptEnhance,
+    /// Codette behavioral locks: answer-then-stop, constraints override,
+    /// completeness self-check, no incomplete outputs.
+    #[serde(rename = "behavioral-locks")]
+    BehavioralLocks,
+    /// AEGIS pro-social ethics: Care 0.30, Reciprocity 0.25, Ubuntu 0.20,
+    /// Utilitarian 0.10 (floor), Deontological 0.10 (floor), Virtue 0.05.
+    /// Opt-in experimental anchor for relational-ethics reasoning.
+    #[serde(rename = "aegis-pro-social")]
+    AegisProSocial,
 }
 
 crate::enum_snake_str!(FusionSkill, {
@@ -156,6 +165,8 @@ crate::enum_snake_str!(FusionSkill, {
     RefactorArchitecture => "refactor-architecture",
     Metacognition => "metacognition",
     PromptEnhance => "prompt-enhance",
+    BehavioralLocks => "behavioral-locks",
+    AegisProSocial => "aegis-pro-social",
 });
 
 /// Configuration for fusion multi-model deliberation.
@@ -190,6 +201,24 @@ pub struct FusionConfig {
     /// Ignored when the judge is an LLM model name.
     #[serde(default)]
     pub algo_method: AlgoMethod,
+    /// Coherence threshold for measured convergence in deliberation mode.
+    /// When `Some(t)` and the computed coherence Γ > t, an advisory
+    /// "measured convergence" signal is emitted alongside the judge verdict.
+    /// The judge verdict still wins — this is an additional signal, not a
+    /// replacement. Default: `None` (measured convergence disabled).
+    #[serde(default)]
+    pub coherence_threshold: Option<f64>,
+    /// Enable query-complexity-based panel sizing. When `true`, simple queries
+    /// dispatch fewer panel models (1 for Simple, 2 for Medium, all for Complex).
+    /// Default: `false` (full panel always).
+    #[serde(default)]
+    pub panel_sizing_enabled: bool,
+    /// Enable substrate-aware degradation. When `true`, panel size is reduced
+    /// under high latency pressure (rolling average of recent dispatch times).
+    /// Design position: degraded output is better than hard failure.
+    /// Default: `false` (no adaptive degradation).
+    #[serde(default)]
+    pub pressure_adaptive_enabled: bool,
 }
 
 fn default_max_rounds() -> u32 {
@@ -218,6 +247,9 @@ impl FusionConfig {
             skills: Vec::new(),
             max_rounds: 5,
             algo_method: AlgoMethod::default(),
+            coherence_threshold: None,
+            panel_sizing_enabled: false,
+            pressure_adaptive_enabled: false,
         }
     }
 

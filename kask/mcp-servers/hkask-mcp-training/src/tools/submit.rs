@@ -149,6 +149,25 @@ impl TrainingServer {
             let resolved_params = params.unwrap_or_default();
 
             let validation_findings = lora_validation::validate_training_params(&resolved_params);
+
+            // G-D0: Dataset format compatibility check. Run before the refusal
+            // gate so incompatible-dataset refusals are reported alongside
+            // config refusals. Derive trainer preference from trl_trainer.
+            let trainer_pref = resolved_params.trl_trainer.as_ref().map(|t| match t {
+                crate::providers::types::TrlTrainer::Sft => "sft",
+                crate::providers::types::TrlTrainer::Dpo => "dpo",
+                crate::providers::types::TrlTrainer::Kto => "kto",
+                crate::providers::types::TrlTrainer::Orpo => "orpo",
+                crate::providers::types::TrlTrainer::Reward => "reward",
+            });
+            let dataset_format_result = lora_validation::validate_dataset_format(
+                &file_path,
+                trainer_pref,
+                None,
+            );
+            let mut validation_findings = validation_findings;
+            validation_findings.extend(dataset_format_result.findings.clone());
+
             if lora_validation::has_refusals(&validation_findings) {
                 let refusals: Vec<_> = validation_findings.iter().filter(|f| f.severity == lora_validation::ValidationSeverity::Refuse).collect();
                 let messages: Vec<String> = refusals.iter().map(|f| format!("{}: {}", f.gate_id, f.message)).collect();
@@ -156,6 +175,19 @@ impl TrainingServer {
                     tracing::error!(target: "reg.lora.audit", gate = f.gate_id, severity = "refuse", message = %f.message, source = %f.source, "LoRA training-config gate refused at submit");
                 }
                 return Err(McpToolError::invalid_argument(format!("Training config failed math-contract validation: {}", messages.join("; "))));
+            }
+            // G-D0 NeedsMapping: warn but do not block submit. The operator may
+            // have already applied the mapping code or accepted the risk.
+            if dataset_format_result.verdict == lora_validation::DatasetFormatVerdict::NeedsMapping {
+                tracing::warn!(
+                    target: "reg.lora.audit",
+                    gate = "G-D0",
+                    severity = "warn",
+                    verdict = "needs_mapping",
+                    detected_format = ?dataset_format_result.detected_format,
+                    expected_format = ?dataset_format_result.expected_format,
+                    "Dataset format needs mapping — mapping code emitted"
+                );
             }
             for finding in &validation_findings {
                 let severity_str = match finding.severity {

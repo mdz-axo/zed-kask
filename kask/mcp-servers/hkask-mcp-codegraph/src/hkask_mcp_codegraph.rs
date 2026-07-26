@@ -93,6 +93,22 @@ fn default_limit() -> u64 {
     10
 }
 
+/// Request for `codegraph_index_embeddings` — generate embeddings for all
+/// indexed symbols via the configured embedding API.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EmbedIndexRequest {
+    /// Optional: override the embedding model (default: `HKASK_EMBEDDING_MODEL`
+    /// or `DI/Qwen/Qwen3-Embedding-0.6B`).
+    #[serde(default)]
+    model: Option<String>,
+    /// Batch size for embedding API calls. Default: 32.
+    #[serde(default = "default_batch_size")]
+    batch_size: u32,
+}
+fn default_batch_size() -> u32 {
+    32
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TraverseRequest {
     symbol: String,
@@ -387,6 +403,189 @@ impl CodeGraphServer {
                 "total_files": stats.files, "total_symbols": stats.symbols, "total_edges": stats.edges,
             }))
         }).await
+    }
+
+    /// Generate embeddings for all indexed symbols via the configured embedding API.
+    ///
+    /// Reads all symbols from the database, batches them, calls the embedding
+    /// API (DeepInfra or OpenRouter), and stores the resulting vectors in the
+    /// `symbols_vec` sqlite-vec table for semantic similarity search.
+    ///
+    /// Requires `DI_API_KEY` or `OR_API_KEY` to be set. Uses
+    /// `HKASK_EMBEDDING_MODEL` (default: `DI/Qwen/Qwen3-Embedding-0.6B`) and
+    /// `HKASK_EMBEDDING_DIM` (default: 1024).
+    #[tool(
+        description = "Generate embeddings for all indexed symbols via the embedding API. Requires DI_API_KEY or OR_API_KEY."
+    )]
+    pub async fn codegraph_index_embeddings(
+        &self,
+        Parameters(req): Parameters<EmbedIndexRequest>,
+    ) -> String {
+        execute_tool(self, "codegraph_index_embeddings", async {
+            self.ensure_indexed()?;
+
+            // Resolve the embedding model and dimension.
+            let model = req.model.unwrap_or_else(|| {
+                std::env::var("HKASK_EMBEDDING_MODEL")
+                    .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string())
+            });
+            let dim: usize = std::env::var("HKASK_EMBEDDING_DIM")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|&d: &usize| d > 0)
+                .unwrap_or(1024);
+
+            // Collect all symbols for embedding — drop the lock before any
+            // async API calls. GraphStore is not Send (RefCell<LruCache>),
+            // so we cannot hold the MutexGuard across .await points.
+            let symbols: Vec<(i64, String, String)> = {
+                let pipeline = self.pipeline_guard()?;
+                let store = pipeline.store();
+                store.all_symbols_for_embedding().map_err(db_err)?
+            };
+
+            if symbols.is_empty() {
+                return Ok(serde_json::json!({
+                    "symbols_embedded": 0,
+                    "model": model,
+                    "dim": dim,
+                    "errors": [],
+                    "note": "no symbols indexed — run codegraph_reindex first"
+                }));
+            }
+
+            // Resolve API key and base URL from the model prefix.
+            let (api_key, base_url, model_id) = if model.starts_with("DI/") {
+                (
+                    std::env::var("DI_API_KEY").unwrap_or_default(),
+                    "https://api.deepinfra.com/v1".to_string(),
+                    model[3..].to_string(),
+                )
+            } else if model.starts_with("OR/") {
+                (
+                    std::env::var("OR_API_KEY").unwrap_or_default(),
+                    "https://openrouter.ai/api/v1".to_string(),
+                    model[3..].to_string(),
+                )
+            } else {
+                return Ok(serde_json::json!({
+                    "symbols_embedded": 0,
+                    "model": model,
+                    "dim": dim,
+                    "errors": ["unsupported model prefix — use DI/ or OR/"],
+                }));
+            };
+
+            if api_key.is_empty() {
+                let env_var = if model.starts_with("DI/") {
+                    "DI_API_KEY"
+                } else {
+                    "OR_API_KEY"
+                };
+                return Ok(serde_json::json!({
+                    "symbols_embedded": 0,
+                    "model": model,
+                    "dim": dim,
+                    "errors": [format!("{} not set — cannot generate embeddings", env_var)],
+                }));
+            }
+
+            let batch_size = req.batch_size.max(1) as usize;
+            let mut embeddings_to_insert: Vec<(i64, Vec<f32>)> = Vec::new();
+            let mut errors: Vec<String> = Vec::new();
+
+            let client = reqwest::Client::new();
+            for chunk in symbols.chunks(batch_size) {
+                let texts: Vec<&str> = chunk.iter().map(|(_, _, t)| t.as_str()).collect();
+
+                let request_body = serde_json::json!({
+                    "model": model_id,
+                    "input": texts,
+                });
+
+                let response = client
+                    .post(format!("{}/embeddings", base_url))
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&request_body)
+                    .send()
+                    .await;
+
+                match response {
+                    Ok(resp) => {
+                        if !resp.status().is_success() {
+                            let status = resp.status();
+                            let body = resp.text().await.unwrap_or_default();
+                            errors.push(format!("API error {}: {}", status, body));
+                            continue;
+                        }
+                        match resp.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                                    for (i, entry) in data.iter().enumerate() {
+                                        if i >= chunk.len() {
+                                            break;
+                                        }
+                                        if let Some(emb) =
+                                            entry.get("embedding").and_then(|e| e.as_array())
+                                        {
+                                            let embedding: Vec<f32> = emb
+                                                .iter()
+                                                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                                .collect();
+                                            if embedding.len() == dim {
+                                                embeddings_to_insert.push((chunk[i].0, embedding));
+                                            } else {
+                                                errors.push(format!(
+                                                    "dimension mismatch: expected {}, got {}",
+                                                    dim,
+                                                    embedding.len()
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => errors.push(format!("JSON parse error: {}", e)),
+                        }
+                    }
+                    Err(e) => errors.push(format!("request failed: {}", e)),
+                }
+            }
+
+            // Re-acquire the lock to insert embeddings into the database.
+            let symbols_embedded = {
+                let pipeline = self.pipeline_guard()?;
+                let store = pipeline.store();
+                let mut count = 0usize;
+                for (symbol_id, embedding) in &embeddings_to_insert {
+                    match store.upsert_embedding(*symbol_id, embedding) {
+                        Ok(()) => count += 1,
+                        Err(e) => errors.push(format!("symbol {} insert failed: {}", symbol_id, e)),
+                    }
+                }
+                count
+            };
+
+            tracing::info!(
+                target: "hkask.mcp.codegraph",
+                symbols_embedded,
+                total_symbols = symbols.len(),
+                model = %model,
+                dim,
+                error_count = errors.len(),
+                "Embedding indexing complete"
+            );
+
+            Ok(serde_json::json!({
+                "symbols_embedded": symbols_embedded,
+                "total_symbols": symbols.len(),
+                "model": model,
+                "dim": dim,
+                "errors": errors,
+            }))
+        })
+        .await
     }
 }
 

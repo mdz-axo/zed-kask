@@ -18,6 +18,7 @@ contract:
     existing_regressions: array
     proposed_regressions: array
     previous_metric: number
+    runtime_metrics: object
     userpod_host: string
   output:
     convergence_metric: number
@@ -54,6 +55,7 @@ INPUT: corda_mode = {{ corda_mode | default(false) }} (if true, G-F2 may apply)
 INPUT: existing_regressions = {{ existing_regressions }} (actual surface: training entries)
 INPUT: proposed_regressions = {{ proposed_regressions }} (actual proposals from this cycle)
 INPUT: previous_metric = {{ previous_metric | default(none) }} (optional evidence from the immediately preceding comparable phase)
+INPUT: runtime_metrics = {{ runtime_metrics | default({}) | tojson }} (v0.32.0 — runtime metrics for G-R1; absent in preflight)
 INPUT: userpod_host = {{ userpod_host }} (mandatory, P12)
 
 EVIDENCE AND APPLICABILITY RULES (P8):
@@ -92,6 +94,9 @@ COMPUTE CURRENT-PHASE METRIC (weighted risk, P5, P8):
    - Data/eval contracts G-D1..G-D3: 0.10.
    - Forgetting contracts G-F1..G-F2: 0.10, with G-F2 excluded when
      `corda_mode=false`.
+   - Runtime alert contracts G-R1: 0.15 when `current_phase=runtime` and
+     `runtime_metrics` is supplied (v0.32.0). Excluded in preflight and
+     post_training phases, and when runtime_metrics is absent.
 
 3. For each family, include only gates applicable in `current_phase`.
    Exclude a family with zero currently applicable gates. For each

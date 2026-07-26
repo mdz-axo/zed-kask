@@ -15,6 +15,7 @@ contract:
     existing_regressions: array
     userpod_host: string
     dataset_profile: object
+    runtime_metrics: object
   output:
     findings: array
     gate_results: object
@@ -42,6 +43,7 @@ INPUT: selected_method = {{ selected_method }} (operator-selected; do not replac
 INPUT: existing_regressions = {{ existing_regressions | default([]) }}
 INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory)
 INPUT: dataset_profile = {{ dataset_profile | default({}) | tojson }} (v0.31.0 — from G-D0 dataset profiling; feeds G-D1 dataset size/quality assessment)
+INPUT: runtime_metrics = {{ runtime_metrics | default({}) | tojson }} (v0.32.0 — runtime metrics from training; feeds G-R1 runtime alert gate. Empty/absent in preflight.)
 
 AUTHORITATIVE AUDIT MODEL
 
@@ -198,6 +200,16 @@ RUNTIME — REQUIREMENTS ONLY; DO NOT EXECUTE
   required adapter parameters.
 - G-Q4 No silent upcast: supplied runtime measurement shows the frozen base was
   not unexpectedly materialized in fp32.
+- G-R1 Runtime alert (v0.32.0): when `runtime_metrics` is supplied, evaluate
+  training stability from loss/grad_norm/alerts. Mirrors HF trackio alert
+  pattern. Each alert becomes a finding with `evidence_kind: runtime_measurement`.
+  - Loss > 5.0 after step 100 → refuse (loss divergence)
+  - |loss| < 1e-8 after step 0 → warn (vanishing loss / gradient collapse)
+  - NaN or infinite grad_norm → refuse (training diverged)
+  - Explicit alerts: error → refuse, warn → warn, info → info
+  When `runtime_metrics` is absent, G-R1 is `not_applicable` in preflight and
+  `deferred` in runtime phase (no measurement supplied).
+  Runtime enforcement: `lora_validation::validate_runtime_metrics()`.
 For each applicable runtime gate without `runtime_measurement`, emit
 `deferred`, or `planned` when a concrete measurement plan is supplied.
 

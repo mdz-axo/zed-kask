@@ -15,6 +15,8 @@
 //! - G-Q2: Adapter dtype (compute dtype is bf16/fp16, not fp32)
 //! - G-Q4: No silent upcast (QLoRA mode: bf16=true, not fp16-only)
 //! - G-Q5: Paged optimizer (conditional — warns for large models with QLoRA)
+//! - G-D0: Dataset format compatibility (detects format, checks against
+//!   expected trainer/method, emits copy-paste mapping code on mismatch)
 //! - G-D1: Dataset size vs quality (warns <1000 or >100000 samples)
 //! - G-D2: Eval protocol (advisory in preflight — Vicuna/MMLU not trustworthy)
 //! - G-D3: Lemon-pick analysis (advisory in preflight — report failure cases)
@@ -30,6 +32,7 @@
 //! rsLoRA (arXiv:2312.03732), DoRA (arXiv:2402.09353), PiSSA (arXiv:2404.02948),
 //! Razin et al. (arXiv:2410.21228), PEFT v0.19.0, TRL v1.8.0.
 
+use crate::dataset::DatasetFormat;
 use crate::providers::types::{
     LoraParams, QuantizationParams, TrainingHarnessId, TrainingParams, TrlTrainer,
 };
@@ -508,6 +511,396 @@ pub fn has_refusals(findings: &[ValidationFinding]) -> bool {
         .any(|f| f.severity == ValidationSeverity::Refuse)
 }
 
+/// Verdict from G-D0 dataset format compatibility check.
+///
+/// Mirrors the HuggingFace `dataset_inspector.py` three-state pattern:
+/// `Ready` (use directly), `NeedsMapping` (compatible but needs preprocessing —
+/// mapping code is provided), `Incompatible` (cannot be used for this method).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatasetFormatVerdict {
+    /// Dataset format matches the expected format for the selected method.
+    Ready,
+    /// Dataset is compatible but needs column-name mapping. `mapping_code` is
+    /// copy-paste Python that transforms the dataset into the expected schema.
+    NeedsMapping,
+    /// Dataset cannot be used for the selected method (e.g., SFT data for DPO).
+    Incompatible,
+}
+
+/// Result of G-D0 dataset format validation.
+#[derive(Debug, Clone)]
+pub struct DatasetFormatResult {
+    /// The verdict: ready, needs mapping, or incompatible.
+    pub verdict: DatasetFormatVerdict,
+    /// The format detected from the dataset file (None if detection failed).
+    pub detected_format: Option<DatasetFormat>,
+    /// The format expected by the selected trainer/method (None if undetermined).
+    pub expected_format: Option<DatasetFormat>,
+    /// Copy-paste Python mapping code when verdict is `NeedsMapping`.
+    /// Empty string otherwise.
+    pub mapping_code: String,
+    /// Validation findings (G-D0 warnings/refusals).
+    pub findings: Vec<ValidationFinding>,
+}
+
+/// G-D0: Dataset format compatibility check.
+///
+/// Detects the dataset format from the file and checks it against the format
+/// expected by the selected trainer/method. When the detected format is
+/// structurally compatible but uses non-standard column names, emits
+/// copy-paste Python mapping code (mirrors HF's `dataset_inspector.py`).
+///
+/// This is the runtime enforcement point for the lora-training skill's G-D0
+/// gate. Called from `training_validate_config` and `training_submit`.
+///
+/// # Arguments
+/// * `dataset_path` - Path to the dataset file.
+/// * `trainer_preference` - The operator-selected trainer (sft/dpo/kto/orpo/etc.).
+/// * `adapter_purpose` - The adapter purpose (instruction/preference/reward_model/etc.).
+///
+/// # Returns
+/// A `DatasetFormatResult` with the verdict, detected/expected formats,
+/// mapping code (if applicable), and any findings.
+pub fn validate_dataset_format(
+    dataset_path: &std::path::Path,
+    trainer_preference: Option<&str>,
+    adapter_purpose: Option<&str>,
+) -> DatasetFormatResult {
+    let mut findings = Vec::new();
+
+    let detected_format = DatasetFormat::detect(dataset_path);
+    let expected_format = derive_expected_format(trainer_preference, adapter_purpose);
+
+    match (&detected_format, &expected_format) {
+        (None, _) => {
+            findings.push(ValidationFinding {
+                gate_id: "G-D0",
+                severity: ValidationSeverity::Warn,
+                message: format!(
+                    "Could not detect dataset format from file: {} — format detection requires .jsonl/.json/.txt extension",
+                    dataset_path.display()
+                ),
+                source: "hKask dataset pipeline — DatasetFormat::detect",
+                remediation: "Ensure the dataset file has a .jsonl, .json, or .txt extension".to_string(),
+            });
+            DatasetFormatResult {
+                verdict: DatasetFormatVerdict::Ready,
+                detected_format,
+                expected_format,
+                mapping_code: String::new(),
+                findings,
+            }
+        }
+        (Some(_detected), None) => {
+            // No expected format derivable — cannot check compatibility.
+            // This is not a failure; the operator may not have declared a trainer.
+            DatasetFormatResult {
+                verdict: DatasetFormatVerdict::Ready,
+                detected_format,
+                expected_format,
+                mapping_code: String::new(),
+                findings,
+            }
+        }
+        (Some(detected), Some(expected)) => {
+            if detected == expected {
+                // Exact match — ready.
+                DatasetFormatResult {
+                    verdict: DatasetFormatVerdict::Ready,
+                    detected_format,
+                    expected_format,
+                    mapping_code: String::new(),
+                    findings,
+                }
+            } else if is_format_compatible(detected, expected) {
+                // Structurally compatible. SFT formats (ChatML, ShareGPT, Alpaca,
+                // RawText) are auto-normalized by the dataset pipeline — no manual
+                // mapping needed, so verdict is Ready. Preference formats need
+                // manual column mapping, so verdict is NeedsMapping.
+                let needs_manual_mapping = detected.is_preference() && expected.is_preference();
+                if needs_manual_mapping {
+                    let mapping_code = generate_mapping_code(detected, expected);
+                    findings.push(ValidationFinding {
+                        gate_id: "G-D0",
+                        severity: ValidationSeverity::Warn,
+                        message: format!(
+                            "Dataset format {:?} needs mapping to {:?} for the selected method — mapping code provided",
+                            detected, expected
+                        ),
+                        source: "HF dataset_inspector.py pattern — huggingface.co/datasets/mcp-tools/skills",
+                        remediation: "Apply the mapping code below before training to avoid format-mismatch failures".to_string(),
+                    });
+                    DatasetFormatResult {
+                        verdict: DatasetFormatVerdict::NeedsMapping,
+                        detected_format,
+                        expected_format,
+                        mapping_code,
+                        findings,
+                    }
+                } else {
+                    // SFT format conversion — auto-normalized by the pipeline.
+                    DatasetFormatResult {
+                        verdict: DatasetFormatVerdict::Ready,
+                        detected_format,
+                        expected_format,
+                        mapping_code: String::new(),
+                        findings,
+                    }
+                }
+            } else {
+                // Incompatible — e.g., SFT data (ChatML) for DPO training.
+                findings.push(ValidationFinding {
+                    gate_id: "G-D0",
+                    severity: ValidationSeverity::Refuse,
+                    message: format!(
+                        "Dataset format {:?} is incompatible with expected format {:?} — cannot use this dataset for the selected method",
+                        detected, expected
+                    ),
+                    source: "TRL dataset formats — huggingface.co/docs/trl/main/en/dataset_formats",
+                    remediation: format!(
+                        "Use a {:?} dataset for the selected method, or change the trainer to match the {:?} dataset",
+                        expected, detected
+                    ),
+                });
+                DatasetFormatResult {
+                    verdict: DatasetFormatVerdict::Incompatible,
+                    detected_format,
+                    expected_format,
+                    mapping_code: String::new(),
+                    findings,
+                }
+            }
+        }
+    }
+}
+
+/// Derive the expected dataset format from the trainer preference and adapter purpose.
+///
+/// Returns `None` when neither input is sufficient to determine the expected format.
+fn derive_expected_format(
+    trainer_preference: Option<&str>,
+    adapter_purpose: Option<&str>,
+) -> Option<DatasetFormat> {
+    // Trainer preference takes precedence.
+    if let Some(trainer) = trainer_preference {
+        match trainer {
+            "sft" | "undetermined" => return Some(DatasetFormat::ChatML),
+            "dpo" => return Some(DatasetFormat::PreferenceDpo),
+            "kto" => return Some(DatasetFormat::PreferenceKto),
+            "orpo" => return Some(DatasetFormat::PreferenceOrpo),
+            "reward" | "grpo" => return Some(DatasetFormat::ChatML),
+            _ => {}
+        }
+    }
+    // Fall back to adapter purpose.
+    if let Some(purpose) = adapter_purpose {
+        match purpose {
+            "instruction" | "reasoning" | "vision" | "reward_model" | "undetermined" => {
+                return Some(DatasetFormat::ChatML);
+            }
+            "preference" => return Some(DatasetFormat::PreferenceDpo),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Check whether a detected format is structurally compatible with the expected
+/// format (i.e., can be mapped via column renaming, not a fundamental mismatch).
+fn is_format_compatible(detected: &DatasetFormat, expected: &DatasetFormat) -> bool {
+    use DatasetFormat::*;
+    // SFT formats are interchangeable via normalization (ChatML, ShareGPT, Alpaca, RawText).
+    let sft_formats = [ChatML, ShareGPT, Alpaca, RawText];
+    let detected_is_sft = sft_formats.contains(detected);
+    let expected_is_sft = sft_formats.contains(expected);
+    if detected_is_sft && expected_is_sft {
+        return true;
+    }
+    // Preference formats are interchangeable via column mapping (DPO, KTO, ORPO).
+    let preference_formats = [PreferenceDpo, PreferenceKto, PreferenceOrpo];
+    let detected_is_preference = preference_formats.contains(detected);
+    let expected_is_preference = preference_formats.contains(expected);
+    if detected_is_preference && expected_is_preference {
+        return true;
+    }
+    // SFT data cannot be used for preference training and vice versa.
+    false
+}
+
+/// Generate copy-paste Python mapping code for a compatible format mismatch.
+///
+/// Mirrors the HF `dataset_inspector.py` "MAPPING CODE" section pattern.
+fn generate_mapping_code(detected: &DatasetFormat, expected: &DatasetFormat) -> String {
+    use DatasetFormat::*;
+    match (detected, expected) {
+        // SFT format conversions — the pipeline normalizes these, so no manual mapping needed.
+        (ShareGPT, ChatML) | (Alpaca, ChatML) | (RawText, ChatML) => {
+            "# The hKask dataset pipeline normalizes this format to ChatML automatically.\n# No manual mapping code needed — proceed with training.".to_string()
+        }
+        (ChatML, ShareGPT) | (Alpaca, ShareGPT) | (RawText, ShareGPT) => {
+            "# The hKask dataset pipeline normalizes this format to ChatML automatically.\n# No manual mapping code needed — proceed with training.".to_string()
+        }
+        // Preference format conversions — column-name mapping.
+        (PreferenceKto, PreferenceDpo) => {
+            "# Map KTO format (prompt/completion/label) to DPO format (prompt/chosen/rejected):\n\ndef format_for_dpo(example):\n    return {\n        'prompt': example['prompt'],\n        'chosen': example['completion'] if example.get('label', True) else '',\n        'rejected': example['completion'] if not example.get('label', True) else '',\n    }\n\n# Apply before training:\n# dataset = dataset.map(format_for_dpo, remove_columns=dataset.column_names)".to_string()
+        }
+        (PreferenceOrpo, PreferenceDpo) => {
+            "# Map ORPO format (chosen/rejected, no prompt) to DPO format (prompt/chosen/rejected):\n# ORPO's chosen/rejected typically contain the prompt implicitly.\n\ndef format_for_dpo(example):\n    # ORPO chosen/rejected are conversational; extract the prompt from the first turn.\n    chosen = example['chosen']\n    rejected = example['rejected']\n    # If chosen is a list of messages, extract prompt from the first user turn.\n    prompt = ''\n    if isinstance(chosen, list) and len(chosen) > 0:\n        prompt = chosen[0].get('content', '') if isinstance(chosen[0], dict) else str(chosen[0])\n    return {'prompt': prompt, 'chosen': chosen, 'rejected': rejected}\n\n# Apply before training:\n# dataset = dataset.map(format_for_dpo, remove_columns=dataset.column_names)".to_string()
+        }
+        (PreferenceDpo, PreferenceKto) => {
+            "# Map DPO format (prompt/chosen/rejected) to KTO format (prompt/completion/label):\n\ndef format_for_kto(example):\n    return {\n        'prompt': example['prompt'],\n        'completion': example['chosen'],\n        'label': True,\n    }\n\n# Note: DPO data only provides positive examples. For KTO, you also need\n# negative examples. Consider adding rejected completions as label=False rows.\n# Apply before training:\n# dataset = dataset.map(format_for_kto, remove_columns=dataset.column_names)".to_string()
+        }
+        (PreferenceDpo, PreferenceOrpo) => {
+            "# Map DPO format (prompt/chosen/rejected) to ORPO format (chosen/rejected):\n\ndef format_for_orpo(example):\n    return {\n        'chosen': example['chosen'],\n        'rejected': example['rejected'],\n    }\n\n# Apply before training:\n# dataset = dataset.map(format_for_orpo, remove_columns=dataset.column_names)".to_string()
+        }
+        (PreferenceKto, PreferenceOrpo) => {
+            "# Map KTO format (prompt/completion/label) to ORPO format (chosen/rejected):\n# KTO is unpaired; ORPO is paired. This mapping loses information.\n# Consider collecting paired preference data instead.\n\ndef format_for_orpo(example):\n    completion = example['completion']\n    label = example.get('label', True)\n    return {\n        'chosen': completion if label else '',\n        'rejected': completion if not label else '',\n    }\n\n# Apply before training:\n# dataset = dataset.map(format_for_orpo, remove_columns=dataset.column_names)".to_string()
+        }
+        (PreferenceOrpo, PreferenceKto) => {
+            "# Map ORPO format (chosen/rejected) to KTO format (prompt/completion/label):\n\ndef format_for_kto(example):\n    chosen = example['chosen']\n    rejected = example['rejected']\n    # Extract prompt from chosen (first user turn if conversational).\n    prompt = ''\n    if isinstance(chosen, list) and len(chosen) > 0:\n        prompt = chosen[0].get('content', '') if isinstance(chosen[0], dict) else str(chosen[0])\n    return [\n        {'prompt': prompt, 'completion': chosen, 'label': True},\n        {'prompt': prompt, 'completion': rejected, 'label': False},\n    ]\n\n# Apply before training (flatten the resulting list):\n# dataset = dataset.map(format_for_kto, remove_columns=dataset.column_names)\n# dataset = datasets.concatenate_datasets([dataset])  # flatten if needed".to_string()
+        }
+        _ => {
+            format!(
+                "# No automatic mapping code available for {:?} → {:?}.\n# Inspect the dataset columns and write a custom mapping function.",
+                detected, expected
+            )
+        }
+    }
+}
+
+/// Runtime metrics from a training job — consumed by G-R1 (runtime alert gate).
+///
+/// Sourced from the completion manifest or live metric polling. When supplied
+/// to `validate_runtime_metrics`, produces findings for loss spikes, NaN
+/// gradients, vanishing loss, and training stalls.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeMetrics {
+    /// Current training step.
+    #[serde(default)]
+    pub current_step: Option<u32>,
+    /// Total training steps.
+    #[serde(default)]
+    pub total_steps: Option<u32>,
+    /// Latest loss value.
+    #[serde(default)]
+    pub loss: Option<f64>,
+    /// Latest gradient norm.
+    #[serde(default)]
+    pub grad_norm: Option<f64>,
+    /// Runtime alerts (e.g., from trackio.alert() or equivalent).
+    #[serde(default)]
+    pub alerts: Vec<RuntimeAlert>,
+}
+
+/// A single runtime alert from the training loop.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeAlert {
+    /// Alert title (e.g., "Loss divergence", "Vanishing loss").
+    pub title: String,
+    /// Alert severity: "info", "warn", "error".
+    pub level: String,
+    /// Alert text/body.
+    pub text: String,
+    /// Step at which the alert fired.
+    #[serde(default)]
+    pub step: Option<u32>,
+}
+
+/// G-R1: Runtime alert gate — validates runtime metrics for training instability.
+///
+/// Mirrors the HuggingFace trackio alert pattern: loss spikes, NaN gradients,
+/// vanishing loss, and training stalls. This gate is `runtime`-phase only; it
+/// is `not_applicable` in preflight. When `runtime_metrics` is supplied, each
+/// alert becomes a normalized finding with `evidence_kind: runtime_measurement`.
+///
+/// Anchored to: trackio alert API (huggingface-trackio skill §Alerts),
+/// QLoRA paper §3 (training stability), Razin et al. arXiv:2410.21228
+/// (intruder dimensions and structured forgetting).
+pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFinding> {
+    let mut findings = Vec::new();
+
+    // Process explicit alerts first — these are operator/runtime-supplied signals.
+    for alert in &metrics.alerts {
+        let severity = match alert.level.as_str() {
+            "error" => ValidationSeverity::Refuse,
+            "warn" => ValidationSeverity::Warn,
+            _ => ValidationSeverity::Info,
+        };
+        let step_str = alert
+            .step
+            .map(|s| format!(" at step {s}"))
+            .unwrap_or_default();
+        findings.push(ValidationFinding {
+            gate_id: "G-R1",
+            severity,
+            message: format!("{}{}: {}", alert.title, step_str, alert.text),
+            source: "Runtime alert (trackio.alert pattern) — huggingface-trackio skill §Alerts",
+            remediation:
+                "Investigate the alert condition and adjust hyperparameters or stop the run"
+                    .to_string(),
+        });
+    }
+
+    // Detect loss divergence: loss > 5.0 after step 100.
+    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss) {
+        if step > 100 && loss > 5.0 {
+            findings.push(ValidationFinding {
+                gate_id: "G-R1",
+                severity: ValidationSeverity::Refuse,
+                message: format!(
+                    "Loss divergence: loss {:.4} still high after {} steps",
+                    loss, step
+                ),
+                source: "trackio.alert pattern — huggingface-trackio skill §Autonomous ML Experiment Workflow",
+                remediation: "Stop the run, reduce learning rate, or check for dataset/label errors".to_string(),
+            });
+        }
+    }
+
+    // Detect vanishing loss: |loss| < 1e-8 after step 0.
+    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss) {
+        if step > 0 && loss.abs() < 1e-8 {
+            findings.push(ValidationFinding {
+                gate_id: "G-R1",
+                severity: ValidationSeverity::Warn,
+                message: format!(
+                    "Vanishing loss: loss {:.2e} near zero at step {} — possible gradient collapse",
+                    loss, step
+                ),
+                source: "trackio.alert pattern — huggingface-trackio skill §Alerts",
+                remediation: "Check gradient flow, learning rate, and dataset labels".to_string(),
+            });
+        }
+    }
+
+    // Detect NaN gradient norm.
+    if let Some(grad_norm) = metrics.grad_norm {
+        if grad_norm.is_nan() {
+            findings.push(ValidationFinding {
+                gate_id: "G-R1",
+                severity: ValidationSeverity::Refuse,
+                message: "NaN gradient norm detected — training has diverged".to_string(),
+                source: "QLoRA paper §3 (training stability); trackio alert pattern",
+                remediation: "Stop the run, reduce learning rate, enable gradient clipping, or check for numerical instability".to_string(),
+            });
+        } else if grad_norm.is_infinite() {
+            findings.push(ValidationFinding {
+                gate_id: "G-R1",
+                severity: ValidationSeverity::Refuse,
+                message: format!(
+                    "Infinite gradient norm ({}) — training has diverged",
+                    grad_norm
+                ),
+                source: "QLoRA paper §3 (training stability)",
+                remediation: "Stop the run, reduce learning rate, or enable gradient clipping"
+                    .to_string(),
+            });
+        }
+    }
+
+    findings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -916,6 +1309,236 @@ mod tests {
             findings
                 .iter()
                 .any(|f| f.gate_id == "G-H1" && f.severity == ValidationSeverity::Warn)
+        );
+    }
+
+    // ── G-D0: Dataset format compatibility tests ──────────────────────────
+
+    use crate::dataset::DatasetFormat;
+    use std::io::Write;
+
+    fn write_temp_dataset(content: &str, ext: &str) -> tempfile::NamedTempFile {
+        let mut file = tempfile::Builder::new()
+            .suffix(&format!(".{ext}"))
+            .tempfile()
+            .expect("create temp file");
+        file.write_all(content.as_bytes()).expect("write temp file");
+        file
+    }
+
+    #[test]
+    fn gd0_chatml_dataset_for_sft_is_ready() {
+        let file = write_temp_dataset(
+            r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), Some("sft"), None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+        assert_eq!(result.detected_format, Some(DatasetFormat::ChatML));
+        assert_eq!(result.expected_format, Some(DatasetFormat::ChatML));
+        assert!(result.findings.is_empty());
+    }
+
+    #[test]
+    fn gd0_dpo_dataset_for_dpo_is_ready() {
+        let file = write_temp_dataset(
+            r#"{"prompt":"hi","chosen":"hello","rejected":"bye"}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), Some("dpo"), None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+        assert_eq!(result.detected_format, Some(DatasetFormat::PreferenceDpo));
+    }
+
+    #[test]
+    fn gd0_sharegpt_for_sft_is_ready_via_normalization() {
+        let file = write_temp_dataset(
+            r#"{"conversations":[{"from":"human","value":"hi"},{"from":"gpt","value":"hello"}]}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), Some("sft"), None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+    }
+
+    #[test]
+    fn gd0_kto_dataset_for_dpo_needs_mapping() {
+        let file = write_temp_dataset(
+            r#"{"prompt":"hi","completion":"hello","label":true}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), Some("dpo"), None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::NeedsMapping);
+        assert!(!result.mapping_code.is_empty());
+        assert!(result.mapping_code.contains("format_for_dpo"));
+        assert!(result.findings.iter().any(|f| f.gate_id == "G-D0"));
+    }
+
+    #[test]
+    fn gd0_chatml_dataset_for_dpo_is_incompatible() {
+        let file = write_temp_dataset(
+            r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), Some("dpo"), None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Incompatible);
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| { f.gate_id == "G-D0" && f.severity == ValidationSeverity::Refuse })
+        );
+    }
+
+    #[test]
+    fn gd0_no_trainer_no_purpose_returns_ready_without_findings() {
+        let file = write_temp_dataset(
+            r#"{"messages":[{"role":"user","content":"hi"}]}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), None, None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+        assert!(result.findings.is_empty());
+    }
+
+    #[test]
+    fn gd0_unrecognized_extension_warns() {
+        let file = write_temp_dataset("some content", "csv");
+        let result = validate_dataset_format(file.path(), Some("sft"), None);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+        assert!(result.findings.iter().any(|f| f.gate_id == "G-D0"));
+    }
+
+    #[test]
+    fn gd0_adapter_purpose_preference_expects_dpo() {
+        let file = write_temp_dataset(
+            r#"{"prompt":"hi","chosen":"hello","rejected":"bye"}
+"#,
+            "jsonl",
+        );
+        let result = validate_dataset_format(file.path(), None, Some("preference"));
+        assert_eq!(result.expected_format, Some(DatasetFormat::PreferenceDpo));
+        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+    }
+
+    // ── G-R1: Runtime metrics validation tests ────────────────────────────
+
+    #[test]
+    fn gr1_no_metrics_no_findings() {
+        let metrics = RuntimeMetrics::default();
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn gr1_loss_spike_after_step_100_refuses() {
+        let metrics = RuntimeMetrics {
+            current_step: Some(150),
+            loss: Some(6.0),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(findings.iter().any(|f| {
+            f.gate_id == "G-R1"
+                && f.severity == ValidationSeverity::Refuse
+                && f.message.contains("Loss divergence")
+        }));
+    }
+
+    #[test]
+    fn gr1_loss_spike_before_step_100_no_finding() {
+        let metrics = RuntimeMetrics {
+            current_step: Some(50),
+            loss: Some(6.0),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn gr1_vanishing_loss_warns() {
+        let metrics = RuntimeMetrics {
+            current_step: Some(10),
+            loss: Some(1e-10),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(findings.iter().any(|f| {
+            f.gate_id == "G-R1"
+                && f.severity == ValidationSeverity::Warn
+                && f.message.contains("Vanishing loss")
+        }));
+    }
+
+    #[test]
+    fn gr1_nan_gradient_refuses() {
+        let metrics = RuntimeMetrics {
+            grad_norm: Some(f64::NAN),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Refuse })
+        );
+    }
+
+    #[test]
+    fn gr1_infinite_gradient_refuses() {
+        let metrics = RuntimeMetrics {
+            grad_norm: Some(f64::INFINITY),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Refuse })
+        );
+    }
+
+    #[test]
+    fn gr1_error_alert_refuses() {
+        let metrics = RuntimeMetrics {
+            alerts: vec![RuntimeAlert {
+                title: "Loss divergence".to_string(),
+                level: "error".to_string(),
+                text: "Loss 8.0 still high after 200 steps".to_string(),
+                step: Some(200),
+            }],
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Refuse })
+        );
+    }
+
+    #[test]
+    fn gr1_warn_alert_warns() {
+        let metrics = RuntimeMetrics {
+            alerts: vec![RuntimeAlert {
+                title: "Slow convergence".to_string(),
+                level: "warn".to_string(),
+                text: "Loss decreased <1% over 50 steps".to_string(),
+                step: None,
+            }],
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn })
         );
     }
 }

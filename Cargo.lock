@@ -9249,6 +9249,7 @@ dependencies = [
  "tree-sitter-rust",
  "uuid",
  "walkdir",
+ "zed-reqwest",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@ name: lora-training
 visibility: public
 description: >
   LoRA/QLoRA training configuration and contract enforcement skill for hKask
-  (v0.31.0). Produces an advisory, composable PEFT recommendation through a
+  (v0.32.0). Produces an advisory, composable PEFT recommendation through a
   deterministic 8-gate refinement (adapter purpose → dataset analysis →
   memory → task distance → quality/cost → knowledge preservation → harness
   capability); the operator accepts, overrides, or rejects it, and the runtime
@@ -11,12 +11,12 @@ description: >
   Training approach selection (G0-G5) precedes harness selection (G6) — the
   harness is selected based on its capability to efficiently process the
   declared dataset and produce the adapter type implied by G0. Audits math,
-  quantization, data/evaluation, forgetting, and harness-method compatibility
-  gates with phase-aware states and evidence. PDCA iteration loop is
-  mechanically closed by the process manifest: select-method → audit-config →
-  report → convergence-check → loop, with prior_iteration routing. Emits
-  reg.lora.* spans, plus outcome and operator_feedback spans that close the
-  self-improvement feedback loop.
+  quantization, data/evaluation, forgetting, runtime alert, and harness-method
+  compatibility gates with phase-aware states and evidence. PDCA iteration loop
+  is mechanically closed by the process manifest: preflight-dataset →
+  select-method → audit-config → report → convergence-check → loop, with
+  prior_iteration routing. Emits reg.lora.* spans, plus outcome and
+  operator_feedback spans that close the self-improvement feedback loop.
 ---
 
 # LoRA Training
@@ -62,6 +62,22 @@ This skill does not train, load, initialize, merge, or evaluate models.
   `reg.lora.*` span.
 
 ## Instructions
+
+### `lora-training/preflight-dataset`
+
+1. Detect the dataset format from the declared `dataset_path` and check it
+   against the expected format for the selected trainer/method. This is the
+   runtime-evidence source for G-D0.
+2. Emit a three-state verdict: `ready` (use directly), `needs_mapping`
+   (compatible but needs column-name preprocessing — mapping code provided),
+   or `incompatible` (cannot be used for this method, e.g., SFT data for DPO).
+3. When `needs_mapping`, emit copy-paste Python mapping code following the HF
+   `dataset_inspector.py` pattern. SFT format conversions (ChatML, ShareGPT,
+   Alpaca, RawText) are auto-normalized by the dataset pipeline — no manual
+   mapping needed, verdict is `ready`.
+4. This phase is optional — skipped when `dataset_path` is absent. It does not
+   execute training, load the dataset into memory, or modify files.
+5. Emit `reg.lora.preflight`.
 
 ### `lora-training/select-method`
 
@@ -156,10 +172,12 @@ This skill does not train, load, initialize, merge, or evaluate models.
 5. Use exactly one evidence kind:
    `config_value | code_presence | code_absence | runtime_measurement | operator_assertion | not_available`.
    `code_absence` requires a search of the complete declared harness scope.
-6. Apply all 17 gates phase-appropriately: G-M1..G-M5, G-Q1..G-Q6,
-   G-D1..G-D3, G-F1..G-F2, and G-H1. Runtime and post-training passes require
-   supplied measurements; this template never executes those checks. Consume
-   `dataset_profile` from G-D0 for G-D1 dataset size/quality assessment.
+6. Apply all 18 gates phase-appropriately: G-M1..G-M5, G-Q1..G-Q6,
+   G-D1..G-D3, G-F1..G-F2, G-H1, and G-R1 (runtime alert). Runtime and
+   post-training passes require supplied measurements; this template never
+   executes those checks. Consume `dataset_profile` from G-D0 for G-D1 dataset
+   size/quality assessment. Consume `runtime_metrics` for G-R1 runtime alert
+   assessment (loss spikes, NaN gradients, vanishing loss) when supplied.
 7. Inspect initializer-specific preprocessing and persistence according to the
    selected initializer's documented contract. Do not introduce an EVA-specific
    or framework-version-specific refusal rule.
@@ -255,19 +273,21 @@ Do not create alternate finding shapes. A recommendation never overwrites
 
 | Template | Type | Purpose |
 |---|---|---|
+| `preflight-dataset.j2` | `KnowAct` | Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's `dataset_inspector.py` three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when `dataset_path` is absent. |
 | `select-method.j2` | `KnowAct` | Produce an advisory composable recommendation via eight-gate refinement (G0 adapter purpose, G-D0 dataset analysis → G1-G5 method → G6 harness), with deep capability reasoning over the full harness×trainer×host×cost space when `provider_capabilities` is supplied, Good Regulator refinement from `prior_training_history`, mechanical PDCA loop closure via `prior_iteration`, and self-improvement signals from `prior_outcome` and `prior_operator_feedback`. |
-| `audit-config.j2` | `KnowAct` | Audit declared artifacts with phase-aware gates, states, evidence kinds, normalized findings, separate readiness, algedonic `refuse_escalation` for safety-boundary violations, and mechanical no-fiction enforcement rejecting findings with null `config_path`/`line`. |
+| `audit-config.j2` | `KnowAct` | Audit declared artifacts with phase-aware gates, states, evidence kinds, normalized findings, separate readiness, algedonic `refuse_escalation` for safety-boundary violations, mechanical no-fiction enforcement rejecting findings with null `config_path`/`line`, and G-R1 runtime alert assessment from `runtime_metrics` when supplied. |
 | `report.j2` | `KnowAct` | Preserve findings losslessly; report readiness and contract gaps; propose only evidence-backed pending regressions with `surface: training`. |
-| `convergence-check.j2` | `KnowAct` | Compute normalized current-phase convergence with graded critical/high dimension, `not_evaluated=0.5` vs `deferred=1.0` distinction, all-gates-not-applicable edge case handling, and preflight/runtime/post-training posture from supplied evidence. |
+| `convergence-check.j2` | `KnowAct` | Compute normalized current-phase convergence with graded critical/high dimension, `not_evaluated=0.5` vs `deferred=1.0` distinction, all-gates-not-applicable edge case handling, G-R1 runtime alert family when `runtime_metrics` is supplied, and preflight/runtime/post-training posture from supplied evidence. |
 
 ## Fusion Mode
 
 The process manifest declares `fusion: false` on the convergence-check step
 (ordinal 4). No other step declares a fusion block. The skill is a linear
-PDCA flow — select-method → audit-config → report → convergence-check → loop —
-not a fused multi-template synthesis. The loop step (ordinal 5) routes
-`convergence_metric`, `blockers`, `gate_results_summary`, and `converged` back
-to select-method as `prior_iteration`, closing the feedback loop mechanically.
+PDCA flow — preflight-dataset → select-method → audit-config → report →
+convergence-check → loop — not a fused multi-template synthesis. The loop
+step (ordinal 5) routes `convergence_metric`, `blockers`,
+`gate_results_summary`, and `converged` back to select-method as
+`prior_iteration`, closing the feedback loop mechanically.
 
 ## Constraints
 

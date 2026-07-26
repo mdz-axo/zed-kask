@@ -445,6 +445,25 @@ pub struct KaskFusionSettings {
     /// Default 40.0. Used by Slice 4 to filter candidate panel models.
     #[serde(default = "default_openrouter_min_intelligence")]
     pub openrouter_min_intelligence: f64,
+
+    /// Coherence threshold (0.0–1.0) for measured convergence in deliberation
+    /// mode. When set, the orchestrator computes epistemic tension ξ and
+    /// coherence Γ from panel response embeddings; if Γ exceeds this threshold,
+    /// an advisory "measured convergence" signal is emitted. Empty/disabled
+    /// by default — requires an embedding API key (`DI_API_KEY` or `OR_API_KEY`).
+    #[serde(default)]
+    pub coherence_threshold: Option<f64>,
+
+    /// Enable query-complexity-based panel sizing. When `true`, simple queries
+    /// dispatch fewer panel models (1 for Simple, 2 for Medium, all for Complex).
+    /// Default: `false`.
+    #[serde(default)]
+    pub panel_sizing_enabled: bool,
+
+    /// Enable substrate-aware degradation. When `true`, panel size is reduced
+    /// under high latency pressure. Default: `false`.
+    #[serde(default)]
+    pub pressure_adaptive_enabled: bool,
 }
 
 fn default_fusion_mode() -> String {
@@ -530,6 +549,9 @@ impl KaskFusionSettings {
         config.algo_method = algo_method;
         config.skills = skills;
         config.max_rounds = self.max_rounds;
+        config.coherence_threshold = self.coherence_threshold;
+        config.panel_sizing_enabled = self.panel_sizing_enabled;
+        config.pressure_adaptive_enabled = self.pressure_adaptive_enabled;
         Some(config)
     }
 }
@@ -838,6 +860,9 @@ impl From<KaskSettingsContent> for KaskSettings {
                     max_rounds: f.max_rounds.unwrap_or(5),
                     openrouter_max_price: f.openrouter_max_price.unwrap_or(1.0),
                     openrouter_min_intelligence: f.openrouter_min_intelligence.unwrap_or(40.0),
+                    coherence_threshold: f.coherence_threshold,
+                    panel_sizing_enabled: f.panel_sizing_enabled.unwrap_or(false),
+                    pressure_adaptive_enabled: f.pressure_adaptive_enabled.unwrap_or(false),
                 })
                 .unwrap_or_default(),
             inference_providers: c

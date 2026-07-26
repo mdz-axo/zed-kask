@@ -556,6 +556,9 @@ async fn generate_stream_with_fusion_buffers_as_one_chunk() {
             skills: Vec::new(),
             max_rounds: 5,
             algo_method: AlgoMethod::default(),
+            coherence_threshold: None,
+            panel_sizing_enabled: false,
+            pressure_adaptive_enabled: false,
         }),
         system_prompt: None,
         ..Default::default()

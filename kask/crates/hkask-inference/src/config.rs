@@ -487,6 +487,9 @@ fn parse_fusion_config() -> Option<FusionConfig> {
             skills,
             max_rounds,
             algo_method,
+            coherence_threshold: None,
+            panel_sizing_enabled: false,
+            pressure_adaptive_enabled: false,
         });
     }
 

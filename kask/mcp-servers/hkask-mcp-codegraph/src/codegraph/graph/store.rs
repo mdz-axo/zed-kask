@@ -238,6 +238,60 @@ impl GraphStore {
             .query_row("SELECT COUNT(*) FROM code_files", [], |row| row.get(0))?;
         Ok(count as usize)
     }
+
+    /// Get all symbol IDs and their signature+doc text for embedding generation.
+    ///
+    /// Returns `(id, name, text)` tuples where `text` is a concatenation
+    /// of the symbol name, signature, and doc comment — the text that will
+    /// be embedded for semantic search.
+    pub fn all_symbols_for_embedding(&self) -> Result<Vec<(i64, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, COALESCE(s.doc_comment, '')
+             FROM symbols s
+             ORDER BY s.id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let name: String = row.get(1)?;
+            let signature: String = row.get(2)?;
+            let doc: String = row.get(3)?;
+            let text = if doc.is_empty() {
+                format!("{name}: {signature}")
+            } else {
+                format!("{name}: {signature}\n{doc}")
+            };
+            Ok((id, name, text))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    /// Insert or replace an embedding for a symbol in the `symbols_vec` table.
+    ///
+    /// The embedding must match the dimension the table was created with
+    /// (see `DEFAULT_EMBEDDING_DIM` / `HKASK_EMBEDDING_DIM`).
+    pub fn upsert_embedding(&self, symbol_id: i64, embedding: &[f32]) -> Result<()> {
+        // Serialize the embedding as a JSON array — sqlite-vec accepts this
+        // format for the vec0 virtual table.
+        let embedding_json = serde_json::to_string(embedding)?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO symbols_vec (symbol_id, embedding)
+             VALUES (?1, ?2)",
+            params![symbol_id, embedding_json],
+        )?;
+        Ok(())
+    }
+
+    /// Count how many symbols have embeddings in `symbols_vec`.
+    pub fn embedding_count(&self) -> Result<usize> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM symbols_vec", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
 }
 
 // ── Deserialization helpers ───────────────────────────────────────

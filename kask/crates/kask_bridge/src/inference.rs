@@ -24,9 +24,9 @@ use hkask_types::{
 };
 use language_model::LanguageModel;
 use language_model_core::{
-    LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUseInput, MessageContent,
-    Role, StopReason,
+    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolChoice,
+    LanguageModelToolUseInput, MessageContent, Role, StopReason,
 };
 use tokio::sync::oneshot;
 
@@ -161,6 +161,22 @@ impl LanguageModelInferencePort {
         parameters: &LLMParameters,
         tools: Option<&[ChatToolDefinition]>,
     ) -> LanguageModelRequest {
+        self.build_request_with_images(messages, &[], parameters, tools)
+    }
+
+    /// Build a multimodal request with optional base64-encoded images.
+    ///
+    /// When `images` is non-empty, the user message content array includes
+    /// `MessageContent::Image` parts alongside the text prompt. This is the
+    /// OpenAI multimodal content-array format that zed's `LanguageModel`
+    /// implementations (Anthropic, OpenAI, etc.) already handle.
+    fn build_request_with_images(
+        &self,
+        messages: &[ChatMessage],
+        images: &[String],
+        parameters: &LLMParameters,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> LanguageModelRequest {
         let req_messages: Vec<LanguageModelRequestMessage> = messages
             .iter()
             .map(|m| {
@@ -169,9 +185,24 @@ impl LanguageModelInferencePort {
                     "assistant" => Role::Assistant,
                     _ => Role::User,
                 };
+                // For user messages with images, build a multimodal content array.
+                // For all other messages (and user messages without images), use
+                // text-only content.
+                let content = if role == Role::User && !images.is_empty() {
+                    let mut parts = Vec::with_capacity(1 + images.len());
+                    parts.push(MessageContent::Text(m.content.clone()));
+                    for img in images {
+                        parts.push(MessageContent::Image(LanguageModelImage {
+                            source: img.clone().into(),
+                        }));
+                    }
+                    parts
+                } else {
+                    vec![MessageContent::Text(m.content.clone())]
+                };
                 LanguageModelRequestMessage {
                     role,
-                    content: vec![MessageContent::Text(m.content.clone())],
+                    content,
                     cache: false,
                     reasoning_details: None,
                 }
@@ -241,6 +272,38 @@ impl InferencePort for LanguageModelInferencePort {
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
         let request = self.build_request(messages, parameters, tools);
+        let (tx_reply, rx_reply) = oneshot::channel();
+        async move {
+            self.tx
+                .send(InferenceRequest {
+                    request,
+                    reply: tx_reply,
+                })
+                .map_err(|e| InferenceError::Connection(e.to_string()))?;
+            rx_reply
+                .await
+                .map_err(|e| InferenceError::Connection(e.to_string()))?
+        }
+        .boxed()
+    }
+
+    /// Vision inference — send base64-encoded images to a multimodal model.
+    ///
+    /// Builds a multimodal `LanguageModelRequest` with `MessageContent::Image`
+    /// parts and dispatches it through the same channel-based path as text
+    /// inference. The model must be vision-capable; if it isn't, the upstream
+    /// provider will return an error.
+    fn generate_vision(
+        &self,
+        prompt: &str,
+        images: &[String],
+        parameters: &LLMParameters,
+        _model_override: Option<&str>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+    > {
+        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let request = self.build_request_with_images(&messages, images, parameters, None);
         let (tx_reply, rx_reply) = oneshot::channel();
         async move {
             self.tx

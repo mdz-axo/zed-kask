@@ -1677,4 +1677,10 @@ pub struct KaskFusionSettingsContent {
     pub openrouter_max_price: Option<f64>,
     /// OpenRouter auto-discovery minimum intelligence index.
     pub openrouter_min_intelligence: Option<f64>,
+    /// Coherence threshold (0.0–1.0) for measured convergence in deliberation mode.
+    pub coherence_threshold: Option<f64>,
+    /// Enable query-complexity-based panel sizing.
+    pub panel_sizing_enabled: Option<bool>,
+    /// Enable substrate-aware degradation under high latency pressure.
+    pub pressure_adaptive_enabled: Option<bool>,
 }
