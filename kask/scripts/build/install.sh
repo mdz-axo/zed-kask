@@ -9,8 +9,8 @@
 # and manages account creation, deletion, and moderation on the server.
 # Skip with --skip-conduit.
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/mdz-axo/hKask/main/scripts/build/install.sh | bash
-# Or: wget -O - https://raw.githubusercontent.com/mdz-axo/hKask/main/scripts/build/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
+# Or: wget -O - https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 
 set -euo pipefail
 
@@ -225,7 +225,7 @@ install_rust() {
 # Build and Install
 # ============================================================================
 
-HKASK_REPO_URL="${HKASK_REPO_URL:-https://github.com/mdz-axo/hKask.git}"
+HKASK_REPO_URL="${HKASK_REPO_URL:-https://github.com/mdz-axo/zed-kask.git}"
 HKASK_SOURCE_DIR="${HKASK_SOURCE_DIR:-}"
 
 clone_repo() {
@@ -730,11 +730,11 @@ Environment Variables:
     HKASK_SYSTEM_INSTALL Force system-wide install (default: false)
     HKASK_REMOVE_CONFIG Remove config and data on uninstall (default: false)
     HKASK_SOURCE_DIR    Use existing source directory instead of cloning
-    HKASK_REPO_URL      Git repository URL (default: https://github.com/mdz-axo/hKask.git)
+    HKASK_REPO_URL      Git repository URL (default: https://github.com/mdz-axo/zed-kask.git)
 
 Examples:
     # Install hKask
-    curl -fsSL https://raw.githubusercontent.com/mdz-axo/hKask/main/scripts/build/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 
     # Install with custom directory
     INSTALL_DIR=/opt/hkask bash install.sh

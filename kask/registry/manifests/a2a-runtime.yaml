@@ -1,3 +1,6 @@
+# ACP Runtime Configuration
+# ℏKask v0.31.0
+
 manifest:
   id: a2a-runtime
   category: runtime-config
@@ -6,12 +9,57 @@ manifest:
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
+
+# root_authority: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   webid: "did:web:hkask.dev#system"
+#   secret:
+#     source: environment
+#     env_var: HKASK_ACP_SECRET
+
+# agent_registration: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   requirements:
+#     require_webid: true
+#     require_capabilities: true
+#   validation:
+#     reject_wildcard_capabilities: true
+
+# messaging: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   correlation:
+#     enabled: true
+#   routing:
+#     strategy: template_dispatch
+#   delivery:
+#     guarantee: at_least_once
+#     max_retries: 3
+
+# rate_limiting: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   enabled: true
+#   defaults:
+#     messages_per_minute: 60
+#     burst_size: 10
+
+# capability_verification: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   required: true
+#   token_validation:
+#     check_signature: true
+#     check_expiry: true
+#     max_chain_depth: 7
+
 audit:
   enabled: true
   log:
     message_send: true
     message_receive: true
     capability_check: true
+
 ledger:
+  spans:
+    emit_on_message_send: true
+    emit_on_capability_denied: true
   namespace: reg.agent.acp
-  span_namespace: reg.skill.a2a-runtime
+
+# security: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   injection_prevention:
+#     sanitize_message_content: true
+#   dos_prevention:
+#     max_message_size_bytes: 1048576

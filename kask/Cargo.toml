@@ -51,7 +51,7 @@ exclude = ["fuzz"]
 version = "0.31.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/mdz-axo/hKask"
+repository = "https://github.com/mdz-axo/zed-kask"
 
 [workspace.dependencies]
 # ── Dependencies that differ from or are not in the root workspace ──────────

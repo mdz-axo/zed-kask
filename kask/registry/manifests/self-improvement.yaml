@@ -1,17 +1,24 @@
+# Self-Improvement Skill Manifest
+# ℏKask v0.31.0 — Unified self-induced update operator with nested PDCA + outer Kata
+# Implements: Ren et al. (2026, arXiv:2607.13104) "Self-Improvements in Modern Agentic Systems: A Survey"
+
 manifest:
   id: self-improvement
   category: skill
   name: Self-Improvement
-  description: "General multi-purpose self-improvement skill for FM-based agents. Implements the unified\
-    \ self-induced update operator from Ren et al. (2026, arXiv:2607.13104). Drives persistent, endogenous\
-    \ adaptation across two pathways \u2014 Foundation Model Improvement (\u03B8) and Scaffolding Improvement\
-    \ (\u03A3) \u2014 through intrinsic generative demonstrations, intrinsic evaluative feedback, and\
-    \ extrinsic exploratory experience. Embeds its own PDCA loops at the improvement-cycle level and wraps\
-    \ an outer Improvement Kata loop around all algorithmic approaches.\n"
+  description: >
+    General multi-purpose self-improvement skill for FM-based agents. Implements
+    the unified self-induced update operator from Ren et al. (2026, arXiv:2607.13104).
+    Drives persistent, endogenous adaptation across two pathways — Foundation Model
+    Improvement (θ) and Scaffolding Improvement (Σ) — through intrinsic generative
+    demonstrations, intrinsic evaluative feedback, and extrinsic exploratory
+    experience. Embeds its own PDCA loops at the improvement-cycle level and wraps
+    an outer Improvement Kata loop around all algorithmic approaches.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
+
 convergence:
   threshold: 0.25
   improvement_gate: threshold_only
@@ -19,261 +26,290 @@ convergence:
   min_iterations: 1
   convergence_field: si_kata_convergence_result.convergence_metric
   on_not_reached: escalate
+
 gas:
   cap: 200000
   cost_per_iteration: 200
   alert_threshold: 0.8
   hard_limit: true
+
 rjoule:
   cap: 5
   alert_threshold: 0.8
   hard_limit: true
+
 inputs:
-- name: challenge
-  type: string
-  required: true
-  description: The capability the agent should build or improve.
-- name: current_metrics
-  type: object
-  required: false
-  description: Baseline metrics for the current agent configuration.
-- name: pathway_preference
-  type: string
-  required: false
-  description: "Preferred pathway \u2014 \"theta\" (FM improvement) or \"sigma\" (scaffolding). Defaults\
-    \ to \"sigma\"."
-- name: signal_preference
-  type: string
-  required: false
-  description: "Preferred signal \u2014 \"demos\" (intrinsic generative), \"feedback\" (intrinsic evaluative),\
-    \ or \"experience\" (extrinsic exploratory)."
-- name: scaffold_component
-  type: string
-  required: false
-  description: "If pathway is \"sigma\", which component \u2014 \"prompt\", \"memory\", \"tool\", or \"\
-    full\"."
-- name: budget
-  type: object
-  required: false
-  description: "Resource budget \u2014 compute, tokens, wall-clock time, human input."
-- name: acceptance_criteria
-  type: object
-  required: false
-  description: "Criteria for committing an update \u2014 performance threshold, regression tolerance,\
-    \ safety constraints."
+  - name: challenge
+    type: string
+    required: true
+    description: The capability the agent should build or improve.
+  - name: current_metrics
+    type: object
+    required: false
+    description: Baseline metrics for the current agent configuration.
+  - name: pathway_preference
+    type: string
+    required: false
+    description: Preferred pathway — "theta" (FM improvement) or "sigma" (scaffolding). Defaults to "sigma".
+  - name: signal_preference
+    type: string
+    required: false
+    description: Preferred signal — "demos" (intrinsic generative), "feedback" (intrinsic evaluative), or "experience" (extrinsic exploratory).
+  - name: scaffold_component
+    type: string
+    required: false
+    description: If pathway is "sigma", which component — "prompt", "memory", "tool", or "full".
+  - name: budget
+    type: object
+    required: false
+    description: Resource budget — compute, tokens, wall-clock time, human input.
+  - name: acceptance_criteria
+    type: object
+    required: false
+    description: Criteria for committing an update — performance threshold, regression tolerance, safety constraints.
+
 steps:
-- ordinal: 1
-  action: select
-  description: "Outer Kata Step 1 \u2014 Understand direction: what capability are we building?"
-  renderer: minijinja
-  template_ref: self-improvement/si-kata-direction.j2
-  gas_cap: 3000
-  timeout_seconds: 45
-  input_mapping:
-    challenge: '{{ challenge }}'
-- ordinal: 2
-  action: select
-  description: "Outer Kata Step 2 \u2014 Grasp current condition: baseline measurement."
-  renderer: minijinja
-  template_ref: self-improvement/si-kata-current.j2
-  gas_cap: 3500
-  timeout_seconds: 45
-  input_mapping:
-    challenge: '{{ challenge }}'
-    current_metrics: '{{ current_metrics | default({}) }}'
-    direction: '{{ step_1_result }}'
-- ordinal: 3
-  action: select
-  description: "Outer Kata Step 3 \u2014 Establish target condition: measurable, time-bounded."
-  renderer: minijinja
-  template_ref: self-improvement/si-kata-target.j2
-  gas_cap: 3500
-  timeout_seconds: 45
-  input_mapping:
-    challenge: '{{ challenge }}'
-    current_condition: '{{ step_2_result }}'
-- ordinal: 4
-  action: select
-  description: "PDCA Plan \u2014 Select pathway (\u03B8 or \u03A3), signal type, and generate improvement\
-    \ plan."
-  renderer: minijinja
-  template_ref: self-improvement/si-select-pathway.j2
-  gas_cap: 4000
-  timeout_seconds: 60
-  input_mapping:
-    challenge: '{{ challenge }}'
-    current_condition: '{{ step_2_result }}'
-    target_condition: '{{ step_3_result }}'
-    pathway_preference: '{{ pathway_preference | default(''sigma'') }}'
-    signal_preference: '{{ signal_preference | default('''') }}'
-    scaffold_component: '{{ scaffold_component | default('''') }}'
-    budget: '{{ budget | default({}) }}'
-    acceptance_criteria: '{{ acceptance_criteria | default({}) }}'
-- ordinal: 5
-  action: select
-  description: "PDCA Do \u2014 Execute the improvement operator \U0001D4B0 on the selected target."
-  renderer: minijinja
-  template_ref: self-improvement/si-execute-improvement.j2
-  gas_cap: 8000
-  timeout_seconds: 120
-  input_mapping:
-    improvement_plan: '{{ step_4_result }}'
-    current_config: '{{ step_2_result }}'
-- ordinal: 6
-  action: select
-  description: "PDCA Check \u2014 Evaluate updated agent on held-out tasks."
-  renderer: minijinja
-  template_ref: self-improvement/si-evaluate-improvement.j2
-  gas_cap: 5000
-  timeout_seconds: 90
-  input_mapping:
-    updated_config: '{{ step_5_result }}'
-    improvement_plan: '{{ step_4_result }}'
-    current_condition: '{{ step_2_result }}'
-- ordinal: 7
-  action: select
-  description: "PDCA Act \u2014 Commit or rollback the update based on acceptance criteria."
-  renderer: minijinja
-  template_ref: self-improvement/si-commit-or-rollback.j2
-  gas_cap: 3000
-  timeout_seconds: 45
-  input_mapping:
-    evaluation_result: '{{ step_6_result }}'
-    improvement_plan: '{{ step_4_result }}'
-    proposed_artifact: '{{ step_5_result }}'
-- ordinal: 8
-  action: select
-  description: "Inner PDCA Convergence \u2014 per-iteration metric with materiality guard."
-  renderer: minijinja
-  template_ref: self-improvement/si-pdca-convergence.j2
-  gas_cap: 2000
-  timeout_seconds: 30
-  input_mapping:
-    evaluation_result: '{{ step_6_result }}'
-    commit_decision: '{{ step_7_result }}'
-    improvement_plan: '{{ step_4_result }}'
-    pdca_iteration: '{{ pdca_iteration | default(1) }}'
-    max_pdca_iterations: 5
-- ordinal: 9
-  action: loop
-  description: Re-enter PDCA Plan if not converged (max 5 inner iterations).
-  gas_cap: 1000
-  timeout_seconds: 30
-  input_mapping:
-    loop_target: 4
-    loop_condition: step_8_result.next_action == 're-enter'
-    max_iterations: 5
-- ordinal: 10
-  action: select
-  description: "Outer Kata Convergence \u2014 Trajectory stability + transfer + regression + materiality\
-    \ guard."
-  renderer: minijinja
-  template_ref: self-improvement/si-kata-convergence.j2
-  gas_cap: 2500
-  timeout_seconds: 45
-  input_mapping:
-    direction: '{{ step_1_result }}'
-    current_condition: '{{ step_2_result }}'
-    target_condition: '{{ step_3_result }}'
-    pdca_convergence: '{{ step_8_result }}'
-    pdca_check: '{{ step_6_result }}'
-    pdca_act: '{{ step_7_result }}'
-- ordinal: 11
-  action: loop
-  description: Re-enter Kata Step 2 (current condition) if not converged (max 10 outer iterations).
-  gas_cap: 1000
-  timeout_seconds: 30
-  input_mapping:
-    loop_target: 2
-    loop_condition: step_10_result.convergence_metric > 0.25 and not step_10_result.materiality_guard_triggered
-    max_iterations: 10
+  # ─── OUTER KATA: Steps 1-3 (Direction → Current → Target) ───
+  - ordinal: 1
+    action: select
+    description: "Outer Kata Step 1 — Understand direction: what capability are we building?"
+    renderer: minijinja
+    template_ref: self-improvement/si-kata-direction.j2
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+
+  - ordinal: 2
+    action: select
+    description: "Outer Kata Step 2 — Grasp current condition: baseline measurement."
+    renderer: minijinja
+    template_ref: self-improvement/si-kata-current.j2
+    gas_cap: 3500
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_metrics: "{{ current_metrics | default({}) }}"
+      direction: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: "Outer Kata Step 3 — Establish target condition: measurable, time-bounded."
+    renderer: minijinja
+    template_ref: self-improvement/si-kata-target.j2
+    gas_cap: 3500
+    timeout_seconds: 45
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_condition: "{{ step_2_result }}"
+
+  # ─── INNER PDCA: Steps 4-7 (Plan → Do → Check → Act) ───
+  # Max 5 iterations of the inner PDCA per Kata step 4 experiment.
+  - ordinal: 4
+    action: select
+    description: "PDCA Plan — Select pathway (θ or Σ), signal type, and generate improvement plan."
+    renderer: minijinja
+    template_ref: self-improvement/si-select-pathway.j2
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      challenge: "{{ challenge }}"
+      current_condition: "{{ step_2_result }}"
+      target_condition: "{{ step_3_result }}"
+      pathway_preference: "{{ pathway_preference | default('sigma') }}"
+      signal_preference: "{{ signal_preference | default('') }}"
+      scaffold_component: "{{ scaffold_component | default('') }}"
+      budget: "{{ budget | default({}) }}"
+      acceptance_criteria: "{{ acceptance_criteria | default({}) }}"
+
+  - ordinal: 5
+    action: select
+    description: "PDCA Do — Execute the improvement operator 𝒰 on the selected target."
+    renderer: minijinja
+    template_ref: self-improvement/si-execute-improvement.j2
+    gas_cap: 8000
+    timeout_seconds: 120
+    input_mapping:
+      improvement_plan: "{{ step_4_result }}"
+      current_config: "{{ step_2_result }}"
+
+  - ordinal: 6
+    action: select
+    description: "PDCA Check — Evaluate updated agent on held-out tasks."
+    renderer: minijinja
+    template_ref: self-improvement/si-evaluate-improvement.j2
+    gas_cap: 5000
+    timeout_seconds: 90
+    input_mapping:
+      updated_config: "{{ step_5_result }}"
+      improvement_plan: "{{ step_4_result }}"
+      current_condition: "{{ step_2_result }}"
+
+  - ordinal: 7
+    action: select
+    description: "PDCA Act — Commit or rollback the update based on acceptance criteria."
+    renderer: minijinja
+    template_ref: self-improvement/si-commit-or-rollback.j2
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      evaluation_result: "{{ step_6_result }}"
+      improvement_plan: "{{ step_4_result }}"
+      proposed_artifact: "{{ step_5_result }}"
+
+  # ─── INNER PDCA CONVERGENCE CHECK ───
+  # Computes per-iteration convergence with materiality guard for irreducible gaps.
+  - ordinal: 8
+    action: select
+    description: "Inner PDCA Convergence — per-iteration metric with materiality guard."
+    renderer: minijinja
+    template_ref: self-improvement/si-pdca-convergence.j2
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      evaluation_result: "{{ step_6_result }}"
+      commit_decision: "{{ step_7_result }}"
+      improvement_plan: "{{ step_4_result }}"
+      pdca_iteration: "{{ pdca_iteration | default(1) }}"
+      max_pdca_iterations: 5
+
+  # ─── INNER PDCA LOOP: Re-enter Plan if not converged ───
+  # Loop condition uses the inner PDCA convergence metric (step_8_result), not just the LLM's self-assessed next_step.
+  # The LLM's commit/rollback decision (step_7_result) is still checked, but the convergence metric is the primary signal.
+  - ordinal: 9
+    action: loop
+    description: "Re-enter PDCA Plan if not converged (max 5 inner iterations)."
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: 4  # Re-enter at PDCA Plan (step 4) for next improvement iteration
+      loop_condition: "step_8_result.next_action == 're-enter'"
+      max_iterations: 5
+
+  # ─── OUTER KATA CONVERGENCE ───
+  - ordinal: 10
+    action: select
+    description: "Outer Kata Convergence — Trajectory stability + transfer + regression + materiality guard."
+    renderer: minijinja
+    template_ref: self-improvement/si-kata-convergence.j2
+    gas_cap: 2500
+    timeout_seconds: 45
+    input_mapping:
+      direction: "{{ step_1_result }}"
+      current_condition: "{{ step_2_result }}"
+      target_condition: "{{ step_3_result }}"
+      pdca_convergence: "{{ step_8_result }}"
+      pdca_check: "{{ step_6_result }}"
+      pdca_act: "{{ step_7_result }}"
+
+  # ─── OUTER KATA LOOP: Re-enter Current Condition if not converged ───
+  - ordinal: 11
+    action: loop
+    description: "Re-enter Kata Step 2 (current condition) if not converged (max 10 outer iterations)."
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: 2  # Re-enter at Kata Step 2 (current condition) — direction (step 1) only revisited if challenge fundamentally changes
+      loop_condition: "step_10_result.convergence_metric > 0.25 and not step_10_result.materiality_guard_triggered"
+      max_iterations: 10
+
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
+
 ocap:
   required_capabilities:
-  - resource: template
-    action: render
-    template_id: self-improvement/si-kata-direction
-    gas_budget: 3000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-kata-current
-    gas_budget: 3500
-  - resource: template
-    action: render
-    template_id: self-improvement/si-kata-target
-    gas_budget: 3500
-  - resource: template
-    action: render
-    template_id: self-improvement/si-select-pathway
-    gas_budget: 4000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-execute-improvement
-    gas_budget: 1000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-fm-demos
-    gas_budget: 6000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-fm-feedback
-    gas_budget: 6000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-fm-experience
-    gas_budget: 6000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-scaffold-prompt
-    gas_budget: 6000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-scaffold-memory
-    gas_budget: 6000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-scaffold-tool
-    gas_budget: 6000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-exec-scaffold-full
-    gas_budget: 8000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-evaluate-improvement
-    gas_budget: 5000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-commit-or-rollback
-    gas_budget: 3000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-pdca-convergence
-    gas_budget: 2000
-  - resource: template
-    action: render
-    template_id: self-improvement/si-kata-convergence
-    gas_budget: 2500
-  - resource: manifest
-    action: execute
-    template_id: self-improvement
-    gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-kata-direction
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-kata-current
+      gas_budget: 3500
+    - resource: template
+      action: render
+      template_id: self-improvement/si-kata-target
+      gas_budget: 3500
+    - resource: template
+      action: render
+      template_id: self-improvement/si-select-pathway
+      gas_budget: 4000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-execute-improvement
+      gas_budget: 1000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-fm-demos
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-fm-feedback
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-fm-experience
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-prompt
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-memory
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-tool
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-exec-scaffold-full
+      gas_budget: 8000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-evaluate-improvement
+      gas_budget: 5000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-commit-or-rollback
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-pdca-convergence
+      gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: self-improvement/si-kata-convergence
+      gas_budget: 2500
+    - resource: manifest
+      action: execute
+      template_id: self-improvement
+      gas_budget: 2000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
+
+# Safety governance (Section 9.1 of the paper):
+# - Verifier-gated updates: all updates must pass verifier checks before commitment
+# - Critic decoupling: evaluator must be decoupled from generator
+# - Layered gating: strict permission system for self-modification
+# - Version history for rollback: both pathways maintain version history
+# - Fast-to-slow consolidation: scaffold improvements validated before parametric consolidation
+
 ledger:
   emit_spans: true
   span_namespace: reg.skill.self-improvement
+  telemetry_namespace: hkask.template.self-improvement
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  telemetry_namespace: hkask.template.self-improvement
+
 audit:
   enabled: true
   log_level: info

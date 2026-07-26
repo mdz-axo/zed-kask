@@ -1,264 +1,335 @@
+# Replica Discovery Manifest
+# hKask v0.27.0 — Academic Author Corpus Discovery Pipeline
+#
+# Composable skill for discovering an academic author's body of work
+# across multiple sources and generating a corpus.yaml for corpus_build_persona.
+#
+# Supports two modes:
+#   - agentic: Fully automated discovery → corpus generation
+#   - curated: Human-in-the-loop — presents candidates for confirmation at each phase
+#
+# Pipeline: disambiguate → enumerate (Semantic Scholar, arXiv, web, YouTube)
+#   → extract content → cache to disk → extract transcripts
+#   → extract concepts (LLM dedup) → infer methods (LLM)
+#   → generate corpus.yaml → Curator gate → Regulation feedback
+
 manifest:
   id: mcp/replica-discovery
   category: pipeline
   name: Replica Discovery
-  description: 'Multi-source academic author discovery pipeline. Given an author name, disambiguates identity,
-    enumerates works across Semantic Scholar, arXiv, web search, and YouTube transcripts, extracts and
-    caches content, extracts key concepts and methodological patterns via LLM, and generates a corpus.yaml
-    ready for corpus_build_persona.
-
-    '
+  description: >
+    Multi-source academic author discovery pipeline. Given an author name,
+    disambiguates identity, enumerates works across Semantic Scholar, arXiv,
+    web search, and YouTube transcripts, extracts and caches content, extracts
+    key concepts and methodological patterns via LLM, and generates a
+    corpus.yaml ready for corpus_build_persona.
   version: 0.31.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public
+
+# ── Parameters (supplied by caller) ──────────────────────────────────────────
+# parameters: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
+#   author_name:
+#     type: string
+#     description: "Full name of the academic author to research (e.g., 'David Dunning')"
+#     required: true
+#   mode:
+#     type: string
+#     description: "Discovery mode: 'agentic' (fully automated) or 'curated' (human-in-the-loop)"
+#     default: "curated"
+#   max_works:
+#     type: integer
+#     description: "Maximum number of works to include in the corpus"
+#     default: 20
+#   include_transcripts:
+#     type: boolean
+#     description: "Whether to search for and include YouTube transcripts"
+#     default: true
+#   include_web:
+#     type: boolean
+#     description: "Whether to include institutional pages and open web content"
+#     default: true
+#   include_methods:
+#     type: boolean
+#     description: "Whether to infer methodological patterns via LLM (default: on — quality first)"
+#     default: true
+#   cache_dir:
+#     type: string
+#     description: "Directory for caching extracted content (default: ./.cache relative to output path)"
+#     default: "./.cache"
+#   author_domain:
+#     type: string
+#     description: "Academic domain for method inference context (e.g., 'psychology', 'physics')"
+#     default: "academic"
+
 gas:
   cap: 24576
   alert_threshold: 0.8
   hard_limit: true
+
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
+
 steps:
-- ordinal: 1
-  action: execute
-  description: 'Phase 1: Disambiguate author identity. Search across multiple sources to confirm the correct
-    person. In curated mode, present candidates to the Curator for confirmation.
+  # ── Phase 1: Name Disambiguation ────────────────────────────────────────
+  - ordinal: 1
+    action: execute
+    description: >
+      Phase 1: Disambiguate author identity. Search across multiple sources
+      to confirm the correct person. In curated mode, present candidates to
+      the Curator for confirmation.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${input.author_name} academic publications university"
+      strategy: "deep"
+      num_results: 10
+    gas_cap: 4096
+    timeout_seconds: 30
+    output_schema:
+      results: array
+      answer_box: object
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${input.author_name} academic publications university
-    strategy: deep
-    num_results: 10
-  gas_cap: 4096
-  timeout_seconds: 30
-  output_schema:
-    results: array
-    answer_box: object
-- ordinal: 2
-  action: execute
-  description: 'Phase 2a: Search Semantic Scholar for papers by this author. Returns structured paper
-    metadata with abstracts, citations, and PDF links.
+  # ── Phase 2: Academic Paper Search ───────────────────────────────────────
+  - ordinal: 2
+    action: execute
+    description: >
+      Phase 2a: Search Semantic Scholar for papers by this author.
+      Returns structured paper metadata with abstracts, citations, and PDF links.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${input.author_name}"
+      strategy: "web"
+      num_results: "${input.max_works}"
+    gas_cap: 4096
+    timeout_seconds: 30
+    output_schema:
+      results: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${input.author_name}
-    strategy: web
-    num_results: ${input.max_works}
-  gas_cap: 4096
-  timeout_seconds: 30
-  output_schema:
-    results: array
-- ordinal: 3
-  action: execute
-  description: 'Phase 2b: Search arXiv for preprints by this author. Uses arXiv''s author search syntax.
+  - ordinal: 3
+    action: execute
+    description: >
+      Phase 2b: Search arXiv for preprints by this author.
+      Uses arXiv's author search syntax.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "au:${input.author_name_lower}"
+      strategy: "web"
+      num_results: "${input.max_works}"
+    gas_cap: 2048
+    timeout_seconds: 30
+    output_schema:
+      results: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: au:${input.author_name_lower}
-    strategy: web
-    num_results: ${input.max_works}
-  gas_cap: 2048
-  timeout_seconds: 30
-  output_schema:
-    results: array
-- ordinal: 4
-  action: execute
-  description: 'Phase 3 (conditional): Search the open web for institutional pages, interviews, and other
-    content by or about the author.
+  # ── Phase 3: Web + Institutional Content ─────────────────────────────────
+  - ordinal: 4
+    action: execute
+    description: >
+      Phase 3 (conditional): Search the open web for institutional pages,
+      interviews, and other content by or about the author.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${input.author_name} faculty page institutional profile"
+      strategy: "web"
+      num_results: 5
+    condition: "${input.include_web}"
+    gas_cap: 2048
+    timeout_seconds: 30
+    output_schema:
+      results: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${input.author_name} faculty page institutional profile
-    strategy: web
-    num_results: 5
-  condition: ${input.include_web}
-  gas_cap: 2048
-  timeout_seconds: 30
-  output_schema:
-    results: array
-- ordinal: 5
-  action: execute
-  description: 'Phase 4 (conditional): Search for YouTube videos featuring the author (talks, interviews,
-    lectures). Returns video URLs that can be fed to the transcript extraction step.
+  # ── Phase 4: YouTube Transcript Discovery ─────────────────────────────────
+  - ordinal: 5
+    action: execute
+    description: >
+      Phase 4 (conditional): Search for YouTube videos featuring the author
+      (talks, interviews, lectures). Returns video URLs that can be fed to
+      the transcript extraction step.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${input.author_name} interview talk lecture"
+      strategy: "web"
+      num_results: 5
+      include_domains: ["youtube.com"]
+    condition: "${input.include_transcripts}"
+    gas_cap: 2048
+    timeout_seconds: 30
+    output_schema:
+      results: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${input.author_name} interview talk lecture
-    strategy: web
-    num_results: 5
-    include_domains:
-    - youtube.com
-  condition: ${input.include_transcripts}
-  gas_cap: 2048
-  timeout_seconds: 30
-  output_schema:
-    results: array
-- ordinal: 6
-  action: execute
-  description: 'Phase 5: Extract full content from discovered works. Iterates over merged results from
-    phases 2-4 and extracts markdown content. PDFs are handled by the research server''s extraction pipeline.
+  # ── Phase 5: Content Extraction ──────────────────────────────────────────
+  - ordinal: 6
+    action: execute
+    description: >
+      Phase 5: Extract full content from discovered works.
+      Iterates over merged results from phases 2-4 and extracts markdown content.
+      PDFs are handled by the research server's extraction pipeline.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_extract
+    arguments:
+      url: "${item.url}"
+      format: "markdown"
+      main_content_only: true
+    loop_over: "${merged_works[:input.max_works]}"
+    gas_cap: 8192
+    timeout_seconds: 120
+    output_schema:
+      extracted_pages: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_extract
-  arguments:
-    url: ${item.url}
-    format: markdown
-    main_content_only: true
-  loop_over: ${merged_works[:input.max_works]}
-  gas_cap: 8192
-  timeout_seconds: 120
-  output_schema:
-    extracted_pages: array
-- ordinal: 7
-  action: execute
-  description: 'Phase 6: Write extracted content to the cache directory so corpus_build_persona can skip
-    re-downloading. Each work is saved as {cache_dir}/{slug}.txt.
+  # ── Phase 6: Cache Extracted Content to Disk ─────────────────────────────
+  - ordinal: 7
+    action: execute
+    description: >
+      Phase 6: Write extracted content to the cache directory so corpus_build_persona
+      can skip re-downloading. Each work is saved as {cache_dir}/{slug}.txt.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-corpus
+    tool: corpus_cache_work
+    arguments:
+      slug: "${item.slug}"
+      content: "${item.content}"
+      cache_dir: "${input.cache_dir}"
+    loop_over: "${step6_extracted_pages}"
+    gas_cap: 2048
+    timeout_seconds: 30
+    output_schema:
+      cached_works: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-corpus
-  tool: corpus_cache_work
-  arguments:
-    slug: ${item.slug}
-    content: ${item.content}
-    cache_dir: ${input.cache_dir}
-  loop_over: ${step6_extracted_pages}
-  gas_cap: 2048
-  timeout_seconds: 30
-  output_schema:
-    cached_works: array
-- ordinal: 8
-  action: execute
-  description: 'Phase 7 (conditional): Extract transcripts from discovered YouTube videos. Each video
-    ID is sent to SerpAPI''s youtube_video_transcript engine.
+  # ── Phase 7: Transcript Extraction ───────────────────────────────────────
+  - ordinal: 8
+    action: execute
+    description: >
+      Phase 7 (conditional): Extract transcripts from discovered YouTube videos.
+      Each video ID is sent to SerpAPI's youtube_video_transcript engine.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${item.video_id}"
+      strategy: "quick"
+      num_results: 1
+    loop_over: "${step5_youtube_urls}"
+    condition: "${input.include_transcripts}"
+    gas_cap: 4096
+    timeout_seconds: 60
+    output_schema:
+      transcripts: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${item.video_id}
-    strategy: quick
-    num_results: 1
-  loop_over: ${step5_youtube_urls}
-  condition: ${input.include_transcripts}
-  gas_cap: 4096
-  timeout_seconds: 60
-  output_schema:
-    transcripts: array
-- ordinal: 9
-  action: execute
-  description: 'Phase 8: Extract key concepts, places, and events from paper metadata using LLM semantic
-    deduplication. Renders the extract-concepts template with paper titles and abstracts, then calls inference
-    to produce structured entities for the corpus YAML.
+  # ── Phase 8: Concept Extraction ──────────────────────────────────────────
+  - ordinal: 9
+    action: execute
+    description: >
+      Phase 8: Extract key concepts, places, and events from paper metadata
+      using LLM semantic deduplication. Renders the extract-concepts template
+      with paper titles and abstracts, then calls inference to produce
+      structured entities for the corpus YAML.
+    renderer: minijinja
+    template_ref: replica/extract-concepts
+    mcp: hkask-mcp-memory
+    gas_cap: 4096
+    timeout_seconds: 60
+    output_schema:
+      concepts: array
+      places: array
+      events: array
 
-    '
-  renderer: minijinja
-  template_ref: replica/extract-concepts
-  mcp: hkask-mcp-memory
-  gas_cap: 4096
-  timeout_seconds: 60
-  output_schema:
-    concepts: array
-    places: array
-    events: array
-- ordinal: 10
-  action: execute
-  description: 'Phase 9 (default on): Infer methodological and stylistic patterns from representative
-    passages of the author''s work. Renders the infer-methods template with sample passages, then calls
-    inference to produce method definitions with stylometric signal thresholds.
+  # ── Phase 9: Method Inference ────────────────────────────────────────────
+  - ordinal: 10
+    action: execute
+    description: >
+      Phase 9 (default on): Infer methodological and stylistic patterns from
+      representative passages of the author's work. Renders the infer-methods
+      template with sample passages, then calls inference to produce method
+      definitions with stylometric signal thresholds.
+    renderer: minijinja
+    template_ref: replica/infer-methods
+    mcp: hkask-mcp-memory
+    condition: "${input.include_methods}"
+    gas_cap: 4096
+    timeout_seconds: 60
+    output_schema:
+      methods: array
 
-    '
-  renderer: minijinja
-  template_ref: replica/infer-methods
-  mcp: hkask-mcp-memory
-  condition: ${input.include_methods}
-  gas_cap: 4096
-  timeout_seconds: 60
-  output_schema:
-    methods: array
-- ordinal: 11
-  action: populate
-  description: 'Phase 10: Generate corpus.yaml from all discovered works, extracted concepts, and inferred
-    methods. Renders the discovery-corpus template with collected metadata. In curated mode, presents
-    the generated config for Curator approval before proceeding to build.
+  # ── Phase 10: Corpus YAML Generation ─────────────────────────────────────
+  - ordinal: 11
+    action: populate
+    description: >
+      Phase 10: Generate corpus.yaml from all discovered works, extracted
+      concepts, and inferred methods. Renders the discovery-corpus template
+      with collected metadata. In curated mode, presents the generated config
+      for Curator approval before proceeding to build.
+    renderer: minijinja
+    template_ref: replica/discovery-corpus
+    gas_cap: 2000
+    timeout_seconds: 10
+    output_schema:
+      corpus_yaml: string
+      works_count: integer
+      sources: array
 
-    '
-  renderer: minijinja
-  template_ref: replica/discovery-corpus
-  gas_cap: 2000
-  timeout_seconds: 10
-  output_schema:
-    corpus_yaml: string
-    works_count: integer
-    sources: array
-- ordinal: 12
-  action: choice
-  description: 'Phase 11 (curated mode only): Present discovered works, extracted concepts, inferred methods,
-    and generated corpus.yaml to the Curator for review. Curator can approve, modify, or abort. In agentic
-    mode, this step is skipped.
+  # ── Phase 11: Curator Confirmation Gate (curated mode only) ──────────────
+  - ordinal: 12
+    action: choice
+    description: >
+      Phase 11 (curated mode only): Present discovered works, extracted concepts,
+      inferred methods, and generated corpus.yaml to the Curator for review.
+      Curator can approve, modify, or abort. In agentic mode, this step is skipped.
+    renderer: null
+    template_ref: null
+    mcp: null
+    condition: "${input.mode == 'curated'}"
+    gas_cap: 500
+    timeout_seconds: 300
+    choices:
+      - approve: "Proceed to corpus_build_persona with generated corpus"
+      - modify: "Adjust works, concepts, or methods and regenerate corpus.yaml"
+      - abort: "Stop discovery, discard results"
+    output_schema:
+      decision: string
+      approved_works: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: null
-  condition: ${input.mode == 'curated'}
-  gas_cap: 500
-  timeout_seconds: 300
-  choices:
-  - approve: Proceed to corpus_build_persona with generated corpus
-  - modify: Adjust works, concepts, or methods and regenerate corpus.yaml
-  - abort: Stop discovery, discard results
-  output_schema:
-    decision: string
-    approved_works: array
-- ordinal: 13
-  action: feedback
-  description: 'Emit discovery outcome to Regulation. Track variety, source coverage, works discovered,
-    concepts extracted, and methods inferred.
+  # ── Phase 12: Regulation Feedback ───────────────────────────────────────────────
+  - ordinal: 13
+    action: feedback
+    description: >
+      Emit discovery outcome to Regulation. Track variety, source coverage,
+      works discovered, concepts extracted, and methods inferred.
+    renderer: null
+    template_ref: null
+    mcp: null # Regulation is ambient (RegulationRuntime)
+    gas_cap: 500
+    timeout_seconds: 5
+    feedback:
+      variety_delta: integer
+      works_discovered: integer
+      concepts_extracted: integer
+      methods_inferred: integer
+      sources_used: array
+    output_schema:
+      reg_event_id: string
+      outcome_recorded: boolean
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: null
-  gas_cap: 500
-  timeout_seconds: 5
-  feedback:
-    variety_delta: integer
-    works_discovered: integer
-    concepts_extracted: integer
-    methods_inferred: integer
-    sources_used: array
-  output_schema:
-    reg_event_id: string
-    outcome_recorded: boolean
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
@@ -270,33 +341,36 @@ error_handling:
   on_cache_failure: skip_item
   on_concept_failure: continue
   on_method_failure: continue
+
 ocap:
   required_capabilities:
-  - resource: web
-    action: search
-    gas_budget: 8192
-  - resource: web
-    action: extract
-    gas_budget: 8192
-  - resource: replica
-    action: cache
-    gas_budget: 2048
-  - resource: memory
-    action: infer
-    gas_budget: 8192
-  - resource: regulation
-    action: emit
-    gas_budget: 500
+    - resource: web
+      action: search
+      gas_budget: 8192
+    - resource: web
+      action: extract
+      gas_budget: 8192
+    - resource: replica
+      action: cache
+      gas_budget: 2048
+    - resource: memory
+      action: infer
+      gas_budget: 8192
+    - resource: regulation
+      action: emit
+      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
+
 ledger:
   emit_spans: true
-  span_namespace: reg.skill.mcp/replica-discovery
+  span_namespace: reg.skill.mcp-replica-discovery
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
+
 audit:
   enabled: true
   log_level: info

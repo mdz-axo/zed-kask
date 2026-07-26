@@ -1,17 +1,28 @@
+# Graph Audit Process Manifest
+# hKask v0.31.0 — Unified graph analysis (code + semantic + dual) as convergent PDCA
+#
+# Merged from codegraph + semantic-graph-audit + zoom-out (context-expansion).
+# Three modes selected by the `mode` input:
+#   code     -> discover, query, analyze, context, converge (orchestrates MCP tools)
+#   semantic -> classify, analyze, detect, report (no MCP tools; accepts any graph)
+#   dual     -> code steps 1-4 to extract graph, then semantic steps 1-4 to audit it
+
 manifest:
   id: graph-audit
   category: skill
   name: Graph Audit
-  description: 'Unified graph analysis with three modes. Code mode: query, traverse, analyze, and assemble
-    context from the code graph via hkask-mcp-codegraph MCP tools. Semantic mode: domain-agnostic dependency
-    graph health analysis through pragmatic-semantics, pragmatic-cybernetics, essentialist, and grill-me
-    lenses. Dual mode: extract code graph then audit its health. Any userpod may invoke this skill.
-
-    '
+  description: >
+    Unified graph analysis with three modes. Code mode: query, traverse,
+    analyze, and assemble context from the code graph via hkask-mcp-codegraph
+    MCP tools. Semantic mode: domain-agnostic dependency graph health analysis
+    through pragmatic-semantics, pragmatic-cybernetics, essentialist, and
+    grill-me lenses. Dual mode: extract code graph then audit its health.
+    Any userpod may invoke this skill.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
+
 convergence:
   threshold: 0.25
   improvement_gate: threshold_only
@@ -19,451 +30,459 @@ convergence:
   min_iterations: 1
   convergence_field: convergence_metric
   on_not_reached: escalate
+
 gas:
   cap: 100000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
+
 rjoule:
   cap: 3
   alert_threshold: 0.8
   hard_limit: true
+
 inputs:
-- name: mode
-  type: string
-  required: true
-  description: 'Analysis mode: code, semantic, or dual. code: query/traverse/analyze the codebase graph
-    via MCP tools. semantic: audit any directed graph for health (no MCP tools). dual: extract code graph
-    then audit its health.
+  - name: mode
+    type: string
+    required: true
+    description: >
+      Analysis mode: code, semantic, or dual.
+      code: query/traverse/analyze the codebase graph via MCP tools.
+      semantic: audit any directed graph for health (no MCP tools).
+      dual: extract code graph then audit its health.
+  - name: target
+    type: object
+    required: false
+    description: >
+      Target specification for code/dual mode. Can be a crate name, file path,
+      symbol name, or a structured object with { crate, module, symbol } fields.
+  - name: goal
+    type: string
+    required: false
+    description: >
+      What the userpod wants to understand (code/dual mode). Examples: "impact
+      of changing the inference router", "find dead code in hkask-mcp".
+  - name: depth
+    type: string
+    required: false
+    default: "immediate-neighbors"
+    description: >
+      Traversal depth for code/dual mode. immediate-neighbors (default),
+      transitive (2-hop), or full (recursive CTE).
+  - name: analysis_types
+    type: array
+    required: false
+    default: ["complexity", "dead_code"]
+    description: >
+      Which analyses to run in code/dual mode. Options: complexity,
+      dead_code, impact.
+  - name: context_budget
+    type: string
+    required: false
+    default: "medium"
+    description: >
+      Token budget for context assembly in code/dual mode. small (2048),
+      medium (4096), large (8192).
+  - name: requires_context
+    type: boolean
+    required: false
+    default: true
+    description: >
+      Whether to assemble token-budgeted context in code/dual mode step 4.
+  - name: nodes
+    type: array
+    required: false
+    description: "Graph nodes with domain metadata (semantic mode)."
+  - name: edges
+    type: array
+    required: false
+    description: "Directed edges (source, target, label, semantics) (semantic mode)."
+  - name: domain
+    type: string
+    required: false
+    description: "Domain context - what do the nodes represent? (semantic mode)"
+  - name: workspace_context
+    type: object
+    required: false
+    description: "Workspace metadata and known references."
 
-    '
-- name: target
-  type: object
-  required: false
-  description: 'Target specification for code/dual mode. Can be a crate name, file path, symbol name,
-    or a structured object with { crate, module, symbol } fields.
-
-    '
-- name: goal
-  type: string
-  required: false
-  description: 'What the userpod wants to understand (code/dual mode). Examples: "impact of changing the
-    inference router", "find dead code in hkask-mcp".
-
-    '
-- name: depth
-  type: string
-  required: false
-  default: immediate-neighbors
-  description: 'Traversal depth for code/dual mode. immediate-neighbors (default), transitive (2-hop),
-    or full (recursive CTE).
-
-    '
-- name: analysis_types
-  type: array
-  required: false
-  default:
-  - complexity
-  - dead_code
-  description: 'Which analyses to run in code/dual mode. Options: complexity, dead_code, impact.
-
-    '
-- name: context_budget
-  type: string
-  required: false
-  default: medium
-  description: 'Token budget for context assembly in code/dual mode. small (2048), medium (4096), large
-    (8192).
-
-    '
-- name: requires_context
-  type: boolean
-  required: false
-  default: true
-  description: 'Whether to assemble token-budgeted context in code/dual mode step 4.
-
-    '
-- name: nodes
-  type: array
-  required: false
-  description: Graph nodes with domain metadata (semantic mode).
-- name: edges
-  type: array
-  required: false
-  description: Directed edges (source, target, label, semantics) (semantic mode).
-- name: domain
-  type: string
-  required: false
-  description: Domain context - what do the nodes represent? (semantic mode)
-- name: workspace_context
-  type: object
-  required: false
-  description: Workspace metadata and known references.
 steps:
-- ordinal: 1
-  action: select
-  condition: '{{ mode | default(''code'') == ''code'' or mode | default(''code'') == ''dual'' }}'
-  description: 'CODE DISCOVER: Index the target codebase (if needed) and get a project structure overview.
-    The userpod invokes codegraph_reindex (if needed), codegraph_stats, and codegraph_structure to build
-    an initial map.
+  # === CODE MODE (steps 1-4) — also used by DUAL mode for graph extraction ===
+  - ordinal: 1
+    action: select
+    condition: "{{ mode | default('code') == 'code' or mode | default('code') == 'dual' }}"
+    description: >
+      CODE DISCOVER: Index the target codebase (if needed) and get a project
+      structure overview. The userpod invokes codegraph_reindex (if needed),
+      codegraph_stats, and codegraph_structure to build an initial map.
+    renderer: minijinja
+    template_ref: graph-audit/code-discover
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      target: "{{ target }}"
+      goal: "{{ goal }}"
+      project_stats: "{{ project_stats | default({}) }}"
+      structure_overview: "{{ structure_overview | default([]) }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/code-discover
-  gas_cap: 4096
-  timeout_seconds: 120
-  input_mapping:
-    target: '{{ target }}'
-    goal: '{{ goal }}'
-    project_stats: '{{ project_stats | default({}) }}'
-    structure_overview: '{{ structure_overview | default([]) }}'
-- ordinal: 2
-  action: select
-  condition: '{{ mode | default(''code'') == ''code'' or mode | default(''code'') == ''dual'' }}'
-  description: 'CODE QUERY: Search the code graph for symbols relevant to the goal. The userpod invokes
-    codegraph_query with keyword/name/semantic queries.
+  - ordinal: 2
+    action: select
+    condition: "{{ mode | default('code') == 'code' or mode | default('code') == 'dual' }}"
+    description: >
+      CODE QUERY: Search the code graph for symbols relevant to the goal.
+      The userpod invokes codegraph_query with keyword/name/semantic queries.
+    renderer: minijinja
+    template_ref: graph-audit/code-query
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      goal: "{{ goal }}"
+      discovery: "{{ step_1_result }}"
+      query_results: "{{ query_results | default([]) }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/code-query
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    goal: '{{ goal }}'
-    discovery: '{{ step_1_result }}'
-    query_results: '{{ query_results | default([]) }}'
-- ordinal: 3
-  action: select
-  condition: '{{ mode | default(''code'') == ''code'' or mode | default(''code'') == ''dual'' }}'
-  description: 'CODE ANALYZE: Traverse the dependency graph (forward and reverse) for matched symbols,
-    run quality analysis (complexity, dead code, impact), and synthesize findings.
+  - ordinal: 3
+    action: select
+    condition: "{{ mode | default('code') == 'code' or mode | default('code') == 'dual' }}"
+    description: >
+      CODE ANALYZE: Traverse the dependency graph (forward and reverse) for
+      matched symbols, run quality analysis (complexity, dead code, impact),
+      and synthesize findings.
+    renderer: minijinja
+    template_ref: graph-audit/code-analyze
+    gas_cap: 6144
+    timeout_seconds: 120
+    input_mapping:
+      goal: "{{ goal }}"
+      discovery: "{{ step_1_result }}"
+      query_results: "{{ step_2_result }}"
+      traverse_results: "{{ traverse_results | default({}) }}"
+      analysis_results: "{{ analysis_results | default({}) }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/code-analyze
-  gas_cap: 6144
-  timeout_seconds: 120
-  input_mapping:
-    goal: '{{ goal }}'
-    discovery: '{{ step_1_result }}'
-    query_results: '{{ step_2_result }}'
-    traverse_results: '{{ traverse_results | default({}) }}'
-    analysis_results: '{{ analysis_results | default({}) }}'
-- ordinal: 4
-  action: select
-  condition: '{{ (mode | default(''code'') == ''code'' or mode | default(''code'') == ''dual'') and requires_context
-    | default(true) }}'
-  description: 'CODE CONTEXT: Assemble token-budgeted context from the gathered analysis for downstream
-    use. Conditional - runs only when requires_context is true.
+  - ordinal: 4
+    action: select
+    condition: "{{ (mode | default('code') == 'code' or mode | default('code') == 'dual') and requires_context | default(true) }}"
+    description: >
+      CODE CONTEXT: Assemble token-budgeted context from the gathered analysis
+      for downstream use. Conditional - runs only when requires_context is true.
+    renderer: minijinja
+    template_ref: graph-audit/code-context
+    gas_cap: 2048
+    timeout_seconds: 60
+    input_mapping:
+      goal: "{{ goal }}"
+      context_result: "{{ context_results | default({}) }}"
+      analysis_result: "{{ step_3_result }}"
+      budget: "{{ context_budget | default('medium') }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/code-context
-  gas_cap: 2048
-  timeout_seconds: 60
-  input_mapping:
-    goal: '{{ goal }}'
-    context_result: '{{ context_results | default({}) }}'
-    analysis_result: '{{ step_3_result }}'
-    budget: '{{ context_budget | default(''medium'') }}'
-- ordinal: 5
-  action: select
-  condition: '{{ mode == ''semantic'' }}'
-  description: 'SEMANTIC CLASSIFY: Force-classify every edge using the pragmatic-semantics constraint
-    hierarchy (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
+  # === SEMANTIC MODE (steps 5-8) ===
+  - ordinal: 5
+    action: select
+    condition: "{{ mode == 'semantic' }}"
+    description: >
+      SEMANTIC CLASSIFY: Force-classify every edge using the pragmatic-semantics
+      constraint hierarchy (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
+    renderer: minijinja
+    template_ref: graph-audit/semantic-classify
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      nodes: "{{ nodes }}"
+      edges: "{{ edges }}"
+      domain: "{{ domain }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-classify
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    nodes: '{{ nodes }}'
-    edges: '{{ edges }}'
-    domain: '{{ domain }}'
-- ordinal: 6
-  action: select
-  condition: '{{ mode == ''semantic'' }}'
-  description: 'SEMANTIC ANALYZE: Evaluate graph health through four lenses - pragmatic-cybernetics, essentialist,
-    grill-me, pragmatic-semantics.
+  - ordinal: 6
+    action: select
+    condition: "{{ mode == 'semantic' }}"
+    description: >
+      SEMANTIC ANALYZE: Evaluate graph health through four lenses -
+      pragmatic-cybernetics, essentialist, grill-me, pragmatic-semantics.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-analyze
+    gas_cap: 8192
+    timeout_seconds: 120
+    input_mapping:
+      nodes: "{{ nodes }}"
+      edges: "{{ edges }}"
+      classified_edges: "{{ step_5_result }}"
+      domain: "{{ domain }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-analyze
-  gas_cap: 8192
-  timeout_seconds: 120
-  input_mapping:
-    nodes: '{{ nodes }}'
-    edges: '{{ edges }}'
-    classified_edges: '{{ step_5_result }}'
-    domain: '{{ domain }}'
-- ordinal: 7
-  action: select
-  condition: '{{ mode == ''semantic'' }}'
-  description: 'SEMANTIC DETECT: Detect structural pathologies (cycles, redundancies, gaps, orphans, fan-in/out
-    anomalies, force/structure mismatches).
+  - ordinal: 7
+    action: select
+    condition: "{{ mode == 'semantic' }}"
+    description: >
+      SEMANTIC DETECT: Detect structural pathologies (cycles, redundancies,
+      gaps, orphans, fan-in/out anomalies, force/structure mismatches).
+    renderer: minijinja
+    template_ref: graph-audit/semantic-detect
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      nodes: "{{ nodes }}"
+      edges: "{{ edges }}"
+      classified_edges: "{{ step_5_result }}"
+      analysis: "{{ step_6_result }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-detect
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    nodes: '{{ nodes }}'
-    edges: '{{ edges }}'
-    classified_edges: '{{ step_5_result }}'
-    analysis: '{{ step_6_result }}'
-- ordinal: 8
-  action: select
-  condition: '{{ mode == ''semantic'' }}'
-  description: 'SEMANTIC REPORT: Synthesize classification, four-lens analysis, and structural detection
-    into a graph-health convergence metric + markdown report.
+  - ordinal: 8
+    action: select
+    condition: "{{ mode == 'semantic' }}"
+    description: >
+      SEMANTIC REPORT: Synthesize classification, four-lens analysis, and
+      structural detection into a graph-health convergence metric + markdown report.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-report
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      nodes: "{{ nodes }}"
+      edges: "{{ edges }}"
+      classified_edges: "{{ step_5_result }}"
+      analysis: "{{ step_6_result }}"
+      structural_issues: "{{ step_7_result }}"
+      domain: "{{ domain }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-report
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    nodes: '{{ nodes }}'
-    edges: '{{ edges }}'
-    classified_edges: '{{ step_5_result }}'
-    analysis: '{{ step_6_result }}'
-    structural_issues: '{{ step_7_result }}'
-    domain: '{{ domain }}'
-- ordinal: 9
-  action: select
-  condition: '{{ mode == ''dual'' }}'
-  description: 'DUAL SEMANTIC CLASSIFY: Force-classify edges extracted from the code graph analysis (steps
-    1-4). Nodes = discovered symbols; edges = dependency/caller relationships from traversal results.
+  # === DUAL MODE — semantic audit on extracted code graph ===
+  - ordinal: 9
+    action: select
+    condition: "{{ mode == 'dual' }}"
+    description: >
+      DUAL SEMANTIC CLASSIFY: Force-classify edges extracted from the code graph
+      analysis (steps 1-4). Nodes = discovered symbols; edges = dependency/caller
+      relationships from traversal results.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-classify
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      nodes: "{{ step_3_result.symbols | default([]) }}"
+      edges: "{{ step_3_result.dependencies | default([]) }}"
+      domain: "code: {{ goal | default('codebase') }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-classify
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    nodes: '{{ step_3_result.symbols | default([]) }}'
-    edges: '{{ step_3_result.dependencies | default([]) }}'
-    domain: 'code: {{ goal | default(''codebase'') }}'
-- ordinal: 10
-  action: select
-  condition: '{{ mode == ''dual'' }}'
-  description: 'DUAL SEMANTIC ANALYZE: Evaluate the extracted code graph through four lenses.
+  - ordinal: 10
+    action: select
+    condition: "{{ mode == 'dual' }}"
+    description: >
+      DUAL SEMANTIC ANALYZE: Evaluate the extracted code graph through four lenses.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-analyze
+    gas_cap: 8192
+    timeout_seconds: 120
+    input_mapping:
+      nodes: "{{ step_3_result.symbols | default([]) }}"
+      edges: "{{ step_3_result.dependencies | default([]) }}"
+      classified_edges: "{{ step_9_result }}"
+      domain: "code: {{ goal | default('codebase') }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-analyze
-  gas_cap: 8192
-  timeout_seconds: 120
-  input_mapping:
-    nodes: '{{ step_3_result.symbols | default([]) }}'
-    edges: '{{ step_3_result.dependencies | default([]) }}'
-    classified_edges: '{{ step_9_result }}'
-    domain: 'code: {{ goal | default(''codebase'') }}'
-- ordinal: 11
-  action: select
-  condition: '{{ mode == ''dual'' }}'
-  description: 'DUAL SEMANTIC DETECT: Detect structural pathologies in the extracted code graph.
+  - ordinal: 11
+    action: select
+    condition: "{{ mode == 'dual' }}"
+    description: >
+      DUAL SEMANTIC DETECT: Detect structural pathologies in the extracted code graph.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-detect
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      nodes: "{{ step_3_result.symbols | default([]) }}"
+      edges: "{{ step_3_result.dependencies | default([]) }}"
+      classified_edges: "{{ step_9_result }}"
+      analysis: "{{ step_10_result }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-detect
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    nodes: '{{ step_3_result.symbols | default([]) }}'
-    edges: '{{ step_3_result.dependencies | default([]) }}'
-    classified_edges: '{{ step_9_result }}'
-    analysis: '{{ step_10_result }}'
-- ordinal: 12
-  action: select
-  condition: '{{ mode == ''dual'' }}'
-  description: 'DUAL SEMANTIC REPORT: Synthesize graph-health report for the extracted code graph.
+  - ordinal: 12
+    action: select
+    condition: "{{ mode == 'dual' }}"
+    description: >
+      DUAL SEMANTIC REPORT: Synthesize graph-health report for the extracted code graph.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-report
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      nodes: "{{ step_3_result.symbols | default([]) }}"
+      edges: "{{ step_3_result.dependencies | default([]) }}"
+      classified_edges: "{{ step_9_result }}"
+      analysis: "{{ step_10_result }}"
+      structural_issues: "{{ step_11_result }}"
+      domain: "code: {{ goal | default('codebase') }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-report
-  gas_cap: 4096
-  timeout_seconds: 60
-  input_mapping:
-    nodes: '{{ step_3_result.symbols | default([]) }}'
-    edges: '{{ step_3_result.dependencies | default([]) }}'
-    classified_edges: '{{ step_9_result }}'
-    analysis: '{{ step_10_result }}'
-    structural_issues: '{{ step_11_result }}'
-    domain: 'code: {{ goal | default(''codebase'') }}'
-- ordinal: 13
-  action: select
-  condition: '{{ mode | default(''code'') == ''code'' }}'
-  description: 'CODE CONVERGENCE: Compute coverage saturation metric for code mode.
+  # === CONVERGENCE — mode-specific ===
+  - ordinal: 13
+    action: select
+    condition: "{{ mode | default('code') == 'code' }}"
+    description: >
+      CODE CONVERGENCE: Compute coverage saturation metric for code mode.
+    renderer: minijinja
+    template_ref: graph-audit/code-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_3_result | default(step_2_result) }}"
+      discovery_result: "{{ step_1_result | default({}) }}"
+      query_result: "{{ step_2_result | default({}) }}"
+      context_result: "{{ step_4_result | default({}) }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/code-convergence-check
-  gas_cap: 2000
-  timeout_seconds: 30
-  input_mapping:
-    primary_result: '{{ step_3_result | default(step_2_result) }}'
-    discovery_result: '{{ step_1_result | default({}) }}'
-    query_result: '{{ step_2_result | default({}) }}'
-    context_result: '{{ step_4_result | default({}) }}'
-- ordinal: 14
-  action: select
-  condition: '{{ mode == ''semantic'' }}'
-  description: 'SEMANTIC CONVERGENCE: The semantic-report step (ordinal 8) already computes the graph-health
-    convergence metric. This step passes it through.
+  - ordinal: 14
+    action: select
+    condition: "{{ mode == 'semantic' }}"
+    description: >
+      SEMANTIC CONVERGENCE: The semantic-report step (ordinal 8) already computes
+      the graph-health convergence metric. This step passes it through.
+    renderer: minijinja
+    template_ref: graph-audit/semantic-report
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      nodes: "{{ nodes }}"
+      edges: "{{ edges }}"
+      classified_edges: "{{ step_5_result }}"
+      analysis: "{{ step_6_result }}"
+      structural_issues: "{{ step_7_result }}"
+      domain: "{{ domain }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/semantic-report
-  gas_cap: 2000
-  timeout_seconds: 30
-  input_mapping:
-    nodes: '{{ nodes }}'
-    edges: '{{ edges }}'
-    classified_edges: '{{ step_5_result }}'
-    analysis: '{{ step_6_result }}'
-    structural_issues: '{{ step_7_result }}'
-    domain: '{{ domain }}'
-- ordinal: 15
-  action: select
-  condition: '{{ mode == ''dual'' }}'
-  description: 'DUAL CONVERGENCE: Compute combined convergence metric from code coverage (steps 1-4) and
-    graph health (steps 9-12). Both must be sufficient.
+  - ordinal: 15
+    action: select
+    condition: "{{ mode == 'dual' }}"
+    description: >
+      DUAL CONVERGENCE: Compute combined convergence metric from code coverage
+      (steps 1-4) and graph health (steps 9-12). Both must be sufficient.
+    renderer: minijinja
+    template_ref: graph-audit/dual-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      code_coverage_result: "{{ step_3_result | default({}) }}"
+      graph_health_result: "{{ step_12_result | default({}) }}"
 
-    '
-  renderer: minijinja
-  template_ref: graph-audit/dual-convergence-check
-  gas_cap: 2000
-  timeout_seconds: 30
-  input_mapping:
-    code_coverage_result: '{{ step_3_result | default({}) }}'
-    graph_health_result: '{{ step_12_result | default({}) }}'
-- ordinal: 16
-  action: loop
-  condition: '{{ mode | default(''code'') == ''code'' }}'
-  description: Re-enter code mode cycle if convergence is not met.
-  input_mapping:
-    loop_target: 1
-    convergence_metric: '{{ step_13_result.convergence_metric | default(1.0) }}'
-- ordinal: 17
-  action: loop
-  condition: '{{ mode == ''semantic'' }}'
-  description: Re-enter semantic mode cycle if convergence is not met.
-  input_mapping:
-    loop_target: 5
-    convergence_metric: '{{ step_14_result.convergence_metric | default(1.0) }}'
-- ordinal: 18
-  action: loop
-  condition: '{{ mode == ''dual'' }}'
-  description: Re-enter dual mode cycle if convergence is not met.
-  input_mapping:
-    loop_target: 1
-    convergence_metric: '{{ step_15_result.convergence_metric | default(1.0) }}'
+  - ordinal: 16
+    action: loop
+    condition: "{{ mode | default('code') == 'code' }}"
+    description: Re-enter code mode cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+      convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
+
+  - ordinal: 17
+    action: loop
+    condition: "{{ mode == 'semantic' }}"
+    description: Re-enter semantic mode cycle if convergence is not met.
+    input_mapping:
+      loop_target: 5
+      convergence_metric: "{{ step_14_result.convergence_metric | default(1.0) }}"
+
+  - ordinal: 18
+    action: loop
+    condition: "{{ mode == 'dual' }}"
+    description: Re-enter dual mode cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+      convergence_metric: "{{ step_15_result.convergence_metric | default(1.0) }}"
+
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
+
 ocap:
   required_capabilities:
-  - resource: template
-    action: render
-    template_id: graph-audit/code-discover
-    gas_budget: 4096
-  - resource: template
-    action: render
-    template_id: graph-audit/code-query
-    gas_budget: 4096
-  - resource: template
-    action: render
-    template_id: graph-audit/code-analyze
-    gas_budget: 6144
-  - resource: template
-    action: render
-    template_id: graph-audit/code-context
-    gas_budget: 2048
-  - resource: template
-    action: render
-    template_id: graph-audit/code-convergence-check
-    gas_budget: 2000
-  - resource: template
-    action: render
-    template_id: graph-audit/semantic-classify
-    gas_budget: 4096
-  - resource: template
-    action: render
-    template_id: graph-audit/semantic-analyze
-    gas_budget: 8192
-  - resource: template
-    action: render
-    template_id: graph-audit/semantic-detect
-    gas_budget: 4096
-  - resource: template
-    action: render
-    template_id: graph-audit/semantic-report
-    gas_budget: 4096
-  - resource: template
-    action: render
-    template_id: graph-audit/dual-convergence-check
-    gas_budget: 2000
-  - resource: mcp
-    action: call
-    tool: codegraph_query
-    gas_budget: 2000
-  - resource: mcp
-    action: call
-    tool: codegraph_traverse
-    gas_budget: 2000
-  - resource: mcp
-    action: call
-    tool: codegraph_impact
-    gas_budget: 2000
-  - resource: mcp
-    action: call
-    tool: codegraph_analysis
-    gas_budget: 2000
-  - resource: mcp
-    action: call
-    tool: codegraph_context
-    gas_budget: 2000
-  - resource: mcp
-    action: call
-    tool: codegraph_structure
-    gas_budget: 1000
-  - resource: mcp
-    action: call
-    tool: codegraph_stats
-    gas_budget: 1000
-  - resource: mcp
-    action: call
-    tool: codegraph_reindex
-    gas_budget: 4000
-  - resource: mcp
-    action: call
-    tool: codegraph_feedback
-    gas_budget: 1000
-  - resource: mcp
-    action: call
-    tool: codegraph_index_embeddings
-    gas_budget: 3000
-  - resource: manifest
-    action: execute
-    template_id: graph-audit
-    gas_budget: 1000
+    - resource: template
+      action: render
+      template_id: graph-audit/code-discover
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: graph-audit/code-query
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: graph-audit/code-analyze
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: graph-audit/code-context
+      gas_budget: 2048
+    - resource: template
+      action: render
+      template_id: graph-audit/code-convergence-check
+      gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: graph-audit/semantic-classify
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: graph-audit/semantic-analyze
+      gas_budget: 8192
+    - resource: template
+      action: render
+      template_id: graph-audit/semantic-detect
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: graph-audit/semantic-report
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: graph-audit/dual-convergence-check
+      gas_budget: 2000
+    - resource: mcp
+      action: call
+      tool: codegraph_query
+      gas_budget: 2000
+    - resource: mcp
+      action: call
+      tool: codegraph_traverse
+      gas_budget: 2000
+    - resource: mcp
+      action: call
+      tool: codegraph_impact
+      gas_budget: 2000
+    - resource: mcp
+      action: call
+      tool: codegraph_analysis
+      gas_budget: 2000
+    - resource: mcp
+      action: call
+      tool: codegraph_context
+      gas_budget: 2000
+    - resource: mcp
+      action: call
+      tool: codegraph_structure
+      gas_budget: 1000
+    - resource: mcp
+      action: call
+      tool: codegraph_stats
+      gas_budget: 1000
+    - resource: mcp
+      action: call
+      tool: codegraph_reindex
+      gas_budget: 4000
+    - resource: mcp
+      action: call
+      tool: codegraph_feedback
+      gas_budget: 1000
+    - resource: mcp
+      action: call
+      tool: codegraph_index_embeddings
+      gas_budget: 3000
+    - resource: manifest
+      action: execute
+      template_id: graph-audit
+      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
+
 ledger:
   emit_spans: true
   span_namespace: reg.skill.graph-audit
+  telemetry_namespace: hkask.template.graph-audit
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  telemetry_namespace: hkask.template.graph-audit
+
 audit:
   enabled: true
   log_level: info

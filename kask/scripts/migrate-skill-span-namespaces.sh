@@ -44,6 +44,11 @@ print(m.get('manifest', {}).get('id', ''))
   expected_ns="reg.skill.$skill_id"
   telemetry_ns="hkask.template.$skill_id"
 
+  # Sanitize: replace any '/' in the namespace with '-' (some manifests use
+  # id: mcp/... or id: process/... — the slash is invalid in a span namespace).
+  expected_ns="${expected_ns//\//-}"
+  telemetry_ns="${telemetry_ns//\//-}"
+
   # Read current span_namespace and check if migration is needed.
   current_ns=$(python3 -c "
 import yaml

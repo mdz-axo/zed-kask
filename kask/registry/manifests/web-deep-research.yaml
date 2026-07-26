@@ -1,133 +1,138 @@
+# Web Deep Research Manifest
+# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
+
 manifest:
   id: mcp/web-deep-research
   category: pipeline
   name: Web Deep Research
-  description: 'Multi-phase research pipeline: compound search across all providers with RRF fusion, findSimilar
-    expansion, content extraction, iteration on related questions, and synthesis. Use for comprehensive
-    research requiring cross-referencing and depth.
-
-    '
+  description: >
+    Multi-phase research pipeline: compound search across all providers with RRF fusion,
+    findSimilar expansion, content extraction, iteration on related questions, and synthesis.
+    Use for comprehensive research requiring cross-referencing and depth.
   version: 0.31.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public
+
 gas:
   cap: 8192
   alert_threshold: 0.8
   hard_limit: true
+
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
+
 steps:
-- ordinal: 1
-  action: execute
-  description: 'Phase 1: Compound search across all providers with RRF fusion and reranking. Returns enriched
-    results with scores, provider agreement, and related questions.
+  - ordinal: 1
+    action: execute
+    description: >
+      Phase 1: Compound search across all providers with RRF fusion and reranking.
+      Returns enriched results with scores, provider agreement, and related questions.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${input.query}"
+      strategy: "deep"
+      num_results: "${input.num_results | default(10)}"
+      include_domains: "${input.include_domains | default(null)}"
+      exclude_domains: "${input.exclude_domains | default(null)}"
+    gas_cap: 4096
+    timeout_seconds: 30
+    output_schema:
+      results: array
+      related_questions: array
+      providers_succeeded: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${input.query}
-    strategy: deep
-    num_results: ${input.num_results | default(10)}
-    include_domains: ${input.include_domains | default(null)}
-    exclude_domains: ${input.exclude_domains | default(null)}
-  gas_cap: 4096
-  timeout_seconds: 30
-  output_schema:
-    results: array
-    related_questions: array
-    providers_succeeded: array
-- ordinal: 2
-  action: execute
-  description: 'Phase 2 (conditional): Find similar pages to top result via Exa findSimilar. Only runs
-    if Exa provider is configured and top result has a valid URL.
+  - ordinal: 2
+    action: execute
+    description: >
+      Phase 2 (conditional): Find similar pages to top result via Exa findSimilar.
+      Only runs if Exa provider is configured and top result has a valid URL.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_find_similar
+    arguments:
+      url: "${step1.results[0].url}"
+      num_results: "${input.breadth | default(5)}"
+    gas_cap: 2048
+    timeout_seconds: 20
+    condition: "${input.expand_similar | default(true)}"
+    output_schema:
+      results: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_find_similar
-  arguments:
-    url: ${step1.results[0].url}
-    num_results: ${input.breadth | default(5)}
-  gas_cap: 2048
-  timeout_seconds: 20
-  condition: ${input.expand_similar | default(true)}
-  output_schema:
-    results: array
-- ordinal: 3
-  action: execute
-  description: 'Phase 3: Extract full content from top results. Iterates over the merged result set and
-    extracts markdown content.
+  - ordinal: 3
+    action: execute
+    description: >
+      Phase 3: Extract full content from top results.
+      Iterates over the merged result set and extracts markdown content.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_extract
+    arguments:
+      url: "${item.url}"
+      format: "markdown"
+      main_content_only: true
+    loop_over: "${step1.results[:5]}"
+    gas_cap: 4096
+    timeout_seconds: 60
+    output_schema:
+      extracted_pages: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_extract
-  arguments:
-    url: ${item.url}
-    format: markdown
-    main_content_only: true
-  loop_over: ${step1.results[:5]}
-  gas_cap: 4096
-  timeout_seconds: 60
-  output_schema:
-    extracted_pages: array
-- ordinal: 4
-  action: execute
-  description: 'Phase 4 (conditional): Iterative search on related questions. Searches for each related
-    question to fill gaps in coverage.
+  - ordinal: 4
+    action: execute
+    description: >
+      Phase 4 (conditional): Iterative search on related questions.
+      Searches for each related question to fill gaps in coverage.
+    renderer: null
+    template_ref: null
+    mcp: hkask-mcp-research
+    tool: web_search
+    arguments:
+      query: "${item}"
+      strategy: "quick"
+      num_results: 3
+    loop_over: "${step1.related_questions[:3]}"
+    condition: "${input.iterate | default(true)}"
+    gas_cap: 2048
+    timeout_seconds: 30
+    output_schema:
+      expanded_results: array
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: hkask-mcp-research
-  tool: web_search
-  arguments:
-    query: ${item}
-    strategy: quick
-    num_results: 3
-  loop_over: ${step1.related_questions[:3]}
-  condition: ${input.iterate | default(true)}
-  gas_cap: 2048
-  timeout_seconds: 30
-  output_schema:
-    expanded_results: array
-- ordinal: 5
-  action: populate
-  description: 'Phase 5: Synthesize all findings into a structured research report. Renders the research-cascade
-    template with collected data.
+  - ordinal: 5
+    action: populate
+    description: >
+      Phase 5: Synthesize all findings into a structured research report.
+      Renders the research-cascade template with collected data.
+    renderer: minijinja
+    template_ref: web/research-cascade
+    gas_cap: 1000
+    timeout_seconds: 10
+    output_schema:
+      synthesis: string
+      sources: array
 
-    '
-  renderer: minijinja
-  template_ref: web/research-cascade
-  gas_cap: 1000
-  timeout_seconds: 10
-  output_schema:
-    synthesis: string
-    sources: array
-- ordinal: 6
-  action: feedback
-  description: 'Emit research outcome to Regulation. Track variety and coverage metrics.
+  - ordinal: 6
+    action: feedback
+    description: >
+      Emit research outcome to Regulation. Track variety and coverage metrics.
+    renderer: null
+    template_ref: null
+    mcp: null # Regulation is ambient (RegulationRuntime)
+    gas_cap: 500
+    timeout_seconds: 5
+    feedback:
+      variety_delta: integer
+      result_count: integer
+      pages_extracted: integer
+    output_schema:
+      reg_event_id: string
 
-    '
-  renderer: null
-  template_ref: null
-  mcp: null
-  gas_cap: 500
-  timeout_seconds: 5
-  feedback:
-    variety_delta: integer
-    result_count: integer
-    pages_extracted: integer
-  output_schema:
-    reg_event_id: string
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
@@ -135,27 +140,30 @@ error_handling:
   retry_backoff_seconds: 2
   on_capability_denied: escalate
   on_search_failure: fallback
+
 ocap:
   required_capabilities:
-  - resource: web
-    action: search
-    gas_budget: 8192
-  - resource: web
-    action: extract
-    gas_budget: 4096
-  - resource: regulation
-    action: emit
-    gas_budget: 500
+    - resource: web
+      action: search
+      gas_budget: 8192
+    - resource: web
+      action: extract
+      gas_budget: 4096
+    - resource: regulation
+      action: emit
+      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
+
 ledger:
   emit_spans: true
-  span_namespace: reg.skill.mcp/web-deep-research
+  span_namespace: reg.skill.mcp-web-deep-research
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
+
 audit:
   enabled: true
   log_level: info
