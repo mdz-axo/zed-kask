@@ -14,6 +14,7 @@ contract:
     slices: array
     risks: array
     evaluation_result: object
+    refinement_directives: array
   output:
     plan_md: string
     todo_md: string
@@ -72,6 +73,20 @@ You are a plan-finalization agent. Produce the two output files: `tasks/plan.md`
 {{ evaluation_result | tojson }}
 ```
 
+{% if refinement_directives %}
+## Refinement History (v0.31.0 — PDCA loop visibility)
+
+The following refinement directives were applied during PDCA iterations.
+Include a "Refinement History" section in plan.md documenting what was
+refined and why. This makes the PDCA loop visible in the artifact —
+without it, the plan document doesn't record what was improved across
+iterations.
+
+```json
+{{ refinement_directives | tojson }}
+```
+{% endif %}
+
 ## PKO Grounding (Process Axis)
 
 Emit `pko_anchors` alongside the markdown. The plan is a PKO `Procedure` (process axis)
@@ -120,6 +135,12 @@ Use this template structure:
 ### Checkpoint: Complete
 - [ ] All acceptance criteria met
 - [ ] Ready for review
+
+## Refinement History
+[If refinement directives were applied during PDCA iterations, document
+them here: what criterion scored above threshold, what was wrong, and what
+fix was applied. This makes the PDCA loop visible in the artifact. If no
+refinement was needed, omit this section.]
 
 ## Risks and Mitigations
 | Risk | Impact | Mitigation |

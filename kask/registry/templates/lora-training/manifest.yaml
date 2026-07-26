@@ -1,6 +1,6 @@
 # Registry manifest for lora-training skill
-# hKask v0.31.0
-# goal: Recommend a composable PEFT configuration from declared evidence while preserving operator authority; distinguish recommendation from readiness, and leave enforcement of established hard contracts to the runtime.
+# hKask v0.31.0 (refinement cycle 1)
+# goal: Recommend a composable PEFT configuration from declared evidence while preserving operator authority; distinguish recommendation from readiness, and leave enforcement of established hard contracts to the runtime. v0.31.0: evolved from template-by-template invocation into a coordinated flow with mechanical PDCA loop closure, deeper capability reasoning over the full harness×trainer×host×cost space, prior-training-history consumption (Good Regulator), algedonic escalation, and honest convergence metrics.
 
 crate:
   name: lora-training
@@ -38,54 +38,31 @@ crate:
 
 templates:
   - id: lora-training/select-method
-    name: "Recommend composable PEFT configuration via 8-gate refinement"
+    name: "Recommend composable PEFT configuration via 8-gate refinement with capability reasoning"
     path: select-method.j2
     type: KnowAct
-    lexicon_terms: [select, decide, gate, method, config, training, harness, purpose]
+    lexicon_terms: [select, decide, gate, method, config, training, harness, purpose, map]
     description: >
       Apply a deterministic 8-gate refinement without overwriting earlier
-      constraints or operator requirements. G0 (adapter purpose) establishes
-      what kind of adapter is being produced (instruction, reasoning, vision,
-      preference, reward_model) and determines baseline rank ranges, target
-      module strategies, and the learning-forgetting tradeoff posture. G1-G5
-      refine the PEFT method. G6 (harness capability) selects a harness based
-      on the training approach determined by G0-G5 — the harness must be able
-      to efficiently process the declared dataset and produce the adapter type
-      implied by G0. Emit a composable recommendation record with
-      adapter_purpose, base_mode, adapter_form, scaling, initializer,
-      preservation, rank_range, target_module_strategy, harness, and trainer,
-      plus per-gate citations and explicit undetermined states. PDCA iteration
-      loop: select-method → audit-config → convergence-check → revise →
-      re-invoke. Recommendation is advisory and distinct from training
-      readiness. G6 reads optional harness_preference and trainer_preference
-      inputs. Three harnesses: axolotl (YAML, SFT-only, runtime default for
-      instruction), trl (Python, SFT + DPO/KTO/ORPO/Reward), ludwig (YAML,
-      SFT + DPO/KTO/ORPO/GRPO + advanced PEFT initializers). Ludwig is the
-      only harness covering GRPO and the full advanced-PEFT initializer set
-      (PiSSA, EVA, CorDA, LoftQ).
+      constraints or operator requirements. v0.31.0: G6 reasons over the full
+      capability space (3 harnesses × 6 trainers × 3 hosts × cost models) when
+      provider_capabilities is supplied. G2 and G3 refine using
+      prior_training_history when supplied (Good Regulator compliance). Consumes
+      prior_iteration when present (mechanical PDCA loop closure via manifest).
 
   - id: lora-training/audit-config
-    name: "Audit training config against math/quant/data/forgetting/harness gates"
+    name: "Audit training config with algedonic escalation and citation enforcement"
     path: audit-config.j2
     type: KnowAct
-    lexicon_terms: [audit, verify, gate, contract, evidence, config, harness]
+    lexicon_terms: [audit, verify, gate, contract, evidence, config, harness, escalate]
     description: >
       Read training config, harness, runtime, and post-training evidence.
-      Evaluate the applicable subset of 17 quality gates without treating
-      unavailable or future-phase evidence as passed: 5 math-contract
-      (G-M1 no-op-at-init, G-M2 merge
-      equivalence, G-M3 scaling form, G-M4 rank budget, G-M5 trainable
-      param count), 6 QLoRA-specific (G-Q1..G-Q6: frozen base
-      quantized, adapter dtype, gradient flow, no silent upcast, paged
-      optimizer, NF4 optimality), 3 data/eval (G-D1 dataset size vs
-      quality, G-D2 eval protocol, G-D3 lemon-pick analysis), 2
-      forgetting (G-F1 intruder dimensions, G-F2 knowledge preservation
-      for CorDA mode), 1 harness-method compatibility (G-H1: axolotl=SFT
-      only, trl=SFT/DPO/KTO/ORPO/Reward, ludwig=SFT/DPO/KTO/ORPO/GRPO). Preserve the operator-selected
-      initializer; harness evidence affects readiness state rather than
-      rewriting the recommendation. Apply pragmatic-cybernetics (IS/OUGHT,
-      epistemic mode, provenance, grill-me self-challenge). Emit
-      reg.lora.audit spans per gate evaluated.
+      Evaluate the applicable subset of 17 quality gates. v0.31.0: emits
+      refuse_escalation for refuse findings (algedonic S1→S5 short-circuit)
+      and rejects findings with config_value/code_presence/code_absence
+      evidence_kind but null config_path/line (no-fiction enforcement,
+      mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1
+      dataset size/quality assessment.
 
   - id: lora-training/report
     name: "Synthesize training-config findings and propose regressions"
@@ -102,14 +79,15 @@ templates:
       verdicts from evidence-backed states without reclassifying findings.
 
   - id: lora-training/convergence-check
-    name: "Compute training-readiness convergence metric"
+    name: "Compute honest phase-aware convergence with graded critical/high and not_evaluated distinction"
     path: convergence-check.j2
     type: KnowAct
     lexicon_terms: [evaluate, converge, gate, coverage, training, readiness]
     description: >
       Compute normalized convergence metric [0, 1] where 0 = fully
-      converged for the current phase. Normalize weighted dimensions over
-      applicable gates and distinguish preflight readiness, pending runtime
-      contracts, and post-training verification. Stable metrics below the
-      threshold remain converged. Emit reg.lora.convergence span (P9 — registered in
-      CANONICAL_NAMESPACES).
+      converged for the current phase. v0.31.0: not_evaluated maps to risk
+      0.5 (coverage gap) instead of 1.0 (known risk), graded critical/high
+      dimension (0→0.6→0.8→1.0) replaces binary, all-gates-not-applicable
+      edge case handled. Distinguish preflight readiness, pending runtime
+      contracts, and post-training verification. Emit reg.lora.convergence
+      span (P9).

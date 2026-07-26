@@ -97,7 +97,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | Crate | Why irreducible |
 |---|---|
 | `hkask-types` | Foundation: IDs, `InferencePort` trait, `RegulationSpan`, vocab. `VoiceDesign` and `ExpectProposal` moved here from deleted crates. `HMemEntry` moved here from deleted `hkask-git-cas`. |
-| `hkask-storage` | **Sovereignty:** per-user/curator data directory SQLCipher encrypted private sphere (P11.1). `user_store` deleted (multi-user identity store — zed account replaces it). |
+| `hkask-storage` | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). Dual-backend: SQLite (SQLCipher, default) or PostgreSQL (pgvector, for scale-up). `user_store` deleted (multi-user identity store — zed account replaces it). |
 | `hkask-memory` | Unique semantic/episodic memory + consolidation. |
 | `hkask-regulation` | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Pruned from 49 files/15,408 lines to 26 files/9,004 lines — orphaned modules deleted (see §2.3). `WalletManager` now implements `WalletBudgetPort` and holds `gas_per_rjoule` (moved from deleted `hkask-wallet`). |
 | `hkask-templates` | **The tools/skills:** `ManifestExecutor` + registry + cascade + PDCA. |

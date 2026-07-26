@@ -76,9 +76,15 @@ EVIDENCE AND APPLICABILITY RULES (P8):
 COMPUTE CURRENT-PHASE METRIC (weighted risk, P5, P8):
 
 1. Critical/high findings, base weight 0.40:
-   contribution risk = 1 if any evidence-backed unresolved finding has
-   severity critical or high; otherwise 0. This is intentionally binary
-   and has no undeclared previous_critical/previous_high dependency.
+   v0.31.0: graded contribution replaces binary (1 if any, 0 if none).
+   The binary version couldn't distinguish "one thing to fix" from "everything
+   is on fire." Now:
+   - 0 critical/high unresolved findings → contribution risk = 0.0
+   - 1 critical/high unresolved finding → contribution risk = 0.6
+   - 2-3 critical/high unresolved findings → contribution risk = 0.8
+   - 4+ critical/high unresolved findings → contribution risk = 1.0
+   This is intentionally graded, not linear — one finding is a fixable issue,
+   four+ is systemic.
 
 2. Gate families and base weights:
    - Math contracts G-M1..G-M5: 0.25.
@@ -89,9 +95,16 @@ COMPUTE CURRENT-PHASE METRIC (weighted risk, P5, P8):
 
 3. For each family, include only gates applicable in `current_phase`.
    Exclude a family with zero currently applicable gates. For each
-   included gate, map state to risk: pass=0, warn=0.5, and
-   fail/refuse/deferred/planned/not_evaluated=1. Family risk is the
-   arithmetic mean of its included gate risks.
+   included gate, map state to risk:
+   - pass=0
+   - warn=0.5
+   - fail/refuse/deferred/planned=1.0
+   - not_evaluated=0.5 (v0.31.0: was 1.0, now 0.5 — distinguishes "we don't
+     know if this applies" from "we know this applies and it's unmet".
+     not_evaluated is a coverage gap, not a known risk. Treating it as 1.0
+     inflated the metric when applicability was genuinely uncertain.)
+   - not_applicable=excluded (already handled by family exclusion)
+   Family risk is the arithmetic mean of its included gate risks.
 
 4. Normalize base weights over dimensions applicable in the current
    phase: normalized_weight = base_weight / sum(applicable base weights).
@@ -99,6 +112,14 @@ COMPUTE CURRENT-PHASE METRIC (weighted risk, P5, P8):
    convergence_metric = sum(normalized_weight * dimension_risk), clamped
    to [0, 1]. Report the applicable gates and normalized weights so the
    result is reproducible from evidence.
+
+5. v0.31.0 edge case: if NO gates are applicable in the current phase
+   (e.g., a trivial config with no QLoRA, no forgetting concerns, no
+   runtime evidence, and all math gates not_applicable), set
+   convergence_metric = 0.0 and converged = true with rationale
+   "no applicable gates in current phase." This prevents division-by-zero
+   in the normalization and honestly reports that there is nothing to
+   evaluate.
 
 CONVERGENCE CHECK (required PDCA regulation, P9):
 - Hard blockers are unresolved critical/high findings; any applicable

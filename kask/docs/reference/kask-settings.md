@@ -64,6 +64,52 @@ keys from zed's keychain and injects them as env vars into the child process.
 MCP servers then find the keys via `std::env::var` or their own keychain
 fallback.
 
+## Storage Backend
+
+hKask supports two storage backends, selected at startup via environment
+variables. The `DatabaseDriver` trait abstracts the backend so all stores
+(consent, goals, embeddings, wallet, kata, regulation, etc.) work with
+either provider without code changes.
+
+### SQLite (default)
+
+Per-agent SQLCipher-encrypted databases at `~/.local/share/hkask/agents/{name}/`.
+Zero configuration — the default for local, single-user deployments. Uses
+`sqlite-vec` for vector similarity search.
+
+### PostgreSQL
+
+Connects to a PostgreSQL database with `pgvector` for vector similarity
+search. Use when memory or embedding collections outgrow SQLite's
+single-writer model, or for multi-user / remote deployments.
+
+```bash
+# SQLite (default)
+HKASK_DB_PROVIDER=sqlite kask chat
+
+# PostgreSQL
+HKASK_DB_PROVIDER=postgres \
+  HKASK_DATABASE_URL=postgres://user:pass@localhost/hkask \
+  kask chat
+```
+
+The `PostgresDriver` uses a dedicated worker thread to bridge async `sqlx`
+to the sync `DatabaseDriver` trait — safe from any calling context
+including the GPUI foreground thread. Encryption at rest is the operator's
+responsibility (TLS to a remote Postgres + disk encryption).
+
+### `ServiceConfig::open_driver()`
+
+The canonical entry point for driver construction. Dispatches on
+`db_provider`:
+
+- `Sqlite` → opens a SQLCipher database at `db_path` with `db_passphrase`.
+- `Postgres` → connects to `HKASK_DATABASE_URL` and initializes the
+  pgvector schema (`schema_pg.sql`).
+
+Returns `Arc<dyn DatabaseDriver>` ready for any store's `from_driver()`
+constructor.
+
 ## Environment Variable Reference
 
 All env vars can be set either via the settings UI (keychain) or via shell
@@ -71,7 +117,11 @@ environment. Shell env vars take precedence over keychain values.
 
 | Env Var | Service | Source |
 |---------|--------|--------|
-| `HKASK_EODHD_API_KEY` | EODHD | Data Services |
+| `HKASK_DB_PROVIDER` | Storage backend (`sqlite` or `postgres`) | Storage |
+| `HKASK_DATABASE_URL` | PostgreSQL connection URL (required when `HKASK_DB_PROVIDER=postgres`) | Storage |
+| `HKASK_DB_PATH` | SQLite database path | Storage |
+| `HKASK_DB_PASSPHRASE` | SQLite SQLCipher encryption passphrase | Storage |
+| `HKASK_EMBEDDING_DIM` | Embedding vector dimension (default 1024) | Storage |
 | `HKASK_FMP_API_KEY` | FMP | Data Services |
 | `HKASK_EXA_API_KEY` | Exa | Data Services |
 | `HKASK_TAVILY_API_KEY` | Tavily | Data Services |

@@ -74,12 +74,26 @@ You are a convergence evaluator for task-breakdown. Measure whether the plan is 
 ## Materiality Guard (vacuous-iteration detection)
 
 If `prior_metric` is not null (iteration 2+), compare it to this iteration's metric:
-- If |metric - prior_metric| < 0.02 AND the plan is unchanged from the prior iteration
-  (same tasks, sizes, order — no new refinement applied), the plan is stable but not
-  progressing — force convergence_metric to 0.0 (converged at the achievable ceiling) and
-  set `materiality_guard: true`. This prevents the PDCA loop from spinning on a
-  stable-but-imperfect plan; the residual gap is taste, not a fixable defect.
+- v0.31.0: The plan-unchanged check is now MECHANICAL, not self-reported.
+  Compare the current tasks array against the prior iteration's tasks by
+  (task_id, title, estimated_scope). If all three fields match for every
+  task AND the task count is the same AND the ordering is the same, the
+  plan is unchanged. This removes the LLM self-reporting bias where the
+  LLM could claim "unchanged" to escape the loop or "changed" to keep spinning.
+- If |metric - prior_metric| < 0.02 AND the plan is unchanged (mechanical
+  check above), the plan is stable but not progressing — force
+  convergence_metric to 0.0 (converged at the achievable ceiling) and
+  set `materiality_guard: true`. This prevents the PDCA loop from
+  spinning on a stable-but-imperfect plan; the residual gap is taste,
+  not a fixable defect.
 - Otherwise set `materiality_guard: false` and report the computed metric.
+
+Note: the mechanical plan-unchanged check requires the prior iteration's
+tasks to be available. If they are not (e.g., the manifest executor does
+not preserve cross-iteration step results), fall back to the LLM's best
+judgment but note `materiality_guard_method: "self_reported"` in the
+output. When the mechanical check is possible, note
+`materiality_guard_method: "mechanical"`.
 
 Return JSON only:
 ```json
@@ -87,6 +101,7 @@ Return JSON only:
   "convergence_metric": 0.0,
   "convergence_method": "LLM-assessed saturation detection + materiality guard (independent gate input)",
   "materiality_guard": false,
+  "materiality_guard_method": "mechanical|self_reported",
   "metric_decomposition": {
     "sizing_ok": true,
     "vertical_slices": true,

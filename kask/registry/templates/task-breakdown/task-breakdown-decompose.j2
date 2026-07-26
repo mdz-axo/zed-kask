@@ -20,6 +20,7 @@ contract:
     phases: array
     checkpoints: array
     slices: array
+    plan_escalation: array
 energy_cap: 8192
 visibility: Public
 ---
@@ -204,6 +205,14 @@ Respond with a JSON object:
       "label": "Checkpoint: Foundation",
       "checks": ["All tests pass", "cargo build clean", "Core flow works end-to-end", "Review with human before proceeding"]
     }
+  ],
+  "plan_escalation": [
+    {
+      "reason": "all_tasks_xl|no_dependencies_multi_task|no_acceptance_criteria|empty_decomposition",
+      "description": "what is catastrophically wrong",
+      "severity": "critical",
+      "recommended_action": "what the operator should do before proceeding to evaluation"
+    }
   ]
 }
 ```
@@ -220,6 +229,30 @@ Respond with a JSON object:
 - Every task must declare its dependencies (or "None").
 - Dependency order must be respected: a task may not precede a task it depends on.
 - If skill_catalog is provided, every task must include a skill_match_query field describing the capability need. If skill_catalog is not provided, omit skill_match_query.
+
+## Algedonic Escalation (v0.31.0 — VSM S1→S5 short-circuit)
+
+After producing the tasks array, check for catastrophic plan conditions. If any
+of the following are true, emit a `plan_escalation` entry IN ADDITION to the
+normal output. These short-circuit the full evaluate → quality-gate →
+convergence pipeline — the operator should see them before evaluation completes:
+
+- **All tasks XL**: every task is estimated_scope=XL. The plan has not been
+  decomposed at all. Escalation reason: "all_tasks_xl".
+- **No dependencies in multi-task plan**: the plan has >1 task but no task
+  declares any dependency. This suggests the tasks were not analyzed for
+  ordering. Escalation reason: "no_dependencies_multi_task".
+- **No acceptance criteria**: no task in the plan has acceptance_criteria.
+  The plan cannot be verified. Escalation reason: "no_acceptance_criteria".
+- **Empty tasks array**: decomposition produced zero tasks. Escalation reason:
+  "empty_decomposition".
+
+Each escalation entry must include: `reason`, `description`, `severity` (always
+"critical"), and `recommended_action` (what the operator should do before
+proceeding to evaluation).
+
+If no catastrophic conditions are met, emit `plan_escalation: []`.
+
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

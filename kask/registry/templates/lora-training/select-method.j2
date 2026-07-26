@@ -23,11 +23,15 @@ contract:
     trainer_preference: string
     adapter_purpose: string
     dataset_format_hint: string
+    provider_capabilities: object
+    prior_training_history: object
+    prior_iteration: object
   output:
     recommendation: object
     readiness: object
     justification: object
     authority: object
+    dataset_profile: object
     reg_span_emitted: boolean
 energy_cap: 6144
 visibility: Public
@@ -63,6 +67,9 @@ INPUT: harness_preference = {{ harness_preference | default("undetermined") }} (
 INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | reward | grpo | undetermined)
 INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
 INPUT: dataset_format_hint = {{ dataset_format_hint | default("undetermined") }} (chatml | preference_dpo | preference_kto | preference_orpo | raw_text | undetermined)
+INPUT: provider_capabilities = {{ provider_capabilities | default({}) | tojson }} (v0.31.0 — capability matrix for available training hosts and inference providers; enables G6 to reason over the full capability space)
+INPUT: prior_training_history = {{ prior_training_history | default({}) | tojson }} (v0.31.0 — prior runs on same base model; enables Good Regulator compliance)
+INPUT: prior_iteration = {{ prior_iteration | default({}) | tojson }} (v0.31.0 — previous PDCA iteration output; closes the feedback loop)
 
 AUTHORITY CONTRACT (P1, P3, P4, P12):
 - This skill emits an advisory recommendation from declared evidence.
@@ -119,16 +126,36 @@ GATE PRECEDENCE AND REFINEMENT:
 10. A later gate may refine an `undetermined` or default field, but must not
    overwrite a non-default field without recording the prior value and reason.
 
-PDCA ITERATION LOOP:
-The select-method phase is the first turn of a PDCA loop. After audit-config
-and convergence-check, the operator may revise inputs and re-invoke
-select-method. Each iteration refines the recommendation:
+PDCA ITERATION LOOP (v0.31.0 — mechanically closed via manifest):
+The select-method phase is the first turn of a PDCA loop. The manifest's
+loop step (ordinal 5) routes convergence_metric, blockers, and
+gate_results_summary back to select-method as `prior_iteration`, closing
+the feedback loop mechanically rather than relying on operator-managed
+re-invocation.
+{% if prior_iteration and prior_iteration | length > 0 %}
+## Prior Iteration Feedback (loop closure)
+This is iteration N+1. The previous iteration produced:
+```json
+{{ prior_iteration | tojson }}
+```
+- **convergence_metric**: if > 0.10, the prior config had unresolved risk.
+  Use the blockers to identify which gates failed and refine the recommendation
+  to address them (e.g., if G-M3 scaling failed, adjust the scaling recommendation;
+  if G-Q1 failed, reconsider base_mode).
+- **blockers**: concrete findings/gates that prevented convergence. Address each
+  blocker in the appropriate gate below.
+- **gate_results_summary**: per-gate state summary. Gates in fail/refuse/deferred/
+  not_evaluated state need attention in this iteration.
+{% else %}
+This is the first iteration — no prior feedback to consume.
+{% endif %}
 - Plan: select-method produces a recommendation from declared evidence.
 - Do: the operator accepts/overrides/rejects; audit-config evaluates the
   accepted config against the 17 gates.
 - Check: convergence-check computes readiness; contract gaps are recorded.
-- Act: if not converged, the operator revises inputs (e.g., adjust rank,
-  switch harness, add evidence) and re-invokes select-method.
+- Act: if not converged, the manifest's loop step routes prior_iteration back
+  to select-method. The operator may also revise inputs (adjust rank, switch
+  harness, add evidence) and re-invoke.
 The loop converges when the convergence metric ≤ 0.10 and no hard blockers
 remain. Each iteration's recommendation is advisory — the operator's accepted
 configuration is authoritative.
@@ -264,6 +291,20 @@ G2. memory_budget_gb vs model_size_b?
        memory relative to full fine-tuning]
     - Never emit `will_oom`, `fits`, or equivalent certainty from these two
       scalar inputs alone.
+    {% if prior_training_history and prior_training_history.prior_oom_patterns %}
+    - v0.31.0 Good Regulator: prior_training_history.prior_oom_patterns is
+      available. Use it to refine the memory assessment:
+      - If prior runs on the same base model OOM'd at a specific batch size /
+        sequence length combination, warn that the same combination is at risk
+        and recommend a lower batch size or gradient checkpointing.
+      - If prior runs succeeded with QLoRA on this model size, note that
+        QLoRA has empirical precedent for this operator.
+      - If prior runs succeeded with full precision, note that full precision
+        has empirical precedent for this operator's setup.
+      Do NOT fabricate OOM certainty — prior patterns are evidence, not proof.
+      Prior OOM at a different batch size does not guarantee OOM at the current
+      batch size.
+    {% endif %}
 
 G3. task_distance? (refines rank_range within the baseline established by G0)
     - G0 established a baseline rank range from adapter_purpose. G3 refines
@@ -284,6 +325,19 @@ G3. task_distance? (refines rank_range within the baseline established by G0)
     - If G0 baseline and task_distance disagree (e.g., G0=instruction with
       rank 8-32 but task_distance=heavy), use the wider range and note the
       tension as a constraint.
+    {% if prior_training_history and prior_training_history.prior_rank_choices %}
+    - v0.31.0 Good Regulator: prior_training_history.prior_rank_choices is
+      available. Use it to refine the rank recommendation:
+      - If prior runs on the same base model + similar task distance succeeded
+        at a specific rank, note that rank as empirically validated for this
+        operator's setup.
+      - If prior runs failed to converge at a specific rank (underfitting),
+        warn against that rank and recommend the high end of the range.
+      - If prior runs overfit at a specific rank, warn against that rank and
+        recommend the low end of the range.
+      Do NOT override the G0 baseline or task_distance refinement — prior
+      choices refine within the baseline, they do not replace it.
+    {% endif %}
 
 G4. quality_vs_cost?
     - cost-sensitive → retain the lowest-complexity compatible recommendation;
@@ -320,6 +374,27 @@ G6. harness_capability? (after G0-G5; selects harness based on training approach
     G0-G5 have already determined the training approach (purpose, method, rank,
     modules, initializer, preservation). G6 selects the harness that can best
     execute that approach.
+    {% if provider_capabilities and provider_capabilities | length > 0 %}
+    ## v0.31.0: Deep capability reasoning over the full capability space
+    provider_capabilities is available. Reason over the full capability matrix:
+    - **available_hosts**: which training hosts (runpod, deepinfra, nebius) are
+      configured and have API keys? This affects which harnesses are practically
+      usable (all three hosts support all three harnesses, but GPU type
+      availability may constrain model size).
+    - **host_gpu_types**: which GPU types are available on each host? This affects
+      memory_budget_gb refinement (e.g., if only 24GB GPUs are available, QLoRA
+      is more likely needed for large models).
+    - **host_cost_models**: GPU hourly rate, setup time, teardown grace per host.
+      When quality_vs_cost=cost-sensitive, factor cost into the harness
+      recommendation (e.g., axolotl's simpler config may reduce setup time;
+      ludwig's GRPO support may require longer runs).
+    - **inference_provider_capabilities**: which inference providers support LoRA
+      composition? This affects inference_constraint reasoning (if no provider
+      supports dynamic switching, must-merge becomes more attractive).
+    Use this capability matrix to produce a more informed recommendation. When
+    provider_capabilities is absent, fall back to harness-method compatibility
+    only (the pre-v0.31.0 behavior).
+    {% endif %}
     - If harness_preference is declared (not undetermined): preserve it as
       `operator_requested`. Do not overwrite. Validate compatibility with
       earlier gates; record conflicts if any (e.g., harness=axolotl but

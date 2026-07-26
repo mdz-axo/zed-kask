@@ -13,6 +13,7 @@ contract:
     slices: array
     dependency_graph: array
     evaluation_result: object
+    context_summary: string
   output:
     gate_scores: object
     gate_weighted_total: number
@@ -55,6 +56,15 @@ You are an INDEPENDENT plan-quality gate. You are evaluating, not generating. Do
 ```json
 {{ dependency_graph | tojson }}
 ```
+{% endif %}
+
+{% if context_summary %}
+## Project Context (v0.31.0 — Good Regulator)
+
+The following context was gathered during the plan phase. Use it to check
+project-specific conventions independently of the producer's evaluation.
+
+{{ context_summary }}
 {% endif %}
 
 ## Producer's Self-Assessment (for bias detection only — do not copy)

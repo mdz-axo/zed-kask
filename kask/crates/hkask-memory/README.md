@@ -18,11 +18,13 @@ resets — t goes back to 0, R = 1.0.
 ## Configuration
 
 | Variable | Description | Default |
-|----------|-------------|---------|
+|----------|-------------|--------|
 | `HKASK_MEMORY_LIFE_DAYS` | Memory life S in days | 180 |
-| `HKASK_DB_PROVIDER` | Database provider (`sqlite` or `postgres`) | — |
+| `HKASK_DB_PROVIDER` | Database provider (`sqlite` or `postgres`) | `sqlite` |
 | `HKASK_DB_PATH` | SQLite database path | — |
-| `HKASK_DB_PASSPHRASE` | Database encryption passphrase | — |
+| `HKASK_DB_PASSPHRASE` | SQLite SQLCipher encryption passphrase | — |
+| `HKASK_DATABASE_URL` | PostgreSQL connection URL (required when `HKASK_DB_PROVIDER=postgres`) | — |
+| `HKASK_EMBEDDING_DIM` | Embedding vector dimension | 1024 |
 
 `ServiceConfig.memory_life_days` also accepts the value programmatically.
 

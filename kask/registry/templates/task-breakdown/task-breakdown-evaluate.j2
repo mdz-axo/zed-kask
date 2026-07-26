@@ -11,6 +11,7 @@ contract:
     tasks: array
     dependency_graph: array
     slices: array
+    context_summary: string
   output:
     scores: object
     weighted_total: number
@@ -53,11 +54,23 @@ You are a plan-quality evaluator. Score the task breakdown against six weighted 
 ```
 {% endif %}
 
+{% if context_summary %}
+## Project Context (v0.31.0 — Good Regulator)
+
+The following context was gathered during the plan phase by reading the codebase.
+Use it to check project-specific conventions, not just generic criteria. For example:
+- Does the plan respect the project's testing pattern (tests/ directories, doctests)?
+- Are the file paths in tasks consistent with the project's module structure?
+- Does the dependency ordering match the project's actual crate dependency graph?
+
+{{ context_summary }}
+{% endif %}
+
 ## Six Weighted Criteria
 
 | Criterion | Weight | 0 (perfect) | 1 (severely deficient) |
 |-----------|--------|-------------|------------------------|
-| Task sizing | 0.25 | All tasks XS–M; none L+; none touches >5 files | XL tasks present or L tasks un-decomposed |
+| Task sizing | 0.25 | All tasks XS–M; none L+; none touches >5 files; task count 3-20 | XL tasks present or L tasks un-decomposed; task count <3 or >20 |
 | Vertical-slice integrity | 0.20 | Every task is a vertical feature path | Horizontal layers present (build all X, then all Y) |
 | Acceptance-criteria specificity | 0.20 | Every AC is specific and testable | Vague ACs; "implement the feature"; >3 bullets or untestable |
 | Dependency ordering | 0.15 | Every task follows its dependencies; foundations first | A task precedes a task it depends on |
@@ -65,6 +78,16 @@ You are a plan-quality evaluator. Score the task breakdown against six weighted 
 | Red-flag absence | 0.10 | No red flags (see below) | One or more red flags present |
 
 The weighted_total is the sum of (score x weight) across all six criteria, in [0,1].
+
+### Task-count awareness (v0.31.0)
+
+The sizing criterion now accounts for task count, not just task size:
+- Task count > 20: score +0.10 (too granular — the plan is a list of micro-tasks
+  that will be hard to track and coordinate).
+- Task count < 3: score +0.10 (too coarse — the plan hasn't been decomposed
+  enough for reliable estimation and verification).
+- Task count 3-20: no adjustment (healthy range).
+This is in addition to the existing XL/L checks, not a replacement.
 
 ## Red Flags
 

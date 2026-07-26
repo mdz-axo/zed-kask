@@ -6,9 +6,10 @@
 #   1. PLAN      — read-only context + dependency graph + risks
 #   2. DECOMPOSE — slice vertically + write tasks in one producer (DO)
 #   3. EVALUATE  — score against six weighted criteria (CHECK)
-#   4. CONVERGE  — normalized metric (CHECK)
-#   5. WRITE-PLAN — finalize tasks/plan.md + tasks/todo.md + pko_anchors (ACT)
-#   6. LOOP      — re-enter at DECOMPOSE if unconverged
+#   4. QUALITY-GATE — independent evaluation, bias detection (CHECK)
+#   5. CONVERGE  — normalized metric (CHECK)
+#   6. WRITE-PLAN — finalize tasks/plan.md + tasks/todo.md + pko_anchors (ACT)
+#   7. LOOP      — re-enter at DECOMPOSE if unconverged
 #
 # Design notes:
 #   - slice + write-tasks merged into one producer to fix the grain-mismatch between
@@ -16,6 +17,23 @@
 #   - min_iterations: 0 allows first-pass convergence when the plan is already good,
 #     avoiding a forced non-converged write-plan execution (Finding 2). With
 #     improvement_gate: threshold_only the forced second pass added no value.
+#
+# v0.31.0 refinement (self-improvement cycle 1, proposed-not-committed):
+#   1. Loop step now explicitly routes refinement_directives back to decompose
+#      (was implicit, depended on manifest executor preserving cross-iteration
+#      step results — now mechanical and documented).
+#   2. Plan step validates empty spec_or_intent (was silent failure — empty spec
+#      produced empty plan that converged at 0.0).
+#   3. Evaluate and quality-gate now receive context_summary (Good Regulator —
+#      evaluators can check project-specific conventions, not just generic criteria).
+#   4. skill_catalog wired as manifest input (was in decompose contract but not
+#      in manifest inputs — dead input).
+#   5. Decompose emits plan_escalation for catastrophic plans (all XL, no deps,
+#      no ACs) as algedonic short-circuit.
+#   6. Write-plan records refinement_history (what was refined across iterations)
+#      in plan.md.
+#   7. Convergence materiality guard now uses mechanical plan-unchanged check
+#      (task_id + title + scope comparison) rather than LLM self-report.
 
 manifest:
   id: task-breakdown
@@ -75,6 +93,13 @@ inputs:
     type: string
     description: "Optional hint on available agents/sessions for parallelization planning"
     required: false
+  - name: skill_catalog
+    type: array
+    required: false
+    description: >
+      v0.31.0: Installed skill catalog for skill_match_query generation.
+      When provided, decompose emits a skill_match_query field per task
+      for skill-router consumption. When absent, skill_match_query is omitted.
 
 steps:
   - ordinal: 1
@@ -97,6 +122,8 @@ steps:
     description: >
       DECOMPOSE — single producer: slice vertically AND write tasks in one step.
       Accepts refinement_directives from the evaluate step on re-entry (task-addressable).
+      v0.31.0: Emits plan_escalation for catastrophic plans (all XL, no deps in
+      multi-task plan, no ACs) as algedonic short-circuit.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-decompose
     gas_cap: 8192
@@ -107,12 +134,15 @@ steps:
       risks: "{{ step_1_result.risks | default([]) }}"
       refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
       parallelization_hint: "{{ parallelization_hint | default('') }}"
+      skill_catalog: "{{ skill_catalog | default([]) }}"
 
   - ordinal: 3
     action: select
     description: >
       EVALUATE — score the plan against six weighted criteria. Emit task-addressable
-      refinement directives for criteria above threshold.
+      refinement directives for criteria above threshold. v0.31.0: receives
+      context_summary so evaluators can check project-specific conventions
+      (Good Regulator), not just generic criteria.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-evaluate
     gas_cap: 6144
@@ -121,6 +151,7 @@ steps:
       tasks: "{{ step_2_result.tasks | default([]) }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
       slices: "{{ step_2_result.slices | default([]) }}"
+      context_summary: "{{ step_1_result.context_summary | default('') }}"
 
   - ordinal: 4
     action: select
@@ -128,7 +159,8 @@ steps:
       QUALITY-GATE — independent evaluation of the plan (fusion: false, deterministic
       rubric, no self-assessment bias). Scores the six criteria independently of the
       producer-coupled evaluate step and flags compensation masking. Mirrors
-      superforecasting's forecast-quality-gate separation of concerns.
+      superforecasting's forecast-quality-gate separation of concerns. v0.31.0:
+      receives context_summary for project-specific convention checking.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-quality-gate
     gas_cap: 4096
@@ -138,6 +170,7 @@ steps:
       slices: "{{ step_2_result.slices | default([]) }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
       evaluation_result: "{{ step_3_result }}"
+      context_summary: "{{ step_1_result.context_summary | default('') }}"
     fusion: false
 
   - ordinal: 5
@@ -163,6 +196,8 @@ steps:
       WRITE-PLAN — finalize tasks/plan.md (overview, architecture decisions, phased
       task list with checkpoints, risks, open questions) and tasks/todo.md (checklist),
       with a pko_anchors map giving each element a PKO process-axis identity.
+      v0.31.0: includes refinement_history section in plan.md showing what was
+      refined across PDCA iterations.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-write-plan
     gas_cap: 4096
@@ -174,18 +209,22 @@ steps:
       slices: "{{ step_2_result.slices | default([]) }}"
       risks: "{{ step_1_result.risks | default([]) }}"
       evaluation_result: "{{ step_4_result }}"
+      refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
 
   - ordinal: 7
     action: loop
     description: >
       If convergence not met (metric > 0.15) and refinement directives exist, loop
       back to DECOMPOSE (step 2) with directives as focused, task-addressable
-      improvement targets. Carries the prior convergence_metric forward so the next
-      convergence check's materiality guard can detect a stable-but-unconverged plan.
-      Each iteration narrows the gap.
+      improvement targets. v0.31.0: explicitly routes refinement_directives back
+      to decompose (was implicit, depended on manifest executor preserving
+      cross-iteration step results). Carries the prior convergence_metric forward
+      so the next convergence check's materiality guard can detect a stable-but-
+      unconverged plan. Each iteration narrows the gap.
     input_mapping:
       loop_target: 2
       prior_metric: "{{ step_5_result.convergence_metric }}"
+      refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
 
 error_handling:
   on_gas_exceeded: abort

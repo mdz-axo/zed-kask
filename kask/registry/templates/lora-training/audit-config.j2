@@ -14,11 +14,14 @@ contract:
     selected_method: string
     existing_regressions: array
     userpod_host: string
+    dataset_profile: object
   output:
     findings: array
     gate_results: object
     parameters_extracted: array
     reg_span_emitted: boolean
+    refuse_escalation: array
+    rejected_findings: integer
 energy_cap: 8192
 visibility: Public
 ---
@@ -38,6 +41,7 @@ INPUT: config_paths = {{ config_paths | default([]) }}
 INPUT: selected_method = {{ selected_method }} (operator-selected; do not replace)
 INPUT: existing_regressions = {{ existing_regressions | default([]) }}
 INPUT: userpod_host = {{ userpod_host | default("REQUIRED") }} (P12 — mandatory)
+INPUT: dataset_profile = {{ dataset_profile | default({}) | tojson }} (v0.31.0 — from G-D0 dataset profiling; feeds G-D1 dataset size/quality assessment)
 
 AUTHORITATIVE AUDIT MODEL
 
@@ -265,6 +269,27 @@ EVIDENCE AND CITATION INTEGRITY (P8)
   an actual declared artifact. Deferred/planned/not_evaluated checks are not
   regressions by themselves.
 
+NO-FICTION ENFORCEMENT (v0.31.0 — mechanical, not voluntary):
+Findings with `evidence_kind` of `config_value`, `code_presence`, or
+`code_absence` MUST have non-null `evidence.config_path` AND non-null
+`evidence.line`. Findings that fail this check are REJECTED at the audit
+gate and counted in `rejected_findings` with reason `"missing_citation"`.
+This makes the "no synthetic snippets/line numbers" prohibition mechanical
+rather than voluntary. Findings with `evidence_kind` of `not_available`,
+`operator_assertion`, or `runtime_measurement` are exempt (they may have
+null evidence fields legitimately).
+
+ALGEDONIC ESCALATION (v0.31.0 — VSM S1→S5 short-circuit):
+Findings with `state: refuse` represent safety-boundary violations that
+should reach the operator BEFORE the full report/convergence pipeline
+completes. Emit each `refuse` finding as a `refuse_escalation` entry with:
+- `finding_id`, `gate_id`, `claim`, `requirement`, `evidence` (the
+  contradictory evidence that triggered the refusal), `selected_method`,
+  `userpod_host`, and `severity` (always critical).
+The manifest and downstream phases still process the finding normally —
+the escalation is an IN-ADDITION short-circuit, not a replacement for the
+normal flow. This mirrors bug-hunt's `probe_escalation` pattern.
+
 Regulation SPAN EMISSION (P9)
 Emit `reg.lora.audit` for every gate represented in `gate_results`: target
 `"reg.lora.audit"`, message `"Regulation"`, operation `"audit_gate"`, gate_id,
@@ -281,8 +306,10 @@ evidence assessments only.
 OUTPUT FORMAT
 JSON object with `config_paths`, `parameters_extracted`, `selected_method`,
 `method_recommendations`, `findings` (the normalized schema unchanged),
-`gate_results`, `readiness_state`, `userpod_host`, `source_citations`, and
-`reg_span_reference`.
+`gate_results`, `readiness_state`, `userpod_host`, `source_citations`,
+`reg_span_reference`, `refuse_escalation` (v0.31.0 — algedonic short-circuit
+for refuse findings), and `rejected_findings` (v0.31.0 — count of findings
+rejected for missing citations).
 
 5W1H GATE CHECK (P5): Who = operator / userpod_host; What = phase-aware
 training contract audit; Where = declared workspace paths; When = static,
