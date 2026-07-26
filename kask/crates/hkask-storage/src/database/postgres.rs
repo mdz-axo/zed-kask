@@ -1,14 +1,11 @@
 //! PostgresDriver — sqlx-backed DatabaseDriver for PostgreSQL.
 //!
-//! Bridges async sqlx to the sync DatabaseDriver trait via
-//! tokio::runtime::Handle::block_on.
-//!
-//! # ⚠️ Deadlock Risk
-//!
-//! All methods call `block_on` internally. This will panic with
-//! "Cannot start a runtime from within a runtime" if called from
-//! within an async tokio context. Callers must ensure PostgresDriver
-//! operations happen from a non-async context or a dedicated thread.
+//! Bridges async sqlx to the sync `DatabaseDriver` trait via a dedicated
+//! worker thread that owns the tokio runtime and `PgPool`. Store calls send
+//! a request over a channel and block on the response — safe from any
+//! calling context (sync, async, GPUI foreground) because the worker thread
+//! is the only place `block_on` is invoked, and it is never inside an
+//! existing runtime.
 //!
 //! # SQL Translation
 //!
@@ -22,32 +19,156 @@ use super::value::{DbRow, DbValue};
 use base64::Engine;
 use sqlx::Column;
 use sqlx::Row;
+use std::sync::mpsc;
+
+/// Request sent from the driver (any thread) to the postgres worker thread.
+enum PgRequest {
+    Execute {
+        sql: String,
+        params: Vec<DbValue>,
+        tx: mpsc::Sender<Result<usize, DbError>>,
+    },
+    ExecuteBatch {
+        sql: String,
+        tx: mpsc::Sender<Result<(), DbError>>,
+    },
+    Query {
+        sql: String,
+        params: Vec<DbValue>,
+        tx: mpsc::Sender<Result<Vec<DbRow>, DbError>>,
+    },
+}
 
 pub struct PostgresDriver {
+    sender: mpsc::Sender<PgRequest>,
     pool: sqlx::PgPool,
-    handle: tokio::runtime::Handle,
 }
 
 impl PostgresDriver {
-    pub fn new(pool: sqlx::PgPool, handle: tokio::runtime::Handle) -> Self {
-        Self { pool, handle }
+    /// Create a `PostgresDriver` backed by a dedicated worker thread.
+    ///
+    /// The worker thread owns a single-threaded tokio runtime and runs all
+    /// sqlx queries on it. This avoids `block_on`-inside-async-context
+    /// panics: the worker is never inside an existing runtime.
+    pub fn new(pool: sqlx::PgPool) -> Self {
+        let (sender, receiver) = mpsc::channel::<PgRequest>();
+        let worker_pool = pool.clone();
+        std::thread::Builder::new()
+            .name("hkask-postgres-worker".into())
+            .spawn(move || {
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        tracing::error!(
+                            "hkask-postgres-worker: failed to build runtime: {e}. \
+                             Channel closed; all subsequent queries will fail."
+                        );
+                        // Drain remaining requests with a runtime-build error so
+                        // callers get a clear message instead of hanging.
+                        while let Ok(req) = receiver.recv() {
+                            match req {
+                                PgRequest::Execute { tx, .. } => {
+                                    let _ = tx.send(Err(DbError::Database(format!(
+                                        "postgres worker runtime unavailable: {e}"
+                                    ))));
+                                }
+                                PgRequest::Query { tx, .. } => {
+                                    let _ = tx.send(Err(DbError::Database(format!(
+                                        "postgres worker runtime unavailable: {e}"
+                                    ))));
+                                }
+                                PgRequest::ExecuteBatch { tx, .. } => {
+                                    let _ = tx.send(Err(DbError::Database(format!(
+                                        "postgres worker runtime unavailable: {e}"
+                                    ))));
+                                }
+                            }
+                        }
+                        return;
+                    }
+                };
+                runtime.block_on(async move {
+                    while let Ok(req) = receiver.recv() {
+                        match req {
+                            PgRequest::Execute { sql, params, tx } => {
+                                let result = exec_one(&worker_pool, &sql, &params).await;
+                                let _ = tx.send(result);
+                            }
+                            PgRequest::ExecuteBatch { sql, tx } => {
+                                let result = exec_batch(&worker_pool, &sql).await;
+                                let _ = tx.send(result);
+                            }
+                            PgRequest::Query { sql, params, tx } => {
+                                let result = query_one(&worker_pool, &sql, &params).await;
+                                let _ = tx.send(result);
+                            }
+                        }
+                    }
+                });
+            })
+            .expect("hkask-postgres-worker: failed to spawn thread");
+        Self { sender, pool }
     }
 
-    /// Raw query execution without Regulation span emission.
-    /// Called by `query` and `query_optional` which each emit their own spans.
-    fn query_raw(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
-        let sql = translate_placeholders(sql);
-        let pool = self.pool.clone();
-        let args: Vec<Option<String>> = params.iter().map(to_param).collect();
-        let rows = self.handle.block_on(async move {
-            let mut q = sqlx::query(&sql);
-            for a in &args {
-                q = q.bind(a);
-            }
-            q.fetch_all(&pool).await.map_err(pg_err)
-        })?;
-        Ok(rows.iter().map(row_to_dbrow).collect())
+    fn round_trip_execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {
+        let (tx, rx) = mpsc::channel();
+        self.sender
+            .send(PgRequest::Execute {
+                sql: translate_placeholders(sql),
+                params: params.to_vec(),
+                tx,
+            })
+            .map_err(|_| DbError::Database("postgres worker thread exited".into()))?;
+        rx.recv()
+            .map_err(|_| DbError::Database("postgres worker dropped response".into()))?
     }
+
+    fn round_trip_query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
+        let (tx, rx) = mpsc::channel();
+        self.sender
+            .send(PgRequest::Query {
+                sql: translate_placeholders(sql),
+                params: params.to_vec(),
+                tx,
+            })
+            .map_err(|_| DbError::Database("postgres worker thread exited".into()))?;
+        rx.recv()
+            .map_err(|_| DbError::Database("postgres worker dropped response".into()))?
+    }
+}
+
+// ── Async query execution (runs on the worker thread) ────────────────
+
+async fn exec_one(pool: &sqlx::PgPool, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {
+    let args: Vec<Option<String>> = params.iter().map(to_param).collect();
+    let mut q = sqlx::query(sql);
+    for a in &args {
+        q = q.bind(a);
+    }
+    let r = q.execute(pool).await.map_err(pg_err)?;
+    Ok(r.rows_affected() as usize)
+}
+
+async fn exec_batch(pool: &sqlx::PgPool, sql: &str) -> Result<(), DbError> {
+    sqlx::query(sql).execute(pool).await.map_err(pg_err)?;
+    Ok(())
+}
+
+async fn query_one(
+    pool: &sqlx::PgPool,
+    sql: &str,
+    params: &[DbValue],
+) -> Result<Vec<DbRow>, DbError> {
+    let args: Vec<Option<String>> = params.iter().map(to_param).collect();
+    let mut q = sqlx::query(sql);
+    for a in &args {
+        q = q.bind(a);
+    }
+    let rows = q.fetch_all(pool).await.map_err(pg_err)?;
+    Ok(rows.iter().map(row_to_dbrow).collect())
 }
 
 // ── SQL translation: ?N → $N ─────────────────────────────────────────
@@ -141,17 +262,7 @@ impl DatabaseDriver for PostgresDriver {
     fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {
         let start = std::time::Instant::now();
         let table = super::regulation::extract_table(sql);
-        let sql = translate_placeholders(sql);
-        let pool = self.pool.clone();
-        let args: Vec<Option<String>> = params.iter().map(to_param).collect();
-        let result = self.handle.block_on(async move {
-            let mut q = sqlx::query(&sql);
-            for a in &args {
-                q = q.bind(a);
-            }
-            let r = q.execute(&pool).await.map_err(pg_err)?;
-            Ok(r.rows_affected() as usize)
-        });
+        let result = self.round_trip_execute(sql, params);
         let duration_us = start.elapsed().as_micros() as u64;
         match &result {
             Ok(rows) => {
@@ -163,18 +274,21 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), DbError> {
-        let sql = translate_placeholders(sql);
-        let pool = self.pool.clone();
-        self.handle.block_on(async move {
-            sqlx::query(&sql).execute(&pool).await.map_err(pg_err)?;
-            Ok(())
-        })
+        let (tx, rx) = mpsc::channel();
+        self.sender
+            .send(PgRequest::ExecuteBatch {
+                sql: translate_placeholders(sql),
+                tx,
+            })
+            .map_err(|_| DbError::Database("postgres worker thread exited".into()))?;
+        rx.recv()
+            .map_err(|_| DbError::Database("postgres worker dropped response".into()))?
     }
 
     fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
         let start = std::time::Instant::now();
         let table = super::regulation::extract_table(sql);
-        let result = self.query_raw(sql, params);
+        let result = self.round_trip_query(sql, params);
         let duration_us = start.elapsed().as_micros() as u64;
         match &result {
             Ok(rows) => {
@@ -188,7 +302,7 @@ impl DatabaseDriver for PostgresDriver {
     fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError> {
         let start = std::time::Instant::now();
         let table = super::regulation::extract_table(sql);
-        let result = self.query_raw(sql, params);
+        let result = self.round_trip_query(sql, params);
         let duration_us = start.elapsed().as_micros() as u64;
         match result {
             Ok(rows) => {

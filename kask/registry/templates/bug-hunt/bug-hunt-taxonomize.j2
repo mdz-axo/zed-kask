@@ -76,9 +76,10 @@ Respond with a JSON object:
       "summary": "one sentence",
       "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
       "confidence": 0.85,
+      "reproducibility": "reproduced | reproducible | hard_to_reproduce | not_reproducible",
       "beizer_category": "data | structural | coding | interface | integration | timing | configuration | requirements",
       "severity": "CRITICAL | HIGH | MEDIUM | LOW",
-      "pattern_signature": "how to detect this class of bug elsewhere",
+      "pattern_signature": "how to detect this class of bug elsewhere — grep-able or structural, suitable for the next expedition's probe to consume",
       "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
     }
   ],
@@ -107,7 +108,11 @@ Respond with a JSON object:
 
 - Every finding must have exactly one Beizer category.
 - Severity must be justified by the evidence in the finding.
-- Pattern signatures should enable detection of similar bugs elsewhere.
+- Pattern signatures should enable detection of similar bugs elsewhere and be
+  concrete enough for the next expedition's probe to consume (grep-able string
+  or structural description). Vague signatures like "look for similar patterns"
+  are not acceptable.
+- Preserve the `reproducibility` field from the oracle output — do not drop it.
 - Do not fabricate fix suggestions — "needs investigation" is valid.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.

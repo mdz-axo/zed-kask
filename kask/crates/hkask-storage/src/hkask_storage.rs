@@ -10,7 +10,7 @@ pub mod database;
 
 pub use core::DatabaseDriverTrait;
 pub use core::database::{Database, DatabaseError};
-pub use core::{check_passphrase, open_database, open_or_repair, sanitize_path};
+pub use core::{check_passphrase, open_database, open_or_repair, open_postgres, sanitize_path};
 pub use database::{
     DatabaseDriver, DbProvider, PostgresDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas,
 };

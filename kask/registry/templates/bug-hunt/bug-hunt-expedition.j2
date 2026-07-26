@@ -3,6 +3,25 @@
 {# Implementation: Jinja2 prompt #}
 {# Produces: Structured bug report with charter, findings, taxonomy #}
 {# hKask v0.31.0 — Bug Hunting Expedition #}
+{#
+  LEGACY TEMPLATE — retained for backward compatibility (v0.30.0 callers).
+  Prefer the decomposed pipeline: charter → probe → oracle → taxonomize →
+  report → convergence-check.
+
+  Divergence from decomposed pipeline (v0.31.0):
+    - No crate_model phase (Good Regulator compliance missing).
+    - No prior_expedition consumption (feedback loop not closed).
+    - No dynamic pattern expansion (static pattern list only — Ashby deficit).
+    - No missing-tests detection.
+    - No algedonic escalation channel.
+    - No reproducibility axis in oracle (confidence conflated with reproducibility).
+    - No file:line citation enforcement (no-fiction is voluntary, not mechanical).
+    - No lessons_learned / pattern_signatures outputs.
+    - No composite convergence metric (uses old saturation-only metric).
+
+  Use this template only when a single-call monolithic expedition is required.
+  All new callers should use the decomposed pipeline via the bug-hunt manifest.
+#}
 
 [inference]
 template_type: KnowAct

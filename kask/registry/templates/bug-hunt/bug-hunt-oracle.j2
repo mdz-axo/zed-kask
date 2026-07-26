@@ -1,4 +1,4 @@
-{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings. #}
+{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings. v0.31.0: reproducibility separated from confidence; file:line citation required. #}
 [inference]
 template_type: KnowAct
 lexicon_terms:
@@ -18,6 +18,7 @@ contract:
     confirmed_bugs: integer
     potential_bugs: integer
     contract_gaps: integer
+    rejected_findings: integer
 energy_cap: 6144
 visibility: Public
 ---
@@ -27,6 +28,19 @@ visibility: Public
 {# Produces: oracle_findings #}
 {# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
 {# hKask v0.31.0 — Bug Hunting Expedition #}
+{#
+  v0.31.0 refinement:
+    - Reproducibility is a separate axis from confidence. The previous logic
+      conflated "how sure am I this is a bug" (confidence) with "can I reproduce
+      it" (provenance). Race conditions, timing bugs, and UB under specific
+      input orderings get downgraded not because they are uncertain but because
+      they are hard to reproduce. This systematically biases against exactly
+      the bug classes that are most dangerous. Now: a high-confidence
+      low-reproducibility finding stays POTENTIAL_BUG, not OBSERVATION.
+    - No-fiction enforcement: every finding must cite a specific file:line
+      and include the exact code read. Findings without citations are rejected
+      at the oracle gate and counted in rejected_findings.
+#}
 
 [inference]
 temperature = 0.2
@@ -50,13 +64,40 @@ You are a bug hunting oracle. Evaluate raw probe findings against user-defined q
 
 ## Tiered Verdict System (Weinberg: bug = threat to user-defined quality)
 
-For each finding, assign a tier and confidence:
+For each finding, assign a tier, confidence, AND reproducibility:
 
-| Tier | Criteria | Confidence | Label |
-|------|----------|-----------|-------|
-| Tier 1 | Contract violated | 0.90–1.00 | BUG — cite the contract |
-| Tier 2 | Pattern matched, no contract | 0.60–0.89 | POTENTIAL BUG — cite the pattern |
-| Tier 3 | Suspicious but unverified | <0.60 | OBSERVATION — flag as contract gap |
+| Tier | Criteria | Confidence | Reproducibility | Label |
+|------|----------|-----------|-----------------|-------|
+| Tier 1 | Contract violated | 0.90–1.00 | any | BUG — cite the contract |
+| Tier 2 | Pattern matched, no contract | 0.60–0.89 | any | POTENTIAL BUG — cite the pattern |
+| Tier 3 | Suspicious but unverified | <0.60 | any | OBSERVATION — flag as contract gap |
+
+### Reproducibility axis (separate from confidence)
+
+- **reproduced**: you observed the bug behavior directly (test failed, panic
+  occurred, runtime probe confirmed).
+- **reproducible**: you can describe a concrete reproduction steps sequence
+  even if you did not execute it.
+- **hard_to_reproduce**: the bug class is inherently hard to reproduce (race
+  condition, timing-dependent, UB under specific input ordering) but you are
+  confident it exists based on code analysis.
+- **not_reproducible**: you cannot describe a reproduction path.
+
+**Critical rule**: reproducibility does NOT downgrade confidence. A
+`hard_to_reproduce` finding with confidence 0.85 stays POTENTIAL_BUG, not
+OBSERVATION. The previous logic conflated these axes and systematically
+biased against the most dangerous bug classes (timing, concurrency, UB).
+
+### No-fiction enforcement
+
+Every finding MUST include:
+- `location.file` — concrete file path
+- `location.line_approx` — line number or line range
+- `evidence` — the exact code you read (verbatim snippet, ≤5 lines)
+
+Findings without these are REJECTED at the oracle gate. Count them in
+`rejected_findings` with reason `"missing_citation"`. This makes the
+"do not fabricate findings" prohibition mechanical rather than voluntary.
 
 ## Pragmatic-Semantics Classification (v0.31.0)
 
@@ -96,28 +137,34 @@ Respond with a JSON object:
     {
       "id": "BUG-001",
       "summary": "one sentence — what the finding is and why it matters",
-      "location": { "file": "...", "function": "...", "line_approx": "..." },
+      "location": { "file": "src/path.rs", "function": "fn_name", "line_approx": "123-127" },
       "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
       "confidence": 0.85,
+      "reproducibility": "reproduced | reproducible | hard_to_reproduce | not_reproducible",
       "is_vs_ought": "IS | OUGHT",
       "epistemic_mode": "declarative | probabilistic | subjunctive",
       "provenance": "direct_measurement | inference | assessment",
       "grill_me_challenge": "self-challenge result and resolution",
-      "evidence": "what was observed"
+      "evidence": "verbatim code snippet read from the cited location (≤5 lines)"
     }
   ],
   "confirmed_bugs": 0,
   "potential_bugs": 0,
-  "contract_gaps": 0
+  "contract_gaps": 0,
+  "rejected_findings": 0
 }
 ```
 
 ## Constraints
 
-- Every finding must have IS/OUGHT, epistemic mode, and provenance labels.
+- Every finding must have IS/OUGHT, epistemic mode, provenance, AND reproducibility labels.
+- Every finding must cite a concrete file:line and include a verbatim code snippet.
+- Findings without citations are rejected, not silently dropped.
 - The grill-me challenge must be specific to the finding, not generic.
 - Downgrade unverifiable findings — a subjunctive presented as declarative is an error.
 - If confidence is below 0.60, the finding is an OBSERVATION, not a bug.
+- Reproducibility does NOT downgrade confidence. `hard_to_reproduce` with high
+  confidence stays POTENTIAL_BUG.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

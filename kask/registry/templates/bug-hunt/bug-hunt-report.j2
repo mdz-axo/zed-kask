@@ -1,4 +1,4 @@
-{# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. #}
+{# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. v0.31.0: emits lessons_learned and pattern_signatures for feedback loop closure. #}
 [inference]
 template_type: KnowAct
 lexicon_terms:
@@ -6,6 +6,7 @@ lexicon_terms:
 - summarize
 - compose
 - document
+- learn
 contract:
   input:
     charter: object
@@ -17,10 +18,13 @@ contract:
     files_read: integer
     tests_run: integer
     crates_examined: array
+    prior_expedition: object
   output:
     expedition_id: string
     findings: array
     summary: object
+    lessons_learned: array
+    pattern_signatures: array
 energy_cap: 4096
 visibility: Public
 ---
@@ -30,6 +34,13 @@ visibility: Public
 {# Produces: report #}
 {# Phase 5 — REPORT (structured JSON bug report) #}
 {# hKask v0.31.0 — Bug Hunting Expedition #}
+{#
+  v0.31.0 refinement: the report now emits lessons_learned and
+  pattern_signatures. These are consumed by the next expedition's charter
+  (via the manifest's loop step routing them as prior_expedition) to close
+  the feedback loop. Without these fields, each expedition is a one-shot and
+  cannot learn from prior iterations.
+#}
 
 [inference]
 temperature = 0.1
@@ -61,6 +72,11 @@ You are a bug report compiler. Produce a structured JSON bug report from all pri
 - Tests run: {{ tests_run | default(0) }}
 - Crates examined: {{ crates_examined | default([]) | tojson }}
 - Quality criteria: {{ quality_criteria }}
+{% if prior_expedition and prior_expedition | length > 0 %}
+- Prior expedition: consumed (this is iteration N+1)
+{% else %}
+- Prior expedition: none (first pass)
+{% endif %}
 
 ## Output
 
@@ -83,9 +99,10 @@ Respond with the complete expedition report as JSON. Combine all prior phase out
       "location": { "file": "...", "function": "...", "line_approx": "..." },
       "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
       "confidence": 0.0,
+      "reproducibility": "reproduced | reproducible | hard_to_reproduce | not_reproducible",
       "beizer_category": "...",
       "severity": "CRITICAL | HIGH | MEDIUM | LOW",
-      "evidence": "what was observed",
+      "evidence": "verbatim code snippet read from the cited location (≤5 lines)",
       "pattern_signature": "how to detect this class of bug elsewhere",
       "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
     }
@@ -94,6 +111,7 @@ Respond with the complete expedition report as JSON. Combine all prior phase out
     "confirmed_bugs": 0,
     "potential_bugs": 0,
     "contract_gaps": 0,
+    "rejected_findings": 0,
     "crates_examined": [],
     "files_read": 0,
     "tests_run": 0,
@@ -101,15 +119,41 @@ Respond with the complete expedition report as JSON. Combine all prior phase out
       "by_category": {},
       "by_severity": {}
     }
-  }
+  },
+  "lessons_learned": [
+    "concrete, actionable lesson that the next expedition's charter should consume — e.g. 'async lock held across .await at 3 sites; next charter should target all .await points in lock scope'",
+    "probe strategy adjustment — e.g. 'static analysis found 80% of findings; dynamic probes added little because no tests exist; next expedition should prioritize test coverage'",
+    "coverage gap — e.g. 'Beizer timing category not explored because no runtime probes were run; next charter should include dynamic probe_depth'"
+  ],
+  "pattern_signatures": [
+    {
+      "signature": "grep-able pattern or structural description",
+      "beizer_category": "...",
+      "derived_from": "BUG-001",
+      "notes": "how to apply this signature in the next probe"
+    }
+  ]
 }
 ```
+
+### lessons_learned and pattern_signatures — purpose
+
+These two fields close the feedback loop. The manifest's loop step routes them
+back to the charter as `prior_expedition.lessons_learned` and
+`prior_expedition.pattern_signatures`. The next charter consumes them to:
+- adjust probe strategy (lessons_learned)
+- extend the probe pattern list (pattern_signatures)
+
+Without these fields, each expedition is a one-shot and cannot learn from prior
+iterations. Treat them as first-class outputs, not afterthoughts.
 
 ## Constraints
 
 - Consolidate findings from oracle + taxonomy into a single findings array.
-- Each finding must include all fields: id, summary, location, verdict, confidence, beizer_category, severity, evidence, pattern_signature, fix_suggestion.
-- Summary counts must be accurate.
+- Each finding must include all fields: id, summary, location, verdict, confidence, reproducibility, beizer_category, severity, evidence, pattern_signature, fix_suggestion.
+- Summary counts must be accurate, including rejected_findings from the oracle.
+- lessons_learned must be concrete and actionable, not generic platitudes.
+- pattern_signatures must be derived from actual findings, not fabricated.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

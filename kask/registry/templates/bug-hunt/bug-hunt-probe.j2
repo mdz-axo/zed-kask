@@ -1,4 +1,4 @@
-{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. #}
+{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. v0.31.0: dynamic pattern expansion (Ashby), missing-tests detection, algedonic escalation. #}
 [inference]
 template_type: KnowAct
 lexicon_terms:
@@ -7,6 +7,7 @@ lexicon_terms:
 - search
 - test
 - verify
+- escalate
 contract:
   input:
     charter: object
@@ -20,6 +21,7 @@ contract:
     tests_run: integer
     probes_executed: integer
     crates_examined: array
+    probe_escalation: array
 energy_cap: 2048
 visibility: Public
 ---
@@ -28,12 +30,22 @@ visibility: Public
 {# Implementation: Jinja2 prompt #}
 {# Produces: probe_results #}
 {# Phase 2 — PROBE (MCP tool-driven code exploration) #}
-{# ℏKask v0.30.0 — Bug Hunting Expedition #}
+{# hKask v0.31.0 — Bug Hunting Expedition #}
 {#
   This template provides probe guidance, but the actual probing is inherently
   agent-coordinated: the agent reads source files, searches for patterns, runs
   terminal commands (cargo check, cargo test, cargo clippy). This template
   formats the charter into actionable probe instructions and collects results.
+
+  v0.31.0 refinement:
+    - Dynamic pattern expansion (Ashby's Law): the static pattern list is a
+      FLOOR, not a ceiling. The charter's crate_model.observed_characteristics
+      amplify regulator variety by generating crate-specific patterns.
+    - Missing-tests detection: absence of tests is itself a quality threat
+      (Weinberg) and a finding, not a silent no-op.
+    - Algedonic channel (VSM S1→S5): critical findings (unsafe with likely UB,
+      panic in fn main path, security-relevant contract violation) are emitted
+      as probe_escalation entries that can short-circuit the full pipeline.
 #}
 
 [inference]
@@ -69,7 +81,9 @@ explore the target with available MCP tools:
 - `code:search` — search for bug patterns
 - `terminal` — run cargo check, cargo test, cargo clippy
 
-Bug patterns to search for:
+### Step 1 — Static baseline patterns (floor, not ceiling)
+
+Search for these baseline patterns regardless of crate characteristics:
 - `.unwrap()` / `.expect()` in library code
 - Public functions without contracts
 - `unsafe` blocks without documented safety invariants
@@ -77,6 +91,60 @@ Bug patterns to search for:
 - `clone()` calls that may hide ownership confusion
 - Mutable state without synchronization
 - `panic!` or `todo!` in non-startup code
+
+### Step 2 — Dynamic pattern expansion (Ashby's Law — amplifier)
+
+The static list above has critical variety deficit against a real Rust crate.
+Use the charter's `crate_model.observed_characteristics` to generate
+additional crate-specific patterns. If `crate_model` is absent or sparse,
+infer characteristics from the source you read in Step 1.
+
+Map observed characteristics to expanded patterns:
+
+| Characteristic | Expanded patterns to search for |
+|----------------|---------------------------------|
+| `async` | `.await` on `MutexGuard` across yield points; `tokio::spawn` without `JoinHandle` consumption; `select!` branches that drop in-flight futures; `RwLock` write guard held across `.await`; missing `Send`/`Sync` bounds on spawned futures; `tokio::time::timeout` not applied to external calls |
+| `unsafe` | `unsafe fn` with non-local safety obligations; raw pointer dereference without null check; `transmute` between types of different sizes; `from_raw_parts` without checking capacity invariants; `unsafe impl Sync` for types with interior mutability; soundness of public API that exposes `unsafe` internally |
+| `trait_objects` | `dyn Trait` with `Send`/`Sync` assumptions not enforced; object safety violations worked around with `where` clauses; downcasting via `Any` without type check; vtable lifetime mismatches; trait methods with default impls that violate LSP |
+| `concurrency` | `Arc<Mutex<_>>` lock ordering across functions; `AtomicBool`/`AtomicUsize` with wrong `Ordering` for the access pattern; `mpsc` channels with unbounded capacity; `Barrier` misuse; `OnceCell` initialization races; `thread_local!` with `RefCell` panicking on reentrancy |
+| `ffi` | `CString` / `CStr` conversion without NUL check; `extern "C"` functions that panic across the FFI boundary; raw pointer lifetimes not tied to a Rust owner; `Drop` for FFI resources that double-frees on panic; struct layout assumptions without `#[repr(C)]` |
+| `macros` | `macro_rules!` with hygiene violations; repeated evaluation of macro arguments; macro-generated code that panics on edge inputs; proc-macro span information lost |
+| `proc_macros` | proc-macro code that panics instead of emitting `compile_error!`; token stream consumption without backtracking; attribute order dependence; generated code that violates the borrow checker in non-obvious ways |
+
+For each expanded pattern, record which characteristic it derives from.
+
+### Step 3 — Missing-tests detection (Weinberg: missing tests = quality threat)
+
+Check for the presence of tests:
+- `cargo test --no-run` — does the crate compile a test binary?
+- `find . -path ./target -prune -o -name '*test*' -print` — are there test modules?
+- For each public function in a critical path (per `crate_model.critical_paths`),
+  is there a corresponding test?
+
+If tests are absent or sparse:
+- Record this as a finding (Tier 3 OBSERVATION in the oracle, but a finding
+  nonetheless). Missing tests are a quality threat per Weinberg's definition.
+- Adjust strategy: shift toward static analysis (more `code:search`, more
+  `cargo clippy -- -W warnings`) since dynamic probing has nothing to run.
+- If `probe_depth` includes `dynamic` or `full`, note that BugStalker runtime
+  probes are not possible without a binary to debug.
+
+### Step 4 — Algedonic escalation (VSM S1→S5 short-circuit)
+
+While probing, if you encounter any of the following, emit a `probe_escalation`
+entry IN ADDITION to the normal finding. These short-circuit the full pipeline
+— the user should see them before taxonomize/report completes:
+
+- `unsafe` block with likely undefined behavior (raw pointer dereference
+  without provenance, data race through `UnsafeCell`, etc.)
+- `panic!` / `unwrap` / `expect` in a `fn main()` path or in a `Drop` impl
+- Security-relevant contract violation (e.g., authentication bypass,
+  authorization check skipped, crypto misuse)
+- Data loss path with no recovery (e.g., overwrite without backup, file
+  truncation before write)
+
+Each escalation entry must include: `finding_summary`, `location` (file:line),
+`severity` (always CRITICAL), and `reason` (why this warrants short-circuit).
 
 Apply diagnose pattern: reproduce before diagnosing, isolate one variable.
 Apply adversarial pattern: try unexpected input orders, boundary values.
@@ -121,4 +189,8 @@ variable states, thread states, and whether the behavior matches expectations.
 {% endif %}
 
 Collect all findings as structured text to feed into the oracle phase.
+
+If any algedonic escalations were emitted, prefix the findings with:
+`[ESCALATION] <summary> at <file:line> — <reason>`
+so the oracle and downstream phases can detect and route them.
 {% endif %}

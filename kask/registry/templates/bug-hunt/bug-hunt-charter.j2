@@ -1,4 +1,4 @@
-{# goal: Generate a focused bug-hunt charter using Hendrickson format and Bach's HTSM. #}
+{# goal: Generate a focused bug-hunt charter using Hendrickson format and Bach's HTSM, with Good Regulator crate modeling and prior-expedition feedback consumption. #}
 [inference]
 template_type: KnowAct
 lexicon_terms:
@@ -7,16 +7,19 @@ lexicon_terms:
 - target
 - explore
 - assess
+- map
 contract:
   input:
     target: object
     quality_criteria: string
+    prior_expedition: object
   output:
     charter_statement: string
     target_area: string
     strategy: string
     expected_category: string
     beizer_focus: array
+    crate_model: object
 energy_cap: 4096
 visibility: Public
 ---
@@ -24,8 +27,17 @@ visibility: Public
 {# Functional Role: KnowAct — Generate a focused bug-hunt charter using Hendrickson format and Bach's HTSM #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: charter #}
-{# Phase 1 — CHARTER (Hendrickson + Bach HTSM) #}
+{# Phase 1 — CHARTER (Hendrickson + Bach HTSM + Good Regulator + feedback loop) #}
 {# hKask v0.31.0 — Bug Hunting Expedition #}
+{#
+  v0.31.0 refinement:
+    - Good Regulator compliance: build a lightweight crate_model BEFORE selecting
+      Beizer categories. A regulator that does not model the system it regulates
+      cannot regulate it well (Conant-Ashby).
+    - Feedback loop closure: when prior_expedition is present, consume its
+      lessons_learned, pattern_signatures, and next_charter_focus to amplify
+      this charter. A first-pass expedition has no prior context.
+#}
 
 [inference]
 temperature = 0.3
@@ -42,18 +54,60 @@ You are a bug hunting strategist. Generate a focused testing charter for explori
 ## Quality Criteria (P1 boundary — user defines what matters)
 {{ quality_criteria }}
 
-## Charter Format (Hendrickson)
+{% if prior_expedition and prior_expedition | length > 0 %}
+## Prior Expedition Feedback (loop closure)
+This is iteration N+1. The previous expedition produced the following signals;
+consume them to amplify this charter rather than starting from scratch.
+
+```json
+{{ prior_expedition | tojson }}
+```
+
+- **lessons_learned**: distill into 1-3 concrete adjustments to probe strategy.
+- **pattern_signatures**: extend the probe pattern list with derived signatures.
+- **next_charter_focus**: if present, this is the convergence check's directed
+  focus for the next iteration. Make it the primary target_area unless it is
+  already exhausted.
+{% else %}
+## Prior Expedition Feedback
+No prior expedition — this is a first pass. Build the charter from scratch.
+{% endif %}
+
+## Step 1 — Crate Model (Good Regulator compliance)
+
+Before selecting Beizer categories, build a lightweight model of the target
+crate. A regulator must be a model of the system it regulates (Conant-Ashby).
+Jumping straight to taxonomy selection without modeling the crate is a Good
+Regulator violation.
+
+Read the crate's `Cargo.toml`, `lib.rs` / `main.rs`, and module structure.
+Then describe:
+- **architecture**: 1-2 sentences on the crate's shape (library / binary / both,
+  module layout, primary types).
+- **data_flow**: where data enters, where it is transformed, where it exits.
+  Name the critical paths.
+- **critical_paths**: functions or modules where correctness is most at risk
+  given the quality criteria.
+- **dependency_surface**: notable dependencies (async runtime, FFI, serialization,
+  crypto, etc.) that introduce bug classes.
+- **observed_characteristics**: async usage, unsafe usage, trait objects,
+  concurrency primitives, FFI, macros, proc-macros. These feed the probe's
+  dynamic pattern expansion (Ashby's Law).
+
+## Step 2 — Charter Format (Hendrickson)
 
 Generate: "Explore [target] using [strategy] to discover [quality threat]."
 
-## Strategy Selection (Bach HTSM)
+## Step 3 — Strategy Selection (Bach HTSM)
 
 Pick the most promising strategy from Bach's Heuristic Test Strategy Model:
 - **Project Environment:** available tools, constraints, dependencies
 - **Product Elements:** public interfaces, data boundaries, state machines
 - **Quality Criteria:** which of the user's criteria is most at risk?
 
-## Beizer Taxonomy — Target the Most Likely Categories
+Justify the strategy against the crate model — not against generic categories.
+
+## Step 4 — Beizer Taxonomy — Target the Most Likely Categories GIVEN THE CRATE MODEL
 
 | Category | What to look for | Typical prevalence |
 |----------|-----------------|-------------------|
@@ -66,7 +120,18 @@ Pick the most promising strategy from Bach's Heuristic Test Strategy Model:
 | timing | race conditions, ordering assumptions | situational |
 | configuration | env settings, feature flags | situational |
 
-Pick 2-3 most likely categories given the target and quality criteria.
+Pick 2-3 most likely categories given the crate model and quality criteria —
+NOT generic prevalence. If the crate model shows heavy async usage, `timing`
+overrides `requirements` regardless of generic prevalence.
+
+{% if prior_expedition and prior_expedition.next_charter_focus %}
+## Prior-Directed Focus
+The convergence check directed this iteration to focus on:
+  {{ prior_expedition.next_charter_focus }}
+
+Make this the primary target_area and adjust beizer_focus accordingly, unless
+the prior iteration already exhausted it (state so explicitly if so).
+{% endif %}
 
 ## Output
 
@@ -76,14 +141,22 @@ Respond with a JSON object:
 {
   "charter_statement": "Explore [target] using [strategy] to discover [quality threat]",
   "target_area": "specific module/function/interface to focus on",
-  "strategy": "selected HTSM strategy with justification",
+  "strategy": "selected HTSM strategy with justification grounded in the crate model",
   "expected_category": "primary Beizer category to target",
   "beizer_focus": ["category1", "category2", "category3"],
+  "crate_model": {
+    "architecture": "...",
+    "data_flow": "...",
+    "critical_paths": ["..."],
+    "dependency_surface": ["..."],
+    "observed_characteristics": ["async", "unsafe", "trait_objects", "concurrency", "ffi", "macros", "proc_macros"]
+  },
   "probe_instructions": [
     "specific file/pattern to examine",
     "specific command to run",
     "specific boundary to test"
-  ]
+  ],
+  "prior_feedback_consumed": "brief note on how prior_expedition (if any) shaped this charter"
 }
 ```
 
@@ -91,6 +164,13 @@ Respond with a JSON object:
 
 - Be specific — name actual files, functions, or modules in the target.
 - Probe instructions must be actionable with available MCP tools.
+- The crate_model must be derived from actually reading the crate — do not
+  fabricate characteristics. If you could not read the crate, state so in
+  `crate_model.architecture` and proceed with generic categories.
+- Beizer category selection must be justified against the crate model, not
+  against generic prevalence tables.
+- When prior_expedition is present, the charter MUST consume it — silent
+  ignoring of prior feedback is a feedback-loop violation.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

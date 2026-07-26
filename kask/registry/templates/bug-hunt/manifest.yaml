@@ -1,5 +1,5 @@
 # Template crate manifest for bug-hunt skill
-# hKask v0.30.0
+# hKask v0.31.0 (refinement cycle 1)
 
 crate:
   name: bug-hunt
@@ -9,45 +9,55 @@ crate:
     Applies Weinberg's quality definition ("value to some person who matters"),
     Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and
     Hendrickson's exploratory testing charters. Decomposed into phased templates:
-    Charter → Probe (agent-coordinated) → Oracle → Taxonomize → Report.
-    Reasoning patterns from pragmatic-semantics (IS/OUGHT + epistemic classification
-    + provenance), pragmatic-cybernetics (feedback loop analysis + Good Regulator
-    checks + variety engineering), diagnose, grill-me, and adversarial-red-team
-    are embedded as inline prompt instructions in the oracle phase.
-    Emits Regulation spans (reg.bughunt.*) for observability (P12). OCAP-gated: requires
-    Tool:test:Execute and Tool:regulation:Read.
+    Charter (with Good Regulator crate modeling + prior-expedition feedback) →
+    Probe (with dynamic pattern expansion + missing-tests detection + algedonic
+    escalation) → Oracle (with reproducibility separated from confidence +
+    file:line citation enforcement) → Taxonomize → Report (with lessons_learned
+    + pattern_signatures for loop closure) → Convergence (with honest
+    process_stabilization + coverage_estimate sub-metrics + next_charter_focus).
+    Reasoning patterns from pragmatic-semantics (IS/OUGHT + epistemic
+    classification + provenance), pragmatic-cybernetics (feedback loop analysis
+    + Good Regulator checks + variety engineering), diagnose, grill-me, and
+    adversarial-red-team are embedded as inline prompt instructions in the
+    oracle phase. Emits Regulation spans (reg.bughunt.*) for observability
+    (P12). OCAP-gated: requires Tool:test:Execute and Tool:regulation:Read.
 
 templates:
   - id: bug-hunt/bug-hunt-charter
-    name: "Generate a focused bug-hunt charter using Hendrickson format and…"
+    name: "Generate a focused bug-hunt charter with crate modeling and prior-expedition feedback"
     path: bug-hunt-charter.j2
     type: KnowAct
-    lexicon_terms: [charter, plan, target, explore, assess]
+    lexicon_terms: [charter, plan, target, explore, assess, map]
     description: >
       Generate a focused bug-hunt charter using Hendrickson format and Bach's
-      Heuristic Test Strategy Model (HTSM). Targets specific Beizer taxonomy
-      categories based on the target crate and user-defined quality criteria.
+      Heuristic Test Strategy Model (HTSM). v0.31.0: builds a lightweight
+      crate_model first (Good Regulator compliance) and consumes prior_expedition
+      when present (feedback loop closure). Selects Beizer taxonomy categories
+      based on the crate model rather than generic prevalence.
     generates_spans:
       - reg.bughunt.charter
 
   - id: bug-hunt/bug-hunt-probe
-    name: "PROBE phase — agent-coordinated MCP tool execution"
+    name: "PROBE phase — agent-coordinated MCP tool execution with dynamic pattern expansion"
     path: bug-hunt-probe.j2
     type: KnowAct
-    lexicon_terms: [probe, explore, search, test, verify]
+    lexicon_terms: [probe, explore, search, test, verify, escalate]
     description: >
       PROBE phase — agent-coordinated MCP tool execution. Reads target source
       files, searches for bug patterns, runs cargo check/test/clippy, and
       when probe_depth includes `dynamic`, executes BugStalker (`bs`) runtime
       probes (breakpoints, thread inspection, Tokio oracle) for timing,
-      integration, and structural Beizer categories. This template provides
-      guidance and collects results; the actual probing is performed by the
-      agent using MCP tools between template calls.
+      integration, and structural Beizer categories. v0.31.0: dynamic pattern
+      expansion based on crate_model.observed_characteristics (Ashby's Law),
+      missing-tests detection (Weinberg), and algedonic escalation for critical
+      findings (VSM S1→S5 short-circuit). This template provides guidance and
+      collects results; the actual probing is performed by the agent using MCP
+      tools between template calls.
     generates_spans:
       - reg.bughunt.probe
 
   - id: bug-hunt/bug-hunt-oracle
-    name: "Apply Weinberg oracle (bug = threat to user-defined quality),…"
+    name: "Apply Weinberg oracle with reproducibility axis and citation enforcement"
     path: bug-hunt-oracle.j2
     type: KnowAct
     lexicon_terms:
@@ -55,8 +65,12 @@ templates:
     description: >
       Apply Weinberg oracle (bug = threat to user-defined quality), pragmatic-semantics
       IS/OUGHT classification, epistemic mode labeling, provenance tracing, and
-      grill-me self-challenge to raw probe findings. Produces tiered verdicts
-      (BUG / POTENTIAL_BUG / OBSERVATION) with confidence scores.
+      grill-me self-challenge to raw probe findings. v0.31.0: reproducibility is
+      a separate axis from confidence (a high-confidence low-reproducibility
+      finding stays POTENTIAL_BUG, not OBSERVATION), and findings without
+      file:line citation are rejected (no-fiction enforcement). Produces tiered
+      verdicts (BUG / POTENTIAL_BUG / OBSERVATION) with confidence and
+      reproducibility scores.
     generates_spans:
       - reg.bughunt.oracle
 
@@ -74,26 +88,33 @@ templates:
       - reg.bughunt.taxonomize
 
   - id: bug-hunt/bug-hunt-report
-    name: "Compile charter, oracle, and taxonomy results into a structured JSON…"
+    name: "Compile structured JSON bug report with lessons_learned and pattern_signatures"
     path: bug-hunt-report.j2
     type: KnowAct
-    lexicon_terms: [report, summarize, compose, document]
+    lexicon_terms: [report, summarize, compose, document, learn]
     description: >
       Compile charter, oracle, and taxonomy results into a structured JSON bug
       report. Consolidates findings, computes summary statistics, and produces
-      the final expedition report.
+      the final expedition report. v0.31.0: emits lessons_learned and
+      pattern_signatures fields that the next expedition's charter consumes to
+      close the feedback loop.
     generates_spans:
       - reg.bughunt.report
 
   - id: bug-hunt/bug-hunt-expedition
-    name: "Legacy monolithic expedition template (v0.30.0)"
+    name: "Legacy monolithic expedition template (v0.30.0) — divergence documented"
     path: bug-hunt-expedition.j2
     type: KnowAct
     lexicon_terms: [hunt, explore, probe, detect, classify, report, charter]
     description: >
       Legacy monolithic expedition template (v0.30.0). Retained for backward
       compatibility. Prefer the decomposed pipeline: charter → probe → oracle →
-      taxonomize → report.
+      taxonomize → report → convergence-check. v0.31.0: divergence from the
+      decomposed pipeline is now documented in the template header — missing
+      crate_model, prior_expedition consumption, dynamic pattern expansion,
+      missing-tests detection, algedonic escalation, reproducibility axis,
+      citation enforcement, lessons_learned/pattern_signatures outputs, and
+      composite convergence metric.
     generates_spans:
       - reg.bughunt.charter
       - reg.bughunt.probe
@@ -103,11 +124,14 @@ templates:
       - reg.bughunt.report
 
   - id: bug-hunt/bug-hunt-convergence-check
-    name: "Compute normalized convergence metric for bug-hunt PDCA cycles"
+    name: "Compute composite convergence metric with process_stabilization + coverage_estimate"
     path: bug-hunt-convergence-check.j2
     type: KnowAct
     lexicon_terms: [evaluate, converge, classify, verify, calibrate]
     description: >
-      Compute normalized convergence metric for bug-hunt PDCA cycles.
-      Saturation detection with stability check — severity-weighted unresolved
-      findings + Beizer taxonomy coverage.
+      Compute normalized convergence metric for bug-hunt PDCA cycles. v0.31.0:
+      composite of process_stabilization_metric (what the old metric measured —
+      severity-weighted unresolved findings + stability overlap) and
+      coverage_estimate (Beizer taxonomy coverage + charter scope coverage).
+      Emits next_charter_focus when not converged to direct the next iteration's
+      charter (feedback loop closure).
