@@ -99,4 +99,3 @@ ledger:
   span_namespace: reg.skill.qa-comm-integration-gate
 
   emit_spans: true
-  alert: qa.comm.integration

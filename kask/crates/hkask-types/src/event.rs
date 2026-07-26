@@ -556,6 +556,7 @@ impl std::fmt::Display for SpanCategory {
             SpanCategory::Inference => "inference",
             SpanCategory::Episodic => "episodic",
             SpanCategory::Wallet => "wallet",
+            SpanCategory::Skill => "skill",
             SpanCategory::Unknown => "unknown",
         };
         f.write_str(s)
@@ -1059,6 +1060,7 @@ mod tests {
                     "inference" => SpanCategory::Inference,
                     "pod" | "connector" => SpanCategory::Episodic,
                     "wallet" => SpanCategory::Wallet,
+                    "skill" => SpanCategory::Skill,
                     _ => SpanCategory::Unknown,
                 };
                 prop_assert!(category == expected,

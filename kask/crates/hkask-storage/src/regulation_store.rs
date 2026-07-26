@@ -163,6 +163,7 @@ impl RegulationArchive {
             SpanCategory::Inference => config.inference_lambda,
             SpanCategory::Episodic => config.episodic_lambda,
             SpanCategory::Wallet => config.cybernetics_lambda, // wallet ops are cybernetic (energy budget)
+            SpanCategory::Skill => config.cybernetics_lambda,  // skill ops are cybernetic
             SpanCategory::Unknown => config.cybernetics_lambda, // safe default
         }
     }

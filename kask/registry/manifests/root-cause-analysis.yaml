@@ -253,11 +253,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  variety_counters:
-    - causes_identified
-    - root_causes_confirmed
-    - corrective_actions
-
 # Audit Trail
 audit:
   enabled: true

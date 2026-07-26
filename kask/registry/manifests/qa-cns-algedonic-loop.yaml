@@ -77,4 +77,3 @@ ledger:
   span_namespace: reg.skill.qa-regulation-algedonic-loop
 
   emit_spans: true
-  alert: qa.reg.algedonic

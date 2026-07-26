@@ -101,4 +101,3 @@ ledger:
   span_namespace: reg.skill.qa-memory-privacy-boundary
 
   emit_spans: true
-  alert: qa.memory.privacy

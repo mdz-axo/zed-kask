@@ -46,6 +46,7 @@ use crate::ports::{Result, TemplateError};
 use hkask_capability::{DelegationAction, DelegationResource, DelegationToken};
 use hkask_capability::{ToolPort, ToolPortError};
 use hkask_guard::{SpotlightMode, Spotlighter};
+use hkask_regulation::SkillFeedbackSpan;
 use hkask_types::NotFound;
 use hkask_types::ToolTaint;
 use hkask_types::WebID;
@@ -81,6 +82,30 @@ fn safe_template_join(base: &std::path::Path, template_ref: &str) -> Option<Path
         rv.push(segment);
     }
     Some(rv)
+}
+
+/// Extract the PDCA feedback phase from a template_ref string.
+///
+/// Template refs look like "sankey-flow/sankey-classify" or
+/// "diataxis-diagram/diataxis-diagram-generate". The phase is extracted
+/// from the last segment after the final '-' or '/'. Returns None if the
+/// segment doesn't match one of the six canonical phases.
+///
+/// This is the bridge between the step's template_ref and the
+/// SkillFeedbackSpan enum — it lets the executor emit the correct
+/// reg.skill.<id>.<phase> span without hardcoding ordinal-to-phase mappings.
+fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
+    let last_segment = template_ref.rsplit('/').next().unwrap_or(template_ref);
+    let after_last_dash = last_segment.rsplit('-').next().unwrap_or(last_segment);
+    match after_last_dash {
+        "classify" => Some(SkillFeedbackSpan::Classify.phase()),
+        "gather" => Some(SkillFeedbackSpan::Gather.phase()),
+        "draft" | "generate" | "extract" => Some(SkillFeedbackSpan::Draft.phase()),
+        "evaluate" => Some(SkillFeedbackSpan::Evaluate.phase()),
+        "convergence" | "converge" => Some(SkillFeedbackSpan::Convergence.phase()),
+        "write" => Some(SkillFeedbackSpan::Write.phase()),
+        _ => None,
+    }
 }
 
 /// Manifest executor — drives the select → populate → execute cascade.
@@ -811,6 +836,36 @@ impl ManifestExecutor {
                             "Unknown manifest step action: '{}'",
                             other
                         )));
+                    }
+                }
+
+                // ── Unified skill feedback span emission (P9 §9.2) ──────────
+                // After each select step, emit the corresponding SkillFeedbackSpan
+                // under reg.skill.<manifest.id>.<phase>. The phase is derived from
+                // the step's template_ref (e.g. "sankey-flow/sankey-classify" →
+                // "classify"). Only select steps emit feedback spans — loop,
+                // choice, abort, and escalate are control flow, not PDCA phases.
+                if step.action == "select" {
+                    if let Some(ref template_ref) = step.template_ref {
+                        if let Some(phase) = extract_feedback_phase(template_ref) {
+                            let span_target =
+                                format!("{}.{}", manifest.ledger.span_namespace, phase);
+                            // tracing's target: needs &'static str, but we have a
+                            // dynamic namespace. Use tracing::event! with the
+                            // target as a field instead, and emit under the
+                            // generic "reg.skill" target (which is registered).
+                            // The full namespace is carried in the `ns` field.
+                            info!(
+                                target: "reg.skill",
+                                ns = %span_target,
+                                skill_id = %manifest.id,
+                                phase = phase,
+                                step = step.ordinal,
+                                iteration = iteration,
+                                template_ref = %template_ref,
+                                "REG"
+                            );
+                        }
                     }
                 }
 

@@ -112,4 +112,3 @@ ledger:
   span_namespace: reg.skill.qa-mcp-server-smoke
 
   emit_spans: true
-  alert: qa.mcp.smoke

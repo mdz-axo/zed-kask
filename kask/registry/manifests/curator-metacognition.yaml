@@ -125,18 +125,6 @@ ledger:
   emit_spans: true
   span_namespace: reg.skill.curator-metacognition
   telemetry_namespace: hkask.template.curator-metacognition
-  rate_limit:
-    per_bot_per_minute: 100
-    per_session_per_minute: 500
-    burst_allowance: 50
-    on_exceed: queue_not_drop
-  aggregation:
-    enabled: true
-    interval_minutes: 5
-    repetitive_span_threshold: 10
-  priority_queue:
-    enabled: true
-    order: [alert, outcome, invocation, production]
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: hKask-Administrator

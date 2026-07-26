@@ -74,10 +74,3 @@ ledger:
   telemetry_namespace: hkask.template.dispatch
   variety_monitoring: true
   algedonic_threshold: 100
-  instrumentation:
-    log_dynamic_template_id: true
-    rationale: >
-      Enabled because dispatch.yaml step 2 uses ${selected_template_id}
-      for dynamic template resolution. Recording the resolved template ID
-      at runtime enables static-analysis-invisible templates to be visible
-      in Regulation span data for orphan detection and dependency graph auditing.

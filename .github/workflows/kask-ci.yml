@@ -64,3 +64,17 @@ jobs:
         run: ./script/linux
       - name: Build all binaries
         run: cargo build --workspace --bins
+
+  skill-span-namespace:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check skill span namespace standard
+        run: cd kask && bash scripts/check-skill-span-namespace.sh
+
+  reg-canonical:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check reg.* canonical namespace registration
+        run: cd kask && bash scripts/check-reg-canonical.sh

@@ -80,17 +80,12 @@ impl std::fmt::Display for SkillFeedbackSpan {
 }
 
 impl ObservableSpan for SkillFeedbackSpan {
-    /// Returns the template namespace (with `<skill-id>` placeholder).
-    /// Use `namespace(skill_id)` for the concrete emission string.
+    /// Returns the base namespace `reg.skill`. The full namespace is
+    /// `reg.skill.<skill-id>.<phase>` — use `namespace(skill_id)` for the
+    /// concrete emission string. This impl returns the registered ancestor
+    /// so `SpanNamespace::from_observable()` validates against `reg.skill`.
     fn as_str(&self) -> &'static str {
-        match self {
-            Self::Classify => "reg.skill.classify",
-            Self::Gather => "reg.skill.gather",
-            Self::Draft => "reg.skill.draft",
-            Self::Evaluate => "reg.skill.evaluate",
-            Self::Convergence => "reg.skill.convergence",
-            Self::Write => "reg.skill.write",
-        }
+        "reg.skill"
     }
 }
 

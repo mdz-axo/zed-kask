@@ -816,7 +816,9 @@ pub mod kask_panel {
             /// Opens the kanban board view in the center pane.
             ToggleKanbanBoard,
             /// Opens the portfolio dashboard view in the center pane.
-            TogglePortfolioDashboard
+            TogglePortfolioDashboard,
+            /// Opens the scenarios planning view in the center pane.
+            ToggleScenarios
         ]
     );
 }

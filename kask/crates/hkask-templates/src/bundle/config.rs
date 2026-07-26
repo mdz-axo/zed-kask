@@ -181,6 +181,11 @@ impl Default for OcapConfig {
 pub struct BundleLedgerConfig {
     pub emit_spans: bool,
     pub span_namespace: String,
+    /// Performative telemetry namespace (hkask.template.<skill-id>). Optional —
+    /// used for fine-grained execution telemetry that is NOT regulated. Distinct
+    /// from span_namespace (reg.skill.<skill-id>) which IS regulated.
+    #[serde(default)]
+    pub telemetry_namespace: Option<String>,
     pub variety_monitoring: bool,
     pub algedonic_threshold: u32,
     pub escalation_target: String,
@@ -190,6 +195,7 @@ impl Default for BundleLedgerConfig {
         Self {
             emit_spans: true,
             span_namespace: String::new(),
+            telemetry_namespace: None,
             variety_monitoring: true,
             algedonic_threshold: 100,
             escalation_target: "Curator".into(),

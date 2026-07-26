@@ -204,7 +204,6 @@ error_handling:
 
 # Regulation Integration
 ledger:
-  emit_bootstrap_spans: true
   span_namespace: reg.skill.bootstrap-sequence
 
 # Audit Trail

@@ -260,11 +260,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  variety_counters:
-    - threat_categories_detected
-    - defense_layers_recommended
-    - critical_threats
-
 # Audit Trail
 audit:
   enabled: true

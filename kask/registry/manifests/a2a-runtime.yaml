@@ -54,8 +54,6 @@ audit:
 
 ledger:
   span_namespace: reg.skill.a2a-runtime
-  emit_on_message_send: true
-  emit_on_capability_denied: true
 
 # security: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
 #   injection_prevention:

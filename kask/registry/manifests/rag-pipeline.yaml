@@ -260,11 +260,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  variety_counters:
-    - sources_retrieved
-    - citation_coverage
-    - hallucination_flags
-
 # Audit Trail
 audit:
   enabled: true

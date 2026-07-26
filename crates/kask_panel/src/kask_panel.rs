@@ -43,13 +43,17 @@ use workspace::{
     register_serializable_item,
 };
 
-use zed_actions::kask_panel::{Toggle, ToggleFocus, ToggleKanbanBoard, TogglePortfolioDashboard};
+use zed_actions::kask_panel::{
+    Toggle, ToggleFocus, ToggleKanbanBoard, TogglePortfolioDashboard, ToggleScenarios,
+};
 
 mod kanban_view;
 mod portfolio_view;
+mod scenarios_view;
 
 pub use kanban_view::KanbanBoardView;
 pub use portfolio_view::PortfolioDashboardView;
+pub use scenarios_view::ScenariosView;
 
 /// The 10 built-in kask MCP servers (matches `kask_page.rs`).
 const BUILT_IN_MCP_SERVERS: &[&str] = &[
@@ -978,6 +982,7 @@ pub fn init(cx: &mut App) {
     register_serializable_item::<KaskPanel>(cx);
     register_serializable_item::<KanbanBoardView>(cx);
     register_serializable_item::<PortfolioDashboardView>(cx);
+    register_serializable_item::<ScenariosView>(cx);
 
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
@@ -1037,6 +1042,22 @@ pub fn init(cx: &mut App) {
                     focus.focus(window, cx);
                 } else {
                     let view = PortfolioDashboardView::new(workspace, window, cx);
+                    workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
+                }
+            });
+            workspace.register_action(|workspace, _: &ToggleScenarios, window, cx| {
+                // If a ScenariosView is already open in the active pane, focus it;
+                // otherwise add a new one to the active center pane.
+                let active_pane = workspace.active_pane().clone();
+                let existing_focus = active_pane
+                    .read(cx)
+                    .items_of_type::<ScenariosView>()
+                    .next()
+                    .map(|view| view.focus_handle(cx));
+                if let Some(focus) = existing_focus {
+                    focus.focus(window, cx);
+                } else {
+                    let view = ScenariosView::new(workspace, window, cx);
                     workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
                 }
             });

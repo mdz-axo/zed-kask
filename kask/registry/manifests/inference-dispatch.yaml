@@ -67,6 +67,3 @@ steps:
 
 ledger:
   span_namespace: reg.skill.inference-dispatch
-  fast_local: OM/llama3.2
-  balanced: FW/claude-haiku
-  high_quality: FW/claude-sonnet

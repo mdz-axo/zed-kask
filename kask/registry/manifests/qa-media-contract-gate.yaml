@@ -102,4 +102,3 @@ ledger:
   span_namespace: reg.skill.qa-media-contract-gate
 
   emit_spans: true
-  alert: qa.media.contract
