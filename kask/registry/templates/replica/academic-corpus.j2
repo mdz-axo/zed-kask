@@ -27,9 +27,22 @@
 {% endblock %}
 
 {% block budget %}
-# Budget: PerPage — triples scale with corpus size (3750 per 100 pages).
+# Budget shape: {{ budget_shape | default("per_page") }}
+# Academic replicas default to per_page (scales with corpus size).
+# Effort preset rate: low=2500, medium=3750, high=8100.
+{% set shape = budget_shape | default("per_page") %}
+{% set b = budget | default({}) %}
+{% if shape == "absolute" %}
 budget:
-  per_100_pages: 3750
+  max_triples: {{ b.max_triples | default(0) }}
+{% elif shape == "flat" %}
+budget:
+  total_passages: {{ b.total_passages | default(0) }}
+  triple_budget_per_100: {{ b.triple_budget_per_100 | default(default_triple_budget) }}
+{% else %}
+budget:
+  per_100_pages: {{ b.per_100_pages | default(default_triple_budget) }}
+{% endif %}
 {% endblock %}
 
 {% block foundational_rules %}

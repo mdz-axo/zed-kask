@@ -32,16 +32,21 @@ const KNOWN_TERMS: &[&str] = &[
     "assess",
     "audit",
     "backup",
+    "balance",
+    "base",
     "baseline",
     "batch",
     "bind",
+    "blend",
     "block",
+    "bound",
     "branch",
     "budget",
     "build",
     "calculate",
     "calibrate",
     "calibration",
+    "canonicalize",
     "capability",
     "capture",
     "catalog",
@@ -56,6 +61,7 @@ const KNOWN_TERMS: &[&str] = &[
     "clarify",
     "classify",
     "coach",
+    "coalesce",
     "collect",
     "combine",
     "command",
@@ -73,6 +79,8 @@ const KNOWN_TERMS: &[&str] = &[
     "confidence",
     "config",
     "configure",
+    "confirm",
+    "conform",
     "consent",
     "consistency",
     "consolidate",
@@ -113,6 +121,7 @@ const KNOWN_TERMS: &[&str] = &[
     "detect",
     "diagnose",
     "dialogue",
+    "dimension",
     "discover",
     "discriminate",
     "dispatch",
@@ -140,6 +149,7 @@ const KNOWN_TERMS: &[&str] = &[
     "evolution",
     "evolve",
     "execute",
+    "exemplify",
     "exercise",
     "expect",
     "expectation",
@@ -151,6 +161,7 @@ const KNOWN_TERMS: &[&str] = &[
     "fact",
     "falsify",
     "feedback",
+    "filter",
     "finalize",
     "find",
     "finding",
@@ -162,12 +173,14 @@ const KNOWN_TERMS: &[&str] = &[
     "frame",
     "gap",
     "gate",
+    "gather",
     "generate",
     "goal",
     "ground",
     "guard",
     "guide",
     "habit",
+    "handoff",
     "harness",
     "heal",
     "hunt",
@@ -186,6 +199,7 @@ const KNOWN_TERMS: &[&str] = &[
     "instrument",
     "integrate",
     "interpret",
+    "interrogate",
     "intervene",
     "inventory",
     "invert",
@@ -201,10 +215,12 @@ const KNOWN_TERMS: &[&str] = &[
     "link",
     "list",
     "locate",
+    "loop",
     "manifest",
     "map",
     "mapping",
     "markdown",
+    "mashup",
     "match",
     "maturity",
     "measure",
@@ -215,6 +231,7 @@ const KNOWN_TERMS: &[&str] = &[
     "movement",
     "multi_step",
     "mutate",
+    "narrate",
     "normalize",
     "observe",
     "obstacle",
@@ -291,6 +308,7 @@ const KNOWN_TERMS: &[&str] = &[
     "reverse",
     "review",
     "revise",
+    "rewrite",
     "rotate",
     "route",
     "routine",
@@ -307,6 +325,7 @@ const KNOWN_TERMS: &[&str] = &[
     "serialize",
     "severity",
     "shape",
+    "shared",
     "signal",
     "signature",
     "simplify",
@@ -333,6 +352,7 @@ const KNOWN_TERMS: &[&str] = &[
     "telemetry",
     "tension",
     "test",
+    "theme",
     "threat",
     "topology",
     "trace",
@@ -367,8 +387,7 @@ const KNOWN_TERMS: &[&str] = &[
 /// expect: "The system validates template contracts against the lexicon"
 /// pre:  term may be any string
 /// post: returns true if term is in KNOWN_TERMS
-#[allow(dead_code)]
-pub(crate) fn is_known(term: &str) -> bool {
+pub fn is_known(term: &str) -> bool {
     KNOWN_TERMS.binary_search(&term).is_ok()
 }
 
@@ -421,8 +440,7 @@ pub(crate) fn validate_entry(entry: &RegistryEntry) -> Vec<String> {
 /// expect: "The system validates template contracts against the lexicon"
 /// pre:  term may be any string
 /// post: returns true if term matches ^[a-z][a-z0-9_]*$
-#[allow(dead_code)]
-pub(crate) fn is_well_formed(term: &str) -> bool {
+pub fn is_well_formed(term: &str) -> bool {
     let mut chars = term.chars();
     match chars.next() {
         Some(first) if first.is_ascii_lowercase() => {

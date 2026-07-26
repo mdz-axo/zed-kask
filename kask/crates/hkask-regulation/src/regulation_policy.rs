@@ -486,7 +486,11 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
 /// - `block_ratio`: at or above this → Block (hard reject).
 /// - Between → Stage (escalate for review).
 #[allow(dead_code)]
-pub(crate) fn classify_decision(worsening: f64, stage_ratio: f64, block_ratio: f64) -> ActionDecision {
+pub(crate) fn classify_decision(
+    worsening: f64,
+    stage_ratio: f64,
+    block_ratio: f64,
+) -> ActionDecision {
     debug_assert!(
         stage_ratio <= block_ratio,
         "stage_worsening_ratio ({stage_ratio}) must be <= block_worsening_ratio ({block_ratio})"

@@ -1162,7 +1162,14 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
                 .copied()
                 .collect::<Vec<_>>()
                 .join("\n");
-            let tail_start = lines.len().saturating_sub(tail_lines);
+            // Tail starts after the head to avoid duplicating overlapping
+            // lines when head + tail >= total lines. Clamp tail_start to
+            // at least head_lines so the tail begins where the head ends.
+            let tail_start = lines
+                .len()
+                .saturating_sub(tail_lines)
+                .max(head_lines)
+                .min(lines.len());
             let tail = lines[tail_start..].join("\n");
             format!("{head}\n\n{tail}")
         }

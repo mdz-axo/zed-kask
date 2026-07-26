@@ -58,23 +58,21 @@
 
 {% block budget %}
 # Budget shape: {{ budget_shape | default("flat") }}
-# Compound replicas default to Flat (passage cap + per-100-pages rate) because
+# Compound replicas default to flat (passage cap + per-100-pages rate) because
 # mashup corpora tend to be larger (multiple authors' works combined).
+# All three shapes are supported. Effort preset rate: low=2500, medium=3750, high=8100.
 {% set shape = budget_shape | default("flat") %}
+{% set b = budget | default({}) %}
 {% if shape == "absolute" %}
 budget:
-  max_triples: {{ budget.max_triples }}
-{% elif shape == "flat" %}
-budget:
-  total_passages: {{ budget.total_passages | default(0) }}
-  triple_budget_per_100: {{ budget.triple_budget_per_100 | default(3750) }}
+  max_triples: {{ b.max_triples | default(0) }}
 {% elif shape == "per_page" %}
 budget:
-  per_100_pages: {{ budget.per_100_pages | default(3750) }}
+  per_100_pages: {{ b.per_100_pages | default(default_triple_budget) }}
 {% else %}
 budget:
-  total_passages: {{ budget.total_passages | default(0) }}
-  triple_budget_per_100: {{ budget.triple_budget_per_100 | default(3750) }}
+  total_passages: {{ b.total_passages | default(0) }}
+  triple_budget_per_100: {{ b.triple_budget_per_100 | default(default_triple_budget) }}
 {% endif %}
 {% endblock %}
 

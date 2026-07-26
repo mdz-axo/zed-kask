@@ -546,9 +546,15 @@ mod tests {
                 }
             }
         }
-        assert_eq!(
-            checked, 11,
-            "All 11 kata templates must contain learner_bot"
+        // Count-agnostic: every kata template must reference the learner's
+        // identity, but the template corpus grows over time. Hardcoding the
+        // count causes drift whenever a template is added. Assert that at
+        // least one template was checked and all of them contained the tag
+        // (the per-file assert above enforces the latter).
+        assert!(
+            checked > 0,
+            "No kata .j2 templates found in {:?} — directory missing or empty",
+            template_dirs
         );
     }
 }

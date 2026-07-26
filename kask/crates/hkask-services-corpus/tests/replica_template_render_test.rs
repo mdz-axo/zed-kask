@@ -341,3 +341,122 @@ fn compound_corpus_template_renders_and_parses() {
         other => panic!("compound budget must be Flat, got {other:?}"),
     }
 }
+
+#[test]
+fn effort_low_produces_lower_budget_rate_and_looser_validation() {
+    // effort=low should produce triple_budget_per_100=2500 and
+    // centroid_distance_max=0.30 when no explicit values are provided.
+    let context = json!({
+        "author_slug": "test-low",
+        "author_name": "Test Low",
+        "generation_date": "2026-07-26",
+        "effort": "low",
+        "works": [{
+            "title": "Test", "slug": "test", "url": "https://example.com", "format": "text"
+        }],
+        "chunking": { "min_words": 50, "max_words": 200, "sentence_boundary": ".!? " }
+    });
+
+    let rendered = render_replica_template("replica/academic-corpus.j2", context);
+    let config = parse_rendered(&rendered);
+
+    match &config.budget {
+        hkask_memory::salience::BudgetConfig::PerPage { per_100_pages } => {
+            assert_eq!(*per_100_pages, 2500, "low effort should set rate to 2500");
+        }
+        other => panic!("low effort academic budget must be PerPage, got {other:?}"),
+    }
+    assert!((config.validation.centroid_distance_max - 0.30).abs() < 1e-9);
+    assert_eq!(config.validation.exemplar_count_min, 2);
+    assert_eq!(config.validation.exemplar_count_max, 5);
+}
+
+#[test]
+fn effort_high_produces_higher_budget_rate_and_stricter_validation() {
+    // effort=high should produce triple_budget_per_100=8100 and
+    // centroid_distance_max=0.15 when no explicit values are provided.
+    let context = json!({
+        "author_slug": "test-high",
+        "author_name": "Test High",
+        "generation_date": "2026-07-26",
+        "effort": "high",
+        "works": [{
+            "title": "Test", "slug": "test", "url": "https://example.com", "format": "text"
+        }],
+        "chunking": { "min_words": 50, "max_words": 200, "sentence_boundary": ".!? " }
+    });
+
+    let rendered = render_replica_template("replica/academic-corpus.j2", context);
+    let config = parse_rendered(&rendered);
+
+    match &config.budget {
+        hkask_memory::salience::BudgetConfig::PerPage { per_100_pages } => {
+            assert_eq!(*per_100_pages, 8100, "high effort should set rate to 8100");
+        }
+        other => panic!("high effort academic budget must be PerPage, got {other:?}"),
+    }
+    assert!((config.validation.centroid_distance_max - 0.15).abs() < 1e-9);
+    assert_eq!(config.validation.exemplar_count_min, 10);
+    assert_eq!(config.validation.exemplar_count_max, 20);
+}
+
+#[test]
+fn effort_explicit_values_override_effort_defaults() {
+    // Even with effort=low, explicit validation values should be used.
+    let context = json!({
+        "author_slug": "test-override",
+        "author_name": "Test Override",
+        "generation_date": "2026-07-26",
+        "effort": "low",
+        "works": [{
+            "title": "Test", "slug": "test", "url": "https://example.com", "format": "text"
+        }],
+        "chunking": { "min_words": 50, "max_words": 200, "sentence_boundary": ".!? " },
+        "validation": { "centroid_distance_max": 0.40, "exemplar_count_min": 100, "exemplar_count_max": 10000 }
+    });
+
+    let rendered = render_replica_template("replica/academic-corpus.j2", context);
+    let config = parse_rendered(&rendered);
+
+    assert!((config.validation.centroid_distance_max - 0.40).abs() < 1e-9);
+    assert_eq!(config.validation.exemplar_count_min, 100);
+    assert_eq!(config.validation.exemplar_count_max, 10000);
+    match &config.budget {
+        hkask_memory::salience::BudgetConfig::PerPage { per_100_pages } => {
+            assert_eq!(
+                *per_100_pages, 2500,
+                "budget rate should use low effort default"
+            );
+        }
+        other => panic!("budget must be PerPage, got {other:?}"),
+    }
+}
+
+#[test]
+fn all_budget_shapes_work_in_literary_template() {
+    for shape in ["absolute", "flat", "per_page"] {
+        let budget = match shape {
+            "absolute" => json!({ "max_triples": 5000 }),
+            "flat" => json!({ "total_passages": 1000, "triple_budget_per_100": 3750 }),
+            "per_page" => json!({ "per_100_pages": 3750 }),
+            _ => unreachable!(),
+        };
+        let context = json!({
+            "author_slug": "test-shape",
+            "author_name": "Test Shape",
+            "generation_date": "2026-07-26",
+            "works": [{
+                "title": "Test", "slug": "test", "url": "https://example.com", "format": "text"
+            }],
+            "foundational_rules": [],
+            "chunking": { "min_words": 50, "max_words": 200, "sentence_boundary": ".!? " },
+            "validation": { "centroid_distance_max": 0.25, "exemplar_count_min": 3, "exemplar_count_max": 7 },
+            "budget_shape": shape,
+            "budget": budget
+        });
+
+        let rendered = render_replica_template("replica/literary-corpus.j2", context);
+        let config = parse_rendered(&rendered);
+        assert_eq!(config.author, "test-shape");
+    }
+}

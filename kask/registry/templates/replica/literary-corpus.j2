@@ -27,11 +27,22 @@
 {% endblock %}
 
 {% block budget %}
-# Budget: Flat — explicit passage cap and per-100-pages rate.
-# total_passages: 0 = no cap (use actual count). triple_budget_per_100: 3750.
+# Budget shape: {{ budget_shape | default("flat") }}
+# Literary replicas default to flat (passage cap + per-100-pages rate).
+# total_passages: 0 = no cap. Effort preset rate: low=2500, medium=3750, high=8100.
+{% set shape = budget_shape | default("flat") %}
+{% set b = budget | default({}) %}
+{% if shape == "absolute" %}
 budget:
-  total_passages: {{ budget.total_passages | default(0) }}
-  triple_budget_per_100: {{ budget.triple_budget_per_100 | default(3750) }}
+  max_triples: {{ b.max_triples | default(0) }}
+{% elif shape == "per_page" %}
+budget:
+  per_100_pages: {{ b.per_100_pages | default(default_triple_budget) }}
+{% else %}
+budget:
+  total_passages: {{ b.total_passages | default(0) }}
+  triple_budget_per_100: {{ b.triple_budget_per_100 | default(default_triple_budget) }}
+{% endif %}
 {% endblock %}
 
 {% block foundational_rules %}

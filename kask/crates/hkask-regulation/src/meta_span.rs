@@ -128,7 +128,11 @@ pub(crate) fn emit_meta_escalation(
 
 /// Emit a `reg.meta.circuit_breaker` span recording a template circuit-breaker trip.
 #[allow(dead_code)]
-pub(crate) fn emit_meta_circuit_breaker(sink: &dyn RegulationSink, observer: &WebID, skip_cycles: u64) {
+pub(crate) fn emit_meta_circuit_breaker(
+    sink: &dyn RegulationSink,
+    observer: &WebID,
+    skip_cycles: u64,
+) {
     let Some(ns) = SpanNamespace::from_observable(&MetaSpan::CircuitBreakerTrip) else {
         tracing::warn!(target: "hkask.meta", "reg.meta.circuit_breaker namespace not canonical");
         return;

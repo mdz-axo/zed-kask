@@ -42,24 +42,26 @@
 
 {% block budget %}
 # Budget shape: {{ budget_shape | default("absolute") }}
-# Exemplar replicas support three budget shapes:
+# Exemplar replicas support all three shapes:
 #   absolute: { max_triples } — hard cap; 0 disables triples (style-only).
-#   flat: { total_passages, triple_budget_per_100 } — passage cap + rate.
+#   flat: { total_passages, triple_budget_per_100 } — rate with optional passage cap.
 #   per_page: { per_100_pages } — rate only (scales with corpus size).
+# Effort preset rate: low=2500, medium=3750, high=8100.
 {% set shape = budget_shape | default("absolute") %}
+{% set b = budget | default({}) %}
 {% if shape == "absolute" %}
 budget:
-  max_triples: {{ budget.max_triples }}
+  max_triples: {{ b.max_triples | default(0) }}
 {% elif shape == "flat" %}
 budget:
-  total_passages: {{ budget.total_passages | default(0) }}
-  triple_budget_per_100: {{ budget.triple_budget_per_100 | default(3750) }}
+  total_passages: {{ b.total_passages | default(0) }}
+  triple_budget_per_100: {{ b.triple_budget_per_100 | default(default_triple_budget) }}
 {% elif shape == "per_page" %}
 budget:
-  per_100_pages: {{ budget.per_100_pages | default(3750) }}
+  per_100_pages: {{ b.per_100_pages | default(default_triple_budget) }}
 {% else %}
 budget:
-  max_triples: {{ budget.max_triples | default(0) }}
+  max_triples: {{ b.max_triples | default(0) }}
 {% endif %}
 {% endblock %}
 

@@ -42,12 +42,13 @@ manifest:
 # The pipeline iterates if the Curator modifies the corpus (Phase 11) or if
 # validation fails (Phase 10.5). Convergence is reached when the corpus.yaml
 # validates and the Curator approves (or agentic mode skips the gate).
+# Effort scales max_iterations: low=1, medium=3, high=5.
 convergence:
   threshold: 0.15
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1
-  convergence_field: step_11_result.convergence_metric
+  convergence_field: step_14_result.convergence_metric
   on_not_reached: escalate
 
 # ── Parameters (supplied by caller) ──────────────────────────────────────────
@@ -105,19 +106,30 @@ convergence:
 #       (authors blended by dimension weights), 'contrastive' (authors
 #       placed at opposite ends of a quality dimension for range analysis).
 #     default: "mixture_of_experts"
+#   effort:
+#     type: string
+#     description: >
+#       Effort/depth/rigor level: 'low', 'medium', or 'high'. Controls budget
+#       rate (low=2500, medium=3750, high=8100 triples/100 pages), validation
+#       thresholds (low: centroid_max=0.30, exemplar_min=2; high: centroid_max=0.15,
+#       exemplar_min=10), gas cap (low=30000, medium=40000, high=60000), and
+#       convergence max_iterations (low=1, medium=3, high=5). Explicit values
+#       in the context always override effort-derived defaults.
+#     default: "medium"
 
 # ── Budget policy ───────────────────────────────────────────────────────────
 # Infrastructure activities (template rendering, YAML generation, validation)
 # are budgeted generously — they are cheap, local, and load-bearing for
 # downstream quality. Network I/O (search, extraction) remains tightly
-# budgeted. The total cap is raised to accommodate the new validation step
-# and iteration loop.
+# budgeted. The total cap accommodates the validation step and iteration loop.
+#
+# Effort scales the gas cap: low=30000, medium=40000, high=60000.
+# Per-step infrastructure caps (render, validate, converge) get 2× the prior
+# cap at medium, 3× at high. Network steps keep their existing caps regardless.
 gas:
   cap: 40000
   alert_threshold: 0.85
   hard_limit: true
-  # Per-step caps are set inline on each step. Infrastructure steps (render,
-  # validate) get 2× the prior cap; network steps keep their existing caps.
 
 rjoule:
   cap: 2
