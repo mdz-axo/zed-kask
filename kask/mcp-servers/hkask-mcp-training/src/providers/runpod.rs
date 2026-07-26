@@ -618,7 +618,10 @@ pub fn generate_install_script(
     // (loss, grad_norm, step) for the completion manifest. The log path
     // is /workspace/training.log — same convention as HF Transformers output.
     script.push_str("TRAINING_LOG=\"/workspace/training.log\"\n");
-    script.push_str(&format!("if {} 2>&1 | tee \"$TRAINING_LOG\"; then\n", train_command));
+    script.push_str(&format!(
+        "if {} 2>&1 | tee \"$TRAINING_LOG\"; then\n",
+        train_command
+    ));
     script.push_str("    TRAINING_END=$(date +%s)\n");
     script.push_str("    TRAINING_DURATION=$((TRAINING_END - TRAINING_START))\n");
     script.push_str("    echo \"=== Training completed in ${TRAINING_DURATION}s ===\"\n");
@@ -634,15 +637,28 @@ pub fn generate_install_script(
     // HF Transformers logs metrics as: {'loss': 0.5, 'grad_norm': 1.2, 'epoch': 0.1}
     // We extract the last occurrence of each metric. Best-effort — if the
     // log format differs or the metrics are absent, the manifest fields stay null.
-    script.push_str("# ── Extract final training metrics from log ─────────────────────────────────\n");
-    script.push_str("FINAL_LOSS=$(grep -oP \"'loss':\s*\K[0-9eE.+-]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
-    script.push_str("FINAL_GRAD_NORM=$(grep -oP \"'grad_norm':\s*\K[0-9eE.+-]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
-    script.push_str("FINAL_STEP=$(grep -oP \"'step':\s*\K[0-9]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
-    script.push_str("TOTAL_STEPS=$(grep -oP \"'total_steps':\s*\K[0-9]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
-    script.push_str("# Format as JSON values (null if empty)\n");
-    script.push_str("FINAL_LOSS_JSON=$( [ -n \"$FINAL_LOSS\" ] && echo \"$FINAL_LOSS\" || echo \"null\" )\n");
-    script.push_str("FINAL_GRAD_NORM_JSON=$( [ -n \"$FINAL_GRAD_NORM\" ] && echo \"$FINAL_GRAD_NORM\" || echo \"null\" )\n");
-    script.push_str("FINAL_STEP_JSON=$( [ -n \"$FINAL_STEP\" ] && echo \"$FINAL_STEP\" || echo \"null\" )\n");
+    script.push_str(
+        "# ── Extract final training metrics from log ─────────────────────────────────\n",
+    );
+    script.push_str("FINAL_LOSS=$(grep -oP \"'loss':\\\\s*\\\\K[0-9eE.+-]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
+    script.push_str("FINAL_GRAD_NORM=$(grep -oP \"'grad_norm':\\\\s*\\\\K[0-9eE.+-]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
+    // 'step' may appear as 'step': N in the per-step dict, or as 'global_step' in TrainerState.
+    script.push_str("FINAL_STEP=$(grep -oP \"'(step|global_step)':\\\\s*\\\\K[0-9]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
+    // 'total_steps' appears as 'max_steps' in HF Transformers TrainerState output.
+    script.push_str("TOTAL_STEPS=$(grep -oP \"'(total_steps|max_steps)':\\\\s*\\\\K[0-9]+\" \"$TRAINING_LOG\" 2>/dev/null | tail -1 || echo \"\")\n");
+    // Sanitize: empty, nan, inf, -inf → null (these are invalid JSON numbers).
+    // Python's float('nan') and float('inf') print as 'nan'/'inf' in str(),
+    // which would make the manifest JSON invalid and break parse_completion_manifest.
+    script.push_str("# Format as JSON values (null if empty or non-finite)\n");
+    script.push_str(
+        "FINAL_LOSS_JSON=$( case \"$FINAL_LOSS\" in ''|*'nan'*|*'inf'*) echo \"null\" ;; *) echo \"$FINAL_LOSS\" ;; esac )\n",
+    );
+    script.push_str(
+        "FINAL_GRAD_NORM_JSON=$( case \"$FINAL_GRAD_NORM\" in ''|*'nan'*|*'inf'*) echo \"null\" ;; *) echo \"$FINAL_GRAD_NORM\" ;; esac )\n",
+    );
+    script.push_str(
+        "FINAL_STEP_JSON=$( [ -n \"$FINAL_STEP\" ] && echo \"$FINAL_STEP\" || echo \"null\" )\n",
+    );
     script.push_str("TOTAL_STEPS_JSON=$( [ -n \"$TOTAL_STEPS\" ] && echo \"$TOTAL_STEPS\" || echo \"null\" )\n\n");
 
     // Step 4: Upload adapter.
@@ -704,7 +720,7 @@ pub fn generate_install_script(
         "    \"harness\": \"{}\",\n",
         format!("{:?}", harness).to_lowercase()
     ));
-    script.push_str(&format!("    \"training_duration_secs\": ${TRAINING_DURATION},\n"));
+    script.push_str("    \"training_duration_secs\": ${TRAINING_DURATION},\n");
     script.push_str("    \"loss\": ${FINAL_LOSS_JSON},\n");
     script.push_str("    \"grad_norm\": ${FINAL_GRAD_NORM_JSON},\n");
     script.push_str("    \"current_step\": ${FINAL_STEP_JSON},\n");
@@ -1261,6 +1277,76 @@ mod tests {
         assert_eq!(map_pod_status("TERMINATED"), TrainingJobStatus::Failed);
         // Unknown statuses default to Queued (safe — poll again).
         assert_eq!(map_pod_status("UNKNOWN"), TrainingJobStatus::Queued);
+    }
+
+    #[test]
+    fn install_script_extracts_runtime_metrics_from_log() {
+        // Verify the install script includes metric-extraction lines for
+        // loss, grad_norm, step, and total_steps — these feed the completion
+        // manifest's runtime fields consumed by G-R1.
+        let mut params = TrainingParams {
+            num_epochs: 3,
+            batch_size: 1,
+            learning_rate: 1e-4,
+            ..TrainingParams::default()
+        };
+        params.lora.r = 32;
+        params.lora.alpha = 64;
+        params.lora.init_lora_weights = Some(crate::providers::types::LoraInit::Eva);
+        params.optimization.gradient_accumulation_steps = 16;
+        params.optimization.lr_scheduler = Some("cosine".to_string());
+        params.optimization.warmup_steps = Some(100);
+        params.sequence.sequence_len = Some(4096);
+        params.advanced.bf16 = true;
+        params.advanced.eval_split_ratio = Some(0.0012);
+        let job = TrainingJob::new(
+            std::path::PathBuf::from("/tmp/train_chat_full.jsonl"),
+            "Qwen3:8b".to_string(),
+            params,
+            TrainingHostId::Runpod,
+            TrainingHarnessId::Axolotl,
+        );
+        let mut job = job;
+        job.artifacts = Some(crate::huggingface::TrainingArtifacts {
+            dataset: crate::huggingface::TrainingArtifact {
+                repository: "test/dataset".to_string(),
+                revision: "main".to_string(),
+                path: "train.jsonl".to_string(),
+                sha256: String::new(),
+            },
+            model_repository: "test/model".to_string(),
+            completion_manifest_path: "/workspace/completion.json".to_string(),
+        });
+        let script = generate_install_script(&job, TrainingHarnessId::Axolotl)
+            .expect("generate install script");
+        assert!(
+            script.contains("FINAL_LOSS="),
+            "script must extract final loss"
+        );
+        assert!(
+            script.contains("FINAL_GRAD_NORM="),
+            "script must extract final grad_norm"
+        );
+        assert!(
+            script.contains("FINAL_STEP="),
+            "script must extract final step"
+        );
+        assert!(
+            script.contains("TOTAL_STEPS="),
+            "script must extract total steps"
+        );
+        assert!(
+            script.contains("\"grad_norm\""),
+            "manifest must include grad_norm field"
+        );
+        assert!(
+            script.contains("\"current_step\""),
+            "manifest must include current_step field"
+        );
+        assert!(
+            script.contains("\"alerts\""),
+            "manifest must include alerts field"
+        );
     }
 
     #[test]

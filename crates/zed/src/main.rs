@@ -276,6 +276,30 @@ fn main() {
         return;
     }
 
+    // Load kask `.env` file if present. The file contains API keys and
+    // configuration for kask inference providers (DI_API_KEY, FA_API_KEY,
+    // TG_API_KEY, OR_API_KEY, etc.) and kask runtime settings (HKASK_*).
+    // Without this, the keys are invisible to the process even though they're
+    // in the file. We search for `.env` in the current directory and in
+    // `kask/.env` (the standard kask project layout).
+    //
+    // dotenvy does NOT override existing env vars — if a key is already in
+    // the process environment (e.g. from the shell), the file value is
+    // ignored. This is the correct behavior: shell env > .env file.
+    for env_path in [
+        std::path::Path::new(".env"),
+        std::path::Path::new("kask/.env"),
+    ] {
+        if env_path.is_file() {
+            if let Err(e) = dotenvy::from_path(env_path) {
+                log::warn!("Failed to load {}: {e}", env_path.display());
+            } else {
+                log::info!("Loaded environment from {}", env_path.display());
+            }
+            break;
+        }
+    }
+
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);

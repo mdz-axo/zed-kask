@@ -25870,6 +25870,7 @@ dependencies = [
  "debugger_ui",
  "dev_container",
  "diagnostics",
+ "dotenvy",
  "ed25519-dalek",
  "edit_prediction",
  "edit_prediction_ui",

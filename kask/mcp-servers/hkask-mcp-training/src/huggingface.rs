@@ -386,7 +386,7 @@ pub struct CompletionManifest {
     /// G-R1 finding with `evidence_kind: runtime_measurement`. Mirrors the
     /// HF trackio alert pattern.
     #[serde(default)]
-    pub alerts: Vec<crate::lora_validation::RuntimeAlert>,
+    pub alerts: Vec<crate::lora_validation::TrainingAlert>,
     /// Output directory on the pod where the adapter was saved.
     #[serde(default)]
     pub output_dir: Option<String>,
@@ -772,6 +772,52 @@ mod training_artifact_tests {
         )
         .expect("manifest JSON is valid");
         assert_eq!(manifest.job_id, "job-1");
+        // v0.32.0 backward compat: new fields default to None/empty when absent.
+        assert_eq!(manifest.grad_norm, None, "grad_norm should default to None");
+        assert_eq!(
+            manifest.current_step, None,
+            "current_step should default to None"
+        );
+        assert_eq!(
+            manifest.total_steps, None,
+            "total_steps should default to None"
+        );
+        assert!(manifest.alerts.is_empty(), "alerts should default to empty");
+    }
+
+    #[test]
+    fn completion_manifest_parses_v032_runtime_metrics() {
+        let manifest = HuggingFaceTraining::parse_completion_manifest(
+            br#"{
+                "job_id":"job-runtime",
+                "status":"success",
+                "dataset_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "adapter":{
+                    "repository":"owner/models",
+                    "revision":"revision",
+                    "path":"adapter_model.safetensors",
+                    "sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                },
+                "finished_at":"2026-07-26T00:00:00Z",
+                "loss":0.5,
+                "grad_norm":1.23,
+                "current_step":500,
+                "total_steps":1000,
+                "alerts":[
+                    {"title":"Loss spike","level":"warn","text":"Loss jumped to 8.0","step":450}
+                ]
+            }"#,
+        )
+        .expect("manifest JSON with runtime metrics is valid");
+        assert_eq!(manifest.job_id, "job-runtime");
+        assert_eq!(manifest.loss, Some(0.5));
+        assert_eq!(manifest.grad_norm, Some(1.23));
+        assert_eq!(manifest.current_step, Some(500));
+        assert_eq!(manifest.total_steps, Some(1000));
+        assert_eq!(manifest.alerts.len(), 1);
+        assert_eq!(manifest.alerts[0].title, "Loss spike");
+        assert_eq!(manifest.alerts[0].level, "warn");
+        assert_eq!(manifest.alerts[0].step, Some(450));
     }
 
     #[test]
@@ -791,6 +837,10 @@ mod training_artifact_tests {
             harness: Some("axolotl".to_string()),
             training_duration_secs: Some(3600),
             loss: Some(0.123),
+            grad_norm: Some(1.5),
+            current_step: Some(500),
+            total_steps: Some(1000),
+            alerts: Vec::new(),
             output_dir: Some("/workspace/outputs/job-1".to_string()),
         };
         assert!(manifest.validate_for("job-1", "dataset-hash").is_ok());

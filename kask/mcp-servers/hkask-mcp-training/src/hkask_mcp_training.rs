@@ -271,11 +271,15 @@ impl TrainingServer {
                 Some((status, Some(manifest)))
             }
             Err(e) => {
-                tracing::debug!(
+                // Log at warn (not debug) so manifest parse failures are visible.
+                // A malformed manifest (e.g., missing required field) means
+                // training_status cannot detect completion — the operator should
+                // see this rather than wondering why the job appears stuck.
+                tracing::warn!(
                     target: "hkask.training.completion.check",
                     job_id = %job_id,
                     error = %e,
-                    "No completion manifest found (training may still be in progress)"
+                    "Completion manifest not found or unparseable (training may still be in progress, or the manifest is malformed)"
                 );
                 None
             }

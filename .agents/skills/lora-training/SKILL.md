@@ -13,11 +13,13 @@ description: >
   declared dataset and produce the adapter type implied by G0. Audits math,
   quantization, data/evaluation, forgetting, runtime alert, persistence
   preflight, and harness-method compatibility gates with phase-aware states
-  and evidence. PDCA iteration loop is mechanically closed by the process
-  manifest: preflight-dataset → select-method → audit-config → report →
+  and evidence. Runtime metrics (loss, grad_norm, alerts) are sourced from
+  the completion manifest and evaluated by G-R1 during training_status.
+  PDCA iteration loop is mechanically closed by the process manifest:
+  preflight-dataset → select-method → audit-config → report →
   convergence-check → loop, with prior_iteration routing. Emits reg.lora.*
-  spans, plus outcome and operator_feedback spans that close the
-  self-improvement feedback loop.
+  spans (including reg.lora.runtime from training_status), plus outcome and
+  operator_feedback spans that close the self-improvement feedback loop.
 ---
 
 # LoRA Training

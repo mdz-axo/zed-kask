@@ -862,21 +862,32 @@ pub struct RuntimeMetrics {
     pub grad_norm: Option<f64>,
     /// Runtime alerts (e.g., from trackio.alert() or equivalent).
     #[serde(default)]
-    pub alerts: Vec<RuntimeAlert>,
+    pub alerts: Vec<TrainingAlert>,
 }
 
 /// A single runtime alert from the training loop.
+///
+/// Renamed from `RuntimeAlert` to avoid collision with
+/// `hkask_regulation::RuntimeAlert` (which has different fields).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RuntimeAlert {
+pub struct TrainingAlert {
     /// Alert title (e.g., "Loss divergence", "Vanishing loss").
+    #[serde(default)]
     pub title: String,
-    /// Alert severity: "info", "warn", "error".
+    /// Alert severity: "info", "warn", "error", "critical".
+    /// Unknown levels default to "warn" in `validate_runtime_metrics`.
+    #[serde(default = "default_alert_level")]
     pub level: String,
     /// Alert text/body.
+    #[serde(default)]
     pub text: String,
     /// Step at which the alert fired.
     #[serde(default)]
     pub step: Option<u32>,
+}
+
+fn default_alert_level() -> String {
+    "warn".to_string()
 }
 
 /// G-R1: Runtime alert gate — validates runtime metrics for training instability.
@@ -895,9 +906,11 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
     // Process explicit alerts first — these are operator/runtime-supplied signals.
     for alert in &metrics.alerts {
         let severity = match alert.level.as_str() {
-            "error" => ValidationSeverity::Refuse,
+            "error" | "critical" | "fatal" => ValidationSeverity::Refuse,
             "warn" => ValidationSeverity::Warn,
-            _ => ValidationSeverity::Info,
+            // Unknown non-empty levels default to Warn (safer than Info —
+            // surfaces the alert rather than silently downgrading it).
+            _ => ValidationSeverity::Warn,
         };
         let step_str = alert
             .step
@@ -914,8 +927,35 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
         });
     }
 
+    // Detect NaN or infinite loss — training has diverged.
+    // NaN comparisons are always false in Rust, so `loss > 5.0` would silently
+    // pass. We check is_nan()/is_infinite() explicitly before the divergence
+    // and vanishing checks.
+    if let Some(loss) = metrics.loss {
+        if loss.is_nan() {
+            findings.push(ValidationFinding {
+                gate_id: "G-R1",
+                severity: ValidationSeverity::Refuse,
+                message: "NaN loss detected — training has diverged".to_string(),
+                source: "QLoRA paper §3 (training stability); IEEE-754 NaN semantics",
+                remediation: "Stop the run, reduce learning rate, enable gradient clipping, or check for numerical instability".to_string(),
+            });
+        } else if loss.is_infinite() {
+            findings.push(ValidationFinding {
+                gate_id: "G-R1",
+                severity: ValidationSeverity::Refuse,
+                message: format!("Infinite loss ({}) — training has diverged", loss),
+                source: "QLoRA paper §3 (training stability)",
+                remediation: "Stop the run, reduce learning rate, or enable gradient clipping"
+                    .to_string(),
+            });
+        }
+    }
+
     // Detect loss divergence: loss > 5.0 after step 100.
+    // Only reached if loss is finite (NaN/inf handled above).
     if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss)
+        && loss.is_finite()
         && step > 100
         && loss > 5.0
     {
@@ -932,7 +972,9 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
     }
 
     // Detect vanishing loss: |loss| < 1e-8 after step 0.
+    // Only reached if loss is finite.
     if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss)
+        && loss.is_finite()
         && step > 0
         && loss.abs() < 1e-8
     {
@@ -1490,6 +1532,33 @@ mod tests {
     }
 
     #[test]
+    fn gd0_empty_jsonl_returns_none_format() {
+        // Empty .jsonl should not default to ChatML — return None so G-D0 warns.
+        let file = write_temp_dataset("", "jsonl");
+        let result = validate_dataset_format(file.path(), Some("sft"), None);
+        assert_eq!(
+            result.detected_format, None,
+            "empty .jsonl should not be detected as ChatML"
+        );
+        assert!(result.findings.iter().any(|f| f.gate_id == "G-D0"));
+    }
+
+    #[test]
+    fn gd0_whitespace_only_jsonl_returns_none_format() {
+        let file = write_temp_dataset("\n\n  \n", "jsonl");
+        let result = validate_dataset_format(file.path(), Some("sft"), None);
+        assert_eq!(result.detected_format, None);
+    }
+
+    #[test]
+    fn gd0_non_json_jsonl_returns_none_format() {
+        // A .jsonl with non-JSON content should not default to ChatML.
+        let file = write_temp_dataset("hello world\nthis is not json\n", "jsonl");
+        let result = validate_dataset_format(file.path(), Some("sft"), None);
+        assert_eq!(result.detected_format, None);
+    }
+
+    #[test]
     fn gd0_adapter_purpose_preference_expects_dpo() {
         let file = write_temp_dataset(
             r#"{"prompt":"hi","chosen":"hello","rejected":"bye"}
@@ -1582,7 +1651,7 @@ mod tests {
     #[test]
     fn gr1_error_alert_refuses() {
         let metrics = RuntimeMetrics {
-            alerts: vec![RuntimeAlert {
+            alerts: vec![TrainingAlert {
                 title: "Loss divergence".to_string(),
                 level: "error".to_string(),
                 text: "Loss 8.0 still high after 200 steps".to_string(),
@@ -1601,7 +1670,7 @@ mod tests {
     #[test]
     fn gr1_warn_alert_warns() {
         let metrics = RuntimeMetrics {
-            alerts: vec![RuntimeAlert {
+            alerts: vec![TrainingAlert {
                 title: "Slow convergence".to_string(),
                 level: "warn".to_string(),
                 text: "Loss decreased <1% over 50 steps".to_string(),
@@ -1615,6 +1684,125 @@ mod tests {
                 .iter()
                 .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn })
         );
+    }
+
+    // ── G-R1: NaN/infinite loss and unknown alert level tests ─────────────
+
+    #[test]
+    fn gr1_nan_loss_refuses() {
+        let metrics = RuntimeMetrics {
+            current_step: Some(150),
+            loss: Some(f64::NAN),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(findings.iter().any(|f| {
+            f.gate_id == "G-R1"
+                && f.severity == ValidationSeverity::Refuse
+                && f.message.contains("NaN loss")
+        }));
+    }
+
+    #[test]
+    fn gr1_infinite_loss_refuses() {
+        let metrics = RuntimeMetrics {
+            current_step: Some(150),
+            loss: Some(f64::INFINITY),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(findings.iter().any(|f| {
+            f.gate_id == "G-R1"
+                && f.severity == ValidationSeverity::Refuse
+                && f.message.contains("Infinite loss")
+        }));
+    }
+
+    #[test]
+    fn gr1_nan_loss_does_not_trigger_divergence_check() {
+        // NaN loss should be caught by the explicit NaN check, not silently
+        // pass the `loss > 5.0` divergence check (NaN > 5.0 is false in Rust).
+        let metrics = RuntimeMetrics {
+            current_step: Some(200),
+            loss: Some(f64::NAN),
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        // Should have exactly one NaN finding, not a divergence finding.
+        let nan_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.message.contains("NaN loss"))
+            .collect();
+        let divergence_findings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.message.contains("Loss divergence"))
+            .collect();
+        assert_eq!(nan_findings.len(), 1);
+        assert!(
+            divergence_findings.is_empty(),
+            "NaN loss should not trigger divergence check"
+        );
+    }
+
+    #[test]
+    fn gr1_critical_alert_level_refuses() {
+        let metrics = RuntimeMetrics {
+            alerts: vec![TrainingAlert {
+                title: "Critical training failure".to_string(),
+                level: "critical".to_string(),
+                text: "Gradient explosion detected".to_string(),
+                step: Some(300),
+            }],
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Refuse })
+        );
+    }
+
+    #[test]
+    fn gr1_unknown_alert_level_warns_not_info() {
+        let metrics = RuntimeMetrics {
+            alerts: vec![TrainingAlert {
+                title: "Unknown severity".to_string(),
+                level: "severe".to_string(),
+                text: "Some unknown alert".to_string(),
+                step: None,
+            }],
+            ..Default::default()
+        };
+        let findings = validate_runtime_metrics(&metrics);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn }),
+            "Unknown alert level should default to Warn, not Info"
+        );
+    }
+
+    #[test]
+    fn training_alert_deserializes_with_missing_level() {
+        // A manifest alert without the `level` field should deserialize
+        // with the default level ("warn"), not fail parsing.
+        let json = r#"{"title":"Test","text":"body"}"#;
+        let alert: TrainingAlert =
+            serde_json::from_str(json).expect("deserialize with missing level");
+        assert_eq!(alert.level, "warn");
+        assert_eq!(alert.title, "Test");
+    }
+
+    #[test]
+    fn training_alert_deserializes_with_all_fields_missing() {
+        // All fields have serde defaults — an empty JSON object should deserialize.
+        let json = r#"{}"#;
+        let alert: TrainingAlert = serde_json::from_str(json).expect("deserialize empty alert");
+        assert_eq!(alert.level, "warn");
+        assert!(alert.title.is_empty());
+        assert!(alert.text.is_empty());
+        assert_eq!(alert.step, None);
     }
 
     // ── G-P1: Persistence preflight tests ─────────────────────────────────

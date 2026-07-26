@@ -868,14 +868,33 @@ impl From<KaskSettingsContent> for KaskSettings {
             inference_providers: c
                 .inference_providers
                 .map(|ip| KaskInferenceProvidersSettings {
-                    deepinfra_enabled: ip.deepinfra_enabled.unwrap_or(false),
-                    fal_enabled: ip.fal_enabled.unwrap_or(false),
-                    together_enabled: ip.together_enabled.unwrap_or(false),
-                    openrouter_enabled: ip.openrouter_enabled.unwrap_or(false),
-                    kilocode_enabled: ip.kilocode_enabled.unwrap_or(false),
-                    cline_enabled: ip.cline_enabled.unwrap_or(false),
+                    deepinfra_enabled: ip
+                        .deepinfra_enabled
+                        .unwrap_or_else(|| std::env::var("DI_API_KEY").is_ok()),
+                    fal_enabled: ip
+                        .fal_enabled
+                        .unwrap_or_else(|| std::env::var("FA_API_KEY").is_ok()),
+                    together_enabled: ip
+                        .together_enabled
+                        .unwrap_or_else(|| std::env::var("TG_API_KEY").is_ok()),
+                    openrouter_enabled: ip
+                        .openrouter_enabled
+                        .unwrap_or_else(|| std::env::var("OR_API_KEY").is_ok()),
+                    kilocode_enabled: ip
+                        .kilocode_enabled
+                        .unwrap_or_else(|| std::env::var("KC_API_KEY").is_ok()),
+                    cline_enabled: ip
+                        .cline_enabled
+                        .unwrap_or_else(|| std::env::var("CLINE_API_KEY").is_ok()),
                 })
-                .unwrap_or_default(),
+                .unwrap_or_else(|| KaskInferenceProvidersSettings {
+                    deepinfra_enabled: std::env::var("DI_API_KEY").is_ok(),
+                    fal_enabled: std::env::var("FA_API_KEY").is_ok(),
+                    together_enabled: std::env::var("TG_API_KEY").is_ok(),
+                    openrouter_enabled: std::env::var("OR_API_KEY").is_ok(),
+                    kilocode_enabled: std::env::var("KC_API_KEY").is_ok(),
+                    cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
+                }),
         }
     }
 }

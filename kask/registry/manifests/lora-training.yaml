@@ -45,7 +45,10 @@ manifest:
     (loss spikes, NaN gradients, vanishing loss — mirroring HF trackio alerts),
     and G-P1 persistence preflight (verifies HuggingFace artifact persistence
     is configured before submit on ephemeral cloud hosts — mirroring HF's
-    "Critical: Saving Results to Hub" checklist).
+    "Critical: Saving Results to Hub" checklist). v0.32.0: runtime metrics
+    (loss, grad_norm, current_step, alerts) are sourced from the completion
+    manifest and evaluated by G-R1 during training_status, emitting
+    reg.lora.runtime spans.
     losslessly with regression proposals, and computes phase-aware convergence.
     v0.31.0: evolved from template-by-template invocation into a coordinated
     flow with mechanical PDCA loop closure, deeper capability reasoning over

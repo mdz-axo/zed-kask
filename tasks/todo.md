@@ -1,5 +1,68 @@
 # Infrastructure Jinja2 Template & YAML Manifest Audit — Checklist
 
+## Pending Tasks
+
+- [ ] **T-KASK-ICON: Replace app icon with burnt orange zed-kask icon**
+  - The status bar / window title bar / desktop icon currently shows the
+    standard zed icon (green/blue). It should show the burnt orange
+    zed-kask icon to visually distinguish the fork.
+  - Icon pipeline (Linux):
+    1. `crates/zed/build.rs:icon_path()` selects `resources/app-icon{channel}.png`
+    2. `build.rs:prepare_app_icon_x11()` resizes to `OUT_DIR/app_icon.png`
+    3. `crates/zed/src/zed.rs:380` includes `OUT_DIR/app_icon.png` as the
+       X11 window icon (used by the status bar / title bar)
+    4. `crates/zed/src/zed.rs:1473` uses `resources/app-icon-dev.png` for
+       the About window
+    5. `script/bundle-linux:170` copies `resources/app-icon.png` to the
+       desktop icon directory (`share/icons/hicolor/`)
+  - Fix: replace `crates/zed/resources/app-icon.png` and
+    `app-icon-dev.png` (and `@2x` variants) with the burnt orange kask
+    icon. Generate from `kask/assets/kask-logo.svg` or a dedicated
+    app-icon SVG with the burnt orange background.
+  - Also check `crates/gpui_linux/src/linux/platform.rs` for Wayland
+    window icon setup (may need a separate code path).
+
+- [ ] **T-INFERENCE-SYNTAX: Migrate from old hKask prefix syntax to zed model syntax**
+  - Old syntax: `DI/model`, `FA/model`, `TG/model`, `OR/model`, `KC/model`
+  - Zed syntax: `provider_id/model_name` where provider_id is the JSON key
+    from `openai_compatible` in settings.json (e.g., `DeepInfra/model`,
+    `OpenRouter/model`, `Together AI/model`)
+  - OpenRouter should be the default provider for zed-kask / curator agent
+  - Sites to update:
+    - `kask/crates/hkask-inference/src/config.rs` — `ProviderId` enum,
+      `parse_from_model`, `prefix_model`, `looks_like_prefix`
+    - `kask/crates/hkask-inference/src/model_constants.rs` — all default
+      model constants
+    - `kask/crates/hkask-types/src/fusion.rs` — `kask_default()` defaults
+    - `kask/crates/hkask-services-core/src/settings.rs` — embedding default
+    - `kask/crates/kask_bridge/src/settings.rs` — doc comments + defaults
+    - `kask/.env` — all `HKASK_*_MODEL` vars
+    - `kask/mcp-servers/hkask-mcp-codegraph/src/hkask_mcp_codegraph.rs` —
+      prefix routing
+    - `kask/mcp-servers/hkask-mcp-corpus/` — embedding model defaults
+    - `kask/mcp-servers/hkask-mcp-training/src/huggingface.rs` — prefix
+      stripping
+    - `kask/crates/hkask-services-corpus/src/embed/utils.rs` — prefix
+      stripping
+    - `kask/crates/hkask-inference/src/chat_protocol.rs` — test fixtures
+    - `kask/registry/templates/` — any manifests with model references
+
+- [ ] **T-ENV-LOADING: Load kask/.env at startup**
+  - `kask/.env` has API keys but nothing loads it. Added `dotenvy::from_path`
+    in `main.rs` but needs verification that it runs before settings parsing.
+
+- [ ] **T-PROVIDER-DEFAULTS: Enable inference providers by default when API key present**
+  - Changed `unwrap_or(false)` to `unwrap_or_else(|| env_var_is_set(...))`
+    in `settings.rs`. Needs testing.
+
+- [ ] **T-PROVIDER-ID-ALIGN: Align kask provider IDs with zed settings.json keys**
+  - Changed `INFERENCE_PROVIDERS` IDs from lowercase (`deepinfra`) to display
+    names (`DeepInfra`) to match existing settings.json. Needs verification
+    that no duplicate entries are created.
+
+## Completed Tasks
+
+
 ## Phase 0 — Plan & Inventory (done)
 
 - [x] **T0: Inventory infrastructure `.j2`/`.yaml` artifacts**

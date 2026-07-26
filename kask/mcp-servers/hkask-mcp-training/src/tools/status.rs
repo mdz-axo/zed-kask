@@ -89,6 +89,62 @@ impl TrainingServer {
 
                     // Auto-register adapter on completion
                     if status == TrainingJobStatus::Completed {
+                        // G-R1: Evaluate runtime metrics from the completion manifest
+                        // and emit reg.lora.runtime spans. Mirrors the HF trackio
+                        // alert pattern — loss spikes, NaN gradients, vanishing loss.
+                        if let Some(ref manifest) = manifest {
+                            let runtime_metrics = crate::lora_validation::RuntimeMetrics {
+                                current_step: manifest.current_step,
+                                total_steps: manifest.total_steps,
+                                loss: manifest.loss,
+                                grad_norm: manifest.grad_norm,
+                                alerts: manifest.alerts.clone(),
+                            };
+                            let runtime_findings =
+                                crate::lora_validation::validate_runtime_metrics(&runtime_metrics);
+                            for finding in &runtime_findings {
+                                let severity_str = match finding.severity {
+                                    crate::lora_validation::ValidationSeverity::Refuse => "refuse",
+                                    crate::lora_validation::ValidationSeverity::Warn => "warn",
+                                    crate::lora_validation::ValidationSeverity::Info => "info",
+                                };
+                                tracing::warn!(
+                                    target: "reg.lora.runtime",
+                                    gate = finding.gate_id,
+                                    severity = severity_str,
+                                    message = %finding.message,
+                                    source = %finding.source,
+                                    job_id = %job_id,
+                                    "LoRA runtime alert gate"
+                                );
+                            }
+                            if runtime_findings.is_empty() && manifest.loss.is_some() {
+                                tracing::info!(
+                                    target: "reg.lora.runtime",
+                                    gate = "G-R1",
+                                    severity = "pass",
+                                    job_id = %job_id,
+                                    loss = ?manifest.loss,
+                                    "Runtime metrics passed G-R1"
+                                );
+                            }
+                            // Surface runtime findings in the status response.
+                            if !runtime_findings.is_empty() {
+                                result["runtime_findings"] = json!(runtime_findings.iter().map(|f| {
+                                    json!({
+                                        "gate_id": f.gate_id,
+                                        "severity": match f.severity {
+                                            crate::lora_validation::ValidationSeverity::Refuse => "refuse",
+                                            crate::lora_validation::ValidationSeverity::Warn => "warn",
+                                            crate::lora_validation::ValidationSeverity::Info => "info",
+                                        },
+                                        "message": f.message,
+                                        "remediation": f.remediation,
+                                    })
+                                }).collect::<Vec<_>>());
+                            }
+                        }
+
                         let adapter: crate::adapter::TrainedLoRAAdapter = match self
                             .adapter_store
                             .get_by_id(uuid::Uuid::parse_str(&job_id).unwrap_or_default())

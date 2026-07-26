@@ -93,46 +93,60 @@ impl HarnessAdapter for AxolotlHarness {
                 serde_json::json!(self.output_dir(&job.id).display().to_string()),
             ),
         ]);
-        for (key, value) in [
-            (
-                "peft_init_lora_weights",
+        // peft_init_lora_weights is used in {% if %} in the template, so it
+        // must always be present in the context for minijinja Strict mode.
+        // Insert as null when absent — null is falsy in {% if %}.
+        context.insert(
+            "peft_init_lora_weights".to_string(),
+            serde_json::json!(
                 lo.init_lora_weights
                     .as_ref()
-                    .map(|init| init.as_config_value()),
+                    .map(|init| init.as_config_value())
             ),
-            ("optim", opt.optimizer.clone()),
-            ("lr_scheduler", opt.lr_scheduler.clone()),
-            (
-                "sequence_len",
-                p.sequence.sequence_len.map(|value| value.to_string()),
-            ),
-            (
-                "warmup_steps",
-                opt.warmup_steps.map(|value| value.to_string()),
-            ),
-            (
-                "max_grad_norm",
-                opt.max_grad_norm.map(|value| value.to_string()),
-            ),
-            (
-                "val_set_size",
-                p.advanced.eval_split_ratio.map(|value| value.to_string()),
-            ),
-            (
-                "gradient_checkpointing",
-                p.advanced.gradient_checkpointing.clone(),
-            ),
-            (
-                "flash_attention",
-                p.advanced
-                    .attn_implementation
-                    .as_ref()
-                    .map(|attn| (attn == "flash_attention_2").to_string()),
-            ),
-        ] {
-            if let Some(value) = value {
-                context.insert(key.to_string(), serde_json::json!(value));
-            }
+        );
+        // The following fields are used with {{ field | default(...) }} in the
+        // template. The default() filter only triggers when the variable is
+        // undefined (not in context), not when it's null. So we use conditional
+        // insertion — only insert when Some, leaving the variable undefined so
+        // default() can supply the fallback value.
+        if let Some(ref optimizer) = opt.optimizer {
+            context.insert("optim".to_string(), serde_json::json!(optimizer));
+        }
+        if let Some(ref scheduler) = opt.lr_scheduler {
+            context.insert("lr_scheduler".to_string(), serde_json::json!(scheduler));
+        }
+        if let Some(sequence_len) = p.sequence.sequence_len {
+            context.insert(
+                "sequence_len".to_string(),
+                serde_json::json!(sequence_len.to_string()),
+            );
+        }
+        if let Some(warmup) = opt.warmup_steps {
+            context.insert(
+                "warmup_steps".to_string(),
+                serde_json::json!(warmup.to_string()),
+            );
+        }
+        if let Some(max_grad_norm) = opt.max_grad_norm {
+            context.insert(
+                "max_grad_norm".to_string(),
+                serde_json::json!(max_grad_norm.to_string()),
+            );
+        }
+        if let Some(eval_ratio) = p.advanced.eval_split_ratio {
+            context.insert(
+                "val_set_size".to_string(),
+                serde_json::json!(eval_ratio.to_string()),
+            );
+        }
+        if let Some(ref gc) = p.advanced.gradient_checkpointing {
+            context.insert("gradient_checkpointing".to_string(), serde_json::json!(gc));
+        }
+        if let Some(ref attn) = p.advanced.attn_implementation {
+            context.insert(
+                "flash_attention".to_string(),
+                serde_json::json!((attn == "flash_attention_2").to_string()),
+            );
         }
         if opt.weight_decay > 0.0 {
             context.insert(

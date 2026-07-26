@@ -44,15 +44,15 @@ pub struct InferenceProviderDescriptor {
 /// The 6 inference providers surfaced in kask settings.
 pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     InferenceProviderDescriptor {
-        id: "deepinfra",
+        id: "DeepInfra",
         name: "DeepInfra",
-        api_url: "https://api.deepinfra.com/v1",
+        api_url: "https://api.deepinfra.com/v1/openai",
         env_var: "DI_API_KEY",
         credential_key: "deepinfra",
         dashboard_url: "https://deepinfra.com/",
     },
     InferenceProviderDescriptor {
-        id: "fal",
+        id: "fal.ai",
         name: "fal.ai",
         api_url: "https://api.fal.ai/v1",
         env_var: "FA_API_KEY",
@@ -60,7 +60,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://fal.ai/",
     },
     InferenceProviderDescriptor {
-        id: "together",
+        id: "Together AI",
         name: "Together AI",
         api_url: "https://api.together.xyz/v1",
         env_var: "TG_API_KEY",
@@ -68,7 +68,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://together.ai/",
     },
     InferenceProviderDescriptor {
-        id: "openrouter",
+        id: "OpenRouter",
         name: "OpenRouter",
         api_url: "https://openrouter.ai/api/v1",
         env_var: "OR_API_KEY",
@@ -76,7 +76,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://openrouter.ai/",
     },
     InferenceProviderDescriptor {
-        id: "kilocode",
+        id: "KiloCode",
         name: "KiloCode",
         api_url: "https://api.kilo.ai/api/gateway",
         env_var: "KC_API_KEY",
@@ -84,7 +84,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://kilo.ai/",
     },
     InferenceProviderDescriptor {
-        id: "cline",
+        id: "Cline",
         name: "Cline",
         api_url: "https://api.cline.bot/api/v1",
         env_var: "CLINE_API_KEY",
@@ -146,7 +146,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     // Inference providers — inject the API key as the env var the MCP servers
     // and hKask's InferenceRouter expect.
     for provider in INFERENCE_PROVIDERS {
-        let enabled = match provider.id {
+        let enabled = match provider.credential_key {
             "deepinfra" => settings.inference_providers.deepinfra_enabled,
             "fal" => settings.inference_providers.fal_enabled,
             "together" => settings.inference_providers.together_enabled,
@@ -178,15 +178,15 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
     // Extract the enabled states before the closure so we don't borrow
     // `settings` inside the `move` closure.
     let enabled_states: [(&'static str, bool); 6] = [
-        ("deepinfra", settings.inference_providers.deepinfra_enabled),
-        ("fal", settings.inference_providers.fal_enabled),
-        ("together", settings.inference_providers.together_enabled),
+        ("DeepInfra", settings.inference_providers.deepinfra_enabled),
+        ("fal.ai", settings.inference_providers.fal_enabled),
+        ("Together AI", settings.inference_providers.together_enabled),
         (
-            "openrouter",
+            "OpenRouter",
             settings.inference_providers.openrouter_enabled,
         ),
-        ("kilocode", settings.inference_providers.kilocode_enabled),
-        ("cline", settings.inference_providers.cline_enabled),
+        ("KiloCode", settings.inference_providers.kilocode_enabled),
+        ("Cline", settings.inference_providers.cline_enabled),
     ];
 
     let fs = <dyn fs::Fs>::global(cx);

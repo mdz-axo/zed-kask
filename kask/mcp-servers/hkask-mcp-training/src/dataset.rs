@@ -99,6 +99,12 @@ impl DatasetFormat {
                 // Could be ChatML, ShareGPT, or preference — read first line to disambiguate.
                 if let Ok(content) = std::fs::read_to_string(path) {
                     let first_line = content.lines().next().unwrap_or("");
+                    // Empty file or empty first line — cannot detect format.
+                    // Return None rather than defaulting to ChatML, so G-D0
+                    // can warn the operator about the empty/unrecognizable dataset.
+                    if first_line.trim().is_empty() {
+                        return None;
+                    }
                     // Preference formats take precedence over ChatML when preference
                     // fields are present — a DPO dataset with conversational chosen/rejected
                     // might also contain "messages" in the prompt, but the top-level
@@ -120,8 +126,11 @@ impl DatasetFormat {
                     if first_line.contains("\"conversations\"") {
                         return Some(Self::ShareGPT);
                     }
+                    // Non-empty .jsonl with unrecognized content — return None
+                    // so G-D0 warns rather than silently defaulting to ChatML.
+                    return None;
                 }
-                Some(Self::ChatML) // default for .jsonl
+                None // cannot read file
             }
             "json" => {
                 // Single JSON array of Alpaca objects.
@@ -484,6 +493,11 @@ impl DatasetPipeline {
             return Ok(cached_path);
         }
 
+        let raw = std::fs::read_to_string(file_path)?;
+        if raw.lines().all(|l| l.trim().is_empty()) {
+            return Err(DatasetError::Empty);
+        }
+
         let format = DatasetFormat::detect(file_path).ok_or_else(|| {
             DatasetError::UnsupportedFormat(format!(
                 "Cannot determine format for {}",
@@ -491,7 +505,6 @@ impl DatasetPipeline {
             ))
         })?;
 
-        let raw = std::fs::read_to_string(file_path)?;
         let normalized = match format {
             DatasetFormat::ChatML => NormalizedDataset::Sft(self.normalize_chatml(&raw)?),
             DatasetFormat::ShareGPT => NormalizedDataset::Sft(self.normalize_sharegpt(&raw)?),

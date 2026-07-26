@@ -394,6 +394,41 @@ mod tests {
         }
     }
 
+    /// Regression test for the minijinja Strict undefined-variable bug:
+    /// rendering with default TrainingParams (no explicit init_lora_weights,
+    /// no lr_scheduler, no optim, etc.) must not throw "undefined value".
+    /// Previously, optional fields were conditionally inserted only when
+    /// Some, but the template's {% if peft_init_lora_weights %} threw on
+    /// undefined under Strict mode. The fix: always insert peft_init_lora_weights
+    /// (as null when absent), keep other optional fields as conditional inserts
+    /// so {{ field | default(...) }} works.
+    #[test]
+    fn axolotl_harness_renders_with_default_params_without_undefined_error() {
+        let job = TrainingJob::new(
+            std::path::PathBuf::from("/tmp/train.jsonl"),
+            "Qwen3:8b".to_string(),
+            TrainingParams::default(),
+            TrainingHostId::Runpod,
+            TrainingHarnessId::Axolotl,
+        );
+        let yaml = AxolotlHarness
+            .render_config(&job)
+            .expect("render config with default params");
+        // The template's default() filters should supply fallback values.
+        assert!(
+            yaml.contains("optim: adamw_8bit"),
+            "default optim should be adamw_8bit"
+        );
+        assert!(
+            yaml.contains("lr_scheduler: cosine"),
+            "default lr_scheduler should be cosine"
+        );
+        assert!(
+            yaml.contains("sequence_len: 4096"),
+            "default sequence_len should be 4096"
+        );
+    }
+
     #[test]
     fn host_config_default() {
         let config = TrainingHostConfig::default();

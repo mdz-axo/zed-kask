@@ -252,8 +252,7 @@ impl Default for InferenceConfig {
             cline_api_key: String::new(),
             timeout_secs: 120,
             pool_max_idle: 5,
-            default_model: "KC/z-ai/glm-5.2".to_string(),
-            fusion: None,
+            default_model: "OpenRouter/z-ai/glm-5.2".to_string(),
         }
     }
 }
@@ -322,7 +321,7 @@ impl InferenceConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(256),
             default_model: resolve_config_str("HKASK_DEFAULT_MODEL")
-                .unwrap_or_else(|| "KC/z-ai/glm-5.2".to_string()),
+                .unwrap_or_else(|| "OpenRouter/z-ai/glm-5.2".to_string()),
             fusion,
         }
     }
