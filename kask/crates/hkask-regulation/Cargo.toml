@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Cybernetic Nervous System for hKask"
 
+
+[lib]
+path = "src/hkask_regulation.rs"
+
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 # Regulation defines WalletBudgetPort; regulation::WalletManager implements it
@@ -20,11 +24,11 @@ tracing.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 
-parking_lot = "0.12"
+parking_lot = { workspace = true }
 
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 hkask-storage = { path = "../hkask-storage" }
-proptest = "1"
+proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -7,7 +7,7 @@ description = "Model training MCP server — ingests QA pairs and training data 
 
 [lib]
 name = "hkask_mcp_training"
-path = "src/lib.rs"
+path = "src/hkask_mcp_training.rs"
 
 [[bin]]
 name = "hkask-mcp-training"

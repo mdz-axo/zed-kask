@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask corpus services — discovery, embedding pipeline, chunking, OCR, entity extraction"
 
+
+[lib]
+path = "src/hkask_services_corpus.rs"
+
 [dependencies]
 hkask-services-core = { path = "../hkask-services-core" }
 hkask-services-runtime = { path = "../hkask-services-runtime" }

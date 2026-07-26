@@ -980,7 +980,6 @@ subtle = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-axum = "0.2"
-matrix-sdk = { version = "0.16", default-features = false, features = ["rustls-tls"] }
 
 [workspace.dependencies.windows]
 version = "0.61"

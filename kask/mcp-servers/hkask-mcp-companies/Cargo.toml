@@ -7,7 +7,7 @@ description = "Company financial data MCP server — FMP + EODHD dual-provider i
 
 [lib]
 name = "hkask_mcp_companies"
-path = "src/lib.rs"
+path = "src/hkask_mcp_companies.rs"
 
 [[bin]]
 name = "hkask-mcp-companies"

@@ -4,11 +4,6 @@
 # This script installs hKask and its dependencies on Linux systems.
 # Supports: Debian/Ubuntu, Fedora/RHEL, Arch Linux, openSUSE, Alpine
 #
-# Also sets up the Conduit Matrix homeserver (Docker/Podman sidecar) for
-# agent-to-agent communication. The Curator registers as the Matrix admin
-# and manages account creation, deletion, and moderation on the server.
-# Skip with --skip-conduit.
-#
 # Usage: curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 # Or: wget -O - https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 
@@ -479,122 +474,8 @@ setup_environment() {
 }
 
 # ============================================================================
-# Conduit Setup (Matrix Homeserver)
-# ============================================================================
-
-# Print OS-specific instructions for installing Docker or Podman.
-# Called when setup_conduit() detects no container runtime.
-print_container_runtime_guide() {
-    local pkg_mgr
-    pkg_mgr=$(detect_package_manager)
-
-    echo ""
-    log_warning "Conduit (Matrix homeserver) requires Docker or Podman."
-    echo ""
-    echo "  Install a container runtime for your system:"
-    echo ""
-
-    case "$pkg_mgr" in
-        apt)
-            echo "    # Docker (Debian/Ubuntu):"
-            echo "    sudo apt-get install -y docker.io"
-            echo "    sudo systemctl enable --now docker"
-            echo "    sudo usermod -aG docker \$USER  # log out and back in after this"
-            echo ""
-            echo "    # Or Podman:"
-            echo "    sudo apt-get install -y podman podman-compose"
-            ;;
-        dnf|yum)
-            echo "    # Docker (Fedora/RHEL):"
-            echo "    sudo dnf install -y docker docker-compose"
-            echo "    sudo systemctl enable --now docker"
-            echo "    sudo usermod -aG docker \$USER  # log out and back in after this"
-            echo ""
-            echo "    # Or Podman:"
-            echo "    sudo dnf install -y podman podman-compose"
-            ;;
-        pacman)
-            echo "    # Docker (Arch):"
-            echo "    sudo pacman -S --noconfirm docker docker-compose"
-            echo "    sudo systemctl enable --now docker"
-            echo "    sudo usermod -aG docker \$USER  # log out and back in after this"
-            echo ""
-            echo "    # Or Podman:"
-            echo "    sudo pacman -S --noconfirm podman podman-compose"
-            ;;
-        zypper)
-            echo "    # Docker (openSUSE):"
-            echo "    sudo zypper install -y docker docker-compose"
-            echo "    sudo systemctl enable --now docker"
-            echo "    sudo usermod -aG docker \$USER  # log out and back in after this"
-            echo ""
-            echo "    # Or Podman:"
-            echo "    sudo zypper install -y podman podman-compose"
-            ;;
-        apk)
-            echo "    # Docker (Alpine):"
-            echo "    sudo apk add docker docker-compose"
-            echo "    sudo rc-update add docker boot"
-            echo "    sudo service docker start"
-            echo "    sudo addgroup \$USER docker  # log out and back in after this"
-            ;;
-        *)
-            echo "    See: https://docs.docker.com/engine/install/"
-            echo "    Or:  https://podman.io/getting-started/installation"
-            ;;
-    esac
-
-    echo ""
-    echo "  After installing, start Conduit:"
-    echo "    ./scripts/conduit/conduit-docker.sh start"
-    echo ""
-}
-
-# Start Conduit Matrix homeserver via the conduit-docker.sh management script.
-#
-# If a container runtime (Docker/Podman) is available, pulls the Conduit image,
-# starts the container, waits for it to become healthy, and registers the
-# Curator as the Matrix admin. The Curator manages account creation, deletion,
-# and moderation on the Matrix server.
-#
-# If no runtime is found, prints OS-specific install instructions and
-# skips Conduit (non-fatal).
-#
-# Requires the repo to be cloned (HKASK_SOURCE_DIR must be set).
-setup_conduit() {
-    local conduit_script="$HKASK_SOURCE_DIR/scripts/conduit/conduit-docker.sh"
-
-    if [ ! -f "$conduit_script" ]; then
-        log_warning "conduit-docker.sh not found at $conduit_script — skipping Conduit setup"
-        return 0
-    fi
-
-    log "Setting up Conduit Matrix homeserver..."
-
-    # conduit-docker.sh handles its own runtime detection and will exit with
-    # a clear error if neither Docker nor Podman is available.
-    if bash "$conduit_script" start; then
-        log_success "Conduit Matrix homeserver is running at http://localhost:8008"
-
-        # Register the Curator admin user for human administration.
-        # System bots (hkask-curator, 7R7, etc.) auto-register during hKask bootstrap.
-        log "Registering Curator admin user..."
-        if bash "$conduit_script" register curator UserSovereignty 2>&1 | grep -q "successfully"; then
-            log_success "Curator admin registered: @curator:localhost / UserSovereignty"
-        else
-            log "Curator admin may already exist — credentials: @curator:localhost / UserSovereignty"
-        fi
-        log "System bots will auto-register Matrix accounts on first launch."
-        CONDUIT_READY=true
-    else
-        print_container_runtime_guide
-        CONDUIT_READY=false
-    fi
-}
-
-# ============================================================================
 # Verification
-# ============================================================================
+# =============================================================================
 
 verify_installation() {
     log "Verifying installation..."
@@ -639,15 +520,6 @@ verify_installation() {
         log_warning "kask command not yet in PATH for this shell session"
         log "The PATH will take effect in new shell sessions. For now:"
         log "  export PATH=\"$BIN_DIR:\$PATH\""
-    fi
-
-    # Check Conduit health if it was set up
-    if [ "${CONDUIT_READY:-false}" = "true" ]; then
-        if curl -s "http://localhost:8008/_matrix/client/versions" > /dev/null 2>&1; then
-            log_success "Conduit Matrix homeserver: healthy at http://localhost:8008"
-        else
-            log_warning "Conduit Matrix homeserver: not responding — check logs with ./scripts/conduit/conduit-docker.sh logs"
-        fi
     fi
 }
 
@@ -717,8 +589,6 @@ Options:
     --system            Install system-wide (symlink in /usr/local/bin)
     --skip-deps         Skip system dependency installation
     --skip-rust         Skip Rust installation
-    --skip-conduit      Skip Conduit Matrix homeserver setup
-    --matrix-lan        Enable TLS + well-known for phone access over LAN
     --install-dir DIR   Install to custom directory (default: \$HOME/.local)
     --help              Show this help message
 
@@ -759,8 +629,6 @@ main() {
     local action="install"
     local skip_deps=false
     local skip_rust=false
-    local skip_conduit=false
-    local matrix_lan=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -793,14 +661,6 @@ main() {
                 ;;
             --skip-rust)
                 skip_rust=true
-                shift
-                ;;
-            --skip-conduit)
-                skip_conduit=true
-                shift
-                ;;
-            --matrix-lan)
-                matrix_lan=true
                 shift
                 ;;
             --install-dir)
@@ -858,16 +718,6 @@ main() {
             install_binary
             setup_environment
 
-            if [ "$skip_conduit" = false ]; then
-                setup_conduit
-                if [ "$matrix_lan" = true ] && [ "${CONDUIT_READY:-false}" = "true" ]; then
-                    log "Setting up LAN access for phone connections..."
-                    bash "$HKASK_SOURCE_DIR/scripts/conduit/conduit-docker.sh" setup-lan
-                fi
-            else
-                log "Skipping Conduit setup (--skip-conduit)"
-            fi
-
             verify_installation
 
             echo ""
@@ -880,15 +730,6 @@ main() {
             echo "  2. Start interactive chat:"
             echo "     kask chat"
             echo ""
-            if [ "${CONDUIT_READY:-false}" = "true" ]; then
-                echo "  Matrix communication is ready at http://localhost:8008"
-                echo "  Manage Conduit: ./scripts/conduit/conduit-docker.sh {status|stop|logs|reset}"
-                echo ""
-            elif [ "$skip_conduit" = false ]; then
-                echo "  Matrix communication not available — Conduit not running."
-                echo "  Install Docker/Podman, then: ./scripts/conduit/conduit-docker.sh start"
-                echo ""
-            fi
             if ! command -v kask &> /dev/null; then
                 echo "  Note: Start a new shell session for PATH changes to take effect."
                 echo ""

@@ -66,7 +66,7 @@ hkask-services-core = { path = "../../crates/hkask-services-core" }
 
 [lib]
 name = "hkask_mcp_corpus"
-path = "src/lib.rs"
+path = "src/hkask_mcp_corpus.rs"
 
 [[bin]]
 name = "hkask-mcp-corpus"

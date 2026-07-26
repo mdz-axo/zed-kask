@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask compose service — prompt composition with cognition config"
 
+
+[lib]
+path = "src/hkask_services_compose.rs"
+
 [dependencies]
 hkask-services-core = { path = "../hkask-services-core" }
 hkask-services-inference = { path = "../hkask-services-inference" }
@@ -17,4 +21,4 @@ hkask-inference = { path = "../hkask-inference" }
 minijinja.workspace = true
 
 [dev-dependencies]
-proptest = "1"
+proptest = { workspace = true }

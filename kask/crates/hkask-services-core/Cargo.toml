@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask service-layer foundation — ServiceError, ServiceConfig, HkaskSettings"
 
+
+[lib]
+path = "src/hkask_services_core.rs"
+
 [dependencies]
 hkask-storage = { path = "../hkask-storage" }
 hkask-types = { path = "../hkask-types" }
@@ -15,4 +19,4 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-dirs = "6"
+dirs = { workspace = true }

@@ -202,7 +202,11 @@ impl DatabaseDriver for PostgresDriver {
                 );
                 match row_count {
                     0 => Ok(None),
-                    1 => Ok(Some(rows.into_iter().next().unwrap())),
+                    1 => Ok(Some(rows.into_iter().next().ok_or_else(|| {
+                        DbError::Database(
+                            "query_optional: row_count was 1 but iterator was empty".to_string(),
+                        )
+                    })?)),
                     n => Err(DbError::Database(format!(
                         "query_optional: expected 0-1 rows, got {n}"
                     ))),

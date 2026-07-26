@@ -24,7 +24,7 @@ anyhow.workspace = true
 
 [lib]
 name = "hkask_mcp_condenser"
-path = "src/lib.rs"
+path = "src/hkask_mcp_condenser.rs"
 
 [[bin]]
 name = "hkask-mcp-condenser"

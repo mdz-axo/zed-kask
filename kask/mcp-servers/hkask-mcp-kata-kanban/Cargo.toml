@@ -25,7 +25,7 @@ anyhow.workspace = true
 
 [lib]
 name = "hkask_mcp_kata_kanban"
-path = "src/lib.rs"
+path = "src/hkask_mcp_kata_kanban.rs"
 
 [[bin]]
 name = "hkask-mcp-kata-kanban"

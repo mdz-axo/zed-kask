@@ -1,4 +1,0 @@
-# hKask — additive integration crate (not a separate workspace).
-# All kask crates are members of the root zed-kask workspace.
-# All workspace dependencies are defined in the root Cargo.toml [workspace.dependencies].
-# This file exists only for documentation and kask-specific scripts that expect it.

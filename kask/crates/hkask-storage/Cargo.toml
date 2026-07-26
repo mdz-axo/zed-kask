@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "SQLite + SQLCipher storage for hKask"
 
+
+[lib]
+path = "src/hkask_storage.rs"
+
 [dependencies]
 
 hkask-capability = { path = "../hkask-capability" }

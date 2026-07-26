@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "MCP runtime and governance for hKask"
 
+
+[lib]
+path = "src/hkask_mcp.rs"
+
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
@@ -20,11 +24,11 @@ jsonschema = "0.28"
 [dev-dependencies]
 async-trait.workspace = true
 tempfile.workspace = true
-proptest = "1"
+proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 rcgen = "0.13"
 tokio-rustls = "0.26"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls = { workspace = true }
 
 [[test]]
 name = "tool_input_fuzz"

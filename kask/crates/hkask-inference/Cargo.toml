@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Multi-provider inference router for hKask — DeepInfra, Together AI, fal.ai, OpenRouter, KiloCode"
 
+
+[lib]
+path = "src/hkask_inference.rs"
+
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 hkask-regulation = { path = "../hkask-regulation" }

@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "The bidirectional seam between hKask port traits and zed-kask facilities (D8)"
 
+
+[lib]
+path = "src/kask_bridge.rs"
+
 [dependencies]
 # hKask side — port traits only (never concrete zed crates)
 hkask-types = { path = "../hkask-types" }

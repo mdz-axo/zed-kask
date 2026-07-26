@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask goal types — minimal coordination substrate for multi-agent collaboration (extracted from hkask-services-core)"
 
+
+[lib]
+path = "src/hkask_goal.rs"
+
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 chrono.workspace = true

@@ -7,7 +7,7 @@ description = "Web search, extraction, and feed-based research MCP server"
 
 [lib]
 name = "hkask_mcp_research"
-path = "src/lib.rs"
+path = "src/hkask_mcp_research.rs"
 
 [[bin]]
 name = "hkask-mcp-research"

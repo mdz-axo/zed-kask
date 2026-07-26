@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Ontology vocabulary bridge — Dublin Core + BIBO + CiTO + PKO constants and mapping helpers"
 
+
+[lib]
+path = "src/hkask_bridge_dublincore.rs"
+
 [dependencies]
 
 [dev-dependencies]

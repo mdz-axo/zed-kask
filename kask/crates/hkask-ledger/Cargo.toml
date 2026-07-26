@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Double-entry accounting ledger — immutable transactions for cost, crypto, and securities tracking"
 
+
+[lib]
+path = "src/hkask_ledger.rs"
+
 [dependencies]
 hkask-storage = { path = "../hkask-storage" }
 uuid.workspace = true

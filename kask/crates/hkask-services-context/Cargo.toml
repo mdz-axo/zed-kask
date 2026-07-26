@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask context service — governance, regulation store, storage guards"
 
+
+[lib]
+path = "src/hkask_services_context.rs"
+
 [dependencies]
 hkask-services-core = { path = "../hkask-services-core" }
 hkask-regulation = { path = "../hkask-regulation" }
@@ -17,7 +21,7 @@ hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
 serde_json.workspace = true
 async-trait.workspace = true
-parking_lot = "0.12"
+parking_lot = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true

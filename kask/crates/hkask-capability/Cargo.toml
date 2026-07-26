@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "OCAP delegation token system with Ed25519-signed cryptographic attenuation"
 
+
+[lib]
+path = "src/hkask_capability.rs"
+
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 serde.workspace = true

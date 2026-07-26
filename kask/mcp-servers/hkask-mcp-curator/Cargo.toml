@@ -22,7 +22,7 @@ chrono.workspace = true
 
 [lib]
 name = "hkask_mcp_curator"
-path = "src/lib.rs"
+path = "src/hkask_mcp_curator.rs"
 
 [[bin]]
 name = "hkask-mcp-curator"

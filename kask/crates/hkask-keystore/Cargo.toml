@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "OS keychain integration and AES-256-GCM encryption for hKask"
 
+
+[lib]
+path = "src/hkask_keystore.rs"
+
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 keyring.workspace = true
@@ -18,7 +22,7 @@ thiserror.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 hex.workspace = true
-dirs = "6"
+dirs = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true

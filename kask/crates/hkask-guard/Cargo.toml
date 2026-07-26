@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask content safety guard — mandatory input/output scanning for all LLM boundaries, OWASP LLM Top 10 aligned"
 
+
+[lib]
+path = "src/hkask_guard.rs"
+
 [dependencies]
 hkask-regulation = { path = "../hkask-regulation" }
 hkask-types = { path = "../hkask-types" }

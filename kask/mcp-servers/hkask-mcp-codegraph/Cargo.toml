@@ -30,7 +30,7 @@ tree-sitter-rust = { workspace = true }
 
 [lib]
 name = "hkask_mcp_codegraph"
-path = "src/lib.rs"
+path = "src/hkask_mcp_codegraph.rs"
 
 [[bin]]
 name = "hkask-mcp-codegraph"

@@ -38,7 +38,7 @@ nom-exif = "3"
 
 [lib]
 name = "hkask_mcp_media"
-path = "src/lib.rs"
+path = "src/hkask_mcp_media.rs"
 
 [[bin]]
 name = "hkask-mcp-media"

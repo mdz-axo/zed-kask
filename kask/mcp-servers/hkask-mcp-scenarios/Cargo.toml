@@ -7,7 +7,7 @@ description = "Scenario planning MCP server — MAIA event-tree forecasting with
 
 [lib]
 name = "hkask_mcp_scenarios"
-path = "src/lib.rs"
+path = "src/hkask_mcp_scenarios.rs"
 
 [[bin]]
 name = "hkask-mcp-scenarios"

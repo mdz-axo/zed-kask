@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask Kata-Kanban workflow service — Toyota Kata process engine with Kanban board mechanics"
 
+
+[lib]
+path = "src/hkask_services_kata_kanban.rs"
+
 [dependencies]
 # Shared across both legacy crates
 hkask-services-core = { path = "../hkask-services-core" }

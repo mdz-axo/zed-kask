@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "hKask runtime services — text classification, provider intelligence, daemon handler"
 
+
+[lib]
+path = "src/hkask_services_runtime.rs"
+
 [dependencies]
 hkask-services-core = { path = "../hkask-services-core" }
 hkask-guard = { path = "../hkask-guard" }
