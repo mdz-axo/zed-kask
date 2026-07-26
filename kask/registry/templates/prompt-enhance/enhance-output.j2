@@ -1,0 +1,121 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- format
+- deliver
+- structure
+- finalize
+contract:
+  input:
+    enhanced_prompt:
+      type: string
+    original_prompt:
+      type: string
+    prompt_type:
+      type: string
+    effort_tier:
+      type: string
+    output_format_resolved:
+      type: string
+      enum: [inline, file, both]
+    output_path_resolved:
+      type: string
+    phases_run:
+      type: array
+      description: List of phases actually completed
+    audit_findings:
+      type: array
+      description: Findings from Phase 2 with constraint_force labels
+    grill_ratings:
+      type: array
+      description: Phase 4 ratings per area
+    mutations_applied:
+      type: array
+      description: Mutations applied across all rewrite iterations
+    mutations_deferred:
+      type: array
+      description: Hypothesis-tier findings deferred for user verification
+    convergence_metric:
+      type: number
+  output:
+    delivered_output:
+      type: string
+      description: The final formatted output (inline block, file content, or both)
+    output_path_written:
+      type: string
+      description: Path written if file/both; empty otherwise
+    change_log:
+      type: object
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.31.0 — prompt-enhance #}
+{# ACT phase: Format and deliver the enhanced prompt #}
+{# goal: Deliver the enhanced prompt per output_format with a change log. #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 3000
+thinking_budget = "off"
+
+You are the output formatter for prompt-enhance. Format the final enhanced prompt per the resolved `output_format` and produce a change log.
+
+## Output Formats
+
+### `inline` (default)
+Return the enhanced prompt in a fenced code block (using triple backticks) so it can be easily copied and pasted into a new thread. Precede it with a one-line summary. Follow it with the change log.
+
+### `file`
+Write the enhanced prompt to `output_path_resolved`. The file content is the enhanced prompt followed by the change log as a markdown comment. Return a confirmation message with the path.
+
+### `both`
+Inline (as above) + write to file (as above).
+
+## Change Log
+
+Always include a change log section with:
+
+1. **Summary** — one line: type, effort, phases run, convergence metric.
+2. **Audit findings table** — by constraint force (Prohibition → Guardrail → Guideline → Evidence → Hypothesis), with the finding, the lens, and whether it was addressed.
+3. **Grill ratings** — per area (Solid/Partial/Gap).
+4. **Mutations applied** — list of mutations with the finding they addressed.
+5. **Deferred findings** — Hypothesis-tier findings the user should verify manually.
+6. **Residual risks** — any remaining concerns.
+
+## Context
+```json
+{
+  "enhanced_prompt": {{ enhanced_prompt | tojson }},
+  "original_prompt": {{ original_prompt | tojson }},
+  "prompt_type": {{ prompt_type | tojson }},
+  "effort_tier": {{ effort_tier | tojson }},
+  "output_format_resolved": {{ output_format_resolved | tojson }},
+  "output_path_resolved": {{ output_path_resolved | tojson }},
+  "phases_run": {{ phases_run | tojson }},
+  "audit_findings": {{ audit_findings | tojson }},
+  "grill_ratings": {{ grill_ratings | tojson }},
+  "mutations_applied": {{ mutations_applied | tojson }},
+  "mutations_deferred": {{ mutations_deferred | tojson }},
+  "convergence_metric": {{ convergence_metric | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "delivered_output": "the full formatted output (inline block + change log, or file confirmation, or both)",
+  "output_path_written": "path written or empty string",
+  "change_log": {
+    "summary": "type=X effort=Y phases=[1,2,3,4] convergence=0.15",
+    "audit_findings_table": "markdown table",
+    "grill_ratings": "per-area ratings",
+    "mutations_applied": ["list"],
+    "deferred_findings": ["list"],
+    "residual_risks": ["list"]
+  }
+}
+```

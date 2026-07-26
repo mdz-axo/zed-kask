@@ -1,91 +1,83 @@
-# Agent Loop Improvements — Task Checklist
+# Infrastructure Jinja2 Template & YAML Manifest Audit — Checklist
 
-## Phase 1 — Foundation & high-risk plumbing
+## Phase 0 — Plan & Inventory (done)
 
-- [x] **T1: Deferred tool-result plumbing**
-  - `DeferredToolResult` with `owning_message_ix` + `tool_name`, `Option<Pin<Box<oneshot::Receiver>>>`
-  - Drain at top of `run_turn_internal` after compaction, before `build_completion_request`
-  - Inject into original agent message via clone-and-replace (not `Arc::get_mut`)
-  - `cancel()` clears the queue
-  - 3 tests
-  - Files: `crates/agent/src/thread.rs`
+- [x] **T0: Inventory infrastructure `.j2`/`.yaml` artifacts**
+  - 0 `.j2` files outside `kask/registry/` (all 335 are skill-registry).
+  - 3 in-scope YAMLs: `kask/corpus/replica/company-researcher.yaml`,
+    `kask/corpus/replica/john-brooks.yaml`,
+    `kask/corpus/pipeline-capabilities-researcher.yaml`.
+  - 7 out-of-scope infra YAMLs (no Rust consumer / generator output / ops config).
 
-- [x] **T2a: `SubagentHandle::send_streaming` trait method**
-  - Async trait method with default impl delegating to `send` (I2)
-  - `NativeSubagentHandle` override spawns background turn, delivers via oneshot
-  - `ToolCallEventStream::enqueue_deferred_result` with `owning_message_ix` from stream
-  - Files: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`
+## Phase 1 — Functional Role Discovery (done)
 
-- [~] **T2b: Non-blocking `spawn_agent` tool** (DEFERRED — GPUI test scheduler incompatibility)
-  - Infrastructure complete and tested in isolation
-  - Blocking `send` kept: the GPUI test scheduler's `run_until_parked` cannot handle
-    a foreground task waiting on a background task (causes "Parking forbidden")
-  - Non-blocking activation requires either a test scheduler change or a
-    `cx.notify()`-based watcher task pattern
+- [x] **T1: graph-audit (dual mode) — replica YAML cluster**
+  - Confirmed `EmbedService::embed_corpus` → `CorpusConfig` parse path.
+  - Mapped every `CorpusConfig` field to its YAML source.
+  - Classified edges by constraint force; detected 7 Prohibition + 5 Guardrail.
+  - Output: `tasks/phase1-functional-roles.md`.
+- [x] **T2: graph-audit (dual mode) — pipeline manifest runbook**
+  - Re-verified no Rust consumer.
+  - Mapped 13 referenced MCP tools to Rust entry points (all match).
+  - Output: `tasks/phase1-functional-roles.md`.
 
-## Phase 2 — Conditional rules
+**Checkpoint C1**: ✅ consumer code unchanged; functional-role statements produced.
 
-- [x] **T3: Frontmatter parsing**
-  - `RuleFrontmatter` with manual `Default` (always_apply: true)
-  - Handles empty frontmatter, no closing fence, malformed YAML
-  - 6 tests
-  - Files: `crates/prompt_store/src/prompts.rs`, `crates/agent/src/agent.rs`
+## Phase 2 — Logic & Semantics Audit (done)
 
-- [x] **T4: Conditional-rules scoping**
-  - `filter_conditional_rules()` in `render_system_prompt`
-  - Relative glob matching via worktree-prefix stripping + `globset`
-  - `CachedFilteredContext` + `filter_inputs_digest` avoids per-render clone
-  - Invalid globs logged
-  - 4 tests
-  - Files: `crates/agent/src/thread.rs`
+- [x] **T3: pragmatic-semantics + pragmatic-cybernetics + essentialist — replica YAMLs**
+  - 7 Prohibition, 5 Guardrail, 2 Guideline, 3 Hypothesis.
+  - Output: `tasks/phase2-logic-semantics.md`.
+- [x] **T4: pragmatic-semantics + pragmatic-cybernetics + essentialist — pipeline manifest**
+  - 0 Prohibition, 3 Guardrail, 2 Guideline, 5 Hypothesis (3 resolved as Evidence).
+  - Output: `tasks/phase2-logic-semantics.md`.
 
-## Phase 3 — Static-context memory
+**Checkpoint C2**: ✅ Prohibition findings promoted to Phase 3.
 
-- [x] **T5: Static-context memory block**
-  - `inject_static_context` is async (`Pin<Box<Future>>`) — no `block_on` deadlock
-  - Loaded in `run_turn_internal` (async), cached on `Thread`
-  - `BridgeContextInjector` overrides with high-confidence memory recall
-  - Files: `crates/agent/src/agent.rs`, `crates/agent/src/thread.rs`, `crates/agent/src/templates.rs`, `crates/agent/src/templates/system_prompt.hbs`, `kask/crates/kask_bridge/src/context_injector.rs`
+## Phase 3 — Gap Interrogation (done)
 
-## Phase 4 — Context-aware tool router
+- [x] **T5: sequential-inquiry + grill-me — replica YAMLs**
+  - `company-researcher.yaml`: **Gap** (Rationale/Edge-Cases/Synthesis).
+  - `john-brooks.yaml`: **Solid** (all 5 rounds).
+  - Output: `tasks/phase3-gap-analysis.md`.
+- [x] **T6: sequential-inquiry + grill-me — pipeline manifest**
+  - Runbook: **Partial** (Recall/Mechanism/Rationale Solid; Edge-Cases/Synthesis Partial).
+  - Confirmed `max_tokens: 512` = Rust default; `dedup_threshold: 0.89` diverges from default 0.85.
+  - Output: `tasks/phase3-gap-analysis.md`.
 
-- [x] **T6: Lazy tool router**
-  - `LazyToolRouter` — activates on explicit tool requests, complex messages, or code-file + edit signals
-  - Scores all tools (including MCP) by keyword overlap with descriptions
-  - Returns `Option<Vec>` — `None` = fail-open, `Some(vec)` = filter
-  - 8 tests
-  - Files: `crates/agent/src/tool_router.rs`
+**Checkpoint C3**: ✅ BUG-001 promoted to Phase 4.
 
-- [x] **T7: Wire `ToolRouter` into `enabled_tools` + composition root**
-  - `TOOL_ROUTER` extension point — `None` by default (I2)
-  - Wired in `crates/zed/src/main.rs`: `set_tool_router(Some(Arc::new(LazyToolRouter::new())))`
-  - Files: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`, `crates/zed/src/main.rs`
+## Phase 4 — Bug Hunt & Diagnosis (done)
 
-## Adversarial review fixes
+- [x] **T7: bug-hunt expedition — replica YAMLs + `hkask-services-corpus`**
+  - Wrote `tests/replica_persona_parse_test.rs` (2 tests).
+  - Confirmed BUG-001 (`company-researcher.yaml` parse failure: missing `exemplar_count_min`).
+  - Discovered BUG-002 (`john-brooks.yaml` `budget` silent PerPage mismatch).
+  - Output: `tasks/phase4-bughunt-report.md`.
+- [x] **T8: diagnose — fix `company-researcher.yaml` contract drift**
+  - falsifiability: 3 ranked hypotheses; H1 (missing required) confirmed via `[DIAG-0001]`.
+  - Fix applied: 8 changes conforming YAML to `CorpusConfig`.
+  - Regression test flipped to positive assertion; instrumentation cleaned.
+  - Post-mortem written.
+- [x] **T9: diagnose — verify `john-brooks.yaml`**
+  - Parses; BUG-002 is a contract defect (deferred to Phase 5).
 
-- [x] C1: `tool_router()` returns `None` by default (I2)
-- [x] C2: `BridgeContextInjector` implements `inject_static_context`
-- [x] B1: Deferred result injected into original agent message
-- [x] B2: Deferred results survive replay
-- [x] B3: Correct `scoped_tool_call_id` using original `owning_message_ix`
-- [x] B4: Relative globs match via worktree-prefix stripping
-- [x] B5: Router returns `Option<Vec>` to distinguish states
-- [x] M4: `tool_name` stored on `DeferredToolResult`
-- [x] M6: Empty frontmatter `---\n---` recognized
-- [x] 1.1: `inject_static_context` is async — no `block_on`
-- [x] 1.2: Clone-and-replace instead of `Arc::get_mut`
-- [x] 1.4: `CachedFilteredContext` avoids per-render clone
-- [x] 3.3: `filter_conditional_rules` doc clarifies I2 scope
-- [x] 3.4: `drain_completed_deferred_results` doc updated
+**Checkpoint C4**: ✅ `cargo test -p hkask-services-corpus` 21 passed; `./script/clippy -p hkask-services-corpus` clean.
 
-## .rules additions
+## Phase 5 — Architectural Refactor (done — decision only)
 
-- [x] No `block_on` on foreground thread
-- [x] Mutating `Arc<Message>` in `Thread.messages` (clone-and-replace, not `get_mut`)
-- [x] Deferred results and the turn loop (no busy-spin/timer in `end_turn`)
+- [x] **T10: refactor-architecture decision — replica YAML cluster**
+  - Candidate: `BudgetConfig` untagged-enum variant reorder.
+  - Decision: **DEFER** with ADR (cross-crate, affects 7 out-of-scope registry YAMLs).
+  - Other candidates (`deny_unknown_fields`, surface width, runbook `verify:`): **Reject** (scope/effort).
+  - Output: `tasks/phase5-refactor-decision.md`.
 
-## Remaining (non-blocking, documented)
+**Checkpoint C5**: ✅ ADR recorded; no Phase 5 code changes (correct).
 
-- T2b: Non-blocking `spawn_agent` — requires GPUI test scheduler change or watcher-task pattern
-- 1.5: Redundant `opened_buffers` traversal (twice per turn) — low impact, `CachedFilteredContext` mitigates
-- 2.4: Static context has no mid-session refresh — by design
+## Phase 6 — Convergence & Report (done)
+
+- [x] **T11: convergence check + final report**
+  - All slices converged: Slice A (replica) — fixed + tested; Slice B (runbook) — audited, no fix needed.
+  - Per-artifact health scores: company-researcher 0.85, john-brooks 0.80, runbook 0.90.
+  - Aggregate report: `tasks/audit-report.md`.
+  - 6 recommended follow-ups documented.

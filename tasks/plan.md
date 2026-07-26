@@ -1,451 +1,318 @@
-# Agent Loop Improvements — Task Breakdown Plan
+# Infrastructure Jinja2 Template & YAML Manifest Audit — Task Breakdown Plan
 
 <!--
 DC+BIBO document metadata
-Title:        Agent Loop Improvements — Task Breakdown Plan
+Title:        Infrastructure Jinja2 Template & YAML Manifest Audit — Task Breakdown Plan
 Creator:      task-breakdown skill (GLM 5.2 agent)
-Date:         2026-07-24
+Date:         2026-07-26
 Type:         bibo:Document
-Description:  Vertical-slice decomposition of four agent REPL/chat loop improvements
-              (non-blocking subagents, conditional rules, static-context memory,
-              context-aware tool router) for the zed-kask codebase.
+Description:  Vertical-slice decomposition of an audit pass over infrastructure
+              (non-skill-registry) Jinja2 templates and YAML manifests in the
+              zed-kask codebase. Each slice spans Phases 1–5 for one artifact
+              (or one tightly-coupled cluster) and ends with the system in a
+              working state.
 -->
 
 ## Overview
 
-Four improvements to the agent REPL/chat loop in `crates/agent`, decomposed into
-vertical slices that each deliver a testable, end-to-end behavior change while
-keeping the system in a working state after every slice. Mode-based tool scoping
-(Roo Code modes) is explicitly abandoned; the fourth item replaces it with a
-context-aware tool router.
+This plan audits **infrastructure** Jinja2 templates and YAML manifests —
+artifacts that live outside `kask/registry/` (the skill registry) and are
+consumed by Rust at runtime (rendered, parsed, dispatched, or referenced as
+configuration). The skill registry's own `.j2`/`.yaml` artifacts are explicitly
+out of scope; they were covered by a prior cleanup pass.
 
-The four improvements, ordered by risk (highest first) and dependency:
+### Inventory result (Phase 0)
 
-1. **Non-blocking subagents** — `spawn_agent` returns immediately with a
-   `session_id` and streams progress; the final result is delivered as a
-   deferred tool result in a subsequent outer-loop iteration.
-2. **Conditional rules** — YAML frontmatter on `AGENTS.md` / `.rules` files
-   scopes rules to file globs; only matching rules enter the system prompt.
-3. **Static-context memory block** — a project-level memory block loaded once
-   per session via the existing `ContextInjector` trait, included in the
-   system-prompt digest (not retrieved per-turn).
-4. **Context-aware tool router** — a Rust-side `ToolRouter` trait that filters
-   the tool set per turn based on context (open files, message content),
-   replacing static mode-based scoping.
+A full filesystem scan was performed:
 
-All four share two invariants that every slice must preserve:
+- **`.j2` / `.jinja2` / `.jinja` files outside `kask/registry/`:** **0 files.**
+  All 335 Jinja2 templates in the repo live under `kask/registry/templates/`
+  (skill crates). There are **no infrastructure Jinja2 templates** in this
+  codebase. The task's "Jinja2 template" dimension is therefore empty; the
+  audit reduces to a YAML-manifest audit.
+- **Infrastructure `.yaml` / `.yml` files outside `kask/registry/` and outside
+  `kask/security/regressions/`:** 7 candidate files. After tracing consumers:
 
-- **I1 — System-prompt digest cache correctness**: any change to system-prompt
-  inputs (rules text, static context, available tools) must be reflected in
-  the digest computed by `system_prompt_digest` (thread.rs L4862) so cache
-  busts are observable and stale prompts are never served.
-- **I2 — Upstream Zed compatibility**: all new features are no-ops when the
-  extension point is unset. `ContextInjector`, `ToolRouter`, the
-  `SubagentHandle::send_streaming` default, and frontmatter parsing
-  (frontmatter absent ⇒ `alwaysApply: true`) must all degrade to current
-  behavior when not wired.
+| # | Artifact | Rust consumer | In scope? | Why |
+|---|----------|---------------|-----------|-----|
+| 1 | `livekit.yaml` | None — config for the external `livekit-server` container, mounted by `compose.yml`. Rust reads LiveKit **server/key/secret** from env-backed `collab` config, not this file. | **No** | Pure ops config; no Rust parse/render. |
+| 2 | `compose.yml` | None — Docker Compose orchestration. `dev_container` crate parses `devcontainer.json`, not `compose.yml`. | **No** | Pure ops config. |
+| 3 | `crates/proto/proto/buf.yaml` | None in Rust — consumed by the `buf` CLI invoked from `tooling/xtask` workflow generators. | **No** | External tool config; no Rust parse. |
+| 4 | `crates/collab/k8s/collab.template.yml` | `tooling/xtask/src/tasks/workflows/deploy_collab.rs` — but only as a shell `envsubst < ... | kubectl apply -f -` path. Not parsed by Rust. | **No** | Ops template; no Rust data contract. |
+| 5 | `extensions/workflows/shared/bump_version.yml` | Generated artifact — produced by `tooling/xtask` Rust code (`extensions/bump_version.rs`) into `.github/workflows/`. The Rust is the **producer**, not consumer. | **No** | Generator output; reverse direction. |
+| 6 | `extensions/workflows/run_tests.yml` | Same — generated by `tooling/xtask` `run_tests.rs`. | **No** | Generator output. |
+| 7 | `script/danger/pnpm-lock.yaml` | Lockfile for a Ruby/JS tool. No Rust consumer. | **No** | Lockfile. |
+| 8 | `kask/corpus/replica/company-researcher.yaml` | **Yes** — `hkask_services_corpus::EmbedService::embed_corpus` deserializes it via `serde_yaml_neo::from_str` into `CorpusConfig`. Entry point: `kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs::corpus_build_persona`. | **Yes** | Real Rust data contract. |
+| 9 | `kask/corpus/replica/john-brooks.yaml` | **Yes** — same consumer as #8. | **Yes** | Real Rust data contract. |
+| 10 | `kask/corpus/pipeline-capabilities-researcher.yaml` | **No Rust consumer found.** Grep for `capabilities-researcher-pipeline`, `corpus/pipeline`, `PipelineManifest`, and `type: pipeline` against `*.rs` returns only unrelated "scenario pipeline" matches in `hkask-mcp-scenarios` and `kask_panel`. The file is a human-run runbook (its own header says "All pipeline steps run through MCP corpus tools" via CLI). | **Yes (advisory)** | No Rust contract to drift, but it carries hardcoded model names, paths, and tunable values whose provenance and currency must be audited as a runbook. |
 
-## Architecture Decisions
+**Conclusion:** The audit has **3 in-scope artifacts**, all YAML, all under
+`kask/corpus/`:
 
-### AD-1: Deferred tool results for non-blocking subagents
+- `kask/corpus/replica/company-researcher.yaml` (Rust-consumed — high risk)
+- `kask/corpus/replica/john-brooks.yaml` (Rust-consumed — high risk)
+- `kask/corpus/pipeline-capabilities-researcher.yaml` (runbook — medium risk)
 
-The inner loop's `tool_results: FuturesUnordered` drains all tool tasks before
-re-entering the outer loop (thread.rs L3104–3111). A non-blocking subagent
-cannot block this drain. Decision: `spawn_agent` returns an immediate
-placeholder `LanguageModelToolResult` ("subagent spawned, session_id=X, will
-report when done") that completes the current tool-result slot, and registers a
-**deferred tool result** keyed by `tool_use_id` on the `Thread`. The outer loop
-checks for due deferred results at the top of each iteration (after compaction,
-before `build_completion_request`) and, if any are ready, inserts them as a
-synthetic tool-result message so the model sees them in the next request. This
-fits the existing architecture without restructuring the inner-loop race.
+The two replica YAMLs are tightly coupled (same `CorpusConfig` consumer, same
+`corpus_build_persona` entry point) and are audited as **one cluster** in
+Slice A so the contract drift between them and `CorpusConfig` is resolved
+consistently. The pipeline manifest is a standalone runbook audited as
+**Slice B**.
 
-Rationale: option (a) from the initiative brief is simpler and avoids
-introducing a stream-of-results type into the inner loop's `select!`. Progress
-events flow through the existing `ToolCallEventStream::update_fields` path
-(already used by streaming tool inputs); only the *final* result is deferred.
+### Pre-existing findings (Phase 0 → Phase 1 handoff)
 
-### AD-2: Frontmatter parsing in `prompt_store`, scoping in `agent`
+Already established by reading the consumer code (`embed/types.rs`,
+`embed/service.rs`, `salience.rs`) against the artifacts:
 
-`RulesFileContext` (prompts.rs L95) gains an `Option<RuleFrontmatter>` field
-with `globs: Vec<String>` and `always_apply: bool`. Parsing happens in
-`load_worktree_rules_file` (agent.rs L1267) — the frontmatter is stripped from
-the `text` field so the system prompt never sees the YAML. Scoping happens in
-`build_project_context` (agent.rs L1032): conditional rules are filtered out of
-the `WorktreeContext.rules_file` unless a matching file is open or mentioned.
-The filtered `ProjectContext` is what feeds `render_system_prompt`, so the
-digest (AD/I1) automatically reflects the conditional-rules state — no
-separate digest field is needed.
+- **`company-researcher.yaml` will not deserialize into `CorpusConfig`.**
+  - `centroid_entity_ref` is nested under `embedding:` — `CorpusConfig` expects it top-level. `EmbedService::embed_corpus` reads `config.centroid_entity_ref` directly.
+  - `validation.per_dimension: true` — `ValidationConfig` has no `per_dimension` field. With `serde_yaml_neo`'s default behavior this is likely a hard error (unknown field), not a silent ignore.
+  - `budget.mode: "absolute"` + `budget.triple_budget_per_100: 100` — `BudgetConfig::Absolute { max_triples }` has only `max_triples`. `mode` and `triple_budget_per_100` are unknown fields.
+  - `dimension_centroids[].dimension` — `DimensionCentroid` requires `name`, `ref_name`, `weight`. The `company-researcher.yaml` entries use `dimension:` (not `name:`) and omit `ref_name` and `weight`.
+  - `entities.concepts` is a list of **bare strings** — `EntityConfig.concepts: Vec<Entity>` where `Entity { name, appears_in }`. Bare strings will fail to deserialize.
+  - `methods[].threshold: {}` — `DeclaredMethod.threshold: Option<f64>`. An empty map `{}` is not a valid `Option<f64>`.
+- **`john-brooks.yaml` is closer to the contract** but still divergent:
+  - `entities.concepts` uses `[{name: "..."}]` — correct shape.
+  - `dimension_centroids` uses `name`/`ref_name`/`weight`/`description` — correct.
+  - `validation` has `exemplar_count_min`/`exemplar_count_max` — correct.
+  - `budget: { max_triples: 0 }` — matches `BudgetConfig::Absolute`. OK.
+  - But `company-researcher.yaml` and `john-brooks.yaml` disagree on the
+    `entities.concepts` shape, the `dimension_centroids` shape, and the
+    `budget` shape — at least one of them is wrong, and the consumer code
+    says it is `company-researcher.yaml`.
+- **`pipeline-capabilities-researcher.yaml` has no Rust consumer** but
+  embeds hardcoded model names (`DI/Qwen/Qwen3-235B-A22B-Instruct-2507`,
+  `DI/zai-org/GLM-5.2`, `unsloth/Qwen3.6-27B`), absolute paths
+  (`/home/mdz-axolotl/Clones/Library/Researcher`), and tunable hypotheses
+  (`max_tokens: 512` — explicitly marked "UNVALIDATED"). Provenance of each
+  must be traced to `.env` / Rust constants / design docs.
 
-Frontmatter format is Cline-compatible (`globs`, `alwaysApply`). When
-frontmatter is absent or `alwaysApply: true`, behavior is unchanged (I2).
+These findings are **Hypothesis-tier** until Phase 2 confirms them with
+provenance and Phase 4 confirms the runtime failure mode.
 
-### AD-3: Static context via a new `ContextInjector` method, cached on `Thread`
+## Architecture decisions
 
-Add `inject_static_context(&self, thread_id: &str) -> Vec<LanguageModelRequestMessage>`
-to the `ContextInjector` trait with a default impl returning `Vec::new()` (I2).
-Call it once on the first turn of a session (or lazily on first
-`render_system_prompt`), cache the result on `Thread` as
-`static_context: Option<SharedString>`, and include it in
-`SystemPromptTemplate` as a new `static_context: Option<SharedString>` field
-rendered after the project context block. The digest must hash this field
-(I1). The per-turn `inject_context` continues unchanged for dynamic retrieval.
+- **One slice per artifact cluster.** Slice A = the two replica YAMLs
+  (same consumer, must be fixed consistently). Slice B = the pipeline
+  manifest runbook. No horizontal slices.
+- **Read before write.** Phases 1–3 are read-only. The first edit happens
+  in Phase 4 (diagnose fix) for Slice A and Phase 5 (refactor) is not
+  anticipated for Slice B unless Phase 1–4 surface friction.
+- **No fabricated findings.** Every defect above cites a real file path,
+  a real Rust struct, and a real line in a real artifact. Hypothesis-tier
+  findings are labeled as such.
+- **Skill registry is authoritative and out of scope.** No edits to
+  `kask/registry/` artifacts. The `CorpusConfig` struct in
+  `kask/crates/hkask-services-corpus/src/embed/types.rs` is the contract
+  of record; the YAMLs are the artifacts that must conform.
+- **`./script/clippy` over `cargo clippy`** per project `.rules`. No
+  `unwrap()`/`expect()`/`panic!`/`let _ =` on fallible ops in any fix.
 
-### AD-4: `ToolRouter` trait with heuristic default, plugged into `enabled_tools`
+## Phased task list with checkpoints
 
-A new `crates/agent/src/tool_router.rs` file defines `ToolRouter` (trait) and
-`ToolSelectionContext` (struct: latest user message, open file paths, mentioned
-paths, available tool names). The router returns `Vec<SharedString>` of selected
-tool names above a 0.30 threshold. A `HeuristicToolRouter` default impl scores
-tools by simple signals (`.rs` open ⇒ boost `grep`/`read_file`/`edit_file`;
-URL in message ⇒ boost `fetch`/`web_search`; etc.). The router plugs into
-`Thread::enabled_tools` (thread.rs L4222) as a final filter after
-profile/feature-flag checks. When no router is wired (upstream Zed), all
-enabled tools pass through (I2). The selected tool set feeds
-`render_system_prompt`'s `available_tools`, so the digest (I1) reflects it.
+### Phase 1 — Foundation: Functional Role Discovery (Slice A + Slice B)
 
-## Dependency Graph
+- [ ] **T1: graph-audit (dual mode) — replica YAML cluster**
+  - Code mode: confirm `EmbedService::embed_corpus` → `CorpusConfig`
+    deserialization path; map every field of `CorpusConfig` to its YAML
+    source; identify the render/parse entry point
+    (`corpus_build_persona` MCP tool) and the data contract (variables the
+    YAML must provide).
+  - Semantic mode: classify every edge between the two YAMLs and
+    `CorpusConfig` by constraint force. Detect the structural pathologies
+    already surfaced in Phase 0 (orphan fields, gaps, shape mismatch).
+  - Output: per-artifact functional-role statement.
+  - Files read-only: `kask/corpus/replica/company-researcher.yaml`,
+    `kask/corpus/replica/john-brooks.yaml`,
+    `kask/crates/hkask-services-corpus/src/embed/types.rs`,
+    `kask/crates/hkask-services-corpus/src/embed/service.rs`,
+    `kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs`.
+  - Scope: S.
 
-```
-                      ┌──────────────────────────────────────────┐
-                      │ S1: Deferred tool-result plumbing (found.)│
-                      └─────────────────┬────────────────────────┘
-                                        │
-                          ┌─────────────┴─────────────┐
-                          ▼                           ▼
-                ┌────────────────────┐      ┌──────────────────────┐
-                │ S2: Non-blocking   │      │ S5: Frontmatter      │
-                │   subagent tool    │      │   parsing (prompt_   │
-                │   (end-to-end)     │      │   store)             │
-                └────────────────────┘      └──────────┬───────────┘
-                                                       │
-                                                       ▼
-                                          ┌────────────────────────┐
-                                          │ S6: Conditional-rules  │
-                                          │   scoping (end-to-end) │
-                                          └────────────────────────┘
-                                                       │
-                                          ┌────────────┴───────────┐
-                                          ▼                        ▼
-                                ┌──────────────────┐     ┌─────────────────────┐
-                                │ S3: Static-       │     │ S7: ToolRouter      │
-                                │   context memory  │     │   trait + heuristic  │
-                                │   (end-to-end)    │     │   (end-to-end)       │
-                                └──────────────────┘     └─────────────────────┘
-                                                       │
-                                                       ▼
-                                          ┌────────────────────────┐
-                                          │ S4: Wire ToolRouter   │
-                                          │   into enabled_tools  │
-                                          └────────────────────────┘
-```
+- [ ] **T2: graph-audit (dual mode) — pipeline manifest runbook**
+  - Code mode: confirm there is no Rust consumer (re-verify the negative
+    result). Map the runbook's referenced MCP tools (`corpus_convert`,
+    `corpus_chunk`, `corpus_purge_qa`, `training_submit`, etc.) to their
+    Rust entry points in `hkask-mcp-corpus` and the training MCP server.
+  - Semantic mode: classify each hardcoded value's edge to its referent
+    (model name → `.env` var, path → operator environment, tunable →
+    design doc or "Inference-only").
+  - Output: functional-role statement (runbook, no Rust contract).
+  - Files read-only: `kask/corpus/pipeline-capabilities-researcher.yaml`,
+    `kask/.env`, `kask/mcp-servers/hkask-mcp-corpus/`,
+    `kask/mcp-servers/hkask-mcp-training/` (if present).
+  - Scope: S.
 
-- **S1** is the foundation for S2 (non-blocking subagents need the deferred
-  result mechanism). It is also independently valuable (enables any future
-  deferred tool result).
-- **S5 → S6**: frontmatter parsing must exist before scoping can filter on it.
-- **S3** depends on S1 only loosely (both touch `Thread` fields and the digest)
-  but is scheduled after S2 to keep the high-risk subagent work contiguous and
-  to avoid interleaving two `Thread` struct changes in the same session.
-- **S7 → S4**: the trait must exist before it is wired into `enabled_tools`.
-- S6 and S7 are independent and could be parallelized across two sessions if
-  needed, but the plan sequences them to keep `Thread` struct edits
-  single-threaded.
+**Checkpoint C1** (after T1+T2): build green (`cargo check -p hkask-services-corpus`), human reviews functional-role statements before logic audit.
 
-## Slices (Vertical)
+### Phase 2 — Logic & Semantics Audit
 
-### S1 — Deferred tool-result plumbing (foundation)
-- **slice_id**: `agent/deferred-tool-results`
-- **feature_path**: `crates/agent/src/thread.rs`
-- **Description**: Add a `deferred_tool_results: Vec<DeferredToolResult>` field
-  to `Thread` and a check at the top of each `run_turn_internal` iteration that
-  drains due deferred results into a synthetic tool-result message before
-  `build_completion_request`. No tool uses this yet — the slice delivers the
-  mechanism plus a test that injects a deferred result manually and observes it
-  appear in the next request.
-- **Acceptance criteria**:
-  - A deferred result enqueued during iteration N appears as a tool-result
-    message in the request built at iteration N+1, with the correct
-    `tool_use_id`.
-  - With no deferred results enqueued, `run_turn_internal` behavior is
-    byte-identical to before (no extra messages, no digest change).
-  - New unit test `test_deferred_tool_result_appears_in_next_request` passes;
-    `./script/clippy` clean.
-- **Verification**: `cargo test -p agent --features test-support deferred_tool_result`
-  + `./script/clippy`.
-- **Dependencies**: None.
-- **Files likely touched**: `crates/agent/src/thread.rs`.
-- **Estimated scope**: M.
+- [ ] **T3: pragmatic-semantics + pragmatic-cybernetics + essentialist — replica YAML cluster**
+  - pragmatic-semantics: classify every hardcoded value in both YAMLs on
+    ontological (IS the consumer's actual behavior vs OUGHT the intended
+    contract), epistemic, and ontology-anchoring axes. Trace provenance of
+    `centroid_distance_max: 0.40`, `max_triples`, `batch_size`, model
+    names. Flag any Unknown (confidence ≤ 0.2) or Inference-only.
+  - pragmatic-cybernetics: the YAML + `embed_corpus` form a feedback loop.
+    Analyze polarity/delay/gain/closure/fidelity. The loop is open (config
+    is read once at start) — verify no hidden closure. Run the variety
+    check: does `CorpusConfig`'s deserializer have requisite variety for
+    the disturbances the YAMLs can produce (unknown fields, wrong shapes)?
+  - essentialist (advisory): 3-gate eliminative interrogation on each YAML.
+    G1 Exist — does the YAML earn its keep, or could its values be inlined
+    as `CorpusConfig` defaults? G2 Surface — is the variable surface
+    minimal (≤7 exposed top-level keys)? `CorpusConfig` exposes ~13.
+    G3 Contract — does every field encode genuine behavior?
+  - Output: per-artifact findings with constraint-force labels
+    (Prohibition / Guardrail / Guideline / Evidence / Hypothesis).
+  - Scope: M.
 
-### S2 — Non-blocking `spawn_agent` tool (end-to-end)
-- **slice_id**: `agent/non-blocking-subagent`
-- **feature_path**: `crates/agent/src/tools/spawn_agent_tool.rs`,
-  `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`
-- **Description**: `SpawnAgentTool::run` returns an immediate placeholder
-  result ("subagent spawned, session_id=X, will report when done") and enqueues
-  a `DeferredToolResult` carrying the real `subagent.send()` task. Progress
-  events flow via `ToolCallEventStream::update_fields` while the subagent runs.
-  When the subagent completes, the deferred result is marked due and the outer
-  loop delivers it. Add `SubagentHandle::send_streaming` with a default impl
-  that delegates to `send` (so upstream `NativeSubagentHandle` and any other
-  impl keep working — I2). The parent can spawn multiple subagents in parallel
-  and continue generating text while they run.
-- **Acceptance criteria**:
-  - After `spawn_agent` returns, the parent's tool-result slot is freed and the
-    parent receives a `StopReason::ToolUse` (not blocked) so it can continue.
-  - When the subagent completes, its final output appears as a tool result in
-    the parent's next request, keyed by the original `tool_use_id`.
-  - Cancelling the parent cancels all running subagents (existing
-    `running_subagents` cancellation still works).
-  - New test `test_non_blocking_subagent_streams_then_delivers` passes; existing
-    subagent tests still pass; `./script/clippy` clean.
-- **Verification**: `cargo test -p agent --features test-support subagent` +
-  `./script/clippy`.
-- **Dependencies**: S1.
-- **Files likely touched**: `crates/agent/src/tools/spawn_agent_tool.rs`,
-  `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`.
-- **Estimated scope**: L → broken into S2a + S2b (see Tasks).
+- [ ] **T4: pragmatic-semantics + pragmatic-cybernetics + essentialist — pipeline manifest**
+  - Same three lenses applied to the runbook. Focus on provenance of
+    hardcoded model names and paths, and on the cybernetic question: does
+    the runbook's `verify:` block close a feedback loop with the MCP tools
+    it invokes, or is it open-loop (no verification)?
+  - Output: per-artifact findings with constraint-force labels.
+  - Scope: M.
 
-### S3 — Static-context memory block (end-to-end)
-- **slice_id**: `agent/static-context-memory`
-- **feature_path**: `crates/agent/src/agent.rs`, `crates/agent/src/thread.rs`,
-  `crates/agent/src/templates.rs`, `crates/agent/src/templates/system_prompt.hbs`
-- **Description**: Add `inject_static_context` to `ContextInjector` (default
-  returns empty). On first turn (or first `render_system_prompt`), call it,
-  cache the result on `Thread` as `static_context: Option<SharedString>`, render
-  it in the system prompt after the project context, and include it in
-  `system_prompt_digest` (I1). The per-turn `inject_context` path is unchanged.
-- **Acceptance criteria**:
-  - When a `ContextInjector` is set and returns non-empty static context, the
-    rendered system prompt contains the static block exactly once, after the
-    project context section.
-  - The digest changes when the static context changes (new test
-    `test_system_prompt_digest_includes_static_context`); the cache busts.
-  - When no `ContextInjector` is set, the system prompt is byte-identical to
-    before (I2) — verified by extending `test_system_prompt_digest_stability`.
-  - `./script/clippy` clean.
-- **Verification**: `cargo test -p agent --features test-support system_prompt` +
-  `./script/clippy`.
-- **Dependencies**: S1 (both touch `Thread` struct + digest; sequence to avoid
-  merge conflicts).
-- **Files likely touched**: `crates/agent/src/agent.rs`,
-  `crates/agent/src/thread.rs`, `crates/agent/src/templates.rs`,
-  `crates/agent/src/templates/system_prompt.hbs`.
-- **Estimated scope**: M.
+**Checkpoint C2** (after T3+T4): human reviews findings; Prohibition/Guardrail findings are promoted to Phase 3 interrogation.
 
-### S4 — Wire `ToolRouter` into `enabled_tools`
-- **slice_id**: `agent/tool-router-wiring`
-- **feature_path**: `crates/agent/src/thread.rs`, `crates/agent/src/agent.rs`
-- **Description**: Add a `static TOOL_ROUTER: OnceLock<Option<Arc<dyn ToolRouter>>>`
-  extension point in `agent.rs` (mirroring `CONTEXT_INJECTOR`). In
-  `Thread::enabled_tools`, after the profile/feature-flag filter, if a router
-  is set, build a `ToolSelectionContext` from the current turn (latest user
-  message, open file paths from the project, available tool names) and retain
-  only the router-selected tools. When no router is set, all enabled tools pass
-  through (I2). The filtered set feeds `render_system_prompt`'s
-  `available_tools`, so the digest (I1) reflects it.
-- **Acceptance criteria**:
-  - With a router set that selects only `grep` and `read_file`, the next
-    request's `tools` array contains exactly those two (plus any context-server
-    tools the router passes through).
-  - With no router set, `enabled_tools` returns the same set as before (I2) —
-    verified by an existing test asserting no regression.
-  - The system-prompt digest changes when the router selects a different tool
-    set (new test `test_digest_reflects_tool_router_selection`).
-  - `./script/clippy` clean.
-- **Verification**: `cargo test -p agent --features test-support tool_router` +
-  `./script/clippy`.
-- **Dependencies**: S7 (the trait must exist).
-- **Files likely touched**: `crates/agent/src/thread.rs`,
-  `crates/agent/src/agent.rs`.
-- **Estimated scope**: M.
+### Phase 3 — Gap Interrogation
 
-### S5 — Frontmatter parsing (prompt_store)
-- **slice_id**: `prompt_store/rule-frontmatter`
-- **feature_path**: `crates/prompt_store/src/prompts.rs`,
-  `crates/agent/src/agent.rs`
-- **Description**: Add `RuleFrontmatter { globs: Vec<String>, always_apply: bool }`
-  and an `Option<RuleFrontmatter>` field on `RulesFileContext`. In
-  `load_worktree_rules_file`, parse YAML frontmatter (between `---` fences) at
-  the top of the rules file using `serde_yaml` (already a workspace dep via
-  minijinja/hkask — confirm) or a minimal hand-rolled parser to avoid a new
-  dep. Strip the frontmatter from `text` so the system prompt never sees it.
-  When frontmatter is absent, `always_apply` defaults to `true` (I2). No
-  scoping happens in this slice — all rules still load unconditionally; this
-  slice only adds the parsed metadata and ensures the stripped text renders
-  identically to before.
-- **Acceptance criteria**:
-  - A rules file with frontmatter parses into `RuleFrontmatter` with correct
-    `globs` and `always_apply`; the `text` field excludes the frontmatter.
-  - A rules file without frontmatter parses with `always_apply: true` and
-    `globs: vec![]`; `text` is unchanged.
-  - The rendered system prompt for a frontmattered-but-`alwaysApply: true` file
-    is byte-identical to the same file without frontmatter (I2) — verified by
-    extending `test_system_prompt_renders_user_agents_md_before_project_rules`.
-  - `./script/clippy` clean.
-- **Verification**: `cargo test -p prompt_store` + `cargo test -p agent
-  --features test-support rules_frontmatter` + `./script/clippy`.
-- **Dependencies**: None.
-- **Files likely touched**: `crates/prompt_store/src/prompts.rs`,
-  `crates/agent/src/agent.rs`.
-- **Estimated scope**: S.
+- [ ] **T5: sequential-inquiry + grill-me — replica YAML cluster**
+  - sequential-inquiry: branch on each open question from T3. Hypotheses:
+    (a) `company-researcher.yaml` is a stale template predating the
+    `DimensionCentroid`/`Entity` refactor; (b) it was never run against
+    current `CorpusConfig`; (c) it is intentionally divergent (different
+    persona shape). Delegate to **falsifiability** the counterfactual "if
+    `company-researcher.yaml` is loaded by current `embed_corpus`, does
+    it parse?" — test by constructing a minimal `#[test]` that calls
+    `serde_yaml_neo::from_str::<CorpusConfig>(...)` on the file contents.
+  - grill-me: 5 rounds (Recall → Mechanism → Rationale → Edge Cases →
+    Synthesis) on the authoring rationale of each divergent field.
+  - Output: per-artifact gap analysis with Solid/Partial/Gap ratings.
+  - Scope: M.
 
-### S6 — Conditional-rules scoping (end-to-end)
-- **slice_id**: `agent/conditional-rules-scoping`
-- **feature_path**: `crates/agent/src/agent.rs`, `crates/agent/src/thread.rs`
-- **Description**: In `build_project_context` (agent.rs L1032), after loading
-  `WorktreeContext.rules_file`, filter out conditional rules
-  (`always_apply: false` with non-empty `globs`) unless a file matching one of
-  the globs is open in the editor or mentioned in the current user message.
-  Glob matching uses the `glob` crate (confirm workspace dep) or a minimal
-  matcher. The open-files set comes from the project's active editor state;
-  the mentioned-paths set is extracted from the latest user message via simple
-  path detection. The filtered `ProjectContext` feeds `render_system_prompt`,
-  so the digest (I1) automatically reflects which conditional rules are active.
-  Add a project-event subscription so opening/closing a matching file refreshes
-  `project_context` (mirroring the existing rules-file-change subscription in
-  `handle_project_event`).
-- **Acceptance criteria**:
-  - A conditional rule scoped to `**/*.rs` is included in the system prompt iff
-    a `.rs` file is open or a `.rs` path is in the latest user message.
-  - Opening a matching file mid-session causes the next `render_system_prompt`
-    to include the rule (digest changes); closing it causes the rule to drop
-    (digest changes again).
-  - `alwaysApply: true` rules are always included (I2).
-  - New test `test_conditional_rule_scoped_to_open_file` passes; existing rules
-    tests pass; `./script/clippy` clean.
-- **Verification**: `cargo test -p agent --features test-support conditional_rules`
-  + `./script/clippy`.
-- **Dependencies**: S5.
-- **Files likely touched**: `crates/agent/src/agent.rs`,
-  `crates/agent/src/thread.rs`.
-- **Estimated scope**: M.
+- [ ] **T6: sequential-inquiry + grill-me — pipeline manifest**
+  - Same engine on the runbook's hardcoded values. For each model name,
+    confirm it exists in `kask/.env` or is referenced by Rust. For the
+    absolute path `/home/mdz-axolotl/Clones/Library/Researcher`, confirm
+    whether it is an operator-local path (acceptable in a runbook) or a
+    stale default. For `max_tokens: 512` (marked UNVALIDATED), confirm no
+    Rust default has since been established.
+  - Output: per-artifact gap analysis.
+  - Scope: M.
 
-### S7 — `ToolRouter` trait + heuristic scorer (end-to-end)
-- **slice_id**: `agent/tool-router-trait`
-- **feature_path**: `crates/agent/src/tool_router.rs` (new),
-  `crates/agent/src/tools.rs`
-- **Description**: New `crates/agent/src/tool_router.rs` (no `mod.rs` —
-  project rule) defining `ToolRouter` (trait), `ToolSelectionContext` (struct),
-  and `HeuristicToolRouter` (default impl). The heuristic scores each tool
-  0.0–1.0: e.g., `.rs`/`.ts` open ⇒ `grep`/`read_file`/`edit_file`/`diagnostics`
-  ≥ 0.5; URL in message ⇒ `fetch`/`web_search` ≥ 0.5; "terminal"/"run" in
-  message ⇒ `terminal` ≥ 0.5; otherwise 0.1 baseline. Returns tools scoring
-  ≥ 0.30. The trait and heuristic are unit-tested in isolation (no `Thread`
-  wiring — that is S4). Register the module in `tools.rs` or `lib.rs` per the
-  existing module pattern.
-- **Acceptance criteria**:
-  - `HeuristicToolRouter::select_tools` returns `grep` and `read_file` when the
-    context has an open `.rs` file and no URL.
-  - It returns `fetch` and `web_search` when the message contains a URL and no
-    open code file.
-  - It returns all tools (no filtering) when the context is empty (baseline
-    0.1 < 0.30 ⇒ empty selection ⇒ caller treats empty as "no filtering" —
-    decide in S4; the trait itself returns the filtered set).
-  - New test `test_heuristic_tool_router_scores` passes; `./script/clippy`
-    clean.
-- **Verification**: `cargo test -p agent --features test-support tool_router` +
-  `./script/clippy`.
-- **Dependencies**: None (independent of S1–S6; can start in parallel with S5).
-- **Files likely touched**: `crates/agent/src/tool_router.rs` (new),
-  `crates/agent/src/tools.rs` or `crates/agent/src/lib.rs` (module registration).
-- **Estimated scope**: M.
+**Checkpoint C3** (after T5+T6): human reviews gap analysis; confirmed bugs proceed to Phase 4.
 
-## Tasks (flat list, grouped by phase)
+### Phase 4 — Bug Hunt & Diagnosis (Slice A only — Slice B has no Rust consumer)
 
-### Phase 1 — Foundation & high-risk plumbing
-- [ ] **T1 (S1)**: Add `deferred_tool_results` field + drain logic to `Thread`;
-  add `DeferredToolResult` struct; add test
-  `test_deferred_tool_result_appears_in_next_request`. (M)
-- [ ] **T2a (S2)**: Add `SubagentHandle::send_streaming` trait method with
-  default impl delegating to `send`; implement on `NativeSubagentHandle`
-  returning a progress stream + final result future. (M)
-- [ ] **T2b (S2)**: Rewrite `SpawnAgentTool::run` to return immediate
-  placeholder + enqueue `DeferredToolResult`; wire progress via
-  `ToolCallEventStream::update_fields`; add test
-  `test_non_blocking_subagent_streams_then_delivers`. (M)
+- [ ] **T7: bug-hunt expedition — replica YAML cluster + `hkask-services-corpus`**
+  - Charter: target `kask/corpus/replica/*.yaml` + consumer crate
+    `hkask-services-corpus`. Strategy: Bach HTSM, Beizer categories
+    (configuration, interface, data). 
+  - Probe: write a `#[test]` in `hkask-services-corpus` that loads
+    `company-researcher.yaml` via `serde_yaml_neo::from_str::<CorpusConfig>`
+    and asserts the parse outcome. Run `cargo test -p hkask-services-corpus`
+    and `./script/clippy`. Search consumer for `.unwrap()`/`.expect()`/
+    `panic!`/`todo!` on the config path.
+  - Oracle: apply Weinberg oracle + IS/OUGHT + provenance + grill-me.
+    Tier findings BUG / POTENTIAL_BUG / OBSERVATION with confidence ≥ 0.60.
+  - Taxonomize: Beizer category + severity + pattern signature.
+  - Report: JSON expedition report.
+  - Scope: M.
 
-**Checkpoint 1**: `./script/clippy` clean; `cargo test -p agent --features
-test-support` passes (deferred results + subagent tests); manual smoke test:
-spawn two subagents in one parent turn and observe parallel execution.
+- [ ] **T8: diagnose — fix `company-researcher.yaml` contract drift**
+  - Phase 0 anchor: functional requirement is "the YAML must deserialize
+    into `CorpusConfig` and produce a valid `company-researcher` persona
+    embedding." Flag any spec gap explicitly — do not fabricate FR# refs.
+  - Build deterministic feedback loop: the T7 test is the loop. It fails
+    red before the fix, green after.
+  - Delegate hypothesis generation to **falsifiability**: 3–7 ranked
+    falsifiable root causes for the parse failure (unknown-field error vs
+    missing-required-field error vs wrong-type error). Present to user
+    before testing.
+  - Instrument with `[DIAG-xxxx]`-tagged probes mapped 1:1 to hypotheses
+    (e.g., `[DIAG-0001]` print the actual `serde_yaml_neo::Error` kind).
+  - Apply fix: edit `company-researcher.yaml` to conform to `CorpusConfig`
+    — move `centroid_entity_ref` to top level, remove `validation.per_dimension`,
+    fix `budget` to `Absolute { max_triples }`, fix `dimension_centroids`
+    entries to use `name`/`ref_name`/`weight`, fix `entities.concepts` to
+    `Vec<Entity>` shape, fix `methods[].threshold` to `Option<f64>`.
+  - Regression test written **before** the fix (T7's test).
+  - Clean up all `[DIAG-xxxx]` instrumentation.
+  - Write post-mortem.
+  - Convergence threshold 0.25.
+  - Files written: `kask/corpus/replica/company-researcher.yaml`,
+    `kask/crates/hkask-services-corpus/src/embed/service.rs` or a new
+    test file (regression test).
+  - Scope: M.
 
-### Phase 2 — Conditional rules
-- [ ] **T3 (S5)**: Add `RuleFrontmatter` + `Option<RuleFrontmatter>` on
-  `RulesFileContext`; parse frontmatter in `load_worktree_rules_file`; strip
-  from `text`; add parsing tests. (S)
-- [ ] **T4 (S6)**: Filter conditional rules in `build_project_context` by
-  open-files + mentioned-paths; add project-event subscription for open-file
-  changes; add `test_conditional_rule_scoped_to_open_file`. (M)
+- [ ] **T9: diagnose — verify `john-brooks.yaml` still parses (regression)**
+  - Run the same `CorpusConfig` parse test against `john-brooks.yaml`.
+    If it passes, no fix needed. If it fails, run the diagnose loop on it
+    too. This guards against the two YAMLs diverging from each other
+    after the T8 fix.
+  - Scope: S.
 
-**Checkpoint 2**: `./script/clippy` clean; `cargo test -p prompt_store` and
-`cargo test -p agent --features test-support rules` pass; manual smoke test:
-add a `**/*.rs`-scoped rule, open a `.rs` file, confirm rule appears in
-prompt; close it, confirm rule disappears (digest changes observable via
-telemetry).
+**Checkpoint C4** (after T7+T8+T9): `cargo test -p hkask-services-corpus` green, `./script/clippy` green, human reviews the fix and post-mortem.
 
-### Phase 3 — Static-context memory
-- [ ] **T5 (S3)**: Add `inject_static_context` to `ContextInjector` (default
-  empty); add `static_context: Option<SharedString>` to `Thread`; call once on
-  first turn, cache; add `static_context` field to `SystemPromptTemplate` +
-  `.hbs`; include in `system_prompt_digest`; add
-  `test_system_prompt_digest_includes_static_context`. (M)
+### Phase 5 — Architectural Refactor (conditional)
 
-**Checkpoint 3**: `./script/clippy` clean; `cargo test -p agent --features
-test-support system_prompt` passes; manual smoke test: set a `ContextInjector`
-returning static context, confirm it appears once in the prompt and the digest
-changes when it changes.
+- [ ] **T10: refactor-architecture decision — replica YAML cluster**
+  - Only if Phase 1–4 surface architectural friction. Candidate friction:
+    `CorpusConfig` exposes ~13 top-level fields with `#[serde(default)]` on
+    most — is the surface too wide? Are the two replica YAMLs the only
+    two instances of this config in the repo, suggesting the config could
+    be tightened or the YAMLs replaced with a builder?
+  - Run refactor-architecture: Explore for friction → rank deepening
+    candidates → walk design tree for the selected candidate → audit
+    cross-surface duplication → plan strangler-fig migration one domain
+    per commit with failing tests first → verify surgical completeness.
+  - Decision: proceed / defer / reject. If reject and the reason is
+    load-bearing, record an ADR.
+  - Scope: M (only if invoked; otherwise S for the decision write-up).
 
-### Phase 4 — Context-aware tool router
-- [ ] **T6 (S7)**: Create `crates/agent/src/tool_router.rs` with
-  `ToolRouter` trait, `ToolSelectionContext`, `HeuristicToolRouter`; register
-  module; add `test_heuristic_tool_router_scores`. (M)
-- [ ] **T7 (S4)**: Add `TOOL_ROUTER` extension point in `agent.rs`; in
-  `Thread::enabled_tools`, apply router filter after profile/feature-flag;
-  build `ToolSelectionContext` from current turn; add
-  `test_digest_reflects_tool_router_selection`. (M)
+**Checkpoint C5** (after T10): human reviews refactor decision; if proceed, full test suite green after refactor.
 
-**Checkpoint 4**: `./script/clippy` clean; `cargo test -p agent --features
-test-support tool_router` passes; manual smoke test: with a router set,
-confirm the tool set narrows based on open files; with no router, confirm no
-regression.
+### Phase 6 — Convergence & Report
+
+- [ ] **T11: convergence check + final report**
+  - Re-run `task-breakdown-convergence-check` across the whole plan.
+    Iterate Phases 1–5 on any artifact whose slice is not converged.
+  - Produce a final report per artifact: functional role, findings by
+    skill, constraint-force classification, fixes applied, refactor
+    decisions, residual risks, per-artifact health score.
+  - Aggregate into a workspace-level summary: inventory, defect counts
+    by severity, recommended follow-ups.
+  - Output: `tasks/audit-report.md`.
+  - Scope: S.
 
 ## Risks
 
 | Risk | Impact | Mitigation |
-|---|---|---|
-| Deferred tool results interact badly with compaction (a deferred result arrives mid-compaction) | High — turn corruption | S1 drains deferred results *after* compaction and *before* `build_completion_request`; compaction never sees a pending deferred result. Test this ordering explicitly. |
-| Non-blocking subagent progress events flood the `ToolCallEventStream` | Medium — UI jitter / token waste | Throttle progress updates (e.g., 1 event per N tokens or per 500ms); the existing `update_fields` path is already debounced upstream. |
-| Frontmatter parsing introduces a new YAML dep | Medium — build weight | Check workspace for `serde_yaml` (used by hkask-templates/minijinja context). If absent, hand-roll a minimal `---`-fence parser (frontmatter is a flat `globs` list + one bool — ~20 lines). |
-| Conditional-rules glob matching is slow on large worktrees | Low — startup latency | Globs are matched only against the open-files set (small) + mentioned paths (small), not the full worktree. Cache compiled globs on `RuleFrontmatter`. |
-| Static context loaded once goes stale if the underlying memory changes | Medium — stale prompt | Document that static context is session-scoped; provide a `refresh_static_context` method for future use. The digest catches byte changes if the cache is invalidated. |
-| Tool router drops a tool the model needed (false negative) | High — agent can't complete task | Default threshold 0.30 is permissive; heuristic gives every tool a 0.1 baseline so only truly irrelevant tools drop. S4 treats an *empty* router result as "no filtering" (fail-open) to avoid starving the model. |
-| Two slices touching `Thread` struct concurrently (S1, S3) cause merge conflicts | Low — rebase friction | Plan sequences S1 → S2 → S3; S3 starts only after S2 merges. |
-| Digest change from tool router busts the prefix cache too often | Medium — cost | The router runs once per turn (in `refresh_turn_tools`), so within a turn the tool set is stable. Across turns, cache busts only when the open-file/message context changes — acceptable. |
+|------|--------|------------|
+| `serde_yaml_neo`'s unknown-field behavior is not a hard error (e.g., `#[serde(deny_unknown_fields)]` absent), so `company-researcher.yaml` parses silently dropping fields — the bug is silent drift, not a crash. | High — the fix in T8 would be different (add `#[serde(deny_unknown_fields)]` to `CorpusConfig`, or fix the YAML, or both). | T7's test must assert **which** fields survive the parse, not just that it returns `Ok`. Probe `[DIAG-0002]` prints the parsed `CorpusConfig` debug repr. |
+| `john-brooks.yaml` is the "known-good" reference but may also have latent drift that has never been exercised because the persona was built once and cached. | Medium — T9 may surface a second bug. | T9 is scoped to handle a second diagnose loop if needed. |
+| `pipeline-capabilities-researcher.yaml` has no Rust consumer, so "fixes" are runbook edits with no automated verification. | Medium — runbook edits can introduce new staleness. | T6 must justify each edit against `.env` / Rust constants; no edit without provenance. |
+| The `CorpusConfig` struct itself may have evolved since the YAMLs were authored; the "correct" shape may be ambiguous. | Medium — T8 fix could conform to the wrong version. | T8 anchors to the **current** `embed/types.rs` as the contract of record; if the struct is wrong, that is a separate Phase 5 refactor, not a T8 fix. |
+| `./script/clippy` and `cargo test` may be slow on this workspace (large monorepo). | Low — checkpoints stall. | Scope test runs to `-p hkask-services-corpus` where possible. |
 
-## Open Questions
+## Open questions
 
-1. **`serde_yaml` availability**: Is `serde_yaml` a workspace dependency (via
-   hkask-templates or minijinja context), or does adding it to `prompt_store`
-   pull a new dep? Check `Cargo.lock` / `Cargo.toml` before T3. If absent,
-   hand-roll the minimal frontmatter parser.
-2. **`glob` crate availability**: Is the `glob` crate already a workspace dep,
-   or should conditional-rules matching use `globset` (likely present via
-   git/ignore logic)? Check before T4.
-3. **Open-files source**: What is the canonical way to query "files open in the
-   editor" from within `build_project_context`? The `Project` entity has a
-   worktree store, but the active editor state lives elsewhere (likely
-   `workspace::Workspace` or `EditorStore`). Need to find the right entry point
-   or pass the open-paths set down from the composition root. This is the
-   highest open question for S6.
-4. **Deferred result ordering vs. steering messages**: The outer loop already
-   handles "steering" queued user messages (`end_turn_at_next_boundary`). Does
-   a due deferred result take precedence over a steering message, or vice
-   versa? Tentative: steering messages end the turn at the next boundary;
-   deferred results are delivered *within* the turn. Confirm in S1.
-5. **Static context refresh trigger**: Should static context be re-fetched on
-   worktree-add/remove events (like rules), or strictly once per session?
-   Tentative: once per session (Kilo Code Memory Bank pattern); revisit if
-   staleness is observed.
-6. **Tool router + context-server tools**: Should the router score context-server
-   (MCP) tools, or only built-in tools? Tentative: router sees only built-in
-   tool names; MCP tools always pass through. Confirm in S4.
+1. **Is `company-researcher.yaml` still used?** Its header references a
+   `replica_build` tool that does not exist in the current MCP server
+   (the tool is `corpus_build_persona`). If the persona is no longer
+   built, the file may be dead. Phase 1 must confirm whether any
+   operator runbook or doc still points to it.
+2. **Is `pipeline-capabilities-researcher.yaml` still run?** Its header
+   says "v8.0" and references a `/home/mdz-axolotl/Clones/Library/Researcher`
+   path. If the corpus has been re-extracted elsewhere, the runbook is
+   stale. Phase 1 must check `kask/docs/` and any operator notes.
+3. **Should `CorpusConfig` carry `#[serde(deny_unknown_fields)]`?** This
+   is a Phase 5 question. Without it, silent drift is possible. With it,
+   every future YAML edit must be coordinated with a struct change. The
+   essentialist G2/G3 gates inform this.
+4. **Are there other `corpus/replica/*.yaml` files outside the repo**
+   (e.g., operator-local personas) that would break if `CorpusConfig`
+   tightens? Out of scope for this audit but informs the Phase 5 decision.

@@ -1,0 +1,96 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- rewrite
+- structure
+- decompose
+- verify
+- challenge
+contract:
+  input:
+    prompt:
+      type: string
+    findings:
+      type: array
+    proxy_eval_set:
+      type: array
+    iteration:
+      type: integer
+    grill_feedback:
+      type: object
+  output:
+    enhanced_prompt:
+      type: string
+    mutations_applied:
+      type: array
+    mutations_deferred:
+      type: array
+    acceptance_criteria:
+      type: array
+energy_cap: 6144
+visibility: Public
+---
+{# hKask v0.31.0 — prompt-enhance #}
+{# Phase 3 (reasoning): Typed rewrite for reasoning prompts #}
+{# goal: Surface hidden assumptions, structure CoT, add self-verification. #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4500
+thinking_budget = "on"
+
+You are the typed rewrite phase for **reasoning** prompts. Apply audit findings as targeted mutations to produce an enhanced prompt that surfaces hidden assumptions, structures the chain of thought, and adds self-verification.
+
+## Reasoning Prompt Rewrite Moves
+
+1. **Hidden-assumption surfacing** — Identify assumptions the prompt makes about the problem, the input, or the expected reasoning path. Make them explicit in the prompt. "Analyze why X is slow" → "Analyze why X is slow. State your assumptions about the input distribution, the workload, and the measurement context before reasoning."
+
+2. **Chain-of-thought structure** — If the reasoning is multi-step, structure it: (a) decompose the problem, (b) reason about each part, (c) synthesize. Don't force "think step by step" if the reasoning is single-step — that adds delay without benefit (cybernetic lens).
+
+3. **Self-verification** — Add a verification step where the model checks its own reasoning before producing the final answer. "Before giving your answer, check whether your reasoning is consistent with the original constraints."
+
+4. **Decomposition discipline** — If the problem is complex, decompose into sub-problems explicitly. Each sub-problem should have a clear question and a clear answer that feeds the next.
+
+5. **Counterfactual stress** — For causal or diagnostic reasoning, ask the model to consider at least one counterfactual. "What would change if X were not the case?"
+
+6. **Edge-case enumeration** — Reasoning prompts often fail on edge cases. Enumerate them: empty input, boundary values, contradictory constraints.
+
+## Mutation Discipline
+
+- Each audit finding → at most one mutation.
+- Hypothesis-tier findings → defer, don't mutate.
+- `iteration > 1`: address each grill Partial/Gap rating.
+- Preserve intent. Don't add scope.
+
+## Context
+```json
+{
+  "prompt": {{ prompt | tojson }},
+  "findings": {{ findings | tojson }},
+  "proxy_eval_set": {{ proxy_eval_set | tojson }},
+  "iteration": {{ iteration | tojson }},
+  "grill_feedback": {{ grill_feedback | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "enhanced_prompt": "the full rewritten prompt text",
+  "mutations_applied": [
+    {"finding_id": "F1", "mutation": "what was changed", "section": "which section"}
+  ],
+  "mutations_deferred": [
+    {"finding_id": "F2", "reason": "Hypothesis-tier — needs user verification"}
+  ],
+  "acceptance_criteria": [
+    "criterion 1 (testable — e.g., 'the prompt asks the model to state assumptions before reasoning')",
+    "criterion 2",
+    "criterion 3"
+  ]
+}
+```

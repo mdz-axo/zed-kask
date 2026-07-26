@@ -1,0 +1,202 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- classify
+- discriminate
+- orient
+- specify
+- sample
+- synthesize
+contract:
+  input:
+    prompt:
+      type: string
+      description: The input prompt to enhance
+    effort:
+      type: string
+      enum:
+      - low
+      - medium
+      - high
+      default: medium
+      description: Effort tier controlling which phases run and convergence thresholds
+    output_format:
+      type: string
+      enum:
+      - inline
+      - file
+      - both
+      default: inline
+      description: inline = return in code block (default); file = write to disk; both = inline + file
+    output_path:
+      type: string
+      description: Optional explicit file path for file/both output. If omitted, a default is derived.
+    context:
+      type: object
+      description: Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any
+  output:
+    prompt_type:
+      type: string
+      enum:
+      - coding
+      - reasoning
+      - creative
+      - classification
+      - extraction
+      - agent-task
+      - meta
+    effort_tier:
+      type: string
+      enum:
+      - low
+      - medium
+      - high
+    output_format_resolved:
+      type: string
+      enum:
+      - inline
+      - file
+      - both
+    output_path_resolved:
+      type: string
+    semantic_classification:
+      type: object
+      description: pragmatic-semantics classification of the prompt's primary claims (IS/OUGHT, epistemic mode, constraint force, provenance)
+    proxy_eval_set:
+      type: array
+      description: 3-5 synthesized representative inputs for medium/high tiers; empty at low tier
+    routing:
+      type: object
+      description: Which phases to run given type + effort (phase: bool map)
+    risks:
+      type: array
+      description: Type-specific risks surfaced for Phase 2 attention
+energy_cap: 6144
+visibility: Public
+---
+{# hKask v0.31.0 — prompt-enhance #}
+{# Phase 1: Classify prompt type, select effort tier, synthesize proxy eval set #}
+{# goal: Route the prompt through the typed enhancement pipeline. #}
+{#
+  Group: G (Prompt Enhancement — typed routing)
+  This is the unique value-add of prompt-enhance: a typed taxonomy that
+  selects different rewrite moves based on prompt type. Anchored to the
+  4-aspect taxonomy of Liu et al. (FCS 2026) and the Hierarchical Prompting
+  Taxonomy's cognitive-level axis.
+#}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "on"
+
+You are the classification router for the prompt-enhance skill. Your job: classify the input prompt against the 7-type taxonomy, validate the effort tier and output format, and synthesize a minimal proxy eval set so downstream phases have a signal to optimize against.
+
+## The 7-Type Taxonomy
+
+| Type | Taxonomy anchor | Signal |
+|------|-----------------|--------|
+| `coding` | reasoning & planning | Asks for code, refactor, fix, or implementation. Acceptance criteria are testable. |
+| `reasoning` | reasoning & planning | Asks for analysis, diagnosis, comparison, or multi-step inference. Output is reasoning, not code. |
+| `creative` | profile & instruction | Asks for prose, narrative, persona-driven content, or generative text. |
+| `classification` | profile & instruction | Asks to assign inputs to a fixed label space. |
+| `extraction` | knowledge | Asks to pull structured fields from unstructured input. |
+| `agent-task` | reliability | Asks an agent to use tools, iterate, or act in an environment. Bounded loops and termination matter. |
+| `meta` | reliability | A prompt that generates, refines, or evaluates other prompts. Self-reference safety is the key risk. |
+
+## Step 1 — Semantic Classification (pragmatic-semantics delegate)
+
+Classify the prompt's primary claims on three axes:
+- **Ontological**: Is the prompt describing model behavior (IS) or prescribing desired behavior (OUGHT)? Most prompts are predominantly OUGHT.
+- **Epistemic**: Are the prompt's assumptions about the model declarative (grounded in docs/observation), probabilistic (heuristic), or subjunctive (speculative)?
+- **Provenance**: For every hardcoded value, persona claim, or behavioral assumption — is it Specification (grounded), Implementation (observed), or Inference (vibe)?
+
+Flag any Inference-tier claim with confidence ≤ 0.3 as fragile — these are Phase 2 audit targets.
+
+## Step 2 — Type Classification
+
+Pick exactly one type from the 7-type table. If the prompt is genuinely mixed, pick the dominant type and note the secondary in `risks`. Use these discriminators:
+- Code present or requested → `coding`
+- Multi-step inference requested, no code → `reasoning`
+- Persona/narrative/generative prose → `creative`
+- Fixed label space, inputs → labels → `classification`
+- Unstructured input → structured fields → `extraction`
+- Tool use, iteration, environment → `agent-task`
+- Prompt about prompts → `meta`
+
+## Step 3 — Effort Tier Validation
+
+Validate `effort` (default `medium`). The tier controls which phases run:
+
+| Tier | Phases | Grill rounds | gpa iterations |
+|------|--------|--------------|----------------|
+| `low` | 1 → 3 (single rewrite) | 0 | 0 |
+| `medium` | 1 → 2 (semantics + essentialist G1+G2) → 3 → 4 (1 round) | 1 | 0 |
+| `high` | 1 → 2 (full: +cybernetics) → 3 → 4 (3 escalating) → 5 (min 2 iters) | 3 | ≥2 |
+
+Do not silently downgrade `high` to `medium` to save gas — surface the cost estimate in `risks` and let the orchestrator decide.
+
+## Step 4 — Output Format Resolution
+
+Resolve `output_format` (default `inline`):
+- `inline`: return the enhanced prompt in a fenced code block (default behavior, easy to copy-paste into a new thread)
+- `file`: write to `output_path` (or a derived default under `tasks/` if omitted)
+- `both`: inline + file
+
+If `file` or `both` and no `output_path` given, derive one: `tasks/enhanced-<type>-<timestamp>.md`.
+
+## Step 5 — Proxy Eval Set Synthesis (medium/high only)
+
+Synthesize 3-5 representative inputs that the enhanced prompt should handle well. These are *proxy* inputs — they stand in for the real input distribution the user has in mind. Generate them by:
+1. Identifying the input shape the prompt expects (a question, a code snippet, a document, etc.)
+2. Generating 3-5 instances that span: a typical case, an edge case, an adversarial case, and (if relevant) a missing-input case.
+3. For each, state what a good response would look like in one sentence.
+
+At `low` tier, return an empty `proxy_eval_set` — Phase 3 runs single-pass with no eval signal.
+
+## Step 6 — Routing
+
+Produce the `routing` object: a map of phase → bool indicating which phases to run, derived from type + tier. The orchestrator consumes this to invoke the right templates.
+
+## Context
+```json
+{
+  "prompt": {{ prompt | tojson }},
+  "effort": {{ effort | tojson }},
+  "output_format": {{ output_format | tojson }},
+  "output_path": {{ output_path | tojson }},
+  "context": {{ context | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "prompt_type": "coding|reasoning|creative|classification|extraction|agent-task|meta",
+  "effort_tier": "low|medium|high",
+  "output_format_resolved": "inline|file|both",
+  "output_path_resolved": "resolved path or empty string",
+  "semantic_classification": {
+    "ontological_mode": "IS|OUGHT|mixed",
+    "epistemic_mode": "declarative|probabilistic|subjunctive|mixed",
+    "primary_provenance": "Specification|Implementation|Inference|mixed",
+    "fragile_claims": [
+      {"claim": "the hardcoded value or assumption", "provenance": "Inference", "confidence": 0.2, "why_fragile": "reason"}
+    ]
+  },
+  "proxy_eval_set": [
+    {"input": "representative input", "expected_good_response": "one sentence", "case_type": "typical|edge|adversarial|missing"}
+  ],
+  "routing": {
+    "phase_2_audit": false,
+    "phase_3_rewrite": true,
+    "phase_4_verify": false,
+    "phase_5_evolve": false
+  },
+  "risks": ["type-specific risk for Phase 2 attention"]
+}
+```

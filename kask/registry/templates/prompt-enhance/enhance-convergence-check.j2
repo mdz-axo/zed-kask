@@ -1,0 +1,115 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- evaluate
+- converge
+- classify
+- verify
+- calibrate
+contract:
+  input:
+    effort_tier:
+      type: string
+      enum: [low, medium, high]
+    phases_completed:
+      type: array
+      description: List of phases actually run this cycle
+    phase_results:
+      type: object
+      description: Summary results from each completed phase
+    prior_metric:
+      type: number
+      description: Prior convergence metric (null on iteration 1)
+    iteration:
+      type: integer
+  output:
+    convergence_metric:
+      type: number
+    convergence_method:
+      type: string
+    metric_decomposition:
+      type: object
+    rationale:
+      type: string
+    blockers:
+      type: array
+    materiality_guard_triggered:
+      type: boolean
+    next_action:
+      type: string
+      enum: [exit, re-enter, exhausted]
+energy_cap: 3072
+visibility: Public
+---
+{# hKask v0.31.0 — prompt-enhance #}
+{# Convergence gate — tier-scaled thresholds #}
+{# goal: Decide whether the enhancement cycle is done or needs another iteration. #}
+
+[inference]
+temperature = 0.1
+reasoning_effort = "medium"
+verbosity = "standard"
+max_tokens = 2000
+thinking_budget = "off"
+
+You are the convergence gate for prompt-enhance. Compute the normalized convergence metric and decide whether to exit or re-enter the PDCA cycle.
+
+## Tier-Scaled Thresholds
+
+| Tier | Threshold | Rationale |
+|------|-----------|-----------|
+| `low` | 0.30 | Single rewrite is acceptable; don't over-engineer |
+| `medium` | 0.20 | Audit + rewrite + 1 grill round should converge cleanly |
+| `high` | 0.10 | Full evolution must be stable; tighter threshold |
+
+## Scoring (start at 1.0, subtract for each satisfied check)
+
+- Type classified (`phase_1` complete) → −0.15
+- Audit complete (`phase_2` complete, if run) → −0.20
+- Rewrite applied (`phase_3` complete) → −0.20
+- Critic passed (`phase_4` verdict = pass, if run) → −0.20
+- Evolution stable (`phase_5` convergence ≤ 0.10, if run) → −0.25
+
+Clamp to [0, 1].
+
+## Materiality Guard
+
+If `iteration >= 3` AND `|metric - prior_metric| < 0.02` AND no new phase completed this iteration, force `convergence_metric = 0.0` and set `materiality_guard_triggered = true`. The gap is irreducible — stop.
+
+## Next Action Logic
+
+- `exit` — metric ≤ tier threshold OR materiality guard triggered
+- `re-enter` — metric > threshold, iterations remaining
+- `exhausted` — max 3 iterations reached without convergence
+
+## Context
+```json
+{
+  "effort_tier": {{ effort_tier | tojson }},
+  "phases_completed": {{ phases_completed | tojson }},
+  "phase_results": {{ phase_results | tojson }},
+  "prior_metric": {{ prior_metric | tojson }},
+  "iteration": {{ iteration | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "convergence_metric": 0.15,
+  "convergence_method": "tier-scaled weighted subtraction",
+  "metric_decomposition": {
+    "type_classified": -0.15,
+    "audit_complete": -0.20,
+    "rewrite_applied": -0.20,
+    "critic_passed": -0.20,
+    "evolution_stable": 0.0
+  },
+  "rationale": "one-sentence explanation of why the metric is what it is",
+  "blockers": ["specific gap preventing convergence, or empty"],
+  "materiality_guard_triggered": false,
+  "next_action": "exit|re-enter|exhausted"
+}
+```

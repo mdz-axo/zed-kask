@@ -1,0 +1,154 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- audit
+- evaluate
+- diagnose
+- classify
+- trace
+- simplify
+- reduce
+contract:
+  input:
+    prompt:
+      type: string
+      description: The original input prompt
+    prompt_type:
+      type: string
+      description: Classified prompt type from Phase 1
+    effort_tier:
+      type: string
+      enum: [low, medium, high]
+    semantic_classification:
+      type: object
+      description: Phase 1 semantic classification including fragile_claims
+    risks:
+      type: array
+      description: Type-specific risks from Phase 1
+  output:
+    findings:
+      type: array
+      description: Constraint-force-labeled findings feeding Phase 3
+    loop_diagnosis:
+      type: object
+      description: Cybernetic loop analysis (high tier only; empty otherwise)
+    deletion_test:
+      type: object
+      description: Essentialist G1+G2 results
+    audit_summary:
+      type: string
+energy_cap: 7168
+visibility: Public
+---
+{# hKask v0.31.0 — prompt-enhance #}
+{# Phase 2: Audit prompt health via semantics, cybernetics, essentialist #}
+{# goal: Produce constraint-force-labeled findings that drive Phase 3 mutations. #}
+{#
+  Group: G (Prompt Enhancement — audit)
+  Three lenses, each catching a different failure class:
+  - semantics: fragile claims (Inference-tier provenance)
+  - cybernetics: broken feedback loops (the prompt as controller)
+  - essentialist: accreted cruft (sections that don't earn their tokens)
+#}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 5000
+thinking_budget = "on"
+
+You are the audit phase of prompt-enhance. Apply three lenses to the input prompt and produce a constraint-force-labeled findings list that Phase 3 will use as targeted mutation guidance.
+
+## Lens 1 — Pragmatic Semantics (always run at medium/high)
+
+For every claim, default, and hardcoded reference in the prompt:
+1. Classify ontological mode (IS the model's actual behavior vs OUGHT the intended behavior).
+2. Classify epistemic mode (declarative / probabilistic / subjunctive).
+3. Trace provenance: Specification (grounded in docs), Implementation (observed in model behavior), or Inference (vibe). Use the `fragile_claims` from Phase 1 as seeds.
+4. Assign constraint force per the hierarchy: Prohibition > Guardrail > Guideline > Evidence > Hypothesis.
+5. Flag conflicts between what the prompt says (OUGHT) and what the model actually does (IS) — these are the highest-priority findings.
+
+A claim like "You are an expert Rust programmer" is Inference-tier (vibe) unless grounded in observed behavior. Flag it. A claim like "Return JSON with fields {name, version}" is Specification-tier if the consumer code parses those exact fields.
+
+## Lens 2 — Pragmatic Cybernetics (high tier only)
+
+Treat the prompt → model → output path as a feedback loop. Assess the 5 properties:
+
+| Property | Question | Healthy | Degraded | Broken |
+|----------|----------|---------|----------|--------|
+| Polarity | Does the prompt's feedback correct or reinforce errors? | Corrective | Mixed | Reinforcing (amplifies errors) |
+| Delay | How many tokens/steps before the prompt's signal takes effect? | Low (immediate) | Medium (multi-step) | High (signal arrives too late) |
+| Gain | How strongly does the prompt steer the model? | Proportionate | Over/under-steered | Saturating or negligible |
+| Closure | Can the model verify its own output against the prompt's criteria? | Closed loop | Partial | Open loop (no verification possible) |
+| Fidelity | Does the prompt's signal survive the model's processing? | High | Distorted | Lost |
+
+Diagnose broken loops explicitly. A prompt that says "think step by step then answer" has *delay* (good for reasoning, bad for latency) and *closure* (the model can verify). A prompt with no verification step has *broken closure* — the model cannot self-correct. Prescribe targeted remediation naming the specific prompt section to add or modify.
+
+## Lens 3 — Essentialist (medium: G1+G2; high: G1+G2+G3)
+
+Run the eliminative interrogation on the prompt's structure:
+
+**G1 — Exist (Deletion Test):** For each section, example, constraint, or persona framing in the prompt: if you deleted it, would the model's failure mode reappear? If complexity vanishes on deletion (the section was a pass-through), FAIL. If complexity reappears across multiple model failure modes, the section earns its keep — PASS.
+
+**G2 — Surface (Instruction Block Count):** Count distinct instruction blocks (sections, bullet groups, examples, persona statements). ≤7 passes. Each block beyond 7 requires a written justification. Compute depth score: `implementation_tokens / instruction_blocks`. Challenge: "What if this prompt had exactly one instruction block? What would it be?"
+
+**G3 — Contract (high tier only):** Trace every abstraction boundary. For every example, check if it's single-use (could it be inlined?). For every persona claim, check if it adds behavior beyond a direct instruction (if not → pass-through, delete). For every constraint, check if it's passed through untouched or if it encodes genuine behavior.
+
+Classify every finding by constraint force. In advisory mode (default), Prohibition findings are REQUIRED (Phase 3 must address), Guardrails are REQUIRED (overridable with reason), Guidelines are SUGGESTED, Evidence is INFO, Hypotheses are SPECULATIVE.
+
+## Constraint-Force Labeling
+
+Every finding must carry a `constraint_force` label:
+- **Prohibition** — the prompt will fail if this isn't fixed (e.g., broken closure on a high-stakes task, conflicting OUGHT/IS claims)
+- **Guardrail** — the prompt is degraded but not failing (e.g., Inference-tier persona claim, >7 instruction blocks)
+- **Guideline** — improvement opportunity (e.g., example could be tighter, delay could be lower)
+- **Evidence** — observation about current behavior (informational)
+- **Hypothesis** — speculative finding requiring user verification
+
+## Context
+```json
+{
+  "prompt": {{ prompt | tojson }},
+  "prompt_type": {{ prompt_type | tojson }},
+  "effort_tier": {{ effort_tier | tojson }},
+  "semantic_classification": {{ semantic_classification | tojson }},
+  "risks": {{ risks | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "findings": [
+    {
+      "id": "F1",
+      "lens": "semantics|cybernetics|essentialist",
+      "section": "the prompt section or claim this finding targets",
+      "finding": "what is wrong",
+      "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
+      "evidence": "specific evidence from the prompt text",
+      "recommended_mutation": "what Phase 3 should do about it"
+    }
+  ],
+  "loop_diagnosis": {
+    "polarity": "healthy|degraded|broken",
+    "delay": "healthy|degraded|broken",
+    "gain": "healthy|degraded|broken",
+    "closure": "healthy|degraded|broken",
+    "fidelity": "healthy|degraded|broken",
+    "diagnosis": "what's broken and why",
+    "remediation": "specific prompt section to add or modify"
+  },
+  "deletion_test": {
+    "g1_results": [{"section": "name", "verdict": "PASS|FAIL", "reason": "complexity vanishes or reappears"}],
+    "g2_surface_count": 0,
+    "g2_verdict": "PASS|FAIL",
+    "g2_justifications": ["justification for blocks beyond 7"],
+    "g3_results": "high tier only; empty otherwise"
+  },
+  "audit_summary": "one-paragraph summary of prompt health"
+}
+```

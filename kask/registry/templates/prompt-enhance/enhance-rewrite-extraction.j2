@@ -1,0 +1,98 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- rewrite
+- specify
+- structure
+- constrain
+- verify
+contract:
+  input:
+    prompt:
+      type: string
+    findings:
+      type: array
+    proxy_eval_set:
+      type: array
+    iteration:
+      type: integer
+    grill_feedback:
+      type: object
+  output:
+    enhanced_prompt:
+      type: string
+    mutations_applied:
+      type: array
+    mutations_deferred:
+      type: array
+    acceptance_criteria:
+      type: array
+energy_cap: 6144
+visibility: Public
+---
+{# hKask v0.31.0 — prompt-enhance #}
+{# Phase 3 (extraction): Typed rewrite for extraction prompts #}
+{# goal: Schema-first output, explicit fields, missing-field policy. #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "high"
+verbosity = "detailed"
+max_tokens = 4500
+thinking_budget = "on"
+
+You are the typed rewrite phase for **extraction** prompts. Apply audit findings as targeted mutations to produce an enhanced prompt with schema-first output, explicit field definitions, a missing-field policy, and a clear null-vs-absent distinction.
+
+## Extraction Prompt Rewrite Moves
+
+1. **Schema-first output** — Define the output schema explicitly. If JSON, give the shape. If a table, give the columns. The model should not have to infer the schema from examples.
+
+2. **Explicit field definitions** — For each field: name, type, description, constraints. "name: string, the person's full name as it appears in the document" is better than "name".
+
+3. **Missing-field policy** — State what to do when a field is not present in the input. Options: omit the field, set to null, set to empty string, set to "N/A". Pick one and be consistent. The model will guess inconsistently without a policy.
+
+4. **Null vs absent distinction** — If the distinction matters (it usually does for downstream code), state it explicitly. "If the field is present but empty, use empty string. If the field is not present in the input, omit the key entirely."
+
+5. **Type discipline** — Enforce types. Numbers should be numbers, not strings. Dates should follow a stated format. Booleans should be true/false, not "yes"/"no".
+
+6. **Multi-occurrence handling** — If a field can appear multiple times, state whether to extract all occurrences, the first, or the most prominent.
+
+7. **Context preservation** — If the extraction needs context (e.g., resolving "it" or "the aforementioned"), state that the model should resolve references before extraction.
+
+## Mutation Discipline
+
+- Each audit finding → at most one mutation.
+- Missing-schema findings are Prohibition-tier — must be addressed.
+- Hypothesis-tier findings → defer.
+- `iteration > 1`: address grill Partial/Gap ratings.
+
+## Context
+```json
+{
+  "prompt": {{ prompt | tojson }},
+  "findings": {{ findings | tojson }},
+  "proxy_eval_set": {{ proxy_eval_set | tojson }},
+  "iteration": {{ iteration | tojson }},
+  "grill_feedback": {{ grill_feedback | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "enhanced_prompt": "the full rewritten prompt text",
+  "mutations_applied": [
+    {"finding_id": "F1", "mutation": "what was changed", "section": "which section"}
+  ],
+  "mutations_deferred": [
+    {"finding_id": "F2", "reason": "Hypothesis-tier — needs user verification"}
+  ],
+  "acceptance_criteria": [
+    "criterion 1 (testable — e.g., 'output schema is explicitly defined with field names, types, and descriptions')",
+    "criterion 2",
+    "criterion 3"
+  ]
+}
+```
