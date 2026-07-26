@@ -1,5 +1,10 @@
 # Improvement Kata Process Manifest
 # ℏKask v0.31.0 — Improvement cycle as convergent PDCA
+#
+# Two modes:
+#   improvement (default) — 4-step PDCA: direction → current → target → experiment
+#   beginner              — Foundational drills: Five Questions, PDCA Cycle, Observation Drill
+#                          Agents graduate when automaticity > 0.5.
 
 manifest:
   id: kata-improvement
@@ -8,7 +13,9 @@ manifest:
   description: >
     Convergent four-step improvement kata. Establishes direction, assesses
     current condition, sets target condition, defines next experiment, then
-    computes convergence and iterates.
+    computes convergence and iterates. Includes beginner_mode (folded from
+    kata-starter): foundational drills for habit-building — Five Questions,
+    PDCA Cycle, and Observation Drill. Agents graduate when automaticity > 0.5.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
@@ -34,16 +41,107 @@ rjoule:
   hard_limit: true
 
 inputs:
+  - name: mode
+    type: string
+    required: false
+    default: "improvement"
+    description: >
+      Kata mode: "improvement" (default — 4-step PDCA cycle) or "beginner"
+      (foundational drills for habit-building).
   - name: challenge
     type: string
-    required: true
+    required: false
+    description: >
+      The strategic challenge (improvement mode). Required when mode is
+      "improvement"; ignored in beginner mode.
   - name: current_metrics
     type: object
     required: false
+  - name: learner_profile
+    type: object
+    required: false
+    description: >
+      Learner profile for beginner mode — practice history, automaticity
+      scores, and current drill focus.
 
 steps:
+  # === BEGINNER MODE (folded from kata-starter) ===
   - ordinal: 1
     action: select
+    condition: "{{ mode | default('improvement') == 'beginner' }}"
+    description: >
+      BEGINNER SELECTOR: Select appropriate starter drill based on learner
+      profile and practice history. If no history, start with Observation
+      Drill. If automaticity is low in a specific drill, target that drill.
+      If 7+ days since last practice, restart with Observation Drill.
+    renderer: minijinja
+    template_ref: kata-improvement/beginner-selector
+    gas_cap: 2500
+    timeout_seconds: 30
+    input_mapping:
+      learner_profile: "{{ learner_profile | default({}) }}"
+      practice_goal: "{{ practice_goal | default('foundational scientific thinking') }}"
+
+  - ordinal: 2
+    action: select
+    condition: "{{ mode | default('improvement') == 'beginner' and step_1_result.selected_drill == 'five-questions' }}"
+    description: >
+      BEGINNER FIVE QUESTIONS DRILL: Practice asking the 5 coaching questions
+      in order on a trivial process (making toast, brewing coffee).
+    renderer: minijinja
+    template_ref: kata-improvement/beginner-five-questions
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      learner_profile: "{{ learner_profile | default({}) }}"
+      selector_result: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    condition: "{{ mode | default('improvement') == 'beginner' and step_1_result.selected_drill == 'pdca-cycle' }}"
+    description: >
+      BEGINNER PDCA CYCLE DRILL: Practice Plan-Do-Check-Act on a trivial
+      measurable process.
+    renderer: minijinja
+    template_ref: kata-improvement/beginner-pdca-cycle
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      learner_profile: "{{ learner_profile | default({}) }}"
+      selector_result: "{{ step_1_result }}"
+
+  - ordinal: 4
+    action: select
+    condition: "{{ mode | default('improvement') == 'beginner' and step_1_result.selected_drill == 'observation-drill' }}"
+    description: >
+      BEGINNER OBSERVATION DRILL: Practice separating observed facts (IS) from
+      interpretations (OUGHT).
+    renderer: minijinja
+    template_ref: kata-improvement/beginner-observation-drill
+    gas_cap: 3000
+    timeout_seconds: 45
+    input_mapping:
+      learner_profile: "{{ learner_profile | default({}) }}"
+      selector_result: "{{ step_1_result }}"
+
+  - ordinal: 5
+    action: select
+    condition: "{{ mode | default('improvement') == 'beginner' }}"
+    description: >
+      BEGINNER CONVERGENCE: Compute convergence metric for beginner drill
+      cycle. Measures habit signal quality and automaticity.
+    renderer: minijinja
+    template_ref: kata-improvement/beginner-convergence-check
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      selector_result: "{{ step_1_result }}"
+      drill_result: "{{ step_2_result | default(step_3_result | default(step_4_result | default({}))) }}"
+
+  # === IMPROVEMENT MODE (default) ===
+  - ordinal: 6
+    action: select
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 1 — understand direction/challenge.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction.j2
@@ -52,8 +150,9 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
 
-  - ordinal: 2
+  - ordinal: 7
     action: select
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 2 — grasp current condition with data.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step2-current.j2
@@ -62,10 +161,11 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
       current_metrics: "{{ current_metrics | default({}) }}"
-      direction: "{{ step_1_result }}"
+      direction: "{{ step_6_result }}"
 
-  - ordinal: 3
+  - ordinal: 8
     action: select
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 3 — establish target condition.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step3-target.j2
@@ -73,10 +173,11 @@ steps:
     timeout_seconds: 45
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_2_result }}"
+      current_condition: "{{ step_7_result }}"
 
-  - ordinal: 4
+  - ordinal: 9
     action: select
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 4 — define next experiment.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step4-experiment.j2
@@ -84,28 +185,29 @@ steps:
     timeout_seconds: 60
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_2_result }}"
-      target_condition: "{{ step_3_result }}"
+      current_condition: "{{ step_7_result }}"
+      target_condition: "{{ step_8_result }}"
 
-  - ordinal: 5
+  - ordinal: 10
     action: select
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Compute normalized convergence metric for improvement cycle.
     renderer: minijinja
     template_ref: kata-improvement/kata-improvement-convergence-check.j2
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      step2_result: "{{ step_2_result }}"
-      step3_result: "{{ step_3_result }}"
-      step4_result: "{{ step_4_result }}"
+      step2_result: "{{ step_7_result }}"
+      step3_result: "{{ step_8_result }}"
+      step4_result: "{{ step_9_result }}"
 
-  - ordinal: 6
+  - ordinal: 11
     action: loop
-    description: Re-enter improvement cycle if convergence is not met.
+    description: Re-enter kata cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 2  # By Toyota Kata design: after experiment (step 4), reassess current condition (step 2) — direction (step 1) only revisited if challenge fundamentally changes (see SKILL.md step 4: 'next obstacle if correct'). This preserves direction stability while allowing current-state correction.
+      loop_target: 7  # improvement mode: re-enter at step 2 (ordinal 7)
 
 error_handling:
   on_gas_exceeded: abort
@@ -116,6 +218,28 @@ error_handling:
 
 ocap:
   required_capabilities:
+    # Beginner mode templates
+    - resource: template
+      action: render
+      template_id: kata-improvement/beginner-selector
+      gas_budget: 2500
+    - resource: template
+      action: render
+      template_id: kata-improvement/beginner-five-questions
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: kata-improvement/beginner-pdca-cycle
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: kata-improvement/beginner-observation-drill
+      gas_budget: 3000
+    - resource: template
+      action: render
+      template_id: kata-improvement/beginner-convergence-check
+      gas_budget: 2000
+    # Improvement mode templates
     - resource: template
       action: render
       template_id: kata-improvement/improvement-step1-direction
@@ -148,6 +272,9 @@ ocap:
 # Recommends: improv skill for self-directed coaching posture during Step 4.
 # - Plan (design experiment) → Yes But
 # - Check (compare prediction to actual) → Plussing
+# Beginner mode recommends: improv for constructive interaction postures.
+# - Observation Drill → Plussing
+# - Five Questions Drill → Yes And
 
 ledger:
   emit_spans: true
@@ -160,6 +287,7 @@ ledger:
     - reg.kata.improvement.current_condition
     - reg.kata.improvement.target_set
     - reg.kata.improvement.experiment_run
+    - reg.kata.improvement.beginner_drill
 
 audit:
   enabled: true

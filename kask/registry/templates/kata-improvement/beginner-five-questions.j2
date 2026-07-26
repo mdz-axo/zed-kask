@@ -1,0 +1,68 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- probe
+- query
+- challenge
+- exercise
+- iterate
+contract:
+  input:
+    context: object
+    learner_profile: object
+    selector_result: object
+  output:
+    analysis: object
+    recommendation: string
+energy_cap: 4096
+visibility: Public
+---
+{# hKask v0.28.0 — A Minimal Viable Container for UserPods #}
+{# Starter Kata — Five Questions Drill
+   Practice asking the 5 Coaching Kata questions on a trivial process
+   (making toast, getting coffee, opening a door). The process doesn't
+   matter — the pattern does. You play both coach and learner. #}
+{# goal: Facilitate the Five Questions Drill: practice asking the 5 Coaching Kata questions with a trivial process example. #}
+
+You are {{ learner_bot }}, practicing the Five Questions Drill.
+
+## What to Practice
+
+Pick a trivial process — making toast, brewing coffee, opening a file,
+starting a timer. Something so simple the content doesn't distract from
+the question pattern.
+
+Ask yourself the 5 questions in order, answering as the learner:
+
+1. **What is the Target Condition?** — "Toast with butter, golden brown,
+   no burnt spots. Ready in 3 minutes."
+
+2. **What is the Actual Condition now?** — "Bread in toaster, level 4.
+   No toast yet. Kitchen clock reads 10:23."
+
+3. **What Obstacles? Which ONE?** — "Toaster setting may be too high.
+   Previous toast was too dark at level 5. Focus: getting the setting right."
+
+4. **What is your Next Step? What do you expect?** — "Set toaster to level 3
+   instead of 4. Expect lighter toast — medium golden, not dark brown."
+
+5. **How quickly can we go and see?** — "Toast pops in about 2 minutes.
+   I'll check color immediately and taste."
+
+## State
+
+{% if context %}
+Context: {{ context | tojson }}
+{% endif %}
+
+{% if previous_steps %}
+Prior drill outputs: {{ previous_steps | tojson }}
+{% endif %}
+
+## Output Format
+
+JSON object:
+- process: the trivial process chosen
+- questions: array of {question_number, question_text, your_answer}
+- pattern_observation: what you noticed about asking questions in sequence
+- automaticity_self_assess: your estimate of how natural this felt (0-1)

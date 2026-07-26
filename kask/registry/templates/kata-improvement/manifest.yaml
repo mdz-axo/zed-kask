@@ -1,49 +1,106 @@
 # Template crate manifest for kata-improvement skill
-# hKask v0.28.0
+# hKask v0.31.0
+# Includes beginner_mode templates (folded from kata-starter)
 
 crate:
   name: kata-improvement
   version: "0.31.0"
   description: >
-    4-step Improvement Kata templates for scientific capability development.
-    Step 1: Understand Direction. Step 2: Grasp Current Condition.
-    Step 3: Establish Target Condition. Step 4: Experiment (PDCA).
-    Each step references prior outputs. The cycle closes with before/after measurement.
+    Improvement Kata templates. Two modes: improvement (4-step PDCA cycle)
+    and beginner (foundational drills for habit-building — folded from
+    kata-starter). Agents graduate from beginner mode when automaticity > 0.5.
 
 templates:
+  # -- Beginner mode templates (folded from kata-starter) --
+  - id: kata-improvement/beginner-selector
+    name: "Select appropriate beginner drill based on learner profile"
+    path: beginner-selector.j2
+    type: KnowAct
+    lexicon_terms: [select, classify, route, discriminate, recommend]
+    description: >
+      Select appropriate starter drill based on practice history and
+      automaticity. If no history, start with Observation Drill. If
+      automaticity is low in a specific drill, target that drill. If 7+ days
+      since last practice, restart with Observation Drill.
+
+  - id: kata-improvement/beginner-five-questions
+    name: "Five Questions Drill — practice asking the 5 coaching questions"
+    path: beginner-five-questions.j2
+    type: KnowAct
+    lexicon_terms: [prompt, query, challenge, transform, synthesize]
+    description: >
+      Five Questions Drill — exercise asking the 5 coaching questions in
+      order on a trivial process (making toast, brewing coffee).
+
+  - id: kata-improvement/beginner-pdca-cycle
+    name: "PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial process"
+    path: beginner-pdca-cycle.j2
+    type: KnowAct
+    lexicon_terms: [prompt, query, challenge, transform, synthesize]
+    description: >
+      PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable
+      process.
+
+  - id: kata-improvement/beginner-observation-drill
+    name: "Observation Drill — practice separating facts from interpretations"
+    path: beginner-observation-drill.j2
+    type: KnowAct
+    lexicon_terms: [prompt, query, challenge, transform, synthesize]
+    description: >
+      Observation Drill — practice separating observed facts (IS) from
+      interpretations (OUGHT).
+
+  - id: kata-improvement/beginner-convergence-check
+    name: "Compute convergence metric for beginner drill cycle"
+    path: beginner-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, score, verify]
+    description: >
+      Compute normalized convergence metric for beginner_mode PDCA cycles.
+      Returns convergence_metric plus rationale and blockers.
+
+  # -- Improvement mode templates --
   - id: kata-improvement/improvement-step1-direction
-    name: "Step 1 — Understand the direction"
+    name: "Step 1 — understand direction/challenge"
     path: improvement-step1-direction.j2
-    type: WordAct
-    lexicon_terms: [declare, target, measure, plan, explore]
-    description: Step 1 — Understand the direction. Articulate challenge, target, measurement plan, knowledge threshold.
+    type: KnowAct
+    lexicon_terms: [specify, orient, classify, assess, verify]
+    description: >
+      Step 1 of the Improvement Kata — understand the strategic direction
+      and challenge from the level above.
 
   - id: kata-improvement/improvement-step2-current
-    name: "Step 2 — Grasp the current condition"
+    name: "Step 2 — grasp current condition with data"
     path: improvement-step2-current.j2
-    type: WordAct
-    lexicon_terms: [observe, collect, detect, measure, report]
-    description: Step 2 — Grasp the current condition. Collect data, detect patterns, establish baseline metrics.
+    type: KnowAct
+    lexicon_terms: [observe, measure, classify, assess, verify]
+    description: >
+      Step 2 of the Improvement Kata — grasp the current condition by
+      gathering facts and data to establish a baseline.
 
   - id: kata-improvement/improvement-step3-target
-    name: "Step 3 — Establish next target condition"
+    name: "Step 3 — establish target condition"
     path: improvement-step3-target.j2
-    type: WordAct
-    lexicon_terms: [target, measure, detect, prioritize, select]
-    description: Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle.
+    type: KnowAct
+    lexicon_terms: [specify, target, constrain, verify, classify]
+    description: >
+      Step 3 of the Improvement Kata — establish a measurable, time-bounded
+      next target condition.
 
   - id: kata-improvement/improvement-step4-experiment
-    name: "Step 4 — Experiment toward target"
+    name: "Step 4 — define next experiment"
     path: improvement-step4-experiment.j2
-    type: WordAct
-    lexicon_terms: [plan, predict, apply, evaluate, reflect]
-    description: Step 4 — Experiment toward target. Design PDCA experiment with specific prediction and measurement plan.
+    type: KnowAct
+    lexicon_terms: [propose, experiment, predict, verify, transform]
+    description: >
+      Step 4 of the Improvement Kata — define next experiment with testable
+      predictions toward the target.
 
   - id: kata-improvement/kata-improvement-convergence-check
-    name: "Compute normalized convergence metric for kata-improvement PDCA cycles"
+    name: "Compute convergence metric for improvement cycle"
     path: kata-improvement-convergence-check.j2
     type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    lexicon_terms: [evaluate, converge, classify, score, verify]
     description: >
-      Compute normalized convergence metric for kata-improvement PDCA cycles.
-      Returns convergence_metric plus rationale and blockers.
+      Compute normalized convergence metric to evaluate the coherence of a
+      PDCA cycle.

@@ -1629,7 +1629,7 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
         &self,
         server: &str,
     ) -> gpui::Task<Result<Vec<kask_panel::ToolDescriptor>, String>> {
-        let runtime = self.tool_port.runtime().clone();
+        let runtime = self.tool_port.runtime_arc();
         let server = server.to_string();
         self.executor.spawn(async move {
             let servers = runtime.list_servers().await;

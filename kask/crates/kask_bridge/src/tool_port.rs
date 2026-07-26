@@ -35,6 +35,12 @@ impl BridgeToolPort {
     pub fn runtime(&self) -> &McpRuntime {
         &self.runtime
     }
+
+    /// Get a clone of the inner `Arc<McpRuntime>` (for spawning async tasks
+    /// that outlive the borrow, e.g. `list_tools` from the kask panel).
+    pub fn runtime_arc(&self) -> Arc<McpRuntime> {
+        self.runtime.clone()
+    }
 }
 
 #[async_trait]

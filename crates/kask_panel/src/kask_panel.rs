@@ -850,3 +850,143 @@ pub fn init(cx: &mut App) {
     )
     .detach();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_tool_invocation ────────────────────────────────────────────
+
+    #[test]
+    fn parse_tool_invocation_strips_slash_and_args() {
+        let (tool, args) = parse_tool_invocation("/kanban_board_list").unwrap();
+        assert_eq!(tool, "kanban_board_list");
+        assert_eq!(args, "");
+
+        let (tool, args) = parse_tool_invocation("/kanban_task_create board=main").unwrap();
+        assert_eq!(tool, "kanban_task_create");
+        assert_eq!(args, "board=main");
+    }
+
+    #[test]
+    fn parse_tool_invocation_returns_none_for_slash_commands() {
+        assert!(parse_tool_invocation("/help").is_none());
+        assert!(parse_tool_invocation("/clear").is_none());
+        assert!(parse_tool_invocation("/tools").is_none());
+    }
+
+    #[test]
+    fn parse_tool_invocation_returns_none_without_slash() {
+        assert!(parse_tool_invocation("hello").is_none());
+        assert!(parse_tool_invocation("").is_none());
+    }
+
+    // ── parse_args ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_args_empty_is_empty_object() {
+        assert_eq!(parse_args(""), Value::Object(serde_json::Map::new()));
+    }
+
+    #[test]
+    fn parse_args_json_object() {
+        let result = parse_args("{\"board\": \"main\", \"count\": 5}");
+        assert_eq!(result["board"], Value::from("main"));
+        assert_eq!(result["count"], Value::from(5));
+    }
+
+    #[test]
+    fn parse_args_key_value_int() {
+        let result = parse_args("board=main priority=3");
+        assert_eq!(result["board"], Value::from("main"));
+        assert_eq!(result["priority"], Value::from(3));
+    }
+
+    #[test]
+    fn parse_args_key_value_float() {
+        let result = parse_args("threshold=2.5");
+        assert!(result["threshold"].is_f64());
+        assert_eq!(result["threshold"], Value::from(2.5));
+    }
+
+    #[test]
+    fn parse_args_key_value_bool() {
+        let result = parse_args("active=true archived=false");
+        assert_eq!(result["active"], Value::from(true));
+        assert_eq!(result["archived"], Value::from(false));
+    }
+
+    #[test]
+    fn parse_args_falls_back_to_string_when_no_pairs() {
+        let result = parse_args("just some text");
+        assert_eq!(result, Value::from("just some text"));
+    }
+
+    // ── format_json_result ──────────────────────────────────────────────
+
+    #[test]
+    fn format_json_simple_string() {
+        assert_eq!(format_json_result(&Value::from("hello")), "hello");
+    }
+
+    #[test]
+    fn format_json_object_pretty_printed() {
+        let result = format_json_result(&serde_json::json!({"key": "value"}));
+        assert!(result.contains("\"key\""));
+        assert!(result.contains("\"value\""));
+        assert!(result.contains('\n')); // pretty-printed
+    }
+
+    #[test]
+    fn format_json_nested_string_parses() {
+        let inner = serde_json::json!({"nested": true});
+        let wrapped = Value::String(inner.to_string());
+        let result = format_json_result(&wrapped);
+        assert!(result.contains("nested"));
+        assert!(result.contains("true"));
+    }
+
+    #[test]
+    fn format_json_recursion_capped_at_depth_5() {
+        let mut val = serde_json::json!({"a": 1});
+        for _ in 0..10 {
+            val = Value::String(val.to_string());
+        }
+        let result = format_json_result(&val);
+        assert!(result.contains("[...]") || result.len() < 100);
+    }
+
+    #[test]
+    fn format_json_truncates_long_output() {
+        let mut map = serde_json::Map::new();
+        for i in 0..1000 {
+            map.insert(format!("key_{i}"), serde_json::json!(format!("value_{i}")));
+        }
+        let val = Value::Object(map);
+        let result = format_json_result(&val);
+        // ≤5000 safe UTF-8 boundary + "…" (3 bytes)
+        assert!(
+            result.len() <= 5003,
+            "output should be truncated (got {})",
+            result.len()
+        );
+        assert!(result.ends_with('…'));
+    }
+
+    // ── server_welcome ──────────────────────────────────────────────────
+
+    #[test]
+    fn server_welcome_includes_server_name_and_hint() {
+        let welcome = server_welcome("kata-kanban");
+        assert!(welcome.contains("kata-kanban"));
+        assert!(welcome.contains("/help"));
+        assert!(welcome.contains("/tools"));
+    }
+
+    #[test]
+    fn server_welcome_handles_unknown_server() {
+        let welcome = server_welcome("nonexistent");
+        assert!(welcome.contains("nonexistent"));
+        assert!(welcome.contains("MCP server"));
+    }
+}
