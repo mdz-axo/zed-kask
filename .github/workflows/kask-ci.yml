@@ -1,6 +1,12 @@
 # zed-kask CI — runs on standard GitHub Actions runners (no Namespace, no sccache).
 # This workflow is fork-specific and does not replace upstream's run_tests.yml
 # (which is gated on repository_owner == 'zed-industries' and skipped on forks).
+#
+# The test job does NOT spin up a postgres service: kask reads
+# HKASK_DATABASE_URL (not DATABASE_URL) and HKASK_DB_PROVIDER defaults to
+# sqlite, so a postgres service would provide zero kask coverage. Add it back
+# only when a kask crate's tests explicitly require postgres (set
+# HKASK_DB_PROVIDER=postgres + HKASK_DATABASE_URL=... in the env block).
 name: kask-ci
 
 on:
@@ -41,21 +47,6 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: zed_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/zed_test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -93,3 +84,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check reg.* canonical namespace registration
         run: cd kask && bash scripts/check-reg-canonical.sh
+
+  mcp-servers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check mcp-servers.txt matches BUILTIN_SERVERS
+        run: cd kask && bash scripts/check-mcp-servers.sh

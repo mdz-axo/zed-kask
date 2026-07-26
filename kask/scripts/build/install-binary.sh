@@ -3,22 +3,33 @@
 # and installs them to ~/.local/bin (or /usr/local/bin with --system).
 #
 # Falls back to the source-build installer (kask/scripts/build/install.sh)
-# if no matching prebuilt archive exists for the current platform.
+# if no matching prebuilt archive exists for the current platform. The
+# fallback is pinned to the same tag being installed and verified against
+# the release's SHA256SUMS — never fetched from a mutable branch.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
 #   wget -O - https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
 #
 # Environment variables:
-#   HKASK_VERSION   Pin a release tag (default: latest release from GitHub API)
-#                    Set to "nightly" to install the nightly build.
-#   HKASK_CHANNEL    Alias for HKASK_VERSION=nightly ("nightly" or "stable")
-#   INSTALL_DIR     Install prefix (default: $HOME/.local)
-#   HKASK_SYSTEM_INSTALL  Set to "true" to symlink into /usr/local/bin
-#   HKASK_REPO      GitHub owner/repo (default: mdz-axo/zed-kask)
-#   HKASK_NO_FALLBACK  Set to "true" to skip source-build fallback
+#   HKASK_VERSION        Pin a release tag (default: latest release from GitHub API).
+#                        Set to "nightly" to install the nightly build.
+#   HKASK_CHANNEL        Alias for HKASK_VERSION=nightly ("nightly" or "stable")
+#   INSTALL_DIR          Install prefix (default: $HOME/.local)
+#   HKASK_SYSTEM_INSTALL Set to "true" to symlink into /usr/local/bin
+#   HKASK_REPO           GitHub owner/repo (default: mdz-axo/zed-kask)
+#   HKASK_NO_FALLBACK    Set to "true" to skip source-build fallback
+#   HKASK_ALLOW_UNVERIFIED  Set to "true" to proceed when SHA256SUMS is missing
+#                        for a non-nightly tag (default: false — hard fail)
 
 set -euo pipefail
+
+# ============================================================================
+# Shared helpers (log functions, MCP_SERVERS, add_to_path, print_banner)
+# ============================================================================
+_HKASK_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=install-common.sh
+source "$_HKASK_INSTALL_DIR/install-common.sh"
 
 # ============================================================================
 # Configuration
@@ -27,35 +38,6 @@ set -euo pipefail
 HKASK_REPO="${HKASK_REPO:-mdz-axo/zed-kask}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local}"
 BIN_DIR="${INSTALL_DIR}/bin"
-SYSTEM_BIN="/usr/local/bin"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log()        { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success(){ echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning(){ echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error()  { echo -e "${RED}[ERROR]${NC} $1" >&2; }
-
-# MCP server binaries that kask spawns as child processes.
-# Must stay in sync with kask/crates/hkask-mcp-server/src/lib.rs BUILTIN_SERVERS
-# and kask/scripts/build/install.sh MCP_SERVERS.
-MCP_SERVERS=(
-    "hkask-mcp-condenser"
-    "hkask-mcp-research"
-    "hkask-mcp-companies"
-    "hkask-mcp-media"
-    "hkask-mcp-corpus"
-    "hkask-mcp-training"
-    "hkask-mcp-kata-kanban"
-    "hkask-mcp-curator"
-    "hkask-mcp-codegraph"
-    "hkask-mcp-scenarios"
-)
 
 # ============================================================================
 # Platform detection
@@ -129,6 +111,8 @@ resolve_tag() {
             return
         fi
         # Strip leading 'v' if user passed a bare version, then re-add it.
+        # Only numeric versions are supported here — SHAs and branch names
+        # are not accepted (use HKASK_SOURCE_DIR + install.sh for those).
         local stripped="${HKASK_VERSION#v}"
         echo "v${stripped}"
         return
@@ -172,13 +156,25 @@ download_and_extract() {
     http_download "$archive_url" "$temp_dir/$archive" || return 1
 
     # Verify checksum if SHA256SUMS is published alongside the archive.
+    # For non-nightly tags, missing SHA256SUMS is a hard error unless the
+    # user explicitly opts in via HKASK_ALLOW_UNVERIFIED=true. Nightly tags
+    # are force-moved each night, so checksums verify download integrity but
+    # not release pinning — warn but proceed.
     local sums_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/SHA256SUMS"
     local sums_path="$temp_dir/SHA256SUMS"
     if http_download "$sums_url" "$sums_path" 2>/dev/null; then
         log "Verifying checksum..."
         ( cd "$temp_dir" && grep -F "$archive" SHA256SUMS | sha256sum -c - )
     else
-        log_warning "No SHA256SUMS published for ${tag} — skipping checksum verification"
+        if [ "$tag" = "nightly" ]; then
+            log_warning "No SHA256SUMS published for nightly — proceeding (nightly tag is force-moved)"
+        elif [ "${HKASK_ALLOW_UNVERIFIED:-false}" = "true" ]; then
+            log_warning "No SHA256SUMS published for ${tag} — HKASK_ALLOW_UNVERIFIED=true, proceeding"
+        else
+            log_error "No SHA256SUMS published for ${tag} — refusing to install unverified archive"
+            log_error "Set HKASK_ALLOW_UNVERIFIED=true to override, or use the source-build installer."
+            return 1
+        fi
     fi
 
     # Extract into a staging dir
@@ -186,6 +182,7 @@ download_and_extract() {
     mkdir -p "$staging"
     case "$archive" in
         *.tar.gz)
+            command -v tar >/dev/null 2>&1 || { log_error "tar is required to extract $archive"; return 1; }
             tar -xzf "$temp_dir/$archive" -C "$staging"
             ;;
         *.zip)
@@ -219,7 +216,7 @@ install_binaries() {
         return 1
     fi
     cp "$cli_src" "$BIN_DIR/"
-    chmod +x "$BIN_DIR"/zed-kask* 2>/dev/null || true
+    chmod +x "$BIN_DIR/zed-kask" 2>/dev/null || true
 
     # MCP server binaries
     local installed_servers=0
@@ -227,7 +224,7 @@ install_binaries() {
         for cand in "$staging/$server" "$staging/$server.exe"; do
             if [ -f "$cand" ]; then
                 cp "$cand" "$BIN_DIR/"
-                chmod +x "$BIN_DIR"/"$server"* 2>/dev/null || true
+                chmod +x "$BIN_DIR/$server" 2>/dev/null || true
                 installed_servers=$((installed_servers + 1))
                 break
             fi
@@ -237,66 +234,61 @@ install_binaries() {
     log_success "Installed zed-kask + ${installed_servers} MCP server(s) to $BIN_DIR"
 }
 
-add_to_path() {
-    # Strategy 1: symlink into /usr/local/bin (already in PATH on all Linux/macOS)
-    if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ] || [ -w "$SYSTEM_BIN" ]; then
-        if ln -sf "$BIN_DIR/zed-kask" "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
-            log_success "zed-kask linked into $SYSTEM_BIN"
-            return 0
-        fi
-        if command -v sudo >/dev/null 2>&1 && \
-           sudo ln -sf "$BIN_DIR/zed-kask" "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
-            log_success "zed-kask linked into $SYSTEM_BIN (via sudo)"
-            return 0
-        fi
-        log_warning "Cannot write to $SYSTEM_BIN, falling back to shell config"
-    fi
-
-    # Strategy 2: add BIN_DIR to PATH via shell config files.
-    local user_shell added=false
-    user_shell=$(basename "${SHELL:-/bin/bash}")
-    local configs=("$HOME/.profile")
-    case "$user_shell" in
-        zsh)  configs+=("$HOME/.zshrc" "$HOME/.zprofile") ;;
-        bash|sh) configs+=("$HOME/.bashrc") ;;
-        *)    configs+=("$HOME/.bashrc") ;;
-    esac
-
-    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-        for cfg in "${configs[@]}"; do
-            if ! grep -qF '# hKask' "$cfg" 2>/dev/null; then
-                {
-                    echo ""
-                    echo "# hKask"
-                    echo "export PATH=\"$BIN_DIR:\$PATH\""
-                } >> "$cfg"
-                log "Added PATH entry to $cfg"
-                added=true
-            fi
-        done
-    fi
-
-    if [ "$added" = true ]; then
-        log_success "PATH configured in shell profile(s)"
-        log "Restart your shell or run: source ~/.profile"
-    fi
-}
-
 # ============================================================================
 # Source-build fallback
 # ============================================================================
+#
+# Pinned to the same tag being installed (not `main`) and verified against the
+# release's SHA256SUMS. Refuses to fall back if the installer script cannot be
+# verified — the user is instructed to download and inspect it manually.
 
 fallback_to_source_build() {
+    local tag="$1"
+
     if [ "${HKASK_NO_FALLBACK:-false}" = "true" ]; then
         log_error "No prebuilt binary available and HKASK_NO_FALLBACK=true"
         exit 1
     fi
 
     log_warning "No prebuilt binary for this platform. Falling back to source build..."
-    log "This will clone the repo and build with cargo (requires Rust toolchain)."
+    log "This will clone the repo at tag ${tag} and build with cargo (requires Rust toolchain)."
 
-    local installer_url="https://raw.githubusercontent.com/${HKASK_REPO}/main/kask/scripts/build/install.sh"
-    exec bash -c "$(http_get "$installer_url")"
+    # Fetch the installer pinned to the same tag, not from a mutable branch.
+    # For nightly, the tag is force-moved so this is still mutable — but it's
+    # the same trust boundary as the binary archive the user just tried to
+    # download from the same tag.
+    local installer_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/install.sh"
+    local sums_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/SHA256SUMS"
+
+    local temp_dir
+    temp_dir="$(mktemp -d)"
+    trap 'rm -rf "$temp_dir"' EXIT
+
+    local installer_path="$temp_dir/install.sh"
+    if ! http_download "$installer_url" "$installer_path" 2>/dev/null; then
+        log_error "Could not download pinned installer from ${installer_url}"
+        log_error "Please download and inspect kask/scripts/build/install.sh from the repo manually:"
+        log_error "  https://github.com/${HKASK_REPO}/blob/${tag}/kask/scripts/build/install.sh"
+        exit 1
+    fi
+
+    # Verify the installer against SHA256SUMS if published.
+    local sums_path="$temp_dir/SHA256SUMS"
+    if http_download "$sums_url" "$sums_path" 2>/dev/null; then
+        log "Verifying installer checksum..."
+        ( cd "$temp_dir" && grep -F "install.sh" SHA256SUMS | sha256sum -c - ) || {
+            log_error "Installer checksum verification failed"
+            exit 1
+        }
+    elif [ "$tag" = "nightly" ]; then
+        log_warning "No SHA256SUMS for nightly installer — proceeding (nightly is force-moved)"
+    else
+        log_error "No SHA256SUMS published for ${tag} installer — refusing to execute unverified script"
+        log_error "Set HKASK_ALLOW_UNVERIFIED=true to override, or build from source manually."
+        exit 1
+    fi
+
+    exec bash "$installer_path" "$@"
 }
 
 # ============================================================================
@@ -336,12 +328,7 @@ verify_installation() {
 # ============================================================================
 
 main() {
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              hKask Binary Installer                      ║"
-    echo "║   Downloads prebuilt binaries from GitHub Releases       ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
-    echo ""
+    print_banner "Binary Installer — Downloads from GitHub Releases"
 
     local target tag
     target=$(detect_target) || exit 1
@@ -353,7 +340,7 @@ main() {
     local staging
     staging=$(download_and_extract "$target" "$tag") || {
         log_error "Download/extract failed for $target"
-        fallback_to_source_build
+        fallback_to_source_build "$tag" "$@"
         exit 1
     }
 

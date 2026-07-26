@@ -1,223 +1,46 @@
 #!/bin/bash
 # hKask Installation Script for Linux
 #
-# This script installs hKask and its dependencies on Linux systems.
-# Supports: Debian/Ubuntu, Fedora/RHEL, Arch Linux, openSUSE, Alpine
+# Builds zed-kask and the kask MCP servers from source and installs them to
+# $HOME/.local/bin (or a custom dir). System dependencies are installed via
+# the canonical ./script/linux (shared with CI); Rust toolchain pinning is
+# delegated to rust-toolchain.toml.
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
-# Or: wget -O - https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
+#   bash kask/scripts/build/install.sh --debug --skip-deps
+#
+# Environment variables:
+#   HKASK_VERSION       Tag to clone (default: 0.31.0; falls back to main only
+#                       if HKASK_ALLOW_FALLBACK=true)
+#   HKASK_BUILD_TYPE    release or debug (default: release)
+#   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
+#   HKASK_REPO_URL      Git URL (default: https://github.com/mdz-axo/zed-kask.git)
+#   HKASK_ALLOW_FALLBACK  Set to "true" to allow silent fallback to main when
+#                       the requested tag is missing (default: false — hard fail)
+#   INSTALL_DIR         Install prefix (default: $HOME/.local)
+#   HKASK_SYSTEM_INSTALL  Set to "true" to symlink into /usr/local/bin
+#   HKASK_REMOVE_CONFIG  Remove config and data on uninstall (default: false)
 
 set -euo pipefail
+
+# ============================================================================
+# Shared helpers (log functions, MCP_SERVERS, add_to_path, print_banner)
+# ============================================================================
+_HKASK_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=install-common.sh
+source "$_HKASK_INSTALL_DIR/install-common.sh"
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
-HKASK_VERSION="${HKASK_VERSION:-0.31.0}"
+HKASK_VERSION="${HKASK_VERSION:-}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local}"
 BIN_DIR="${INSTALL_DIR}/bin"
-SYSTEM_BIN="/usr/local/bin"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 
 # ============================================================================
-# Logging Functions
-# ============================================================================
-
-log() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-# ============================================================================
-# System Detection
-# ============================================================================
-
-detect_package_manager() {
-    if command -v apt-get &> /dev/null; then
-        echo "apt"
-    elif command -v dnf &> /dev/null; then
-        echo "dnf"
-    elif command -v yum &> /dev/null; then
-        echo "yum"
-    elif command -v pacman &> /dev/null; then
-        echo "pacman"
-    elif command -v zypper &> /dev/null; then
-        echo "zypper"
-    elif command -v apk &> /dev/null; then
-        echo "apk"
-    else
-        echo "unknown"
-    fi
-}
-
-detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        echo "$ID"
-    else
-        echo "unknown"
-    fi
-}
-
-# ============================================================================
-# Dependency Installation
-# ============================================================================
-
-install_system_dependencies() {
-    local pkg_mgr os
-    pkg_mgr=$(detect_package_manager)
-    os=$(detect_os)
-
-    log "Detected package manager: $pkg_mgr"
-    log "Detected OS: $os"
-
-    case "$pkg_mgr" in
-        apt)
-            log "Updating package lists..."
-            sudo apt-get update -qq
-
-            log "Installing build dependencies (Debian/Ubuntu)..."
-            sudo apt-get install -y -qq \
-                build-essential \
-                clang \
-                mold \
-                pkg-config \
-                libssl-dev \
-                libsqlite3-dev \
-                libdbus-1-dev \
-                git \
-                curl \
-                wget \
-                jq \
-                xz-utils
-            ;;
-        dnf|yum)
-            log "Installing build dependencies (Fedora/RHEL)..."
-            sudo "$pkg_mgr" install -y \
-                gcc \
-                gcc-c++ \
-                clang \
-                mold \
-                make \
-                pkg-config \
-                openssl-devel \
-                sqlite-devel \
-                dbus-devel \
-                git \
-                curl \
-                wget \
-                jq \
-                xz
-            ;;
-        pacman)
-            log "Installing build dependencies (Arch Linux)..."
-            sudo pacman -Sy --noconfirm \
-                base-devel \
-                clang \
-                mold \
-                openssl \
-                sqlite \
-                dbus \
-                git \
-                curl \
-                wget \
-                jq \
-                xz
-            ;;
-        zypper)
-            log "Installing build dependencies (openSUSE)..."
-            sudo zypper install -y \
-                -t pattern devel_basis \
-                clang \
-                mold \
-                pkg-config \
-                libopenssl-devel \
-                sqlite3-devel \
-                dbus-1-devel \
-                git \
-                curl \
-                wget \
-                jq \
-                xz
-            ;;
-        apk)
-            log "Installing build dependencies (Alpine)..."
-            sudo apk add --no-cache \
-                build-base \
-                clang \
-                mold \
-                openssl-dev \
-                sqlite-dev \
-                dbus-dev \
-                git \
-                curl \
-                wget \
-                jq \
-                xz
-            ;;
-        unknown)
-            log_warning "Unknown package manager. Please install dependencies manually."
-            log "Required: build-essential, clang, mold, pkg-config, libssl-dev, libsqlite3-dev, libdbus-1-dev, git, curl, jq, xz-utils"
-            return 1
-            ;;
-    esac
-
-    log_success "System dependencies installed"
-}
-
-install_rust() {
-    if command -v rustc &> /dev/null; then
-        local rust_version
-        rust_version=$(rustc --version)
-        log "Rust already installed: $rust_version"
-
-        # Parse version: e.g. "rustc 1.91.0 (...)", extract major.minor
-        local rust_major_minor rust_major rust_minor
-        rust_major_minor=$(rustc --version | awk '{print $2}' | cut -d. -f1,2)
-        rust_major=$(echo "$rust_major_minor" | cut -d. -f1)
-        rust_minor=$(echo "$rust_major_minor" | cut -d. -f2)
-        if [ -n "$rust_major" ] && [ -n "$rust_minor" ] && { [ "$rust_major" -lt 1 ] || { [ "$rust_major" -eq 1 ] && [ "$rust_minor" -lt 91 ]; }; }; then
-            log_warning "Rust version too old (project requires 1.91+). Update with 'rustup update' or install from https://rustup.rs"
-        fi
-    else
-        log "Installing Rust toolchain..."
-
-        if [ "${CI:-}" != "true" ]; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91
-
-            if [ -f "$HOME/.cargo/env" ]; then
-                source "$HOME/.cargo/env"
-            fi
-        else
-            log "Running in CI environment, skipping Rust installation"
-        fi
-    fi
-
-    log "Adding Rust components..."
-    rustup component add rustfmt clippy rust-src 2>/dev/null || true
-
-    log_success "Rust toolchain ready"
-}
-
-# ============================================================================
-# Build and Install
+# Repository
 # ============================================================================
 
 HKASK_REPO_URL="${HKASK_REPO_URL:-https://github.com/mdz-axo/zed-kask.git}"
@@ -242,25 +65,49 @@ clone_repo() {
     # workspace is three levels up (../../..), not two (../..). Going up only
     # two lands in kask/ — a sub-workspace that inherits deps from the root
     # and cannot build in isolation.
+    # When piped via curl|bash, BASH_SOURCE[0] is empty — fall through to clone.
     if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/../../../Cargo.toml" ]; then
         HKASK_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
         log "Detected repo from script location: $HKASK_SOURCE_DIR"
         return 0
     fi
 
+    # Resolve the version to install: explicit HKASK_VERSION wins, otherwise
+    # derive from the local workspace Cargo.toml (single source of truth),
+    # falling back to the hardcoded default only if Cargo.toml is unreadable.
+    if [ -z "$HKASK_VERSION" ]; then
+        local local_root
+        local_root="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." 2>/dev/null && pwd)"
+        if [ -n "$local_root" ] && [ -f "$local_root/Cargo.toml" ]; then
+            HKASK_VERSION="$(awk -F'"' '/^version *=* "/{print $2; exit}' "$local_root/Cargo.toml")"
+        fi
+        if [ -z "$HKASK_VERSION" ]; then
+            HKASK_VERSION="0.31.0"
+            log_warning "Could not derive version from Cargo.toml — using default $HKASK_VERSION"
+        fi
+    fi
+
     local clone_dir="${XDG_CACHE_HOME:-$HOME/.cache}/hkask-build"
     log "Cloning hKask repository (v${HKASK_VERSION})..."
     rm -rf "$clone_dir"
 
-    # Try version tag first, fall back to main branch
+    # Try the requested tag. If it doesn't exist, fail hard unless the user
+    # explicitly opted into fallback — silent fallback breaks reproducibility
+    # (two users running the same HKASK_VERSION get different binaries).
     local clone_err
     if clone_err=$(git clone --depth 1 --branch "v${HKASK_VERSION}" "$HKASK_REPO_URL" "$clone_dir" 2>&1); then
         log "Checked out tag v${HKASK_VERSION}"
     else
-        # Only fall back if the error is "tag not found", not a network failure
         if echo "$clone_err" | grep -qE '(Remote branch.*not found|pathspec.*did not match|could not find remote branch)'; then
-            log "Tag v${HKASK_VERSION} not found, cloning main branch"
-            git clone --depth 1 "$HKASK_REPO_URL" "$clone_dir"
+            if [ "${HKASK_ALLOW_FALLBACK:-false}" = "true" ]; then
+                log_warning "Tag v${HKASK_VERSION} not found — HKASK_ALLOW_FALLBACK=true, cloning main branch"
+                git clone --depth 1 "$HKASK_REPO_URL" "$clone_dir"
+            else
+                log_error "Tag v${HKASK_VERSION} not found in $HKASK_REPO_URL"
+                log_error "Set HKASK_ALLOW_FALLBACK=true to fall back to main, or check the tag name."
+                echo "$clone_err" >&2
+                exit 1
+            fi
         else
             log_error "Failed to clone repository:"
             echo "$clone_err" >&2
@@ -271,20 +118,67 @@ clone_repo() {
     log_success "Repository cloned to $HKASK_SOURCE_DIR"
 }
 
-# MCP server binaries that kask spawns as child processes.
-# Must stay in sync with crates/hkask-mcp-server/src/lib.rs BUILTIN_SERVERS (canonical registry).
-MCP_SERVERS=(
-    "hkask-mcp-condenser"
-    "hkask-mcp-research"
-    "hkask-mcp-companies"
-    "hkask-mcp-media"
-    "hkask-mcp-corpus"
-    "hkask-mcp-training"
-    "hkask-mcp-kata-kanban"
-    "hkask-mcp-curator"
-    "hkask-mcp-codegraph"
-    "hkask-mcp-scenarios"
-)
+# ============================================================================
+# System dependencies — delegate to the canonical ./script/linux
+# ============================================================================
+#
+# install.sh does NOT maintain its own dependency list. The canonical list
+# lives in script/linux (shared with CI via .github/workflows/kask-ci.yml).
+# A second list here would drift, as it did before this rewrite — the prior
+# inline list omitted libasound2-dev, libfontconfig-dev, libxkbcommon-x11-dev,
+# libvulkan1, libwayland-dev, and other libs required to build zed/GPUI,
+# causing fresh-system source builds to fail.
+#
+# script/linux handles: Debian/Ubuntu, Fedora/RHEL, openSUSE, Arch, Void,
+# Gentoo. It is idempotent (apt-get install is a no-op for already-installed
+# packages) and tolerant of pre-existing version conflicts.
+
+install_system_dependencies() {
+    local workspace_root="$1"
+    if [ ! -x "$workspace_root/script/linux" ]; then
+        log_error "script/linux not found or not executable: $workspace_root/script/linux"
+        return 1
+    fi
+    log "Installing system dependencies via script/linux (canonical)..."
+    (cd "$workspace_root" && ./script/linux)
+    log_success "System dependencies installed"
+}
+
+# ============================================================================
+# Rust toolchain
+# ============================================================================
+#
+# rust-toolchain.toml (at the repo root) is the canonical pin. We do NOT
+# hardcode a version here — rustup's default toolchain is overridden by the
+# repo's rust-toolchain.toml on the first cargo invocation inside the repo.
+
+install_rust() {
+    if command -v rustc >/dev/null 2>&1; then
+        log "Rust already installed: $(rustc --version)"
+    else
+        log "Installing Rust toolchain via rustup..."
+        if [ "${CI:-}" != "true" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+            if [ -f "$HOME/.cargo/env" ]; then
+                # shellcheck disable=SC1091
+                source "$HOME/.cargo/env"
+            fi
+        else
+            log "Running in CI environment, skipping Rust installation"
+            return 1
+        fi
+    fi
+
+    # rust-toolchain.toml auto-installs the pinned components (rustfmt, clippy,
+    # rust-src) on the first cargo invocation. No explicit `rustup component
+    # add` needed — and silently swallowing errors with `|| true` hides real
+    # failures (violates project .rules).
+    log_success "Rust toolchain ready"
+}
+
+# ============================================================================
+# Build and Install
+# ============================================================================
 
 build_hkask() {
     clone_repo
@@ -301,6 +195,7 @@ build_hkask() {
         log "Building in debug mode..."
     fi
 
+    # Build the zed-kask CLI + every MCP server listed in mcp-servers.txt.
     local package_args=(--package zed)
     for server in "${MCP_SERVERS[@]}"; do
         package_args+=(--package "$server")
@@ -317,7 +212,6 @@ install_binary() {
 
     log "Installing hKask binaries..."
 
-    # Create bin directory if it doesn't exist
     mkdir -p "$BIN_DIR"
 
     local profile_dir
@@ -343,7 +237,7 @@ install_binary() {
     chmod +x "$BIN_DIR/zed-kask"
 
     # Strip debug symbols (reduces binary size ~60%, non-fatal if missing)
-    if command -v strip &> /dev/null; then
+    if command -v strip >/dev/null 2>&1; then
         strip "$BIN_DIR/zed-kask" 2>/dev/null || true
         log "Stripped debug symbols from zed-kask"
     fi
@@ -351,109 +245,24 @@ install_binary() {
     # Install MCP server binaries
     local installed_servers=0
     for server in "${MCP_SERVERS[@]}"; do
-        if [ -f "$profile_dir/$server" ]; then
-            cp "$profile_dir/$server" "$BIN_DIR/$server"
-            chmod +x "$BIN_DIR/$server"
-            if command -v strip &> /dev/null; then
-                strip "$BIN_DIR/$server" 2>/dev/null || true
-            fi
-            installed_servers=$((installed_servers + 1))
-        else
-            log_warning "MCP server binary not found: $server"
+        cp "$profile_dir/$server" "$BIN_DIR/$server"
+        chmod +x "$BIN_DIR/$server"
+        if command -v strip >/dev/null 2>&1; then
+            strip "$BIN_DIR/$server" 2>/dev/null || true
         fi
+        installed_servers=$((installed_servers + 1))
     done
 
-    log_success "Installed kask + $installed_servers MCP server(s) to $BIN_DIR"
-}
-
-# Add kask to PATH. Tries symlink to /usr/local/bin first (system-wide),
-# falls back to shell config PATH manipulation (user-local).
-add_to_path() {
-    # Strategy 1: symlink into /usr/local/bin (already in PATH on all Linux)
-    if [ -w "$SYSTEM_BIN" ] || [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
-        log "Creating symlink at $SYSTEM_BIN/zed-kask → $BIN_DIR/zed-kask"
-        if ln -sf "$BIN_DIR/zed-kask" "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
-            log_success "kask linked into $SYSTEM_BIN (system PATH)"
-            return 0
-        fi
-        # Symlink failed even with --system — fall through to shell config
-        log_warning "Cannot write to $SYSTEM_BIN, falling back to shell config"
-    elif command -v sudo &> /dev/null; then
-        log "Creating system symlink (requires sudo)..."
-        if sudo ln -sf "$BIN_DIR/zed-kask" "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
-            log_success "kask linked into $SYSTEM_BIN (system PATH)"
-            return 0
-        fi
-        log_warning "Cannot write to $SYSTEM_BIN, falling back to shell config"
-    else
-        log "No sudo access — configuring PATH in shell config"
-    fi
-
-    # Strategy 2: add BIN_DIR to PATH via shell config files.
-    # Detect the user's login shell from $SHELL (not the script's interpreter
-    # — $SHELL is set by login(1) and inherits through subprocesses).
-    local added=false
-    local configs=()
-    local user_shell
-    user_shell=$(basename "${SHELL:-/bin/bash}")
-
-    # .profile is sourced by bash/zsh/sh login shells (ssh, systemd, tty login)
-    configs+=("$HOME/.profile")
-
-    case "$user_shell" in
-        zsh)
-            configs+=("$HOME/.zshrc")
-            # zsh login shells source .zprofile, not .profile, but many
-            # zsh configs also source .profile for compatibility.
-            configs+=("$HOME/.zprofile")
-            ;;
-        bash|sh)
-            configs+=("$HOME/.bashrc")
-            ;;
-        *)
-            # Unknown shell — add bashrc as best-effort fallback
-            configs+=("$HOME/.bashrc")
-            ;;
-    esac
-
-    # Check if BIN_DIR needs PATH on this system
-    # (systemd 0.25+ ships ~/.local/bin in PATH by default)
-    local needs_local_path=false
-    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-        needs_local_path=true
-    fi
-
-    if [ "$needs_local_path" = true ]; then
-        for cfg in "${configs[@]}"; do
-            if ! grep -qF '# hKask' "$cfg" 2>/dev/null; then
-                {
-                    echo ""
-                    echo "# hKask"
-                    echo "export PATH=\"$BIN_DIR:\$PATH\""
-                } >> "$cfg"
-                log "Added PATH entry to $cfg"
-                added=true
-            fi
-        done
-    fi
-
-    if [ "$added" = true ]; then
-        log_success "PATH configured in shell profile(s)"
-        log "Restart your shell or run: source ~/.profile"
-    else
-        log_warning "Could not add $BIN_DIR to PATH automatically"
-        log "Please add this line to your shell config:"
-        log "  export PATH=\"$BIN_DIR:\$PATH\""
-    fi
+    log_success "Installed zed-kask + $installed_servers MCP server(s) to $BIN_DIR"
 }
 
 setup_environment() {
     log "Setting up environment..."
 
-    # Add kask to PATH
+    # Add zed-kask to PATH (delegates to install-common.sh).
     add_to_path
 
-    # Also export for this script's process
+    # Also export for this script's process.
     export PATH="$BIN_DIR:$PATH"
 
     # Create config directory
@@ -475,12 +284,11 @@ setup_environment() {
 
 # ============================================================================
 # Verification
-# =============================================================================
+# ============================================================================
 
 verify_installation() {
     log "Verifying installation..."
 
-    # Check the binary file exists
     if [ ! -f "$BIN_DIR/zed-kask" ]; then
         log_error "Binary not found at $BIN_DIR/zed-kask"
         return 1
@@ -511,13 +319,11 @@ verify_installation() {
         log "Symlink: $SYSTEM_BIN/zed-kask → $(readlink "$SYSTEM_BIN/zed-kask")"
     fi
 
-    # Check if kask is reachable via PATH
-    if command -v kask &> /dev/null; then
-        local resolved
-        resolved=$(command -v kask)
-        log_success "kask is in PATH: $resolved"
+    # Check if zed-kask is reachable via PATH
+    if command -v zed-kask >/dev/null 2>&1; then
+        log_success "zed-kask is in PATH: $(command -v zed-kask)"
     else
-        log_warning "kask command not yet in PATH for this shell session"
+        log_warning "zed-kask command not yet in PATH for this shell session"
         log "The PATH will take effect in new shell sessions. For now:"
         log "  export PATH=\"$BIN_DIR:\$PATH\""
     fi
@@ -530,10 +336,13 @@ verify_installation() {
 uninstall_hkask() {
     log "Uninstalling hKask..."
 
-    # Remove system symlink
+    # Remove system symlink. Capture the result so we log accurately.
     if [ -L "$SYSTEM_BIN/zed-kask" ]; then
-        sudo rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null || rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null || true
-        log "Removed symlink: $SYSTEM_BIN/zed-kask"
+        if sudo rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null || rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
+            log "Removed symlink: $SYSTEM_BIN/zed-kask"
+        else
+            log_error "Failed to remove $SYSTEM_BIN/zed-kask (may need sudo)"
+        fi
     fi
 
     # Remove CLI binary and MCP server binaries
@@ -579,6 +388,8 @@ show_help() {
     cat << EOF
 hKask Installation Script
 
+Builds zed-kask and the kask MCP servers from source and installs them.
+
 Usage: $0 [OPTIONS]
 
 Options:
@@ -593,24 +404,25 @@ Options:
     --help              Show this help message
 
 Environment Variables:
-    HKASK_VERSION       Version to install (default: 0.31.0)
-    HKASK_BUILD_TYPE    Build type: release or debug (default: release)
-    INSTALL_DIR         Installation directory (default: \$HOME/.local)
-    CARGO_HOME          Cargo installation directory (default: \$HOME/.cargo)
-    HKASK_SYSTEM_INSTALL Force system-wide install (default: false)
-    HKASK_REMOVE_CONFIG Remove config and data on uninstall (default: false)
-    HKASK_SOURCE_DIR    Use existing source directory instead of cloning
-    HKASK_REPO_URL      Git repository URL (default: https://github.com/mdz-axo/zed-kask.git)
+    HKASK_VERSION         Tag to install (default: derived from workspace
+                          Cargo.toml version, or 0.31.0 if unreadable)
+    HKASK_BUILD_TYPE      release or debug (default: release)
+    HKASK_SOURCE_DIR      Use existing source directory instead of cloning
+    HKASK_REPO_URL        Git repository URL
+    HKASK_ALLOW_FALLBACK  Allow silent fallback to main if tag missing (default: false)
+    INSTALL_DIR           Installation directory (default: \$HOME/.local)
+    HKASK_SYSTEM_INSTALL  Force system-wide install (default: false)
+    HKASK_REMOVE_CONFIG   Remove config and data on uninstall (default: false)
 
 Examples:
-    # Install hKask
+    # Install hKask (latest release tag)
     curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
+
+    # Debug build from an existing checkout
+    bash kask/scripts/build/install.sh --debug --skip-deps
 
     # Install with custom directory
     INSTALL_DIR=/opt/hkask bash install.sh
-
-    # Debug build
-    HKASK_BUILD_TYPE=debug bash install.sh
 
     # Uninstall
     bash install.sh --uninstall
@@ -629,8 +441,10 @@ main() {
     local action="install"
     local skip_deps=false
     local skip_rust=false
+    local saw_system=false
+    local saw_install_dir=false
+    local install_dir_arg=""
 
-    # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             --install)
@@ -650,9 +464,8 @@ main() {
                 shift
                 ;;
             --system)
+                saw_system=true
                 HKASK_SYSTEM_INSTALL="true"
-                INSTALL_DIR="/usr/local/libexec/hkask"
-                BIN_DIR="/usr/local/libexec/hkask/bin"
                 shift
                 ;;
             --skip-deps)
@@ -668,8 +481,8 @@ main() {
                     log_error "--install-dir requires a directory argument"
                     exit 1
                 fi
-                INSTALL_DIR="$2"
-                BIN_DIR="${INSTALL_DIR}/bin"
+                saw_install_dir=true
+                install_dir_arg="$2"
                 shift 2
                 ;;
             --help)
@@ -684,26 +497,37 @@ main() {
         esac
     done
 
-    # Post-process: --system takes precedence over --install-dir.
-    # If the user passed both, --system wins (system-wide paths are fixed).
-    if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
+    # --system and --install-dir are mutually exclusive: --system installs to
+    # fixed system paths (/usr/local/libexec/hkask); --install-dir installs
+    # to a user-specified prefix. Combining them is a user error — reject it
+    # rather than silently discarding one (BH-19).
+    if [ "$saw_system" = true ] && [ "$saw_install_dir" = true ]; then
+        log_error "--system and --install-dir are mutually exclusive"
+        log_error "  --system installs to /usr/local/libexec/hkask (system PATH)"
+        log_error "  --install-dir installs to a custom prefix"
+        exit 1
+    fi
+
+    if [ "$saw_system" = true ]; then
         INSTALL_DIR="/usr/local/libexec/hkask"
+        BIN_DIR="${INSTALL_DIR}/bin"
+    elif [ "$saw_install_dir" = true ]; then
+        INSTALL_DIR="$install_dir_arg"
         BIN_DIR="${INSTALL_DIR}/bin"
     fi
 
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║                    hKask Installer                      ║"
-    echo "║        ℏKask - A Minimal Viable Container for UserPods    ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
-    echo ""
+    print_banner "Source Build Installer"
 
     case "$action" in
         install)
             log "Starting hKask installation..."
 
+            # Resolve the source dir early so install_system_dependencies can
+            # find script/linux (which lives at the repo root).
+            clone_repo
+
             if [ "$skip_deps" = false ]; then
-                install_system_dependencies
+                install_system_dependencies "$HKASK_SOURCE_DIR"
             else
                 log "Skipping system dependency installation"
             fi
@@ -724,13 +548,10 @@ main() {
             log_success "Installation complete!"
             echo ""
             echo "To get started:"
-            echo "  1. Run hKask:"
-            echo "     kask --help"
+            echo "  1. Run zed-kask:"
+            echo "     zed-kask --help"
             echo ""
-            echo "  2. Start interactive chat:"
-            echo "     kask chat"
-            echo ""
-            if ! command -v kask &> /dev/null; then
+            if ! command -v zed-kask >/dev/null 2>&1; then
                 echo "  Note: Start a new shell session for PATH changes to take effect."
                 echo ""
             fi
@@ -739,8 +560,9 @@ main() {
             uninstall_hkask
             ;;
         build-only)
+            clone_repo
             if [ "$skip_deps" = false ]; then
-                install_system_dependencies
+                install_system_dependencies "$HKASK_SOURCE_DIR"
             fi
             if [ "$skip_rust" = false ]; then
                 install_rust
@@ -750,5 +572,4 @@ main() {
     esac
 }
 
-# Run main function
 main "$@"

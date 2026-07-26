@@ -7,6 +7,11 @@ if [[ ! " $* " == *" -p "* && ! " $* " == *" --package "* ]]; then
 fi
 
 set -x
+# --all-features enables every feature in every workspace crate. This is
+# correct for the Linux-only clippy CI job: platform-specific features
+# (gpui_web/multithreaded for wasm, gpui_macos/runtime_shaders, vim/neovim)
+# do not fire on Linux. If a macOS/Windows clippy job is added, revisit this
+# flag — some features may pull platform-specific deps that fail to build.
 "${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings
 
 # If local, run other checks if we have the tools installed.

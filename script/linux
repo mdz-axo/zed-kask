@@ -10,7 +10,15 @@ fi
 
 function finalize {
   # after packages install (curl, etc), get the rust toolchain
-  which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  if ! which rustup > /dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # rustup installs cargo/rustc shims into ~/.cargo/bin. Source the env
+    # file so this script's caller (and any subsequent command in the same
+    # shell invocation) can find cargo. Without this, `./script/linux &&
+    # cargo build` fails with `cargo: command not found` on fresh systems.
+    # shellcheck disable=SC1091
+    source "$HOME/.cargo/env" 2>/dev/null || true
+  fi
   cat <<EOF
 Finished installing Linux dependencies with script/linux
 EOF

@@ -38,21 +38,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  # Packages to build — must stay in sync with MCP_SERVERS in
-  # kask/scripts/build/install.sh and BUILTIN_SERVERS in
-  # kask/crates/hkask-mcp-server/src/lib.rs
-  PACKAGES: >-
-    --package zed
-    --package hkask-mcp-condenser
-    --package hkask-mcp-research
-    --package hkask-mcp-companies
-    --package hkask-mcp-media
-    --package hkask-mcp-corpus
-    --package hkask-mcp-training
-    --package hkask-mcp-kata-kanban
-    --package hkask-mcp-curator
-    --package hkask-mcp-codegraph
-    --package hkask-mcp-scenarios
+  # Packages to build — generated from kask/scripts/build/mcp-servers.txt
+  # (single source of truth, verified by kask/scripts/check-mcp-servers.sh
+  # against BUILTIN_SERVERS in kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs).
+  # The list is materialized into --package args in the build step below.
 
 jobs:
   build:
@@ -104,7 +93,16 @@ jobs:
       - name: Build binaries
         shell: bash
         run: |
-          cargo build --release --target ${{ matrix.target }} $PACKAGES
+          set -euo pipefail
+          # Materialize --package args from mcp-servers.txt (single source of truth).
+          packages="--package zed"
+          while IFS= read -r server; do
+            case "$server" in
+              ''|\#*) continue ;;
+            esac
+            packages="$packages --package $server"
+          done < kask/scripts/build/mcp-servers.txt
+          cargo build --release --target ${{ matrix.target }} $packages
 
       - name: Collect and archive binaries (Unix)
         if: runner.os != 'Windows'
@@ -212,5 +210,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 concurrency:
-  group: kask-release-${{ github.ref }}
+  # Serialize all release runs (tag pushes, scheduled nightlies, manual
+  # dispatches) on a single group. The nightly path force-moves the
+  # `nightly` tag and writes to GitHub Releases — concurrent runs would
+  # race on both surfaces. A single group prevents that (BH-18).
+  group: kask-release
   cancel-in-progress: false

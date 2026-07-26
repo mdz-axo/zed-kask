@@ -560,14 +560,35 @@ fn main() {
         );
         log::info!("hKask regulation system wired — tool invocations are governed");
 
-        // Run the CyberneticsLoop's tick cycle on a background task.
+        // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
+        // a dedicated tokio runtime. GPUI's `background_spawn` uses its own
+        // thread-pool executor (not tokio), so `tokio::time::interval` and
+        // `tokio::sync::RwLock` would panic with "there is no reactor running"
+        // if spawned via `cx.background_spawn`. The kask regulation crates
+        // (hkask-regulation, hkask-mcp) are tokio-native; they need a real
+        // tokio reactor to drive their timers and I/O.
+        //
+        // The runtime is multi-threaded so both loops can run concurrently
+        // with any MCP server I/O that the governance membrane triggers.
+        // It is detached (never joined) — the loops run for the lifetime of
+        // the process and are cancelled when the runtime is dropped on exit.
+        let kask_tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("kask-tokio")
+            .enable_all()
+            .build()
+            .expect("failed to build kask tokio runtime — cannot start regulation loops");
+        let kask_runtime_handle = kask_tokio_runtime.handle().clone();
+        // The runtime must outlive the spawn scope. Leak it intentionally —
+        // it is a process-lifetime resource (the loops run forever, and the
+        // MCP server I/O it drives runs until the process exits). Dropping it
+        // would cancel all spawned tasks immediately.
+        std::mem::forget(kask_tokio_runtime);
+
+        // CyberneticsLoop tick cycle (10s interval).
         // Without this, the RegulationLedger stays empty — no variety
         // counters, no regulation health, no algedonic alerts. The
         // metacognition loop would be sensing a dead system.
-        //
-        // The tick interval (10s) matches the Curation loop cadence from
-        // the legacy hKask LoopScheduler.
-        cx.background_spawn(async move {
+        kask_runtime_handle.spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             interval.tick().await; // skip the first immediate tick
             loop {
@@ -576,14 +597,13 @@ fn main() {
                 use hkask_regulation::RegulationLoop;
                 loop_guard.tick().await;
             }
-        })
-        .detach();
+        });
         log::info!("CyberneticsLoop tick cycle started (10s interval)");
 
-        // Curator metacognition loop — runs sense→compare→compute→act cycles
-        // on a background task. Reads from RegulationLedger (populated by
-        // the CyberneticsLoop tick above) and receives alerts from the
-        // CyberneticsLoop via the alert channel.
+        // Curator metacognition loop — runs sense→compare→compute→act cycles.
+        // Reads from RegulationLedger (populated by the CyberneticsLoop tick
+        // above) and receives alerts from the CyberneticsLoop via the alert
+        // channel.
         //
         // This is a self-contained implementation in hkask-regulation that
         // doesn't need hkask-pods. It reads directly from RegulationLedger.
@@ -596,10 +616,9 @@ fn main() {
                 .with_alert_receiver(alert_rx),
         );
         let metacog_loop = metacognition_loop.clone();
-        cx.background_spawn(async move {
+        kask_runtime_handle.spawn(async move {
             metacog_loop.run().await;
-        })
-        .detach();
+        });
         log::info!("Curator metacognition loop started (30s tick interval)");
 
         // Wire the metacognition provider so the CuratorStatusTool can read
@@ -658,6 +677,11 @@ fn main() {
         if let Some(app_commit_sha) = app_commit_sha {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
+        // Register the global Fs so `<dyn Fs>::global(cx)` works (used by
+        // kask_bridge::ensure_openai_compatible_entries and other callers).
+        // Upstream zed sets this in the same position; the kask fork was
+        // missing the call, causing a panic on startup.
+        <dyn fs::Fs>::set_global(fs.clone(), cx);
         settings::init(cx);
         zlog_settings::init(cx);
         zed::watch_settings_files(fs.clone(), cx);
