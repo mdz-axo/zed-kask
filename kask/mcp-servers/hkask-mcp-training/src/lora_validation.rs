@@ -38,7 +38,7 @@ use crate::providers::types::{
 };
 
 /// Severity of a validation finding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationSeverity {
     /// Hard refusal — do not submit the job.
     Refuse,
@@ -46,6 +46,17 @@ pub enum ValidationSeverity {
     Warn,
     /// Informational — no action needed.
     Info,
+}
+
+impl ValidationSeverity {
+    /// String representation for tracing spans and JSON serialization.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Refuse => "refuse",
+            Self::Warn => "warn",
+            Self::Info => "info",
+        }
+    }
 }
 
 /// A single validation finding from a math-contract gate.
@@ -61,6 +72,19 @@ pub struct ValidationFinding {
     pub source: &'static str,
     /// Concrete remediation recommendation.
     pub remediation: String,
+}
+
+impl ValidationFinding {
+    /// Serialize to a JSON object for MCP tool responses.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "gate_id": self.gate_id,
+            "severity": self.severity.as_str(),
+            "message": self.message,
+            "source": self.source,
+            "remediation": self.remediation,
+        })
+    }
 }
 
 /// Validate training params against the LoRA/QLoRA math-contract gates.
@@ -841,70 +865,24 @@ fn generate_mapping_code(detected: &DatasetFormat, expected: &DatasetFormat) -> 
     }
 }
 
-/// Runtime metrics from a training job — consumed by G-R1 (runtime alert gate).
-///
-/// Sourced from the completion manifest or live metric polling. When supplied
-/// to `validate_runtime_metrics`, produces findings for loss spikes, NaN
-/// gradients, vanishing loss, and training stalls.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct RuntimeMetrics {
-    /// Current training step.
-    #[serde(default)]
-    pub current_step: Option<u32>,
-    /// Total training steps.
-    #[serde(default)]
-    pub total_steps: Option<u32>,
-    /// Latest loss value.
-    #[serde(default)]
-    pub loss: Option<f64>,
-    /// Latest gradient norm.
-    #[serde(default)]
-    pub grad_norm: Option<f64>,
-    /// Runtime alerts (e.g., from trackio.alert() or equivalent).
-    #[serde(default)]
-    pub alerts: Vec<TrainingAlert>,
-}
-
-/// A single runtime alert from the training loop.
-///
-/// Renamed from `RuntimeAlert` to avoid collision with
-/// `hkask_regulation::RuntimeAlert` (which has different fields).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TrainingAlert {
-    /// Alert title (e.g., "Loss divergence", "Vanishing loss").
-    #[serde(default)]
-    pub title: String,
-    /// Alert severity: "info", "warn", "error", "critical".
-    /// Unknown levels default to "warn" in `validate_runtime_metrics`.
-    #[serde(default = "default_alert_level")]
-    pub level: String,
-    /// Alert text/body.
-    #[serde(default)]
-    pub text: String,
-    /// Step at which the alert fired.
-    #[serde(default)]
-    pub step: Option<u32>,
-}
-
-fn default_alert_level() -> String {
-    "warn".to_string()
-}
-
 /// G-R1: Runtime alert gate — validates runtime metrics for training instability.
 ///
 /// Mirrors the HuggingFace trackio alert pattern: loss spikes, NaN gradients,
 /// vanishing loss, and training stalls. This gate is `runtime`-phase only; it
-/// is `not_applicable` in preflight. When `runtime_metrics` is supplied, each
-/// alert becomes a normalized finding with `evidence_kind: runtime_measurement`.
+/// is `not_applicable` in preflight. When runtime metrics are supplied via the
+/// completion manifest, each alert becomes a normalized finding with
+/// `evidence_kind: runtime_measurement`.
 ///
 /// Anchored to: trackio alert API (huggingface-trackio skill §Alerts),
 /// QLoRA paper §3 (training stability), Razin et al. arXiv:2410.21228
 /// (intruder dimensions and structured forgetting).
-pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFinding> {
+pub fn validate_runtime_metrics(
+    manifest: &crate::huggingface::CompletionManifest,
+) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();
 
     // Process explicit alerts first — these are operator/runtime-supplied signals.
-    for alert in &metrics.alerts {
+    for alert in &manifest.alerts {
         let severity = match alert.level.as_str() {
             "error" | "critical" | "fatal" => ValidationSeverity::Refuse,
             "warn" => ValidationSeverity::Warn,
@@ -931,7 +909,7 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
     // NaN comparisons are always false in Rust, so `loss > 5.0` would silently
     // pass. We check is_nan()/is_infinite() explicitly before the divergence
     // and vanishing checks.
-    if let Some(loss) = metrics.loss {
+    if let Some(loss) = manifest.loss {
         if loss.is_nan() {
             findings.push(ValidationFinding {
                 gate_id: "G-R1",
@@ -954,7 +932,7 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
 
     // Detect loss divergence: loss > 5.0 after step 100.
     // Only reached if loss is finite (NaN/inf handled above).
-    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss)
+    if let (Some(step), Some(loss)) = (manifest.current_step, manifest.loss)
         && loss.is_finite()
         && step > 100
         && loss > 5.0
@@ -973,7 +951,7 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
 
     // Detect vanishing loss: |loss| < 1e-8 after step 0.
     // Only reached if loss is finite.
-    if let (Some(step), Some(loss)) = (metrics.current_step, metrics.loss)
+    if let (Some(step), Some(loss)) = (manifest.current_step, manifest.loss)
         && loss.is_finite()
         && step > 0
         && loss.abs() < 1e-8
@@ -991,7 +969,7 @@ pub fn validate_runtime_metrics(metrics: &RuntimeMetrics) -> Vec<ValidationFindi
     }
 
     // Detect NaN gradient norm.
-    if let Some(grad_norm) = metrics.grad_norm {
+    if let Some(grad_norm) = manifest.grad_norm {
         if grad_norm.is_nan() {
             findings.push(ValidationFinding {
                 gate_id: "G-R1",

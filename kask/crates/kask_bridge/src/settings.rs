@@ -299,7 +299,7 @@ pub struct KaskCorpusSettings {
     #[serde(default = "default_embedding_dim")]
     pub embedding_dim: u32,
 
-    /// Embedding model override (e.g., "DI/Qwen/Qwen3-Embedding-0.6B").
+    /// Embedding model override (e.g., "DeepInfra/Qwen/Qwen3-Embedding-0.6B").
     #[serde(default)]
     pub embedding_model: String,
 
@@ -356,19 +356,19 @@ fn default_template_root() -> String {
 /// Media MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskMediaSettings {
-    /// TTS model override (e.g., "FA/qwen-3-tts").
+    /// TTS model override (e.g., "fal.ai/qwen-3-tts").
     #[serde(default)]
     pub tts_model: String,
 
-    /// STT model override (e.g., "FA/wizper").
+    /// STT model override (e.g., "fal.ai/wizper").
     #[serde(default)]
     pub stt_model: String,
 
-    /// Vision model override (e.g., "KC/qwen/qwen3-vl-235b-a22b-instruct").
+    /// Vision model override (e.g., "KiloCode/qwen/qwen3-vl-235b-a22b-instruct").
     #[serde(default)]
     pub vision_model: String,
 
-    /// Image generation model override (e.g., "FA/flux-2").
+    /// Image generation model override (e.g., "fal.ai/flux-2").
     #[serde(default)]
     pub image_gen_model: String,
 }
@@ -407,7 +407,7 @@ pub struct KaskFusionSettings {
     #[serde(default)]
     pub enabled: bool,
 
-    /// Judge/fuser model (provider-prefixed, e.g. `"KC/z-ai/glm-5.2"`).
+    /// Judge/fuser model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.2"`).
     /// When empty, defers to `FusionConfig::kask_default()`.
     #[serde(default)]
     pub judge_model: String,

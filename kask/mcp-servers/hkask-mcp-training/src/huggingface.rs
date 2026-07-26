@@ -343,6 +343,32 @@ pub struct TrainingArtifacts {
     pub completion_manifest_path: String,
 }
 
+/// A single runtime alert from the training loop, stored in the completion manifest.
+///
+/// Mirrors the HuggingFace trackio alert pattern. Each alert becomes a G-R1
+/// finding with `evidence_kind: runtime_measurement` when the manifest is
+/// evaluated by `validate_runtime_metrics`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrainingAlert {
+    /// Alert title (e.g., "Loss divergence", "Vanishing loss").
+    #[serde(default)]
+    pub title: String,
+    /// Alert severity: "info", "warn", "error", "critical".
+    /// Unknown levels default to "warn" in `validate_runtime_metrics`.
+    #[serde(default = "default_alert_level")]
+    pub level: String,
+    /// Alert text/body.
+    #[serde(default)]
+    pub text: String,
+    /// Step at which the alert fired.
+    #[serde(default)]
+    pub step: Option<u32>,
+}
+
+fn default_alert_level() -> String {
+    "warn".to_string()
+}
+
 /// Evidence written by the training pod after training completes, uploaded to
 /// the private model repository at `jobs/{job_id}/completion-manifest.json`.
 /// Fetched by `training_status` to detect completion (the pod stays RUNNING for
@@ -386,7 +412,7 @@ pub struct CompletionManifest {
     /// G-R1 finding with `evidence_kind: runtime_measurement`. Mirrors the
     /// HF trackio alert pattern.
     #[serde(default)]
-    pub alerts: Vec<crate::lora_validation::TrainingAlert>,
+    pub alerts: Vec<TrainingAlert>,
     /// Output directory on the pod where the adapter was saved.
     #[serde(default)]
     pub output_dir: Option<String>,

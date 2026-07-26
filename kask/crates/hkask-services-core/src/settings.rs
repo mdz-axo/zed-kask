@@ -52,7 +52,7 @@ pub struct HkaskSettings {
 }
 
 fn default_embedding_model() -> String {
-    "DI/Qwen/Qwen3-Embedding-0.6B".to_string()
+    "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string()
 }
 
 fn default_classifier_model() -> String {
@@ -62,7 +62,7 @@ fn default_classifier_model() -> String {
 }
 
 fn default_ocr_model() -> String {
-    "RP/kask-ocr".to_string()
+    "RunPod/kask-ocr".to_string()
 }
 
 fn default_chunk_max_tokens() -> usize {

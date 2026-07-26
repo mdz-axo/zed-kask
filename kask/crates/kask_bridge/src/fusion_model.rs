@@ -637,7 +637,7 @@ fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
 /// The `/v1/models` endpoint is public, so this works even without an API key
 /// — the key is only sent to personalize results.
 ///
-/// Returns provider-prefixed model IDs (e.g. `"OR/z-ai/glm-5.2"`) sorted by
+/// Returns provider-prefixed model IDs (e.g. `"OpenRouter/z-ai/glm-5.2"`) sorted by
 /// intelligence index descending. On any error, returns an empty vec.
 ///
 /// Used by the composition root to auto-populate the fusion panel when

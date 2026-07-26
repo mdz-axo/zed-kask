@@ -18,7 +18,7 @@ use std::sync::Arc;
 /// on `hkask-inference`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
-    /// Full model name with provider prefix (e.g., "OR/z-ai/glm-5.2")
+    /// Full model name with provider prefix (e.g., "OpenRouter/z-ai/glm-5.2")
     pub prefixed_name: String,
     /// Raw model name without prefix
     pub model: String,

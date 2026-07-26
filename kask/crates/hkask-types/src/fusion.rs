@@ -182,7 +182,7 @@ crate::enum_snake_str!(FusionSkill, {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FusionConfig {
     /// The judge/fuser model that orchestrates and synthesizes the fusion.
-    /// Supports provider prefix routing (e.g., "KC/z-ai/glm-5.2").
+    /// Supports provider prefix routing (e.g., "OpenRouter/z-ai/glm-5.2").
     pub judge: String,
     /// The panel of analysis models that answer in parallel.
     /// Each model supports provider prefix routing.
@@ -228,14 +228,14 @@ fn default_max_rounds() -> u32 {
 impl FusionConfig {
     /// Return the kask default fusion configuration.
     ///
-    /// Reads judge model from `HKASK_FUSION_JUDGE_MODEL` (default: `KC/z-ai/glm-5.2`)
+    /// Reads judge model from `HKASK_FUSION_JUDGE_MODEL` (default: `OpenRouter/z-ai/glm-5.2`)
     /// and panel models from `HKASK_FUSION_PANEL_MODELS` (comma-separated,
-    /// default: `"Kimi2.7,Qwen3.7 Max,GLM5.2,Minimax3"`).
+    /// default: `"OpenRouter/z-ai/glm-5.2,OpenRouter/qwen/qwen3-235b,OpenRouter/minimax/minimax3"`).
     pub fn kask_default() -> Self {
         let judge = std::env::var("HKASK_FUSION_JUDGE_MODEL")
-            .unwrap_or_else(|_| "KC/z-ai/glm-5.2".to_string());
+            .unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2".to_string());
         let panel: Vec<String> = std::env::var("HKASK_FUSION_PANEL_MODELS")
-            .unwrap_or_else(|_| "Kimi2.7,Qwen3.7 Max,GLM5.2,Minimax3".to_string())
+            .unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2,OpenRouter/qwen/qwen3-235b-a22b,OpenRouter/minimax/minimax3".to_string())
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())

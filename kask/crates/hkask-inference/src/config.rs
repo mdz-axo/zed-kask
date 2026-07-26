@@ -11,7 +11,7 @@
 //! - `CLINE_BASE_URL` / `CLINE_API_KEY` — Cline cloud gateway (required)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
 //! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DI, FA, TG, OR, KC, OM, CL, RP; default: DI)
-//! - `HKASK_DEFAULT_MODEL` — default model (default: `KC/z-ai/glm-5.2`)
+//! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //! - `HKASK_FUSION_JUDGE_MODEL` / `HKASK_FUSION_PANEL_MODELS` / `HKASK_FUSION_MODE` / `HKASK_FUSION_SKILLS` — fusion config
 //! - `HKASK_FUSION_DISABLED=1` — disable fusion
 //!
@@ -24,11 +24,11 @@
 //! # Model Naming Convention
 //!
 //! Models use a 2-letter provider prefix:
-//! - `DI/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
+//! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
 //! - `FA/paddleocr` → fal.ai (cloud)
 //! - `TG/Qwen/Qwen2.5-7B-Instruct-Turbo` → Together AI (cloud)
 //! - `OR/openai/gpt-4o` → OpenRouter (cloud)
-//! - `KC/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
+//! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
 //! - `OM/qwen3:8b` → Ollama (local)
 //! - `CL/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
 //! - `RP/kask-ocr` → RunPod (vision/OCR only — not available for chat)
@@ -169,8 +169,8 @@ impl ProviderId {
 //
 // # Environment Variables
 //
-// - `HKASK_FUSION_JUDGE_MODEL` — judge model for fusion (e.g., "DI/deepseek-v4-pro")
-// - `HKASK_FUSION_PANEL_MODELS` — comma-separated panel models (e.g., "OR/auto,KC/anthropic/claude-sonnet-4.5")
+// - `HKASK_FUSION_JUDGE_MODEL` — judge model for fusion (e.g., "OpenRouter/deepseek-v4-pro")
+// - `HKASK_FUSION_PANEL_MODELS` — comma-separated panel models (e.g., "OpenRouter/auto,KiloCode/anthropic/claude-sonnet-4.5")
 // - `HKASK_FUSION_MODE` — judge deliberation mode (default: synthesis)
 // - `HKASK_FUSION_SKILLS` — comma-separated skill anchors for the judge
 // - `HKASK_FUSION_MAX_ROUNDS` — max rounds for deliberation mode (default: 5)
@@ -253,6 +253,7 @@ impl Default for InferenceConfig {
             timeout_secs: 120,
             pool_max_idle: 5,
             default_model: "OpenRouter/z-ai/glm-5.2".to_string(),
+            fusion: None,
         }
     }
 }
@@ -267,11 +268,11 @@ impl InferenceConfig {
     /// post: returns InferenceConfig resolved from env vars and keychain
     /// post: defaults to DeepInfra cloud if env vars unset
     pub fn from_env() -> Self {
-        let di = ProviderConfig::from_env("DI", "https://api.deepinfra.com");
-        let tg = ProviderConfig::from_env("TG", "https://api.together.xyz");
-        let or = ProviderConfig::from_env("OR", "https://openrouter.ai/api");
-        let kc = ProviderConfig::from_env("KC", "https://api.kilo.ai/api/gateway");
-        let om = ProviderConfig::from_env("OM", "http://localhost:11434");
+        let di = ProviderConfig::from_env("DeepInfra", "https://api.deepinfra.com");
+        let tg = ProviderConfig::from_env("Together AI", "https://api.together.xyz");
+        let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
+        let kc = ProviderConfig::from_env("KiloCode", "https://api.kilo.ai/api/gateway");
+        let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
         // Cline uses `CLINE_` env vars (not `CL_`) per the documented API key name.
         let cline_base_url = std::env::var("CLINE_BASE_URL")
             .unwrap_or_else(|_| "https://api.cline.bot/api".to_string());
@@ -531,15 +532,15 @@ mod tests {
     #[test]
     fn parse_provider_prefix() {
         assert_eq!(
-            ProviderId::parse_from_model("TG/Qwen/Qwen2.5-7B-Instruct-Turbo"),
+            ProviderId::parse_from_model("Together AI/Qwen/Qwen2.5-7B-Instruct-Turbo"),
             Some((ProviderId::Together, "Qwen/Qwen2.5-7B-Instruct-Turbo"))
         );
         assert_eq!(
-            ProviderId::parse_from_model("DI/meta-llama/Llama-3.3-70B-Instruct"),
+            ProviderId::parse_from_model("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
             Some((ProviderId::DeepInfra, "meta-llama/Llama-3.3-70B-Instruct"))
         );
         assert_eq!(
-            ProviderId::parse_from_model("RP/my-model"),
+            ProviderId::parse_from_model("RunPod/my-model"),
             Some((ProviderId::Runpod, "my-model"))
         );
     }
@@ -556,8 +557,8 @@ mod tests {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — validates malformed model rejection
     #[test]
     fn parse_empty_model_returns_none() {
-        assert_eq!(ProviderId::parse_from_model("DI/"), None);
-        assert_eq!(ProviderId::parse_from_model("FA/"), None);
+        assert_eq!(ProviderId::parse_from_model("DeepInfra/"), None);
+        assert_eq!(ProviderId::parse_from_model("fal.ai/"), None);
     }
 
     /// expect: "Inference malformed model rejection works correctly under test conditions"
@@ -583,14 +584,20 @@ mod tests {
     fn prefix_model_format() {
         assert_eq!(
             ProviderId::Together.prefix_model("Qwen/Qwen2.5-7B"),
-            "TG/Qwen/Qwen2.5-7B"
+            "Together AI/Qwen/Qwen2.5-7B"
         );
         assert_eq!(
             ProviderId::DeepInfra.prefix_model("meta-llama/Llama-3.3-70B"),
-            "DI/meta-llama/Llama-3.3-70B"
+            "DeepInfra/meta-llama/Llama-3.3-70B"
         );
-        assert_eq!(ProviderId::Fal.prefix_model("paddleocr"), "FA/paddleocr");
-        assert_eq!(ProviderId::Runpod.prefix_model("my-model"), "RP/my-model");
+        assert_eq!(
+            ProviderId::Fal.prefix_model("paddleocr"),
+            "fal.ai/paddleocr"
+        );
+        assert_eq!(
+            ProviderId::Runpod.prefix_model("my-model"),
+            "RunPod/my-model"
+        );
     }
 
     /// expect: "Inference fal.ai prefix parsing works correctly under test conditions"
@@ -598,11 +605,11 @@ mod tests {
     #[test]
     fn parse_fal_prefix() {
         assert_eq!(
-            ProviderId::parse_from_model("FA/paddleocr"),
+            ProviderId::parse_from_model("fal.ai/paddleocr"),
             Some((ProviderId::Fal, "paddleocr"))
         );
         assert_eq!(
-            ProviderId::parse_from_model("FA/nemotron-parse"),
+            ProviderId::parse_from_model("fal.ai/nemotron-parse"),
             Some((ProviderId::Fal, "nemotron-parse"))
         );
     }
@@ -664,12 +671,12 @@ mod tests {
         // Two uppercase letters + slash + rest = prefix-shaped.
         assert!(ProviderId::looks_like_prefix("BT/foo"));
         assert!(ProviderId::looks_like_prefix("XX/model"));
-        assert!(ProviderId::looks_like_prefix("DI/foo"));
+        assert!(ProviderId::looks_like_prefix("DeepInfra/foo"));
         // No slash at index 2, too short, or lowercase = not prefix-shaped.
         assert!(!ProviderId::looks_like_prefix("qwen3:8b"));
         assert!(!ProviderId::looks_like_prefix("deepseek-v4-pro"));
         assert!(!ProviderId::looks_like_prefix("DI"));
         assert!(!ProviderId::looks_like_prefix("ab/c"));
-        assert!(!ProviderId::looks_like_prefix("DI/"));
+        assert!(!ProviderId::looks_like_prefix("DeepInfra/"));
     }
 }

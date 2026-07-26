@@ -103,7 +103,7 @@ pub fn default_corpus_config(author_slug: &str) -> CorpusConfig {
     CorpusConfig {
         author: author_slug.to_string(),
         embedding: crate::embed::EmbeddingConfig {
-            model: "DI/Qwen/Qwen3-Embedding-0.6B".to_string(),
+            model: "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string(),
             dim: 1024,
             batch_size: 64,
         },
