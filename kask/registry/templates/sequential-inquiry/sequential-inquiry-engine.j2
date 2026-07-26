@@ -19,6 +19,7 @@ contract:
     constraints: array
     prior_chain: array
     prior_delegation_results: object
+    prior_skill_match_results: object
     max_thoughts: integer
     thinking_budget: string
   output:
@@ -93,6 +94,16 @@ Results from deep-dive skills dispatched in the previous cycle. Weave these insi
 1. References which skill produced the result (e.g., "hypothesis-framer refined this to...")
 2. Summarizes the key insight gained
 3. Explains how it changes or confirms your thinking
+{% endif %}
+
+{% if prior_skill_match_results %}
+## Prior Skill-Match Results
+
+Results from skill-router for `skill_match_queries` emitted in the previous cycle. Incorporate these the same way as delegation results — reference the matched skill, summarize the insight, and explain how it changes or confirms your thinking:
+
+```json
+{{ prior_skill_match_results | tojson }}
+```
 {% endif %}
 
 ## Thinking Protocol

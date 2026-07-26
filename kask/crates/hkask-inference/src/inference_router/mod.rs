@@ -680,8 +680,8 @@ mod tests {
         let router = InferenceRouter::new(config);
         let params = LLMParameters::default();
         assert_eq!(
-            router.effective_model(Some("DI/custom-model"), &params),
-            "DI/custom-model"
+            router.effective_model(Some("DeepInfra/custom-model"), &params),
+            "DeepInfra/custom-model"
         );
     }
 
@@ -777,25 +777,25 @@ mod tests {
     // ── Ollama provider routing ────────────────────────────────────────
 
     /// REQ: P9-inf-ollama-prefix-routing
-    /// expect: "OM/ prefix routes to the Ollama provider with the tag stripped" [P9]
+    /// expect: "ollama/ prefix routes to the Ollama provider with the tag stripped" [P9]
     #[test]
     fn parse_from_model_routes_ollama_prefix() {
         assert_eq!(
-            ProviderId::parse_from_model("OM/qwen3:8b"),
+            ProviderId::parse_from_model("ollama/qwen3:8b"),
             Some((ProviderId::Ollama, "qwen3:8b"))
         );
     }
 
     /// REQ: P9-inf-ollama-prefix-routing
-    /// expect: "Ollama provider formats models with the OM/ prefix" [P9]
+    /// expect: "Ollama provider formats models with the ollama/ prefix" [P9]
     #[test]
     fn ollama_prefix_format() {
-        assert_eq!(ProviderId::Ollama.prefix_model("qwen3:8b"), "OM/qwen3:8b");
+        assert_eq!(ProviderId::Ollama.prefix_model("qwen3:8b"), "ollama/qwen3:8b");
         assert_eq!(ProviderId::Ollama.as_str(), "OM");
     }
 
     /// REQ: P9-inf-ollama-resolve
-    /// expect: "Router resolves an OM/-prefixed model to the Ollama chat backend" [P9]
+    /// expect: "Router resolves an ollama/-prefixed model to the Ollama chat backend" [P9]
     #[test]
     fn resolve_chat_routes_ollama_model() {
         let config = InferenceConfig::default();
@@ -806,8 +806,8 @@ mod tests {
         }
         let router = InferenceRouter::new(config);
         let (provider, model) = router
-            .resolve_chat("OM/qwen3:8b")
-            .expect("OM/-prefixed model should resolve");
+            .resolve_chat("ollama/qwen3:8b")
+            .expect("ollama/-prefixed model should resolve");
         assert_eq!(provider, ProviderId::Ollama);
         assert_eq!(model, "qwen3:8b");
     }
@@ -833,37 +833,37 @@ mod tests {
     // ── Cline provider routing ─────────────────────────────────────────
 
     /// REQ: P9-inf-cline-prefix-routing
-    /// expect: "CL/ prefix routes to the Cline provider with the org/model stripped" [P9]
+    /// expect: "Cline/ prefix routes to the Cline provider with the org/model stripped" [P9]
     #[test]
     fn parse_from_model_routes_cline_prefix() {
         assert_eq!(
-            ProviderId::parse_from_model("CL/anthropic/claude-sonnet-4-6"),
+            ProviderId::parse_from_model("Cline/anthropic/claude-sonnet-4-6"),
             Some((ProviderId::Cline, "anthropic/claude-sonnet-4-6"))
         );
     }
 
     /// REQ: P9-inf-cline-prefix-routing
-    /// expect: "Cline provider formats models with the CL/ prefix" [P9]
+    /// expect: "Cline provider formats models with the Cline/ prefix" [P9]
     #[test]
     fn cline_prefix_format() {
         assert_eq!(
             ProviderId::Cline.prefix_model("openai/gpt-4o"),
-            "CL/openai/gpt-4o"
+            "Cline/openai/gpt-4o"
         );
         assert_eq!(ProviderId::Cline.as_str(), "CL");
     }
 
     /// REQ: P9-inf-cline-resolve
-    /// expect: "Router resolves a CL/-prefixed model; unavailable without a key" [P9]
+    /// expect: "Router resolves a Cline/-prefixed model; unavailable without a key" [P9]
     #[test]
     fn resolve_chat_cline_unavailable_without_key() {
         // Default config has no CLINE_API_KEY → cline backend is None → resolve_chat errors.
         let config = InferenceConfig::default();
         let router = InferenceRouter::new(config);
-        let err = router.resolve_chat("CL/anthropic/claude-sonnet-4-6");
+        let err = router.resolve_chat("Cline/anthropic/claude-sonnet-4-6");
         assert!(
             err.is_err(),
-            "CL/ model should not resolve without CLINE_API_KEY"
+            "Cline/ model should not resolve without CLINE_API_KEY"
         );
     }
 
@@ -910,10 +910,10 @@ mod tests {
         }
         let config = InferenceConfig::default();
         let router = InferenceRouter::new(config);
-        let err = router.resolve_chat("RP/kask-ocr").unwrap_err();
+        let err = router.resolve_chat("RunPod/kask-ocr").unwrap_err();
         assert!(
             err.to_string().contains("not available"),
-            "RP/ chat resolution should report RunPod not available, got: {err}"
+            "RunPod/ chat resolution should report RunPod not available, got: {err}"
         );
         // Vision dispatch path: vision_backend(Runpod) should be Some when configured.
         // (RunpodBackend::new reads RUNPOD_API_KEY/RUNPOD_TEMPLATE_ID; if env present it constructs.)

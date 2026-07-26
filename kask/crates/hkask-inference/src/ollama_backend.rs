@@ -26,8 +26,8 @@
 //! - **Vision is supported** via the shared `vision_infer` path. `build_vision_request`
 //!   already emits the OpenAI content-array multimodal format (`[{image_url},{text}]`)
 //!   that Ollama's OpenAI-compatible layer accepts — verified empirically. OCR routes
-//!   through `InferenceRouter::generate_vision` with an `OM/`-prefixed vision model
-//!   (e.g. `OM/qwen3-vl:8b`), the same path `LlmOcrExecutor` uses for cloud providers.
+//!   through `InferenceRouter::generate_vision` with an `ollama/`-prefixed vision model
+//!   (e.g. `ollama/qwen3-vl:8b`), the same path `LlmOcrExecutor` uses for cloud providers.
 //! - **Streaming is buffered.** `stream_chat_completion` reads the full
 //!   response body then re-emits chunks — same as every other backend today,
 //!   not an Ollama-specific regression.

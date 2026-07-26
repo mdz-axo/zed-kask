@@ -40,39 +40,41 @@ impl TrainingServer {
             }
 
             // G-P1: Persistence preflight — verify HuggingFace artifact persistence
-            // is configured before the expensive dataset normalization step. On
-            // Runpod, missing env vars → refuse (adapter lost on ephemeral pod).
-            // On DeepInfra/Nebius, warn (no auto-upload configured today).
+            // is configured before the expensive dataset normalization step.
             let hf_training_result = HuggingFaceTraining::from_env()
                 .map(|_| ())
                 .map_err(|error| error.to_string());
-            let persistence_findings =
-                lora_validation::validate_persistence(&self.host_id, &hf_training_result);
-            for finding in &persistence_findings {
-                let severity_str = match finding.severity {
-                    lora_validation::ValidationSeverity::Refuse => "refuse",
-                    lora_validation::ValidationSeverity::Warn => "warn",
-                    lora_validation::ValidationSeverity::Info => "info",
-                };
-                tracing::warn!(
-                    target: "reg.lora.audit",
-                    gate = finding.gate_id,
-                    severity = severity_str,
-                    message = %finding.message,
-                    source = %finding.source,
-                    "LoRA training-config persistence gate"
-                );
-            }
-            if lora_validation::has_refusals(&persistence_findings) {
-                let refusals: Vec<_> = persistence_findings
-                    .iter()
-                    .filter(|f| f.severity == lora_validation::ValidationSeverity::Refuse)
-                    .collect();
-                let messages: Vec<String> =
-                    refusals.iter().map(|f| format!("{}: {}", f.gate_id, f.message)).collect();
+            let persistence_refuse = match (&self.host_id, &hf_training_result) {
+                (crate::providers::TrainingHostId::Runpod, Err(reason)) => {
+                    tracing::error!(
+                        target: "reg.lora.audit",
+                        gate = "G-P1",
+                        severity = "refuse",
+                        message = %reason,
+                        "Runpod persistence env vars not configured"
+                    );
+                    Some(format!(
+                        "G-P1: Runpod host requires HuggingFace persistence env vars \
+                         (HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, HF_TOKEN) — \
+                         without them, the adapter and completion manifest are lost when the \
+                         ephemeral pod terminates. Error: {reason}"
+                    ))
+                }
+                (crate::providers::TrainingHostId::DeepInfra | crate::providers::TrainingHostId::Nebius, _) => {
+                    tracing::warn!(
+                        target: "reg.lora.audit",
+                        gate = "G-P1",
+                        severity = "warn",
+                        host = ?self.host_id,
+                        "Host does not configure HuggingFace artifact persistence — results may be lost"
+                    );
+                    None
+                }
+                _ => None,
+            };
+            if let Some(msg) = persistence_refuse {
                 return Err(McpToolError::failed_precondition(format!(
-                    "Training persistence not configured: {}",
-                    messages.join("; ")
+                    "Training persistence not configured: {msg}"
                 )));
             }
 
@@ -190,13 +192,10 @@ impl TrainingServer {
             // G-D0: Dataset format compatibility check. Run before the refusal
             // gate so incompatible-dataset refusals are reported alongside
             // config refusals. Derive trainer preference from trl_trainer.
-            let trainer_pref = resolved_params.trl_trainer.as_ref().map(|t| match t {
-                crate::providers::types::TrlTrainer::Sft => "sft",
-                crate::providers::types::TrlTrainer::Dpo => "dpo",
-                crate::providers::types::TrlTrainer::Kto => "kto",
-                crate::providers::types::TrlTrainer::Orpo => "orpo",
-                crate::providers::types::TrlTrainer::Reward => "reward",
-            });
+            let trainer_pref = resolved_params
+                .trl_trainer
+                .as_ref()
+                .map(|t| t.as_dataset_preference());
             let dataset_format_result = lora_validation::validate_dataset_format(
                 &file_path,
                 trainer_pref,
@@ -227,16 +226,31 @@ impl TrainingServer {
                 );
             }
             for finding in &validation_findings {
-                let severity_str = match finding.severity {
-                    lora_validation::ValidationSeverity::Warn => "warn",
-                    lora_validation::ValidationSeverity::Info => "info",
-                    lora_validation::ValidationSeverity::Refuse => "refuse",
-                };
                 if finding.severity == lora_validation::ValidationSeverity::Warn {
-                    tracing::warn!(target: "reg.lora.audit", gate = finding.gate_id, severity = severity_str, message = %finding.message, source = %finding.source, "LoRA training-config gate warning at submit");
-                    tracing::warn!(target: "hkask.training.validation.warn", gate = finding.gate_id, message = %finding.message, remediation = %finding.remediation, "Training config warning");
+                    tracing::warn!(
+                        target: "reg.lora.audit",
+                        gate = finding.gate_id,
+                        severity = finding.severity.as_str(),
+                        message = %finding.message,
+                        source = %finding.source,
+                        "LoRA training-config gate warning at submit"
+                    );
+                    tracing::warn!(
+                        target: "hkask.training.validation.warn",
+                        gate = finding.gate_id,
+                        message = %finding.message,
+                        remediation = %finding.remediation,
+                        "Training config warning"
+                    );
                 } else if finding.severity == lora_validation::ValidationSeverity::Info {
-                    tracing::info!(target: "reg.lora.audit", gate = finding.gate_id, severity = severity_str, message = %finding.message, source = %finding.source, "LoRA training-config gate info at submit");
+                    tracing::info!(
+                        target: "reg.lora.audit",
+                        gate = finding.gate_id,
+                        severity = finding.severity.as_str(),
+                        message = %finding.message,
+                        source = %finding.source,
+                        "LoRA training-config gate info at submit"
+                    );
                 }
             }
 

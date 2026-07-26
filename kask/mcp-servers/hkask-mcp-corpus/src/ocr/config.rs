@@ -37,7 +37,7 @@ pub enum OcrBackend {
     /// Classical OCR via Tesseract (fast, best for text-only).
     Tesseract,
     /// Vision-language model OCR via hkask-inference router.
-    /// The inner `String` is the model name (e.g., `DI/allenai/olmOCR-2-7B-1025`).
+    /// The inner `String` is the model name (e.g., `DeepInfra/allenai/olmOCR-2-7B-1025`).
     LlmOcr(String),
 }
 
@@ -66,7 +66,7 @@ impl std::fmt::Display for OcrBackend {
 /// Uses kask-ocr on RunPod (OLMOCR-2, synchronous /runsync endpoint).
 /// Override via `HKASK_OCR_MODEL` env var or `llm_model` pipeline parameter.
 /// Requires RUNPOD_API_KEY and RUNPOD_OCR_ENDPOINT env vars.
-pub const DEFAULT_LLM_OCR_MODEL: &str = "RP/kask-ocr";
+pub const DEFAULT_LLM_OCR_MODEL: &str = "RunPod/kask-ocr";
 
 /// Configurable OCR complexity thresholds.
 ///

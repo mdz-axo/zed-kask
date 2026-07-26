@@ -9,8 +9,8 @@
 //!
 //! ```text
 //! InferenceRouter
-//!   ├── DeepInfraBackend — DI/ prefix → POST /v1/chat/completions
-//!   └── TogetherBackend  — TG/ prefix → POST /v1/chat/completions
+//!   ├── DeepInfraBackend — DeepInfra/ prefix → POST /v1/chat/completions
+//!   └── TogetherBackend  — Together AI/ prefix → POST /v1/chat/completions
 //! ```rust,no_run
 //!
 //! # REQ tags
@@ -75,8 +75,8 @@ fn default_params() -> LLMParameters {
 
 /// \[P9\] Motivating: Homeostatic Self-Regulation — end-to-end provider routing
 ///
-/// The router dispatches DI/-prefixed models to the DeepInfra backend
-/// and TG/-prefixed models to the Together AI backend.
+/// The router dispatches DeepInfra/-prefixed models to the DeepInfra backend
+/// and Together AI/-prefixed models to the Together AI backend.
 #[tokio::test]
 async fn routing_by_provider_prefix() {
     let deepinfra_mock = MockServer::start().await;
@@ -114,11 +114,11 @@ async fn routing_by_provider_prefix() {
         .generate_with_model(
             "Hello",
             &default_params(),
-            Some("DI/meta-llama/Llama-3.3-70B-Instruct"),
+            Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
             None,
         )
         .await
-        .expect("DI/ routing should succeed");
+        .expect("DeepInfra/ routing should succeed");
     assert_eq!(result.text, "Response from DeepInfra");
     assert_eq!(result.model, "meta-llama/Llama-3.3-70B-Instruct");
 
@@ -126,11 +126,11 @@ async fn routing_by_provider_prefix() {
         .generate_with_model(
             "Hello",
             &default_params(),
-            Some("TG/Qwen/Qwen2.5-7B-Instruct-Turbo"),
+            Some("Together AI/Qwen/Qwen2.5-7B-Instruct-Turbo"),
             None,
         )
         .await
-        .expect("TG/ routing should succeed");
+        .expect("Together AI/ routing should succeed");
     assert_eq!(result.text, "Response from Together");
     assert_eq!(result.model, "Qwen/Qwen2.5-7B-Instruct-Turbo");
 }
@@ -165,21 +165,21 @@ async fn unavailable_backend_returns_error() {
         .generate_with_model(
             "Hello",
             &default_params(),
-            Some("DI/meta-llama/Llama-3.3-70B-Instruct"),
+            Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
             None,
         )
         .await;
     assert!(
         result.is_ok(),
-        "DI/ should succeed when DeepInfra is available"
+        "DeepInfra/ should succeed when DeepInfra is available"
     );
 
     let result = router
-        .generate_with_model("Hello", &default_params(), Some("TG/some-model"), None)
+        .generate_with_model("Hello", &default_params(), Some("Together AI/some-model"), None)
         .await;
     assert!(
         result.is_err(),
-        "TG/ should fail when Together AI is unavailable"
+        "Together AI/ should fail when Together AI is unavailable"
     );
     let err = result.unwrap_err().to_string();
     assert!(
@@ -255,7 +255,7 @@ async fn model_override_routing() {
         deepinfra_api_key: "test-key".to_string(),
         together_base_url: together_mock.uri(),
         together_api_key: "test-key".to_string(),
-        default_model: "DI/meta-llama/Llama-3.3-70B-Instruct".to_string(),
+        default_model: "DeepInfra/meta-llama/Llama-3.3-70B-Instruct".to_string(),
         ..Default::default()
     };
     let router = InferenceRouter::new(config);
@@ -264,7 +264,7 @@ async fn model_override_routing() {
         .generate_with_model(
             "Hello",
             &default_params(),
-            Some("TG/Qwen/Qwen2.5-7B-Instruct-Turbo"),
+            Some("Together AI/Qwen/Qwen2.5-7B-Instruct-Turbo"),
             None,
         )
         .await
@@ -275,7 +275,7 @@ async fn model_override_routing() {
         .generate_with_model(
             "Hello",
             &default_params(),
-            Some("DI/meta-llama/Llama-3.3-70B-Instruct"),
+            Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
             None,
         )
         .await
@@ -321,10 +321,10 @@ async fn list_models_graceful_degradation() {
 
     let deepinfra_model = models
         .iter()
-        .find(|m| m.prefixed_name == "DI/meta-llama/Llama-3.3-70B-Instruct");
+        .find(|m| m.prefixed_name == "DeepInfra/meta-llama/Llama-3.3-70B-Instruct");
     assert!(
         deepinfra_model.is_some(),
-        "DeepInfra model should be present with DI/ prefix. Got models: {:?}",
+        "DeepInfra model should be present with DeepInfra/ prefix. Got models: {:?}",
         models.iter().map(|m| &m.prefixed_name).collect::<Vec<_>>()
     );
     assert_eq!(deepinfra_model.unwrap().provider, ProviderId::DeepInfra);
@@ -377,7 +377,7 @@ async fn disable_thinking_flows_to_wire_format() {
         .generate_with_model(
             "Summarize this.",
             &params,
-            Some("DI/meta-llama/Llama-3.3-70B-Instruct"),
+            Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
             None,
         )
         .await
@@ -470,20 +470,20 @@ async fn generate_stream_with_model_unavailable_backend_returns_error() {
     let mut stream = router.generate_stream_with_model(
         "Hello",
         &default_params(),
-        Some("DI/meta-llama/Llama-3.3-70B-Instruct"),
+        Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
         None,
     );
     let first = stream.next().await;
-    assert!(first.is_some(), "DI/ stream should yield items");
-    assert!(first.unwrap().is_ok(), "DI/ stream should succeed");
+    assert!(first.is_some(), "DeepInfra/ stream should yield items");
+    assert!(first.unwrap().is_ok(), "DeepInfra/ stream should succeed");
 
     let mut stream =
-        router.generate_stream_with_model("Hello", &default_params(), Some("TG/some-model"), None);
+        router.generate_stream_with_model("Hello", &default_params(), Some("Together AI/some-model"), None);
     let first = stream.next().await;
-    assert!(first.is_some(), "TG/ stream should yield at least one item");
+    assert!(first.is_some(), "Together AI/ stream should yield at least one item");
     assert!(
         first.unwrap().is_err(),
-        "TG/ stream first item should be Err when backend unavailable"
+        "Together AI/ stream first item should be Err when backend unavailable"
     );
 }
 
@@ -551,7 +551,7 @@ async fn generate_stream_with_fusion_buffers_as_one_chunk() {
         bypass_fusion: false,
         fusion_config: Some(FusionConfig {
             judge: "algo".to_string(),
-            panel: NonEmptyVec::one("DI/test-panel".to_string()),
+            panel: NonEmptyVec::one("DeepInfra/test-panel".to_string()),
             mode: FusionMode::Synthesis,
             skills: Vec::new(),
             max_rounds: 5,

@@ -70,7 +70,7 @@ async fn deepinfra_summarization() {
         .generate_with_model(
             prompt,
             &condenser_params(),
-            Some("DI/meta-llama/Llama-3.3-70B-Instruct-Turbo"),
+            Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct-Turbo"),
             None,
         )
         .await
@@ -103,7 +103,7 @@ async fn together_summarization() {
         .generate_with_model(
             prompt,
             &condenser_params(),
-            Some("TG/meta-llama/Llama-3.3-70B-Instruct-Turbo"),
+            Some("Together AI/meta-llama/Llama-3.3-70B-Instruct-Turbo"),
             None,
         )
         .await

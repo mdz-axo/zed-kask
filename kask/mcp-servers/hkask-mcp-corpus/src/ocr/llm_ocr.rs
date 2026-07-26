@@ -2,7 +2,7 @@
 //!
 //! Sends page images as base64-encoded PNG to vision-capable LLMs
 //! through the inference router. Supports provider-prefixed model names
-//! (DI/, FW/, OM/) for backend routing.
+//! (DeepInfra/, FW/, ollama/) for backend routing.
 //!
 //! Includes a circuit breaker for rate-limit resilience: after N consecutive
 //! 429 responses, all LLM requests pause for a cooldown period.

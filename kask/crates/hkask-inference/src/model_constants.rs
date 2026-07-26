@@ -18,7 +18,7 @@
 /// call site resolves it via [`classifier_model`] (env `HKASK_CLASSIFIER_MODEL`
 /// → this constant). Registry YAMLs in `registry/classify/` leave their
 /// `model:` field empty to defer to this path; `ClassifierConfig::from_def`
-/// strips the `DI/` router prefix before sending the raw id to the provider.
+/// strips the `DeepInfra/` router prefix before sending the raw id to the provider.
 /// Fusion orchestration (algo or LLM judge) merges panel outputs; see
 /// `fusion_orchestrator`.
 pub const DEFAULT_CLASSIFIER_MODEL: &str = "DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507";
@@ -31,7 +31,7 @@ pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
 pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 
 /// Fallback model when no other model is configured.
-/// Prefixed with `KC/` so it routes to KiloCode (which hosts this exact id).
+/// Prefixed with `KiloCode/` so it routes to KiloCode (which hosts this exact id).
 /// Matches `InferenceConfig::from_env()` default.
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 

@@ -37,7 +37,7 @@ pub struct IngestQaRequest {
 pub struct TrainSubmitRequest {
     /// Path to the training dataset file.
     pub dataset_path: String,
-    /// Base model to fine-tune (provider-prefixed, e.g., "OM/qwen3:8b").
+    /// Base model to fine-tune (provider-prefixed, e.g., "ollama/qwen3:8b").
     pub base_model: String,
     /// Optional training hyperparameters. Uses defaults if not provided.
     #[serde(default)]

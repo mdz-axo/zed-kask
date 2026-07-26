@@ -37,10 +37,10 @@ fn slugify_empty_string() {
 
 #[test]
 fn parse_model_directive_present() {
-    let src = "{# model: OM/qwen3:14b #}\nrest of template";
+    let src = "{# model: ollama/qwen3:14b #}\nrest of template";
     assert_eq!(
         super::llm::parse_template_model(src),
-        Some("OM/qwen3:14b".to_string())
+        Some("ollama/qwen3:14b".to_string())
     );
 }
 
@@ -57,10 +57,10 @@ fn parse_model_directive_empty_template() {
 
 #[test]
 fn parse_model_directive_whitespace_handling() {
-    let src = "  {# model: DI/meta-llama/Llama-3.3-70B-Instruct #}  \nrest";
+    let src = "  {# model: DeepInfra/meta-llama/Llama-3.3-70B-Instruct #}  \nrest";
     assert_eq!(
         super::llm::parse_template_model(src),
-        Some("DI/meta-llama/Llama-3.3-70B-Instruct".to_string())
+        Some("DeepInfra/meta-llama/Llama-3.3-70B-Instruct".to_string())
     );
 }
 

@@ -741,7 +741,7 @@ mod tests {
             Some(true)
         );
         assert_eq!(
-            RouterModelEntry::infer_vision_support("FA/paddleocr", None),
+            RouterModelEntry::infer_vision_support("fal.ai/paddleocr", None),
             Some(true)
         );
     }

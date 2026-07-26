@@ -96,7 +96,7 @@ impl CorpusServer {
             };
 
             let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
-                .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
+                .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string());
 
             let query_embedding = match emb_router
                 .embed_sentences(&model_name, &[query.as_str()])

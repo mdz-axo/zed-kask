@@ -48,7 +48,7 @@ pub enum HuggingFaceError {
 pub trait ModelRegistry: Send + Sync {
     /// Resolve a provider-prefixed base_model to a HuggingFace model ID.
     ///
-    /// Strips known prefixes (OM/, DI/, FA/, TG/, OR/) from the base_model string.
+    /// Strips known prefixes (ollama/, DeepInfra/, fal.ai/, Together AI/, OpenRouter/) from the base_model string.
     /// Returns the raw HF model ID (e.g., "Qwen/Qwen3.5-9B").
     fn resolve_model_id(&self, base_model: &str) -> String;
 
@@ -144,9 +144,9 @@ pub trait DatasetRegistry: Send + Sync {
 /// Strip known provider prefixes to extract the raw HuggingFace model ID.
 ///
 /// This is the canonical resolution logic used by removed provider.
-/// Provider prefixes: DI/ (DeepInfra), FA/ (fal.ai), TG/ (Together), OR/ (OpenRouter).
+/// Provider prefixes: DeepInfra/, fal.ai/, Together AI/, OpenRouter/ (zed syntax).
 pub fn resolve_model_id(base_model: &str) -> String {
-    let known_prefixes = ["DI/", "FA/", "TG/", "OR/"];
+    let known_prefixes = ["DeepInfra/", "fal.ai/", "Together AI/", "OpenRouter/"];
     let mut model = base_model;
     for prefix in &known_prefixes {
         if model.starts_with(prefix) {
@@ -234,12 +234,15 @@ mod tests {
 
     #[test]
     fn resolve_provider_prefix() {
-        assert_eq!(resolve_model_id("DI/some-model"), "some-model");
+        assert_eq!(resolve_model_id("DeepInfra/some-model"), "some-model");
     }
 
     #[test]
     fn resolve_together_prefix() {
-        assert_eq!(resolve_model_id("TG/Qwen/Qwen3.5-9B"), "Qwen/Qwen3.5-9B");
+        assert_eq!(
+            resolve_model_id("Together AI/Qwen/Qwen3.5-9B"),
+            "Qwen/Qwen3.5-9B"
+        );
     }
 
     #[test]
@@ -250,7 +253,7 @@ mod tests {
     #[test]
     fn resolve_deepinfra_prefix() {
         assert_eq!(
-            resolve_model_id("DI/meta-llama/Llama-3.3-70B-Instruct"),
+            resolve_model_id("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
             "meta-llama/Llama-3.3-70B-Instruct"
         );
     }
@@ -258,7 +261,7 @@ mod tests {
     #[test]
     fn resolve_fireworks_prefix() {
         assert_eq!(
-            resolve_model_id("FA/accounts/fireworks/models/my-model"),
+            resolve_model_id("fal.ai/accounts/fireworks/models/my-model"),
             "accounts/fireworks/models/my-model"
         );
     }
@@ -844,6 +847,25 @@ mod training_artifact_tests {
         assert_eq!(manifest.alerts[0].title, "Loss spike");
         assert_eq!(manifest.alerts[0].level, "warn");
         assert_eq!(manifest.alerts[0].step, Some(450));
+    }
+
+    #[test]
+    fn training_alert_deserializes_with_missing_level() {
+        let json = r#"{"title":"Test","text":"body"}"#;
+        let alert: TrainingAlert =
+            serde_json::from_str(json).expect("deserialize with missing level");
+        assert_eq!(alert.level, "warn");
+        assert_eq!(alert.title, "Test");
+    }
+
+    #[test]
+    fn training_alert_deserializes_with_all_fields_missing() {
+        let json = r#"{}"#;
+        let alert: TrainingAlert = serde_json::from_str(json).expect("deserialize empty alert");
+        assert_eq!(alert.level, "warn");
+        assert!(alert.title.is_empty());
+        assert!(alert.text.is_empty());
+        assert_eq!(alert.step, None);
     }
 
     #[test]

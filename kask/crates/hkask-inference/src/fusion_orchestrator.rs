@@ -300,7 +300,7 @@ fn coherence(xi: f64) -> f64 {
 /// Fetch embeddings for a set of texts via the inference router.
 ///
 /// Uses the configured embedding model (`HKASK_EMBEDDING_MODEL`, default
-/// `DI/Qwen/Qwen3-Embedding-0.6B`). Returns empty vec on failure — the
+/// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). Returns empty vec on failure — the
 /// caller treats empty embeddings as "measurement unavailable" and skips
 /// the ξ/Γ computation.
 async fn fetch_embeddings(router: &dyn InferencePort, texts: &[String]) -> Vec<Vec<f32>> {

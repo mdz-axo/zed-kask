@@ -13,7 +13,7 @@ use super::types::DiscoveredWork;
 const TEMPLATE_BASE: &str = "registry/templates/replica";
 
 /// Parse a model override directive from a Jinja2 template's first line.
-/// Format: `{# model: OM/qwen3:14b #}`
+/// Format: `{# model: ollama/qwen3:14b #}`
 /// Returns the model name (with provider prefix) if found, None otherwise.
 pub(crate) fn parse_template_model(template_src: &str) -> Option<String> {
     let first_line = template_src.lines().next()?;

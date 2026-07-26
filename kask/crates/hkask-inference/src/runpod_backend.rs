@@ -1,7 +1,7 @@
 //! RunPod backend — cloud vision/text inference via RunPod serverless endpoints.
 //!
 //! Requires RUNPOD_API_KEY and one of RUNPOD_BASE_URL or RUNPOD_TEMPLATE_ID.
-//! Model prefix: RP/ (e.g., RP/olmocr-2-7b)
+//! Model prefix: RunPod/ (e.g., RunPod/olmocr-2-7b)
 
 use crate::RouterModelEntry;
 use crate::chat_protocol::{
@@ -100,7 +100,7 @@ impl RunpodBackend {
     /// OCR via RunPod's kask-ocr endpoint (OLMOCR-2).
     /// Synchronous /runsync for single pages, with /stream fallback for async.
     /// Configured via RUNPOD_OCR_ENDPOINT and RUNPOD_OCR_STREAM env vars.
-    /// Model: RP/kask-ocr
+    /// Model: RunPod/kask-ocr
     pub async fn ocr(&self, prompt: &str) -> Result<String, InferenceError> {
         let endpoint = std::env::var("RUNPOD_OCR_ENDPOINT")
             .map_err(|_| InferenceError::Connection("RUNPOD_OCR_ENDPOINT not set".into()))?;
@@ -143,7 +143,7 @@ impl RunpodBackend {
             return Ok(json.to_string());
         }
 
-        info!(target: "reg.inference", provider = "RP/kask-ocr", chars = text.len(), "kask-ocr completed");
+        info!(target: "reg.inference", provider = "RunPod/kask-ocr", chars = text.len(), "kask-ocr completed");
         Ok(text)
     }
 }

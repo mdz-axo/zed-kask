@@ -14,13 +14,15 @@ manifest:
     dispatches to hypothesis-framer (FINER+PICO),
     mcda (weighted comparison), diagnose (root-cause analysis), or
     falsifiability (eliminative inference / counterfactual analysis) as
-    composed sub-steps. Feeds delegation results back into the engine on the
+    composed sub-steps triggered by the engine's delegation_requests.
+    Feeds delegation results back into the engine on the
     next PDCA cycle. Converges when the thought chain is complete AND all
     delegation requests have been resolved.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
+  cycle: intentional
 
 convergence:
   threshold: 0.15
@@ -29,6 +31,12 @@ convergence:
   min_iterations: 1
   convergence_field: step_6_result.convergence_metric
   on_not_reached: escalate
+  materiality_guard:
+    enabled: true
+    min_iterations: 3
+    min_delta: 0.02
+    on_triggered: force_converge
+    blocker: irreducible_inquiry_gap
 
 gas:
   cap: 120000
@@ -67,7 +75,8 @@ steps:
       hypothesize, and verify thoughts. When a thought identifies need
       for deeper analysis, emit delegation_requests targeting
       hypothesis-framer, mcda, or diagnose. On re-entry, weave prior
-      delegation results into the new thought chain.
+      delegation results and prior skill-match results into the new
+      thought chain.
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-engine
     gas_cap: 9000
@@ -80,6 +89,7 @@ steps:
       thinking_budget: "{{ thinking_budget | default('full') }}"
       prior_chain: "{{ step_1_result.thought_chain | default([]) }}"
       prior_delegation_results: "{{ {'hypothesis_framer': step_2_result | default(None), 'mcda': step_3_result | default(None), 'diagnose': step_4_result | default(None), 'falsifiability': step_5_result | default(None)} }}"
+      prior_skill_match_results: "{{ step_7_result | default(None) }}"
 
   # ── Phase 2: Deep-dive delegation ────────────────────────────────
   # Each step receives delegation_requests from the engine. If no
@@ -145,7 +155,10 @@ steps:
     description: >
       Compute normalized convergence metric. Scores whether the thought
       chain is verified AND all delegation requests have been resolved.
-      Single-model inference (the convergence check is deterministic — fusion disabled for rubric stability).
+      Per-delegate incorporation checks (8a–8d) increase regulator variety
+      to address the Ashby deficit. Dead-letter detection flags requests
+      that fired no delegate. Skill-match results from step 7 are consumed
+      when available. Single-model inference (deterministic — fusion disabled).
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-convergence-check
     gas_cap: 2000
@@ -153,10 +166,15 @@ steps:
     input_mapping:
       primary_result: "{{ step_1_result }}"
       delegation_results: "{{ {'hypothesis_framer': step_2_result, 'mcda': step_3_result, 'diagnose': step_4_result, 'falsifiability': step_5_result} }}"
+      skill_match_results: "{{ step_7_result | default({}) }}"
 
   - ordinal: 7
     action: loop
-    description: Re-enter inquiry cycle if convergence is not met.
+    description: >
+      Re-enter inquiry cycle if convergence is not met. The loop_target
+      is step 1 (engine); on the next cycle, step 1 receives
+      prior_skill_match_results from this step's prior invocation via the
+      executor's cross-cycle input wiring.
     input_mapping:
       loop_target: 1
 

@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn configured_qa_model_returns_override() {
-        let model = configured_qa_model(Some("OR/openai/gpt-5.6-terra".to_string()));
-        assert_eq!(model.as_deref(), Some("OR/openai/gpt-5.6-terra"));
+        let model = configured_qa_model(Some("OpenRouter/openai/gpt-5.6-terra".to_string()));
+        assert_eq!(model.as_deref(), Some("OpenRouter/openai/gpt-5.6-terra"));
     }
 }

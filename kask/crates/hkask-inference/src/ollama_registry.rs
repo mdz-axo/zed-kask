@@ -1,5 +1,5 @@
 //! Ollama model/adapter registry — register hKask-owned GGUFs and LoRA adapters
-//! as Ollama models so they become runnable via the `OM/` inference prefix.
+//! as Ollama models so they become runnable via the `ollama/` inference prefix.
 //!
 //! # Storage boundary
 //!
@@ -14,7 +14,7 @@
 //!        ▼  ollama create hkask/<name> -f <Modelfile>
 //! ~/.ollama/models/blobs/sha256-*        ← Ollama imports + dedups by digest
 //!        ▼
-//! routable as OM/hkask/<name>
+//! routable as ollama/hkask/<name>
 //! ```rust,no_run
 //!
 //! # Storage authority (single, not duplicated)
@@ -72,7 +72,7 @@ pub enum ModelFrom {
 /// A blueprint for an Ollama model — the inputs to `ollama create`.
 #[derive(Debug, Clone)]
 pub struct ModelfileSpec {
-    /// Full Ollama tag (e.g. `hkask/solidity-audit-v3`). Routed as `OM/hkask/...`.
+    /// Full Ollama tag (e.g. `hkask/solidity-audit-v3`). Routed as `ollama/hkask/...`.
     pub name: String,
     /// Base weights.
     pub from: ModelFrom,
@@ -197,7 +197,7 @@ impl OllamaRegistry {
     ///
     /// expect: "The system registers owned models as runnable inference providers"
     /// pre:  spec.name is non-empty; referenced GGUF/adapter paths exist
-    /// post: Ollama imports the model; it becomes routable as `OM/<name>`
+    /// post: Ollama imports the model; it becomes routable as `ollama/<name>`
     /// post: the Modelfile is persisted under `source_dir/modelfiles/` for re-creation
     pub fn create(&self, spec: &ModelfileSpec) -> Result<RegisteredModel, RegistryError> {
         if spec.name.is_empty() {
@@ -263,12 +263,12 @@ impl OllamaRegistry {
     /// Builds a Modelfile `FROM <base> ADAPTER <storage_path>` and runs
     /// `ollama create <name>`. The adapter weights stay at `adapter.storage_path`
     /// — they are referenced by absolute path, not copied. This is the train→local
-    /// loop's closing edge: `AdapterStore` metadata → runnable `OM/<name>`.
+    /// loop's closing edge: `AdapterStore` metadata → runnable `ollama/<name>`.
     ///
     /// expect: "The system registers owned models as runnable inference providers"
     /// pre:  adapter.storage_path exists and contains adapter_model.safetensors
     /// pre:  base resolves to a pullable Ollama tag or an existing local GGUF
-    /// post: Ollama model `<name>` is created; routable as `OM/<name>`
+    /// post: Ollama model `<name>` is created; routable as `ollama/<name>`
     pub fn register_adapter(
         &self,
         name: &str,

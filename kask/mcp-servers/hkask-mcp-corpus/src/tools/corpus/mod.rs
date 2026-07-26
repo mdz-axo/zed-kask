@@ -467,7 +467,7 @@ impl CorpusServer {
                 && let Some(emb_router) = self.embedding_router.as_ref()
             {
                 let emb_model = std::env::var("HKASK_EMBEDDING_MODEL")
-                    .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
+                    .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string());
 
                 for batch in reembed_texts.chunks(50) {
                     let texts: Vec<&str> = batch.iter().map(|(_, t)| t.as_str()).collect();

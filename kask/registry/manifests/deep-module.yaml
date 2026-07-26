@@ -21,6 +21,12 @@ convergence:
   min_iterations: 1
   convergence_field: step_4_result.convergence_metric
   on_not_reached: escalate
+  materiality_guard:
+    enabled: true
+    min_iterations: 3
+    min_delta: 0.02
+    on_triggered: force_converge
+    blocker: irreducible_depth_gap
 
 gas:
   cap: 100000
@@ -102,11 +108,19 @@ steps:
 
   - ordinal: 3
     action: select
-    description: Design a deep module interface from deletion test results.
+    description: >
+      Design a deep module interface from deletion test results.
+      Gated on step 2's recommendation — only runs when the deletion test
+      verdict is EXTRACT or DEEPEN. Skipped for DELETE/MERGE (designing a
+      module that should not exist is undefined behavior).
     renderer: minijinja
     template_ref: deep-module/deep-module-design
     gas_cap: 6000
     timeout_seconds: 60
+    when: "step_2_result.recommendation in ['EXTRACT', 'DEEPEN']"
+    skip_output:
+      design_skipped: true
+      reason: "Module recommended for {{ step_2_result.recommendation }} — design not applicable"
     input_mapping:
       deletion_test_result: "{{ step_2_result }}"
       domain_requirements: "{{ domain_requirements | default({}) }}"
@@ -115,20 +129,30 @@ steps:
 
   - ordinal: 4
     action: select
-    description: Compute normalized convergence metric for depth cycle.
+    description: >
+      Compute normalized convergence metric for depth cycle. Consumes
+      assess (primary), delete, and design results for full-fidelity
+      evaluation. Emits re_entry_target to route the next iteration to
+      the failing step rather than defaulting to assess.
     renderer: minijinja
     template_ref: deep-module/deep-module-convergence-check
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      primary_result: "{{ step_3_result }}"
+      primary_result: "{{ step_1_result }}"
+      delete_result: "{{ step_2_result | default({}) }}"
+      design_result: "{{ step_3_result | default({}) }}"
     fusion: false
 
   - ordinal: 5
     action: loop
-    description: Re-enter depth cycle if convergence is not met.
+    description: >
+      Re-enter depth cycle if convergence is not met. Routes to the step
+      indicated by step_4_result.re_entry_target (assess|delete|design);
+      defaults to step 1 (assess) if re_entry_target is absent or "exit".
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ step_4_result.re_entry_target | default(1) }}"
+      loop_target_exit: 0
 
 error_handling:
   on_gas_exceeded: abort

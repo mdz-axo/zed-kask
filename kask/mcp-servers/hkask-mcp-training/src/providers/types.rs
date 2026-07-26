@@ -154,6 +154,18 @@ impl TrlTrainer {
             Self::Reward => "preference (chosen + rejected)",
         }
     }
+
+    /// G-D0 dataset preference string for `validate_dataset_format`.
+    /// Maps the trainer enum to the string expected by the format validator.
+    pub fn as_dataset_preference(&self) -> &'static str {
+        match self {
+            Self::Sft => "sft",
+            Self::Dpo => "dpo",
+            Self::Kto => "kto",
+            Self::Orpo => "orpo",
+            Self::Reward => "reward",
+        }
+    }
 }
 
 // ── Host identifiers ─────────────────────────────────────────────────────────
@@ -200,7 +212,7 @@ pub struct TrainingJob {
     pub id: String,
     /// Path to the preprocessed dataset file.
     pub dataset_path: PathBuf,
-    /// Base model identifier (provider-prefixed, e.g., "OM/qwen3:8b").
+    /// Base model identifier (provider-prefixed, e.g., "ollama/qwen3:8b").
     pub base_model: String,
     /// Training hyperparameters.
     pub params: TrainingParams,

@@ -139,6 +139,7 @@ Respond with a JSON object:
     "notes": "Direct call to database would lose transaction management and retry logic"
   },
   "recommendation": "EXTRACT",
+  "recommendation_force": "guardrail",
   "rationale": "Module passes both deletion test directions. Complexity reappears in 2+ callers (45 lines each). Direct dependency replacement loses critical behavior. Module is deep and deserves to exist.",
   "merge_target": null
 }
@@ -150,6 +151,7 @@ Respond with a JSON object:
 - Be specific about what complexity would reappear or vanish — give concrete examples, not vague claims.
 - If the assessment was Shallow or Very Shallow, the recommendation should reflect that.
 - If the module has a single consumer, flag it as an inline candidate.
+- The `recommendation` field MUST carry a `recommendation_force` companion field: `prohibition` (DELETE/MERGE — must act), `guardrail` (EXTRACT — should act), `guideline` (DEEPEN — consider acting).
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).
 

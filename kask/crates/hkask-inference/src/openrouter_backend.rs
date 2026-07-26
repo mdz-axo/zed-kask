@@ -83,7 +83,7 @@ pub struct OpenRouterArchitecture {
 /// intelligence gates, sorted by intelligence index descending.
 #[derive(Debug, Clone, Serialize)]
 pub struct FavoriteModel {
-    /// Provider-prefixed model ID (e.g. "OR/z-ai/glm-5.2").
+    /// Provider-prefixed model ID (e.g. "OpenRouter/z-ai/glm-5.2").
     pub prefixed_id: String,
     /// Raw model ID from OpenRouter (e.g. "z-ai/glm-5.2").
     pub id: String,

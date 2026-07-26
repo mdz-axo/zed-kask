@@ -9,12 +9,15 @@ lexicon_terms:
 contract:
   input:
     primary_result: object
+    delete_result: object
+    design_result: object
   output:
     convergence_metric: number
     convergence_method: string
     metric_decomposition: object
     rationale: string
     blockers: array
+    re_entry_target: string
 energy_cap: 2048
 visibility: Public
 ---
@@ -37,6 +40,28 @@ You are a convergence evaluator for deep-module. Measure whether module design r
 - Iteration: {{ _convergence.iterations_completed | default(0) }} / {{ _convergence.max_iterations | default(5) }}
 - Improvement target: {{ _convergence.improvement_target | default(0.10) }}
 - Baseline quality: {{ _convergence.baseline_quality | default("first pass") }}
+- Previous convergence metric: {{ _convergence.previous_metric | default(null) }}
+- Metric delta since last iteration: {{ _convergence.metric_delta | default(null) }}
+- Committed changes this iteration: {{ _convergence.committed_changes | default(false) }}
+
+## Input — Primary Result (assess)
+```json
+{{ primary_result | tojson }}
+```
+
+{% if delete_result %}
+## Input — Delete Result
+```json
+{{ delete_result | tojson }}
+```
+{% endif %}
+
+{% if design_result %}
+## Input — Design Result
+```json
+{{ design_result | tojson }}
+```
+{% endif %}
 
 ## Convergence Method: Saturation Detection
 - 0.00 = module passes deletion test, ≤7 public items, interface minimal → converged
@@ -51,6 +76,24 @@ You are a convergence evaluator for deep-module. Measure whether module design r
 4. Caller analysis: do callers benefit from the abstraction? → +0.15 if pass-through
 5. Recommendations actionable: are depth improvements specific? → +0.10 if vague
 6. Start at 1.0, subtract for each satisfied check. Clamp to [0,1].
+
+## Materiality Guard
+
+If iteration ≥ 3 AND |metric_delta| < 0.02 since last iteration AND no committed changes this iteration:
+  - Force `convergence_metric = 0.0` (irreducible gap — further iteration yields no signal)
+  - Add `"irreducible_depth_gap"` to `blockers`
+  - Set `re_entry_target = "exit"` (do not re-enter)
+  - Skip the standard scoring below
+
+## Re-Entry Target Selection
+
+After scoring, determine `re_entry_target` based on which check failed most:
+- Deletion test failed (criterion 1) → `re_entry_target = "delete"`
+- Interface depth failed (criterion 2) → `re_entry_target = "design"`
+- Dependency direction failed (criterion 3) → `re_entry_target = "assess"` (re-map dependencies)
+- Caller analysis failed (criterion 4, pass-through) → `re_entry_target = "delete"` (re-test deletion)
+- Recommendations vague (criterion 5) → `re_entry_target = "assess"` (re-assess with more detail)
+- All checks pass (converged) → `re_entry_target = "exit"`
 
 ## Input
 ```json
@@ -71,6 +114,7 @@ Return JSON only:
     "recommendations_actionable": true
   },
   "rationale": "short explanation",
-  "blockers": ["specific gap preventing convergence"]
+  "blockers": ["specific gap preventing convergence"],
+  "re_entry_target": "assess|delete|design|exit"
 }
 ```

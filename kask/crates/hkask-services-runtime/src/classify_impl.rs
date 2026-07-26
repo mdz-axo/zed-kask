@@ -252,7 +252,7 @@ impl ClassifierConfig {
             };
         // Canonical model resolution: an empty `model:` in the YAML defers to
         // `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. The router
-        // prefix (e.g. `DI/`) is stripped so the raw provider-native id is
+        // prefix (e.g. `DeepInfra/`) is stripped so the raw provider-native id is
         // sent to `base_url`; the YAML's `provider`/`base_url`/`api_key_env`
         // determine the destination and must align with the canonical model's provider.
         let model = if def.model.is_empty() {

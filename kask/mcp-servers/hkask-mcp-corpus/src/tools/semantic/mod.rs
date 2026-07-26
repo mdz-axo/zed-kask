@@ -1009,7 +1009,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
 
         let model_name = model.unwrap_or_else(|| {
             std::env::var("HKASK_EMBEDDING_MODEL")
-                .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string())
+                .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string())
         });
 
         let dim = embedding_dim();
@@ -1128,7 +1128,7 @@ pub struct GenerateQaRequest {
     pub chunk_id: String,
     #[serde(default)]
     pub bloom_levels: Option<Vec<String>>,
-    /// Optional provider-prefixed generation model (for example, `OR/openai/gpt-5.6-terra`).
+    /// Optional provider-prefixed generation model (for example, `OpenRouter/openai/gpt-5.6-terra`).
     /// When absent, uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`.
     #[serde(default)]
     pub model: Option<String>,

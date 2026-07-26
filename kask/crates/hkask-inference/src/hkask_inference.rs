@@ -16,32 +16,32 @@
 //!
 //! ```text
 //! InferenceRouter (implements InferencePort)
-//!   ├── DeepInfraBackend    — DI/ prefix → api.deepinfra.com      (chat + vision)
-//!   ├── FalBackend          — FA/ prefix → api.fal.ai            (chat + vision + media)
-//!   ├── TogetherBackend     — TG/ prefix → api.together.xyz     (chat + vision)
-//!   ├── OpenRouterBackend   — OR/ prefix → openrouter.ai/api   (chat + vision)
-//!   ├── KiloCodeBackend     — KC/ prefix → api.kilo.ai/api/gateway (chat + vision)
-//!   ├── OllamaBackend       — OM/ prefix → localhost:11434 (local, no key) (chat + vision)
-//!   ├── ClineBackend        — CL/ prefix → api.cline.bot/api (cloud gateway) (chat + vision)
-//!   └── RunpodBackend       — RP/ prefix → RunPod serverless (vision/OCR only, NOT chat)
+//!   ├── DeepInfraBackend    — DeepInfra/ prefix → api.deepinfra.com      (chat + vision)
+//!   ├── FalBackend          — fal.ai/ prefix → api.fal.ai            (chat + vision + media)
+//!   ├── TogetherBackend     — Together AI/ prefix → api.together.xyz     (chat + vision)
+//!   ├── OpenRouterBackend   — OpenRouter/ prefix → openrouter.ai/api   (chat + vision)
+//!   ├── KiloCodeBackend     — KiloCode/ prefix → api.kilo.ai/api/gateway (chat + vision)
+//!   ├── OllamaBackend       — ollama/ prefix → localhost:11434 (local, no key) (chat + vision)
+//!   ├── ClineBackend        — Cline/ prefix → api.cline.bot/api (cloud gateway) (chat + vision)
+//!   └── RunpodBackend       — RunPod/ prefix → RunPod serverless (vision/OCR only, NOT chat)
 //!
 //! Dispatch: chat_backend() / vision_backend() match-fns return &dyn trait objects
 //! borrowed from the typed Option<Backend> fields above.
 //!
 //! EmbeddingRouter
-//!   ├── DeepInfraEmbedding — DI/ prefix → /v1/embeddings
-//!   └── OpenRouterEmbedding — OR/ prefix → /v1/embeddings
+//!   ├── DeepInfraEmbedding — DeepInfra/ prefix → /v1/embeddings
+//!   └── OpenRouterEmbedding — OpenRouter/ prefix → /v1/embeddings
 //! ```rust,no_run
 //!
 //! # Model Naming
 //!
-//! - `DI/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra
-//! - `TG/Qwen/Qwen2.5-7B-Instruct-Turbo` → Together AI
-//! - `FA/paddleocr` → fal.ai
-//! - `OR/openai/gpt-4o` → OpenRouter
-//! - `OM/qwen3:8b` → Ollama (local)
-//! - `CL/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
-//! - `RP/kask-ocr` → RunPod (vision/OCR only — not available for chat)
+//! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra
+//! - `Together AI/Qwen/Qwen2.5-7B-Instruct-Turbo` → Together AI
+//! - `fal.ai/paddleocr` → fal.ai
+//! - `OpenRouter/openai/gpt-4o` → OpenRouter
+//! - `ollama/qwen3:8b` → Ollama (local)
+//! - `Cline/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
+//! - `RunPod/kask-ocr` → RunPod (vision/OCR only — not available for chat)
 //! - No prefix → default provider (configurable, default: DeepInfra)
 
 pub mod chat_protocol;
@@ -77,7 +77,7 @@ pub use ollama_registry::{
 /// Unified model entry from any provider, with provider prefix applied.
 #[derive(Debug, Clone)]
 pub struct RouterModelEntry {
-    /// Full model name with provider prefix (e.g., "OM/qwen3:8b")
+    /// Full model name with provider prefix (e.g., "ollama/qwen3:8b")
     pub prefixed_name: String,
     /// Provider this model belongs to
     pub provider: ProviderId,

@@ -50,6 +50,23 @@ The cost of a module is its interface — every public function, type, trait, an
 {{ module_source }}
 ```
 
+{% if not module_source or module_source | trim == "" %}
+## Empty Input Guard
+
+`module_source` is empty or whitespace-only. Return early — do not run the full assessment.
+
+Return JSON:
+```json
+{
+  "interface_inventory": null,
+  "behavior_estimate": null,
+  "depth_score": {"score": null, "classification": "NoSource", "formula": "N/A", "threshold_met": false, "distance_to_deep": null, "provenance_note": "No source provided"},
+  "red_flags": ["module_source is empty — cannot assess depth"],
+  "recommendations": [{"text": "Provide module source or skip assessment", "constraint_force": "guardrail"}]
+}
+```
+{% endif %}
+
 ## Caller Paths
 
 ```json
@@ -91,16 +108,21 @@ Estimate the behavior encapsulated by the module:
 
 ### Step 3 — Compute Depth Score
 
+If `total_interface_items == 0`, set `depth_score: null` and `classification: "Empty"` — division by zero is undefined. Do not compute a numeric score.
+
 ```
 Depth Score = Behavior Lines / (Public Functions + Public Types + Public Traits + Public Constants)
-
-| Score | Classification |
-|-------|---------------|
-| 100+  | Deep          |
-| 50–99 | Adequate      |
-| 20–49 | Shallow       |
-| 0–19  | Very Shallow  |
 ```
+
+| Score | Classification (Ousterhout's empirical observation) |
+|-------|----------------------------------------------------|
+| 100+  | Deep — Ousterhout observes these modules have high benefit/cost |
+| 50–99 | Adequate — moderate benefit/cost |
+| 20–49 | Shallow — low benefit/cost, consider deepening |
+| 0–19  | Very Shallow — minimal benefit relative to interface cost |
+| N/A   | Empty — zero public interface items, division undefined |
+
+**Provenance note**: These thresholds are Ousterhout's empirical observations (2018, Ch. 4), not normative mandates. They correlate with deep modules but do not prescribe depth.
 
 ### Step 4 — Identify Red Flags
 
@@ -160,12 +182,13 @@ Respond with a JSON object:
     "classification": "Adequate",
     "formula": "480 / (5 + 2 + 0 + 1) = 60.0",
     "threshold_met": true,
-    "distance_to_deep": 40
+    "distance_to_deep": 40,
+    "provenance_note": "Thresholds from Ousterhout 2018, Ch. 4 — empirical, not normative"
   },
   "red_flags": [],
   "recommendations": [
-    "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score",
-    "Monitor interface creep as features are added"
+    {"text": "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score", "constraint_force": "guideline"},
+    {"text": "Monitor interface creep as features are added", "constraint_force": "guideline"}
   ]
 }
 ```
@@ -175,6 +198,9 @@ Respond with a JSON object:
 - Count public items mechanically — don't guess.
 - Estimate behavior conservatively — err on the side of undercounting.
 - Flag all red flags even if the depth score is acceptable.
+- If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
+- Every recommendation MUST carry a `constraint_force` field: `prohibition`, `guardrail`, `guideline`, `evidence`, or `hypothesis`.
+- Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition — present them as such.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).
 

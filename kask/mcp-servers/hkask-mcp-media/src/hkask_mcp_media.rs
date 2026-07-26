@@ -52,19 +52,19 @@ use sha2::Digest;
 /// All can be overridden via environment variables.
 pub mod models {
     /// Default TTS model: Qwen3-TTS (Apache 2.0) via fal.ai
-    pub const TTS_DEFAULT: &str = "FA/qwen-3-tts";
+    pub const TTS_DEFAULT: &str = "fal.ai/qwen-3-tts";
     pub const TTS_ENV: &str = "HKASK_MEDIA_TTS_MODEL";
 
     /// Default STT model: fal.ai Wizper (optimized Whisper v3)
-    pub const STT_DEFAULT: &str = "FA/wizper";
+    pub const STT_DEFAULT: &str = "fal.ai/wizper";
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
 
     /// Default vision model: Qwen3-VL (Apache 2.0) via KiloCode
-    pub const VISION_DEFAULT: &str = "KC/qwen/qwen3-vl-235b-a22b-instruct";
+    pub const VISION_DEFAULT: &str = "KiloCode/qwen/qwen3-vl-235b-a22b-instruct";
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
 
     /// Default image generation model: FLUX.2 \[dev\] (open-source) via fal.ai
-    pub const IMAGE_GEN_DEFAULT: &str = "FA/flux-2";
+    pub const IMAGE_GEN_DEFAULT: &str = "fal.ai/flux-2";
     pub const IMAGE_GEN_ENV: &str = "HKASK_MEDIA_IMAGE_GEN_MODEL";
 
     /// Resolve a model name from env var or default.
@@ -939,19 +939,19 @@ impl MediaServer {
             match prefix {
                 "FA" => {
                     // Qwen2.5-VL 72B — Apache 2.0 open-weight, served by fal.ai
-                    return Some(("FA/Qwen/Qwen2.5-VL-72B-Instruct", "qwen2.5-vl-72b"));
+                    return Some(("fal.ai/Qwen/Qwen2.5-VL-72B-Instruct", "qwen2.5-vl-72b"));
                 }
                 "DI" => {
                     return Some((
-                        "DI/meta-llama/Llama-3.2-11B-Vision-Instruct",
+                        "DeepInfra/meta-llama/Llama-3.2-11B-Vision-Instruct",
                         "llama-3.2-vision",
                     ));
                 }
                 "OR" => {
-                    return Some(("OR/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
+                    return Some(("OpenRouter/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
                 }
                 "TG" => {
-                    return Some(("TG/Qwen/Qwen2.5-VL-72B-Instruct", "qwen-vl"));
+                    return Some(("Together AI/Qwen/Qwen2.5-VL-72B-Instruct", "qwen-vl"));
                 }
                 _ => continue,
             }

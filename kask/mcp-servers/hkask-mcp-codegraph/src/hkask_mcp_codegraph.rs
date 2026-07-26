@@ -98,7 +98,7 @@ fn default_limit() -> u64 {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EmbedIndexRequest {
     /// Optional: override the embedding model (default: `HKASK_EMBEDDING_MODEL`
-    /// or `DI/Qwen/Qwen3-Embedding-0.6B`).
+    /// or `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
     #[serde(default)]
     model: Option<String>,
     /// Batch size for embedding API calls. Default: 32.
@@ -412,7 +412,7 @@ impl CodeGraphServer {
     /// `symbols_vec` sqlite-vec table for semantic similarity search.
     ///
     /// Requires `DI_API_KEY` or `OR_API_KEY` to be set. Uses
-    /// `HKASK_EMBEDDING_MODEL` (default: `DI/Qwen/Qwen3-Embedding-0.6B`) and
+    /// `HKASK_EMBEDDING_MODEL` (default: `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and
     /// `HKASK_EMBEDDING_DIM` (default: 1024).
     #[tool(
         description = "Generate embeddings for all indexed symbols via the embedding API. Requires DI_API_KEY or OR_API_KEY."
@@ -427,7 +427,7 @@ impl CodeGraphServer {
             // Resolve the embedding model and dimension.
             let model = req.model.unwrap_or_else(|| {
                 std::env::var("HKASK_EMBEDDING_MODEL")
-                    .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string())
+                    .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string())
             });
             let dim: usize = std::env::var("HKASK_EMBEDDING_DIM")
                 .ok()
@@ -455,29 +455,30 @@ impl CodeGraphServer {
             }
 
             // Resolve API key and base URL from the model prefix.
-            let (api_key, base_url, model_id) = if let Some(stripped) = model.strip_prefix("DI/") {
-                (
-                    std::env::var("DI_API_KEY").unwrap_or_default(),
-                    "https://api.deepinfra.com/v1".to_string(),
-                    stripped.to_string(),
-                )
-            } else if let Some(stripped) = model.strip_prefix("OR/") {
-                (
-                    std::env::var("OR_API_KEY").unwrap_or_default(),
-                    "https://openrouter.ai/api/v1".to_string(),
-                    stripped.to_string(),
-                )
-            } else {
-                return Ok(serde_json::json!({
-                    "symbols_embedded": 0,
-                    "model": model,
-                    "dim": dim,
-                    "errors": ["unsupported model prefix — use DI/ or OR/"],
-                }));
-            };
+            let (api_key, base_url, model_id) =
+                if let Some(stripped) = model.strip_prefix("DeepInfra/") {
+                    (
+                        std::env::var("DI_API_KEY").unwrap_or_default(),
+                        "https://api.deepinfra.com/v1/openai".to_string(),
+                        stripped.to_string(),
+                    )
+                } else if let Some(stripped) = model.strip_prefix("OpenRouter/") {
+                    (
+                        std::env::var("OR_API_KEY").unwrap_or_default(),
+                        "https://openrouter.ai/api/v1".to_string(),
+                        stripped.to_string(),
+                    )
+                } else {
+                    return Ok(serde_json::json!({
+                        "symbols_embedded": 0,
+                        "model": model,
+                        "dim": dim,
+                        "errors": ["unsupported model prefix — use DeepInfra/ or OpenRouter/"],
+                    }));
+                };
 
             if api_key.is_empty() {
-                let env_var = if model.starts_with("DI/") {
+                let env_var = if model.starts_with("DeepInfra/") {
                     "DI_API_KEY"
                 } else {
                     "OR_API_KEY"

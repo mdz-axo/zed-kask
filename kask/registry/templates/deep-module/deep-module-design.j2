@@ -46,6 +46,24 @@ The goal is a module with high depth: behavior encapsulated / interface surface 
 {{ deletion_test_result | tojson }}
 ```
 
+{% if not deletion_test_result or deletion_test_result | trim == "" %}
+## Empty Input Guard
+
+`deletion_test_result` is empty. Return early — design requires a deletion test verdict.
+
+Return JSON:
+```json
+{
+  "module_specification": null,
+  "public_interface": [],
+  "hidden_internals": [],
+  "error_design": null,
+  "config_design": null,
+  "depth_projection": {"public_functions": 0, "public_types": 0, "estimated_implementation_lines": 0, "projected_depth_score": null, "classification": "NoInput", "notes": "No deletion test result provided — cannot design interface"}
+}
+```
+{% endif %}
+
 ## Domain Requirements
 
 ```json
@@ -215,6 +233,7 @@ Respond with a JSON object:
 - One error type per module. Map, don't leak, dependency errors.
 - One config struct. Validated at construction.
 - Hide everything that isn't required by callers.
+- If `deletion_test_result.recommendation` is `DELETE` or `MERGE`, return `module_specification: null` with `design_skipped: true` and a reason — design is not applicable for modules that should not exist.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).
 

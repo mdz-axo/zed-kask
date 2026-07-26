@@ -784,7 +784,7 @@ mod tests {
             1,
             executor.clone(),
             &thresholds,
-            Some("RP/kask-ocr"),
+            Some("RunPod/kask-ocr"),
             None,
             None,
         )

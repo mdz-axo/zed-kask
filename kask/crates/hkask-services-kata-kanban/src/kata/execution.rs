@@ -18,8 +18,8 @@ impl KataEngine {
         let result = if step.classifier {
             // Use the configured classifier model with its provider prefix.
             // The model string from HkaskSettings includes a routing prefix
-            // (e.g., KC/qwen/...), so the inference router dispatches to
-            // the correct provider automatically — no hardcoded DI/ prefix.
+            // (e.g., KiloCode/qwen/...), so the inference router dispatches to
+            // the correct provider automatically — no hardcoded DeepInfra/ prefix.
             let cls_model = HkaskSettings::load().classifier_model();
             self.inference
                 .generate_with_model(&prompt, &default_llm_params(), Some(&cls_model), None)

@@ -458,7 +458,7 @@ pub struct ThreadSummaryRequest {
     pub max_tokens: Option<u32>,
     /// Override the server's default inference model.
     /// When provided, this model is used instead of the server-configured default.
-    /// Supports provider-prefixed names (OM/, FW/, DI/) for backend routing.
+    /// Supports provider-prefixed names (ollama/, FW/, DeepInfra/) for backend routing.
     pub model: Option<String>,
 }
 

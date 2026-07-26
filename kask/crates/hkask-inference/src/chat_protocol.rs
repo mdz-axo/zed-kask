@@ -629,7 +629,7 @@ mod tests {
             "id": "chatcmpl-847",
             "object": "chat.completion",
             "created": 1781219013,
-            "model": "DI/google/gemma-4-9b-it",
+            "model": "DeepInfra/google/gemma-4-9b-it",
             "system_fingerprint": "fp_deepinfra",
             "choices": [{
                 "index": 0,
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn chat_response_deserializes_null_content() {
         let raw = r#"{
-            "model": "KC/z-ai/glm-5.2",
+            "model": "OpenRouter/z-ai/glm-5.2",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn chat_result_surfaces_reasoning_separately_from_answer() {
         let raw = r#"{
-            "model": "KC/z-ai/glm-5.2",
+            "model": "OpenRouter/z-ai/glm-5.2",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -729,12 +729,12 @@ mod tests {
     /// `delta.reasoning_content` and Ollama-style `delta.reasoning`.
     #[test]
     fn stream_carries_reasoning_delta() {
-        let body = r#"data: {"model":"KC/glm-5.2","choices":[{"delta":{"content":"","reasoning_content":"Let me think."}}]}
-data: {"model":"KC/glm-5.2","choices":[{"delta":{"content":"Paris"}}]}
-data: {"model":"KC/glm-5.2","choices":[{"delta":{},"finish_reason":"stop"}]}
+        let body = r#"data: {"model":"OpenRouter/glm-5.2","choices":[{"delta":{"content":"","reasoning_content":"Let me think."}}]}
+data: {"model":"OpenRouter/glm-5.2","choices":[{"delta":{"content":"Paris"}}]}
+data: {"model":"OpenRouter/glm-5.2","choices":[{"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 "#;
-        let chunks = parse_sse_stream(body, "KC/glm-5.2");
+        let chunks = parse_sse_stream(body, "OpenRouter/glm-5.2");
         let reasoning: String = chunks
             .iter()
             .filter_map(|c| c.as_ref().ok())
@@ -756,11 +756,11 @@ data: [DONE]
         assert!(text.contains("Paris"), "answer text must survive");
 
         // Ollama-style `delta.reasoning` must also map to reasoning_delta.
-        let ollama = r#"data: {"model":"OM/qwen3","choices":[{"delta":{"reasoning":"deliberating"}}]}
-data: {"model":"OM/qwen3","choices":[{"delta":{"content":"42"},"finish_reason":"stop"}]}
+        let ollama = r#"data: {"model":"ollama/qwen3","choices":[{"delta":{"reasoning":"deliberating"}}]}
+data: {"model":"ollama/qwen3","choices":[{"delta":{"content":"42"},"finish_reason":"stop"}]}
 data: [DONE]
 "#;
-        let chunks = parse_sse_stream(ollama, "OM/qwen3");
+        let chunks = parse_sse_stream(ollama, "ollama/qwen3");
         let reasoning: String = chunks
             .iter()
             .filter_map(|c| c.as_ref().ok())

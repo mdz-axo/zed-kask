@@ -25,13 +25,13 @@
 //!
 //! Models use a 2-letter provider prefix:
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
-//! - `FA/paddleocr` → fal.ai (cloud)
-//! - `TG/Qwen/Qwen2.5-7B-Instruct-Turbo` → Together AI (cloud)
-//! - `OR/openai/gpt-4o` → OpenRouter (cloud)
+//! - `fal.ai/paddleocr` → fal.ai (cloud)
+//! - `Together AI/Qwen/Qwen2.5-7B-Instruct-Turbo` → Together AI (cloud)
+//! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
 //! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
-//! - `OM/qwen3:8b` → Ollama (local)
-//! - `CL/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
-//! - `RP/kask-ocr` → RunPod (vision/OCR only — not available for chat)
+//! - `ollama/qwen3:8b` → Ollama (local)
+//! - `Cline/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
+//! - `RunPod/kask-ocr` → RunPod (vision/OCR only — not available for chat)
 //! - No prefix → default provider (configurable, default: DeepInfra)
 
 use serde::{Deserialize, Serialize};
@@ -41,29 +41,29 @@ use hkask_types::secret::SecretRef;
 /// Two-letter provider identifier for inference routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderId {
-    /// DeepInfra (cloud) — prefix `DI/`
+    /// DeepInfra (cloud) — prefix `DeepInfra/`
     #[serde(rename = "DI")]
     DeepInfra,
-    /// fal.ai (cloud) — prefix `FA/`
+    /// fal.ai (cloud) — prefix `fal.ai/`
     #[serde(rename = "FA")]
     Fal,
-    /// Together AI (cloud) — prefix `TG/`
+    /// Together AI (cloud) — prefix `Together AI/`
     #[serde(rename = "TG")]
     Together,
-    /// Runpod (cloud) — prefix `RP/`
+    /// Runpod (cloud) — prefix `RunPod/`
     #[serde(rename = "RP")]
     Runpod,
-    /// OpenRouter (cloud) — prefix `OR/`
+    /// OpenRouter (cloud) — prefix `OpenRouter/`
     #[serde(rename = "OR")]
     OpenRouter,
-    /// KiloCode (cloud) — prefix `KC/`
+    /// KiloCode (cloud) — prefix `KiloCode/`
     #[serde(rename = "KC")]
     KiloCode,
-    /// Ollama (local) — prefix `OM/`. No API key required; the OpenAI-compatible
+    /// Ollama (local) — prefix `ollama/`. No API key required; the OpenAI-compatible
     /// endpoint at `/v1/chat/completions` ignores the `Authorization` header.
     #[serde(rename = "OM")]
     Ollama,
-    /// Cline (cloud) — prefix `CL/`. OpenAI-compatible gateway at `api.cline.bot`
+    /// Cline (cloud) — prefix `Cline/`. OpenAI-compatible gateway at `api.cline.bot`
     /// routing to Anthropic/OpenAI/Google/DeepSeek/xAI models behind one key.
     /// Env: `CLINE_API_KEY`, `CLINE_BASE_URL` (default `https://api.cline.bot/api`).
     #[serde(rename = "CL")]
@@ -79,7 +79,7 @@ impl ProviderId {
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — model-name routing to provider boundary
     /// pre:  model is non-empty
-    /// post: returns Some((ProviderId, stripped_model)) for DI/, FA/, TG/, RP/, OR/, KC/, OM/, CL/ prefixes
+    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, fal.ai/, Together AI/, RunPod/, OpenRouter/, KiloCode/, ollama/, Cline/ prefixes
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {

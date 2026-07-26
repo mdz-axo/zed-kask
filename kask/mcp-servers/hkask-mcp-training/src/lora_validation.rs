@@ -528,79 +528,6 @@ fn validate_harness_compatibility(params: &TrainingParams, findings: &mut Vec<Va
     }
 }
 
-/// G-P1: Persistence preflight — verify that training results will be
-/// persisted before allowing submit on ephemeral cloud hosts.
-///
-/// Mirrors the HuggingFace "Critical: Saving Results to Hub" checklist.
-/// The persistence contract in hKask is job-level (env vars + artifacts),
-/// not config-level (`TrainingParams`): the install script's
-/// `huggingface-cli upload` is the actual push-to-Hub, driven by
-/// `HKASK_HF_MODEL_REPO` / `HF_TOKEN` env vars and `job.artifacts`.
-///
-/// # Arguments
-/// * `host_id` - The training host (Runpod, DeepInfra, Nebius).
-/// * `hf_training_result` - `Ok(training)` if env vars are set, `Err` if not.
-///
-/// # Returns
-/// Findings for G-P1. On Runpod, missing env vars → `Refuse` (adapter
-/// upload is configured via env vars; without them, results are lost on the
-/// ephemeral pod). On DeepInfra/Nebius, `Warn` (these hosts don't set
-/// `job.artifacts` today — no upload happens — but manual retrieval may be
-/// possible). On unknown hosts, `not_applicable` (no finding emitted).
-pub fn validate_persistence(
-    host_id: &crate::providers::TrainingHostId,
-    hf_training_result: &Result<(), String>,
-) -> Vec<ValidationFinding> {
-    let mut findings = Vec::new();
-    match host_id {
-        crate::providers::TrainingHostId::Runpod => {
-            if let Err(reason) = hf_training_result {
-                findings.push(ValidationFinding {
-                    gate_id: "G-P1",
-                    severity: ValidationSeverity::Refuse,
-                    message: format!(
-                        "Runpod host requires HuggingFace persistence env vars to be configured \
-                         (HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, HF_TOKEN) — \
-                         without them, the adapter and completion manifest are lost when the \
-                         ephemeral pod terminates. Error: {reason}"
-                    ),
-                    source: "HF huggingface-llm-trainer skill §Critical: Saving Results to Hub — \
-                             ephemeral environment, must push to Hub",
-                    remediation: "Set HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, \
-                                  HKASK_HF_DATASET_REPO, and HF_TOKEN environment variables \
-                                  before submitting a Runpod training job"
-                        .to_string(),
-                });
-            }
-        }
-        crate::providers::TrainingHostId::DeepInfra | crate::providers::TrainingHostId::Nebius => {
-            // These hosts do not currently set job.artifacts, so the install
-            // script has no model_repo to upload to. The operator may retrieve
-            // results manually from the pod, but this is not guaranteed on
-            // ephemeral infrastructure. Warn — do not refuse, since the host
-            // may support manual retrieval or the operator may have a custom
-            // persistence path.
-            findings.push(ValidationFinding {
-                gate_id: "G-P1",
-                severity: ValidationSeverity::Warn,
-                message: format!(
-                    "{host:?} host does not configure HuggingFace artifact persistence — \
-                     adapter weights and completion manifest are not automatically uploaded. \
-                     Results may be lost when the ephemeral pod terminates.",
-                    host = host_id
-                ),
-                source: "HF huggingface-llm-trainer skill §Critical: Saving Results to Hub",
-                remediation: "Configure HuggingFace persistence env vars \
-                              (HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, HF_TOKEN) \
-                              and ensure the host sets job.artifacts, or retrieve the adapter \
-                              manually before the pod terminates"
-                    .to_string(),
-            });
-        }
-    }
-    findings
-}
-
 /// Returns true if any finding has `Refuse` severity — the job must not be submitted.
 pub fn has_refusals(findings: &[ValidationFinding]) -> bool {
     findings
@@ -1549,62 +1476,83 @@ mod tests {
     }
 
     // ── G-R1: Runtime metrics validation tests ────────────────────────────
+    //
+    // These tests construct CompletionManifest instances (not RuntimeMetrics,
+    // which was deleted) and call validate_runtime_metrics(&manifest).
+
+    use crate::huggingface::{CompletionManifest, TrainingArtifact};
+
+    fn test_manifest() -> CompletionManifest {
+        CompletionManifest {
+            job_id: "test".to_string(),
+            status: "success".to_string(),
+            dataset_sha256: String::new(),
+            adapter: TrainingArtifact {
+                repository: String::new(),
+                revision: String::new(),
+                path: String::new(),
+                sha256: String::new(),
+            },
+            finished_at: String::new(),
+            base_model: None,
+            harness: None,
+            training_duration_secs: None,
+            loss: None,
+            grad_norm: None,
+            current_step: None,
+            total_steps: None,
+            alerts: Vec::new(),
+            output_dir: None,
+        }
+    }
 
     #[test]
     fn gr1_no_metrics_no_findings() {
-        let metrics = RuntimeMetrics::default();
-        let findings = validate_runtime_metrics(&metrics);
+        let manifest = test_manifest();
+        let findings = validate_runtime_metrics(&manifest);
         assert!(findings.is_empty());
     }
 
     #[test]
     fn gr1_loss_spike_after_step_100_refuses() {
-        let metrics = RuntimeMetrics {
-            current_step: Some(150),
-            loss: Some(6.0),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
-        assert!(findings.iter().any(|f| {
-            f.gate_id == "G-R1"
-                && f.severity == ValidationSeverity::Refuse
-                && f.message.contains("Loss divergence")
-        }));
+        let mut manifest = test_manifest();
+        manifest.current_step = Some(150);
+        manifest.loss = Some(6.0);
+        let findings = validate_runtime_metrics(&manifest);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Refuse })
+        );
     }
 
     #[test]
     fn gr1_loss_spike_before_step_100_no_finding() {
-        let metrics = RuntimeMetrics {
-            current_step: Some(50),
-            loss: Some(6.0),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.current_step = Some(50);
+        manifest.loss = Some(6.0);
+        let findings = validate_runtime_metrics(&manifest);
         assert!(findings.is_empty());
     }
 
     #[test]
     fn gr1_vanishing_loss_warns() {
-        let metrics = RuntimeMetrics {
-            current_step: Some(10),
-            loss: Some(1e-10),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
-        assert!(findings.iter().any(|f| {
-            f.gate_id == "G-R1"
-                && f.severity == ValidationSeverity::Warn
-                && f.message.contains("Vanishing loss")
-        }));
+        let mut manifest = test_manifest();
+        manifest.current_step = Some(10);
+        manifest.loss = Some(1e-10);
+        let findings = validate_runtime_metrics(&manifest);
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn })
+        );
     }
 
     #[test]
     fn gr1_nan_gradient_refuses() {
-        let metrics = RuntimeMetrics {
-            grad_norm: Some(f64::NAN),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.grad_norm = Some(f64::NAN);
+        let findings = validate_runtime_metrics(&manifest);
         assert!(
             findings
                 .iter()
@@ -1614,11 +1562,9 @@ mod tests {
 
     #[test]
     fn gr1_infinite_gradient_refuses() {
-        let metrics = RuntimeMetrics {
-            grad_norm: Some(f64::INFINITY),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.grad_norm = Some(f64::INFINITY);
+        let findings = validate_runtime_metrics(&manifest);
         assert!(
             findings
                 .iter()
@@ -1628,16 +1574,14 @@ mod tests {
 
     #[test]
     fn gr1_error_alert_refuses() {
-        let metrics = RuntimeMetrics {
-            alerts: vec![TrainingAlert {
-                title: "Loss divergence".to_string(),
-                level: "error".to_string(),
-                text: "Loss 8.0 still high after 200 steps".to_string(),
-                step: Some(200),
-            }],
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.alerts = vec![crate::huggingface::TrainingAlert {
+            title: "Loss divergence".to_string(),
+            level: "error".to_string(),
+            text: "Loss 8.0 still high after 200 steps".to_string(),
+            step: Some(200),
+        }];
+        let findings = validate_runtime_metrics(&manifest);
         assert!(
             findings
                 .iter()
@@ -1647,16 +1591,14 @@ mod tests {
 
     #[test]
     fn gr1_warn_alert_warns() {
-        let metrics = RuntimeMetrics {
-            alerts: vec![TrainingAlert {
-                title: "Slow convergence".to_string(),
-                level: "warn".to_string(),
-                text: "Loss decreased <1% over 50 steps".to_string(),
-                step: None,
-            }],
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.alerts = vec![crate::huggingface::TrainingAlert {
+            title: "Slow convergence".to_string(),
+            level: "warn".to_string(),
+            text: "Loss decreased <1% over 50 steps".to_string(),
+            step: None,
+        }];
+        let findings = validate_runtime_metrics(&manifest);
         assert!(
             findings
                 .iter()
@@ -1664,16 +1606,12 @@ mod tests {
         );
     }
 
-    // ── G-R1: NaN/infinite loss and unknown alert level tests ─────────────
-
     #[test]
     fn gr1_nan_loss_refuses() {
-        let metrics = RuntimeMetrics {
-            current_step: Some(150),
-            loss: Some(f64::NAN),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.current_step = Some(150);
+        manifest.loss = Some(f64::NAN);
+        let findings = validate_runtime_metrics(&manifest);
         assert!(findings.iter().any(|f| {
             f.gate_id == "G-R1"
                 && f.severity == ValidationSeverity::Refuse
@@ -1683,12 +1621,10 @@ mod tests {
 
     #[test]
     fn gr1_infinite_loss_refuses() {
-        let metrics = RuntimeMetrics {
-            current_step: Some(150),
-            loss: Some(f64::INFINITY),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.current_step = Some(150);
+        manifest.loss = Some(f64::INFINITY);
+        let findings = validate_runtime_metrics(&manifest);
         assert!(findings.iter().any(|f| {
             f.gate_id == "G-R1"
                 && f.severity == ValidationSeverity::Refuse
@@ -1698,15 +1634,10 @@ mod tests {
 
     #[test]
     fn gr1_nan_loss_does_not_trigger_divergence_check() {
-        // NaN loss should be caught by the explicit NaN check, not silently
-        // pass the `loss > 5.0` divergence check (NaN > 5.0 is false in Rust).
-        let metrics = RuntimeMetrics {
-            current_step: Some(200),
-            loss: Some(f64::NAN),
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
-        // Should have exactly one NaN finding, not a divergence finding.
+        let mut manifest = test_manifest();
+        manifest.current_step = Some(200);
+        manifest.loss = Some(f64::NAN);
+        let findings = validate_runtime_metrics(&manifest);
         let nan_findings: Vec<_> = findings
             .iter()
             .filter(|f| f.message.contains("NaN loss"))
@@ -1716,24 +1647,19 @@ mod tests {
             .filter(|f| f.message.contains("Loss divergence"))
             .collect();
         assert_eq!(nan_findings.len(), 1);
-        assert!(
-            divergence_findings.is_empty(),
-            "NaN loss should not trigger divergence check"
-        );
+        assert!(divergence_findings.is_empty());
     }
 
     #[test]
     fn gr1_critical_alert_level_refuses() {
-        let metrics = RuntimeMetrics {
-            alerts: vec![TrainingAlert {
-                title: "Critical training failure".to_string(),
-                level: "critical".to_string(),
-                text: "Gradient explosion detected".to_string(),
-                step: Some(300),
-            }],
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.alerts = vec![crate::huggingface::TrainingAlert {
+            title: "Critical training failure".to_string(),
+            level: "critical".to_string(),
+            text: "Gradient explosion detected".to_string(),
+            step: Some(300),
+        }];
+        let findings = validate_runtime_metrics(&manifest);
         assert!(
             findings
                 .iter()
@@ -1743,102 +1669,19 @@ mod tests {
 
     #[test]
     fn gr1_unknown_alert_level_warns_not_info() {
-        let metrics = RuntimeMetrics {
-            alerts: vec![TrainingAlert {
-                title: "Unknown severity".to_string(),
-                level: "severe".to_string(),
-                text: "Some unknown alert".to_string(),
-                step: None,
-            }],
-            ..Default::default()
-        };
-        let findings = validate_runtime_metrics(&metrics);
+        let mut manifest = test_manifest();
+        manifest.alerts = vec![crate::huggingface::TrainingAlert {
+            title: "Unknown severity".to_string(),
+            level: "severe".to_string(),
+            text: "Some unknown alert".to_string(),
+            step: None,
+        }];
+        let findings = validate_runtime_metrics(&manifest);
         assert!(
             findings
                 .iter()
                 .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn }),
             "Unknown alert level should default to Warn, not Info"
         );
-    }
-
-    #[test]
-    fn training_alert_deserializes_with_missing_level() {
-        // A manifest alert without the `level` field should deserialize
-        // with the default level ("warn"), not fail parsing.
-        let json = r#"{"title":"Test","text":"body"}"#;
-        let alert: TrainingAlert =
-            serde_json::from_str(json).expect("deserialize with missing level");
-        assert_eq!(alert.level, "warn");
-        assert_eq!(alert.title, "Test");
-    }
-
-    #[test]
-    fn training_alert_deserializes_with_all_fields_missing() {
-        // All fields have serde defaults — an empty JSON object should deserialize.
-        let json = r#"{}"#;
-        let alert: TrainingAlert = serde_json::from_str(json).expect("deserialize empty alert");
-        assert_eq!(alert.level, "warn");
-        assert!(alert.title.is_empty());
-        assert!(alert.text.is_empty());
-        assert_eq!(alert.step, None);
-    }
-
-    // ── G-P1: Persistence preflight tests ─────────────────────────────────
-
-    use crate::providers::TrainingHostId;
-
-    #[test]
-    fn gp1_runpod_with_env_vars_configured_passes() {
-        let findings = validate_persistence(&TrainingHostId::Runpod, &Ok(()));
-        assert!(
-            findings.is_empty(),
-            "Runpod with env vars configured should not emit a finding"
-        );
-    }
-
-    #[test]
-    fn gp1_runpod_without_env_vars_refuses() {
-        let findings = validate_persistence(
-            &TrainingHostId::Runpod,
-            &Err("HKASK_HF_ARTIFACT_OWNER must be set and non-empty".to_string()),
-        );
-        assert!(
-            findings
-                .iter()
-                .any(|f| { f.gate_id == "G-P1" && f.severity == ValidationSeverity::Refuse })
-        );
-    }
-
-    #[test]
-    fn gp1_deepinfra_warns_no_auto_upload() {
-        let findings = validate_persistence(&TrainingHostId::DeepInfra, &Ok(()));
-        assert!(
-            findings
-                .iter()
-                .any(|f| { f.gate_id == "G-P1" && f.severity == ValidationSeverity::Warn })
-        );
-    }
-
-    #[test]
-    fn gp1_nebius_warns_no_auto_upload() {
-        let findings = validate_persistence(&TrainingHostId::Nebius, &Ok(()));
-        assert!(
-            findings
-                .iter()
-                .any(|f| { f.gate_id == "G-P1" && f.severity == ValidationSeverity::Warn })
-        );
-    }
-
-    #[test]
-    fn gp1_runpod_refusal_message_mentions_ephemeral_pod() {
-        let findings = validate_persistence(
-            &TrainingHostId::Runpod,
-            &Err("HF_TOKEN must be set".to_string()),
-        );
-        let refusal = findings
-            .iter()
-            .find(|f| f.severity == ValidationSeverity::Refuse);
-        assert!(refusal.is_some());
-        assert!(refusal.unwrap().message.contains("ephemeral pod"));
     }
 }

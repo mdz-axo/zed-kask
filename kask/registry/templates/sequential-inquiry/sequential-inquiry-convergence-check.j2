@@ -10,6 +10,7 @@ contract:
   input:
     primary_result: object
     delegation_results: object
+    skill_match_results: object
   output:
     convergence_metric: number
     convergence_method: string
@@ -36,6 +37,8 @@ visibility: Public
 #}
 
 {# DEPENDS-ON-EXECUTOR: `_convergence.improvement_target` is mapped from manifest `convergence.improvement_ratio`. #}
+{# DEPENDS-ON-EXECUTOR: `_convergence.previous_metric`, `_convergence.metric_delta`, `_convergence.committed_changes`
+   are supplied by the executor from the prior iteration's convergence result. #}
 
 [inference]
 temperature = 0.0
@@ -44,16 +47,34 @@ max_tokens = 500
 
 Score convergence. Start at 1.0, subtract for each SATISFIED criterion.
 
-1. Hypothesis exists → -0.12
-2. Hypothesis verified → -0.20
-3. Chain complete (needsMoreThoughts: false on final thought) → -0.12
-4. No unresolved branches → -0.08
-5. No pending revisions → -0.08
-6. Confidence calibrated (solution_confidence ≥ 0.7) → -0.08
-7. Answer synthesized (final_answer clear, specific, actionable) → -0.08
-8. All delegations resolved (no pending request without delegate result) → -0.12
-9. Delegation results incorporated (ONLY cycle 2+; skip cycle 1) → -0.07
-10. Chain stable (ONLY cycle 2+; skip cycle 1) → -0.05
+1. Hypothesis exists → -0.12  [force: evidence]
+2. Hypothesis verified → -0.20  [force: prohibition]
+3. Chain complete (needsMoreThoughts: false on final thought) → -0.12  [force: guardrail]
+4. No unresolved branches → -0.08  [force: guardrail]
+5. No pending revisions → -0.08  [force: guardrail]
+6. Confidence calibrated (solution_confidence ≥ 0.7) → -0.08  [force: guideline]
+7. Answer synthesized (final_answer clear, specific, actionable) → -0.08  [force: guideline]
+8a. hypothesis-framer result incorporated (if requested) → -0.03  [force: guardrail]
+8b. mcda result incorporated (if requested) → -0.03  [force: guardrail]
+8c. diagnose result incorporated (if requested) → -0.03  [force: guardrail]
+8d. falsifiability result incorporated (if requested) → -0.03  [force: guardrail]
+8e. skill_match results incorporated (if queried, cycle 2+) → -0.03  [force: guardrail]
+9. Delegation results incorporated (Guardrail — SKIP on cycle 1; evaluate on cycle 2+) → -0.07  [force: guardrail]
+10. Chain stable (ONLY cycle 2+; skip cycle 1) → -0.05  [force: guideline]
+
+## Delegation Dead-Letter Detection
+
+If the engine emitted N > 0 delegation_requests AND 0 delegates returned `invoked: true`:
+  - Do NOT subtract for criteria 8a–8e
+  - Add `"delegation_dead_letter"` to `blockers`
+  - Set `rationale` to note that delegation was requested but no delegate fired
+
+## Materiality Guard
+
+If iteration ≥ 3 AND |metric_delta| < 0.02 since last iteration AND no new delegation_requests this iteration:
+  - Force `convergence_metric = 0.0` (irreducible gap — further iteration yields no signal)
+  - Add `"irreducible_inquiry_gap"` to `blockers`
+  - Skip the standard scoring above
 
 Clamp to [0, 1].
 
@@ -67,21 +88,33 @@ Delegation results:
 {{ delegation_results | tojson }}
 ```
 
+{% if skill_match_results %}
+Skill-Match results:
+```json
+{{ skill_match_results | tojson }}
+```
+{% endif %}
+
 Return JSON only:
 ```json
 {
   "convergence_metric": 0.0,
-  "convergence_method": "LLM-assessed hypothesis verification + chain stability + delegation resolution",
+  "convergence_method": "LLM-assessed hypothesis verification + chain stability + per-delegate incorporation + dead-letter detection",
   "metric_decomposition": {
-    "hypothesis_exists": true,
-    "hypothesis_verified": true,
-    "chain_complete": true,
+    "hypothesis_exists": {"satisfied": true, "force": "evidence"},
+    "hypothesis_verified": {"satisfied": true, "force": "prohibition"},
+    "chain_complete": {"satisfied": true, "force": "guardrail"},
     "unresolved_branches": 0,
     "pending_revisions": 0,
-    "confidence_calibrated": true,
-    "answer_synthesized": true,
-    "all_delegations_resolved": true,
-    "delegation_results_incorporated": true,
+    "confidence_calibrated": {"satisfied": true, "force": "guideline"},
+    "answer_synthesized": {"satisfied": true, "force": "guideline"},
+    "hypothesis_framer_incorporated": {"satisfied": true, "force": "guardrail"},
+    "mcda_incorporated": {"satisfied": true, "force": "guardrail"},
+    "diagnose_incorporated": {"satisfied": true, "force": "guardrail"},
+    "falsifiability_incorporated": {"satisfied": true, "force": "guardrail"},
+    "skill_match_incorporated": {"satisfied": true, "force": "guardrail"},
+    "delegation_dead_letter": false,
+    "delegation_results_incorporated": {"satisfied": true, "force": "guardrail"},
     "chain_stable_between_iterations": true
   },
   "rationale": "short explanation",

@@ -21,16 +21,11 @@ impl TrainingServer {
         execute_tool(self, "training_validate_config", async {
             let mut findings = lora_validation::validate_training_params(&params);
 
-            // Derive the trainer preference from params.trl_trainer for G-D0.
-            let trainer_preference = params.trl_trainer.as_ref().map(|t| match t {
-                crate::providers::types::TrlTrainer::Sft => "sft",
-                crate::providers::types::TrlTrainer::Dpo => "dpo",
-                crate::providers::types::TrlTrainer::Kto => "kto",
-                crate::providers::types::TrlTrainer::Orpo => "orpo",
-                crate::providers::types::TrlTrainer::Reward => "reward",
-            });
+            let trainer_preference = params
+                .trl_trainer
+                .as_ref()
+                .map(|t| t.as_dataset_preference());
 
-            // G-D0: Dataset format compatibility (when dataset_path is provided).
             let dataset_format_owned: Option<lora_validation::DatasetFormatResult> =
                 if let Some(ref ds_path) = dataset_path {
                     let format_result = lora_validation::validate_dataset_format(
@@ -53,20 +48,36 @@ impl TrainingServer {
             }
 
             for finding in &findings {
-                let severity_str = match finding.severity {
-                    lora_validation::ValidationSeverity::Refuse => "refuse",
-                    lora_validation::ValidationSeverity::Warn => "warn",
-                    lora_validation::ValidationSeverity::Info => "info",
-                };
                 match finding.severity {
                     lora_validation::ValidationSeverity::Refuse => {
-                        tracing::error!(target: "reg.lora.audit", gate = finding.gate_id, severity = severity_str, message = %finding.message, source = %finding.source, "LoRA training-config gate refused");
+                        tracing::error!(
+                            target: "reg.lora.audit",
+                            gate = finding.gate_id,
+                            severity = finding.severity.as_str(),
+                            message = %finding.message,
+                            source = %finding.source,
+                            "LoRA training-config gate refused"
+                        );
                     }
                     lora_validation::ValidationSeverity::Warn => {
-                        tracing::warn!(target: "reg.lora.audit", gate = finding.gate_id, severity = severity_str, message = %finding.message, source = %finding.source, "LoRA training-config gate warning");
+                        tracing::warn!(
+                            target: "reg.lora.audit",
+                            gate = finding.gate_id,
+                            severity = finding.severity.as_str(),
+                            message = %finding.message,
+                            source = %finding.source,
+                            "LoRA training-config gate warning"
+                        );
                     }
                     lora_validation::ValidationSeverity::Info => {
-                        tracing::info!(target: "reg.lora.audit", gate = finding.gate_id, severity = severity_str, message = %finding.message, source = %finding.source, "LoRA training-config gate info");
+                        tracing::info!(
+                            target: "reg.lora.audit",
+                            gate = finding.gate_id,
+                            severity = finding.severity.as_str(),
+                            message = %finding.message,
+                            source = %finding.source,
+                            "LoRA training-config gate info"
+                        );
                     }
                 }
             }
@@ -76,22 +87,8 @@ impl TrainingServer {
             }
 
             let has_refusals = lora_validation::has_refusals(&findings);
-            let findings_json: Vec<serde_json::Value> = findings
-                .iter()
-                .map(|f| {
-                    json!({
-                        "gate_id": f.gate_id,
-                        "severity": match f.severity {
-                            lora_validation::ValidationSeverity::Refuse => "refuse",
-                            lora_validation::ValidationSeverity::Warn => "warn",
-                            lora_validation::ValidationSeverity::Info => "info",
-                        },
-                        "message": f.message,
-                        "source": f.source,
-                        "remediation": f.remediation,
-                    })
-                })
-                .collect();
+            let findings_json: Vec<serde_json::Value> =
+                findings.iter().map(|f| f.to_json()).collect();
 
             let dataset_format_json = dataset_format_owned.as_ref().map(|r| {
                 json!({

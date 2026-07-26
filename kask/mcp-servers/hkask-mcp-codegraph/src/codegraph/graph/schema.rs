@@ -18,7 +18,7 @@ use rusqlite::Connection;
 
 /// Default embedding vector dimension. Must match the output dimension of
 /// the configured embedding model. The default model
-/// `DI/Qwen/Qwen3-Embedding-0.6B` produces 1024-dim vectors.
+/// `DeepInfra/Qwen/Qwen3-Embedding-0.6B` produces 1024-dim vectors.
 /// Override via the `HKASK_EMBEDDING_DIM` env var if using a different model.
 ///
 /// **Migration note:** changing the dimension on an existing database requires
@@ -29,7 +29,7 @@ pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
 
 /// Resolve the embedding dimension from the `HKASK_EMBEDDING_DIM` env var,
 /// falling back to `DEFAULT_EMBEDDING_DIM` (1024, matching the default model
-/// `DI/Qwen/Qwen3-Embedding-0.6B`).
+/// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
 fn resolve_embedding_dim() -> usize {
     std::env::var("HKASK_EMBEDDING_DIM")
         .ok()
@@ -145,7 +145,7 @@ pub fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
     // but FTS5 keyword search still works.
     //
     // Dimension is configurable via HKASK_EMBEDDING_DIM (default 1024, matching
-    // DI/Qwen/Qwen3-Embedding-0.6B). The previous hardcoded 384 was wrong for
+    // DeepInfra/Qwen/Qwen3-Embedding-0.6B). The previous hardcoded 384 was wrong for
     // the default model — INSERTs silently failed via INSERT OR IGNORE.
     let embedding_dim = resolve_embedding_dim();
     let vec_sql = format!(
