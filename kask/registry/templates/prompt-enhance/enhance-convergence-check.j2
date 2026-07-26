@@ -17,6 +17,10 @@ contract:
     phase_results:
       type: object
       description: Summary results from each completed phase
+    grill_verdict:
+      type: string
+      enum: [pass, rewrite_needed, fail, skipped]
+      description: Phase 4 grill verdict. 'skipped' when Phase 4 didn't run (low tier or first iteration).
     prior_metric:
       type: number
       description: Prior convergence metric (null on iteration 1)
@@ -37,13 +41,23 @@ contract:
       type: boolean
     next_action:
       type: string
-      enum: [exit, re-enter, exhausted]
+      enum: [exit, re-enter, exhausted, escalate_to_user]
 energy_cap: 3072
 visibility: Public
 ---
 {# hKask v0.31.0 — prompt-enhance #}
-{# Convergence gate — tier-scaled thresholds #}
-{# goal: Decide whether the enhancement cycle is done or needs another iteration. #}
+{# Convergence gate — tier-scaled thresholds + grill verdict incorporation #}
+{# goal: Decide whether the enhancement cycle is done, needs another iteration, #}
+{#       is exhausted, or must escalate to the user. #}
+{#
+  Group: G (Prompt Enhancement — convergence)
+  The grill verdict is incorporated here (not in a separate loop step)
+  because the executor's loop handler only checks convergence_field +
+  threshold + max_iterations — it does not evaluate loop_condition.
+  So: rewrite_needed forces the metric above threshold → re-enter;
+  fail forces next_action=escalate_to_user → loop condition is false →
+  cascade proceeds to output, which can surface the escalation.
+#}
 
 [inference]
 temperature = 0.1
@@ -52,25 +66,38 @@ verbosity = "standard"
 max_tokens = 2000
 thinking_budget = "off"
 
-You are the convergence gate for prompt-enhance. Compute the normalized convergence metric and decide whether to exit or re-enter the PDCA cycle.
+You are the convergence gate for prompt-enhance. Compute the normalized convergence metric, incorporate the grill verdict, and decide the next action.
 
 ## Tier-Scaled Thresholds and Max Iterations
 
-| Tier | Threshold | Max iterations | Rationale |
-|------|-----------|----------------|----------|
-| `low` | 0.30 | 3 | Single rewrite is acceptable; don't over-engineer |
-| `medium` | 0.20 | 6 | Audit + rewrite + 1 grill round should converge cleanly, with room for grill-driven rewrites |
-| `high` | 0.10 | 9 | Full evolution needs headroom for gpa iterations + grill escalation + PDCA re-entry |
+| Tier | Threshold | Max iterations | Materiality guard at |
+|------|-----------|----------------|----------------------|
+| `low` | 0.30 | 3 | iteration ≥ 1 |
+| `medium` | 0.20 | 6 | iteration ≥ 3 |
+| `high` | 0.10 | 9 | iteration ≥ 4 |
 
 ## Scoring (start at 1.0, subtract for each satisfied check)
 
 - Type classified (`phase_1` complete) → −0.15
 - Audit complete (`phase_2` complete, if run) → −0.20
-- Rewrite applied (`phase_3` complete) → −0.20
+- Rewrite applied (`phase_3` complete via collector) → −0.20
 - Critic passed (`phase_4` verdict = pass, if run) → −0.20
 - Evolution stable (`phase_5` convergence ≤ 0.10, if run) → −0.25
 
 Clamp to [0, 1].
+
+## Grill Verdict Incorporation
+
+The grill verdict (`grill_verdict` input) modifies the metric and next_action:
+
+| Verdict | Metric adjustment | next_action |
+|---------|-------------------|-------------|
+| `pass` | No adjustment (use computed metric) | `exit` if metric ≤ threshold, else `re-enter` |
+| `rewrite_needed` | Force metric = max(computed, threshold + 0.10) | `re-enter` (unless tier max hit → `exhausted`) |
+| `fail` | Force metric = 1.0 | `escalate_to_user` |
+| `skipped` | No adjustment (low tier or first iteration) | `exit` if metric ≤ threshold, else `re-enter` |
+
+This is why the grill verdict is incorporated here rather than in a separate loop step: the executor's loop handler only checks `convergence_field` + `threshold` + `max_iterations`. By forcing the metric above threshold on `rewrite_needed`, we ensure the PDCA loop re-enters. By returning `escalate_to_user` on `fail`, we make the loop step's `condition` false (since `next_action != 're-enter'`), ending the cascade cleanly.
 
 ## Materiality Guard
 
@@ -78,9 +105,17 @@ If `iteration >= tier_max / 2` (rounded down: low=1, medium=3, high=4) AND `|met
 
 ## Next Action Logic
 
-- `exit` — metric ≤ tier threshold OR materiality guard triggered
-- `re-enter` — metric > threshold, iterations remaining (`iteration < tier_max`)
-- `exhausted` — tier max iterations reached without convergence (low=3, medium=6, high=9)
+1. If `grill_verdict == 'fail'` → `escalate_to_user` (regardless of metric).
+2. If `iteration >= tier_max` → `exhausted` (tier cap hit without convergence).
+3. If materiality guard triggered → `exit` (irreducible gap).
+4. If `metric <= tier_threshold` AND `grill_verdict != 'rewrite_needed'` → `exit`.
+5. Otherwise → `re-enter`.
+
+The PDCA loop step (step 14) has `condition: "step_13_result.next_action == 're-enter'"`. So:
+- `exit` → loop condition false → cascade proceeds to output.
+- `exhausted` → loop condition false → cascade proceeds to output (with a note that tier max was hit).
+- `escalate_to_user` → loop condition false → cascade proceeds to output (which surfaces the escalation).
+- `re-enter` → loop condition true → cascade re-enters at step 1.
 
 ## Context
 ```json
@@ -88,6 +123,7 @@ If `iteration >= tier_max / 2` (rounded down: low=1, medium=3, high=4) AND `|met
   "effort_tier": {{ effort_tier | tojson }},
   "phases_completed": {{ phases_completed | tojson }},
   "phase_results": {{ phase_results | tojson }},
+  "grill_verdict": {{ grill_verdict | tojson }},
   "prior_metric": {{ prior_metric | tojson }},
   "iteration": {{ iteration | tojson }}
 }
@@ -99,17 +135,18 @@ Return JSON only:
 ```json
 {
   "convergence_metric": 0.15,
-  "convergence_method": "tier-scaled weighted subtraction",
+  "convergence_method": "tier-scaled weighted subtraction with grill verdict incorporation",
   "metric_decomposition": {
     "type_classified": -0.15,
     "audit_complete": -0.20,
     "rewrite_applied": -0.20,
     "critic_passed": -0.20,
-    "evolution_stable": 0.0
+    "evolution_stable": 0.0,
+    "grill_verdict_adjustment": "none|forced_above_threshold|forced_to_1.0"
   },
-  "rationale": "one-sentence explanation of why the metric is what it is",
+  "rationale": "one-sentence explanation of why the metric and next_action are what they are",
   "blockers": ["specific gap preventing convergence, or empty"],
   "materiality_guard_triggered": false,
-  "next_action": "exit|re-enter|exhausted"
+  "next_action": "exit|re-enter|exhausted|escalate_to_user"
 }
 ```

@@ -31,6 +31,7 @@ pub use strategies::{
     WordCountChunker,
 };
 pub use types::{
-    ChunkingConfig, CorpusConfig, EmbedPhase, EmbedProgress, EmbedResult, EmbeddingConfig, Entity,
-    EntityConfig, FoundationalRule, ProgressFn, ValidationConfig, Work,
+    ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
+    EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig,
+    Work,
 };

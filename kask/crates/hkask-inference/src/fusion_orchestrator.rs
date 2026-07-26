@@ -114,6 +114,15 @@ fn skill_prompt(skill: &FusionSkill) -> &'static str {
              (folded from strangler-fig). Merged from improve-codebase-architecture \
              and refactor-service-layer."
         }
+        FusionSkill::PromptEnhance => {
+            "Prompt Enhance: Typed prompt enhancement. Classify the prompt (coding, reasoning, \
+             creative, classification, extraction, agent-task, meta) before refining. \
+             Apply the deletion test to prompt sections — does complexity reappear in model \
+             failures if deleted? Trace provenance of every hardcoded claim (Specification \
+             > Implementation > Inference); flag Inference-tier claims as fragile. Keep \
+             generator and critic decoupled — never let the same pass that proposes a \
+             refinement also evaluate it."
+        }
     }
 }
 

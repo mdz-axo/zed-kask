@@ -157,6 +157,19 @@ templates:
     generates_spans:
       - reg.prompt-enhance.rewrite.meta
 
+  - id: prompt-enhance/enhance-collector
+    name: "Collector — canonicalize the active rewrite step's output"
+    path: enhance-collector.j2
+    type: KnowAct
+    lexicon_terms: [coalesce, collect, canonicalize, resolve]
+    description: >
+      Collector step — coalesce the output of whichever Phase 3 typed
+      rewrite step (3-9) actually ran into a single canonical context key.
+      Pure coalescing, no enhancement. Eliminates the need for nested
+      default() chains in downstream steps (verify, evolve, output).
+    generates_spans:
+      - reg.prompt-enhance.collector
+
   - id: prompt-enhance/enhance-verify
     name: "Phase 4 — Decoupled critic via grill-me self-challenge"
     path: enhance-verify.j2

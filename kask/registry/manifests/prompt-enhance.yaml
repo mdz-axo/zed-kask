@@ -13,6 +13,16 @@
 # p-component, intrinsic evaluative feedback signal). Borrows the Kata shape
 # (baseline → target → experiment → measure) but not the 10-iteration outer
 # loop — prompt-enhance is a single-shot service skill.
+#
+# EXECUTOR NOTES (learned from reading executor.rs):
+# - Step field is `condition:` (not `skip_condition:`). Step runs when condition
+#   is true. Supported: ==, !=, <, <=, >, >=, AND, OR, NOT, dot-paths.
+# - Loop steps do NOT evaluate `loop_condition`. They check convergence_field
+#   + threshold + max_iterations only. Carried state must be bound via
+#   input_mapping (keys other than loop_target are written into context).
+# - `condition:` on a loop step is evaluated like any other step; if false,
+#   the loop is skipped (treated as a no-op). We use this to gate the PDCA
+#   loop on the convergence-check's next_action verdict.
 
 manifest:
   id: prompt-enhance
@@ -36,13 +46,15 @@ convergence:
   # based on the effort_tier input. The manifest-level threshold is the
   # high-tier value (tightest); medium/low are loosened inside the template.
   # Max iterations also tier-scaled: low=3, medium=6, high=9. The manifest
-  # declares the high-tier max (9); the loop step enforces the tier-scaled
-  # cap via the convergence-check template's next_action verdict.
+  # declares the high-tier max (9); the PDCA loop step enforces the
+  # tier-scaled cap via the convergence-check template's next_action verdict
+  # (returns 'exhausted' when the tier cap is hit, which makes the loop
+  # step's condition false, ending the cascade).
   threshold: 0.10
   improvement_gate: threshold_only
   max_iterations: 9
   min_iterations: 1
-  convergence_field: step_12_result.convergence_metric
+  convergence_field: step_13_result.convergence_metric
   on_not_reached: escalate
 
 gas:
@@ -60,7 +72,7 @@ inputs:
   - name: prompt
     type: string
     required: true
-    description: The input prompt to enhance.
+    description: 'The input prompt to enhance.'
   - name: effort
     type: string
     required: false
@@ -68,7 +80,7 @@ inputs:
   - name: output_format
     type: string
     required: false
-    description: 'inline (default — return in fenced code block), file (write to disk), or both'
+    description: 'inline (default — return in fenced code block), file (write to disk), or both.'
   - name: output_path
     type: string
     required: false
@@ -111,9 +123,9 @@ steps:
       context: "{{ context | default({}) }}"
 
   # ─── PHASE 2: AUDIT (medium/high only) ───
-  # Skipped at low tier via loop_condition on step 3.
-  # Three lenses: pragmatic-semantics (always), pragmatic-cybernetics (high only),
-  # essentialist G1+G2 (medium) / G1+G2+G3 (high).
+  # condition: run when effort is NOT low. Three lenses: pragmatic-semantics
+  # (always at medium/high), pragmatic-cybernetics (high only), essentialist
+  # G1+G2 (medium) / G1+G2+G3 (high).
   - ordinal: 2
     action: select
     description: >
@@ -131,19 +143,12 @@ steps:
       effort_tier: "{{ step_1_result.effort_tier }}"
       semantic_classification: "{{ step_1_result.semantic_classification }}"
       risks: "{{ step_1_result.risks }}"
-    skip_condition: "step_1_result.effort_tier == 'low'"
+    condition: "step_1_result.effort_tier != 'low'"
 
   # ─── PHASE 3: TYPED REWRITE ───
   # Routes to one of 7 typed templates based on prompt_type from step 1.
-  # The router pattern mirrors self-improvement/si-execute-improvement.j2:
-  # a single select step whose template_ref is resolved at runtime by the
-  # executor's template resolver. Here we use a literal template_ref per
-  # branch via the loop_condition mechanism — the executor evaluates
-  # skip_condition to pick the active branch.
-  #
-  # NOTE: The hKask executor resolves template_ref as a literal string.
-  # To route by type, we use 7 parallel steps each with a skip_condition
-  # that fires when prompt_type doesn't match. Only one will run.
+  # Each step has a condition that runs it only when prompt_type matches.
+  # Only one of steps 3-9 will execute per cascade pass.
   - ordinal: 3
     action: select
     description: "Phase 3 (coding) — Typed rewrite for coding prompts."
@@ -155,9 +160,9 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'coding'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'coding'"
 
   - ordinal: 4
     action: select
@@ -170,9 +175,9 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'reasoning'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'reasoning'"
 
   - ordinal: 5
     action: select
@@ -185,9 +190,9 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'creative'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'creative'"
 
   - ordinal: 6
     action: select
@@ -200,9 +205,9 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'classification'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'classification'"
 
   - ordinal: 7
     action: select
@@ -215,9 +220,9 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'extraction'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'extraction'"
 
   - ordinal: 8
     action: select
@@ -230,9 +235,9 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'agent-task'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'agent-task'"
 
   - ordinal: 9
     action: select
@@ -245,39 +250,65 @@ steps:
       prompt: "{{ prompt }}"
       findings: "{{ step_2_result.findings | default([]) }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ rewrite_iteration | default(1) }}"
-      grill_feedback: "{{ step_5_result | default({}) }}"
-    skip_condition: "step_1_result.prompt_type != 'meta'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      grill_feedback: "{{ step_11_result | default({}) }}"
+    condition: "step_1_result.prompt_type == 'meta'"
+
+  # ─── COLLECTOR (step 10) ───
+  # Canonicalizes the rewrite output into a single context key so downstream
+  # steps don't need nested default() chains across steps 3-9. Uses a select
+  # action with a minimal Jinja template that picks the non-empty result.
+  # The executor stores the result as step_10_result.
+  - ordinal: 10
+    action: select
+    description: >
+      Collector — canonicalize the active rewrite step's output into
+      enhanced_prompt and acceptance_criteria context keys. Minimal LLM call;
+      pure context coalescing.
+    renderer: minijinja
+    template_ref: prompt-enhance/enhance-collector.j2
+    gas_cap: 1024
+    timeout_seconds: 15
+    input_mapping:
+      candidates:
+        - step_3_result
+        - step_4_result
+        - step_5_result
+        - step_6_result
+        - step_7_result
+        - step_8_result
+        - step_9_result
 
   # ─── PHASE 4: VERIFY (medium/high only) ───
   # Decoupled grill-me critic. Tier-scaled rounds: 1 (Recall+Mechanism) at
-  # medium, 3 escalating at high. Verdict drives rewrite loop or escalation.
-  - ordinal: 10
+  # medium, 3 escalating at high. Verdict drives the convergence metric
+  # (step 13 incorporates grill verdict into re-enter decision).
+  - ordinal: 11
     action: select
     description: >
       Phase 4 — Decoupled critic via grill-me self-challenge across Recall,
       Mechanism, Rationale, Edge Cases, Synthesis. Tier-scaled rounds.
-      Verdict: pass → proceed; rewrite_needed → back to Phase 3 (max 2
-      rewrites); fail → escalate to user.
+      Verdict: pass → proceed; rewrite_needed → convergence metric stays
+      high, forcing PDCA re-entry; fail → escalate to user.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-verify.j2
     gas_cap: 6000
     timeout_seconds: 90
     input_mapping:
-      enhanced_prompt: "{{ step_3_result.enhanced_prompt | default(step_4_result.enhanced_prompt | default(step_5_result.enhanced_prompt | default(step_6_result.enhanced_prompt | default(step_7_result.enhanced_prompt | default(step_8_result.enhanced_prompt | default(step_9_result.enhanced_prompt)))))) }}"
+      enhanced_prompt: "{{ step_10_result.enhanced_prompt }}"
       original_prompt: "{{ prompt }}"
       prompt_type: "{{ step_1_result.prompt_type }}"
       effort_tier: "{{ step_1_result.effort_tier }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      acceptance_criteria: "{{ step_3_result.acceptance_criteria | default(step_4_result.acceptance_criteria | default(step_5_result.acceptance_criteria | default(step_6_result.acceptance_criteria | default(step_7_result.acceptance_criteria | default(step_8_result.acceptance_criteria | default(step_9_result.acceptance_criteria)))))) }}"
-      round: "{{ grill_round | default(1) }}"
-    skip_condition: "step_1_result.effort_tier == 'low'"
+      acceptance_criteria: "{{ step_10_result.acceptance_criteria }}"
+      round: "{{ pdca_iteration | default(1) }}"
+    condition: "step_1_result.effort_tier != 'low'"
 
   # ─── PHASE 5: EVOLVE (high only) ───
   # Delegates to gpa-evolution's pattern: sample trajectories → reflect
   # (textual gradient) → propose mutations + crossover → test → update
   # Pareto frontier. Min 2 iterations. Returns frontier's best member.
-  - ordinal: 11
+  - ordinal: 12
     action: select
     description: >
       Phase 5 — Evolutionary optimization via gpa-evolution delegate. Fires
@@ -287,7 +318,7 @@ steps:
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
-      enhanced_prompt: "{{ step_10_result.enhanced_prompt | default(step_3_result.enhanced_prompt | default(step_4_result.enhanced_prompt | default(step_5_result.enhanced_prompt | default(step_6_result.enhanced_prompt | default(step_7_result.enhanced_prompt | default(step_8_result.enhanced_prompt | default(step_9_result.enhanced_prompt)))))))) }}"
+      enhanced_prompt: "{{ step_10_result.enhanced_prompt }}"
       prompt_type: "{{ step_1_result.prompt_type }}"
       proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
       objectives:
@@ -295,19 +326,23 @@ steps:
           maximize: true
         - name: cost
           maximize: false
-      iteration: "{{ gpa_iteration | default(1) }}"
-      frontier: "{{ step_11_result.frontier | default([]) }}"
-    skip_condition: "step_1_result.effort_tier != 'high'"
+      iteration: "{{ pdca_iteration | default(1) }}"
+      frontier: "{{ step_12_result.frontier | default([]) }}"
+    condition: "step_1_result.effort_tier == 'high'"
 
-  # ─── CONVERGENCE CHECK ───
+  # ─── CONVERGENCE CHECK (step 13) ───
   # Tier-scaled thresholds: low (0.30), medium (0.20), high (0.10).
-  # Materiality guard forces convergence on irreducible gaps.
-  - ordinal: 12
+  # Tier-scaled max: low=3, medium=6, high=9.
+  # Incorporates grill verdict: if grill returned rewrite_needed, the metric
+  # is forced above threshold so the PDCA loop re-enters. If grill returned
+  # fail, next_action = escalate_to_user (short-circuits the loop).
+  - ordinal: 13
     action: select
     description: >
-      Convergence gate — tier-scaled thresholds. Start at 1.0, subtract
-      for each completed phase. Materiality guard if delta < 0.02 for
-      >= 2 iterations. Max 3 PDCA iterations.
+      Convergence gate — tier-scaled thresholds and max iterations. Start at
+      1.0, subtract for each completed phase. Incorporates grill verdict:
+      rewrite_needed forces re-entry; fail forces escalation. Materiality
+      guard if delta < 0.02 for >= half the tier max iterations.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-convergence-check.j2
     gas_cap: 2000
@@ -318,48 +353,46 @@ steps:
       phase_results:
         classify: "{{ step_1_result }}"
         audit: "{{ step_2_result | default({}) }}"
-        rewrite: "{{ step_3_result | default(step_4_result | default(step_5_result | default(step_6_result | default(step_7_result | default(step_8_result | default(step_9_result | default({}))))))) }}"
-        verify: "{{ step_10_result | default({}) }}"
-        evolve: "{{ step_11_result | default({}) }}"
+        rewrite: "{{ step_10_result | default({}) }}"
+        verify: "{{ step_11_result | default({}) }}"
+        evolve: "{{ step_12_result | default({}) }}"
+      grill_verdict: "{{ step_11_result.verdict | default('skipped') }}"
       prior_metric: "{{ prior_convergence_metric | default(null) }}"
       iteration: "{{ pdca_iteration | default(1) }}"
     fusion: false
 
-  # ─── REWRITE LOOP ───
-  # If Phase 4 verdict is rewrite_needed and rewrite_iteration < 2,
-  # re-enter Phase 3 with grill_feedback as input.
-  - ordinal: 13
-    action: loop
-    description: >
-      Re-enter Phase 3 if grill verdict is rewrite_needed and max rewrites
-      not exceeded. Max 2 rewrites; then escalate to user.
-    gas_cap: 1000
-    timeout_seconds: 30
-    input_mapping:
-      loop_target: 3
-      loop_condition: "step_10_result.verdict == 'rewrite_needed' and (rewrite_iteration | default(1)) < 2"
-      max_iterations: 2
-
-  # ─── PDCA LOOP ───
-  # If convergence not reached and tier-scaled max iterations not exceeded,
-  # re-enter from Phase 1 (re-classify may change routing).
-  # Tier max: low=3, medium=6, high=9. The convergence-check template
-  # (step_12_result.next_action) returns 'exhausted' when the tier cap is
-  # hit, which short-circuits this loop.
+  # ─── PDCA LOOP (step 14) ───
+  # Single loop. The executor checks convergence_field + threshold +
+  # max_iterations. We ALSO gate via condition: the loop step only fires
+  # when the convergence-check's next_action is 're-enter'. If next_action
+  # is 'exit' or 'exhausted', the condition is false and the cascade
+  # proceeds to the output step.
+  #
+  # Carried state is bound via input_mapping (keys other than loop_target
+  # are written into context by the executor):
+  #   - prior_convergence_metric: feeds the materiality guard next iteration
+  #   - pdca_iteration: increments the iteration counter
+  #   - phases_completed: accumulates which phases have run
+  #
+  # Tier max: low=3, medium=6, high=9. The manifest declares max_iterations=9
+  # (the high-tier ceiling); the convergence-check template returns
+  # 'exhausted' when the tier cap is hit, making this condition false.
   - ordinal: 14
     action: loop
     description: >
-      Re-enter PDCA cycle from Phase 1 if convergence not reached and
-      tier-scaled max not exceeded (low=3, medium=6, high=9). The
-      convergence-check template returns 'exhausted' when the tier cap is hit.
+      Re-enter PDCA cycle from Phase 1 if convergence-check returns 're-enter'.
+      Carries prior_convergence_metric and increments pdca_iteration for the
+      materiality guard. Tier-scaled max enforced by the convergence-check
+      template's 'exhausted' verdict.
     gas_cap: 1000
     timeout_seconds: 30
+    condition: "step_13_result.next_action == 're-enter'"
     input_mapping:
       loop_target: 1
-      loop_condition: "step_12_result.next_action == 're-enter'"
-      max_iterations: 9
+      prior_convergence_metric: "{{ step_13_result.convergence_metric }}"
+      pdca_iteration: "{{ (pdca_iteration | default(1)) + 1 }}"
 
-  # ─── OUTPUT ───
+  # ─── OUTPUT (step 15) ───
   # Format per output_format: inline (fenced code block, default),
   # file (write to path), or both. Always include change log.
   - ordinal: 15
@@ -374,18 +407,18 @@ steps:
     gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
-      enhanced_prompt: "{{ step_11_result.best_member | default(step_10_result.enhanced_prompt | default(step_3_result.enhanced_prompt | default(step_4_result.enhanced_prompt | default(step_5_result.enhanced_prompt | default(step_6_result.enhanced_prompt | default(step_7_result.enhanced_prompt | default(step_8_result.enhanced_prompt | default(step_9_result.enhanced_prompt))))))))) }}"
+      enhanced_prompt: "{{ step_12_result.best_member | default(step_10_result.enhanced_prompt) }}"
       original_prompt: "{{ prompt }}"
       prompt_type: "{{ step_1_result.prompt_type }}"
       effort_tier: "{{ step_1_result.effort_tier }}"
       output_format_resolved: "{{ step_1_result.output_format_resolved }}"
       output_path_resolved: "{{ step_1_result.output_path_resolved }}"
-      phases_run: "{{ phases_completed | default([]) }}"
+      phases_completed: "{{ phases_completed | default([]) }}"
       audit_findings: "{{ step_2_result.findings | default([]) }}"
-      grill_ratings: "{{ step_10_result.ratings | default([]) }}"
-      mutations_applied: "{{ step_3_result.mutations_applied | default(step_4_result.mutations_applied | default(step_5_result.mutations_applied | default(step_6_result.mutations_applied | default(step_7_result.mutations_applied | default(step_8_result.mutations_applied | default(step_9_result.mutations_applied | default([])))))))) }}"
-      mutations_deferred: "{{ step_3_result.mutations_deferred | default(step_4_result.mutations_deferred | default(step_5_result.mutations_deferred | default(step_6_result.mutations_deferred | default(step_7_result.mutations_deferred | default(step_8_result.mutations_deferred | default(step_9_result.mutations_deferred | default([])))))))) }}"
-      convergence_metric: "{{ step_12_result.convergence_metric | default(1.0) }}"
+      grill_ratings: "{{ step_11_result.ratings | default([]) }}"
+      mutations_applied: "{{ step_10_result.mutations_applied | default([]) }}"
+      mutations_deferred: "{{ step_10_result.mutations_deferred | default([]) }}"
+      convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -432,6 +465,10 @@ ocap:
       action: render
       template_id: prompt-enhance/enhance-rewrite-meta
       gas_budget: 7000
+    - resource: template
+      action: render
+      template_id: prompt-enhance/enhance-collector
+      gas_budget: 1024
     - resource: template
       action: render
       template_id: prompt-enhance/enhance-verify

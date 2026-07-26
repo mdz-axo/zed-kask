@@ -135,6 +135,8 @@ pub enum FusionSkill {
     RefactorArchitecture,
     #[serde(rename = "metacognition")]
     Metacognition,
+    #[serde(rename = "prompt-enhance")]
+    PromptEnhance,
 }
 
 crate::enum_snake_str!(FusionSkill, {
@@ -153,6 +155,7 @@ crate::enum_snake_str!(FusionSkill, {
     IdiomaticRust => "idiomatic-rust",
     RefactorArchitecture => "refactor-architecture",
     Metacognition => "metacognition",
+    PromptEnhance => "prompt-enhance",
 });
 
 /// Configuration for fusion multi-model deliberation.

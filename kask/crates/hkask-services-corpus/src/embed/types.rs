@@ -234,7 +234,7 @@ pub struct EmbeddingConfig {
 }
 
 /// A work (text) to download and embed.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Work {
     pub title: String,
@@ -265,7 +265,7 @@ fn default_format() -> String {
 }
 
 /// A foundational rule to include as a passage.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FoundationalRule {
     pub slug: String,
@@ -279,7 +279,7 @@ pub struct FoundationalRule {
 }
 
 /// Chunking parameters for passage splitting.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChunkingConfig {
     pub min_words: usize,

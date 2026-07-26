@@ -30,7 +30,7 @@ mod utils;
 mod tests;
 
 pub use cache::download_and_cache;
-pub use config::{default_corpus_config, generate_corpus_yaml};
+pub use config::{PersonaSpec, default_corpus_config, generate_corpus_yaml, generate_persona_yaml};
 pub use service::DiscoveryService;
 pub use types::{DiscoverRequest, DiscoverResult, DiscoveredWork};
 pub use utils::slugify;

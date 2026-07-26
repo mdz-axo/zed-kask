@@ -58,55 +58,73 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 
 ## Instructions
 
-### Phase 1 — Classify (enhance-classify)
+### Phase 1 — Classify (enhance-classify, step 1)
 
 1. Classify the input prompt against the 7-type taxonomy using pragmatic-semantics IS/OUGHT + epistemic-mode axes.
 2. Validate the effort tier and output format (resolve defaults).
 3. Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers; empty at low.
 4. Produce the routing decision (which phases to run) and surface type-specific risks.
 
-### Phase 2 — Audit (enhance-audit, medium/high only)
+### Phase 2 — Audit (enhance-audit, step 2, medium/high only)
 
 1. **Pragmatic-semantics lens**: classify every claim, default, and hardcoded reference by IS/OUGHT, epistemic mode, constraint force, and provenance. Flag Inference-tier claims (confidence ≤ 0.3) as fragile.
 2. **Pragmatic-cybernetics lens** (high only): treat prompt→model→output as a feedback loop; assess polarity, delay, gain, closure, fidelity; diagnose broken loops.
 3. **Essentialist lens**: G1 (deletion test on prompt sections — does complexity reappear in model failures if deleted?) + G2 (≤7 instruction blocks). G3 (contract trace) at high only.
 4. Classify every finding by constraint force (Prohibition → Guardrail → Guideline → Evidence → Hypothesis).
+5. Gated by `condition: step_1_result.effort_tier != 'low'`.
 
-### Phase 3 — Typed Rewrite (enhance-rewrite-<type>)
+### Phase 3 — Typed Rewrite (steps 3-9, one runs per cascade)
 
-1. Route to the typed rewrite template based on Phase 1 classification.
+1. Seven parallel steps, each gated by `condition: step_1_result.prompt_type == '<type>'`. Only one executes.
 2. Apply audit findings as targeted mutations — one mutation per finding, Prohibition findings first.
 3. Defer Hypothesis-tier findings for user verification (do not mutate based on speculation).
-4. If `iteration > 1`, incorporate Phase 4 grill feedback — address each Partial/Gap rating.
+4. If `pdca_iteration > 1`, incorporate Phase 4 grill feedback from the prior iteration (bound as `grill_feedback` from `step_11_result`).
 5. Produce the enhanced prompt + acceptance criteria + mutation log.
 
-### Phase 4 — Verify (enhance-verify, medium/high only)
+### Collector (step 10, compute action)
+
+1. Canonicalizes the active rewrite step's output into `enhanced_prompt`, `acceptance_criteria`, `mutations_applied`, `mutations_deferred` context keys.
+2. No LLM call — pure context coalescing via the `coalesce_rewrite_output` compute function.
+3. Eliminates the need for nested `default()` chains in downstream steps.
+
+### Phase 4 — Verify (enhance-verify, step 11, medium/high only)
 
 1. Run grill-me self-challenge across Recall → Mechanism → Rationale → Edge Cases → Synthesis.
 2. Decoupled from Phase 3 — do not defend the prompt you (didn't) write.
 3. Tier-scaled rounds: 1 (Recall+Mechanism) at medium; 3 escalating at high.
 4. Cross-check against acceptance criteria and proxy eval set.
-5. Verdict: `pass` → proceed; `rewrite_needed` → back to Phase 3 (max 2 rewrites); `fail` → escalate to user.
+5. Verdict: `pass` → proceed; `rewrite_needed` → convergence metric forced above threshold (drives PDCA re-entry); `fail` → escalate to user.
+6. Gated by `condition: step_1_result.effort_tier != 'low'`.
 
-### Phase 5 — Evolve (enhance-evolve, high only)
+### Phase 5 — Evolve (enhance-evolve, step 12, high only)
 
 1. Delegate to gpa-evolution's pattern: sample trajectories → reflect (textual gradient) → propose mutations + crossover → test → update Pareto frontier.
 2. Min 2 iterations. Multi-objective: (quality, cost) — a prompt that is 5% better but 3× longer is often a loss.
 3. Maintain critic decoupling: the reflection step is the critic, the mutation step is the generator.
 4. Return the frontier's best member as the final enhanced prompt.
+5. Gated by `condition: step_1_result.effort_tier == 'high'`.
 
-### Convergence (enhance-convergence-check)
+### Convergence (enhance-convergence-check, step 13)
 
 1. Tier-scaled thresholds: low (0.30), medium (0.20), high (0.10).
 2. Tier-scaled max iterations: low (3), medium (6), high (9).
 3. Start at 1.0; subtract for each completed phase.
-4. Materiality guard: force convergence if metric delta < 0.02 for ≥ half the tier max (low=1, medium=3, high=4) iterations.
-5. Max PDCA iterations enforced by tier cap; convergence-check returns `exhausted` when hit.
+4. **Grill verdict incorporation**: `rewrite_needed` forces metric above threshold (drives re-entry); `fail` forces `next_action=escalate_to_user`; `pass` uses computed metric.
+5. Materiality guard: force convergence if metric delta < 0.02 for ≥ half the tier max (low=1, medium=3, high=4) iterations.
+6. `next_action`: `exit` | `re-enter` | `exhausted` | `escalate_to_user`.
 
-### Output (enhance-output)
+### PDCA Loop (step 14)
+
+1. Single loop step. Gated by `condition: step_13_result.next_action == 're-enter'`.
+2. If `next_action` is `exit`, `exhausted`, or `escalate_to_user`, the condition is false and the cascade proceeds to output.
+3. Carries state via `input_mapping`: `prior_convergence_metric` (feeds materiality guard), `pdca_iteration` (increments counter).
+4. Tier max enforced by the convergence-check template returning `exhausted` when the tier cap is hit.
+
+### Output (enhance-output, step 15)
 
 1. Format per `output_format`: `inline` (fenced code block, default), `file` (write to path), or `both`.
 2. Always include a change log: summary, audit findings table by constraint force, grill ratings, mutations applied, deferred findings, residual risks.
+3. If convergence returned `exhausted` or `escalate_to_user`, surface that in the change log.
 
 ## Registry Templates
 
@@ -121,9 +139,10 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `enhance-rewrite-extraction.j2` | KnowAct | Phase 3 (extraction) — Typed rewrite for extraction prompts |
 | `enhance-rewrite-agent-task.j2` | KnowAct | Phase 3 (agent-task) — Typed rewrite for agent task prompts |
 | `enhance-rewrite-meta.j2` | KnowAct | Phase 3 (meta) — Typed rewrite for meta-prompts |
+| `enhance-collector.j2` | KnowAct | Collector — Coalesce the active rewrite step's output into a canonical context key |
 | `enhance-verify.j2` | KnowAct | Phase 4 — Decoupled critic via grill-me self-challenge |
 | `enhance-evolve.j2` | KnowAct | Phase 5 — Evolutionary optimization via gpa-evolution delegate (high only) |
-| `enhance-convergence-check.j2` | KnowAct | PDCA convergence gate — tier-scaled thresholds |
+| `enhance-convergence-check.j2` | KnowAct | Convergence gate — tier-scaled thresholds + grill verdict incorporation |
 | `enhance-output.j2` | KnowAct | ACT phase — Format and deliver the enhanced prompt |
 
 ## Constraints
@@ -133,8 +152,10 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 - Phase 5 (evolve) fires only at `high` tier.
 - Phase 4 critic is decoupled from Phase 3 generator (self-improvement §9.1).
 - Hypothesis-tier findings are never mutated — always deferred for user verification.
-- Max 2 Phase 3 rewrites driven by Phase 4 feedback; then escalate.
+- Single PDCA loop (step 14) handles all re-entry; no separate rewrite loop. Grill verdict is incorporated into the convergence metric (step 13) to drive re-entry.
 - Max PDCA iterations tier-scaled: low=3, medium=6, high=9; materiality guard forces convergence on irreducible gaps at half the tier max.
+- Step conditions use `condition:` (not `skip_condition:`) — the step runs when the condition is true. Supported operators: `==`, `!=`, `<`, `<=`, `>`, `>=`, `AND`, `OR`, `NOT`, dot-paths.
+- Loop steps do not evaluate `loop_condition` — they check `convergence_field` + `threshold` + `max_iterations`. Use `condition:` on the loop step to gate re-entry.
 - Proxy eval set is auto-synthesized at medium/high; user may override via `context.existing_eval_set`.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 

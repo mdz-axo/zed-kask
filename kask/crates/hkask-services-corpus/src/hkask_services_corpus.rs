@@ -10,11 +10,12 @@ mod discover;
 mod embed;
 
 pub use discover::{
-    DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService, default_corpus_config,
-    download_and_cache, generate_corpus_yaml, slugify,
+    DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService, PersonaSpec,
+    default_corpus_config, download_and_cache, generate_corpus_yaml, generate_persona_yaml,
+    slugify,
 };
 pub use embed::{
-    ChunkingConfig, CorpusConfig, EmbedPhase, EmbedProgress, EmbedResult, EmbedService,
-    EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, ValidationConfig, Work,
-    ocr_pdf_bytes, strip_html_tags,
+    ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
+    EmbedService, EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet,
+    ValidationConfig, Work, ocr_pdf_bytes, strip_html_tags,
 };
