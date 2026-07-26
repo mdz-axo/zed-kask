@@ -94,3 +94,59 @@ templates:
       Compute normalized convergence metric for maintenance PDCA cycles.
       Measures critical signal count, coverage gaps, and regression library
       growth. Used by the FlowDef manifest as step 3 of the maintenance PDCA loop.
+
+  # -- Logic audit mode templates (folded from skill-logic-audit) --
+  - id: skill-maintenance/logic-load-goal
+    name: "Parse the annotated goal block from a .j2 or manifest.yaml file"
+    path: logic-load-goal.j2
+    type: WordAct
+    lexicon_terms: [extract, parse, specify, verify]
+    description: >
+      Parse the annotated goal: block from a .j2 or manifest.yaml file and
+      return it as a normalized string. Verify that a goal exists and is
+      non-empty.
+
+  - id: skill-maintenance/logic-critique-template
+    name: "Adversarial critique of a template body against its stated goal"
+    path: logic-critique-template.j2
+    type: KnowAct
+    lexicon_terms: [critique, assess, detect, classify, recommend]
+    description: >
+      Adversarial critique anchored to the extracted goal. For each flaw,
+      provide the location, claim, anchor to goal, severity, and suggested fix.
+
+  - id: skill-maintenance/logic-critique-critique
+    name: "Soundness filter — separate valid concerns from spurious ones"
+    path: logic-critique-critique.j2
+    type: KnowAct
+    lexicon_terms: [validate, filter, classify, assess, verify]
+    description: >
+      Review a critique for soundness and goal-anchoring. Separate valid,
+      goal-anchored concerns from spurious ones.
+
+  - id: skill-maintenance/logic-compose-proposal
+    name: "Compose a concrete revised artifact and diff from calibrated concerns"
+    path: logic-compose-proposal.j2
+    type: KnowAct
+    lexicon_terms: [compose, propose, revise, synthesize, verify]
+    description: >
+      Compose a concrete revised artifact and unified diff from the calibrated
+      concerns.
+
+  - id: skill-maintenance/logic-user-choice
+    name: "Present the proposal and capture accept/reject/counter-proposal"
+    path: logic-user-choice.j2
+    type: KnowAct
+    lexicon_terms: [present, recommend, confirm, classify, route]
+    description: >
+      Present the proposal to the user and capture accept, reject, or
+      counter-proposal choice.
+
+  - id: skill-maintenance/logic-convergence-check
+    name: "Compute convergence metric for logic audit cycle"
+    path: logic-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, score, verify]
+    description: >
+      Compute a normalized convergence metric in [0,1] for audit PDCA cycles,
+      where 0 means no material flaws remain.

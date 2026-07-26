@@ -1,6 +1,10 @@
 # Skill Maintenance Process Manifest
-# ℏKask v0.31.0 — Registry health maintenance as PDCA
-# Template type: FlowDef — audit + coverage + convergence loop
+# hKask v0.31.0 — Registry health maintenance as PDCA
+#
+# Two modes:
+#   maintenance (default) — audit staleness, coverage gaps, convergence
+#   logic_audit            — bounded dual-layer logic audit of .j2 templates
+#                           against stated goals (folded from skill-logic-audit)
 
 manifest:
   id: skill-maintenance
@@ -9,7 +13,10 @@ manifest:
   description: >
     Convergent maintenance process for the skill corpus. Audits staleness,
     checks coverage gaps, computes convergence, and iterates until critical
-    maintenance blockers are reduced below threshold.
+    maintenance blockers are reduced below threshold. Includes logic_audit
+    mode (folded from skill-logic-audit): bounded dual-layer logic audit of
+    .j2 templates against stated goals — load goal, critique, filter for
+    soundness, compose revised artifact, drive user-review loop.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
@@ -35,6 +42,13 @@ rjoule:
   hard_limit: true
 
 inputs:
+  - name: mode
+    type: string
+    required: false
+    default: "maintenance"
+    description: >
+      Mode: "maintenance" (default — staleness/coverage audit) or
+      "logic_audit" (bounded dual-layer logic audit of .j2 templates).
   - name: skill_name
     type: string
     description: "Optional specific skill to audit"
@@ -51,10 +65,25 @@ inputs:
     type: array
     description: "Task patterns to map against corpus"
     required: false
+  # ── logic_audit mode inputs ──
+  - name: target_path
+    type: string
+    required: false
+    description: "Path to the .j2 or manifest.yaml file to audit (logic_audit mode)."
+  - name: target_content
+    type: string
+    required: false
+    description: "Raw content of the target file (logic_audit mode)."
+  - name: template_type
+    type: string
+    required: false
+    description: "File type: j2 or manifest (logic_audit mode)."
 
 steps:
+  # === MAINTENANCE MODE (default) ===
   - ordinal: 1
     action: select
+    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Run staleness and health audit for target scope.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-audit
@@ -66,6 +95,7 @@ steps:
 
   - ordinal: 2
     action: select
+    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Run corpus coverage analysis for uncovered/partial capabilities.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-coverage
@@ -77,6 +107,7 @@ steps:
 
   - ordinal: 3
     action: select
+    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Compute normalized convergence metric for maintenance cycle.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-convergence-check
@@ -86,14 +117,105 @@ steps:
       audit_result: "{{ step_1_result }}"
       coverage_result: "{{ step_2_result }}"
 
+  # === LOGIC_AUDIT MODE (folded from skill-logic-audit) ===
   - ordinal: 4
+    action: select
+    condition: "{{ mode == 'logic_audit' }}"
+    description: >
+      LOGIC LOAD-GOAL: Parse the annotated goal: block from the target .j2
+      or manifest.yaml file. Strip comment markers, preserve exact goal text.
+    renderer: minijinja
+    template_ref: skill-maintenance/logic-load-goal
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      target_path: "{{ target_path }}"
+      target_content: "{{ target_content }}"
+      template_type: "{{ template_type }}"
+
+  - ordinal: 5
+    action: select
+    condition: "{{ mode == 'logic_audit' }}"
+    description: >
+      LOGIC CRITIQUE: Adversarial critique of the template body against its
+      stated goal. For each flaw, provide location, claim, anchor to goal,
+      severity, and suggested fix.
+    renderer: minijinja
+    template_ref: skill-maintenance/logic-critique-template
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      target_path: "{{ target_path }}"
+      target_content: "{{ target_content }}"
+      template_type: "{{ template_type }}"
+      goal: "{{ step_4_result.goal }}"
+
+  - ordinal: 6
+    action: select
+    condition: "{{ mode == 'logic_audit' }}"
+    description: >
+      LOGIC SOUNDNESS FILTER: Review the critique for soundness — separate
+      valid, goal-anchored concerns from spurious ones.
+    renderer: minijinja
+    template_ref: skill-maintenance/logic-critique-critique
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      goal: "{{ step_4_result.goal }}"
+      prior_critique: "{{ step_5_result }}"
+
+  - ordinal: 7
+    action: select
+    condition: "{{ mode == 'logic_audit' }}"
+    description: >
+      LOGIC COMPOSE: Compose a concrete revised artifact and unified diff
+      from the calibrated concerns.
+    renderer: minijinja
+    template_ref: skill-maintenance/logic-compose-proposal
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      target_path: "{{ target_path }}"
+      original_content: "{{ target_content }}"
+      goal: "{{ step_4_result.goal }}"
+      calibrated_verdict: "{{ step_6_result.calibrated_verdict }}"
+      valid_concerns: "{{ step_6_result.valid_concerns }}"
+
+  - ordinal: 8
+    action: select
+    condition: "{{ mode == 'logic_audit' }}"
+    description: >
+      LOGIC USER-CHOICE: Present the proposal to the user and capture
+      accept/reject/counter-proposal.
+    renderer: minijinja
+    template_ref: skill-maintenance/logic-user-choice
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      target_path: "{{ target_path }}"
+      proposal: "{{ step_7_result.revised_content }}"
+      diff: "{{ step_7_result.diff }}"
+
+  - ordinal: 9
+    action: select
+    condition: "{{ mode == 'logic_audit' }}"
+    description: >
+      LOGIC CONVERGENCE: Compute normalized convergence metric for the audit
+      cycle. Converged when no material flaws remain.
+    renderer: minijinja
+    template_ref: skill-maintenance/logic-convergence-check
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      calibrated_verdict: "{{ step_6_result.calibrated_verdict }}"
+      valid_concerns: "{{ step_6_result.valid_concerns }}"
+      loop_depth: "{{ loop_depth | default(0) }}"
+
+  - ordinal: 10
     action: loop
-    description: Re-enter maintenance cycle if convergence threshold is not met.
+    description: Re-enter cycle if convergence threshold is not met.
     input_mapping:
       loop_target: 1
-      # Carry convergence context into the next iteration.
-      previous_blockers: "{{ step_3_result.blockers | default([]) }}"
-      previous_metric: "{{ step_3_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -104,6 +226,7 @@ error_handling:
 
 ocap:
   required_capabilities:
+    # Maintenance mode templates
     - resource: template
       action: render
       template_id: skill-maintenance/skill-maintenance-audit
@@ -116,6 +239,31 @@ ocap:
       action: render
       template_id: skill-maintenance/skill-maintenance-convergence-check
       gas_budget: 2000
+    # Logic audit mode templates (folded from skill-logic-audit)
+    - resource: template
+      action: render
+      template_id: skill-maintenance/logic-load-goal
+      gas_budget: 2048
+    - resource: template
+      action: render
+      template_id: skill-maintenance/logic-critique-template
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: skill-maintenance/logic-critique-critique
+      gas_budget: 2048
+    - resource: template
+      action: render
+      template_id: skill-maintenance/logic-compose-proposal
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: skill-maintenance/logic-user-choice
+      gas_budget: 2048
+    - resource: template
+      action: render
+      template_id: skill-maintenance/logic-convergence-check
+      gas_budget: 2048
     - resource: manifest
       action: execute
       template_id: skill-maintenance

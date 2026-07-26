@@ -586,6 +586,10 @@ fn main() {
         //
         // This is a self-contained implementation in hkask-regulation that
         // doesn't need hkask-pods. It reads directly from RegulationLedger.
+        //
+        // A clone of the ledger is hoisted for the kask panel's regulation
+        // status bar (wired later in the `if let Some(configured)` block).
+        let panel_regulation_ledger = regulation_ledger.clone();
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger)
                 .with_alert_receiver(alert_rx),

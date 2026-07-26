@@ -812,7 +812,9 @@ pub mod kask_panel {
             /// Toggles the kask panel.
             Toggle,
             /// Toggles focus on the kask panel.
-            ToggleFocus
+            ToggleFocus,
+            /// Opens the kanban board view in the center pane.
+            ToggleKanbanBoard
         ]
     );
 }

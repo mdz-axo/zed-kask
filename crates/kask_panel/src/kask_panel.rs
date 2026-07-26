@@ -38,7 +38,11 @@ use workspace::{
     register_serializable_item,
 };
 
-use zed_actions::kask_panel::{Toggle, ToggleFocus};
+use zed_actions::kask_panel::{Toggle, ToggleFocus, ToggleKanbanBoard};
+
+mod kanban_view;
+
+pub use kanban_view::KanbanBoardView;
 
 /// The 10 built-in kask MCP servers (matches `kask_page.rs`).
 const BUILT_IN_MCP_SERVERS: &[&str] = &[
@@ -97,8 +101,36 @@ pub trait ScopedInference: Send + Sync {
     fn infer(&self, server: &str, prompt: &str) -> Task<Result<String, String>>;
 }
 
+/// A snapshot of regulation/gas status for the status bar.
+///
+/// Mirrors the deleted hKask TUI's `StatusBar` — gas remaining, regulation
+/// health, and alert counts. Fetched on a background task by the bridge's
+/// `RegulationStatus` implementation and rendered in the panel's status bar.
+#[derive(Clone, Debug, Default)]
+pub struct RegulationSnapshot {
+    /// Remaining gas for the panel's WebID (0 if no budget registered).
+    pub gas_remaining: u64,
+    /// Gas cap for the panel's WebID (0 if no budget registered).
+    pub gas_cap: u64,
+    /// Non-critical alert count (warnings).
+    pub alert_count: usize,
+    /// Critical alert count.
+    pub critical_count: usize,
+    /// Overall regulation health flag.
+    pub healthy: bool,
+}
+
+/// Trait for fetching regulation status (mirrors the deleted hKask TUI's
+/// `StatusBar`). The bridge provides the implementation.
+pub trait RegulationStatus: Send + Sync {
+    /// Fetch a status snapshot. Called on a background task; the result
+    /// is rendered in the status bar.
+    fn snapshot(&self) -> Task<RegulationSnapshot>;
+}
+
 static TOOL_INVOKER: OnceLock<Option<Arc<dyn ToolInvoker>>> = OnceLock::new();
 static SCOPED_INFERENCE: OnceLock<Option<Arc<dyn ScopedInference>>> = OnceLock::new();
+static REGULATION_STATUS: OnceLock<Option<Arc<dyn RegulationStatus>>> = OnceLock::new();
 
 /// Inject the global tool invoker (composition root).
 pub fn set_tool_invoker(invoker: Option<Arc<dyn ToolInvoker>>) {
@@ -110,12 +142,25 @@ pub fn set_scoped_inference(inference: Option<Arc<dyn ScopedInference>>) {
     let _ = SCOPED_INFERENCE.set(inference);
 }
 
+/// Inject the global regulation status provider (composition root).
+pub fn set_regulation_status(status: Option<Arc<dyn RegulationStatus>>) {
+    let _ = REGULATION_STATUS.set(status);
+}
+
 fn tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
     TOOL_INVOKER.get().and_then(|opt| opt.as_ref())
 }
 
+pub(crate) fn kanban_tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
+    tool_invoker()
+}
+
 fn scoped_inference() -> Option<&'static Arc<dyn ScopedInference>> {
     SCOPED_INFERENCE.get().and_then(|opt| opt.as_ref())
+}
+
+fn regulation_status() -> Option<&'static Arc<dyn RegulationStatus>> {
+    REGULATION_STATUS.get().and_then(|opt| opt.as_ref())
 }
 
 // ── Center-pane Item ────────────────────────────────────────────────────
@@ -157,6 +202,11 @@ pub struct KaskPanel {
     spinner_frame: u8,
     /// Cached tool list for the selected server (for `/tools` and completion).
     cached_tools: Option<(usize, Vec<ToolDescriptor>)>,
+    /// Latest regulation/gas snapshot for the status bar.
+    regulation_snapshot: RegulationSnapshot,
+    /// Whether a regulation status fetch is in progress (guards against
+    /// overlapping fetches on every render).
+    status_fetching: bool,
 }
 
 impl KaskPanel {
@@ -197,6 +247,8 @@ impl KaskPanel {
                 busy: false,
                 spinner_frame: 0,
                 cached_tools: None,
+                regulation_snapshot: RegulationSnapshot::default(),
+                status_fetching: false,
             }
         })
     }
@@ -598,6 +650,93 @@ impl KaskPanel {
                     ),
             )
     }
+
+    /// Fetch a fresh regulation/gas snapshot on a background task and update
+    /// `regulation_snapshot`. Guarded by `status_fetching` so concurrent
+    /// renders don't spawn overlapping fetches.
+    fn refresh_status(&mut self, cx: &mut Context<Self>) {
+        if self.status_fetching {
+            return;
+        }
+        let Some(status) = regulation_status() else {
+            return;
+        };
+        self.status_fetching = true;
+        let task = status.snapshot();
+        cx.spawn(async move |this, cx| {
+            let snapshot = task.await;
+            this.update(cx, |this, cx| {
+                this.regulation_snapshot = snapshot;
+                this.status_fetching = false;
+                cx.notify();
+            })
+        })
+        .detach();
+    }
+
+    /// Render the regulation status bar — gas gauge + regulation health.
+    ///
+    /// Mirrors the deleted hKask TUI's `StatusBar`: `Gas: ████░░░░ 50%`
+    /// plus a `Reg: ✓ / ⚠ N / ✗ N` indicator. Placed just above the input.
+    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+
+        // ── Gas gauge ──
+        let gas_label = if self.regulation_snapshot.gas_cap == 0 {
+            Label::new("Gas: —")
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+        } else {
+            let cap = self.regulation_snapshot.gas_cap;
+            let remaining = self.regulation_snapshot.gas_remaining;
+            let pct = if cap == 0 { 0 } else { (remaining * 100) / cap };
+            // 8-cell gauge, filled proportionally.
+            let filled = if cap == 0 {
+                0
+            } else {
+                ((remaining * 8) / cap).min(8) as usize
+            };
+            let gauge: String = "█".repeat(filled) + &"░".repeat(8 - filled);
+            let gas_color = if pct > 50 {
+                Color::Created
+            } else if pct > 20 {
+                Color::Warning
+            } else {
+                Color::Error
+            };
+            Label::new(format!("Gas: {gauge} {pct}%"))
+                .size(LabelSize::XSmall)
+                .color(gas_color)
+        };
+
+        // ── Regulation health ──
+        let (reg_text, reg_color) = if self.regulation_snapshot.critical_count > 0 {
+            (
+                format!("Reg: ✗ {}", self.regulation_snapshot.critical_count),
+                Color::Error,
+            )
+        } else if self.regulation_snapshot.alert_count > 0 {
+            (
+                format!("Reg: ⚠ {}", self.regulation_snapshot.alert_count),
+                Color::Warning,
+            )
+        } else {
+            ("Reg: ✓".to_string(), Color::Created)
+        };
+        let reg_label = Label::new(reg_text)
+            .size(LabelSize::XSmall)
+            .color(reg_color);
+
+        h_flex()
+            .gap_3()
+            .border_1()
+            .border_color(border_color)
+            .rounded_sm()
+            .px_2()
+            .py_1()
+            .child(gas_label)
+            .child(reg_label)
+    }
 }
 
 /// Parse a `/tool_name args` invocation from user input.
@@ -792,6 +931,13 @@ impl Render for KaskPanel {
             cx.notify();
         }
 
+        // Refresh the regulation/gas snapshot on each render when not busy
+        // and no fetch is in flight. The fetch is on a background task; the
+        // result triggers a re-render via `cx.notify()`.
+        if !self.busy {
+            self.refresh_status(cx);
+        }
+
         v_flex()
             .size_full()
             .p_4()
@@ -804,6 +950,7 @@ impl Render for KaskPanel {
             )
             .child(self.render_server_selector(cx))
             .child(self.render_messages(cx))
+            .child(self.render_status_bar(cx))
             .child(self.render_input(cx))
             .into_any_element()
     }
@@ -816,6 +963,7 @@ impl Render for KaskPanel {
 /// none is open). This mirrors how `TerminalView::deploy` works.
 pub fn init(cx: &mut App) {
     register_serializable_item::<KaskPanel>(cx);
+    register_serializable_item::<KanbanBoardView>(cx);
 
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
@@ -844,6 +992,22 @@ pub fn init(cx: &mut App) {
                     .map(|panel| panel.focus_handle(cx));
                 if let Some(focus) = existing_focus {
                     focus.focus(window, cx);
+                }
+            });
+            workspace.register_action(|workspace, _: &ToggleKanbanBoard, window, cx| {
+                // If a KanbanBoardView is already open in the active pane, focus it;
+                // otherwise add a new one to the active center pane.
+                let active_pane = workspace.active_pane().clone();
+                let existing_focus = active_pane
+                    .read(cx)
+                    .items_of_type::<KanbanBoardView>()
+                    .next()
+                    .map(|view| view.focus_handle(cx));
+                if let Some(focus) = existing_focus {
+                    focus.focus(window, cx);
+                } else {
+                    let view = KanbanBoardView::new(workspace, window, cx);
+                    workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
                 }
             });
         },
