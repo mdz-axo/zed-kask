@@ -164,6 +164,23 @@ The system must remain observable and self-correcting through cybernetic feedbac
 
 Regulation (Cybernetic Nervous System) spans are the primary observability primitive. Every subsystem must emit canonical `reg.*` spans for every security-sensitive, resource-sensitive, and correctness-sensitive operation. Essential domains carry typed `RegulationSpan` enum variants (P8 — Semantic Grounding), are registered in `CANONICAL_NAMESPACES`, mapped to a `SpanCategory`, and connected to a cybernetic loop via ν-events. The `reg.*` prefix is reserved for these canonical spans — every `reg.*` tracing target MUST be registered. Performative telemetry (CLI, API middleware, and other observability logs) uses `hkask.*` tracing targets, NOT `reg.*`; those are deliberately NOT registered, NOT categorized, and NOT loop-connected — they are observability logs, not regulated variables. The two are distinguished by registry presence: `SpanNamespace::new` accepts only canonical spans.
 
+**§9.2 — Unified Skill Feedback Standard (v0.31.0)**
+
+Every skill emits cybernetic feedback through exactly one regulated namespace: `reg.skill.<skill-id>.*`. This is the single channel from skills to the Curator and the Regulation nervous system — variety-counted, algedonic-escalated, and comparable across the corpus. The `reg.skill` prefix is registered in `CANONICAL_NAMESPACES`; the hierarchical `is_canonical` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
+
+Every skill emits six semantic spans, one per PDCA phase, mapped to the cybernetic loop:
+
+| Span | Phase | Cybernetic role |
+|---|---|---|
+| `reg.skill.<id>.classify` | Sense | What is this? |
+| `reg.skill.<id>.gather` | Sense | What's missing? |
+| `reg.skill.<id>.draft` | Act | Produce artifact |
+| `reg.skill.<id>.evaluate` | Check | How good is it? |
+| `reg.skill.<id>.convergence` | Check | Are we done? |
+| `reg.skill.<id>.write` | Act | Commit artifact |
+
+These six spans are the same for every skill, regardless of domain. The typed enum `SkillFeedbackSpan` (`crates/hkask-regulation/src/skill_span.rs`) encodes them. Fine-grained execution telemetry uses `hkask.template.<skill-id>.*` (performative, unregulated) via the manifest's `telemetry_namespace` field. The `spans:` list in manifest `ledger` blocks is abolished — it was ambiguous and unused by the executor. CI gate: `scripts/check-skill-span-namespace.sh`.
+
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|
 | Tool dispatch (all MCP servers) | `reg.tool.*` | ~170 | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |

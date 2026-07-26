@@ -11,6 +11,8 @@
 #
 # Environment variables:
 #   HKASK_VERSION   Pin a release tag (default: latest release from GitHub API)
+#                    Set to "nightly" to install the nightly build.
+#   HKASK_CHANNEL    Alias for HKASK_VERSION=nightly ("nightly" or "stable")
 #   INSTALL_DIR     Install prefix (default: $HOME/.local)
 #   HKASK_SYSTEM_INSTALL  Set to "true" to symlink into /usr/local/bin
 #   HKASK_REPO      GitHub owner/repo (default: mdz-axo/zed-kask)
@@ -119,15 +121,29 @@ http_download() {
 # ============================================================================
 
 resolve_tag() {
+    # Explicit version wins.
     if [ -n "${HKASK_VERSION:-}" ]; then
+        # "nightly" is a special channel tag, not a version — pass through.
+        if [ "$HKASK_VERSION" = "nightly" ]; then
+            echo "nightly"
+            return
+        fi
         # Strip leading 'v' if user passed a bare version, then re-add it.
         local stripped="${HKASK_VERSION#v}"
         echo "v${stripped}"
         return
     fi
 
+    # Channel alias.
+    if [ "${HKASK_CHANNEL:-stable}" = "nightly" ]; then
+        echo "nightly"
+        return
+    fi
+
     log "Resolving latest release tag from ${HKASK_REPO}..."
     local tag
+    # Use the /releases/latest endpoint, which excludes prereleases.
+    # Nightly builds are marked prerelease, so they won't show up here.
     tag=$(http_get "https://api.github.com/repos/${HKASK_REPO}/releases/latest" \
           | grep -m1 '"tag_name"' \
           | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')

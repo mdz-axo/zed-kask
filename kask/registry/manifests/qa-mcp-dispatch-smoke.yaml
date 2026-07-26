@@ -102,4 +102,4 @@ steps:
 
 ledger:
   emit_spans: true
-  alert: qa.mcp.dispatch
+  span_namespace: reg.skill.qa-mcp-dispatch-smoke

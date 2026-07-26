@@ -74,7 +74,8 @@ A skill is stale if it exhibits any of these signals:
 | FlowDef step parameter names mismatch MCP tool | Compare step params against tool's declared Parameters struct fields | High |
 | FlowDef YAML present but no manifest entry | Orphaned FlowDefs can't be discovered by cascade | High |
 | Cross-skill delegation target missing | `ocap.required_capabilities` entry references a `template_id` in another skill's namespace that does not resolve to a `.j2` file on disk | Critical |
-| Span namespace drift | Process manifest's `ledger.span_namespace` uses a `reg.*` prefix not present in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`). Note: `hkask.template.*` prefixes are performative telemetry and do NOT require registration — only `reg.*` prefixes are validated. | Medium |
+| Span namespace not standardized | Process manifest's `ledger.span_namespace` is not `reg.skill.<manifest.id>` (the unified feedback standard). All skills must use `reg.skill.<id>` for cybernetic feedback; `hkask.template.<id>` goes in `telemetry_namespace` for performative telemetry. | Critical |
+| Abolished spans: list present | Process manifest's `ledger` section contains a `spans:` list. The `spans:` list is abolished — it was ambiguous and unused by the executor. Remove it. | Medium |
 
 ## Health Scoring
 
