@@ -276,6 +276,10 @@ steps:
   # SemDeDup (Abbas et al., 2023): K-means cluster, within-cluster cosine dedup.
   # K = 2.5% of N. Threshold 0.89 (moderate). Stores QA h_mems with 5W1H
   # dimension (What), Dublin Core + PKO metadata. Optionally embeds QAs for KNN.
+  #
+  # Note: 0.89 diverges from the corpus_dedup_chunks Rust default (0.85) —
+  # deliberate tightening for QA dedup (more conservative: fewer near-duplicate
+  # QAs merged). Do not revert to 0.85 without validating QA yield.
   # ═══════════════════════════════════════════════════════════════════════
   - id: ingest_qas
     description: >

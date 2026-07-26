@@ -10,9 +10,8 @@ mod discover;
 mod embed;
 
 pub use discover::{
-    DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService, PersonaSpec,
-    default_corpus_config, download_and_cache, generate_corpus_yaml, generate_persona_yaml,
-    slugify,
+    DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService, default_corpus_config,
+    download_and_cache, generate_corpus_yaml, slugify,
 };
 pub use embed::{
     ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,

@@ -1,0 +1,189 @@
+{# Replica Compound/Mashup Corpus Generator
+   Generates a corpus.yaml for a compound replica — a combination of two or
+   more authors whose perspectives or styles are complementary. Each author
+   contributes a different structural layer, quality dimension, or thematic
+   perspective to the composite replica.
+
+   Mashup strategies:
+     mixture_of_experts: Each author contributes a different structural layer
+       (e.g., Christie → structural architecture, Eliot → psychological depth).
+       Authors do not "blend" sentence by sentence — they operate at different
+       narrative layers. Foundational rules are tagged by contributor.
+     weighted_blend: Authors blended by dimension weights (e.g., Lovelace 0.50,
+       Gentle 0.30, Hopper 0.10, Schriver 0.10). Each author grounds one
+       dimension centroid. The composite centroid is the weighted mean.
+     contrastive: Authors placed at opposite ends of a quality dimension for
+       range analysis (e.g., Hemingway paratactic vs Woolf hypotactic). The
+       distance matrix shows which authors can be blended and which produce
+       noise.
+
+   Variables:
+     author_slug: string (e.g., "agatha-eliot")
+     author_name: string (e.g., "Agatha Christie × George Eliot")
+     generation_date: string (ISO date)
+     mashup_strategy: string ("mixture_of_experts" | "weighted_blend" | "contrastive")
+     compound_authors: [{ name, slug, role, works: [{ title, slug, url, ... }] }]
+     foundational_rules: [{ slug, text, dimensions?, section_type?, contributor? }]
+     dimension_centroids: [{ name, ref_name, weight, description, contributor? }]
+     tag_sets: [{ name, description, values: [string] }]
+     tag_weights: { document_type: { dimension: weight } }
+     entities: optional { characters, places, events, concepts }
+     methods: optional [{ name, description }]
+     chunking: { min_words, max_words, sentence_boundary }
+     validation: { centroid_distance_max, exemplar_count_min, exemplar_count_max }
+     budget_shape: string (default: "flat")
+     budget: { total_passages, triple_budget_per_100 } | { max_triples } | { per_100_pages }
+     classifier: string
+     triple_classifier: string
+     corpus_type: string (default: "literary")
+#}
+{% extends "replica/corpus-base.j2" %}
+{% set replica_class = "compound" %}
+
+{% block ontology %}
+# Ontology: Dublin Core (dcterms) — document type, subject, source, creator
+#           GOLEM (Narrative Ontology) — narrative devices, rhetoric, structure
+#           PKO (Procedural Knowledge Ontology) — process/method concepts
+#           FIBO (Financial Industry Business Ontology) — if investment domain
+#           ESO (Epistemic Science Ontology) — if research/epistemic domain
+#
+# Mashup strategy: {{ mashup_strategy | default("mixture_of_experts") }}
+# Compound authors:
+{% for author in compound_authors %}
+#   - {{ author.name }} ({{ author.role | default("contributor") }})
+{% endfor %}
+# Tagging: docproc/tag-chunks.j2 applies these ontologies at embed time.
+# Each passage is tagged with its contributor author for provenance.
+{% endblock %}
+
+{% block budget %}
+# Budget shape: {{ budget_shape | default("flat") }}
+# Compound replicas default to Flat (passage cap + per-100-pages rate) because
+# mashup corpora tend to be larger (multiple authors' works combined).
+{% set shape = budget_shape | default("flat") %}
+{% if shape == "absolute" %}
+budget:
+  max_triples: {{ budget.max_triples }}
+{% elif shape == "flat" %}
+budget:
+  total_passages: {{ budget.total_passages | default(0) }}
+  triple_budget_per_100: {{ budget.triple_budget_per_100 | default(3750) }}
+{% elif shape == "per_page" %}
+budget:
+  per_100_pages: {{ budget.per_100_pages | default(3750) }}
+{% else %}
+budget:
+  total_passages: {{ budget.total_passages | default(0) }}
+  triple_budget_per_100: {{ budget.triple_budget_per_100 | default(3750) }}
+{% endif %}
+{% endblock %}
+
+{% block foundational_rules %}
+# ── Foundational rules (per-contributor) ───────────────────────────────────
+# Each rule is tagged with its contributor author for provenance.
+# FoundationalRule shape: { slug, text, dimensions: [string], section_type: Option<string> }
+{% if foundational_rules %}
+foundational_rules:
+{% for rule in foundational_rules %}
+  - slug: {{ rule.slug }}
+    text: |-
+      {{ rule.text | indent(6) }}
+{% if rule.dimensions %}
+    dimensions: {{ rule.dimensions | tojson }}
+{% endif %}
+{% if rule.section_type %}
+    section_type: {{ rule.section_type }}
+{% endif %}
+{% endfor %}
+{% else %}
+foundational_rules: []
+{% endif %}
+{% endblock %}
+
+{% block works %}
+# ── Corpus sources (per-author, grouped by contributor) ───────────────────
+# Works are grouped by contributor author. Each work's slug is namespaced
+# under its contributor to avoid collisions (e.g., "christie-mysterious-affair",
+# "eliot-middlearmarch"). All works must be public domain or CC-licensed.
+works:
+{% for author in compound_authors %}
+  # ── {{ author.name }} ({{ author.role | default("contributor") }}) ──────
+{% for work in author.works %}
+  - title: "{{ work.title }}"
+    slug: {{ work.slug }}
+    url: "{{ work.url }}"
+{% if work.local_path %}
+    local_path: "{{ work.local_path }}"
+{% endif %}
+    format: {{ work.format | default("text") }}
+{% if work.document_type %}
+    document_type: {{ work.document_type }}
+{% endif %}
+{% if work.dimensions %}
+    dimensions: {{ work.dimensions | tojson }}
+{% endif %}
+{% if work.section_types %}
+    section_types: {{ work.section_types | tojson }}
+{% endif %}
+{% if work.mds_categories %}
+    mds_categories: {{ work.mds_categories | tojson }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endblock %}
+
+{% block class_specific %}
+# Compound replicas use corpus_type: "literary" by default (hybrid — may be
+# "academic" if all contributors are academics).
+corpus_type: "{{ corpus_type | default("literary") }}"
+
+# ── Dimension centroids (per-contributor grounding) ───────────────────────
+# In weighted_blend strategy, each dimension is grounded by one contributor.
+# In mixture_of_experts, dimensions represent structural layers.
+# In contrastive, dimensions represent opposite ends of a quality axis.
+# DimensionCentroid { name, ref_name, weight, description }
+{% if dimension_centroids %}
+dimension_centroids:
+{% for dc in dimension_centroids %}
+  - name: {{ dc.name }}
+    ref_name: "{{ dc.ref_name }}"
+    weight: {{ dc.weight }}
+    description: "{{ dc.description }}"
+{% endfor %}
+{% else %}
+dimension_centroids: []
+{% endif %}
+
+# ── Orthogonal tag sets ───────────────────────────────────────────────────
+{% if tag_sets %}
+tag_sets:
+{% for ts in tag_sets %}
+  - name: {{ ts.name }}
+{% if ts.description %}
+    description: "{{ ts.description }}"
+{% endif %}
+    values: {{ ts.values | tojson }}
+{% endfor %}
+{% else %}
+tag_sets: []
+{% endif %}
+
+# ── Tag weighting by document type ─────────────────────────────────────────
+{% if tag_weights %}
+tag_weights:
+{% for doc_type, weights in tag_weights.items() %}
+  {{ doc_type }}:
+{% for dim, weight in weights.items() %}
+    {{ dim }}: {{ weight }}
+{% endfor %}
+{% endfor %}
+{% else %}
+tag_weights: {}
+{% endif %}
+
+# ── Classifier configuration ─────────────────────────────────────────────
+classifier: "{{ classifier | default("") }}"
+
+# HMem extractor classifier config name.
+triple_classifier: "{{ triple_classifier | default("h_mem-extractor") }}"
+{% endblock %}

@@ -30,69 +30,53 @@ works:
   - title: "The Sun Also Rises"
     slug: sun-also-rises
     url: "https://www.gutenberg.org/cache/epub/67138/pg67138.txt"
-    type: novel
 
   - title: "A Farewell to Arms"
     slug: farewell-to-arms
     url: "https://www.gutenberg.org/cache/epub/24258/pg24258.txt"
-    type: novel
 
   - title: "In Our Time"
     slug: in-our-time
     url: "https://www.gutenberg.org/cache/epub/57023/pg57023.txt"
-    type: short_story_collection
 
   - title: "Men Without Women"
     slug: men-without-women
     url: "https://www.gutenberg.org/cache/epub/64398/pg64398.txt"
-    type: short_story_collection
 
   - title: "Three Stories and Ten Poems"
     slug: three-stories-ten-poems
     url: "https://www.gutenberg.org/cache/epub/64719/pg64719.txt"
-    type: collection
 
   - title: "The Torrents of Spring"
     slug: torrents-of-spring
     url: "https://www.gutenberg.org/cache/epub/56208/pg56208.txt"
-    type: novella
 
 # ── Kansas City Star Style Guide (canonical source) ────────────────────────────
 # Not a work per se, but the foundational rules that shape Hemingway's prose.
 # Stored as a single special passage for embedding retrieval.
 
 foundational_rules:
-  - title: "Kansas City Star Style Guide (1915)"
-    slug: kansas-city-star-rules
+  - slug: kansas-city-star-rules
     text: |
       Use short sentences. Use short first paragraphs.
       Use vigorous English, not forgetful, but positive.
       Eliminate every superfluous word.
-    type: style_guide
 
-  - title: "'A Clean, Well-Lighted Place' (Iceberg exemplar)"
-    slug: clean-well-lighted-place
+  - slug: clean-well-lighted-place
     text: |
       It was very late and everyone had left the cafe except an old man who sat in the shadow the leaves of the tree made against the electric light. In the day time the street was dusty, but at night the dew settled the dust and the old man liked to sit late because he was deaf and now at night it was quiet and he felt the difference.
-    type: style_exemplar
 
-  - title: "'The Short Happy Life of Francis Macomber' (Action as revelation)"
-    slug: macomber
+  - slug: macomber
     text: |
       He was dressed in the same sort of safari clothes that Wilson wore except that his were new. He was thirty-five years old, kept himself very fit, was good at court games, had a number of big-game fishing records, and had just shown himself, very publicly, to be a coward.
-    type: style_exemplar
 
-  - title: "'The Good Lion' (Fable style)"
-    slug: good-lion
+  - slug: good-lion
     text: |
       Once upon a time there was a good lion who lived in Africa with all the other lions. The other lions were all bad lions and every day they ate zebras and wildebeests and every kind of antelope. Sometimes the bad lions ate people too.
-    type: style_exemplar
 
-  - title: "'The Faithful Bull' (Simple declarative)"
-    slug: faithful-bull
+  - slug: faithful-bull
     text: |
       One time there was a bull and his name was not Ferdinand and he cared nothing for flowers. He loved to fight with all the other bulls of his own age, or any age, and he was a champion.
-    type: style_exemplar
 
 # ── Chunking Configuration ─────────────────────────────────────────────────────
 # Passages are the unit of embedding and retrieval.
@@ -102,9 +86,7 @@ foundational_rules:
 chunking:
   min_words: 50
   max_words: 200
-  split_on: paragraph
   sentence_boundary: ".!? "
-  overlap_words: 0 # no overlap between chunks
 
 # ── Entity Reference Format ────────────────────────────────────────────────────
 # How passages are indexed in sqlite-vec for KNN retrieval.

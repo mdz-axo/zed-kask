@@ -1,0 +1,65 @@
+{# Replica Academic Corpus Generator
+   Generates a corpus.yaml for an academic author replica from discovered
+   academic works (Semantic Scholar, arXiv, web, YouTube transcripts).
+
+   This is the template-driven replacement for the Rust generate_corpus_yaml
+   function. It produces the same CorpusConfig shape but with provenance
+   comments and ontology links that the Rust serializer cannot emit.
+
+   Variables:
+     author_slug: string (e.g., "david-dunning")
+     author_name: string (e.g., "David Dunning")
+     generation_date: string (ISO date)
+     works: [{ title, slug, url, local_path?, format, document_type? }]
+     entities: optional { characters, places, events, concepts }
+     methods: optional [{ name, description }]
+     chunking: { min_words: 50, max_words: 200, sentence_boundary: ".!? " }
+     validation: { centroid_distance_max: 0.25, exemplar_count_min: 3, exemplar_count_max: 7 }
+#}
+{% extends "replica/corpus-base.j2" %}
+{% set replica_class = "academic" %}
+
+{% block ontology %}
+# Ontology: PKO (Procedural Knowledge Ontology) — process/method concepts
+#           ESO (Epistemic Science Ontology) — hypothesis, evidence, theory
+#           Dublin Core (dcterms) — document type, subject, source
+# Tagging: docproc/tag-chunks.j2 applies these ontologies at embed time.
+{% endblock %}
+
+{% block budget %}
+# Budget: PerPage — triples scale with corpus size (3750 per 100 pages).
+budget:
+  per_100_pages: 3750
+{% endblock %}
+
+{% block foundational_rules %}
+# Academic replicas do not embed foundational rules — concepts are extracted
+# from the papers themselves via docproc/extract-hmems.j2.
+foundational_rules: []
+{% endblock %}
+
+{% block works %}
+# ── Corpus sources (Semantic Scholar, arXiv, web, YouTube) ─────────────────
+# Work shape: { title, slug, url, local_path?, format, document_type? }
+# format: "pdf" (journal_article/preprint) | "text" (video_transcript) | "web"
+works:
+{% for work in works %}
+  - title: "{{ work.title }}"
+    slug: {{ work.slug }}
+    url: "{{ work.url }}"
+{% if work.local_path %}
+    local_path: "{{ work.local_path }}"
+{% endif %}
+    format: {{ work.format }}
+{% if work.document_type %}
+    document_type: {{ work.document_type }}
+{% endif %}
+{% endfor %}
+{% endblock %}
+
+{% block class_specific %}
+# Academic replicas use corpus_type: "academic" — activates academic entity
+# categories (co_authors, venues, topics, paradigms) and academic method
+# signals (citation_density, formalism_ratio, technical_term_density).
+corpus_type: "academic"
+{% endblock %}

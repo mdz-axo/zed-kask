@@ -1,24 +1,99 @@
 # Template crate manifest for replica skill
-# hKask v0.28.0
+# hKask v0.31.0
 
 crate:
   name: replica
   version: "0.31.0"
   description: >
-    Academic author replica pipeline. Discovers an author's works across
-    search databases, extracts recurring concepts and entities, and infers
-    methodological patterns from representative passages.
+    Replica corpus configuration generator. Produces corpus.yaml files for
+    three replica classes: academic (discovered works), literary (public-domain
+    texts), and exemplar/theme (mixed sources serving a domain or theme).
+    Each class template extends corpus-base.j2 and carries ontology links
+    (PKO, ESO, GOLEM, Dublin Core, FIBO) as structured comments. Output is
+    validated against CorpusConfig via #[serde(deny_unknown_fields)] and
+    parse tests in hkask-services-corpus.
 
 templates:
-  - id: replica/discovery-corpus
-    name: "Generate a corpus configuration YAML from discovered academic works…"
-    path: discovery-corpus.j2
+  - id: replica/corpus-base
+    name: "Shared scaffolding for all replica corpus.yaml generators"
+    path: corpus-base.j2
+    type: KnowAct
+    lexicon_terms: [scaffold, shared, base]
+    description: >
+      Base template included by academic-corpus, literary-corpus, and
+      exemplar-corpus. Emits the CorpusConfig fields common to all replica
+      classes (author, embedding, chunking, validation, budget, entities,
+      methods). Not rendered directly — extended by class templates.
+
+  - id: replica/academic-corpus
+    name: "Generate a corpus.yaml for an academic author replica"
+    path: academic-corpus.j2
     type: KnowAct
     lexicon_terms: [catalog, document, synthesize]
     description: >
-      Generate a corpus configuration YAML from discovered academic works
-      for an author, organizing works by source with optional foundational
-      rules, entities, and inferred methods.
+      Generates a corpus.yaml for an academic author replica from discovered
+      academic works (Semantic Scholar, arXiv, web, YouTube transcripts).
+      Ontology: PKO (process), ESO (epistemic), Dublin Core (document type).
+      Budget: PerPage. corpus_type: "academic".
+
+  - id: replica/literary-corpus
+    name: "Generate a corpus.yaml for a literary author replica"
+    path: literary-corpus.j2
+    type: KnowAct
+    lexicon_terms: [compose, narrate, embed]
+    description: >
+      Generates a corpus.yaml for a literary author replica from public-domain
+      works (Gutenberg novels, essays, plays) and hand-curated foundational
+      rules (critical essays, style manifestos). Ontology: GOLEM (narrative
+      devices), Dublin Core (bibo:Book). Budget: Flat. corpus_type: "literary".
+
+  - id: replica/exemplar-corpus
+    name: "Generate a corpus.yaml for an exemplar/theme replica"
+    path: exemplar-corpus.j2
+    type: KnowAct
+    lexicon_terms: [exemplify, theme, dimension]
+    description: >
+      Generates a corpus.yaml for a thematic replica — a literary or
+      mixed-source corpus serving a specific domain or theme (e.g.,
+      docs-as-code, capabilities research). Carries the full quality-dimension
+      scaffolding (dimension_centroids, tag_sets, tag_weights). Budget shape
+      is flexible: "absolute" (default), "flat", or "per_page". Ontology:
+      Dublin Core, PKO, FIBO (if investment), ESO (if research), GOLEM (if
+      literary). corpus_type: "literary" (hybrid).
+
+  - id: replica/compound-corpus
+    name: "Generate a corpus.yaml for a compound/mashup replica"
+    path: compound-corpus.j2
+    type: KnowAct
+    lexicon_terms: [compose, mashup, blend]
+    description: >
+      Generates a corpus.yaml for a compound replica — a combination of two
+      or more authors whose perspectives or styles are complementary. Supports
+      three mashup strategies: mixture_of_experts (each author contributes a
+      different structural layer), weighted_blend (authors blended by dimension
+      weights), contrastive (authors at opposite ends of a quality axis). Works
+      are grouped by contributor. Ontology: Dublin Core, GOLEM, PKO, FIBO, ESO.
+
+  - id: replica/validate-corpus
+    name: "Validate a generated corpus.yaml against the CorpusConfig contract"
+    path: validate-corpus.j2
+    type: KnowAct
+    lexicon_terms: [validate, check, conform]
+    description: >
+      Validates a generated corpus.yaml against the CorpusConfig contract.
+      Parses the rendered YAML via EmbedService::parse_config and reports
+      parse success/failure, field coverage, and a convergence metric. This
+      is the automated Check phase of the replica discovery PDCA loop.
+
+  - id: replica/convergence-check
+    name: "PDCA convergence check for the replica discovery pipeline"
+    path: convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [converge, loop, decide]
+    description: >
+      Computes the PDCA convergence metric for the replica discovery pipeline.
+      Determines whether the pipeline should proceed to Regulation feedback
+      (converged) or loop back to corpus generation (not converged).
 
   - id: replica/extract-concepts
     name: "Extract key concepts, places, and events from academic paper metadata…"

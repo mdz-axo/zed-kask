@@ -193,9 +193,7 @@ foundational_rules:
 chunking:
   min_words: 50
   max_words: 200
-  split_on: paragraph
   sentence_boundary: ".!? "
-  overlap_words: 0
 
 validation:
   centroid_distance_max: 0.20
