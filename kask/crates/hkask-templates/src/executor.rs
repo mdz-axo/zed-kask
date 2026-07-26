@@ -97,11 +97,12 @@ fn safe_template_join(base: &std::path::Path, template_ref: &str) -> Option<Path
 fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
     // Extract the last path segment (after the final '/').
     let last_segment = template_ref.rsplit('/').next().unwrap_or(template_ref);
-    // Match against the six canonical phases by checking if the last segment
+    // Match against the canonical phases by checking if the last segment
     // contains the phase name. This handles both "sankey-classify" and
     // "adversarial-convergence-check" — the phase name appears as a substring.
     // Order matters: check longer/more-specific patterns first to avoid
-    // false positives (e.g. "convergence" before "converge").
+    // false positives (e.g. "convergence" before "converge", "operator_feedback"
+    // before "feedback").
     if last_segment.contains("classify") {
         Some(SkillFeedbackSpan::Classify.phase())
     } else if last_segment.contains("gather") {
@@ -117,6 +118,10 @@ fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
         Some(SkillFeedbackSpan::Convergence.phase())
     } else if last_segment.contains("write") {
         Some(SkillFeedbackSpan::Write.phase())
+    } else if last_segment.contains("operator_feedback") || last_segment.contains("feedback") {
+        Some(SkillFeedbackSpan::OperatorFeedback.phase())
+    } else if last_segment.contains("outcome") {
+        Some(SkillFeedbackSpan::Outcome.phase())
     } else {
         None
     }

@@ -20,10 +20,16 @@
 
 use hkask_types::ObservableSpan;
 
-/// The six semantic skill-feedback spans. Every skill emits these under its
+/// The semantic skill-feedback spans. Every skill emits these under its
 /// own `reg.skill.<skill-id>.<phase>` namespace. The `<skill-id>` segment is
 /// provided at emission time (from the manifest's `id` field), not encoded
 /// in the variant — so this enum is shared across all skills.
+///
+/// The first six spans map to the cybernetic loop PDCA phases and are emitted
+/// by every skill invocation. The two outcome spans are emitted
+/// asynchronously, after the skill's output has been used, when outcome
+/// evidence or operator feedback becomes available. They close the feedback
+/// loop for self-improvement (extrinsic exploratory experience, τ_t).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SkillFeedbackSpan {
     /// After step 1 (classify) — the skill has determined what kind of
@@ -48,6 +54,21 @@ pub enum SkillFeedbackSpan {
     /// After step 6 (write) — the skill has committed the final artifact.
     /// Carries: output_path, bytes_written.
     Write,
+    /// Outcome evidence — emitted asynchronously after the skill's output
+    /// has been used in the real world. For lora-training: training
+    /// completed/failed, OOM occurred, convergence issues, eval results.
+    /// For task-breakdown: tasks completed/reworked/blocked, plan followed
+    /// or abandoned. Carries: outcome_kind, outcome_data, skill_output_ref,
+    /// latency_since_skill_output. This is the extrinsic exploratory
+    /// experience signal (τ_t) for self-improvement.
+    Outcome,
+    /// Operator feedback — emitted when the operator explicitly reacts to
+    /// the skill's output (accepted, overridden, rejected, or post-hoc
+    /// correction). Carries: disposition, override_reason, corrected_field,
+    /// skill_output_ref. This is the intrinsic evaluative feedback signal
+    /// (e_t) for self-improvement, sourced from the operator rather than
+    /// the skill itself.
+    OperatorFeedback,
 }
 
 impl SkillFeedbackSpan {
@@ -62,6 +83,8 @@ impl SkillFeedbackSpan {
             Self::Evaluate => "evaluate",
             Self::Convergence => "convergence",
             Self::Write => "write",
+            Self::Outcome => "outcome",
+            Self::OperatorFeedback => "operator_feedback",
         }
     }
 
@@ -102,6 +125,11 @@ mod tests {
         assert_eq!(SkillFeedbackSpan::Evaluate.phase(), "evaluate");
         assert_eq!(SkillFeedbackSpan::Convergence.phase(), "convergence");
         assert_eq!(SkillFeedbackSpan::Write.phase(), "write");
+        assert_eq!(SkillFeedbackSpan::Outcome.phase(), "outcome");
+        assert_eq!(
+            SkillFeedbackSpan::OperatorFeedback.phase(),
+            "operator_feedback"
+        );
     }
 
     #[test]
@@ -128,6 +156,8 @@ mod tests {
             SkillFeedbackSpan::Evaluate,
             SkillFeedbackSpan::Convergence,
             SkillFeedbackSpan::Write,
+            SkillFeedbackSpan::Outcome,
+            SkillFeedbackSpan::OperatorFeedback,
         ];
         for skill in &skill_ids {
             for phase in &phases {

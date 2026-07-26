@@ -32,12 +32,70 @@ use std::sync::Arc;
 
 /// Maximum number of regulation cycles retained for history queries.
 const MAX_REGULATION_HISTORY: usize = 100;
+/// Maximum number of skill feedback spans retained per skill+phase.
+const MAX_SKILL_SPAN_HISTORY: usize = 50;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing;
 
 /// Error healing callback: (error_string, operation_name).
 type HealCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+// ── Skill feedback span storage ───────────────────────────────────────────
+// Stores individual reg.skill.<id>.outcome and reg.skill.<id>.operator_feedback
+// span payloads so skills can query their own prior feedback (self-improvement
+// τ_t / e_t signals). Complements VarietyTracker (counts) and OutcomeTracker
+// (success/failure rates) by retaining the actual field payloads that skills
+// need to refine their recommendations.
+
+/// A stored skill feedback span with its field payload.
+///
+/// Unlike tracing events (which fire and vanish), StoredSkillSpan retains
+/// the structured payload so `query_skill_feedback` can return it to the
+/// next skill invocation.
+#[derive(Debug, Clone)]
+pub struct StoredSkillSpan {
+    /// Full namespace: `reg.skill.<skill-id>.<phase>`
+    pub namespace: String,
+    /// Skill ID extracted from the namespace (e.g., "lora-training").
+    pub skill_id: String,
+    /// Phase: `outcome` or `operator_feedback`.
+    pub phase: String,
+    /// Structured field payload (e.g., {"training_completed": true, "loss": 0.3}).
+    pub payload: serde_json::Value,
+    /// When the span was recorded.
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Bounded storage for skill feedback spans, keyed by (skill_id, phase).
+/// Retains the last `MAX_SKILL_SPAN_HISTORY` spans per key.
+#[derive(Debug, Default)]
+pub(crate) struct SkillSpanStore {
+    spans: HashMap<String, VecDeque<StoredSkillSpan>>,
+}
+
+impl SkillSpanStore {
+    fn key(skill_id: &str, phase: &str) -> String {
+        format!("{skill_id}:{phase}")
+    }
+
+    pub(crate) fn record(&mut self, span: StoredSkillSpan) {
+        let key = Self::key(&span.skill_id, &span.phase);
+        let deque = self.spans.entry(key).or_default();
+        if deque.len() >= MAX_SKILL_SPAN_HISTORY {
+            deque.pop_front();
+        }
+        deque.push_back(span);
+    }
+
+    pub(crate) fn query(&self, skill_id: &str, phase: &str) -> Vec<StoredSkillSpan> {
+        let key = Self::key(skill_id, phase);
+        self.spans
+            .get(&key)
+            .map(|deque| deque.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
 
 // ── Variety counter infrastructure ────────────────────────────────────────
 // Relocated from variety.rs (TASK 2 deletion test — VarietyMonitor only used
@@ -309,6 +367,7 @@ struct RegState {
     regulation_health: RegulationHealth,
     regulation_history: VecDeque<RegulationCycleEntry>,
     tool_stats: Arc<ToolStats>,
+    skill_spans: SkillSpanStore,
 }
 
 impl RegState {
@@ -323,6 +382,7 @@ impl RegState {
         let regulation_health = RegulationHealth::default();
         let regulation_history = VecDeque::with_capacity(MAX_REGULATION_HISTORY);
         let tool_stats = Arc::new(ToolStats::new());
+        let skill_spans = SkillSpanStore::default();
         Self {
             algedonic,
             tracker,
@@ -331,6 +391,7 @@ impl RegState {
             regulation_health,
             regulation_history,
             tool_stats,
+            skill_spans,
         }
     }
 }
@@ -600,6 +661,41 @@ impl RegulationLedger {
     }
 
     // ── Outcome Quality Tracking ──
+
+    // ── Skill Feedback Span Storage ──
+
+    /// Record a skill feedback span for later query by the same skill.
+    ///
+    /// Stores `reg.skill.<skill_id>.<phase>` span payloads so skills can
+    /// query their own prior feedback (self-improvement τ_t / e_t signals).
+    /// Unlike tracing events (which fire and vanish), this method persists
+    /// the structured payload in the ledger.
+    ///
+    /// pre:  skill_id is non-empty; phase is "outcome" or "operator_feedback"
+    /// post: span stored in SkillSpanStore, bounded to MAX_SKILL_SPAN_HISTORY per key
+    pub async fn record_skill_span(&self, skill_id: &str, phase: &str, payload: serde_json::Value) {
+        let span = StoredSkillSpan {
+            namespace: format!("reg.skill.{skill_id}.{phase}"),
+            skill_id: skill_id.to_string(),
+            phase: phase.to_string(),
+            payload,
+            recorded_at: chrono::Utc::now(),
+        };
+        let mut state = self.state.write().await;
+        state.skill_spans.record(span);
+    }
+
+    /// Query prior skill feedback spans for a given skill and phase.
+    ///
+    /// Returns the stored spans (most recent last) for `reg.skill.<skill_id>.<phase>`.
+    /// Returns an empty Vec if no spans have been recorded.
+    ///
+    /// pre:  skill_id is non-empty; phase is "outcome" or "operator_feedback"
+    /// post: returns Vec<StoredSkillSpan> (may be empty)
+    pub async fn query_skill_feedback(&self, skill_id: &str, phase: &str) -> Vec<StoredSkillSpan> {
+        let state = self.state.read().await;
+        state.skill_spans.query(skill_id, phase)
+    }
 
     /// Record a tool outcome (success or failure) for outcome quality tracking.
     ///
@@ -1065,5 +1161,101 @@ mod tests {
         // After reset, only the new record should count
         assert_eq!(tracker.total_operations(), 1);
         assert!((tracker.success_rate() - 1.0).abs() < 0.001);
+    }
+
+    // ── SkillSpanStore tests ──
+
+    #[test]
+    fn skill_span_store_records_and_queries() {
+        let mut store = SkillSpanStore::default();
+
+        store.record(StoredSkillSpan {
+            namespace: "reg.skill.lora-training.outcome".into(),
+            skill_id: "lora-training".into(),
+            phase: "outcome".into(),
+            payload: serde_json::json!({"training_completed": true, "loss": 0.3}),
+            recorded_at: chrono::Utc::now(),
+        });
+
+        store.record(StoredSkillSpan {
+            namespace: "reg.skill.lora-training.outcome".into(),
+            skill_id: "lora-training".into(),
+            phase: "outcome".into(),
+            payload: serde_json::json!({"training_completed": false, "oom_occurred": true}),
+            recorded_at: chrono::Utc::now(),
+        });
+
+        let results = store.query("lora-training", "outcome");
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0].payload["training_completed"],
+            serde_json::json!(true)
+        );
+        assert_eq!(results[1].payload["oom_occurred"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn skill_span_store_returns_empty_for_unknown_skill() {
+        let store = SkillSpanStore::default();
+        let results = store.query("nonexistent", "outcome");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn skill_span_store_bounded_to_max_history() {
+        let mut store = SkillSpanStore::default();
+
+        // Record MAX_SKILL_SPAN_HISTORY + 10 spans
+        for i in 0..(MAX_SKILL_SPAN_HISTORY + 10) {
+            store.record(StoredSkillSpan {
+                namespace: "reg.skill.lora-training.outcome".into(),
+                skill_id: "lora-training".into(),
+                phase: "outcome".into(),
+                payload: serde_json::json!({"iteration": i}),
+                recorded_at: chrono::Utc::now(),
+            });
+        }
+
+        let results = store.query("lora-training", "outcome");
+        assert_eq!(results.len(), MAX_SKILL_SPAN_HISTORY);
+        // Oldest spans evicted — first remaining should be iteration 10
+        assert_eq!(results[0].payload["iteration"], serde_json::json!(10));
+    }
+
+    #[test]
+    fn skill_span_store_isolates_phases() {
+        let mut store = SkillSpanStore::default();
+
+        store.record(StoredSkillSpan {
+            namespace: "reg.skill.lora-training.outcome".into(),
+            skill_id: "lora-training".into(),
+            phase: "outcome".into(),
+            payload: serde_json::json!({"training_completed": true}),
+            recorded_at: chrono::Utc::now(),
+        });
+
+        store.record(StoredSkillSpan {
+            namespace: "reg.skill.lora-training.operator_feedback".into(),
+            skill_id: "lora-training".into(),
+            phase: "operator_feedback".into(),
+            payload: serde_json::json!({"disposition": "accepted"}),
+            recorded_at: chrono::Utc::now(),
+        });
+
+        // Querying outcome should not return operator_feedback spans
+        let outcome = store.query("lora-training", "outcome");
+        assert_eq!(outcome.len(), 1);
+        assert_eq!(
+            outcome[0].payload["training_completed"],
+            serde_json::json!(true)
+        );
+
+        // Querying operator_feedback should not return outcome spans
+        let feedback = store.query("lora-training", "operator_feedback");
+        assert_eq!(feedback.len(), 1);
+        assert_eq!(
+            feedback[0].payload["disposition"],
+            serde_json::json!("accepted")
+        );
     }
 }

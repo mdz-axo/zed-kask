@@ -13,6 +13,8 @@ contract:
     spec_or_intent: string
     crate_scope: string
     code_context: object
+    prior_outcome: object
+    prior_operator_feedback: object
   output:
     context_summary: string
     dependency_graph: array
@@ -68,6 +70,51 @@ Target: **{{ crate_scope }}**
 No pre-read context provided. Identify the relevant codebase sections, existing patterns,
 and conventions by reading the project before planning. Map what depends on what —
 implementation order follows the dependency graph bottom-up: build foundations first.
+{% endif %}
+{% if prior_outcome and prior_outcome | length > 0 %}
+## Prior Outcome Evidence (v0.31.0 — extrinsic exploratory experience, τ_t)
+Outcome evidence from prior plan executions that used this skill's output:
+```json
+{{ prior_outcome | tojson }}
+```
+Use this evidence to improve the plan:
+- **tasks_completed**: how many tasks from the prior plan were completed without
+  rework. If completion rate is low, the plan may have been too granular or the
+  tasks poorly scoped.
+- **tasks_reworked**: how many tasks required rework. If rework rate is high,
+  the acceptance criteria may have been too vague or the task boundaries wrong.
+  Note common rework reasons and adjust the decomposition to avoid them.
+- **tasks_blocked**: how many tasks were blocked by dependencies that weren't
+  captured in the dependency graph. If blocked rate is high, the dependency
+  analysis was incomplete. Be more thorough in mapping dependencies this time.
+- **plan_followed**: whether the plan was followed as written or abandoned. If
+  abandoned, note why and adjust the planning approach.
+Do NOT fabricate outcome patterns — prior outcomes are evidence for this
+project's planning context, not proof for the current spec.
+{% endif %}
+{% if prior_operator_feedback and prior_operator_feedback | length > 0 %}
+## Prior Operator Feedback (v0.31.0 — intrinsic evaluative feedback, e_t)
+The operator explicitly reacted to prior plans as follows:
+```json
+{{ prior_operator_feedback | tojson }}
+```
+Use this feedback to calibrate the plan:
+- **accepted**: the operator accepted the plan. Continue producing plans in the
+  same style (same granularity, same checkpoint frequency).
+- **overridden**: the operator overrode specific tasks or ordering. Note which
+  tasks were overridden and why. If the operator consistently overrides task
+  sizing (e.g., always merges small tasks), adjust the sizing guidelines toward
+  the operator's preference.
+- **rejected**: the operator rejected the entire plan. Note the rejection reason
+  and avoid producing plans in the same pattern.
+- **corrected_fields**: for each corrected field, compare the recommended vs
+  actual value. If the operator consistently corrects in the same direction
+  (e.g., always adds more checkpoints), adjust the plan toward the operator's
+  preference.
+Do NOT blindly follow operator feedback — it calibrates the plan, it does not
+override evidence-based decomposition principles (vertical slicing, dependency
+ordering). If the operator's preference conflicts with a principle, note the
+conflict rather than complying.
 {% endif %}
 
 ## Plan-Mode Rules

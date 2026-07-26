@@ -100,6 +100,26 @@ inputs:
       v0.31.0: Installed skill catalog for skill_match_query generation.
       When provided, decompose emits a skill_match_query field per task
       for skill-router consumption. When absent, skill_match_query is omitted.
+  - name: prior_outcome
+    type: object
+    required: false
+    description: >
+      v0.31.0: Outcome evidence from prior plan executions that used this
+      skill's output. Emitted as reg.skill.task-breakdown.outcome spans by
+      the runtime when tasks are completed/reworked/blocked. Includes:
+      tasks_completed (integer), tasks_reworked (integer), tasks_blocked
+      (integer), plan_followed (bool), rework_reasons (array). This is the
+      extrinsic exploratory experience signal (τ_t) for self-improvement.
+  - name: prior_operator_feedback
+    type: object
+    required: false
+    description: >
+      v0.31.0: Operator feedback from prior skill invocations. Emitted as
+      reg.skill.task-breakdown.operator_feedback spans when the operator
+      explicitly accepts, overrides, or rejects the plan. Includes:
+      disposition (accepted|overridden|rejected), override_reason,
+      corrected_fields (array of {field, recommended, actual}). This is the
+      intrinsic evaluative feedback signal (e_t) for self-improvement.
 
 steps:
   - ordinal: 1
@@ -116,6 +136,8 @@ steps:
       spec_or_intent: "{{ spec_or_intent }}"
       crate_scope: "{{ crate_scope | default('') }}"
       code_context: "{{ code_context | default({}) }}"
+      prior_outcome: "{{ prior_outcome | default({}) }}"
+      prior_operator_feedback: "{{ prior_operator_feedback | default({}) }}"
 
   - ordinal: 2
     action: select
@@ -135,6 +157,8 @@ steps:
       refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
       parallelization_hint: "{{ parallelization_hint | default('') }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
+      prior_outcome: "{{ prior_outcome | default({}) }}"
+      prior_operator_feedback: "{{ prior_operator_feedback | default({}) }}"
 
   - ordinal: 3
     action: select

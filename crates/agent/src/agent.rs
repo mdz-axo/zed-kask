@@ -1569,7 +1569,6 @@ impl NativeAgent {
         let mut seen_global = false;
 
         for state in self.projects.values() {
-            let state_skill_count = state.skills.len();
             for skill in state.skills.iter() {
                 match &skill.source {
                     SkillSource::BuiltIn => {}
@@ -1600,27 +1599,7 @@ impl NativeAgent {
             if !global_skills.is_empty() {
                 seen_global = true;
             }
-            log::info!(
-                "[skills-diag] publish_skill_index: project state had {} skills, global_so_far={}, project_groups_so_far={}",
-                state_skill_count,
-                global_skills.len(),
-                project_groups
-                    .iter()
-                    .map(|g| format!("wt={}({})", g.worktree_id.0, g.skills.len()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
         }
-
-        log::info!(
-            "[skills-diag] publish_skill_index: PUBLISHED global={} project_groups=[{}]",
-            global_skills.len(),
-            project_groups
-                .iter()
-                .map(|g| format!("wt={}({} skills)", g.worktree_id.0, g.skills.len()))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
 
         cx.set_global(SkillIndex {
             global_skills,

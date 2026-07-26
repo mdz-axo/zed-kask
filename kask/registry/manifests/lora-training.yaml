@@ -171,6 +171,30 @@ inputs:
       Closes the feedback loop: select-method consumes
       prior_iteration.convergence_metric and prior_iteration.blockers to
       refine its recommendation. When absent, this is the first iteration.
+  - name: prior_outcome
+    type: object
+    required: false
+    description: >
+      v0.31.0: Outcome evidence from prior training runs that used this
+      skill's recommendation. Emitted as reg.skill.lora-training.outcome
+      spans by the runtime when training completes/fails. Includes:
+      training_completed (bool), oom_occurred (bool), convergence_issues
+      (array), eval_results (object), latency_since_skill_output (seconds).
+      This is the extrinsic exploratory experience signal (τ_t) for
+      self-improvement. When absent, the skill has no outcome evidence to
+      learn from.
+  - name: prior_operator_feedback
+    type: object
+    required: false
+    description: >
+      v0.31.0: Operator feedback from prior skill invocations. Emitted as
+      reg.skill.lora-training.operator_feedback spans when the operator
+      explicitly accepts, overrides, or rejects the skill's recommendation.
+      Includes: disposition (accepted|overridden|rejected), override_reason,
+      corrected_fields (array of {field, recommended, actual}). This is the
+      intrinsic evaluative feedback signal (e_t) for self-improvement,
+      sourced from the operator. When absent, the skill has no operator
+      feedback to learn from.
 
 steps:
   - ordinal: 1
@@ -202,6 +226,8 @@ steps:
       provider_capabilities: "{{ provider_capabilities | default({}) }}"
       prior_training_history: "{{ prior_training_history | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
+      prior_outcome: "{{ prior_outcome | default({}) }}"
+      prior_operator_feedback: "{{ prior_operator_feedback | default({}) }}"
 
   - ordinal: 2
     action: select

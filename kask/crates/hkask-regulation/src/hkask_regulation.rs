@@ -47,6 +47,7 @@ pub use infra_span::InfraSpan;
 pub use qa_span::QaSpan;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
+pub use runtime::StoredSkillSpan;
 pub use runtime_policy::{DefaultPolicy, PolicyConfig, PolicyVerdict, RuntimePolicy};
 pub use sensor_provider::{
     EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry, ToolReliabilitySensor, VarietySensor,

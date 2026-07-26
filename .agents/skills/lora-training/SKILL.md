@@ -12,9 +12,11 @@ description: >
   harness is selected based on its capability to efficiently process the
   declared dataset and produce the adapter type implied by G0. Audits math,
   quantization, data/evaluation, forgetting, and harness-method compatibility
-  gates with phase-aware states and evidence. PDCA iteration loop:
-  select-method → audit-config → convergence-check → revise → re-invoke.
-  Emits reg.lora.* spans.
+  gates with phase-aware states and evidence. PDCA iteration loop is
+  mechanically closed by the process manifest: select-method → audit-config →
+  report → convergence-check → loop, with prior_iteration routing. Emits
+  reg.lora.* spans, plus outcome and operator_feedback spans that close the
+  self-improvement feedback loop.
 ---
 
 # LoRA Training
@@ -37,7 +39,12 @@ This skill does not train, load, initialize, merge, or evaluate models.
 - To compute convergence for the current lifecycle phase and expose preflight,
   runtime-contract, and post-training posture separately.
 - To recommend a training harness (Axolotl, TRL, or Ludwig) and trainer based
-  on task requirements and data shape.
+  on task requirements, data shape, and — when supplied — the full capability
+  space (3 harnesses × 6 trainers × 3 hosts × cost models).
+- When prior training history, prior PDCA iteration output, prior outcome
+  evidence, or prior operator feedback is available, to refine the
+  recommendation via Good Regulator compliance and self-improvement loop
+  closure.
 
 ## Authority and Boundary
 
@@ -59,6 +66,10 @@ This skill does not train, load, initialize, merge, or evaluate models.
 ### `lora-training/select-method`
 
 1. Read the declared training inputs and preserve explicit operator requirements.
+   Consume `prior_iteration` (loop closure), `prior_outcome` (extrinsic
+   exploratory experience, τ_t), `prior_operator_feedback` (intrinsic
+   evaluative feedback, e_t), `prior_training_history` (Good Regulator), and
+   `provider_capabilities` (deep capability reasoning) when supplied.
 2. Refine one composable recommendation record through eight gates: adapter
    purpose (G0), dataset analysis (G-D0), inference constraint (G1), memory
    evidence (G2), task distance (G3), quality/cost (G4), knowledge
@@ -72,7 +83,9 @@ This skill does not train, load, initialize, merge, or evaluate models.
    `undetermined`, required evidence, alternatives, constraints, or conflicts.
 4. Treat `model_size_b × 2` only as an approximate bf16 base-weight floor.
    Memory pressure may favor QLoRA, but these two scalar inputs do not establish
-   that a configuration fits or will OOM.
+   that a configuration fits or will OOM. When `prior_training_history.prior_oom_patterns`
+   is supplied, refine G2 using operator-specific OOM evidence (Good Regulator)
+   without fabricating OOM certainty.
 5. Preserve operator-requested initializers uniformly. For EVA, report
    `initialize_lora_eva_weights(model, dataloader)` as required evidence; do not
    hardcode a recommendation-phase refusal.
@@ -80,7 +93,9 @@ This skill does not train, load, initialize, merge, or evaluate models.
    (instruction, reasoning, vision, preference, reward_model). This
    determines baseline rank ranges, target module strategies, and the
    learning-forgetting tradeoff posture. G0 runs first and constrains all
-   subsequent gates.
+   subsequent gates. When `prior_training_history.prior_rank_choices` is
+   supplied, refine G3 within the G0 baseline using operator-specific rank
+   evidence (Good Regulator) — prior choices refine, they do not replace.
    G-D0 (dataset analysis) runs alongside G0. If `dataset_path` is declared,
    the skill requests the runtime to profile the actual dataset file via
    `training_validate_config`. The profile includes: format detection, sample
@@ -91,11 +106,15 @@ This skill does not train, load, initialize, merge, or evaluate models.
    falls back to `dataset_format_hint` and declared inputs.
 7. G6 (harness capability) selects a harness based on the training approach
    determined by G0-G5. The harness must be able to efficiently process the
-   declared dataset and produce the adapter type implied by G0. If the operator
-   declares `harness_preference` or `trainer_preference` inputs, preserve them
-   as `operator_requested` and validate compatibility. If both are absent,
-   select based on adapter_purpose and dataset_format_hint. The three harnesses
-   have distinct capability profiles:
+   declared dataset and produce the adapter type implied by G0. When
+   `provider_capabilities` is supplied, G6 reasons over the full capability
+   space (3 harnesses × 6 trainers × 3 hosts × cost models): available_hosts,
+   host_gpu_types, host_cost_models, and inference_provider_capabilities.
+   When absent, G6 falls back to harness-method compatibility only. If the
+   operator declares `harness_preference` or `trainer_preference` inputs,
+   preserve them as `operator_requested` and validate compatibility. If both
+   are absent, select based on adapter_purpose and dataset_format_hint. The
+   three harnesses have distinct capability profiles:
    - **Axolotl** (YAML, SFT + DPO + KTO + ORPO + GRPO + GDPO + RM + Full FT):
      mature, single-file config, the runtime default for instruction adapters.
      Uses `rl:` parameter for preference tuning and GRPO. Supports advanced PEFT
@@ -113,10 +132,12 @@ This skill does not train, load, initialize, merge, or evaluate models.
    Axolotl remains the runtime default when harness is undetermined and
    adapter_purpose is instruction — no silent migration. For non-instruction
    purposes, axolotl is not a valid default.
-8. The select-method phase is the first turn of a PDCA loop. After audit-config
-   and convergence-check, the operator may revise inputs and re-invoke.
-   Each iteration refines the recommendation. The loop converges when the
-   convergence metric is ≤ 0.10 and no hard blockers remain.
+8. The select-method phase is the first turn of a PDCA loop mechanically closed
+   by the process manifest's loop step (ordinal 5), which routes
+   `convergence_metric`, `blockers`, and `gate_results_summary` back as
+   `prior_iteration`. The operator may also revise inputs and re-invoke. The
+   loop converges when the convergence metric is ≤ 0.10 and no hard blockers
+   remain.
 9. Return separate `recommendation`, `readiness`, `justification`, and
    `authority` objects. Emit `reg.lora.select`.
 
@@ -137,12 +158,24 @@ This skill does not train, load, initialize, merge, or evaluate models.
    `code_absence` requires a search of the complete declared harness scope.
 6. Apply all 17 gates phase-appropriately: G-M1..G-M5, G-Q1..G-Q6,
    G-D1..G-D3, G-F1..G-F2, and G-H1. Runtime and post-training passes require
-   supplied measurements; this template never executes those checks.
+   supplied measurements; this template never executes those checks. Consume
+   `dataset_profile` from G-D0 for G-D1 dataset size/quality assessment.
 7. Inspect initializer-specific preprocessing and persistence according to the
    selected initializer's documented contract. Do not introduce an EVA-specific
    or framework-version-specific refusal rule.
-8. Emit every result using the normalized Finding schema below, compute readiness
-   separately, and emit `reg.lora.audit` for every represented gate.
+8. Enforce no-fiction mechanically (v0.31.0): findings with `evidence_kind` of
+   `config_value`, `code_presence`, or `code_absence` MUST have non-null
+   `evidence.config_path` AND non-null `evidence.line`. Findings that fail this
+   check are rejected at the audit gate and counted in `rejected_findings` with
+   reason `"missing_citation"`. Findings with `evidence_kind` of
+   `not_available`, `operator_assertion`, or `runtime_measurement` are exempt.
+9. Emit algedonic escalation (v0.31.0): for every `refuse` finding, emit a
+   `refuse_escalation` entry (VSM S1→S5 short-circuit) with `finding_id`,
+   `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
+   `userpod_host`, and `severity: critical`. The escalation is in-addition; the
+   manifest and downstream phases still process the finding normally.
+10. Emit every result using the normalized Finding schema below, compute readiness
+    separately, and emit `reg.lora.audit` for every represented gate.
 
 ### Normalized Finding Schema
 
@@ -194,43 +227,75 @@ Do not create alternate finding shapes. A recommendation never overwrites
 1. Accept `current_phase` (`preflight | runtime | post_training`) and current
    evidence only. Reject unknown gate states as blockers.
 2. Compute risk over currently applicable dimensions: critical/high findings
-   (0.40), math gates (0.25), QLoRA gates when applicable (0.15), data/eval
-   gates (0.10), and forgetting gates when applicable (0.10). Exclude
+   (0.40, graded), math gates (0.25), QLoRA gates when applicable (0.15),
+   data/eval gates (0.10), and forgetting gates when applicable (0.10). Exclude
    non-applicable gates and empty families, then normalize the remaining weights.
-3. Map gate risk as `pass=0`, `warn=0.5`, and
-   `fail/refuse/deferred/planned/not_evaluated=1`. Future- and past-phase gates
-   do not enter the current metric denominator.
-4. Set `converged=true` only when the normalized metric is `≤ 0.10` and no hard
+3. Grade the critical/high dimension (v0.31.0): 0 findings → 0.0; 1 → 0.6;
+   2-3 → 0.8; 4+ → 1.0. This replaces the binary (1 if any, 0 if none) so the
+   metric distinguishes "one thing to fix" from "everything is on fire."
+4. Map gate risk as `pass=0`, `warn=0.5`, `fail/refuse/deferred/planned=1.0`,
+   and `not_evaluated=0.5` (v0.31.0: was 1.0, now 0.5 — distinguishes the
+   coverage gap "we don't know if this applies" from the known risk "we know
+   this applies and it's unmet", which remains `deferred=1.0`). Future- and
+   past-phase gates do not enter the current metric denominator.
+5. Handle the all-gates-not-applicable edge case (v0.31.0): if no gates are
+   applicable in the current phase, set `convergence_metric = 0.0` and
+   `converged = true` with rationale `"no applicable gates in current phase"`.
+   This prevents division-by-zero and honestly reports nothing-to-evaluate.
+6. Set `converged=true` only when the normalized metric is `≤ 0.10` and no hard
    blocker exists. A stable metric below threshold remains converged; a 5%
    improvement is diagnostic only, not required.
-5. Return phase-aware outputs: `preflight_ready`,
+7. Return phase-aware outputs: `preflight_ready`,
    `runtime_contracts_pending`, and `post_training_verified`, plus blockers and
    a reproducible gate-results summary. These do not replace the current-phase
    `converged` verdict.
-6. Emit `reg.lora.convergence` unconditionally.
+8. Emit `reg.lora.convergence` unconditionally.
 
 ## Registry Templates
 
 | Template | Type | Purpose |
 |---|---|---|
-| `select-method.j2` | `KnowAct` | Produce an advisory composable recommendation via eight-gate refinement (G0 adapter purpose, G-D0 dataset analysis → G1-G5 method → G6 harness), explicit uncertainty, operator authority, PDCA iteration loop, and runtime enforcement boundaries. |
-| `audit-config.j2` | `KnowAct` | Audit declared artifacts with phase-aware gates, states, evidence kinds, normalized findings, and separate readiness. |
-| `report.j2` | `KnowAct` | Preserve findings losslessly; report readiness and contract gaps; propose only evidence-backed pending regressions. |
-| `convergence-check.j2` | `KnowAct` | Compute normalized current-phase convergence and preflight/runtime/post-training posture from supplied evidence. |
+| `select-method.j2` | `KnowAct` | Produce an advisory composable recommendation via eight-gate refinement (G0 adapter purpose, G-D0 dataset analysis → G1-G5 method → G6 harness), with deep capability reasoning over the full harness×trainer×host×cost space when `provider_capabilities` is supplied, Good Regulator refinement from `prior_training_history`, mechanical PDCA loop closure via `prior_iteration`, and self-improvement signals from `prior_outcome` and `prior_operator_feedback`. |
+| `audit-config.j2` | `KnowAct` | Audit declared artifacts with phase-aware gates, states, evidence kinds, normalized findings, separate readiness, algedonic `refuse_escalation` for safety-boundary violations, and mechanical no-fiction enforcement rejecting findings with null `config_path`/`line`. |
+| `report.j2` | `KnowAct` | Preserve findings losslessly; report readiness and contract gaps; propose only evidence-backed pending regressions with `surface: training`. |
+| `convergence-check.j2` | `KnowAct` | Compute normalized current-phase convergence with graded critical/high dimension, `not_evaluated=0.5` vs `deferred=1.0` distinction, all-gates-not-applicable edge case handling, and preflight/runtime/post-training posture from supplied evidence. |
+
+## Fusion Mode
+
+The process manifest declares `fusion: false` on the convergence-check step
+(ordinal 4). No other step declares a fusion block. The skill is a linear
+PDCA flow — select-method → audit-config → report → convergence-check → loop —
+not a fused multi-template synthesis. The loop step (ordinal 5) routes
+`convergence_metric`, `blockers`, `gate_results_summary`, and `converged` back
+to select-method as `prior_iteration`, closing the feedback loop mechanically.
 
 ## Constraints
 
-- The registry manifest and these four `.j2` templates are authoritative over
-  this companion.
+- The process manifest, registry manifest, and these four `.j2` templates are
+  authoritative over this companion. If they conflict, the registry wins.
 - All four templates are public. No hidden training controls or parameters.
 - Preserve operator sovereignty and authenticated `userpod_host` identity.
 - Emit only values, findings, states, citations, and measurements supported by
   declared evidence. Do not invent defaults, snippets, line numbers, benchmark
   results, training outcomes, or regression counts.
+- No-fiction enforcement is mechanical (v0.31.0): findings with
+  `config_value`/`code_presence`/`code_absence` evidence_kind and null
+  `config_path`/`line` are rejected at the audit gate, not merely discouraged.
+- Algedonic escalation (v0.31.0): `refuse` findings emit `refuse_escalation`
+  in-addition to normal flow so safety-boundary violations reach the operator
+  before the full pipeline completes.
+- Convergence honesty (v0.31.0): `not_evaluated` maps to risk 0.5 (coverage
+  gap), distinct from `deferred`/`planned` at 1.0 (known unmet requirement).
+  Critical/high contribution is graded (0→0.6→0.8→1.0), not binary.
 - Runtime and post-training gates are requirements or assessments of supplied
   measurements; the skill does not execute them.
 - Regression proposals are human-reviewed, `status: pending`, and
   `surface: training`.
+- Self-improvement feedback loop (v0.31.0): the runtime emits
+  `reg.skill.lora-training.outcome` and `reg.skill.lora-training.operator_feedback`
+  spans when training completes/fails or the operator reacts to a recommendation.
+  These become `prior_outcome` (τ_t) and `prior_operator_feedback` (e_t) on
+  subsequent invocations.
 - `kali-audit` owns security findings; `tdd` owns training-loop code correctness;
   this skill owns training-configuration recommendation and contract evidence.
 

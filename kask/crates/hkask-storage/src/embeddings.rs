@@ -15,6 +15,8 @@
 use hkask_types::InfrastructureError;
 use hkask_types::NotFound;
 
+use crate::database::value::DbValue;
+
 impl From<crate::database::types::DbError> for EmbeddingError {
     fn from(e: crate::database::types::DbError) -> Self {
         // Preserve error kind via InfrastructureError::from(DbError)
@@ -54,7 +56,7 @@ impl From<rusqlite::Error> for EmbeddingError {
 }
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use sqlx::Row;
+
 use std::sync::Arc;
 
 /// Vector search backend — sqlite-vec or pgvector.
@@ -64,8 +66,6 @@ enum VectorBackend {
         dim: usize,
     },
     PgVector {
-        pool: sqlx::PgPool,
-        handle: tokio::runtime::Handle,
         dim: usize,
     },
 }
@@ -73,7 +73,7 @@ enum VectorBackend {
 impl VectorBackend {
     fn dim(&self) -> usize {
         match self {
-            Self::SqliteVec { dim, .. } | Self::PgVector { dim, .. } => *dim,
+            Self::SqliteVec { dim, .. } | Self::PgVector { dim } => *dim,
         }
     }
 
@@ -90,7 +90,10 @@ impl VectorBackend {
                  ORDER BY v.distance"
             }
             Self::PgVector { .. } => {
-                "SELECT id, entity_ref, vector, model,
+                // pgvector KNN: embedding column is vector(N), searched via
+                // cosine distance operator (<->). Routed through the driver's
+                // query() method — the worker thread handles async sqlx.
+                "SELECT id, entity_ref, embedding::text, model,
                         embedding <-> ?1::vector AS distance
                  FROM embeddings ORDER BY distance LIMIT ?2"
             }
@@ -122,13 +125,9 @@ impl EmbeddingStore {
                 VectorBackend::SqliteVec { pool, dim }
             }
             crate::database::types::DbProvider::Postgres => {
-                let pool = driver
-                    .postgres_pool()
-                    .cloned()
-                    .expect("PostgresDriver must provide postgres_pool()");
-                let handle = tokio::runtime::Handle::try_current()
-                    .expect("PostgresDriver requires a tokio runtime");
-                VectorBackend::PgVector { pool, handle, dim }
+                // PgVector routes all operations through the driver's query/execute
+                // methods — no direct sqlx access, no block_on, no Handle.
+                VectorBackend::PgVector { dim }
             }
         };
         Self { backend, driver }
@@ -277,21 +276,21 @@ impl EmbeddingStore {
                 }
                 conn.execute_batch("COMMIT;")?;
             }
-            VectorBackend::PgVector { pool, handle, .. } => {
+            VectorBackend::PgVector { .. } => {
+                // Route through the driver — the PostgresDriver worker thread
+                // handles async sqlx. pgvector coerces the text-encoded vector
+                // to the vector(N) column type.
                 let pg_vector = Self::pgvector_encode(vector);
-                let h = handle.clone();
-                let id_c = id.clone();
-                let er = entity_ref.to_string();
-                let m = model.to_string();
-                h.block_on(async move {
-                    let mut q = sqlx::query(
-                        "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model) VALUES ($1, $2, $3::vector, $4, $5)"
-                    );
-                    q = q.bind(&id_c).bind(&er).bind(&pg_vector).bind(dim).bind(&m);
-                    q.execute(pool).await.map_err(|e| EmbeddingError::Infrastructure(
-                        InfrastructureError::database(e.to_string())
-                    ))
-                })?;
+                self.exec(
+                    "INSERT INTO embeddings (id, entity_ref, embedding, dimensions, model) VALUES (?1, ?2, ?3::vector, ?4, ?5)",
+                    &[
+                        DbValue::Text(id.clone()),
+                        DbValue::Text(entity_ref.to_string()),
+                        DbValue::Text(pg_vector),
+                        DbValue::Integer(dim as i64),
+                        DbValue::Text(model.to_string()),
+                    ],
+                )?;
             }
         }
         tracing::debug!(
@@ -391,34 +390,46 @@ impl EmbeddingStore {
                 }
                 Ok(results)
             }
-            VectorBackend::PgVector { pool, handle, .. } => {
+            VectorBackend::PgVector { .. } => {
+                // Route through the driver — the PostgresDriver worker thread
+                // handles async sqlx. pgvector coerces the text-encoded query
+                // vector to vector type for the <-> distance operator.
                 let pg_vec = Self::pgvector_encode(query_vector);
-                let h = handle.clone();
                 let dim = self.dim();
-                let l = limit;
-                h.block_on(async move {
-                    let mut q = sqlx::query(
-                        "SELECT id, entity_ref, vector::text, model, embedding <-> $1::vector AS distance FROM embeddings ORDER BY distance LIMIT $2"
-                    );
-                    q = q.bind(&pg_vec).bind(l as i64);
-                    let rows = q.fetch_all(pool).await.map_err(|e| {
-                        EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string()))
-                    })?;
-                    let mut results = Vec::new();
-                    for row in &rows {
-                        let id: String = row.try_get(0).map_err(|e| EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string())))?;
-                        let entity_ref: String = row.try_get(1).map_err(|e| EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string())))?;
-                        let vector_text: String = row.try_get(2).map_err(|e| EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string())))?;
-                        let model: String = row.try_get(3).map_err(|e| EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string())))?;
-                        let distance: f64 = row.try_get(4).map_err(|e| EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string())))?;
-                        let vector = Self::pgvector_decode(&vector_text, dim)?;
-                        results.push(SimilarityResult {
-                            embedding: StoredEmbedding { id, entity_ref, vector, model },
-                            distance,
-                        });
-                    }
-                    Ok(results)
-                })
+                let rows = self.query_driver(
+                    "SELECT id, entity_ref, embedding::text, model, embedding <-> ?1::vector AS distance FROM embeddings ORDER BY distance LIMIT ?2",
+                    &[
+                        DbValue::Text(pg_vec),
+                        DbValue::Integer(limit as i64),
+                    ],
+                )?;
+                let mut results = Vec::new();
+                for row in &rows {
+                    let id = row
+                        .get_str_named("id")
+                        .map_err(|_| EmbeddingError::Decode("missing id".into()))?;
+                    let entity_ref = row
+                        .get_str_named("entity_ref")
+                        .map_err(|_| EmbeddingError::Decode("missing entity_ref".into()))?;
+                    let vector_text = row
+                        .get_str_named("embedding")
+                        .map_err(|_| EmbeddingError::Decode("missing embedding".into()))?;
+                    let model = row
+                        .get_str_named("model")
+                        .map_err(|_| EmbeddingError::Decode("missing model".into()))?;
+                    let distance = row.get_real_named("distance").unwrap_or(0.0);
+                    let vector = Self::pgvector_decode(vector_text, dim)?;
+                    results.push(SimilarityResult {
+                        embedding: StoredEmbedding {
+                            id: id.to_string(),
+                            entity_ref: entity_ref.to_string(),
+                            vector,
+                            model: model.to_string(),
+                        },
+                        distance,
+                    });
+                }
+                Ok(results)
             }
         }
     }
@@ -535,36 +546,24 @@ impl EmbeddingStore {
                 }
                 Ok(results)
             }
-            VectorBackend::PgVector { pool, handle, .. } => {
+            VectorBackend::PgVector { .. } => {
                 let pattern = format!("{}%", prefix);
-                let h = handle.clone();
-                h.block_on(async move {
-                    let rows = sqlx::query(
-                        "SELECT entity_ref, vector::text FROM embeddings WHERE entity_ref LIKE $1",
-                    )
-                    .bind(&pattern)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| {
-                        EmbeddingError::Infrastructure(InfrastructureError::database(e.to_string()))
-                    })?;
-                    let mut results = Vec::new();
-                    for row in &rows {
-                        let entity_ref: String = row.try_get(0).map_err(|e| {
-                            EmbeddingError::Infrastructure(InfrastructureError::database(
-                                e.to_string(),
-                            ))
-                        })?;
-                        let vector_text: String = row.try_get(1).map_err(|e| {
-                            EmbeddingError::Infrastructure(InfrastructureError::database(
-                                e.to_string(),
-                            ))
-                        })?;
-                        let vector = Self::pgvector_decode(&vector_text, dim)?;
-                        results.push((entity_ref, vector));
-                    }
-                    Ok(results)
-                })
+                let rows = self.query_driver(
+                    "SELECT entity_ref, embedding::text FROM embeddings WHERE entity_ref LIKE ?1",
+                    &[DbValue::Text(pattern)],
+                )?;
+                let mut results = Vec::new();
+                for row in &rows {
+                    let entity_ref = row
+                        .get_str_named("entity_ref")
+                        .map_err(|_| EmbeddingError::Decode("missing entity_ref".into()))?;
+                    let vector_text = row
+                        .get_str_named("embedding")
+                        .map_err(|_| EmbeddingError::Decode("missing embedding".into()))?;
+                    let vector = Self::pgvector_decode(vector_text, dim)?;
+                    results.push((entity_ref.to_string(), vector));
+                }
+                Ok(results)
             }
         }
     }
@@ -593,31 +592,20 @@ impl EmbeddingStore {
                 }
                 Ok(refs)
             }
-            VectorBackend::PgVector { pool, handle, .. } => {
+            VectorBackend::PgVector { .. } => {
                 let pattern = format!("{}%", prefix);
-                let h = handle.clone();
-                h.block_on(async move {
-                    let rows =
-                        sqlx::query("SELECT entity_ref FROM embeddings WHERE entity_ref LIKE $1")
-                            .bind(&pattern)
-                            .fetch_all(pool)
-                            .await
-                            .map_err(|e| {
-                                EmbeddingError::Infrastructure(InfrastructureError::database(
-                                    e.to_string(),
-                                ))
-                            })?;
-                    let mut refs = Vec::new();
-                    for row in &rows {
-                        let s: String = row.try_get(0).map_err(|e| {
-                            EmbeddingError::Infrastructure(InfrastructureError::database(
-                                e.to_string(),
-                            ))
-                        })?;
-                        refs.push(s);
-                    }
-                    Ok(refs)
-                })
+                let rows = self.query_driver(
+                    "SELECT entity_ref FROM embeddings WHERE entity_ref LIKE ?1",
+                    &[DbValue::Text(pattern)],
+                )?;
+                let mut refs = Vec::new();
+                for row in &rows {
+                    let entity_ref = row
+                        .get_str_named("entity_ref")
+                        .map_err(|_| EmbeddingError::Decode("missing entity_ref".into()))?;
+                    refs.push(entity_ref.to_string());
+                }
+                Ok(refs)
             }
         }
     }

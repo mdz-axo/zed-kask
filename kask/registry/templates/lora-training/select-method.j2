@@ -26,6 +26,8 @@ contract:
     provider_capabilities: object
     prior_training_history: object
     prior_iteration: object
+    prior_outcome: object
+    prior_operator_feedback: object
   output:
     recommendation: object
     readiness: object
@@ -70,6 +72,8 @@ INPUT: dataset_format_hint = {{ dataset_format_hint | default("undetermined") }}
 INPUT: provider_capabilities = {{ provider_capabilities | default({}) | tojson }} (v0.31.0 — capability matrix for available training hosts and inference providers; enables G6 to reason over the full capability space)
 INPUT: prior_training_history = {{ prior_training_history | default({}) | tojson }} (v0.31.0 — prior runs on same base model; enables Good Regulator compliance)
 INPUT: prior_iteration = {{ prior_iteration | default({}) | tojson }} (v0.31.0 — previous PDCA iteration output; closes the feedback loop)
+INPUT: prior_outcome = {{ prior_outcome | default({}) | tojson }} (v0.31.0 — outcome evidence from prior training runs; extrinsic exploratory experience signal τ_t)
+INPUT: prior_operator_feedback = {{ prior_operator_feedback | default({}) | tojson }} (v0.31.0 — operator feedback from prior invocations; intrinsic evaluative feedback signal e_t)
 
 AUTHORITY CONTRACT (P1, P3, P4, P12):
 - This skill emits an advisory recommendation from declared evidence.
@@ -148,6 +152,51 @@ This is iteration N+1. The previous iteration produced:
   not_evaluated state need attention in this iteration.
 {% else %}
 This is the first iteration — no prior feedback to consume.
+{% endif %}
+{% if prior_outcome and prior_outcome | length > 0 %}
+## Prior Outcome Evidence (extrinsic exploratory experience — τ_t)
+Outcome evidence from prior training runs that used this skill's recommendation:
+```json
+{{ prior_outcome | tojson }}
+```
+Use this evidence to refine the recommendation:
+- **training_completed**: if prior runs completed successfully, the recommended
+  config has empirical precedent. Note this in the justification.
+- **oom_occurred**: if prior runs OOM'd, adjust G2 (memory) to recommend a more
+  conservative base_mode or warn about the specific batch size / sequence
+  length that caused the OOM.
+- **convergence_issues**: if prior runs had training instability (loss spikes,
+  divergence), adjust G3 (rank) to recommend a different rank range or warn
+  about the specific configuration that caused the instability.
+- **eval_results**: if prior runs have evaluation results, use them to validate
+  or adjust the rank recommendation (e.g., if r=8 underperformed, recommend
+  higher rank).
+Do NOT fabricate outcome certainty — prior outcomes are evidence for this
+operator's setup, not proof for the current config.
+{% endif %}
+{% if prior_operator_feedback and prior_operator_feedback | length > 0 %}
+## Prior Operator Feedback (intrinsic evaluative feedback — e_t)
+The operator explicitly reacted to prior skill recommendations as follows:
+```json
+{{ prior_operator_feedback | tojson }}
+```
+Use this feedback to calibrate the recommendation:
+- **accepted**: the operator accepted the recommendation. Continue producing
+  recommendations in the same style.
+- **overridden**: the operator overrode a specific field. Note which field was
+  overridden and the override reason. If the operator consistently overrides a
+  specific field (e.g., always increases rank), adjust the default for that
+  field toward the operator's preference while preserving the evidence-based
+  range.
+- **rejected**: the operator rejected the entire recommendation. Note the
+  rejection reason and avoid producing recommendations in the same pattern.
+- **corrected_fields**: for each corrected field, compare the recommended vs
+  actual value. If the operator consistently corrects in the same direction,
+  adjust the recommendation bias toward the operator's preference.
+Do NOT blindly follow operator feedback — it calibrates the recommendation,
+  it does not override evidence-based constraints. If the operator's preference
+  conflicts with a hard contract (e.g., wants rank > min(d_in, d_out)), note
+  the conflict rather than complying.
 {% endif %}
 - Plan: select-method produces a recommendation from declared evidence.
 - Do: the operator accepts/overrides/rejects; audit-config evaluates the

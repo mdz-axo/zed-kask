@@ -136,7 +136,7 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// Execute an hKask skill manifest by name and return the result as text.
     ///
     /// The implementation resolves the skill name to its `manifest.yaml` in the
-    /// hKask registry (`kask/registry/manifests/<name>.yaml`), loads it as a
+    /// hKask registry (`kask/registry/manifests/<skill_name>.yaml`), loads it as a
     /// `BundleManifest`, and runs the `ManifestExecutor` cascade (KnowAct/FlowDef/
     /// RenderAct + PDCA + gas/rjoule + OCAP).
     ///
