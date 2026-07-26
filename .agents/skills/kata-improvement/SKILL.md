@@ -77,7 +77,12 @@ description: "4-step Improvement Kata templates for scientific capability develo
 | `improvement-step2-current.j2` | WordAct | Step 2 — Grasp the current condition. Collect data, detect patterns, establish baseline metrics. |
 | `improvement-step3-target.j2` | WordAct | Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle. |
 | `improvement-step4-experiment.j2` | WordAct | Step 4 — Experiment toward target. Design PDCA experiment with specific prediction and measurement plan. |
-| `kata-improvement-convergence-check.j2` | KnowAct | Compute normalized convergence metric for kata-improvement PDCA cycles. Returns convergence_metric plus rationale and blockers.  |
+| `kata-improvement-convergence-check.j2` | KnowAct | Compute normalized convergence metric for kata-improvement PDCA cycles. Returns convergence_metric plus rationale and blockers. |
+| `beginner-selector.j2` | KnowAct | Select appropriate beginner drill based on practice history and automaticity. (beginner_mode, folded from kata-starter) |
+| `beginner-five-questions.j2` | KnowAct | Five Questions Drill — practice asking the 5 coaching questions on a trivial process. (beginner_mode) |
+| `beginner-pdca-cycle.j2` | KnowAct | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial measurable process. (beginner_mode) |
+| `beginner-observation-drill.j2` | KnowAct | Observation Drill — practice separating facts (IS) from interpretations (OUGHT). (beginner_mode) |
+| `beginner-convergence-check.j2` | KnowAct | Compute convergence metric for beginner drill cycle. Measures habit signal quality and automaticity. (beginner_mode) |
 
 ## Constraints
 

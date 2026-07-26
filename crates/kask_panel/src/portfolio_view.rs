@@ -86,6 +86,77 @@ struct LedgerValidation {
     issues: Vec<String>,
 }
 
+/// A single characteristic field from `portfolio_characteristics`.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct CharacteristicField {
+    value: Option<f64>,
+    fibo: Option<String>,
+    method: Option<String>,
+    holdings: Option<usize>,
+}
+
+/// A single attribution row from `portfolio_attribution`.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct AttributionRow {
+    symbol: String,
+    weight_start_pct: f64,
+    weight_end_pct: f64,
+    security_return_pct: f64,
+    contribution_bps: f64,
+    gain_loss: f64,
+}
+
+/// A position from `portfolio_comparison`.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct ComparisonPosition {
+    symbol: String,
+    shares_a: Option<f64>,
+    shares_b: Option<f64>,
+    shares: Option<f64>,
+}
+
+/// Aggregation method selector (matches the MCP server's enum).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum AggregationMethod {
+    #[default]
+    WeightedArithmetic,
+    WeightedHarmonic,
+    WeightedMedian,
+    Winsorized,
+}
+
+impl AggregationMethod {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::WeightedArithmetic => "weighted_arithmetic",
+            Self::WeightedHarmonic => "weighted_harmonic",
+            Self::WeightedMedian => "weighted_median",
+            Self::Winsorized => "winsorized",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::WeightedArithmetic => "Wtd Arithmetic",
+            Self::WeightedHarmonic => "Wtd Harmonic",
+            Self::WeightedMedian => "Wtd Median",
+            Self::Winsorized => "Winsorized 5/95",
+        }
+    }
+
+    fn next(&self) -> Self {
+        match self {
+            Self::WeightedArithmetic => Self::WeightedHarmonic,
+            Self::WeightedHarmonic => Self::WeightedMedian,
+            Self::WeightedMedian => Self::Winsorized,
+            Self::Winsorized => Self::WeightedArithmetic,
+        }
+    }
+}
+
 // ── Dashboard state ──────────────────────────────────────────────────────
 
 /// A summary tile for the dashboard.
@@ -105,12 +176,37 @@ pub struct PortfolioDashboardView {
     selected_portfolio: usize,
     /// Returns data for the selected portfolio.
     returns: Option<PortfolioReturnsResponse>,
+    /// Characteristics data for the selected portfolio (field name → field).
+    characteristics: Vec<(String, CharacteristicField)>,
+    /// Attribution data for the selected portfolio.
+    attribution: Vec<AttributionRow>,
+    /// Comparison data (if in comparison mode).
+    comparison: Option<ComparisonData>,
+    /// Second portfolio for comparison mode (None = single-portfolio mode).
+    compare_portfolio: Option<usize>,
+    /// Aggregation method for characteristics.
+    aggregation: AggregationMethod,
+    /// Date range for returns/attribution.
+    from_date: String,
+    to_date: String,
     /// Whether data is loading.
     loading: bool,
     /// Error message if loading failed.
     error: Option<String>,
     /// Auto-load status message.
     auto_load_status: Option<String>,
+    /// Whether auto-load has been run this session.
+    auto_loaded: bool,
+}
+
+/// Comparison data from `portfolio_comparison`.
+#[derive(Debug, Clone)]
+struct ComparisonData {
+    portfolio_a: String,
+    portfolio_b: String,
+    shared: Vec<ComparisonPosition>,
+    only_a: Vec<ComparisonPosition>,
+    only_b: Vec<ComparisonPosition>,
 }
 
 impl PortfolioDashboardView {
@@ -121,17 +217,25 @@ impl PortfolioDashboardView {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let view = Self {
+            let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+            Self {
                 _workspace: workspace.weak_handle(),
                 focus_handle: cx.focus_handle(),
                 portfolios: Vec::new(),
                 selected_portfolio: 0,
                 returns: None,
+                characteristics: Vec::new(),
+                attribution: Vec::new(),
+                comparison: None,
+                compare_portfolio: None,
+                aggregation: AggregationMethod::default(),
+                from_date: "2000-01-01".to_string(),
+                to_date: today,
                 loading: false,
                 error: None,
                 auto_load_status: None,
-            };
-            view
+                auto_loaded: false,
+            }
         })
     }
 
@@ -150,7 +254,7 @@ impl PortfolioDashboardView {
                         this.portfolios = resp.portfolios;
                         this.loading = false;
                         if !this.portfolios.is_empty() {
-                            this.fetch_returns(cx);
+                            this.fetch_all(cx);
                         }
                         cx.notify();
                     }
@@ -170,42 +274,168 @@ impl PortfolioDashboardView {
         .detach();
     }
 
-    /// Fetch returns for the selected portfolio.
-    fn fetch_returns(&mut self, cx: &mut Context<Self>) {
+    /// Fetch all data for the selected portfolio: returns, characteristics,
+    /// and attribution. Called on portfolio selection or date/aggregation change.
+    fn fetch_all(&mut self, cx: &mut Context<Self>) {
         let Some(portfolio) = self.portfolios.get(self.selected_portfolio).cloned() else {
             return;
         };
         self.loading = true;
         self.returns = None;
+        self.characteristics = Vec::new();
+        self.attribution = Vec::new();
+        self.error = None;
         cx.notify();
 
-        // Default to all-time: from "2000-01-01" to today.
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let args = json!({
+        let from = self.from_date.clone();
+        let to = self.to_date.clone();
+        let aggregation = self.aggregation.as_str().to_string();
+        let today = self.to_date.clone();
+
+        // Fetch returns.
+        let returns_args = json!({
             "portfolio": portfolio,
-            "from": "2000-01-01",
-            "to": today,
+            "from": from,
+            "to": to,
         });
-        let task = invoke_tool(COMPANIES_SERVER, "portfolio_returns", args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(output) => {
-                let result: Result<PortfolioReturnsResponse, _> = serde_json::from_str(&output);
-                this.update(cx, |this, cx| match result {
-                    Ok(resp) => {
-                        this.returns = Some(resp);
-                        this.loading = false;
-                        cx.notify();
-                    }
+        let returns_task = invoke_tool(COMPANIES_SERVER, "portfolio_returns", returns_args);
+
+        // Fetch characteristics (as-of the `to` date).
+        let char_args = json!({
+            "portfolio": portfolio,
+            "date": today,
+            "aggregation": aggregation,
+        });
+        let char_task = invoke_tool(COMPANIES_SERVER, "portfolio_characteristics", char_args);
+
+        // Fetch attribution.
+        let attr_args = json!({
+            "portfolio": portfolio,
+            "from": from,
+            "to": to,
+        });
+        let attr_task = invoke_tool(COMPANIES_SERVER, "portfolio_attribution", attr_args);
+
+        cx.spawn(async move |this, cx| {
+            // Run all three fetches concurrently.
+            let (returns_result, char_result, attr_result) =
+                futures::join!(returns_task, char_task, attr_task);
+
+            this.update(cx, |this, cx| {
+                this.loading = false;
+
+                // Process returns.
+                match returns_result {
+                    Ok(output) => match serde_json::from_str::<PortfolioReturnsResponse>(&output) {
+                        Ok(resp) => this.returns = Some(resp),
+                        Err(e) => {
+                            this.error = Some(format!("Returns parse error: {e}"));
+                        }
+                    },
                     Err(e) => {
-                        this.loading = false;
-                        this.error = Some(format!("Parse error: {e}"));
-                        cx.notify();
+                        this.error = Some(format!("Returns tool error: {e}"));
                     }
-                })
-            }
+                }
+
+                // Process characteristics.
+                if let Ok(output) = char_result {
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&output) {
+                        if let Some(chars) = obj.get("characteristics").and_then(|c| c.as_object())
+                        {
+                            this.characteristics = chars
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    serde_json::from_value::<CharacteristicField>(v.clone())
+                                        .ok()
+                                        .map(|f| (k.clone(), f))
+                                })
+                                .collect();
+                        }
+                    }
+                }
+
+                // Process attribution.
+                if let Ok(output) = attr_result {
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&output) {
+                        if let Some(rows) = obj.get("attribution").and_then(|a| a.as_array()) {
+                            this.attribution = rows
+                                .iter()
+                                .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                                .collect();
+                        }
+                    }
+                }
+
+                cx.notify();
+            })
+        })
+        .detach();
+    }
+
+    /// Fetch comparison data between two portfolios.
+    fn fetch_comparison(&mut self, cx: &mut Context<Self>) {
+        let Some(portfolio_a) = self.portfolios.get(self.selected_portfolio).cloned() else {
+            return;
+        };
+        let Some(portfolio_b) = self
+            .compare_portfolio
+            .and_then(|i| self.portfolios.get(i).cloned())
+        else {
+            return;
+        };
+        self.loading = true;
+        self.comparison = None;
+        cx.notify();
+
+        let args = json!({
+            "portfolio_a": portfolio_a,
+            "portfolio_b": portfolio_b,
+        });
+        let task = invoke_tool(COMPANIES_SERVER, "portfolio_comparison", args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(output) => this.update(cx, |this, cx| {
+                this.loading = false;
+                if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&output) {
+                    let shared = obj
+                        .get("shared_positions")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let only_a = obj
+                        .get("only_in_a")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let only_b = obj
+                        .get("only_in_b")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    this.comparison = Some(ComparisonData {
+                        portfolio_a,
+                        portfolio_b,
+                        shared,
+                        only_a,
+                        only_b,
+                    });
+                }
+                cx.notify();
+            }),
             Err(e) => this.update(cx, |this, cx| {
                 this.loading = false;
-                this.error = Some(format!("Tool error: {e}"));
+                this.error = Some(format!("Comparison error: {e}"));
                 cx.notify();
             }),
         })
@@ -348,7 +578,7 @@ impl PortfolioDashboardView {
 
     fn select_portfolio(&mut self, index: usize, cx: &mut Context<Self>) {
         self.selected_portfolio = index;
-        self.fetch_returns(cx);
+        self.fetch_all(cx);
     }
 
     fn render_summary_tiles(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -485,6 +715,320 @@ impl PortfolioDashboardView {
                     })),
             )
     }
+
+    /// Render the aggregation method selector and date range controls.
+    fn render_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .justify_between()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Aggregation:")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Button::new("agg-btn", self.aggregation.label())
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.aggregation = this.aggregation.next();
+                                this.fetch_all(cx);
+                            })),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Label::new(format!("{} → {}", self.from_date, self.to_date))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Button::new("ytd-btn", "YTD")
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let year = chrono::Utc::now().format("%Y").to_string();
+                                this.from_date = format!("{year}-01-01");
+                                this.to_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                this.fetch_all(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("all-btn", "All")
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.from_date = "2000-01-01".to_string();
+                                this.to_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                this.fetch_all(cx);
+                            })),
+                    ),
+            )
+    }
+
+    /// Render the characteristics table.
+    fn render_characteristics(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+        if self.characteristics.is_empty() {
+            return div().into_any_element();
+        }
+
+        let rows: Vec<AnyElement> = self
+            .characteristics
+            .iter()
+            .map(|(field, char)| {
+                let value = char
+                    .value
+                    .map(|v| format!("{v:.2}"))
+                    .unwrap_or_else(|| "—".to_string());
+                let fibo = char.fibo.clone().unwrap_or_default();
+                let holdings = char.holdings.unwrap_or(0);
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Label::new(field.clone())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(value)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Default),
+                            )
+                            .child(
+                                Label::new(format!("({holdings} holdings)"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .when(!fibo.is_empty(), |this| {
+                        this.child(Label::new(fibo).size(LabelSize::XSmall).color(Color::Muted))
+                    })
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .p_3()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .border_color(border_color)
+            .child(
+                Label::new("Characteristics")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .children(rows)
+            .into_any_element()
+    }
+
+    /// Render the attribution ranking.
+    fn render_attribution(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+        if self.attribution.is_empty() {
+            return div().into_any_element();
+        }
+
+        let rows: Vec<AnyElement> = self
+            .attribution
+            .iter()
+            .take(20) // Top 20 by absolute contribution (already sorted by server)
+            .map(|row| {
+                let color = if row.contribution_bps >= 0.0 {
+                    Color::Created
+                } else {
+                    Color::Error
+                };
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(row.symbol.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .child(
+                        Label::new(format!("{:+.0} bps", row.contribution_bps))
+                            .size(LabelSize::XSmall)
+                            .color(color),
+                    )
+                    .child(
+                        Label::new(format!("{:+.2}%", row.security_return_pct))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!("{:.1}% wgt", row.weight_start_pct))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .p_3()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .border_color(border_color)
+            .child(
+                Label::new("Attribution (top 20 by impact)")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .children(rows)
+            .into_any_element()
+    }
+
+    /// Render the comparison table (if in comparison mode).
+    fn render_comparison(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+        let Some(comp) = &self.comparison else {
+            return div().into_any_element();
+        };
+
+        let shared_rows: Vec<AnyElement> = comp
+            .shared
+            .iter()
+            .map(|pos| {
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(pos.symbol.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .child(
+                        Label::new(format!(
+                            "A: {} / B: {}",
+                            pos.shares_a.unwrap_or(0.0),
+                            pos.shares_b.unwrap_or(0.0)
+                        ))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        let only_a_rows: Vec<AnyElement> = comp
+            .only_a
+            .iter()
+            .map(|pos| {
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(pos.symbol.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .child(
+                        Label::new(format!("A only: {}", pos.shares.unwrap_or(0.0)))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        let only_b_rows: Vec<AnyElement> = comp
+            .only_b
+            .iter()
+            .map(|pos| {
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(pos.symbol.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .child(
+                        Label::new(format!("B only: {}", pos.shares.unwrap_or(0.0)))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .p_3()
+            .gap_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border_color)
+            .child(
+                Label::new(format!(
+                    "Comparison: {} vs {}",
+                    comp.portfolio_a, comp.portfolio_b
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .child(
+                Label::new(format!(
+                    "Shared: {} | Only A: {} | Only B: {}",
+                    comp.shared.len(),
+                    comp.only_a.len(),
+                    comp.only_b.len()
+                ))
+                .size(LabelSize::XSmall)
+                .color(Color::Muted),
+            )
+            .children(shared_rows)
+            .children(only_a_rows)
+            .children(only_b_rows)
+            .into_any_element()
+    }
+
+    /// Render the comparison mode toggle and second portfolio selector.
+    fn render_compare_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let compare_buttons: Vec<AnyElement> = self
+            .portfolios
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let is_selected = self.compare_portfolio == Some(index);
+                Button::new(("compare-btn", index), name.as_str())
+                    .style(if is_selected {
+                        ButtonStyle::Tinted(ui::TintColor::Accent)
+                    } else {
+                        ButtonStyle::Subtle
+                    })
+                    .label_size(LabelSize::XSmall)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.compare_portfolio == Some(index) {
+                            // Deselect → exit comparison mode.
+                            this.compare_portfolio = None;
+                            this.comparison = None;
+                        } else {
+                            this.compare_portfolio = Some(index);
+                            this.fetch_comparison(cx);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        v_flex()
+            .gap_1()
+            .child(
+                Label::new("Compare with (click to toggle):")
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(h_flex().gap_1().flex_wrap().children(compare_buttons))
+    }
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────
@@ -604,6 +1148,12 @@ impl Render for PortfolioDashboardView {
             self.fetch_portfolios(cx);
         }
 
+        // Auto-load on first render if not yet done.
+        if !self.auto_loaded && !self.loading {
+            self.auto_loaded = true;
+            self.auto_load_transactions(cx);
+        }
+
         let border_color = cx.theme().colors().border;
 
         v_flex()
@@ -623,6 +1173,8 @@ impl Render for PortfolioDashboardView {
             )
             .child(self.render_auto_load_bar(cx))
             .child(self.render_portfolio_selector(cx))
+            .child(self.render_compare_selector(cx))
+            .child(self.render_controls(cx))
             // Summary tiles
             .child(
                 h_flex()
@@ -695,6 +1247,12 @@ impl Render for PortfolioDashboardView {
                     )
                 },
             )
+            // Characteristics table
+            .child(self.render_characteristics(cx))
+            // Attribution ranking
+            .child(self.render_attribution(cx))
+            // Comparison (if in comparison mode)
+            .child(self.render_comparison(cx))
             .into_any_element()
     }
 }

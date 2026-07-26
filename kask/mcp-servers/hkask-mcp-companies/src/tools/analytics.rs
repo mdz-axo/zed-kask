@@ -261,8 +261,20 @@ impl CompaniesServer {
                 ));
             }
 
-            // Fetch fundamentals and compute weighted averages
-            let mut characteristics = serde_json::Map::new();
+            // Fetch fundamentals and compute weighted averages.
+            //
+            // Collect (weight, value) pairs per field, then aggregate at the
+            // end using the requested method. Categorical fields (sector,
+            // industry, country) are always weight-summed (not aggregated).
+            let mut numeric_fields: std::collections::HashMap<
+                String,
+                (Vec<crate::aggregation::WeightedValue>, &'static str),
+            > = std::collections::HashMap::new();
+            let mut categorical_breakdowns: std::collections::HashMap<
+                String,
+                std::collections::HashMap<String, f64>,
+            > = std::collections::HashMap::new();
+
             for (sym, _shares, _price, mv) in &market_values {
                 let weight = mv / total_mv;
 
@@ -272,24 +284,19 @@ impl CompaniesServer {
                 {
                     for field in ["sector", "industry", "country", "mktCap"] {
                         if let Some(val) = profile.get(field) {
-                            let key = field.to_string();
-                            let entry =
-                                characteristics.entry(key).or_insert(serde_json::json!(0.0));
                             if val.is_string() {
                                 let str_val =
                                     val.as_str().expect("guarded by is_string check above");
-                                let sub = characteristics
-                                    .entry(format!("{field}_breakdown"))
-                                    .or_insert(serde_json::json!({}));
-                                if let Some(sub_map) = sub.as_object_mut() {
-                                    let e = sub_map
-                                        .entry(str_val.to_string())
-                                        .or_insert(serde_json::json!(0.0));
-                                    *e = serde_json::json!(e.as_f64().unwrap_or(0.0) + weight);
-                                }
+                                let sub =
+                                    categorical_breakdowns.entry(field.to_string()).or_default();
+                                *sub.entry(str_val.to_string()).or_insert(0.0) += weight;
                             } else if let Some(num) = val.as_f64() {
-                                *entry =
-                                    serde_json::json!(entry.as_f64().unwrap_or(0.0) + weight * num);
+                                let fibo_uri = fibo::fmp_field_to_fibo(field).unwrap_or("unknown");
+                                numeric_fields
+                                    .entry(field.to_string())
+                                    .or_insert_with(|| (Vec::new(), fibo_uri))
+                                    .0
+                                    .push(crate::aggregation::WeightedValue { weight, value: num });
                             }
                         }
                     }
@@ -315,14 +322,11 @@ impl CompaniesServer {
                     ] {
                         if let Some(val) = metrics.get(field).and_then(|v| v.as_f64()) {
                             let fibo_uri = fibo::fmp_field_to_fibo(field).unwrap_or("unknown");
-                            let entry = characteristics
+                            numeric_fields
                                 .entry(field.to_string())
-                                .or_insert(serde_json::json!({"value": 0.0, "fibo": fibo_uri}));
-                            let current = entry["value"].as_f64().unwrap_or(0.0);
-                            *entry = serde_json::json!({
-                                "value": current + weight * val,
-                                "fibo": fibo_uri,
-                            });
+                                .or_insert_with(|| (Vec::new(), fibo_uri))
+                                .0
+                                .push(crate::aggregation::WeightedValue { weight, value: val });
                         }
                     }
                 }
@@ -339,21 +343,39 @@ impl CompaniesServer {
                         let lev = a / e;
                         let fibo_uri =
                             fibo::fmp_field_to_fibo("financialLeverage").unwrap_or("unknown");
-                        let entry = characteristics
+                        numeric_fields
                             .entry("financialLeverage".to_string())
-                            .or_insert(serde_json::json!({"value": 0.0, "fibo": fibo_uri}));
-                        let current = entry["value"].as_f64().unwrap_or(0.0);
-                        *entry = serde_json::json!({
-                            "value": current + weight * lev,
-                            "fibo": fibo_uri,
-                        });
+                            .or_insert_with(|| (Vec::new(), fibo_uri))
+                            .0
+                            .push(crate::aggregation::WeightedValue { weight, value: lev });
                     }
                 }
+            }
+
+            // Aggregate numeric fields using the requested method.
+            let mut characteristics = serde_json::Map::new();
+            for (field, (values, fibo_uri)) in &numeric_fields {
+                let aggregated = crate::aggregation::aggregate(values, &req.aggregation);
+                characteristics.insert(
+                    field.clone(),
+                    serde_json::json!({
+                        "value": aggregated,
+                        "fibo": fibo_uri,
+                        "method": req.aggregation,
+                        "holdings": values.len(),
+                    }),
+                );
+            }
+
+            // Insert categorical breakdowns.
+            for (field, breakdown) in categorical_breakdowns {
+                characteristics.insert(format!("{field}_breakdown"), serde_json::json!(breakdown));
             }
 
             Ok(serde_json::json!({
                 "portfolio": req.portfolio,
                 "date": req.date,
+                "aggregation": req.aggregation,
                 "total_market_value": total_mv,
                 "position_count": market_values.len(),
                 "characteristics": characteristics,

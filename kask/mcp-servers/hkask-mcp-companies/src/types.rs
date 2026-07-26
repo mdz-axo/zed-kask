@@ -96,7 +96,7 @@ pub struct AttributionRequest {
 /// - `winsorized`: Clamp values at the 5th and 95th percentiles before
 ///   computing the weighted arithmetic mean. Bloomberg winsorizes
 ///   descriptors at 5/95 for Quality and Value-Growth indices.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregationMethod {
     /// Weighted arithmetic mean: Σ(wᵢ × xᵢ). Default; matches the original

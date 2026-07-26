@@ -38,7 +38,7 @@ gas:
   hard_limit: true
 
 rjoule:
-  cap: 2
+  cap: 3
   alert_threshold: 0.8
   hard_limit: true
 

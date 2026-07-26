@@ -72,6 +72,7 @@ use hkask_mcp_server::server::{McpToolError, validate_identifier};
 use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 
+pub mod aggregation;
 mod analysis;
 pub mod data_quality;
 pub mod economic_profit;
