@@ -71,16 +71,16 @@ steps:
   # Step 4: PASS
   - ordinal: 4
     action: run_command
-    command: "echo '[QA:mcp-dispatch] PASS — curator_ping, kanban_board_list, condenser_ping all dispatched successfully'",
-    description: "All MCP tool dispatch calls succeeded",
+    command: "echo '[QA:mcp-dispatch] PASS — curator_ping, kanban_board_list, condenser_ping all dispatched successfully'"
+    description: "All MCP tool dispatch calls succeeded"
     retries: 0
     terminal: true
 
   # Step 5: curator_ping failed
   - ordinal: 5
     action: run_command
-    command: "echo '[QA:mcp-dispatch] FAIL — curator_ping dispatch failed'",
-    description: "curator_ping MCP dispatch failure",
+    command: "echo '[QA:mcp-dispatch] FAIL — curator_ping dispatch failed'"
+    description: "curator_ping MCP dispatch failure"
     retries: 0
     terminal: true
 

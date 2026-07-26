@@ -165,6 +165,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.curation.escalation",
     "reg.curation.escalation.critical",
     "reg.curation.matrix",
+    "reg.curator",
     "reg.curator.consolidation",
     "reg.curator.efficiency.exceeded",
     // ── Meta (curator self-observation / self-management) ──

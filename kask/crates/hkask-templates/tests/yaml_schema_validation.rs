@@ -345,20 +345,20 @@ fn all_fusion_skill_references_are_valid() {
         if path.extension().is_some_and(|e| e == "yaml") {
             let content = std::fs::read_to_string(&path).unwrap();
             let parsed: Result<ManifestFile, _> = serde_yaml_neo::from_str(&content);
-            if let Ok(file) = parsed {
-                if let Some(ref fusion) = file.manifest.fusion {
-                    for skill_name in &fusion.skills {
-                        checked += 1;
-                        // Try to deserialize the string as a FusionSkill variant
-                        let json_str = format!("\"{}\"", skill_name);
-                        let result: Result<FusionSkill, _> = serde_json::from_str(&json_str);
-                        if result.is_err() {
-                            failures.push(format!(
-                                "{}: fusion.skills contains '{}' which is not a valid FusionSkill variant",
-                                path.file_name().unwrap().display(),
-                                skill_name
-                            ));
-                        }
+            if let Ok(file) = parsed
+                && let Some(ref fusion) = file.manifest.fusion
+            {
+                for skill_name in &fusion.skills {
+                    checked += 1;
+                    // Try to deserialize the string as a FusionSkill variant
+                    let json_str = format!("\"{}\"", skill_name);
+                    let result: Result<FusionSkill, _> = serde_json::from_str(&json_str);
+                    if result.is_err() {
+                        failures.push(format!(
+                            "{}: fusion.skills contains '{}' which is not a valid FusionSkill variant",
+                            path.file_name().unwrap().display(),
+                            skill_name
+                        ));
                     }
                 }
             }

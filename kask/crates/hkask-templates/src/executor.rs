@@ -95,16 +95,30 @@ fn safe_template_join(base: &std::path::Path, template_ref: &str) -> Option<Path
 /// SkillFeedbackSpan enum — it lets the executor emit the correct
 /// reg.skill.<id>.<phase> span without hardcoding ordinal-to-phase mappings.
 fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
+    // Extract the last path segment (after the final '/').
     let last_segment = template_ref.rsplit('/').next().unwrap_or(template_ref);
-    let after_last_dash = last_segment.rsplit('-').next().unwrap_or(last_segment);
-    match after_last_dash {
-        "classify" => Some(SkillFeedbackSpan::Classify.phase()),
-        "gather" => Some(SkillFeedbackSpan::Gather.phase()),
-        "draft" | "generate" | "extract" => Some(SkillFeedbackSpan::Draft.phase()),
-        "evaluate" => Some(SkillFeedbackSpan::Evaluate.phase()),
-        "convergence" | "converge" => Some(SkillFeedbackSpan::Convergence.phase()),
-        "write" => Some(SkillFeedbackSpan::Write.phase()),
-        _ => None,
+    // Match against the six canonical phases by checking if the last segment
+    // contains the phase name. This handles both "sankey-classify" and
+    // "adversarial-convergence-check" — the phase name appears as a substring.
+    // Order matters: check longer/more-specific patterns first to avoid
+    // false positives (e.g. "convergence" before "converge").
+    if last_segment.contains("classify") {
+        Some(SkillFeedbackSpan::Classify.phase())
+    } else if last_segment.contains("gather") {
+        Some(SkillFeedbackSpan::Gather.phase())
+    } else if last_segment.contains("draft")
+        || last_segment.contains("generate")
+        || last_segment.contains("extract")
+    {
+        Some(SkillFeedbackSpan::Draft.phase())
+    } else if last_segment.contains("evaluate") {
+        Some(SkillFeedbackSpan::Evaluate.phase())
+    } else if last_segment.contains("convergence") || last_segment.contains("converge") {
+        Some(SkillFeedbackSpan::Convergence.phase())
+    } else if last_segment.contains("write") {
+        Some(SkillFeedbackSpan::Write.phase())
+    } else {
+        None
     }
 }
 
@@ -845,28 +859,26 @@ impl ManifestExecutor {
                 // the step's template_ref (e.g. "sankey-flow/sankey-classify" →
                 // "classify"). Only select steps emit feedback spans — loop,
                 // choice, abort, and escalate are control flow, not PDCA phases.
-                if step.action == "select" {
-                    if let Some(ref template_ref) = step.template_ref {
-                        if let Some(phase) = extract_feedback_phase(template_ref) {
-                            let span_target =
-                                format!("{}.{}", manifest.ledger.span_namespace, phase);
-                            // tracing's target: needs &'static str, but we have a
-                            // dynamic namespace. Use tracing::event! with the
-                            // target as a field instead, and emit under the
-                            // generic "reg.skill" target (which is registered).
-                            // The full namespace is carried in the `ns` field.
-                            info!(
-                                target: "reg.skill",
-                                ns = %span_target,
-                                skill_id = %manifest.id,
-                                phase = phase,
-                                step = step.ordinal,
-                                iteration = iteration,
-                                template_ref = %template_ref,
-                                "REG"
-                            );
-                        }
-                    }
+                if step.action == "select"
+                    && let Some(ref template_ref) = step.template_ref
+                    && let Some(phase) = extract_feedback_phase(template_ref)
+                {
+                    let span_target = format!("{}.{}", manifest.ledger.span_namespace, phase);
+                    // tracing's target: needs &'static str, but we have a
+                    // dynamic namespace. Use tracing::event! with the
+                    // target as a field instead, and emit under the
+                    // generic "reg.skill" target (which is registered).
+                    // The full namespace is carried in the `ns` field.
+                    info!(
+                        target: "reg.skill",
+                        ns = %span_target,
+                        skill_id = %manifest.id,
+                        phase = phase,
+                        step = step.ordinal,
+                        iteration = iteration,
+                        template_ref = %template_ref,
+                        "REG"
+                    );
                 }
 
                 step_idx += 1;

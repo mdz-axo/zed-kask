@@ -620,7 +620,7 @@ chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
-clap = { version = "4.4", features = ["derive", "wrap_help"] }
+clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 clap_complete = { version = "4.4" }
 clap_complete_nushell = { version = "4.4" }
 cocoa = "=0.26.0"
@@ -898,7 +898,7 @@ time = { version = "0.3", features = [
     "local-offset",
 ] }
 tiny_http = "0.12"
-tokio = { version = "1" }
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = [
     "display",
@@ -966,6 +966,7 @@ zeroize = "1.8"
 zstd = "0.11"
 
 # hKask workspace dependencies (kask/ crates inherit these)
+# Only deps not already defined above in the root [workspace.dependencies].
 async-stream = "0.3"
 axum = { version = "0.8", features = ["ws"] }
 crossterm = "0.28"
@@ -979,6 +980,7 @@ subtle = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-axum = "0.2"
+matrix-sdk = { version = "0.16", default-features = false, features = ["rustls-tls"] }
 
 [workspace.dependencies.windows]
 version = "0.61"
@@ -1148,7 +1150,7 @@ lto = false
 codegen-units = 16
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "allow" }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("hedera"))', 'cfg(kani)'] }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

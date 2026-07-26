@@ -273,7 +273,7 @@ impl ScenariosView {
 
     // ── Render methods ────────────────────────────────────────────────────
 
-    fn render_scaffolding(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_scaffolding(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let prompt = scaffolding_for_state(&self.status);
 
@@ -302,9 +302,10 @@ impl ScenariosView {
                     .size(LabelSize::Small)
                     .color(Color::Default),
             )
+            .into_any_element()
     }
 
-    fn render_pipeline_stages(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_pipeline_stages(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let stages: Vec<AnyElement> = PIPELINE_STAGES
             .iter()
@@ -346,9 +347,10 @@ impl ScenariosView {
                     .color(Color::Muted),
             )
             .children(stages)
+            .into_any_element()
     }
 
-    fn render_pipeline_overview(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_pipeline_overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let Some(status) = &self.status else {
             return div().into_any_element();
@@ -390,10 +392,14 @@ impl ScenariosView {
             })
             .collect();
 
-        h_flex().gap_2().flex_wrap().children(tile_elements)
+        h_flex()
+            .gap_2()
+            .flex_wrap()
+            .children(tile_elements)
+            .into_any_element()
     }
 
-    fn render_calibration(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_calibration(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let Some(status) = &self.status else {
             return div().into_any_element();
@@ -450,9 +456,10 @@ impl ScenariosView {
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
+            .into_any_element()
     }
 
-    fn render_event_matrix(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_event_matrix(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let Some(status) = &self.status else {
             return div().into_any_element();
@@ -530,10 +537,10 @@ impl ScenariosView {
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
-            .children(dots)
+            .children(dots).into_any_element()
     }
 
-    fn render_event_tree(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_event_tree(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let Some(status) = &self.status else {
             return div().into_any_element();
@@ -544,7 +551,7 @@ impl ScenariosView {
 
         let joint_text = tree
             .joint_probability
-            .map(|j| format!("{j:.4f}"))
+            .map(|j| format!("{j:.4}"))
             .unwrap_or_else(|| "—".to_string());
 
         let nodes: Vec<AnyElement> = tree
@@ -633,9 +640,10 @@ impl ScenariosView {
                     ),
             )
             .children(nodes)
+            .into_any_element()
     }
 
-    fn render_recent_forecasts(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_recent_forecasts(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
         let Some(status) = &self.status else {
             return div().into_any_element();
@@ -688,6 +696,7 @@ impl ScenariosView {
                     .color(Color::Muted),
             )
             .children(rows)
+            .into_any_element()
     }
 }
 
@@ -844,7 +853,6 @@ impl Render for ScenariosView {
             .child(self.render_event_tree(cx))
             // Recent forecasts
             .child(self.render_recent_forecasts(cx))
-            .into_any_element()
     }
 }
 
