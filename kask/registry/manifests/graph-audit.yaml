@@ -28,7 +28,7 @@ convergence:
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1
-  convergence_field: step_5_result.convergence_metric
+  convergence_field: convergence_metric
   on_not_reached: escalate
 
 gas:
@@ -355,10 +355,27 @@ steps:
 
   - ordinal: 16
     action: loop
-    description: >
-      Re-enter graph-audit cycle if convergence is not met.
+    condition: "{{ mode | default('code') == 'code' }}"
+    description: Re-enter code mode cycle if convergence is not met.
     input_mapping:
       loop_target: 1
+      convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
+
+  - ordinal: 17
+    action: loop
+    condition: "{{ mode == 'semantic' }}"
+    description: Re-enter semantic mode cycle if convergence is not met.
+    input_mapping:
+      loop_target: 5
+      convergence_metric: "{{ step_14_result.convergence_metric | default(1.0) }}"
+
+  - ordinal: 18
+    action: loop
+    condition: "{{ mode == 'dual' }}"
+    description: Re-enter dual mode cycle if convergence is not met.
+    input_mapping:
+      loop_target: 1
+      convergence_metric: "{{ step_15_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

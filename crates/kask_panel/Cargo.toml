@@ -20,6 +20,7 @@ log.workspace = true
 anyhow.workspace = true
 editor.workspace = true
 language.workspace = true
+language_core.workspace = true
 text.workspace = true
 serde_json.workspace = true
 serde.workspace = true

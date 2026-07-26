@@ -27,7 +27,7 @@ convergence:
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1
-  convergence_field: step_3_result.convergence_metric
+  convergence_field: convergence_metric
   on_not_reached: escalate
 
 gas:
@@ -213,9 +213,19 @@ steps:
 
   - ordinal: 10
     action: loop
-    description: Re-enter cycle if convergence threshold is not met.
+    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
+    description: Re-enter maintenance cycle if convergence is not met.
     input_mapping:
       loop_target: 1
+      convergence_metric: "{{ step_3_result.convergence_metric | default(1.0) }}"
+
+  - ordinal: 11
+    action: loop
+    condition: "{{ mode == 'logic_audit' }}"
+    description: Re-enter logic audit cycle if convergence is not met.
+    input_mapping:
+      loop_target: 4
+      convergence_metric: "{{ step_9_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

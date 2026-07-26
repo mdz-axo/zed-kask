@@ -22,15 +22,20 @@
 //! The `Toggle` action deploys a new panel if none is open, or focuses the
 //! existing one. This is the same pattern `TerminalView` uses.
 
+use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{CompletionProvider, Editor, EditorMode, MultiBuffer};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, Task,
     WeakEntity, Window, prelude::*,
 };
 use language::Buffer;
+use language_core::CodeLabel;
+use project::lsp_store::CompletionDocumentation;
+use project::{Completion, CompletionResponse, CompletionSource};
 use serde_json::Value;
+use text::ToOffset;
 use ui::prelude::*;
 use workspace::{
     Workspace,
@@ -216,7 +221,7 @@ impl KaskPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
-        cx.new(|cx| {
+        let panel = cx.new(|cx| {
             let input_editor = cx.new(|cx| {
                 let buffer = cx.new(|cx| Buffer::local("", cx));
                 let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -250,7 +255,17 @@ impl KaskPanel {
                 regulation_snapshot: RegulationSnapshot::default(),
                 status_fetching: false,
             }
-        })
+        });
+        // Wire the completion provider now that we have a weak handle.
+        let weak = panel.downgrade();
+        panel.update(cx, |panel, cx| {
+            panel.input_editor.update(cx, |editor, cx| {
+                editor
+                    .set_completion_provider(Some(Rc::new(KaskToolCompletionProvider::new(weak))));
+                cx.notify();
+            });
+        });
+        panel
     }
 
     fn selected_server_name(&self) -> &'static str {
@@ -689,13 +704,9 @@ impl KaskPanel {
         } else {
             let cap = self.regulation_snapshot.gas_cap;
             let remaining = self.regulation_snapshot.gas_remaining;
-            let pct = if cap == 0 { 0 } else { (remaining * 100) / cap };
+            let pct = (remaining * 100) / cap;
             // 8-cell gauge, filled proportionally.
-            let filled = if cap == 0 {
-                0
-            } else {
-                ((remaining * 8) / cap).min(8) as usize
-            };
+            let filled = ((remaining * 8) / cap).min(8) as usize;
             let gauge: String = "█".repeat(filled) + &"░".repeat(8 - filled);
             let gas_color = if pct > 50 {
                 Color::Created
@@ -1013,6 +1024,150 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+}
+
+// ── Tool completion provider ─────────────────────────────────────────────
+//
+// When the user types `/` in the input editor, this provider suggests the
+// selected server's tools (from the cached tool list). The user can run
+// `/tools` first to populate the cache; if the cache is empty, no
+// completions are offered.
+
+/// Completion provider for `/tool_name` invocations.
+///
+/// Reads the panel's `cached_tools` to suggest tool names. Stateless beyond
+/// the weak panel handle — the cache is populated by `/tools` or the
+// `list_tools` call.
+pub(crate) struct KaskToolCompletionProvider {
+    panel: WeakEntity<KaskPanel>,
+}
+
+impl KaskToolCompletionProvider {
+    pub(crate) fn new(panel: WeakEntity<KaskPanel>) -> Self {
+        Self { panel }
+    }
+}
+
+impl CompletionProvider for KaskToolCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: text::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let panel = self.panel.clone();
+        let buffer = buffer.clone();
+        let buffer_position = buffer_position;
+        cx.spawn(async move |_, cx| {
+            // Read the cached tools from the panel.
+            let tools = panel
+                .read_with(cx, |panel, _| {
+                    let (server_index, tools) = panel.cached_tools.as_ref()?;
+                    // Only offer completions if the cache is for the currently
+                    // selected server.
+                    if *server_index != panel.selected_server {
+                        return None;
+                    }
+                    Some(tools.clone())
+                })
+                .ok()
+                .flatten();
+            let tools = tools.unwrap_or_default();
+            if tools.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            // Find the `/` prefix range and build the replace_range anchor.
+            let replace_range = buffer.read_with(cx, |buffer, _| {
+                let snapshot = buffer.text_snapshot();
+                let cursor_offset = buffer_position.to_offset(&snapshot);
+                let text = snapshot.text();
+                let before = &text[..cursor_offset.min(text.len())];
+                let slash_offset = before.rfind('/')?;
+                let between = &before[slash_offset + 1..];
+                if between.chars().any(char::is_whitespace) {
+                    return None;
+                }
+                if slash_offset > 0 {
+                    let prev_char = before.as_bytes()[slash_offset - 1];
+                    if !prev_char.is_ascii_whitespace() {
+                        return None;
+                    }
+                }
+                Some(buffer.anchor_before(slash_offset)..buffer_position)
+            });
+            let Some(replace_range) = replace_range else {
+                return Ok(Vec::new());
+            };
+
+            // Build completions for each tool.
+            let completions: Vec<Completion> = tools
+                .iter()
+                .map(|tool| {
+                    let new_text = format!("/{} ", tool.name);
+                    let label = CodeLabel::plain(format!("/{}", tool.name), Some(&tool.name));
+                    let documentation = if tool.description.is_empty() {
+                        None
+                    } else {
+                        Some(CompletionDocumentation::SingleLine(
+                            tool.description.clone().into(),
+                        ))
+                    };
+                    Completion {
+                        replace_range: replace_range.clone(),
+                        new_text,
+                        label,
+                        documentation,
+                        source: CompletionSource::Custom,
+                        icon_path: None,
+                        icon_color: None,
+                        match_start: None,
+                        snippet_deduplication_key: None,
+                        insert_text_mode: None,
+                        confirm: None,
+                        group: None,
+                    }
+                })
+                .collect();
+
+            Ok(vec![CompletionResponse {
+                completions,
+                display_options: Default::default(),
+                is_incomplete: false,
+            }])
+        })
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: text::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        // Trigger on `/` or on alphanumeric input following a `/` prefix.
+        if text == "/" {
+            return true;
+        }
+        // Check if we're currently inside a `/tool_name` prefix.
+        let buffer = buffer.read(cx);
+        let snapshot = buffer.text_snapshot();
+        let cursor_offset = position.to_offset(&snapshot);
+        let buf_text = snapshot.text();
+        let before = &buf_text[..cursor_offset.min(buf_text.len())];
+        if let Some(slash_offset) = before.rfind('/') {
+            let between = &before[slash_offset + 1..];
+            if !between.chars().any(char::is_whitespace)
+                && (slash_offset == 0 || before.as_bytes()[slash_offset - 1].is_ascii_whitespace())
+            {
+                return text.chars().all(|c| c.is_alphanumeric() || c == '_');
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]

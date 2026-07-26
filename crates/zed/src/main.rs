@@ -549,6 +549,7 @@ fn main() {
                 .with_alerts_channel(alert_tx),
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
+        let cybernetics_loop_for_panel = cybernetics_loop.clone();
         let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
             std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
         let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
@@ -1308,7 +1309,15 @@ fn main() {
                     executor: cx.background_executor().clone(),
                 });
                 kask_panel::set_scoped_inference(Some(panel_inference));
-                log::info!("Kask panel tool invoker + scoped inference wired");
+
+                let panel_status = std::sync::Arc::new(PanelRegulationStatus {
+                    cybernetics_loop: cybernetics_loop_for_panel,
+                    ledger: panel_regulation_ledger,
+                    webid: hkask_types::WebID::from_persona(b"kask-panel"),
+                    executor: cx.background_executor().clone(),
+                });
+                kask_panel::set_regulation_status(Some(panel_status));
+                log::info!("Kask panel tool invoker + scoped inference + regulation status wired");
             } else {
                 log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skills will use body injection");
             }
@@ -1671,6 +1680,40 @@ impl kask_panel::ScopedInference for PanelScopedInference {
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(result.text)
+        })
+    }
+}
+
+/// Adapter implementing `kask_panel::RegulationStatus` via the CyberneticsLoop
+/// and RegulationLedger. Provides gas + health + alert snapshots for the
+/// panel's status bar.
+struct PanelRegulationStatus {
+    cybernetics_loop: std::sync::Arc<tokio::sync::RwLock<hkask_regulation::CyberneticsLoop>>,
+    ledger: std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
+    webid: hkask_types::WebID,
+    executor: gpui::BackgroundExecutor,
+}
+
+impl kask_panel::RegulationStatus for PanelRegulationStatus {
+    fn snapshot(&self) -> gpui::Task<kask_panel::RegulationSnapshot> {
+        let loop_arc = self.cybernetics_loop.clone();
+        let ledger_arc = self.ledger.clone();
+        let webid = self.webid;
+        self.executor.spawn(async move {
+            let loop_guard = loop_arc.read().await;
+            let gas = loop_guard.agent_gas_status(&webid).await;
+            drop(loop_guard);
+            let ledger_guard = ledger_arc.read().await;
+            let health = ledger_guard.health().await;
+            let alerts = ledger_guard.alerts().await;
+            drop(ledger_guard);
+            kask_panel::RegulationSnapshot {
+                gas_remaining: gas.as_ref().map(|g| g.remaining.as_raw()).unwrap_or(0),
+                gas_cap: gas.as_ref().map(|g| g.cap.as_raw()).unwrap_or(0),
+                alert_count: alerts.len(),
+                critical_count: health.critical_count,
+                healthy: health.healthy,
+            }
         })
     }
 }

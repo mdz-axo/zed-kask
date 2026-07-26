@@ -11043,6 +11043,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "language_core",
  "log",
  "project",
  "serde",
@@ -18214,10 +18215,6 @@ dependencies = [
  "smol",
  "tempfile",
 ]
-
-[[package]]
-name = "sandbox-sed-wording"
-version = "0.0.0"
 
 [[package]]
 name = "scc"

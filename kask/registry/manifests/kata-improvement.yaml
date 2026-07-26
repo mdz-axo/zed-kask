@@ -26,7 +26,7 @@ convergence:
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1
-  convergence_field: step_5_result.convergence_metric
+  convergence_field: convergence_metric
   on_not_reached: escalate
 
 gas:
@@ -203,11 +203,23 @@ steps:
 
   - ordinal: 11
     action: loop
-    description: Re-enter kata cycle if convergence is not met.
+    condition: "{{ mode | default('improvement') == 'beginner' }}"
+    description: Re-enter beginner kata cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 7  # improvement mode: re-enter at step 2 (ordinal 7)
+      loop_target: 1
+      convergence_metric: "{{ step_5_result.convergence_metric | default(1.0) }}"
+
+  - ordinal: 12
+    action: loop
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    description: Re-enter improvement kata cycle if convergence is not met.
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: 7
+      convergence_metric: "{{ step_10_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
