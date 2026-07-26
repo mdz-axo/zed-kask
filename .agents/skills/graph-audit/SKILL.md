@@ -53,9 +53,9 @@ Act:    Step 6 - Loop               -> If not converged, re-enter with refined t
 
 ## Improvement Measure
 
-**Code mode convergence**: Coverage Saturation Detection (field: `step_5_result.convergence_metric`). Threshold: 0.25.
+**Code mode convergence**: Coverage Saturation Detection (field: `convergence_metric` (top-level, bound by mode-specific loop step)). Threshold: 0.25.
 
-**Semantic/Dual mode convergence**: Graph-health convergence metric (field: `step_5_result.convergence_metric`). Threshold: 0.15.
+**Semantic/Dual mode convergence**: Graph-health convergence metric (field: `convergence_metric` (top-level, bound by mode-specific loop step)). Threshold: 0.15.
 
 ## MCP Tools (code and dual modes)
 

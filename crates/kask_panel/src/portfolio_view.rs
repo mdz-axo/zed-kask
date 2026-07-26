@@ -841,7 +841,6 @@ impl PortfolioDashboardView {
         let rows: Vec<AnyElement> = self
             .attribution
             .iter()
-            .take(20) // Top 20 by absolute contribution (already sorted by server)
             .map(|row| {
                 let color = if row.contribution_bps >= 0.0 {
                     Color::Created
@@ -881,7 +880,7 @@ impl PortfolioDashboardView {
             .border_1()
             .border_color(border_color)
             .child(
-                Label::new("Attribution (top 20 by impact)")
+                Label::new(format!("Attribution ({} holdings)", self.attribution.len()))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )

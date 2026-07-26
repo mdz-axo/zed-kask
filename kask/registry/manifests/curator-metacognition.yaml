@@ -1,22 +1,15 @@
-# Curator Metacognition Manifest
-# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
-
 manifest:
   id: curator-metacognition
   category: infrastructure
   name: Curator Metacognition
   functional_role: knowact
-  description: >
-    Metacognitive reasoning for system sense-making, performance monitoring,
-    and coordination with hKask Administrator on system evolution.
+  description: 'Metacognitive reasoning for system sense-making, performance monitoring, and coordination
+    with hKask Administrator on system evolution.
+
+    '
   version: 0.31.0
   editor: hKask-Administrator
   visibility: Public
-
-# Metacognition Template Reference
-# metacognition_template: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema) registry/templates/curator-metacognition.yaml
-
-# Energy Budget Configuration
 gas:
   cap: 25000
   alert_threshold: 0.7
@@ -25,59 +18,61 @@ gas:
     enabled: true
     max_adjustment_percent: 10
     requires_regulation_justification: true
-
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
-
-# Process Steps
 steps:
-  - ordinal: 1
-    action: populate
-    description: >
-      Gather system state from bot reports and Regulation spans.
-      Synthesize variety counters, alert states, and performance metrics.
-    renderer: minijinja
-    template_ref: curator/system_state_gather.j2
-    mcp: hkask-mcp-memory
-    gas_cap: 3000
-    timeout_seconds: 30
-    output_schema:
-      type: object
-      properties:
-        system_health:
-          type: string
-          enum: [healthy, degraded, critical]
-        variety_deficit:
-          type: number
-        active_alerts:
-          type: array
-        bot_status:
-          type: object
+- ordinal: 1
+  action: populate
+  description: 'Gather system state from bot reports and Regulation spans. Synthesize variety counters,
+    alert states, and performance metrics.
 
-  - ordinal: 2
-    action: populate
-    description: >
-      Render Kata coaching directives when capability gaps are detected.
-      Uses the curator-metacognition template kata_directives section.
-    renderer: minijinja
-    template_ref: curator/curator-metacognition.yaml#kata_directives
-    gas_cap: 3000
-    timeout_seconds: 30
-    output_schema:
-      type: object
-      properties:
-        kata_directives:
-          type: array
-          description: Array of Kata coaching directives for bots with capability gaps
-        recommended_kata_type:
-          type: string
-          enum: [improvement, coaching, starter]
-        target_bots:
-          type: array
+    '
+  renderer: minijinja
+  template_ref: curator/system_state_gather.j2
+  mcp: hkask-mcp-memory
+  gas_cap: 3000
+  timeout_seconds: 30
+  output_schema:
+    type: object
+    properties:
+      system_health:
+        type: string
+        enum:
+        - healthy
+        - degraded
+        - critical
+      variety_deficit:
+        type: number
+      active_alerts:
+        type: array
+      bot_status:
+        type: object
+- ordinal: 2
+  action: populate
+  description: 'Render Kata coaching directives when capability gaps are detected. Uses the curator-metacognition
+    template kata_directives section.
 
-# Error Handling
+    '
+  renderer: minijinja
+  template_ref: curator/curator-metacognition.yaml#kata_directives
+  gas_cap: 3000
+  timeout_seconds: 30
+  output_schema:
+    type: object
+    properties:
+      kata_directives:
+        type: array
+        description: Array of Kata coaching directives for bots with capability gaps
+      recommended_kata_type:
+        type: string
+        enum:
+        - improvement
+        - coaching
+        - starter
+      target_bots:
+        type: array
 error_handling:
   on_gas_exceeded: abort_and_escalate
   on_timeout: retry
@@ -85,45 +80,45 @@ error_handling:
   retry_backoff_seconds: 1
   on_synthesis_failure: degrade_gracefully
   on_escalation_required: notify_administrator_immediately
-
-# OCAP Configuration
 ocap:
   delegation_chain:
     Curator:
-      can_delegate_to: [all_bots]
-      can_access: [own_episodic, all_public_semantic]
+      can_delegate_to:
+      - all_bots
+      can_access:
+      - own_episodic
+      - all_public_semantic
       requires_consent: false
     bots:
       can_delegate_to: []
-      can_access: [own_episodic, all_public_semantic]
+      can_access:
+      - own_episodic
+      - all_public_semantic
       requires_consent: true
     Administrator:
-      can_delegate_to: [Curator]
-      can_access: [all]
+      can_delegate_to:
+      - Curator
+      can_access:
+      - all
       requires_consent: false
   required_capabilities:
-    - resource: regulation
-      action: emit
-      gas_budget: 2000
-    - resource: memory
-      action: recall
-      gas_budget: 3000
-    - resource: inference
-      action: call
-      gas_budget: 6000
-    # - resource: ensemble  # Deferred (2026-06-14)
-    #   action: coordinate
-    #   gas_budget: 4000
+  - resource: regulation
+    action: emit
+    gas_budget: 2000
+  - resource: memory
+    action: recall
+    gas_budget: 3000
+  - resource: inference
+    action: call
+    gas_budget: 6000
   delegation_chain_required: true
   max_delegation_depth: 7
   signature_algorithm: HMAC-SHA256
   capability_expiry_seconds: 7200
   template_scoped: true
-
-# Regulation Monitoring
 ledger:
   emit_spans: true
-  span_namespace: hkask.template.metacognition
+  span_namespace: reg.skill.curator-metacognition
   rate_limit:
     per_bot_per_minute: 100
     per_session_per_minute: 500
@@ -135,42 +130,15 @@ ledger:
     repetitive_span_threshold: 10
   priority_queue:
     enabled: true
-    order: [alert, outcome, invocation, production]
+    order:
+    - alert
+    - outcome
+    - invocation
+    - production
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: hKask-Administrator
-
-# Bot Report Integration
-# bot_reporting: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   ingest_from:
-#     - regulation-curator-bot
-#     - memory-curator-bot
-#     - inference-curator-bot
-#     - mcp-dispatch-bot
-#     # - ensemble-curator-bot  # Deferred (2026-06-14)
-#     - git-curator-bot
-#     - registry-dispatch-bot
-#   synthesis_interval: hourly
-#   alert_triggers:
-#     - variety_deficit_gt_100
-#     - bot_coordination_failure
-#     - system_degradation_detected
-#     - gas_budget_critical
-
-# Administrator Coordination
-# administrator: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   notification_channels:
-#     - kask_chat
-#     - system_log
-#   report_format: markdown_synthesis
-#   include:
-#     - system_health_summary
-#     - active_alerts
-#     - bot_status
-#     - calibration_changes
-#     - evolution_recommendations
-
-# Audit Trail
+  telemetry_namespace: hkask.template.curator-metacognition
 audit:
   enabled: true
   log_level: info

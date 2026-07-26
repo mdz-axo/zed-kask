@@ -1,246 +1,207 @@
-# Kali Audit Process Manifest
-# ℏKask v0.31.0 — Security review as convergent PDCA
-# Phased: select-surface → audit → report → convergence-check → loop
-#
-# Standards: OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A
-# Sources: Microsoft Research (Spotlighting, FIDES), OpenAI (Instruction Hierarchy),
-#   ANSSI Secure Rust Guidelines, RustSec, Trail of Bits, Thinkst canarytokens
-#
-# Forward-adaptable design:
-# - Audit template consumes regression library at runtime (coverage grows with library)
-# - Defense layers are parameters, not hardcoded (new layers added without template changes)
-# - Surface discovery is dynamic (new crates/MCP servers auto-discovered)
-
 manifest:
   id: kali-audit
   category: skill
   name: Kali Audit
-  description: >
-    Convergent security review process. Runs a structured, phased audit against
-    a target surface (code, template, supply-chain, mcp, config, llm-io):
-    discovers the surface and defense-layer coverage, executes agent-coordinated
-    probes with MCP tools, classifies findings by CWE/OWASP LLM 2025/ATLAS/NIST
-    SSDF, and produces a structured report with proposed regression entries.
-    Computes convergence via defense-layer coverage and residual risk, and
-    iterates until critical/high findings are resolved or escalation is required.
-    Consumes the security regression library (security/regressions/) as input
-    to skip already-enforced checks. Forward-adaptable: new attack vectors,
-    defenses, and surfaces are added as regression entries and defense layers
-    without template changes.
+  description: 'Convergent security review process. Runs a structured, phased audit against a target surface
+    (code, template, supply-chain, mcp, config, llm-io): discovers the surface and defense-layer coverage,
+    executes agent-coordinated probes with MCP tools, classifies findings by CWE/OWASP LLM 2025/ATLAS/NIST
+    SSDF, and produces a structured report with proposed regression entries. Computes convergence via
+    defense-layer coverage and residual risk, and iterates until critical/high findings are resolved or
+    escalation is required. Consumes the security regression library (security/regressions/) as input
+    to skip already-enforced checks. Forward-adaptable: new attack vectors, defenses, and surfaces are
+    added as regression entries and defense layers without template changes.
+
+    '
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-
 convergence:
-  # Rationale: 0.10 — stricter than bug-hunt (0.25) because security findings
-  # are higher-stakes. A 0.10 threshold means no critical/high findings remain
-  # and >= 6/8 defense layers are present. Medium findings are tolerated but flagged.
-  threshold: 0.10
+  threshold: 0.1
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1
   convergence_field: step_5_result.convergence_metric
   on_not_reached: escalate
-
 gas:
   cap: 100000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 2
   alert_threshold: 0.8
   hard_limit: true
-
 inputs:
-  - name: target_surface
-    type: string
-    required: true
-    description: >
-      The surface to audit: `code`, `template`, `supply-chain`, `mcp`, `config`,
-      `llm-io`, or `auto` (discover from filesystem).
-  - name: target_path
-    type: string
-    required: true
-    description: >
-      Filesystem path to the target (crate path, template dir, or "workspace"
-      for supply-chain/config/llm-io audits).
-  - name: regression_library
-    type: array
-    required: false
-    description: >
-      Pre-loaded regression library entries (from security/regressions/RR-*.yaml).
-      If not provided, the select-surface step will output guidance for the agent
-      to read the library before re-invoking.
-  - name: probe_findings
-    type: string
-    required: false
-    description: >
-      Raw probe findings from agent-coordinated MCP tool execution.
-      Populated by the agent between step 2 (audit) and step 3 (report).
+- name: target_surface
+  type: string
+  required: true
+  description: 'The surface to audit: `code`, `template`, `supply-chain`, `mcp`, `config`, `llm-io`, or
+    `auto` (discover from filesystem).
 
+    '
+- name: target_path
+  type: string
+  required: true
+  description: 'Filesystem path to the target (crate path, template dir, or "workspace" for supply-chain/config/llm-io
+    audits).
+
+    '
+- name: regression_library
+  type: array
+  required: false
+  description: 'Pre-loaded regression library entries (from security/regressions/RR-*.yaml). If not provided,
+    the select-surface step will output guidance for the agent to read the library before re-invoking.
+
+    '
+- name: probe_findings
+  type: string
+  required: false
+  description: 'Raw probe findings from agent-coordinated MCP tool execution. Populated by the agent between
+    step 2 (audit) and step 3 (report).
+
+    '
 steps:
-  - ordinal: 1
-    action: select
-    description: >
-      Select the audit target surface, discover defense-layer coverage, and map
-      to the applicable check catalog. Reads the regression library to identify
-      already-enforced checks and excludes them. If target_surface is "auto",
-      discovers surfaces from the filesystem.
-    renderer: minijinja
-    template_ref: kali-audit/select-surface
-    gas_cap: 2048
-    timeout_seconds: 30
-    input_mapping:
-      target_surface: "{{ target_surface }}"
-      target_path: "{{ target_path }}"
-      regression_library: "{{ regression_library | default([]) }}"
+- ordinal: 1
+  action: select
+  description: 'Select the audit target surface, discover defense-layer coverage, and map to the applicable
+    check catalog. Reads the regression library to identify already-enforced checks and excludes them.
+    If target_surface is "auto", discovers surfaces from the filesystem.
 
-  - ordinal: 2
-    action: select
-    description: >
-      AUDIT: Agent-coordinated MCP tool execution. Runs security checks for the
-      selected surface using file:read, code:search, and terminal tools. Checks
-      for evidence-backed patterns (OWASP, ANSSI, RustSec, Microsoft Research)
-      and verifies defense-layer presence. Collect structured findings.
+    '
+  renderer: minijinja
+  template_ref: kali-audit/select-surface
+  gas_cap: 2048
+  timeout_seconds: 30
+  input_mapping:
+    target_surface: '{{ target_surface }}'
+    target_path: '{{ target_path }}'
+    regression_library: '{{ regression_library | default([]) }}'
+- ordinal: 2
+  action: select
+  description: 'AUDIT: Agent-coordinated MCP tool execution. Runs security checks for the selected surface
+    using file:read, code:search, and terminal tools. Checks for evidence-backed patterns (OWASP, ANSSI,
+    RustSec, Microsoft Research) and verifies defense-layer presence. Collect structured findings.
 
-      Design note: This phase requires the agent to execute MCP tools between
-      template calls. In pure FlowDef execution (ManifestExecutor), the probe_findings
-      input should be pre-populated. In Zed sessions, the agent orchestrates
-      probing between audit and report steps.
-    renderer: minijinja
-    template_ref: kali-audit/audit
-    gas_cap: 8192
-    timeout_seconds: 300
-    input_mapping:
-      selected_surface: "{{ step_1_result.selected_surface | default(target_surface) }}"
-      target_path: "{{ target_path }}"
-      checks_to_run: "{{ step_1_result.checks_to_run | default([]) }}"
-      known_regressions: "{{ step_1_result.known_regressions | default([]) }}"
-      defense_layers: "{{ step_1_result.defense_layers | default([]) }}"
+    Design note: This phase requires the agent to execute MCP tools between template calls. In pure FlowDef
+    execution (ManifestExecutor), the probe_findings input should be pre-populated. In Zed sessions, the
+    agent orchestrates probing between audit and report steps.
 
-  - ordinal: 3
-    action: select
-    description: >
-      Synthesize findings into a structured report. Produce verdict (Pass/
-      Conditional/Fail) based on findings AND defense-layer coverage. Propose
-      regression entries with source citations (OWASP 2025, ATLAS, NIST SSDF).
-      Identify top 3 fixes and defense-layer gaps.
-    renderer: minijinja
-    template_ref: kali-audit/report
-    gas_cap: 4096
-    timeout_seconds: 60
-    input_mapping:
-      findings: "{{ step_2_result.findings | default([]) }}"
-      coverage: "{{ step_2_result.coverage | default({}) }}"
-      selected_surface: "{{ step_1_result.selected_surface | default(target_surface) }}"
-      target_path: "{{ target_path }}"
+    '
+  renderer: minijinja
+  template_ref: kali-audit/audit
+  gas_cap: 8192
+  timeout_seconds: 300
+  input_mapping:
+    selected_surface: '{{ step_1_result.selected_surface | default(target_surface) }}'
+    target_path: '{{ target_path }}'
+    checks_to_run: '{{ step_1_result.checks_to_run | default([]) }}'
+    known_regressions: '{{ step_1_result.known_regressions | default([]) }}'
+    defense_layers: '{{ step_1_result.defense_layers | default([]) }}'
+- ordinal: 3
+  action: select
+  description: 'Synthesize findings into a structured report. Produce verdict (Pass/ Conditional/Fail)
+    based on findings AND defense-layer coverage. Propose regression entries with source citations (OWASP
+    2025, ATLAS, NIST SSDF). Identify top 3 fixes and defense-layer gaps.
 
-  - ordinal: 4
-    action: select
-    description: >
-      TAXONOMY_MAP (folded from attack-taxonomy-mapper): Map findings to the
-      OSC&R attack taxonomy (dependency confusion, typosquatting, malicious
-      commit injection, build pipeline compromise, unmaintained component,
-      unverified registry). Adds an optional, backward-compatible
-      `taxonomy_mapping` field to existing `surface: supply-chain` regression
-      YAML entries. Skipped for non-supply-chain surfaces.
-    renderer: minijinja
-    template_ref: kali-audit/taxonomy-map
-    gas_cap: 2048
-    timeout_seconds: 60
-    condition: "step_1_result.selected_surface == 'supply-chain'"
-    input_mapping:
-      findings: "{{ step_2_result.findings | default([]) }}"
-      coverage: "{{ step_2_result.coverage | default({}) }}"
-      selected_surface: "{{ step_1_result.selected_surface | default(target_surface) }}"
+    '
+  renderer: minijinja
+  template_ref: kali-audit/report
+  gas_cap: 4096
+  timeout_seconds: 60
+  input_mapping:
+    findings: '{{ step_2_result.findings | default([]) }}'
+    coverage: '{{ step_2_result.coverage | default({}) }}'
+    selected_surface: '{{ step_1_result.selected_surface | default(target_surface) }}'
+    target_path: '{{ target_path }}'
+- ordinal: 4
+  action: select
+  description: 'TAXONOMY_MAP (folded from attack-taxonomy-mapper): Map findings to the OSC&R attack taxonomy
+    (dependency confusion, typosquatting, malicious commit injection, build pipeline compromise, unmaintained
+    component, unverified registry). Adds an optional, backward-compatible `taxonomy_mapping` field to
+    existing `surface: supply-chain` regression YAML entries. Skipped for non-supply-chain surfaces.
 
-  - ordinal: 5
-    action: select
-    description: >
-      Compute convergence metric via defense-layer coverage + residual risk +
-      CWE coverage + regression library growth. Converged when metric <= 0.10.
-    renderer: minijinja
-    template_ref: kali-audit/convergence-check
-    gas_cap: 2048
-    timeout_seconds: 30
-    input_mapping:
-      findings_count: "{{ step_2_result.findings | default([]) | length }}"
-      critical_count: "{{ step_2_result.coverage.checks_failed | default(0) }}"
-      high_count: 0
-      medium_count: 0
-      low_count: 0
-      defense_layers_present: "{{ step_2_result.coverage.defense_layers_present | default([]) }}"
-      defense_layers_total: 8
-      cwe_classes_checked: "{{ step_2_result.coverage.cwe_classes_covered | default([]) }}"
-      cwe_classes_total: 0
-      regression_library_size: "{{ step_1_result.known_regressions | default([]) | length }}"
-      taxonomy_mappings: "{{ step_4_result.taxonomy_mappings | default([]) }}"
-      previous_metric: 1.0
-    fusion: false
+    '
+  renderer: minijinja
+  template_ref: kali-audit/taxonomy-map
+  gas_cap: 2048
+  timeout_seconds: 60
+  condition: step_1_result.selected_surface == 'supply-chain'
+  input_mapping:
+    findings: '{{ step_2_result.findings | default([]) }}'
+    coverage: '{{ step_2_result.coverage | default({}) }}'
+    selected_surface: '{{ step_1_result.selected_surface | default(target_surface) }}'
+- ordinal: 5
+  action: select
+  description: 'Compute convergence metric via defense-layer coverage + residual risk + CWE coverage +
+    regression library growth. Converged when metric <= 0.10.
 
-  - ordinal: 6
-    action: loop
-    description: Re-enter audit cycle if convergence is not met.
-    input_mapping:
-      loop_target: 1
-
+    '
+  renderer: minijinja
+  template_ref: kali-audit/convergence-check
+  gas_cap: 2048
+  timeout_seconds: 30
+  input_mapping:
+    findings_count: '{{ step_2_result.findings | default([]) | length }}'
+    critical_count: '{{ step_2_result.coverage.checks_failed | default(0) }}'
+    high_count: 0
+    medium_count: 0
+    low_count: 0
+    defense_layers_present: '{{ step_2_result.coverage.defense_layers_present | default([]) }}'
+    defense_layers_total: 8
+    cwe_classes_checked: '{{ step_2_result.coverage.cwe_classes_covered | default([]) }}'
+    cwe_classes_total: 0
+    regression_library_size: '{{ step_1_result.known_regressions | default([]) | length }}'
+    taxonomy_mappings: '{{ step_4_result.taxonomy_mappings | default([]) }}'
+    previous_metric: 1.0
+  fusion: false
+- ordinal: 6
+  action: loop
+  description: Re-enter audit cycle if convergence is not met.
+  input_mapping:
+    loop_target: 1
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
-
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: kali-audit/select-surface
-      gas_budget: 2048
-    - resource: template
-      action: render
-      template_id: kali-audit/audit
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: kali-audit/report
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: kali-audit/taxonomy-map
-      gas_budget: 2048
-    - resource: template
-      action: render
-      template_id: kali-audit/convergence-check
-      gas_budget: 2048
-    - resource: manifest
-      action: execute
-      template_id: kali-audit
-      gas_budget: 1000
+  - resource: template
+    action: render
+    template_id: kali-audit/select-surface
+    gas_budget: 2048
+  - resource: template
+    action: render
+    template_id: kali-audit/audit
+    gas_budget: 8192
+  - resource: template
+    action: render
+    template_id: kali-audit/report
+    gas_budget: 4096
+  - resource: template
+    action: render
+    template_id: kali-audit/taxonomy-map
+    gas_budget: 2048
+  - resource: template
+    action: render
+    template_id: kali-audit/convergence-check
+    gas_budget: 2048
+  - resource: manifest
+    action: execute
+    template_id: kali-audit
+    gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
-
 ledger:
   emit_spans: true
-  span_namespace: reg.skill.kali
+  span_namespace: reg.skill.kali-audit
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  spans:
-    - reg.skill.kali.select
-    - reg.skill.kali.audit
-    - reg.skill.kali.report
-    - reg.skill.kali.converge
-    - reg.taxonomy.select
-    - reg.taxonomy.map
-    - reg.taxonomy.report
-    - reg.taxonomy.convergence
-
 audit:
   enabled: true
   log_level: info

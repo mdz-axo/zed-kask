@@ -1,219 +1,177 @@
-# Kanban Task Decomposition Skill
-# ℏKask v0.31.0 — Agent coordination via kanban boards
-#
-# Decomposes a project description into agile-sized kanban tasks
-# following INVEST criteria (Independent, Negotiable, Valuable,
-# Estimable, Small, Testable). Uses Anthropic's Prompt Chaining pattern:
-#   Gather Context → Decompose → Review → Populate Board
-#
-# Recomposition is embedded in the decomposition: the final stage of
-# a complete task breakdown is the plan for putting the pieces back
-# together. Every decomposition must include a recomposition strategy
-# that defines how completed tasks will be assembled into the final
-# deliverable.
-
 manifest:
   id: kanban-task-decomposition
   category: pipeline
   name: Kanban Task Decomposition
-  version: "0.31.0"
-  description: >
-    Decompose a project description into discrete, independently
-    verifiable kanban tasks. Follows INVEST criteria with vertical
-    slicing — each task delivers end-to-end user value. Includes
-    recomposition strategy: the plan for reassembling completed
-    tasks into the final deliverable. Uses prompt chaining: gather
-    context, decompose with structured output including recomposition,
-    review, populate board.
+  version: 0.31.0
+  description: "Decompose a project description into discrete, independently verifiable kanban tasks.\
+    \ Follows INVEST criteria with vertical slicing \u2014 each task delivers end-to-end user value. Includes\
+    \ recomposition strategy: the plan for reassembling completed tasks into the final deliverable. Uses\
+    \ prompt chaining: gather context, decompose with structured output including recomposition, review,\
+    \ populate board.\n"
   editor: Curator
   visibility: Public
-
 gas:
   cap: 25000
   alert_threshold: 0.7
   hard_limit: true
-
 rjoule:
   cap: 2
   alert_threshold: 0.8
   hard_limit: true
-
 steps:
-  - ordinal: 1
-    action: populate
-    description: >
-      Gather project context. What are we building? What are the goals,
-      constraints, and resources? This step extracts structured context
-      from the user's natural-language project description.
-    renderer: minijinja
-    template_ref: kanban-task-decomposition/gather-context
-    gas_cap: 3000
-    timeout_seconds: 30
-    output_schema:
-      type: object
-      properties:
-        project_name:
+- ordinal: 1
+  action: populate
+  description: 'Gather project context. What are we building? What are the goals, constraints, and resources?
+    This step extracts structured context from the user''s natural-language project description.
+
+    '
+  renderer: minijinja
+  template_ref: kanban-task-decomposition/gather-context
+  gas_cap: 3000
+  timeout_seconds: 30
+  output_schema:
+    type: object
+    properties:
+      project_name:
+        type: string
+      goals:
+        type: array
+        items:
           type: string
-        goals:
-          type: array
-          items:
-            type: string
-        constraints:
-          type: array
-          items:
-            type: string
-        resources:
-          type: array
-          items:
-            type: string
-        target_task_hours:
-          type: number
-
-  - ordinal: 2
-    action: populate
-    description: >
-      Decompose the project into discrete kanban tasks. Each task must
-      satisfy INVEST criteria and be vertically sliced. CRITICAL: this
-      step must also produce a recomposition strategy — a plan for how
-      the completed tasks will be reassembled into the final deliverable.
-      Recomposition is not a separate step; it is the final stage of a
-      complete decomposition. Think of it as: "I'm breaking this apart,
-      and here's exactly how I'll put it back together."
-    renderer: minijinja
-    template_ref: kanban-task-decomposition/decompose-tasks
-    gas_cap: 10000
-    timeout_seconds: 90
-    output_schema:
-      type: object
-      properties:
-        tasks:
-          type: array
-          items:
-            type: object
-            properties:
-              title:
-                type: string
-              description:
-                type: string
-              story_points:
-                type: integer
-              estimated_hours:
-                type: number
-              labels:
-                type: array
-                items:
-                  type: string
-              criteria:
-                type: array
-                items:
-                  type: string
-              priority:
-                type: string
-                enum: [low, medium, high, critical]
-              dependencies:
-                type: array
-                items:
-                  type: string
-        recomposition:
+      constraints:
+        type: array
+        items:
+          type: string
+      resources:
+        type: array
+        items:
+          type: string
+      target_task_hours:
+        type: number
+- ordinal: 2
+  action: populate
+  description: "Decompose the project into discrete kanban tasks. Each task must satisfy INVEST criteria\
+    \ and be vertically sliced. CRITICAL: this step must also produce a recomposition strategy \u2014\
+    \ a plan for how the completed tasks will be reassembled into the final deliverable. Recomposition\
+    \ is not a separate step; it is the final stage of a complete decomposition. Think of it as: \"I'm\
+    \ breaking this apart, and here's exactly how I'll put it back together.\"\n"
+  renderer: minijinja
+  template_ref: kanban-task-decomposition/decompose-tasks
+  gas_cap: 10000
+  timeout_seconds: 90
+  output_schema:
+    type: object
+    properties:
+      tasks:
+        type: array
+        items:
           type: object
           properties:
-            strategy:
+            title:
               type: string
-              description: >
-                How completed tasks will be reassembled. Describe the
-                integration order, testing gates, and final assembly
-                steps. Example: "Tasks complete bottom-up: data layer
-                first, then API, then CLI. Integration test after each
-                layer. Final assembly: end-to-end test suite validates
-                all components together."
-            phases:
-              type: array
-              items:
-                type: object
-                properties:
-                  name:
-                    type: string
-                  task_labels:
-                    type: array
-                    items:
-                      type: string
-                  description:
-                    type: string
-            integration_order:
+            description:
+              type: string
+            story_points:
+              type: integer
+            estimated_hours:
+              type: number
+            labels:
               type: array
               items:
                 type: string
-              description: "Ordered list of task titles showing assembly sequence"
-            final_verification:
-              type: string
-        kata_guidance:
-          type: object
-          description: "Optional guidance on Toyota Kata application per task. Not required — the system learns from experience when katas are useful."
-          properties:
-            per_task:
+            criteria:
               type: array
               items:
-                type: object
-                properties:
-                  task_title:
-                    type: string
-                  starter_kata:
-                    type: string
-                    description: "When to use /kanban practice for observation drills"
-                  improvement_kata:
-                    type: string
-                    description: "When to use /kanban improve for PDCA experiments"
-                  coaching_guidance:
-                    type: string
-                    description: "For the userpod: how to coach this task effectively"
-              description: "How to verify the fully reassembled deliverable"
+                type: string
+            priority:
+              type: string
+              enum:
+              - low
+              - medium
+              - high
+              - critical
+            dependencies:
+              type: array
+              items:
+                type: string
+      recomposition:
+        type: object
+        properties:
+          strategy:
+            type: string
+            description: 'How completed tasks will be reassembled. Describe the integration order, testing
+              gates, and final assembly steps. Example: "Tasks complete bottom-up: data layer first, then
+              API, then CLI. Integration test after each layer. Final assembly: end-to-end test suite
+              validates all components together."
 
-  - ordinal: 3
-    action: populate
-    description: >
-      Review the decomposed task list for quality, completeness, and
-      recomposition viability. Check that the recomposition strategy
-      is coherent — can the pieces actually be put back together in
-      the described order? Are there gaps in the integration plan?
-    renderer: minijinja
-    template_ref: kanban-task-decomposition/review-tasks
-    gas_cap: 4000
-    timeout_seconds: 30
+              '
+          phases:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                task_labels:
+                  type: array
+                  items:
+                    type: string
+                description:
+                  type: string
+          integration_order:
+            type: array
+            items:
+              type: string
+            description: Ordered list of task titles showing assembly sequence
+          final_verification:
+            type: string
+      kata_guidance:
+        type: object
+        description: "Optional guidance on Toyota Kata application per task. Not required \u2014 the system\
+          \ learns from experience when katas are useful."
+        properties:
+          per_task:
+            type: array
+            items:
+              type: object
+              properties:
+                task_title:
+                  type: string
+                starter_kata:
+                  type: string
+                  description: When to use /kanban practice for observation drills
+                improvement_kata:
+                  type: string
+                  description: When to use /kanban improve for PDCA experiments
+                coaching_guidance:
+                  type: string
+                  description: 'For the userpod: how to coach this task effectively'
+            description: How to verify the fully reassembled deliverable
+- ordinal: 3
+  action: populate
+  description: "Review the decomposed task list for quality, completeness, and recomposition viability.\
+    \ Check that the recomposition strategy is coherent \u2014 can the pieces actually be put back together\
+    \ in the described order? Are there gaps in the integration plan?\n"
+  renderer: minijinja
+  template_ref: kanban-task-decomposition/review-tasks
+  gas_cap: 4000
+  timeout_seconds: 30
+- ordinal: 4
+  action: populate
+  description: 'Populate the kanban board with accepted tasks. Each task is created with its title, description,
+    story points, estimated hours, labels, acceptance criteria, priority, and phase grouping. Phases are
+    derived from the recomposition strategy''s phase definitions.
 
-  - ordinal: 4
-    action: populate
-    description: >
-      Populate the kanban board with accepted tasks. Each task is
-      created with its title, description, story points, estimated
-      hours, labels, acceptance criteria, priority, and phase grouping.
-      Phases are derived from the recomposition strategy's phase definitions.
-    renderer: minijinja
-    template_ref: kanban-task-decomposition/populate-board
-    gas_cap: 2000
-    timeout_seconds: 20
-
+    '
+  renderer: minijinja
+  template_ref: kanban-task-decomposition/populate-board
+  gas_cap: 2000
+  timeout_seconds: 20
 ledger:
   emit_spans: true
-  span_namespace: reg.kanban.decompose
+  span_namespace: reg.skill.kanban-task-decomposition
   variety_monitoring: true
   algedonic_threshold: 5
-
-# outcomes: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: tasks_created
-#     condition: "tasks.length > 0"
-#     action: "Board populated with decomposed tasks"
-#   - name: recomposition_defined
-#     condition: "recomposition.strategy is defined"
-#     action: "Recomposition strategy embedded in plan"
-
-# metrics: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: task_count
-#     description: "Number of tasks produced by decomposition"
-#     span: reg.kanban.decompose.tasks_created
-#   - name: avg_story_points
-#     description: "Average story points per task"
-#     span: reg.kanban.decompose.avg_points
-
 audit:
   enabled: true
   include_input: true

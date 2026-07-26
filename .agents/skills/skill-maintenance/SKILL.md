@@ -95,6 +95,12 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 | `skill-maintenance-audit.j2` | KnowAct | Run staleness and health audit for target scope. Checks R1-R12 registry rules, Z1-Z8 companion checks, X1-X4 cross-artifact checks. Used by the FlowDef manifest as step 1 of the maintenance PDCA loop. |
 | `skill-maintenance-coverage.j2` | KnowAct | Run corpus coverage analysis for uncovered/partial capabilities. Maps common task patterns against the existing skill corpus, identifies what is covered, uncovered, and partial. Used by the FlowDef manifest as step 2 of the maintenance PDCA loop. |
 | `skill-maintenance-convergence-check.j2` | KnowAct | Compute normalized convergence metric for maintenance PDCA cycles. Measures critical signal count, coverage gaps, and regression library growth. Used by the FlowDef manifest as step 3 of the maintenance PDCA loop. |
+| `logic-load-goal.j2` | WordAct | Parse the annotated goal: block from a .j2 or manifest.yaml file. (logic_audit mode, folded from skill-logic-audit) |
+| `logic-critique-template.j2` | KnowAct | Adversarial critique of a template body against its stated goal. For each flaw, provide location, claim, anchor to goal, severity, and suggested fix. (logic_audit mode) |
+| `logic-critique-critique.j2` | KnowAct | Soundness filter — separate valid, goal-anchored concerns from spurious ones. (logic_audit mode) |
+| `logic-compose-proposal.j2` | KnowAct | Compose a concrete revised artifact and unified diff from calibrated concerns. (logic_audit mode) |
+| `logic-user-choice.j2` | KnowAct | Present the proposal to the user and capture accept/reject/counter-proposal. (logic_audit mode) |
+| `logic-convergence-check.j2` | KnowAct | Compute convergence metric for logic audit cycle. Converged when no material flaws remain. (logic_audit mode) |
 
 ## Constraints
 

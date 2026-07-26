@@ -1,76 +1,66 @@
-# MCP Web — Web Search & Extract Manifest
-# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
-
 manifest:
   id: prompt-templates/web_extract
   category: pipeline
   name: Prompt-Templates Web Extractor
-  description: >
-    Search and extract information from web sources.
-    Supports source filtering, freshness constraints, and relevance ranking.
+  description: 'Search and extract information from web sources. Supports source filtering, freshness
+    constraints, and relevance ranking.
+
+    '
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-
-# Energy Budget Configuration
 gas:
   cap: 4096
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
-
-# Process Steps
 steps:
-  - ordinal: 1
-    action: populate
-    description: >
-      Render web extraction template with query and parameters.
-    renderer: minijinja
-    template_ref: prompt-templates/web_extract
-    mcp: null
-    gas_cap: 1000
-    timeout_seconds: 10
-    output_schema:
-      rendered_prompt: string
+- ordinal: 1
+  action: populate
+  description: 'Render web extraction template with query and parameters.
 
-  - ordinal: 2
-    action: execute
-    description: >
-      Execute web search and extraction via MCP.
-      Call Brave/Firecrawl search APIs.
-    renderer: null
-    template_ref: null
-    mcp: hkask-mcp-research
-    gas_cap: 4096
-    timeout_seconds: 30
-    output_schema:
-      results: array
-      total_found: integer
-      search_metadata: object
+    '
+  renderer: minijinja
+  template_ref: prompt-templates/web_extract
+  mcp: null
+  gas_cap: 1000
+  timeout_seconds: 10
+  output_schema:
+    rendered_prompt: string
+- ordinal: 2
+  action: execute
+  description: 'Execute web search and extraction via MCP. Call Brave/Firecrawl search APIs.
 
-  - ordinal: 3
-    action: feedback
-    description: >
-      Emit search outcome to Regulation.
-      Track result quality and source diversity.
-    renderer: null
-    template_ref: null
-    mcp: null # Regulation is ambient (RegulationRuntime)
-    gas_cap: 500
-    timeout_seconds: 5
-    feedback:
-      variety_delta: integer
-      result_count: integer
-    output_schema:
-      reg_event_id: string
-      outcome_recorded: boolean
+    '
+  renderer: null
+  template_ref: null
+  mcp: hkask-mcp-research
+  gas_cap: 4096
+  timeout_seconds: 30
+  output_schema:
+    results: array
+    total_found: integer
+    search_metadata: object
+- ordinal: 3
+  action: feedback
+  description: 'Emit search outcome to Regulation. Track result quality and source diversity.
 
-# Error Handling
+    '
+  renderer: null
+  template_ref: null
+  mcp: null
+  gas_cap: 500
+  timeout_seconds: 5
+  feedback:
+    variety_delta: integer
+    result_count: integer
+  output_schema:
+    reg_event_id: string
+    outcome_recorded: boolean
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
@@ -78,36 +68,30 @@ error_handling:
   retry_backoff_seconds: 1
   on_capability_denied: escalate
   on_search_failure: fallback
-
-# OCAP Configuration
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: prompt-templates/web_extract
-      gas_budget: 2000
-    - resource: web
-      action: search
-      template_id: prompt-templates/web_extract
-      gas_budget: 4000
-    - resource: regulation
-      action: emit
-      template_id: prompt-templates/web_extract
-      gas_budget: 500
+  - resource: template
+    action: render
+    template_id: prompt-templates/web_extract
+    gas_budget: 2000
+  - resource: web
+    action: search
+    template_id: prompt-templates/web_extract
+    gas_budget: 4000
+  - resource: regulation
+    action: emit
+    template_id: prompt-templates/web_extract
+    gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
-
-# Regulation Monitoring
 ledger:
   emit_spans: true
-  span_namespace: reg.web.search
+  span_namespace: reg.skill.prompt-templates/web_extract
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-
-# Audit Trail
 audit:
   enabled: true
   log_level: info

@@ -116,7 +116,10 @@ impl CompaniesServer {
                 }
             }
 
-            // Build attribution table
+            // Build attribution table. Cap at 99 holdings — if the portfolio
+            // exceeds this, keep the largest by starting market value. This
+            // bounds the calculation and presentation for a single portfolio.
+            const MAX_HOLDINGS: usize = 99;
             let mut rows = Vec::new();
             for (sym, shares) in &positions_start {
                 let p_start = prices_start
@@ -133,6 +136,14 @@ impl CompaniesServer {
                 let security_return = (p_end - p_start) / p_start;
                 let mv_start = shares * p_start;
                 rows.push((sym.clone(), mv_start, security_return));
+            }
+
+            // If over the cap, sort by market value descending and keep top 99.
+            if rows.len() > MAX_HOLDINGS {
+                rows.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                rows.truncate(MAX_HOLDINGS);
             }
 
             let total_mv: f64 = rows.iter().map(|(_, mv, _)| mv).sum();
@@ -260,6 +271,17 @@ impl CompaniesServer {
                     {"characteristics": {}, "message": "no market value"}
                 ));
             }
+
+            // Cap at 99 holdings — if the portfolio exceeds this, keep the
+            // largest by market value. Bounds the fetch + calculation cost.
+            const MAX_HOLDINGS: usize = 99;
+            if market_values.len() > MAX_HOLDINGS {
+                market_values
+                    .sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+                market_values.truncate(MAX_HOLDINGS);
+            }
+            // Recompute total_mv after truncation.
+            let total_mv: f64 = market_values.iter().map(|(_, _, _, mv)| mv).sum();
 
             // Fetch fundamentals and compute weighted averages.
             //

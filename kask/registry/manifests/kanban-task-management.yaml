@@ -1,201 +1,138 @@
-# Kanban Task Management Skill
-# ℏKask v0.31.0 — Agent coordination via kanban boards
-#
-# The ongoing management of the kanban board as agents work.
-# This is the "board operator" skill — it monitors board state,
-# coordinates between agents, tracks deliverables, manages comment
-# threads, verifies completion, moves tasks through columns, and
-# handles escalations.
-#
-# Distinct from decomposition (breaking work into tasks) and
-# delegation (spawning agents for individual tasks). Management
-# is the continuous coordination across all tasks on the board.
-#
-# Process: Monitor → Coordinate → Track → Move → Verify → Escalate
-
 manifest:
   id: kanban-task-management
   category: pipeline
   name: Kanban Task Management
-  version: "0.31.0"
-  description: >
-    Manage the kanban board as agents execute delegated tasks.
-    Monitor board state, coordinate between agents through comment
-    threads, track deliverables, move tasks through columns based
-    on progress, verify completion against acceptance criteria,
-    and escalate when agents are blocked. This is the ongoing
-    coordination skill — the board operator that keeps work flowing.
+  version: 0.31.0
+  description: "Manage the kanban board as agents execute delegated tasks. Monitor board state, coordinate\
+    \ between agents through comment threads, track deliverables, move tasks through columns based on\
+    \ progress, verify completion against acceptance criteria, and escalate when agents are blocked. This\
+    \ is the ongoing coordination skill \u2014 the board operator that keeps work flowing.\n"
   editor: Curator
   visibility: Public
-
 gas:
   cap: 30000
   alert_threshold: 0.7
   hard_limit: true
-
 rjoule:
   cap: 2
   alert_threshold: 0.8
   hard_limit: true
-
 steps:
-  - ordinal: 1
-    action: populate
-    description: >
-      Monitor the board. Check the status of all tasks, identify
-      blockers (tasks stuck in a column beyond expected time),
-      flag overdue tasks, and note tasks ready for verification.
-      This is the board-level situational awareness step.
-    renderer: minijinja
-    template_ref: kanban-task-management/monitor-board
-    gas_cap: 4000
-    timeout_seconds: 30
-    output_schema:
-      type: object
-      properties:
-        board_summary:
+- ordinal: 1
+  action: populate
+  description: 'Monitor the board. Check the status of all tasks, identify blockers (tasks stuck in a
+    column beyond expected time), flag overdue tasks, and note tasks ready for verification. This is the
+    board-level situational awareness step.
+
+    '
+  renderer: minijinja
+  template_ref: kanban-task-management/monitor-board
+  gas_cap: 4000
+  timeout_seconds: 30
+  output_schema:
+    type: object
+    properties:
+      board_summary:
+        type: object
+        properties:
+          total_tasks:
+            type: integer
+          by_status:
+            type: object
+          blocked_tasks:
+            type: array
+            items:
+              type: string
+          ready_for_review:
+            type: array
+            items:
+              type: string
+          overdue:
+            type: array
+            items:
+              type: string
+- ordinal: 2
+  action: populate
+  description: "Coordinate with agents. Read comment threads on active tasks, respond to questions, provide\
+    \ guidance, and resolve blockers. This is the bidirectional communication step \u2014 the coordinator\
+    \ reads what agents have posted and replies inline through the task's comment thread.\n"
+  renderer: minijinja
+  template_ref: kanban-task-management/coordinate-agents
+  gas_cap: 5000
+  timeout_seconds: 60
+- ordinal: 3
+  action: populate
+  description: 'Track deliverables. Check that file links submitted by agents are valid, review the deliverable
+    contents against task requirements, and flag any missing or incomplete deliverables. Update the task''s
+    deliverable list as work progresses.
+
+    '
+  renderer: minijinja
+  template_ref: kanban-task-management/track-deliverables
+  gas_cap: 4000
+  timeout_seconds: 45
+- ordinal: 4
+  action: populate
+  description: "Move tasks through columns. Based on agent progress and deliverable status, advance tasks\
+    \ to the next column. Enforce WIP limits \u2014 don't move a task into a column that's at capacity.\
+    \ Update task status and record the transition.\n"
+  renderer: minijinja
+  template_ref: kanban-task-management/move-tasks
+  gas_cap: 2000
+  timeout_seconds: 20
+- ordinal: 5
+  action: populate
+  description: 'Verify completion. For tasks in Review, evaluate submitted deliverables against acceptance
+    criteria. Check each criterion: does the work satisfy it? Produce structured pass/fail per criterion
+    with specific, actionable feedback for the agent. If passed, move to Done. If failed, return to InProgress
+    with feedback in the comment thread.
+
+    '
+  renderer: minijinja
+  template_ref: kanban-task-management/verify-completion
+  gas_cap: 6000
+  timeout_seconds: 60
+  output_schema:
+    type: object
+    properties:
+      passed:
+        type: boolean
+      reasoning:
+        type: string
+      criteria_results:
+        type: array
+        items:
           type: object
           properties:
-            total_tasks:
-              type: integer
-            by_status:
-              type: object
-            blocked_tasks:
-              type: array
-              items:
-                type: string
-            ready_for_review:
-              type: array
-              items:
-                type: string
-            overdue:
-              type: array
-              items:
-                type: string
-
-  - ordinal: 2
-    action: populate
-    description: >
-      Coordinate with agents. Read comment threads on active tasks,
-      respond to questions, provide guidance, and resolve blockers.
-      This is the bidirectional communication step — the coordinator
-      reads what agents have posted and replies inline through the
-      task's comment thread.
-    renderer: minijinja
-    template_ref: kanban-task-management/coordinate-agents
-    gas_cap: 5000
-    timeout_seconds: 60
-
-  - ordinal: 3
-    action: populate
-    description: >
-      Track deliverables. Check that file links submitted by agents
-      are valid, review the deliverable contents against task
-      requirements, and flag any missing or incomplete deliverables.
-      Update the task's deliverable list as work progresses.
-    renderer: minijinja
-    template_ref: kanban-task-management/track-deliverables
-    gas_cap: 4000
-    timeout_seconds: 45
-
-  - ordinal: 4
-    action: populate
-    description: >
-      Move tasks through columns. Based on agent progress and
-      deliverable status, advance tasks to the next column.
-      Enforce WIP limits — don't move a task into a column
-      that's at capacity. Update task status and record the
-      transition.
-    renderer: minijinja
-    template_ref: kanban-task-management/move-tasks
-    gas_cap: 2000
-    timeout_seconds: 20
-
-  - ordinal: 5
-    action: populate
-    description: >
-      Verify completion. For tasks in Review, evaluate submitted
-      deliverables against acceptance criteria. Check each criterion:
-      does the work satisfy it? Produce structured pass/fail per
-      criterion with specific, actionable feedback for the agent.
-      If passed, move to Done. If failed, return to InProgress
-      with feedback in the comment thread.
-    renderer: minijinja
-    template_ref: kanban-task-management/verify-completion
-    gas_cap: 6000
-    timeout_seconds: 60
-    output_schema:
-      type: object
-      properties:
-        passed:
-          type: boolean
-        reasoning:
-          type: string
-        criteria_results:
-          type: array
-          items:
-            type: object
-            properties:
-              criterion:
-                type: string
-              satisfied:
-                type: boolean
-              evidence:
-                type: string
-              feedback:
-                type: string
-        action:
-          type: string
-          enum: [move_to_done, return_to_inprogress, request_changes]
-
-  - ordinal: 6
-    action: populate
-    description: >
-      Escalate when needed. If an agent is blocked, unresponsive,
-      or consistently failing verification, escalate to the human
-      operator. Provide context: what task, what's blocked, what
-      has been tried, and what decision is needed. Escalation is
-      a coordination tool, not a failure — it brings human judgment
-      to situations the board operator cannot resolve alone.
-    renderer: minijinja
-    template_ref: kanban-task-management/escalate
-    gas_cap: 3000
-    timeout_seconds: 30
-
+            criterion:
+              type: string
+            satisfied:
+              type: boolean
+            evidence:
+              type: string
+            feedback:
+              type: string
+      action:
+        type: string
+        enum:
+        - move_to_done
+        - return_to_inprogress
+        - request_changes
+- ordinal: 6
+  action: populate
+  description: "Escalate when needed. If an agent is blocked, unresponsive, or consistently failing verification,\
+    \ escalate to the human operator. Provide context: what task, what's blocked, what has been tried,\
+    \ and what decision is needed. Escalation is a coordination tool, not a failure \u2014 it brings human\
+    \ judgment to situations the board operator cannot resolve alone.\n"
+  renderer: minijinja
+  template_ref: kanban-task-management/escalate
+  gas_cap: 3000
+  timeout_seconds: 30
 ledger:
   emit_spans: true
-  span_namespace: reg.kanban.management
+  span_namespace: reg.skill.kanban-task-management
   variety_monitoring: true
   algedonic_threshold: 5
-
-# outcomes: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: board_monitored
-#     condition: "board_summary generated"
-#     action: "Board state assessed"
-#   - name: agents_coordinated
-#     condition: "comments responded to"
-#     action: "Agent communication handled"
-#   - name: tasks_advanced
-#     condition: "tasks moved between columns"
-#     action: "Board flow maintained"
-#   - name: verification_complete
-#     condition: "all review tasks verified"
-#     action: "Deliverables evaluated"
-#   - name: escalated
-#     condition: "escalation issued"
-#     action: "Human operator notified"
-
-# metrics: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: tasks_in_review
-#     description: "Number of tasks awaiting verification"
-#     span: reg.kanban.management.review_count
-#   - name: blocked_tasks
-#     description: "Number of blocked tasks"
-#     span: reg.kanban.management.blocked
-#   - name: cycle_time
-#     description: "Average time tasks spend in each column"
-#     span: reg.kanban.management.cycle_time
-
 audit:
   enabled: true
   include_input: true

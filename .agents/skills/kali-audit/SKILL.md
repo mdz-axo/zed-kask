@@ -57,6 +57,7 @@ Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manife
 | `audit.j2` | KnowAct | Run security checks consuming the regression library at runtime. Checks for evidence-backed patterns (OWASP, ANSSI, RustSec, Microsoft Research). |
 | `report.j2` | KnowAct | Synthesize findings with OWASP 2025 numbering, ATLAS tactics, NIST SSDF practices, and source citations. Proposes regression entries. |
 | `convergence-check.j2` | KnowAct | Convergence metric including defense-layer coverage (8 layers), CWE coverage, and regression library growth. |
+| `taxonomy-map.j2` | KnowAct | Map supply-chain findings to OSC&R attack taxonomy (folded from attack-taxonomy-mapper). Only runs for surface == 'supply-chain'. Emits reg.taxonomy.map spans. |
 
 ## Defense-in-Depth Layer Catalog
 
@@ -89,6 +90,7 @@ The `security/regressions/` directory is the **deep artifact** — it compounds 
 - `audit.j2`: Public.
 - `report.j2`: Public.
 - `convergence-check.j2`: Public.
+- `taxonomy-map.j2`: Public. Only runs for surface == 'supply-chain'. Every mapping requires concrete evidence: finding reference, CWE category, OSC&R tactic + technique.
 - Do NOT fabricate findings — only report what was actually discovered through tool usage.
 - Every finding must include concrete evidence (file path, line number, code snippet) and a source citation.
 - Every proposed regression must use OWASP LLM 2025 numbering (not 2023).

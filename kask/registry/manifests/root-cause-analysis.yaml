@@ -1,210 +1,217 @@
-# Root Cause Analysis Process Manifest
-# ℏKask v0.31.0 — Systematic RCA with Ishikawa + 5 Whys
-# Template type: Process (FlowDef) — multi-step root cause analysis pipeline
-
 manifest:
   id: root-cause-analysis
   category: daemon-process
   name: Root Cause Analysis
-  description: >
-    Systematic root cause analysis pipeline combining Ishikawa (fishbone)
-    diagramming with 5 Whys causal chain analysis. Defines the problem
-    precisely, maps potential causes across 6M categories, traces causal
-    chains to validated root causes, and designs corrective actions with
-    verification plans.
+  description: 'Systematic root cause analysis pipeline combining Ishikawa (fishbone) diagramming with
+    5 Whys causal chain analysis. Defines the problem precisely, maps potential causes across 6M categories,
+    traces causal chains to validated root causes, and designs corrective actions with verification plans.
+
+    '
   functional_role: knowact
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-
-# Energy Budget Configuration
 gas:
   cap: 20000
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 2
   alert_threshold: 0.8
   hard_limit: true
-
 inputs:
-  - name: problem_description
-    type: string
-    description: "Description of the problem or incident to analyze"
-    required: true
-  - name: context
-    type: string
-    description: "Additional context (environment, recent changes, known factors)"
-    required: false
-  - name: domain
-    type: string
-    description: "Domain of the problem (e.g. infrastructure, software, process, safety)"
-    required: false
-
-# Process Steps
+- name: problem_description
+  type: string
+  description: Description of the problem or incident to analyze
+  required: true
+- name: context
+  type: string
+  description: Additional context (environment, recent changes, known factors)
+  required: false
+- name: domain
+  type: string
+  description: Domain of the problem (e.g. infrastructure, software, process, safety)
+  required: false
 steps:
-  - ordinal: 1
-    action: populate
-    description: >
-      Define the problem precisely. Refine the raw problem description into
-      a precise, measurable, verifiable problem statement. Distinguish
-      symptoms from causes. Establish scope, timeline, and impact metrics.
-    renderer: minijinja
-    template_ref: rca/define-problem
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      problem_description: "{{ problem_description }}"
-      context: "{{ context | default('') }}"
-      domain: "{{ domain | default('general') }}"
-    output_schema:
-      type: object
-      properties:
-        problem_statement:
-          type: string
-        severity:
-          type: string
-        scope:
+- ordinal: 1
+  action: populate
+  description: 'Define the problem precisely. Refine the raw problem description into a precise, measurable,
+    verifiable problem statement. Distinguish symptoms from causes. Establish scope, timeline, and impact
+    metrics.
+
+    '
+  renderer: minijinja
+  template_ref: rca/define-problem
+  gas_cap: 2000
+  timeout_seconds: 30
+  input_mapping:
+    problem_description: '{{ problem_description }}'
+    context: '{{ context | default('''') }}'
+    domain: '{{ domain | default(''general'') }}'
+  output_schema:
+    type: object
+    properties:
+      problem_statement:
+        type: string
+      severity:
+        type: string
+      scope:
+        type: object
+        properties:
+          affected_components:
+            type: array
+          timeline:
+            type: string
+          impact_metrics:
+            type: object
+      symptom_vs_cause:
+        type: string
+      precision_score:
+        type: number
+- ordinal: 2
+  action: populate
+  description: 'Build Ishikawa (fishbone) diagram with 6M categories. Brainstorm 3-5 potential causes
+    per category (Machine, Method, Material, Measurement, Man, Environment). Prioritize causes using estimated
+    likelihood dot-voting.
+
+    '
+  renderer: minijinja
+  template_ref: rca/ishikawa-6m
+  gas_cap: 5000
+  timeout_seconds: 60
+  input_mapping:
+    problem_statement: '{{ ordinal_1.problem_statement }}'
+    context: '{{ context | default('''') }}'
+    domain: '{{ domain | default(''general'') }}'
+  output_schema:
+    type: object
+    properties:
+      categories:
+        type: object
+        properties:
+          machine:
+            type: array
+          method:
+            type: array
+          material:
+            type: array
+          measurement:
+            type: array
+          man:
+            type: array
+          environment:
+            type: array
+      total_causes:
+        type: integer
+      prioritized_causes:
+        type: array
+        items:
           type: object
           properties:
-            affected_components: { type: array }
-            timeline: { type: string }
-            impact_metrics: { type: object }
-        symptom_vs_cause:
-          type: string
-        precision_score:
-          type: number
+            cause:
+              type: string
+            category:
+              type: string
+            priority_score:
+              type: number
+- ordinal: 3
+  action: populate
+  description: 'Run 5 Whys chains for each prioritized cause. Verify each link with counterfactual reasoning.
+    Validate root causes are actionable (not "humans are fallible"). Identify convergence across chains
+    for high-confidence root causes.
 
-  - ordinal: 2
-    action: populate
-    description: >
-      Build Ishikawa (fishbone) diagram with 6M categories. Brainstorm
-      3-5 potential causes per category (Machine, Method, Material,
-      Measurement, Man, Environment). Prioritize causes using estimated
-      likelihood dot-voting.
-    renderer: minijinja
-    template_ref: rca/ishikawa-6m
-    gas_cap: 5000
-    timeout_seconds: 60
-    input_mapping:
-      problem_statement: "{{ ordinal_1.problem_statement }}"
-      context: "{{ context | default('') }}"
-      domain: "{{ domain | default('general') }}"
-    output_schema:
-      type: object
-      properties:
-        categories:
+    '
+  renderer: minijinja
+  template_ref: rca/five-whys-chain
+  gas_cap: 6000
+  timeout_seconds: 90
+  input_mapping:
+    problem_statement: '{{ ordinal_1.problem_statement }}'
+    prioritized_causes: '{{ ordinal_2.prioritized_causes }}'
+  output_schema:
+    type: object
+    properties:
+      chains:
+        type: array
+        items:
           type: object
           properties:
-            machine: { type: array }
-            method: { type: array }
-            material: { type: array }
-            measurement: { type: array }
-            man: { type: array }
-            environment: { type: array }
-        total_causes:
-          type: integer
-        prioritized_causes:
-          type: array
-          items:
-            type: object
-            properties:
-              cause: { type: string }
-              category: { type: string }
-              priority_score: { type: number }
+            starting_cause:
+              type: string
+            whys:
+              type: array
+            root_cause:
+              type: string
+            actionable:
+              type: boolean
+            counterfactual_valid:
+              type: boolean
+      validated_root_causes:
+        type: array
+      cross_reference:
+        type: object
+- ordinal: 4
+  action: populate
+  description: 'Design corrective actions for each validated root cause. Classify actions as detection,
+    prevention, or systemic. Assign owners, deadlines, and verification methods. Identify systemic improvements
+    that address multiple root causes.
 
-  - ordinal: 3
-    action: populate
-    description: >
-      Run 5 Whys chains for each prioritized cause. Verify each link
-      with counterfactual reasoning. Validate root causes are actionable
-      (not "humans are fallible"). Identify convergence across chains
-      for high-confidence root causes.
-    renderer: minijinja
-    template_ref: rca/five-whys-chain
-    gas_cap: 6000
-    timeout_seconds: 90
-    input_mapping:
-      problem_statement: "{{ ordinal_1.problem_statement }}"
-      prioritized_causes: "{{ ordinal_2.prioritized_causes }}"
-    output_schema:
-      type: object
-      properties:
-        chains:
-          type: array
-          items:
-            type: object
-            properties:
-              starting_cause: { type: string }
-              whys: { type: array }
-              root_cause: { type: string }
-              actionable: { type: boolean }
-              counterfactual_valid: { type: boolean }
-        validated_root_causes:
-          type: array
-        cross_reference:
+    '
+  renderer: minijinja
+  template_ref: rca/corrective-action
+  gas_cap: 3000
+  timeout_seconds: 45
+  input_mapping:
+    problem_statement: '{{ ordinal_1.problem_statement }}'
+    validated_root_causes: '{{ ordinal_3.validated_root_causes }}'
+    chains: '{{ ordinal_3.chains }}'
+  output_schema:
+    type: object
+    properties:
+      corrective_actions:
+        type: array
+        items:
           type: object
+          properties:
+            root_cause:
+              type: string
+            action:
+              type: string
+            owner:
+              type: string
+            deadline:
+              type: string
+            verification_method:
+              type: string
+            prevention_type:
+              type: string
+      systemic_improvements:
+        type: array
+      verification_plan:
+        type: string
+- ordinal: 5
+  action: feedback
+  description: 'Emit Regulation feedback for variety monitoring and RCA process tracking. Report causes
+    identified, root causes confirmed, and corrective actions for Regulation algedonic monitoring.
 
-  - ordinal: 4
-    action: populate
-    description: >
-      Design corrective actions for each validated root cause. Classify
-      actions as detection, prevention, or systemic. Assign owners,
-      deadlines, and verification methods. Identify systemic improvements
-      that address multiple root causes.
-    renderer: minijinja
-    template_ref: rca/corrective-action
-    gas_cap: 3000
-    timeout_seconds: 45
-    input_mapping:
-      problem_statement: "{{ ordinal_1.problem_statement }}"
-      validated_root_causes: "{{ ordinal_3.validated_root_causes }}"
-      chains: "{{ ordinal_3.chains }}"
-    output_schema:
-      type: object
-      properties:
-        corrective_actions:
-          type: array
-          items:
-            type: object
-            properties:
-              root_cause: { type: string }
-              action: { type: string }
-              owner: { type: string }
-              deadline: { type: string }
-              verification_method: { type: string }
-              prevention_type: { type: string }
-        systemic_improvements:
-          type: array
-        verification_plan:
-          type: string
-
-  - ordinal: 5
-    action: feedback
-    description: >
-      Emit Regulation feedback for variety monitoring and RCA process tracking.
-      Report causes identified, root causes confirmed, and corrective
-      actions for Regulation algedonic monitoring.
-    renderer: null
-    template_ref: null
-    mcp: hkask-mcp-memory # Regulation feedback now via memory server
-    gas_cap: 500
-    timeout_seconds: 5
-    feedback:
-      variety_delta: integer
-      causes_identified: integer
-      root_causes_confirmed: integer
-      corrective_actions: integer
-    output_schema:
-      type: object
-      properties:
-        variety_counter:
-          type: integer
-        reg_event_id:
-          type: string
-
-# Error Handling
+    '
+  renderer: null
+  template_ref: null
+  mcp: hkask-mcp-memory
+  gas_cap: 500
+  timeout_seconds: 5
+  feedback:
+    variety_delta: integer
+    causes_identified: integer
+    root_causes_confirmed: integer
+    corrective_actions: integer
+  output_schema:
+    type: object
+    properties:
+      variety_counter:
+        type: integer
+      reg_event_id:
+        type: string
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
@@ -212,52 +219,47 @@ error_handling:
   retry_backoff_seconds: 2
   on_validation_failure: abort
   on_capability_denied: escalate
-
-# OCAP Configuration
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: rca/define-problem
-      gas_budget: 2000
-    - resource: template
-      action: render
-      template_id: rca/ishikawa-6m
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: rca/five-whys-chain
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: rca/corrective-action
-      gas_budget: 3000
-    - resource: manifest
-      action: execute
-      template_id: root-cause-analysis
-      gas_budget: 500
-    - resource: regulation
-      action: emit
-      template_id: root-cause-analysis
-      gas_budget: 500
+  - resource: template
+    action: render
+    template_id: rca/define-problem
+    gas_budget: 2000
+  - resource: template
+    action: render
+    template_id: rca/ishikawa-6m
+    gas_budget: 5000
+  - resource: template
+    action: render
+    template_id: rca/five-whys-chain
+    gas_budget: 6000
+  - resource: template
+    action: render
+    template_id: rca/corrective-action
+    gas_budget: 3000
+  - resource: manifest
+    action: execute
+    template_id: root-cause-analysis
+    gas_budget: 500
+  - resource: regulation
+    action: emit
+    template_id: root-cause-analysis
+    gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
-
-# Regulation Monitoring
 ledger:
   emit_spans: true
-  span_namespace: hkask.template.root-cause-analysis
+  span_namespace: reg.skill.root-cause-analysis
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
   variety_counters:
-    - causes_identified
-    - root_causes_confirmed
-    - corrective_actions
-
-# Audit Trail
+  - causes_identified
+  - root_causes_confirmed
+  - corrective_actions
+  telemetry_namespace: hkask.template.root-cause-analysis
 audit:
   enabled: true
   log_level: info

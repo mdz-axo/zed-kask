@@ -396,6 +396,11 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.lora.audit",
     "reg.lora.report",
     "reg.lora.convergence",
+    // ── Skill (unified cybernetic feedback — one namespace per skill) ──
+    // Every skill emits reg.skill.<skill-id>.<phase> for its six PDCA phases.
+    // The hierarchical is_canonical function makes reg.skill.<any-id>.* valid
+    // without per-skill registration.
+    "reg.skill",
     // ── Template ──
     "reg.template",
     // ── Training providers (provider HTTP call observability — post-mortem 2026-07-19) ──
@@ -519,6 +524,8 @@ pub enum SpanCategory {
     Episodic,
     /// `reg.wallet*` — wallet operations (balance, keys, deposits, withdrawals).
     Wallet,
+    /// `reg.skill*` — per-skill cybernetic feedback (variety, convergence, gas, outcome).
+    Skill,
     /// Any other namespace. Callers decide the fallback policy.
     Unknown,
 }
@@ -535,6 +542,7 @@ impl SpanCategory {
             "inference" => Self::Inference,
             "pod" | "connector" => Self::Episodic,
             "wallet" => Self::Wallet,
+            "skill" => Self::Skill,
             _ => Self::Unknown,
         }
     }

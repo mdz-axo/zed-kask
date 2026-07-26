@@ -1,207 +1,188 @@
-# File: registry/manifests/woolf-style-synthesizer.yaml
-# Virginia Woolf Style Synthesizer Process Manifest
-# hKask v0.27.0 - A Minimal Viable Container for UserPods
-
 manifest:
   id: woolf-style-synthesizer
   category: pipeline
   name: Woolf Style Synthesizer
   functional_role: wordact
-  description: >
-    Woolf Style Synthesizer — generates prose using Woolfian hypotactic syntax,
-    free indirect discourse, moments of being, and Fish generative forms.
-    Encodes authentic Woolf prose mechanics: 40-65% subordinate clauses,
-    accumulative sentences, tunneling perspective shifts, semicolons as primary connectives.
-    Generative layer uses Stanley Fish form-first approach and RDF triple model.
-    Embedding layer uses Qwen/Qwen3-Embedding-0.6B for exemplar retrieval and centroid validation.
+  description: "Woolf Style Synthesizer \u2014 generates prose using Woolfian hypotactic syntax, free\
+    \ indirect discourse, moments of being, and Fish generative forms. Encodes authentic Woolf prose mechanics:\
+    \ 40-65% subordinate clauses, accumulative sentences, tunneling perspective shifts, semicolons as\
+    \ primary connectives. Generative layer uses Stanley Fish form-first approach and RDF triple model.\
+    \ Embedding layer uses Qwen/Qwen3-Embedding-0.6B for exemplar retrieval and centroid validation.\n"
   version: 0.31.0
   editor: curator
   visibility: Public
-
-# Energy Budget Configuration
 gas:
   cap: 10000
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
-
-# Inputs
 inputs:
-  - name: prompt
-    type: string
-    description: "The user's text prompt to generate prose about"
-    required: true
-  - name: db_path
-    type: string
-    description: "Path to hKask semantic database (for exemplar retrieval and centroid validation)"
-    required: true
-
-# Process Steps
+- name: prompt
+  type: string
+  description: The user's text prompt to generate prose about
+  required: true
+- name: db_path
+  type: string
+  description: Path to hKask semantic database (for exemplar retrieval and centroid validation)
+  required: true
 steps:
-  - ordinal: 0
-    action: retrieve
-    description: >
-      Retrieve exemplar passages from Woolf style embedding corpus.
-      1. Embed the prompt via EmbeddingPort (Qwen/Qwen3-Embedding-0.6B)
-      2. KNN search against style:woolf prefix via semantic_search
-      3. Select k_min..k_max passages within distance_threshold
-    renderer: null
-    template_ref: null
-    mcp: hkask-mcp-memory
-    gas_cap: 500
-    timeout_seconds: 10
-    output_schema:
-      type: object
-      properties:
-        exemplar_passages:
-          type: array
-          description: "Retrieved Woolf passages for few-shot context"
-        centroid_entity_ref:
-          type: string
-          description: "Entity ref for the style centroid in sqlite-vec"
-        centroid_distance_threshold:
-          type: float
-          description: "Max cosine distance from centroid for validation"
+- ordinal: 0
+  action: retrieve
+  description: 'Retrieve exemplar passages from Woolf style embedding corpus. 1. Embed the prompt via
+    EmbeddingPort (Qwen/Qwen3-Embedding-0.6B) 2. KNN search against style:woolf prefix via semantic_search
+    3. Select k_min..k_max passages within distance_threshold
 
-  - ordinal: 1
-    action: select
-    description: >
-      Select Woolf style parameters from cognition config.
-      Hypotactic clause target, free indirect discourse, Woolfian themes
-      are defined in registry/styles/woolf/woolf-style-synthesizer.yaml.
-    renderer: null
-    template_ref: null
-    mcp: null
-    gas_cap: 100
-    timeout_seconds: 5
-    output_schema:
-      type: object
-      properties:
-        hypotactic_mode:
-          type: string
-          description: "Primary clause structure mode (hypotactic)"
-        subordinate_conjunctions:
-          type: array
-          description: "Preferred subordinating conjunctions"
-        voice: { type: string }
-        themes: { type: array }
+    '
+  renderer: null
+  template_ref: null
+  mcp: hkask-mcp-memory
+  gas_cap: 500
+  timeout_seconds: 10
+  output_schema:
+    type: object
+    properties:
+      exemplar_passages:
+        type: array
+        description: Retrieved Woolf passages for few-shot context
+      centroid_entity_ref:
+        type: string
+        description: Entity ref for the style centroid in sqlite-vec
+      centroid_distance_threshold:
+        type: float
+        description: Max cosine distance from centroid for validation
+- ordinal: 1
+  action: select
+  description: 'Select Woolf style parameters from cognition config. Hypotactic clause target, free indirect
+    discourse, Woolfian themes are defined in registry/styles/woolf/woolf-style-synthesizer.yaml.
 
-  - ordinal: 2
-    action: populate
-    description: >
-      Render Woolf style synthesizer template with inputs and exemplar passages.
-      Generate prose using Woolfian principles, free indirect discourse,
-      accumulative sentences, moments of being, and corpus exemplars.
-    renderer: minijinja
-    template_ref: composition/woolf-style-synthesizer
-    gas_cap: 4096
-    timeout_seconds: 30
-    output_schema:
-      prose: string
+    '
+  renderer: null
+  template_ref: null
+  mcp: null
+  gas_cap: 100
+  timeout_seconds: 5
+  output_schema:
+    type: object
+    properties:
+      hypotactic_mode:
+        type: string
+        description: Primary clause structure mode (hypotactic)
+      subordinate_conjunctions:
+        type: array
+        description: Preferred subordinating conjunctions
+      voice:
+        type: string
+      themes:
+        type: array
+- ordinal: 2
+  action: populate
+  description: 'Render Woolf style synthesizer template with inputs and exemplar passages. Generate prose
+    using Woolfian principles, free indirect discourse, accumulative sentences, moments of being, and
+    corpus exemplars.
 
-  - ordinal: 3
-    action: validate
-    description: >
-      Validate output meets Woolf style checks.
-      1. Embed the generated prose via EmbeddingPort
-      2. Compute cosine distance between prose vector and Woolf centroid
-      3. Reject if centroid distance exceeds hard limit (0.25)
-      4. Check subordinate clause ratio, free indirect discourse presence, sentence length variation
-    renderer: null
-    template_ref: null
-    mcp: hkask-mcp-memory
-    gas_cap: 500
-    timeout_seconds: 15
-    validation_rules:
-      - free_indirect_discourse_presence
-      - subordinate_clause_density
-      - sentence_length_variation
-      - sensory_concreteness
-      - metaphorical_thinking
-      - centroid_distance
-    output_schema:
-      type: object
-      properties:
-        validated: { type: boolean }
-        error_reason: { type: string }
-        centroid_distance: { type: float }
+    '
+  renderer: minijinja
+  template_ref: composition/woolf-style-synthesizer
+  gas_cap: 4096
+  timeout_seconds: 30
+  output_schema:
+    prose: string
+- ordinal: 3
+  action: validate
+  description: 'Validate output meets Woolf style checks. 1. Embed the generated prose via EmbeddingPort
+    2. Compute cosine distance between prose vector and Woolf centroid 3. Reject if centroid distance
+    exceeds hard limit (0.25) 4. Check subordinate clause ratio, free indirect discourse presence, sentence
+    length variation
 
-  - ordinal: 4
-    action: feedback
-    description: >
-      Emit Regulation span for variety tracking.
-      Record hypotactic clause ratio, style adherence metrics,
-      and centroid distance measurement.
-    renderer: null
-    template_ref: null
-    mcp: hkask-mcp-memory
-    gas_cap: 500
-    timeout_seconds: 5
-    feedback:
-      variety_delta: integer
-      hypotactic_clause_ratio: float
-      style_adherence: float
-      centroid_distance: float
-    output_schema:
-      reg_event_id: string
-      outcome_recorded: boolean
+    '
+  renderer: null
+  template_ref: null
+  mcp: hkask-mcp-memory
+  gas_cap: 500
+  timeout_seconds: 15
+  validation_rules:
+  - free_indirect_discourse_presence
+  - subordinate_clause_density
+  - sentence_length_variation
+  - sensory_concreteness
+  - metaphorical_thinking
+  - centroid_distance
+  output_schema:
+    type: object
+    properties:
+      validated:
+        type: boolean
+      error_reason:
+        type: string
+      centroid_distance:
+        type: float
+- ordinal: 4
+  action: feedback
+  description: 'Emit Regulation span for variety tracking. Record hypotactic clause ratio, style adherence
+    metrics, and centroid distance measurement.
 
-# Error Handling
+    '
+  renderer: null
+  template_ref: null
+  mcp: hkask-mcp-memory
+  gas_cap: 500
+  timeout_seconds: 5
+  feedback:
+    variety_delta: integer
+    hypotactic_clause_ratio: float
+    style_adherence: float
+    centroid_distance: float
+  output_schema:
+    reg_event_id: string
+    outcome_recorded: boolean
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 1
   on_validation_failure: abort
-
-# OCAP Configuration
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: composition/woolf-style-synthesizer
-      gas_budget: 4096
-    - resource: manifest
-      action: execute
-      template_id: woolf-style-synthesizer
-      gas_budget: 500
-    - resource: embedding
-      action: search
-      template_id: woolf-style-synthesizer
-      gas_budget: 500
-      description: "KNN search for exemplar passage retrieval from Woolf style corpus"
-    - resource: embedding
-      action: generate
-      template_id: woolf-style-synthesizer
-      gas_budget: 500
-      description: "Embed prompts and generated prose for centroid validation"
-    - resource: embedding
-      action: centroid
-      template_id: woolf-style-synthesizer
-      gas_budget: 500
-      description: "Compute style centroid for validation distance check"
-    - resource: regulation
-      action: emit
-      template_id: woolf-style-synthesizer
-      gas_budget: 500
+  - resource: template
+    action: render
+    template_id: composition/woolf-style-synthesizer
+    gas_budget: 4096
+  - resource: manifest
+    action: execute
+    template_id: woolf-style-synthesizer
+    gas_budget: 500
+  - resource: embedding
+    action: search
+    template_id: woolf-style-synthesizer
+    gas_budget: 500
+    description: KNN search for exemplar passage retrieval from Woolf style corpus
+  - resource: embedding
+    action: generate
+    template_id: woolf-style-synthesizer
+    gas_budget: 500
+    description: Embed prompts and generated prose for centroid validation
+  - resource: embedding
+    action: centroid
+    template_id: woolf-style-synthesizer
+    gas_budget: 500
+    description: Compute style centroid for validation distance check
+  - resource: regulation
+    action: emit
+    template_id: woolf-style-synthesizer
+    gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
-
-# Regulation Monitoring
 ledger:
   emit_spans: true
-  span_namespace: reg.prompt
+  span_namespace: reg.skill.woolf-style-synthesizer
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-
-# Audit Trail
 audit:
   enabled: true
   log_level: info

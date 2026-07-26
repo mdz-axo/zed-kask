@@ -18,7 +18,8 @@ pub mod meta_span;
 pub mod metacognition;
 pub mod qa_span;
 pub(crate) mod regulation_policy; // Loop 6 — per-metric regulation rules
-pub mod set_points; // Loop 6 — set-points config & loaders
+pub mod set_points;
+pub mod skill_span; // Unified skill feedback spans (reg.skill.<id>.<phase>) // Loop 6 — set-points config & loaders
 
 pub mod sensor_provider; // Pluggable metric sensors (Fermi Extractor pattern) — public for cross-loop registration
 pub(crate) mod strategy_evaluator; // Loop 6 — multi-model strategy selection (Fermi improvement-loop pattern)
@@ -57,6 +58,7 @@ pub use set_points::{
     DEFAULT_VARIETY_MAX_DEFICIT, InferenceThrottleMode, SetPoints, SetPointsConfig,
     load_set_points,
 };
+pub use skill_span::SkillFeedbackSpan;
 pub use tool_stats::ToolStats;
 pub use types::loops::{CurationInput, ExperienceClassification, RegulationLoop, RegulatoryAction};
 pub use wallet_budget::WalletBackedBudget;

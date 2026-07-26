@@ -1,29 +1,20 @@
-# Refactor Architecture Process Manifest
-# hKask v0.31.0 — End-to-end architecture refactoring as convergent PDCA
-#
-# Merged from improve-codebase-architecture (discover phase) + refactor-service-layer (execution phase).
-# Unified flow: explore -> candidates -> deepen -> route -> audit -> strangle -> verify -> converge
-# Includes migration-strategy phase (folded from standalone strangler-fig skill).
-
 manifest:
   id: refactor-architecture
   category: skill
   name: Refactor Architecture
-  description: >
-    End-to-end architecture refactoring. Explores architectural friction, ranks
-    deepening candidates, walks the design tree with human-in-the-loop grilling,
-    routes decisions, audits cross-surface duplication, plans strangler-fig
-    migration, verifies integrity, computes convergence, and iterates until
-    extraction risks are reduced. Merged from improve-codebase-architecture
-    (discover phase) and refactor-service-layer (execution phase). Includes
-    migration-strategy phase (folded from strangler-fig). Composes tdd,
-    coding-guidelines, pragmatic-semantics, graph-audit, deep-module,
-    essentialist, and pragmatic-cybernetics as methodological guidance.
+  description: 'End-to-end architecture refactoring. Explores architectural friction, ranks deepening
+    candidates, walks the design tree with human-in-the-loop grilling, routes decisions, audits cross-surface
+    duplication, plans strangler-fig migration, verifies integrity, computes convergence, and iterates
+    until extraction risks are reduced. Merged from improve-codebase-architecture (discover phase) and
+    refactor-service-layer (execution phase). Includes migration-strategy phase (folded from strangler-fig).
+    Composes tdd, coding-guidelines, pragmatic-semantics, graph-audit, deep-module, essentialist, and
+    pragmatic-cybernetics as methodological guidance.
+
+    '
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-
 convergence:
   threshold: 0.15
   improvement_gate: threshold_only
@@ -31,243 +22,221 @@ convergence:
   min_iterations: 1
   convergence_field: step_8_result.convergence_metric
   on_not_reached: escalate
-
 gas:
   cap: 100000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 3
   alert_threshold: 0.8
   hard_limit: true
-
 inputs:
-  - name: focus_area
-    type: string
-    required: true
-  - name: code_context
-    type: object
-    required: false
-  - name: known_adrs
-    type: array
-    required: false
-  - name: constraint_forces
-    type: array
-    required: false
-  - name: domain
-    type: string
-    required: false
-  - name: service_module_name
-    type: string
-    required: false
-  - name: current_cli_path
-    type: string
-    required: false
-  - name: current_api_path
-    type: string
-    required: false
-  - name: service_context_design
-    type: object
-    required: false
-  - name: migration_phase
-    type: string
-    required: false
-
+- name: focus_area
+  type: string
+  required: true
+- name: code_context
+  type: object
+  required: false
+- name: known_adrs
+  type: array
+  required: false
+- name: constraint_forces
+  type: array
+  required: false
+- name: domain
+  type: string
+  required: false
+- name: service_module_name
+  type: string
+  required: false
+- name: current_cli_path
+  type: string
+  required: false
+- name: current_api_path
+  type: string
+  required: false
+- name: service_context_design
+  type: object
+  required: false
+- name: migration_phase
+  type: string
+  required: false
 fusion:
   judge: deepseek-v4-pro
   panel:
-    - Kimi2.7
-    - Qwen3.7 Max
-    - GLM5.2
+  - Kimi2.7
+  - Qwen3.7 Max
+  - GLM5.2
   mode: pi
   skills:
-    - essentialist
-    - deep-module
+  - essentialist
+  - deep-module
   max_rounds: 3
-
 steps:
-  # === DISCOVER PHASE (folded from improve-codebase-architecture) ===
-  - ordinal: 1
-    action: select
-    description: Explore architecture friction and shallow-module patterns.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-explore
-    gas_cap: 7000
-    timeout_seconds: 60
-    input_mapping:
-      focus_area: "{{ focus_area }}"
-      code_context: "{{ code_context | default({}) }}"
-      known_adrs: "{{ known_adrs | default([]) }}"
-
-  - ordinal: 2
-    action: select
-    description: Rank deepening candidates from exploration findings.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-candidates
-    gas_cap: 6000
-    timeout_seconds: 60
-    input_mapping:
-      friction_points: "{{ step_1_result.friction_points | default([]) }}"
-      shallow_modules: "{{ step_1_result.shallow_modules | default([]) }}"
-      focus_area: "{{ focus_area }}"
-      known_adrs: "{{ known_adrs | default([]) }}"
-
-  - ordinal: 3
-    action: select
-    description: Walk the design tree for the user-selected candidate — define deepened module shape, identify seams, confirm test surface. Human-in-the-loop grilling.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-deepen
-    gas_cap: 8000
-    timeout_seconds: 120
-    condition: "{{ (step_2_result.candidates | default([])) | length > 0 }}"
-    input_mapping:
-      selected_candidate: "{{ step_2_result.selected_candidate | default(step_2_result.candidates[0] | default({})) }}"
-      friction_points: "{{ step_1_result.friction_points | default([]) }}"
-      focus_area: "{{ focus_area }}"
-      known_adrs: "{{ known_adrs | default([]) }}"
-
-  - ordinal: 4
-    action: select
-    description: Route the deepened design — proceed to refactor (audit), need more data (diagnose), or defer.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-route
-    gas_cap: 4000
-    timeout_seconds: 60
-    input_mapping:
-      deepened_design: "{{ step_3_result }}"
-
-  # === EXECUTION PHASE (folded from refactor-service-layer) ===
-  # Runs when route decision is proceed_to_refactor.
-  - ordinal: 5
-    action: select
-    description: Audit cross-surface duplication and extraction viability.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-audit
-    gas_cap: 7000
-    timeout_seconds: 60
-    condition: "step_4_result.decision == 'proceed_to_refactor'"
-    input_mapping:
-      focus_area: "{{ focus_area }}"
-      code_context: "{{ code_context | default({}) }}"
-      known_adrs: "{{ known_adrs | default([]) }}"
-      constraint_forces: "{{ constraint_forces | default([]) }}"
-      deepened_design: "{{ step_3_result }}"
-
-  - ordinal: 6
-    action: select
-    description: Plan strangler-fig migration for selected service domain.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-strangle
-    gas_cap: 7000
-    timeout_seconds: 60
-    condition: "step_4_result.decision == 'proceed_to_refactor'"
-    input_mapping:
-      domain: "{{ domain | default(step_5_result.top_recommendation | default('')) }}"
-      service_module_name: "{{ service_module_name | default('ExtractedService') }}"
-      current_cli_path: "{{ current_cli_path | default('') }}"
-      current_api_path: "{{ current_api_path | default('') }}"
-      service_context_design: "{{ service_context_design | default({}) }}"
-      known_adrs: "{{ known_adrs | default([]) }}"
-      constraint_forces: "{{ constraint_forces | default([]) }}"
-
-  - ordinal: 7
-    action: select
-    description: Verify migration completeness and boundary discipline.
-    renderer: minijinja
-    template_ref: refactor-architecture/ra-verify
-    gas_cap: 5000
-    timeout_seconds: 60
-    condition: "step_4_result.decision == 'proceed_to_refactor'"
-    input_mapping:
-      domain: "{{ domain | default('') }}"
-      migration_phase: "{{ migration_phase | default('domain_migration') }}"
-      code_context: "{{ code_context | default(step_6_result) }}"
-      known_adrs: "{{ known_adrs | default([]) }}"
-
-  - ordinal: 8
-    action: select
-    description: Compute normalized convergence metric for architecture refactoring cycle.
-    renderer: minijinja
-    template_ref: shared/convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      primary_result: "{{ step_7_result | default(step_3_result) }}"
-      convergence_description: "refactoring is verified and remaining blockers are non-critical"
-      include_blockers: true
-    fusion: false
-
-  - ordinal: 9
-    action: loop
-    description: Re-enter architecture refactoring cycle if convergence is not met.
-    input_mapping:
-      loop_target: 1
-
+- ordinal: 1
+  action: select
+  description: Explore architecture friction and shallow-module patterns.
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-explore
+  gas_cap: 7000
+  timeout_seconds: 60
+  input_mapping:
+    focus_area: '{{ focus_area }}'
+    code_context: '{{ code_context | default({}) }}'
+    known_adrs: '{{ known_adrs | default([]) }}'
+- ordinal: 2
+  action: select
+  description: Rank deepening candidates from exploration findings.
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-candidates
+  gas_cap: 6000
+  timeout_seconds: 60
+  input_mapping:
+    friction_points: '{{ step_1_result.friction_points | default([]) }}'
+    shallow_modules: '{{ step_1_result.shallow_modules | default([]) }}'
+    focus_area: '{{ focus_area }}'
+    known_adrs: '{{ known_adrs | default([]) }}'
+- ordinal: 3
+  action: select
+  description: "Walk the design tree for the user-selected candidate \u2014 define deepened module shape,\
+    \ identify seams, confirm test surface. Human-in-the-loop grilling."
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-deepen
+  gas_cap: 8000
+  timeout_seconds: 120
+  condition: '{{ (step_2_result.candidates | default([])) | length > 0 }}'
+  input_mapping:
+    selected_candidate: '{{ step_2_result.selected_candidate | default(step_2_result.candidates[0] | default({}))
+      }}'
+    friction_points: '{{ step_1_result.friction_points | default([]) }}'
+    focus_area: '{{ focus_area }}'
+    known_adrs: '{{ known_adrs | default([]) }}'
+- ordinal: 4
+  action: select
+  description: "Route the deepened design \u2014 proceed to refactor (audit), need more data (diagnose),\
+    \ or defer."
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-route
+  gas_cap: 4000
+  timeout_seconds: 60
+  input_mapping:
+    deepened_design: '{{ step_3_result }}'
+- ordinal: 5
+  action: select
+  description: Audit cross-surface duplication and extraction viability.
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-audit
+  gas_cap: 7000
+  timeout_seconds: 60
+  condition: step_4_result.decision == 'proceed_to_refactor'
+  input_mapping:
+    focus_area: '{{ focus_area }}'
+    code_context: '{{ code_context | default({}) }}'
+    known_adrs: '{{ known_adrs | default([]) }}'
+    constraint_forces: '{{ constraint_forces | default([]) }}'
+    deepened_design: '{{ step_3_result }}'
+- ordinal: 6
+  action: select
+  description: Plan strangler-fig migration for selected service domain.
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-strangle
+  gas_cap: 7000
+  timeout_seconds: 60
+  condition: step_4_result.decision == 'proceed_to_refactor'
+  input_mapping:
+    domain: '{{ domain | default(step_5_result.top_recommendation | default('''')) }}'
+    service_module_name: '{{ service_module_name | default(''ExtractedService'') }}'
+    current_cli_path: '{{ current_cli_path | default('''') }}'
+    current_api_path: '{{ current_api_path | default('''') }}'
+    service_context_design: '{{ service_context_design | default({}) }}'
+    known_adrs: '{{ known_adrs | default([]) }}'
+    constraint_forces: '{{ constraint_forces | default([]) }}'
+- ordinal: 7
+  action: select
+  description: Verify migration completeness and boundary discipline.
+  renderer: minijinja
+  template_ref: refactor-architecture/ra-verify
+  gas_cap: 5000
+  timeout_seconds: 60
+  condition: step_4_result.decision == 'proceed_to_refactor'
+  input_mapping:
+    domain: '{{ domain | default('''') }}'
+    migration_phase: '{{ migration_phase | default(''domain_migration'') }}'
+    code_context: '{{ code_context | default(step_6_result) }}'
+    known_adrs: '{{ known_adrs | default([]) }}'
+- ordinal: 8
+  action: select
+  description: Compute normalized convergence metric for architecture refactoring cycle.
+  renderer: minijinja
+  template_ref: shared/convergence-check
+  gas_cap: 2000
+  timeout_seconds: 30
+  input_mapping:
+    primary_result: '{{ step_7_result | default(step_3_result) }}'
+    convergence_description: refactoring is verified and remaining blockers are non-critical
+    include_blockers: true
+  fusion: false
+- ordinal: 9
+  action: loop
+  description: Re-enter architecture refactoring cycle if convergence is not met.
+  input_mapping:
+    loop_target: 1
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
-
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-explore
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-candidates
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-deepen
-      gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-route
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-audit
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-strangle
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-verify
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: shared/convergence-check
-      gas_budget: 2000
-    - resource: manifest
-      action: execute
-      template_id: refactor-architecture
-      gas_budget: 1000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-explore
+    gas_budget: 7000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-candidates
+    gas_budget: 6000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-deepen
+    gas_budget: 8000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-route
+    gas_budget: 4000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-audit
+    gas_budget: 7000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-strangle
+    gas_budget: 7000
+  - resource: template
+    action: render
+    template_id: refactor-architecture/ra-verify
+    gas_budget: 5000
+  - resource: template
+    action: render
+    template_id: shared/convergence-check
+    gas_budget: 2000
+  - resource: manifest
+    action: execute
+    template_id: refactor-architecture
+    gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
-
 ledger:
   emit_spans: true
-  span_namespace: hkask.template.arch
+  span_namespace: reg.skill.refactor-architecture
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  spans:
-    - reg.arch.friction.detected
-    - reg.arch.candidate.ranked
-    - reg.arch.design.deepened
-    - reg.arch.audit.complete
-    - reg.arch.migration.verified
-
+  telemetry_namespace: hkask.template.refactor-architecture
 audit:
   enabled: true
   log_level: info

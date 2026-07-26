@@ -1,87 +1,80 @@
-# Web News Timeline Manifest
-# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
-
 manifest:
   id: mcp/web-news-timeline
   category: pipeline
   name: Web News Timeline
-  description: >
-    News-oriented search with recency ranking and timeline output.
-    Searches news-capable providers, buckets results by recency, and produces a chronological summary.
+  description: 'News-oriented search with recency ranking and timeline output. Searches news-capable providers,
+    buckets results by recency, and produces a chronological summary.
+
+    '
   version: 0.31.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public
-
 gas:
   cap: 4096
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
-
 steps:
-  - ordinal: 1
-    action: execute
-    description: >
-      Search news-capable providers with recency bias.
-    renderer: null
-    template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "${input.query}"
-      strategy: "news"
-      num_results: "${input.num_results | default(10)}"
-      freshness: "${input.freshness | default('week')}"
-    gas_cap: 2048
-    timeout_seconds: 20
-    output_schema:
-      results: array
-      related_questions: array
+- ordinal: 1
+  action: execute
+  description: 'Search news-capable providers with recency bias.
 
-  - ordinal: 2
-    action: populate
-    description: >
-      Render results into a timeline format bucketed by recency.
-    renderer: minijinja
-    template_ref: web/search-news
-    gas_cap: 500
-    timeout_seconds: 10
-    output_schema:
-      timeline: object
+    '
+  renderer: null
+  template_ref: null
+  mcp: hkask-mcp-research
+  tool: web_search
+  arguments:
+    query: ${input.query}
+    strategy: news
+    num_results: ${input.num_results | default(10)}
+    freshness: ${input.freshness | default('week')}
+  gas_cap: 2048
+  timeout_seconds: 20
+  output_schema:
+    results: array
+    related_questions: array
+- ordinal: 2
+  action: populate
+  description: 'Render results into a timeline format bucketed by recency.
 
-  - ordinal: 3
-    action: feedback
-    description: >
-      Emit news search outcome to Regulation.
-    renderer: null
-    template_ref: null
-    mcp: null # Regulation is ambient (RegulationRuntime)
-    gas_cap: 500
-    timeout_seconds: 5
-    feedback:
-      result_count: integer
-      recency_distribution: object
-    output_schema:
-      reg_event_id: string
+    '
+  renderer: minijinja
+  template_ref: web/search-news
+  gas_cap: 500
+  timeout_seconds: 10
+  output_schema:
+    timeline: object
+- ordinal: 3
+  action: feedback
+  description: 'Emit news search outcome to Regulation.
 
+    '
+  renderer: null
+  template_ref: null
+  mcp: null
+  gas_cap: 500
+  timeout_seconds: 5
+  feedback:
+    result_count: integer
+    recency_distribution: object
+  output_schema:
+    reg_event_id: string
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 1
   on_search_failure: fallback
-
 ledger:
   emit_spans: true
-  span_namespace: reg.web.news_timeline
+  span_namespace: reg.skill.mcp/web-news-timeline
   variety_monitoring: true
   algedonic_threshold: 100
-
 audit:
   enabled: true
   log_level: info

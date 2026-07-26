@@ -1,245 +1,188 @@
-# GEPA Evolution Process Manifest
-# ℏKask v0.31.0 — Reflective evolutionary optimization as convergent PDCA
-# Based on: Agrawal et al., "GEPA: Reflective Prompt Evolution Can Outperform
-# Reinforcement Learning" (arXiv:2507.19457, ICLR 2026 Oral).
-#
-# Generalized interface (artifact_type parameter) but only the "prompt" path is
-# implemented in v1. The "manifest" and "template" paths are future extensions
-# — the NL-reflection gradient generalizes, but the execution model differs
-# per artifact type. See SKILL.md for the generalization analysis.
-
 manifest:
   id: gpa-evolution
   category: skill
   name: GEPA Evolution
-  description: >
-    Convergent genetic-Pareto evolutionary optimization over text artifacts.
-    Samples execution trajectories from a target artifact, reflects in natural
-    language to diagnose failures and surface high-level rules, proposes and
-    tests mutations, and recombines complementary lessons from the Pareto
-    frontier of (quality, cost) until the frontier stabilizes. Natural-language
-    reflection serves as the gradient signal — richer than sparse scalar rewards,
-    cheaper than policy gradients. v1 implements the prompt artifact path;
-    manifest and template paths are future extensions.
+  description: "Convergent genetic-Pareto evolutionary optimization over text artifacts. Samples execution\
+    \ trajectories from a target artifact, reflects in natural language to diagnose failures and surface\
+    \ high-level rules, proposes and tests mutations, and recombines complementary lessons from the Pareto\
+    \ frontier of (quality, cost) until the frontier stabilizes. Natural-language reflection serves as\
+    \ the gradient signal \u2014 richer than sparse scalar rewards, cheaper than policy gradients. v1\
+    \ implements the prompt artifact path; manifest and template paths are future extensions.\n"
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-
 convergence:
-  # Pareto-frontier stability, expressed as a scalar for the threshold_only gate.
-  # The convergence template computes: hypervolume_delta + penalty for new
-  # non-dominated members. When the frontier stops expanding, this → 0.
-  #
-  # IS: The Rust executor's check_convergence() with improvement_gate:
-  # "threshold_only" only checks quality <= threshold (executor.rs L884-890).
-  # Hypervolume reference point is required for stable convergence measurement.
-  # See input: reference_point (falls back to nadir approximation: worst observed score per objective).
-  threshold: 0.10
+  threshold: 0.1
   improvement_gate: threshold_only
   max_iterations: 5
   min_iterations: 2
   convergence_field: step_6_result.convergence_metric
   on_not_reached: escalate
-
 gas:
-  cap: 200000              # Initial estimate — evolutionary loops are rollout-heavy. Calibrate after first run.
+  cap: 200000
   cost_per_iteration: 200
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
-  cap: 6                   # Initial estimate — reflection + variant generation is inference-heavy. Calibrate after first run.
+  cap: 6
   alert_threshold: 0.8
   hard_limit: true
-
 inputs:
-  - name: artifact_type
-    type: string            # "prompt" (implemented) | "manifest" (future) | "template" (future)
-    required: true
-  - name: target_artifact
-    type: object            # {content, path?, eval_set, tools?}
-    required: true
-  - name: objectives
-    type: array             # [{name, maximize, weight?}] — Pareto axes
-    required: true
-  - name: seed_trajectories
-    type: array
-    required: false
-  - name: frontier_size
-    type: integer
-    required: false         # default 8
-  - name: reference_point
-    type: object
-    required: false         # {point: [f1_min, f2_min, ...], source: 'user' | 'nadir' | 'default'} — hypervolume reference point. If omitted, uses worst-observed-objective value per axis as nadir approximation.
-
+- name: artifact_type
+  type: string
+  required: true
+- name: target_artifact
+  type: object
+  required: true
+- name: objectives
+  type: array
+  required: true
+- name: seed_trajectories
+  type: array
+  required: false
+- name: frontier_size
+  type: integer
+  required: false
+- name: reference_point
+  type: object
+  required: false
 steps:
-  - ordinal: 1
-    action: select
-    description: >
-      Sample trajectories — execute the target artifact against its eval set
-      and capture (input, output, reasoning, tool calls, outcome scores).
-      On iteration 1, samples from target_artifact. On iteration 2+, samples
-      from the current Pareto frontier (step_5_result.frontier).
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-sample-trajectories.j2
-    gas_cap: 4000
-    timeout_seconds: 90
-    input_mapping:
-      artifact_type: "{{ artifact_type }}"
-      target_artifact: "{{ target_artifact }}"
-      # On iteration 1, step_5_result doesn't exist → default to [target_artifact].
-      # On iteration 2+, sample from the frontier updated in the prior iteration.
-      frontier: "{{ step_5_result.frontier | default([]) }}"
-      seed_trajectories: "{{ seed_trajectories | default([]) }}"
+- ordinal: 1
+  action: select
+  description: "Sample trajectories \u2014 execute the target artifact against its eval set and capture\
+    \ (input, output, reasoning, tool calls, outcome scores). On iteration 1, samples from target_artifact.\
+    \ On iteration 2+, samples from the current Pareto frontier (step_5_result.frontier).\n"
+  renderer: minijinja
+  template_ref: gpa-evolution/gpa-sample-trajectories.j2
+  gas_cap: 4000
+  timeout_seconds: 90
+  input_mapping:
+    artifact_type: '{{ artifact_type }}'
+    target_artifact: '{{ target_artifact }}'
+    frontier: '{{ step_5_result.frontier | default([]) }}'
+    seed_trajectories: '{{ seed_trajectories | default([]) }}'
+- ordinal: 2
+  action: select
+  description: "Reflect in natural language \u2014 diagnose failures, surface high-level rules, identify\
+    \ what each trajectory got right and wrong. This is the NL gradient.\n"
+  renderer: minijinja
+  template_ref: gpa-evolution/gpa-reflect.j2
+  gas_cap: 5000
+  timeout_seconds: 60
+  input_mapping:
+    artifact_type: '{{ artifact_type }}'
+    trajectories: '{{ step_1_result.trajectories }}'
+    objectives: '{{ objectives }}'
+- ordinal: 3
+  action: select
+  description: "Propose mutations \u2014 generate artifact variants from reflected lessons. Apply mutation\
+    \ (targeted edit) and crossover (recombine complementary lessons from non-dominated frontier members).\n"
+  renderer: minijinja
+  template_ref: gpa-evolution/gpa-propose-mutations.j2
+  gas_cap: 5000
+  timeout_seconds: 60
+  input_mapping:
+    artifact_type: '{{ artifact_type }}'
+    reflections: '{{ step_2_result }}'
+    current_frontier: '{{ step_5_result.frontier | default([]) }}'
+    target_artifact: '{{ target_artifact }}'
+- ordinal: 4
+  action: select
+  description: "Test variants \u2014 execute each mutated artifact against the eval set, collect (quality,\
+    \ cost) scores per objective.\n"
+  renderer: minijinja
+  template_ref: gpa-evolution/gpa-test-variants.j2
+  gas_cap: 8000
+  timeout_seconds: 120
+  input_mapping:
+    artifact_type: '{{ artifact_type }}'
+    variants: '{{ step_3_result.variants }}'
+    target_artifact: '{{ target_artifact }}'
+    objectives: '{{ objectives }}'
+- ordinal: 5
+  action: select
+  description: "Update Pareto frontier \u2014 keep non-dominated variants, recombine complementary lessons,\
+    \ prune dominated members.\n"
+  renderer: minijinja
+  template_ref: gpa-evolution/gpa-frontier-update.j2
+  gas_cap: 3000
+  timeout_seconds: 45
+  input_mapping:
+    tested_variants: '{{ step_4_result }}'
+    current_frontier: '{{ step_5_result.frontier | default([]) }}'
+    objectives: '{{ objectives }}'
+    frontier_size: '{{ frontier_size | default(8) }}'
+- ordinal: 6
+  action: select
+  description: 'Compute Pareto-frontier stability convergence metric. Frontier is converged when hypervolume
+    delta is small AND no new non-dominated members were added this iteration.
 
-  - ordinal: 2
-    action: select
-    description: >
-      Reflect in natural language — diagnose failures, surface high-level rules,
-      identify what each trajectory got right and wrong. This is the NL gradient.
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-reflect.j2
-    gas_cap: 5000
-    timeout_seconds: 60
-    input_mapping:
-      artifact_type: "{{ artifact_type }}"
-      trajectories: "{{ step_1_result.trajectories }}"
-      objectives: "{{ objectives }}"
-
-  - ordinal: 3
-    action: select
-    description: >
-      Propose mutations — generate artifact variants from reflected lessons.
-      Apply mutation (targeted edit) and crossover (recombine complementary
-      lessons from non-dominated frontier members).
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-propose-mutations.j2
-    gas_cap: 5000
-    timeout_seconds: 60
-    input_mapping:
-      artifact_type: "{{ artifact_type }}"
-      reflections: "{{ step_2_result }}"
-      # Frontier from the prior iteration's step 5. On iteration 1, empty.
-      current_frontier: "{{ step_5_result.frontier | default([]) }}"
-      target_artifact: "{{ target_artifact }}"
-
-  - ordinal: 4
-    action: select
-    description: >
-      Test variants — execute each mutated artifact against the eval set,
-      collect (quality, cost) scores per objective.
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-test-variants.j2
-    gas_cap: 8000
-    timeout_seconds: 120
-    input_mapping:
-      artifact_type: "{{ artifact_type }}"
-      variants: "{{ step_3_result.variants }}"
-      target_artifact: "{{ target_artifact }}"
-      objectives: "{{ objectives }}"
-
-  - ordinal: 5
-    action: select
-    description: >
-      Update Pareto frontier — keep non-dominated variants, recombine
-      complementary lessons, prune dominated members.
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-frontier-update.j2
-    gas_cap: 3000
-    timeout_seconds: 45
-    input_mapping:
-      tested_variants: "{{ step_4_result }}"
-      # Merge prior frontier with new tested variants. On iteration 1, empty.
-      current_frontier: "{{ step_5_result.frontier | default([]) }}"
-      objectives: "{{ objectives }}"
-      frontier_size: "{{ frontier_size | default(8) }}"
-
-  - ordinal: 6
-    action: select
-    description: >
-      Compute Pareto-frontier stability convergence metric. Frontier is
-      converged when hypervolume delta is small AND no new non-dominated
-      members were added this iteration.
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-convergence-check.j2
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      # Compare prior frontier (step_5_result from before this iteration's update)
-      # with the new frontier (this iteration's step_5_result.frontier).
-      # On iteration 1, frontier_before is empty (no prior frontier).
-      frontier_before: "{{ step_5_result.frontier | default([]) }}"
-      frontier_after: "{{ step_5_result.frontier }}"
-      objectives: "{{ objectives }}"
-      iteration: "{{ _convergence.iterations_completed | default(0) }}"
-
-  - ordinal: 7
-    action: loop
-    description: >
-      Re-enter evolution cycle from step 1 (sample trajectories from the
-      updated frontier). Must re-sample each iteration — GEPA's algorithm
-      requires new trajectory data from current frontier members.
-    gas_cap: 1000
-    timeout_seconds: 30
-    input_mapping:
-      loop_target: 1
-
+    '
+  renderer: minijinja
+  template_ref: gpa-evolution/gpa-convergence-check.j2
+  gas_cap: 2000
+  timeout_seconds: 30
+  input_mapping:
+    frontier_before: '{{ step_5_result.frontier | default([]) }}'
+    frontier_after: '{{ step_5_result.frontier }}'
+    objectives: '{{ objectives }}'
+    iteration: '{{ _convergence.iterations_completed | default(0) }}'
+- ordinal: 7
+  action: loop
+  description: "Re-enter evolution cycle from step 1 (sample trajectories from the updated frontier).\
+    \ Must re-sample each iteration \u2014 GEPA's algorithm requires new trajectory data from current\
+    \ frontier members.\n"
+  gas_cap: 1000
+  timeout_seconds: 30
+  input_mapping:
+    loop_target: 1
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 2
   on_validation_failure: abort
-
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-sample-trajectories
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-reflect
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-propose-mutations
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-test-variants
-      gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-frontier-update
-      gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-convergence-check
-      gas_budget: 2000
-    - resource: manifest
-      action: execute
-      template_id: gpa-evolution
-      gas_budget: 1000
+  - resource: template
+    action: render
+    template_id: gpa-evolution/gpa-sample-trajectories
+    gas_budget: 4000
+  - resource: template
+    action: render
+    template_id: gpa-evolution/gpa-reflect
+    gas_budget: 5000
+  - resource: template
+    action: render
+    template_id: gpa-evolution/gpa-propose-mutations
+    gas_budget: 5000
+  - resource: template
+    action: render
+    template_id: gpa-evolution/gpa-test-variants
+    gas_budget: 8000
+  - resource: template
+    action: render
+    template_id: gpa-evolution/gpa-frontier-update
+    gas_budget: 3000
+  - resource: template
+    action: render
+    template_id: gpa-evolution/gpa-convergence-check
+    gas_budget: 2000
+  - resource: manifest
+    action: execute
+    template_id: gpa-evolution
+    gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
-  capability_expiry_seconds: 7200    # Evolution cycles run longer than kata
+  capability_expiry_seconds: 7200
   template_scoped: true
-
-# Regulation: GEPA is a curation activity — the Curator optimizes artifacts.
-# Uses the canonical reg.curation namespace. GEPA does not introduce new
-# RegSpan variants; it emits tracing events under reg.curation with
-# operation fields specific to the evolutionary loop.
 ledger:
   emit_spans: true
-  span_namespace: reg.curation
+  span_namespace: reg.skill.gpa-evolution
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-  spans:
-    - reg.curation
-
 audit:
   enabled: true
   log_level: info

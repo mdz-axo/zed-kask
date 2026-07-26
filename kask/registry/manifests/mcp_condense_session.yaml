@@ -1,112 +1,97 @@
-# MCP Condenser — Session Condensation Manifest
-# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
-
 manifest:
   id: prompt-templates/condense_session
   category: pipeline
   name: Prompt-Templates Session Condenser
-  description: >
-    Condense conversation sessions into summaries with key decisions and action items.
-    Supports configurable compression ratio and selective extraction.
+  description: 'Condense conversation sessions into summaries with key decisions and action items. Supports
+    configurable compression ratio and selective extraction.
+
+    '
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-
-# Energy Budget Configuration
 gas:
   cap: 4096
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
-
-# Process Steps
 steps:
-  - ordinal: 1
-    action: populate
-    description: >
-      Render condensation template with session transcript and parameters.
-    renderer: minijinja
-    template_ref: prompt-templates/condense_session
-    mcp: null
-    gas_cap: 1000
-    timeout_seconds: 10
-    output_schema:
-      rendered_prompt: string
+- ordinal: 1
+  action: populate
+  description: 'Render condensation template with session transcript and parameters.
 
-  - ordinal: 2
-    action: select
-    description: >
-      Condense session via InferencePort.
-      Extract summary, decisions, and action items.
-    renderer: inline
-    template_ref: "{{ step_1_populated }}"
-    gas_cap: 4096
-    timeout_seconds: 60
-    output_schema:
-      summary: string
-      key_decisions: array
-      action_items: array
-      compression_ratio: float
+    '
+  renderer: minijinja
+  template_ref: prompt-templates/condense_session
+  mcp: null
+  gas_cap: 1000
+  timeout_seconds: 10
+  output_schema:
+    rendered_prompt: string
+- ordinal: 2
+  action: select
+  description: 'Condense session via InferencePort. Extract summary, decisions, and action items.
 
-  - ordinal: 3
-    action: feedback
-    description: >
-      Emit condensation outcome to Regulation.
-      Track compression efficiency and quality.
-    renderer: null
-    template_ref: null
-    mcp: null # Regulation is ambient (RegulationRuntime)
-    gas_cap: 500
-    timeout_seconds: 5
-    feedback:
-      variety_delta: integer
-      compression_achieved: float
-    output_schema:
-      reg_event_id: string
-      outcome_recorded: boolean
+    '
+  renderer: inline
+  template_ref: '{{ step_1_populated }}'
+  gas_cap: 4096
+  timeout_seconds: 60
+  output_schema:
+    summary: string
+    key_decisions: array
+    action_items: array
+    compression_ratio: float
+- ordinal: 3
+  action: feedback
+  description: 'Emit condensation outcome to Regulation. Track compression efficiency and quality.
 
-# Error Handling
+    '
+  renderer: null
+  template_ref: null
+  mcp: null
+  gas_cap: 500
+  timeout_seconds: 5
+  feedback:
+    variety_delta: integer
+    compression_achieved: float
+  output_schema:
+    reg_event_id: string
+    outcome_recorded: boolean
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 1
   on_capability_denied: escalate
-
-# OCAP Configuration
 ocap:
   required_capabilities:
-    - resource: template
-      action: render
-      template_id: prompt-templates/condense_session
-      gas_budget: 2048
-    - resource: inference
-      action: call
-      template_id: prompt-templates/condense_session
-      gas_budget: 4096
-    - resource: regulation
-      action: emit
-      template_id: prompt-templates/condense_session
-      gas_budget: 500
+  - resource: template
+    action: render
+    template_id: prompt-templates/condense_session
+    gas_budget: 2048
+  - resource: inference
+    action: call
+    template_id: prompt-templates/condense_session
+    gas_budget: 4096
+  - resource: regulation
+    action: emit
+    template_id: prompt-templates/condense_session
+    gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
-
-# Regulation Monitoring
 ledger:
   emit_spans: true
-  span_namespace: hkask.template.condense
+  span_namespace: reg.skill.prompt-templates/condense_session
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: Curator
-
-# Audit Trail
+  telemetry_namespace: hkask.template.prompt-templates/condense_session
 audit:
   enabled: true
   log_level: info

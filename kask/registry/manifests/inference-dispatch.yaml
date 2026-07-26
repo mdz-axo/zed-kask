@@ -1,74 +1,62 @@
-# Dispatch manifest for inference-curator-bot
-# Orchestrates LLM inference with model tier selection
-
 manifest:
   id: inference-dispatch
   category: pipeline
   name: inference-dispatch
-  version: "0.31.0"
+  version: 0.31.0
   description: Inference orchestration with model tier balancing
   functional_role: flowdef
   visibility: Public
-
 gas:
   cap: 100000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
-
 rjoule:
   cap: 2
   alert_threshold: 0.8
   hard_limit: true
-
 steps:
-  - ordinal: 1
-    action: select
-    template_ref: inference/selectors/model-selector.j2
-    renderer: minijinja
-    output_schema:
-      type: object
-      properties:
-        model_tier:
-          type: string
-          enum: [fast_local, balanced, high_quality]
-        model_name:
-          type: string
-        rationale:
-          type: string
-
-  - ordinal: 2
-    action: populate
-    template_ref: inference/templates/prompt.j2
-    renderer: minijinja
-    bindings:
-      system_prompt: "${input.system_prompt}"
-      user_prompt: "${input.user_prompt}"
-      context: "${input.context}"
-
-  - ordinal: 3
-    action: select
-    target: inference_call
-    renderer: inline
-    template_ref: "{{ step_2_populated }}"
-    output_schema:
-      type: object
-      properties:
-        response:
-          type: string
-        tokens_used:
-          type: integer
-        latency_ms:
-          type: number
-
-# matroshka: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   max_depth: 5
-#   enforce: true
-
+- ordinal: 1
+  action: select
+  template_ref: inference/selectors/model-selector.j2
+  renderer: minijinja
+  output_schema:
+    type: object
+    properties:
+      model_tier:
+        type: string
+        enum:
+        - fast_local
+        - balanced
+        - high_quality
+      model_name:
+        type: string
+      rationale:
+        type: string
+- ordinal: 2
+  action: populate
+  template_ref: inference/templates/prompt.j2
+  renderer: minijinja
+  bindings:
+    system_prompt: ${input.system_prompt}
+    user_prompt: ${input.user_prompt}
+    context: ${input.context}
+- ordinal: 3
+  action: select
+  target: inference_call
+  renderer: inline
+  template_ref: '{{ step_2_populated }}'
+  output_schema:
+    type: object
+    properties:
+      response:
+        type: string
+      tokens_used:
+        type: integer
+      latency_ms:
+        type: number
 ledger:
-  spans:
-    - reg.tool.invocation
-    - hkask.template.outcome
   fast_local: OM/llama3.2
   balanced: FW/claude-haiku
   high_quality: FW/claude-sonnet
+  span_namespace: reg.skill.inference-dispatch
