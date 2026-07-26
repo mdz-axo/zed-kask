@@ -122,7 +122,6 @@ works:
   - title: "Notes on the Analytical Engine"
     slug: lovelace-notes
     url: "https://www.fourmilab.ch/babbage/sketch.html"
-    notes: "Gutenberg ebook #75107 returned 404 (2026-06-12). Using fourmilab.ch mirror."
     local_path: "registry/styles/gentle-lovelace/corpus-sources/lovelace-notes.txt"
     format: text
     type: specification
@@ -224,7 +223,6 @@ works:
     dimensions: [Gentle]
     section_types: [Statement, Implications]
     mds_categories: [composition, curation]
-    notes: "Deep pages require authentication. Welcome page provides core principles."
 
   # ── Schriver: Write the Docs Guide (community operationalizing her principles) ─
   - title: "Write the Docs — Software Documentation Guide"

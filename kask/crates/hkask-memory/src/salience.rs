@@ -820,9 +820,20 @@ pub fn compute_salience_batch(all_tags: &[EntityTags]) -> Vec<f32> {
 // ── Budget ────────────────────────────────────────────────────────────────
 
 /// HMem budget configuration for gating metadata storage.
+///
+/// Variant order is load-bearing: serde tries each variant in declaration
+/// order on untagged input. Variants with required fields must come before
+/// variants whose fields all carry `#[serde(default)]`, otherwise the
+/// all-defaulted variant silently matches first and drops the required
+/// field. `Absolute` (required `max_triples`) and `Flat` (required
+/// `triple_budget_per_100`) come before `PerPage` (all-defaulted) so that
+/// `{ max_triples: N }` selects `Absolute` and `{ total_passages, triple_budget_per_100 }`
+/// selects `Flat`; `PerPage` is the fallback for `{ per_100_pages }` or empty.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
 pub enum BudgetConfig {
+    /// Absolute hard cap.
+    Absolute { max_triples: usize },
     /// Flat config with explicit total passages and rate.
     /// Used by gentle-lovelace and similar mashup styles.
     Flat {
@@ -837,8 +848,6 @@ pub enum BudgetConfig {
         #[serde(default = "default_budget_per_100_pages")]
         per_100_pages: usize,
     },
-    /// Absolute hard cap.
-    Absolute { max_triples: usize },
 }
 
 fn default_budget_per_100_pages() -> usize {

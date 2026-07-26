@@ -19,7 +19,6 @@
 #   }
 
 author: "john-brooks"
-author_full: "John Brooks — Capabilities Researcher"
 
 embedding:
   model: "DI/Qwen/Qwen3-Embedding-0.6B"

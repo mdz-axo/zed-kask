@@ -19,8 +19,6 @@
 # All works are public domain (Christie pre-1931, Eliot pre-1881).
 
 author: agatha-eliot
-author_full: "Agatha Christie × George Eliot"
-style_synthesizer: composition/agatha-eliot-style-synthesizer
 centroid_entity_ref: "style:agatha-eliot:centroid"
 
 embedding:
@@ -35,130 +33,94 @@ works:
   - title: "The Mysterious Affair at Styles"
     slug: mysterious-affair-at-styles
     url: "https://www.gutenberg.org/cache/epub/863/pg863.txt"
-    year: 1920
     type: novel
-    public_domain: true
 
   - title: "The Secret Adversary"
     slug: secret-adversary
     url: "https://www.gutenberg.org/cache/epub/1155/pg1155.txt"
-    year: 1922
     type: novel
-    public_domain: true
 
   - title: "The Murder on the Links"
     slug: murder-on-the-links
     url: "https://www.gutenberg.org/cache/epub/58866/pg58866.txt"
-    year: 1923
     type: novel
-    public_domain: true
 
   - title: "The Man in the Brown Suit"
     slug: man-in-brown-suit
     url: "https://www.gutenberg.org/cache/epub/61168/pg61168.txt"
-    year: 1924
     type: novel
-    public_domain: true
 
   - title: "Poirot Investigates"
     slug: poirot-investigates
     url: "https://www.gutenberg.org/cache/epub/61262/pg61262.txt"
-    year: 1924
     type: short_story_collection
-    public_domain: true
 
   - title: "The Secret of Chimneys"
     slug: secret-of-chimneys
     url: "https://www.gutenberg.org/cache/epub/65238/pg65238.txt"
-    year: 1925
     type: novel
-    public_domain: true
 
   - title: "The Murder of Roger Ackroyd"
     slug: murder-of-roger-ackroyd
     url: "https://www.gutenberg.org/cache/epub/69087/pg69087.txt"
-    year: 1926
     type: novel
-    public_domain: true
 
   - title: "The Big Four"
     slug: big-four
     url: "https://www.gutenberg.org/cache/epub/70119/pg70119.txt"
-    year: 1927
     type: novel
-    public_domain: true
 
   - title: "The Mystery of the Blue Train"
     slug: mystery-of-blue-train
     url: "https://www.gutenberg.org/cache/epub/70052/pg70052.txt"
-    year: 1928
     type: novel
-    public_domain: true
 
   - title: "The Seven Dials Mystery"
     slug: seven-dials-mystery
     url: "https://www.gutenberg.org/cache/epub/1635/pg1635.txt"
-    year: 1929
     type: novel
-    public_domain: true
 
   - title: "The Murder at the Vicarage"
     slug: murder-at-the-vicarage
     url: "https://www.gutenberg.org/cache/epub/59261/pg59261.txt"
-    year: 1930
     type: novel
-    public_domain: true
 
   # ── Eliot ────────────────────────────────────────────────────────────────
 
   - title: "Adam Bede"
     slug: adam-bede
     url: "https://www.gutenberg.org/cache/epub/507/pg507.txt"
-    year: 1859
     type: novel
-    public_domain: true
 
   - title: "The Mill on the Floss"
     slug: mill-on-the-floss
     url: "https://www.gutenberg.org/cache/epub/6688/pg6688.txt"
-    year: 1860
     type: novel
-    public_domain: true
 
   - title: "Silas Marner"
     slug: silas-marner
     url: "https://www.gutenberg.org/cache/epub/550/pg550.txt"
-    year: 1861
     type: novel
-    public_domain: true
 
   - title: "Romola"
     slug: romola
     url: "https://www.gutenberg.org/cache/epub/24020/pg24020.txt"
-    year: 1863
     type: novel
-    public_domain: true
 
   - title: "Felix Holt, the Radical"
     slug: felix-holt
     url: "https://www.gutenberg.org/cache/epub/40882/pg40882.txt"
-    year: 1866
     type: novel
-    public_domain: true
 
   - title: "Middlemarch"
     slug: middlemarch
     url: "https://www.gutenberg.org/cache/epub/145/pg145.txt"
-    year: 1871
     type: novel
-    public_domain: true
 
   - title: "Daniel Deronda"
     slug: daniel-deronda
     url: "https://www.gutenberg.org/cache/epub/7469/pg7469.txt"
-    year: 1876
     type: novel
-    public_domain: true
 
 foundational_rules:
   # ── Christie structural axioms ───────────────────────────────────────────

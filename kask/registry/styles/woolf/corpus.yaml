@@ -13,8 +13,6 @@
 # All works are public domain (pre-1930).
 
 author: woolf
-author_full: "Virginia Woolf"
-style_synthesizer: composition/woolf-style-synthesizer
 
 # ── Embedding Model Configuration ──────────────────────────────────────────────
 embedding:
@@ -29,51 +27,37 @@ works:
   - title: "Mrs Dalloway"
     slug: mrs-dalloway
     url: "https://www.gutenberg.org/cache/epub/71865/pg71865.txt"
-    year: 1925
     type: novel
-    public_domain: true
 
   - title: "To the Lighthouse"
     slug: to-the-lighthouse
     url: "https://www.gutenberg.org/cache/epub/45401/pg45401.txt"
-    year: 1927
     type: novel
-    public_domain: true
 
   - title: "Orlando"
     slug: orlando
     url: "https://www.gutenberg.org/cache/epub/71533/pg71533.txt"
-    year: 1928
     type: novel
-    public_domain: true
 
   - title: "A Room of One's Own"
     slug: a-room-of-ones-own
     url: "https://www.gutenberg.org/cache/epub/71734/pg71734.txt"
-    year: 1929
     type: essay
-    public_domain: true
 
   - title: "The Voyage Out"
     slug: the-voyage-out
     url: "https://www.gutenberg.org/cache/epub/144/pg144.txt"
-    year: 1915
     type: novel
-    public_domain: true
 
   - title: "Night and Day"
     slug: night-and-day
     url: "https://www.gutenberg.org/cache/epub/1245/pg1245.txt"
-    year: 1919
     type: novel
-    public_domain: true
 
   - title: "Jacob's Room"
     slug: jacobs-room
     url: "https://www.gutenberg.org/cache/epub/5670/pg5670.txt"
-    year: 1922
     type: novel
-    public_domain: true
 
 # ── Foundational Style Manifestos ───────────────────────────────────────────────
 # Woolf's own critical essays articulate the aesthetic principles of her fiction.
@@ -105,8 +89,6 @@ chunking:
   sentence_boundary: ".!? "
   overlap_words: 0
 
-# ── Entity Reference Format ────────────────────────────────────────────────────
-entity_ref_pattern: "style:{author}:{slug}:{index}"
 centroid_entity_ref: "style:woolf:centroid"
 
 # ── Quality Thresholds ─────────────────────────────────────────────────────────

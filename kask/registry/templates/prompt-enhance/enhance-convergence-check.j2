@@ -54,13 +54,13 @@ thinking_budget = "off"
 
 You are the convergence gate for prompt-enhance. Compute the normalized convergence metric and decide whether to exit or re-enter the PDCA cycle.
 
-## Tier-Scaled Thresholds
+## Tier-Scaled Thresholds and Max Iterations
 
-| Tier | Threshold | Rationale |
-|------|-----------|-----------|
-| `low` | 0.30 | Single rewrite is acceptable; don't over-engineer |
-| `medium` | 0.20 | Audit + rewrite + 1 grill round should converge cleanly |
-| `high` | 0.10 | Full evolution must be stable; tighter threshold |
+| Tier | Threshold | Max iterations | Rationale |
+|------|-----------|----------------|----------|
+| `low` | 0.30 | 3 | Single rewrite is acceptable; don't over-engineer |
+| `medium` | 0.20 | 6 | Audit + rewrite + 1 grill round should converge cleanly, with room for grill-driven rewrites |
+| `high` | 0.10 | 9 | Full evolution needs headroom for gpa iterations + grill escalation + PDCA re-entry |
 
 ## Scoring (start at 1.0, subtract for each satisfied check)
 
@@ -74,13 +74,13 @@ Clamp to [0, 1].
 
 ## Materiality Guard
 
-If `iteration >= 3` AND `|metric - prior_metric| < 0.02` AND no new phase completed this iteration, force `convergence_metric = 0.0` and set `materiality_guard_triggered = true`. The gap is irreducible — stop.
+If `iteration >= tier_max / 2` (rounded down: low=1, medium=3, high=4) AND `|metric - prior_metric| < 0.02` AND no new phase completed this iteration, force `convergence_metric = 0.0` and set `materiality_guard_triggered = true`. The gap is irreducible — stop.
 
 ## Next Action Logic
 
 - `exit` — metric ≤ tier threshold OR materiality guard triggered
-- `re-enter` — metric > threshold, iterations remaining
-- `exhausted` — max 3 iterations reached without convergence
+- `re-enter` — metric > threshold, iterations remaining (`iteration < tier_max`)
+- `exhausted` — tier max iterations reached without convergence (low=3, medium=6, high=9)
 
 ## Context
 ```json

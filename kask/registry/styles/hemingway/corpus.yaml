@@ -15,8 +15,6 @@
 # All works are public domain (pre-1929) or CC-licensed.
 
 author: hemingway
-author_full: "Ernest Hemingway"
-style_synthesizer: composition/hemingway-style-synthesizer
 
 # ── Embedding Model Configuration ──────────────────────────────────────────────
 embedding:
@@ -32,44 +30,32 @@ works:
   - title: "The Sun Also Rises"
     slug: sun-also-rises
     url: "https://www.gutenberg.org/cache/epub/67138/pg67138.txt"
-    year: 1926
     type: novel
-    public_domain: true
 
   - title: "A Farewell to Arms"
     slug: farewell-to-arms
     url: "https://www.gutenberg.org/cache/epub/24258/pg24258.txt"
-    year: 1929
     type: novel
-    public_domain: true
 
   - title: "In Our Time"
     slug: in-our-time
     url: "https://www.gutenberg.org/cache/epub/57023/pg57023.txt"
-    year: 1925
     type: short_story_collection
-    public_domain: true
 
   - title: "Men Without Women"
     slug: men-without-women
     url: "https://www.gutenberg.org/cache/epub/64398/pg64398.txt"
-    year: 1927
     type: short_story_collection
-    public_domain: true
 
   - title: "Three Stories and Ten Poems"
     slug: three-stories-ten-poems
     url: "https://www.gutenberg.org/cache/epub/64719/pg64719.txt"
-    year: 1923
     type: collection
-    public_domain: true
 
   - title: "The Torrents of Spring"
     slug: torrents-of-spring
     url: "https://www.gutenberg.org/cache/epub/56208/pg56208.txt"
-    year: 1926
     type: novella
-    public_domain: true
 
 # ── Kansas City Star Style Guide (canonical source) ────────────────────────────
 # Not a work per se, but the foundational rules that shape Hemingway's prose.
@@ -124,7 +110,6 @@ chunking:
 # How passages are indexed in sqlite-vec for KNN retrieval.
 # Format: style:{author}:{work_slug}:{chunk_index}
 
-entity_ref_pattern: "style:{author}:{slug}:{index}"
 centroid_entity_ref: "style:hemingway:centroid"
 
 # ── Quality Thresholds ─────────────────────────────────────────────────────────

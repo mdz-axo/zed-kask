@@ -87,7 +87,12 @@ impl EmbedProgress {
 /// Corpus configuration — defines the author, works, embedding model,
 /// chunking parameters, entity declarations, method declarations,
 /// budget settings, and validation constraints.
+///
+/// `deny_unknown_fields` makes schema drift between persona YAMLs and this
+/// struct fail loudly at parse time instead of silently dropping stale
+/// field names (which previously hid BUG-001 for an unknown period).
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CorpusConfig {
     pub author: String,
     pub embedding: EmbeddingConfig,
@@ -165,6 +170,7 @@ fn default_triple_classifier() -> String {
 /// Literary-only: characters.
 /// Academic-only: co_authors, venues, topics, paradigms.
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EntityConfig {
     /// Literary: named characters in the author's works.
     #[serde(default)]
@@ -196,6 +202,7 @@ pub struct EntityConfig {
 
 /// A declared entity with name and optional per-work scoping.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Entity {
     pub name: String,
     /// Restrict to specific work slugs (empty = all works).
@@ -219,6 +226,7 @@ impl Entity {
 
 /// Embedding model and dimension configuration.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct EmbeddingConfig {
     pub model: String,
     pub dim: usize,
@@ -227,6 +235,7 @@ pub struct EmbeddingConfig {
 
 /// A work (text) to download and embed.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Work {
     pub title: String,
     pub slug: String,
@@ -257,6 +266,7 @@ fn default_format() -> String {
 
 /// A foundational rule to include as a passage.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FoundationalRule {
     pub slug: String,
     pub text: String,
@@ -270,6 +280,7 @@ pub struct FoundationalRule {
 
 /// Chunking parameters for passage splitting.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChunkingConfig {
     pub min_words: usize,
     pub max_words: usize,
@@ -278,6 +289,7 @@ pub struct ChunkingConfig {
 
 /// Validation constraints for centroid distance and exemplar counts.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationConfig {
     pub centroid_distance_max: f64,
     pub exemplar_count_min: usize,
@@ -286,6 +298,7 @@ pub struct ValidationConfig {
 
 /// Per-dimension centroid configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DimensionCentroid {
     /// Dimension name: "gentle", "schriver", "hopper", "lovelace".
     pub name: String,
@@ -300,6 +313,7 @@ pub struct DimensionCentroid {
 
 /// Orthogonal tag set definition.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TagSet {
     /// Tag axis name: "section_type", "mds_category", "document_type", "dimension".
     pub name: String,
