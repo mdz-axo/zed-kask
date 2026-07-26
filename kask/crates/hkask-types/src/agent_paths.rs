@@ -50,7 +50,8 @@ pub fn agent_memory_db(name: &str) -> PathBuf {
 }
 
 /// Style database — corpus embeddings and centroids for style composition.
-pub fn agent_style_db(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_style_db(name: &str) -> PathBuf {
     agent_dir(name).join("style.db")
 }
 
@@ -65,29 +66,34 @@ pub fn agent_training_db(name: &str) -> PathBuf {
 }
 
 /// Wallet database — per-agent rJoule balances, API keys, encumbrances.
-pub fn agent_wallet_db(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_wallet_db(name: &str) -> PathBuf {
     agent_dir(name).join("wallet.db")
 }
 
 // ── Directory paths ──────────────────────────────────────────────────────────
 
 /// Gallery directory — media server assets (images, video, audio).
-pub fn agent_gallery_dir(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_gallery_dir(name: &str) -> PathBuf {
     agent_dir(name).join("gallery")
 }
 
 /// Documents directory — docproc parsed/extracted documents.
-pub fn agent_documents_dir(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_documents_dir(name: &str) -> PathBuf {
     agent_dir(name).join("documents")
 }
 
 /// Library directory — research materials, downloaded papers, RSS feeds.
-pub fn agent_library_dir(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_library_dir(name: &str) -> PathBuf {
     agent_dir(name).join("library")
 }
 
 /// Sessions directory — MCP session transcripts.
-pub fn agent_sessions_dir(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_sessions_dir(name: &str) -> PathBuf {
     agent_dir(name).join("sessions")
 }
 
@@ -97,17 +103,20 @@ pub fn agent_adapters_dir(name: &str) -> PathBuf {
 }
 
 /// Portfolios directory — financial portfolio/watchlist data.
-pub fn agent_portfolios_dir(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_portfolios_dir(name: &str) -> PathBuf {
     agent_dir(name).join("portfolios")
 }
 
 /// Artifacts directory — agent-specific styles, bots, templates, bundles.
-pub fn agent_artifacts_dir(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_artifacts_dir(name: &str) -> PathBuf {
     agent_dir(name).join("artifacts")
 }
 
 /// Artifact manifest — per-agent index of published artifacts.
-pub fn agent_manifest_json(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn agent_manifest_json(name: &str) -> PathBuf {
     agent_dir(name).join("manifest.json")
 }
 
@@ -146,7 +155,8 @@ pub fn ensure_agent_dirs(name: &str) -> std::io::Result<()> {
 /// Called when an agent produces a shareable artifact (style, bot, gallery
 /// item, trained adapter). The CuratorSync reads manifest files to build
 /// the cross-agent artifact index.
-pub fn publish_artifact(
+#[allow(dead_code)]
+pub(crate) fn publish_artifact(
     name: &str,
     artifact_type: &str,
     artifact_name: &str,

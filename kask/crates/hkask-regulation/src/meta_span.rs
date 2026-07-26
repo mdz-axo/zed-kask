@@ -84,7 +84,8 @@ impl ObservableSpan for MetaSpan {
 ///
 /// Degrades gracefully: on namespace miss or persistence failure, logs a warning
 /// and continues (directive issuance is never blocked by observability).
-pub fn emit_meta_directive(
+#[allow(dead_code)]
+pub(crate) fn emit_meta_directive(
     sink: &dyn RegulationSink,
     observer: &WebID,
     variant: &str,
@@ -106,7 +107,8 @@ pub fn emit_meta_directive(
 }
 
 /// Emit a `reg.meta.escalation` span recording an escalation persistence outcome.
-pub fn emit_meta_escalation(
+#[allow(dead_code)]
+pub(crate) fn emit_meta_escalation(
     sink: &dyn RegulationSink,
     observer: &WebID,
     outcome: &str,
@@ -125,7 +127,8 @@ pub fn emit_meta_escalation(
 }
 
 /// Emit a `reg.meta.circuit_breaker` span recording a template circuit-breaker trip.
-pub fn emit_meta_circuit_breaker(sink: &dyn RegulationSink, observer: &WebID, skip_cycles: u64) {
+#[allow(dead_code)]
+pub(crate) fn emit_meta_circuit_breaker(sink: &dyn RegulationSink, observer: &WebID, skip_cycles: u64) {
     let Some(ns) = SpanNamespace::from_observable(&MetaSpan::CircuitBreakerTrip) else {
         tracing::warn!(target: "hkask.meta", "reg.meta.circuit_breaker namespace not canonical");
         return;
@@ -160,7 +163,8 @@ pub struct CalibrationSpan<'a> {
 /// Emit a `reg.meta.self_calibration` span recording a self-applied threshold change.
 /// The span records both the primary signal (drop count delta — lever-controlled)
 /// and the secondary signal (effectiveness delta — retained for offline GEPA).
-pub fn emit_meta_self_calibration(
+#[allow(dead_code)]
+pub(crate) fn emit_meta_self_calibration(
     sink: &dyn RegulationSink,
     observer: &WebID,
     data: &CalibrationSpan,

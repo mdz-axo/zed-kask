@@ -469,7 +469,8 @@ impl RegulationPolicy {
 
 /// Extract (deficit, threshold) from a `RegulationData` variant.
 /// Returns (0, 0) when the variant doesn't carry deficit/threshold.
-pub fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
+#[allow(dead_code)]
+pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
     match data {
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
             (*deficit as u64, *threshold as u64)
@@ -484,7 +485,8 @@ pub fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
 /// - `stage_ratio`: below this → Accept (noise).
 /// - `block_ratio`: at or above this → Block (hard reject).
 /// - Between → Stage (escalate for review).
-pub fn classify_decision(worsening: f64, stage_ratio: f64, block_ratio: f64) -> ActionDecision {
+#[allow(dead_code)]
+pub(crate) fn classify_decision(worsening: f64, stage_ratio: f64, block_ratio: f64) -> ActionDecision {
     debug_assert!(
         stage_ratio <= block_ratio,
         "stage_worsening_ratio ({stage_ratio}) must be <= block_worsening_ratio ({block_ratio})"
@@ -503,7 +505,8 @@ pub fn classify_decision(worsening: f64, stage_ratio: f64, block_ratio: f64) -> 
 /// These are the built-in ladders used when no custom ladders are configured
 /// via `SetPoints.action_substitutions`. Each ladder is an ordered list of
 /// action types to try when the primary action is repeatedly ineffective.
-pub fn default_substitution_ladder(metric: SignalMetric) -> &'static [ActionType] {
+#[allow(dead_code)]
+pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [ActionType] {
     use ActionType::*;
     match metric {
         // ── Energy / Gas ──
