@@ -435,40 +435,6 @@ impl Registry {
             }
         }
 
-        // Register platform engineering FlowDef manifests.
-        // These are the loyalty-anchored platform maintenance skills.
-        let platform_manifests = [
-            include_str!(
-                "../../../registry/manifests/platform-governance-transparency-reporter.yaml"
-            ),
-            include_str!("../../../registry/manifests/platform-consent-auditor.yaml"),
-            include_str!("../../../registry/manifests/platform-portability-verifier.yaml"),
-            include_str!("../../../registry/manifests/platform-health-scorer.yaml"),
-            include_str!("../../../registry/manifests/platform-loyalty-scorecard.yaml"),
-            include_str!("../../../registry/manifests/platform-bulkhead-auditor.yaml"),
-            include_str!("../../../registry/manifests/platform-wardley-mapper.yaml"),
-        ];
-        for manifest_yaml in platform_manifests {
-            match crate::manifest_loader::load_manifest_from_yaml(manifest_yaml) {
-                Ok(bundle) => {
-                    tracing::info!(
-                        target: "hkask.templates",
-                        id = %bundle.id,
-                        steps = bundle.steps.len(),
-                        "Registered platform engineering manifest",
-                    );
-                    registry.register_bundle(bundle);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.templates",
-                        error = %e,
-                        "Failed to load platform engineering manifest",
-                    );
-                }
-            }
-        }
-
         registry
     }
 }

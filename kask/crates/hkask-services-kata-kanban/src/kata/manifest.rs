@@ -15,16 +15,12 @@ pub struct KataManifest {
     #[serde(default)]
     pub questions: Vec<CoachQuestion>,
     #[serde(default)]
-    pub practices: Vec<PracticeRoutine>,
-    #[serde(default)]
     pub error_handling: ErrorHandling,
     pub ledger: KataLedgerConfig,
     #[serde(default)]
     pub outcomes: Vec<Outcome>,
     #[serde(default)]
     pub metrics: Vec<MetricDef>,
-    #[serde(default)]
-    pub starter_outcomes: Vec<StarterOutcome>,
     #[serde(default)]
     pub audit: KataAuditConfig,
 }
@@ -101,23 +97,6 @@ pub struct CoachQuestion {
     pub expected_output: Option<String>,
 }
 
-/// A practice routine in a Starter Kata.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PracticeRoutine {
-    pub name: String,
-    pub description: String,
-    #[serde(default)]
-    pub frequency: Option<String>,
-    #[serde(default)]
-    pub duration_minutes: Option<u32>,
-    #[serde(default)]
-    pub reg_spans: Vec<String>,
-    #[serde(default)]
-    pub steps: Vec<String>,
-    #[serde(default)]
-    pub success_criteria: Vec<String>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct ErrorHandling {
     #[serde(default)]
@@ -171,13 +150,6 @@ pub struct MetricDef {
     pub description: String,
     #[serde(default)]
     pub span: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct StarterOutcome {
-    pub name: String,
-    pub condition: String,
-    pub action: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

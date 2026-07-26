@@ -42,7 +42,7 @@ pub use history::{
 };
 pub use manifest::{
     CoachQuestion, ErrorHandling, KataAuditConfig, KataGasConfig, KataLedgerConfig, KataManifest,
-    KataStep, ManifestMeta, MetricDef, Outcome, PracticeRoutine, StarterOutcome,
+    KataStep, ManifestMeta, MetricDef, Outcome,
 };
 pub use state::{KataResult, KataState};
 

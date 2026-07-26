@@ -1617,6 +1617,7 @@ pub struct KaskCodegraphSettingsContent {
 pub struct KaskCompaniesSettingsContent {
     pub chronic_staleness_days: Option<u32>,
     pub fermi_defaults: Option<String>,
+    pub transactions_dir: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

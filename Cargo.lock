@@ -11040,6 +11040,8 @@ name = "kask_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "dirs 6.0.0",
  "editor",
  "gpui",
  "language",

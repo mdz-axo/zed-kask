@@ -168,7 +168,6 @@ const KNOWN_TERMS: &[&str] = &[
     "guard",
     "guide",
     "habit",
-    "handoff",
     "harness",
     "heal",
     "hunt",

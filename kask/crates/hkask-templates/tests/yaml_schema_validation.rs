@@ -298,3 +298,77 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         "delegation chain should be required"
     );
 }
+
+/// Verify that every `fusion.skills` entry in every manifest deserializes
+/// successfully as a `FusionSkill` enum variant. Catches drift between the
+/// registry and the `FusionSkill` enum in `hkask-types::fusion`.
+///
+/// When a manifest specifies `fusion.skills: [some-skill]` but `some-skill`
+/// is not a `FusionSkill` variant, serde deserialization of the manifest
+/// will fail at runtime. This test catches that at test time.
+#[test]
+fn all_fusion_skill_references_are_valid() {
+    use hkask_types::fusion::FusionSkill;
+    use serde::Deserialize;
+    use std::path::Path;
+
+    #[derive(Debug, Deserialize)]
+    struct FusionBlock {
+        #[serde(default)]
+        skills: Vec<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ManifestWithFusion {
+        fusion: Option<FusionBlock>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ManifestFile {
+        manifest: ManifestWithFusion,
+    }
+
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifests_dir = workspace_root.join("registry/manifests");
+
+    if !manifests_dir.exists() {
+        eprintln!("registry/manifests/ not found — skipping");
+        return;
+    }
+
+    let mut checked = 0;
+    let mut failures = Vec::new();
+
+    for entry in std::fs::read_dir(&manifests_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "yaml") {
+            let content = std::fs::read_to_string(&path).unwrap();
+            let parsed: Result<ManifestFile, _> = serde_yaml_neo::from_str(&content);
+            if let Ok(file) = parsed {
+                if let Some(ref fusion) = file.manifest.fusion {
+                    for skill_name in &fusion.skills {
+                        checked += 1;
+                        // Try to deserialize the string as a FusionSkill variant
+                        let json_str = format!("\"{}\"", skill_name);
+                        let result: Result<FusionSkill, _> = serde_json::from_str(&json_str);
+                        if result.is_err() {
+                            failures.push(format!(
+                                "{}: fusion.skills contains '{}' which is not a valid FusionSkill variant",
+                                path.file_name().unwrap().display(),
+                                skill_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "FusionSkill drift detected (checked {} references):\n{}",
+        checked,
+        failures.join("\n")
+    );
+}

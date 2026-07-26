@@ -814,7 +814,9 @@ pub mod kask_panel {
             /// Toggles focus on the kask panel.
             ToggleFocus,
             /// Opens the kanban board view in the center pane.
-            ToggleKanbanBoard
+            ToggleKanbanBoard,
+            /// Opens the portfolio dashboard view in the center pane.
+            TogglePortfolioDashboard
         ]
     );
 }

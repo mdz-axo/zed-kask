@@ -1,0 +1,115 @@
+# Template crate manifest for sankey-flow skill
+# hKask v0.31.0
+# Dynamic Sankey diagramming — anchored in PKO, PROV-O, FIBO, Mermaid sankey-beta
+# Canonical references: Schmidt (2008) J. Industrial Ecology 12(1):82–94, 12(2):173–185
+
+crate:
+  name: sankey-flow
+  version: "0.31.0"
+  description: >
+    Dynamic Sankey flow diagramming. Convergent PDCA loop: classify prompt
+    against 10-domain flow catalog, gather weighted edges via interrogation or
+    research delegation, draft Mermaid sankey-beta CSV, evaluate against four
+    weighted criteria (data integrity hard-fail), iterate until convergence
+    (threshold 0.15). Anchors flows to PKO (a Sankey is a visualization of a
+    PKO Procedure). Per-domain conservation modes (mandatory/asserted/none).
+    All diagrams render natively in Zed.
+
+templates:
+  - id: sankey-flow/sankey-classify
+    name: "Classify the prompt against the flow domain catalog"
+    path: sankey-classify.j2
+    type: KnowAct
+    lexicon_terms: [classify, select, orient, map, identify]
+    description: >
+      Classify the prompt against the 10-domain flow catalog (process,
+      data-pipeline, resource-allocation, user-journey, energy-material,
+      decision-funnel, value-stream, cost-breakdown, conversion,
+      system-architecture). Produce domain, rationale, weight unit,
+      conservation mode (mandatory/asserted/none), ontology anchor (PKO/FIBO),
+      candidate nodes, candidate edges, and source_ref if the prompt references
+      an external source.
+    generates_spans:
+      - reg.sankey-flow.classify
+
+  - id: sankey-flow/sankey-gather
+    name: "GATHER — interrogation loop or research delegation"
+    path: sankey-gather.j2
+    type: KnowAct
+    lexicon_terms: [gather, interrogate, delegate, extract, probe]
+    description: >
+      GATHER phase — compute the spec gap (nodes/edges/weights/conservation)
+      and either run the direct interrogation loop (Path A, no source) or
+      delegate extraction to a research skill (Path B, source present). Path A
+      emits ≤ 5 constrained-answer questions prioritized by blocking power.
+      Path B emits a delegation directive targeting structured-extraction,
+      sequential-inquiry, or graph-audit with a schema matching the Sankey
+      spec. Hard rule: never fabricate weights — mark unknowns as value=1.
+      If extracted_spec is pre-populated, validate completeness and skip.
+    generates_spans:
+      - reg.sankey-flow.gather
+
+  - id: sankey-flow/sankey-draft
+    name: "Render gathered nodes and edges into sankey-beta CSV"
+    path: sankey-draft.j2
+    type: KnowAct
+    lexicon_terms: [generate, compose, render, structure, format]
+    description: >
+      Render gathered nodes and weighted edges into Mermaid sankey-beta CSV
+      (source,target,value per row). Apply conventions: title case labels ≤ 30
+      chars, sources before targets in CSV ordering, front-matter config block
+      (width/height/showValues/linkColor), blank CSV lines to group stages.
+      For mandatory-conservation domains, verify inflow=outflow at every
+      internal node before drafting; flag discrepancies in the description
+      rather than silently balancing. For none-conservation domains, do not
+      add loss branches to "balance" the flow. Accepts refinement directives
+      from the evaluate step for iterative improvement.
+    generates_spans:
+      - reg.sankey-flow.draft
+
+  - id: sankey-flow/sankey-evaluate
+    name: "Score a drafted Sankey against four weighted quality criteria"
+    path: sankey-evaluate.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, score, critique, verify, calibrate]
+    description: >
+      Score a drafted Sankey against four weighted criteria: node completeness
+      (0.30), edge fidelity (0.25), data integrity (0.35), readability (0.10).
+      Data integrity subsumes weight provenance and conservation honesty — a
+      fabricated weight scores 1.0 (hard failure forcing DIVERGED), silent
+      conservation "balancing" in mandatory domains scores > 0, missing
+      provenance for a weight scores 0.5. Produces specific, actionable
+      refinement directives when quality gaps are found.
+    generates_spans:
+      - reg.sankey-flow.evaluate
+
+  - id: sankey-flow/sankey-convergence
+    name: "Compute normalized convergence metric from the evaluation scores"
+    path: sankey-convergence.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, score, verify, calibrate]
+    description: >
+      Compute normalized convergence metric from the evaluation scores.
+      Weighted sum across four criteria, normalized to [0,1] where 0 = perfect
+      Sankey. Threshold: 0.15 (same as diataxis-diagram / task-breakdown /
+      idiomatic-rust — "maximally correct"). Data integrity = 1.0 forces
+      DIVERGED regardless of other scores — fabrication is not refinable.
+    generates_spans:
+      - reg.sankey-flow.convergence
+
+  - id: sankey-flow/sankey-write
+    name: "Finalize the Sankey into a markdown file with provenance"
+    path: sankey-write.j2
+    type: KnowAct
+    lexicon_terms: [write, compose, structure, format, finalize]
+    description: >
+      Finalize the Sankey into a markdown file. Wraps the sankey-beta source in
+      a code block, adds a description paragraph stating domain, weight unit,
+      conservation mode, PKO anchoring, any abbreviations, any unweighted-
+      placeholder edges, any conservation discrepancies. Includes a Data
+      sources section with PROV-O provenance (prov:wasDerivedFrom) per weight,
+      and a References section citing canonical Sankey resources (Schmidt 2008,
+      FIBO, PROV-O, PKO) when relevant. Outputs to
+      docs/diagrams/sankey-{domain}-{subject}.md.
+    generates_spans:
+      - reg.sankey-flow.write

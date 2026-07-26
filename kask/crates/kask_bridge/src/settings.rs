@@ -284,6 +284,12 @@ pub struct KaskCompaniesSettings {
     /// When empty, uses hardcoded defaults.
     #[serde(default)]
     pub fermi_defaults: String,
+
+    /// Directory for portfolio transaction files (CSV/JSON). The portfolio
+    /// dashboard auto-loads any new files from this directory. When empty,
+    /// defaults to `<kask_data_dir>/transactions/`.
+    #[serde(default)]
+    pub transactions_dir: String,
 }
 
 /// Corpus MCP server configuration.
@@ -573,6 +579,12 @@ impl KaskSettings {
                 self.companies.fermi_defaults.clone(),
             );
         }
+        if !self.companies.transactions_dir.is_empty() {
+            env.insert(
+                "HKASK_TRANSACTIONS_DIR".to_string(),
+                self.companies.transactions_dir.clone(),
+            );
+        }
 
         // ── Corpus ──
         if self.corpus.embedding_dim != 1024 {
@@ -776,6 +788,7 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .map(|cm| KaskCompaniesSettings {
                     chronic_staleness_days: cm.chronic_staleness_days.unwrap_or(0),
                     fermi_defaults: cm.fermi_defaults.unwrap_or_default(),
+                    transactions_dir: cm.transactions_dir.unwrap_or_default(),
                 })
                 .unwrap_or_default(),
             corpus: c
