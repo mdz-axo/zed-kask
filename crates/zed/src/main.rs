@@ -953,6 +953,7 @@ fn main() {
                             embedding_model,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
+                            gpui_tokio::Tokio::handle(&cx),
                         ) {
                             Ok(real) => {
                                 let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
@@ -1175,9 +1176,12 @@ fn main() {
                             let or_api_key = std::env::var("OR_API_KEY").unwrap_or_default();
                             let max_price = kask_settings.fusion.openrouter_max_price;
                             let min_ia = kask_settings.fusion.openrouter_min_intelligence;
-                            let discovery_task = cx.background_spawn(async move {
-                                kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
-                            });
+                            let discovery_task = {
+                                let _tokio_guard = gpui_tokio::Tokio::handle(&cx).enter();
+                                cx.background_spawn(async move {
+                                    kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
+                                })
+                            };
                             // Block on the foreground executor with a 5s timeout.
                             // Discovery is best-effort — on timeout, fall back to kask_default panel.
                             let result = cx.foreground_executor().block_on(async {
@@ -1314,6 +1318,7 @@ fn main() {
                         a2a_secret.clone(),
                         registry_manifests_dir,
                         registry_templates_dir,
+                        gpui_tokio::Tokio::handle(cx),
                     ),
                 );
                 agent::set_manifest_executor(Some(executor));

@@ -504,6 +504,79 @@ fn validate_harness_compatibility(params: &TrainingParams, findings: &mut Vec<Va
     }
 }
 
+/// G-P1: Persistence preflight — verify that training results will be
+/// persisted before allowing submit on ephemeral cloud hosts.
+///
+/// Mirrors the HuggingFace "Critical: Saving Results to Hub" checklist.
+/// The persistence contract in hKask is job-level (env vars + artifacts),
+/// not config-level (`TrainingParams`): the install script's
+/// `huggingface-cli upload` is the actual push-to-Hub, driven by
+/// `HKASK_HF_MODEL_REPO` / `HF_TOKEN` env vars and `job.artifacts`.
+///
+/// # Arguments
+/// * `host_id` - The training host (Runpod, DeepInfra, Nebius).
+/// * `hf_training_result` - `Ok(training)` if env vars are set, `Err` if not.
+///
+/// # Returns
+/// Findings for G-P1. On Runpod, missing env vars → `Refuse` (adapter
+/// upload is configured via env vars; without them, results are lost on the
+/// ephemeral pod). On DeepInfra/Nebius, `Warn` (these hosts don't set
+/// `job.artifacts` today — no upload happens — but manual retrieval may be
+/// possible). On unknown hosts, `not_applicable` (no finding emitted).
+pub fn validate_persistence(
+    host_id: &crate::providers::TrainingHostId,
+    hf_training_result: &Result<(), String>,
+) -> Vec<ValidationFinding> {
+    let mut findings = Vec::new();
+    match host_id {
+        crate::providers::TrainingHostId::Runpod => {
+            if let Err(reason) = hf_training_result {
+                findings.push(ValidationFinding {
+                    gate_id: "G-P1",
+                    severity: ValidationSeverity::Refuse,
+                    message: format!(
+                        "Runpod host requires HuggingFace persistence env vars to be configured \
+                         (HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, HF_TOKEN) — \
+                         without them, the adapter and completion manifest are lost when the \
+                         ephemeral pod terminates. Error: {reason}"
+                    ),
+                    source: "HF huggingface-llm-trainer skill §Critical: Saving Results to Hub — \
+                             ephemeral environment, must push to Hub",
+                    remediation: "Set HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, \
+                                  HKASK_HF_DATASET_REPO, and HF_TOKEN environment variables \
+                                  before submitting a Runpod training job"
+                        .to_string(),
+                });
+            }
+        }
+        crate::providers::TrainingHostId::DeepInfra | crate::providers::TrainingHostId::Nebius => {
+            // These hosts do not currently set job.artifacts, so the install
+            // script has no model_repo to upload to. The operator may retrieve
+            // results manually from the pod, but this is not guaranteed on
+            // ephemeral infrastructure. Warn — do not refuse, since the host
+            // may support manual retrieval or the operator may have a custom
+            // persistence path.
+            findings.push(ValidationFinding {
+                gate_id: "G-P1",
+                severity: ValidationSeverity::Warn,
+                message: format!(
+                    "{host:?} host does not configure HuggingFace artifact persistence — \
+                     adapter weights and completion manifest are not automatically uploaded. \
+                     Results may be lost when the ephemeral pod terminates.",
+                    host = host_id
+                ),
+                source: "HF huggingface-llm-trainer skill §Critical: Saving Results to Hub",
+                remediation: "Configure HuggingFace persistence env vars \
+                              (HKASK_HF_ARTIFACT_OWNER, HKASK_HF_MODEL_REPO, HF_TOKEN) \
+                              and ensure the host sets job.artifacts, or retrieve the adapter \
+                              manually before the pod terminates"
+                    .to_string(),
+            });
+        }
+    }
+    findings
+}
+
 /// Returns true if any finding has `Refuse` severity — the job must not be submitted.
 pub fn has_refusals(findings: &[ValidationFinding]) -> bool {
     findings
@@ -1542,5 +1615,64 @@ mod tests {
                 .iter()
                 .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn })
         );
+    }
+
+    // ── G-P1: Persistence preflight tests ─────────────────────────────────
+
+    use crate::providers::TrainingHostId;
+
+    #[test]
+    fn gp1_runpod_with_env_vars_configured_passes() {
+        let findings = validate_persistence(&TrainingHostId::Runpod, &Ok(()));
+        assert!(
+            findings.is_empty(),
+            "Runpod with env vars configured should not emit a finding"
+        );
+    }
+
+    #[test]
+    fn gp1_runpod_without_env_vars_refuses() {
+        let findings = validate_persistence(
+            &TrainingHostId::Runpod,
+            &Err("HKASK_HF_ARTIFACT_OWNER must be set and non-empty".to_string()),
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-P1" && f.severity == ValidationSeverity::Refuse })
+        );
+    }
+
+    #[test]
+    fn gp1_deepinfra_warns_no_auto_upload() {
+        let findings = validate_persistence(&TrainingHostId::DeepInfra, &Ok(()));
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-P1" && f.severity == ValidationSeverity::Warn })
+        );
+    }
+
+    #[test]
+    fn gp1_nebius_warns_no_auto_upload() {
+        let findings = validate_persistence(&TrainingHostId::Nebius, &Ok(()));
+        assert!(
+            findings
+                .iter()
+                .any(|f| { f.gate_id == "G-P1" && f.severity == ValidationSeverity::Warn })
+        );
+    }
+
+    #[test]
+    fn gp1_runpod_refusal_message_mentions_ephemeral_pod() {
+        let findings = validate_persistence(
+            &TrainingHostId::Runpod,
+            &Err("HF_TOKEN must be set".to_string()),
+        );
+        let refusal = findings
+            .iter()
+            .find(|f| f.severity == ValidationSeverity::Refuse);
+        assert!(refusal.is_some());
+        assert!(refusal.unwrap().message.contains("ephemeral pod"));
     }
 }

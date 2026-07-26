@@ -264,13 +264,20 @@ fn epistemic_tension(embeddings: &[Vec<f32>]) -> f64 {
     if dim == 0 {
         return 0.0;
     }
-    let k = embeddings.len() as f64;
+    // Guard against mismatched embedding dimensions — skip any embedding
+    // whose length differs from the first. This prevents index-out-of-bounds
+    // panics when the embedding source returns inconsistent vectors.
+    let valid: Vec<&Vec<f32>> = embeddings.iter().filter(|e| e.len() == dim).collect();
+    if valid.len() <= 1 {
+        return 0.0;
+    }
+    let k = valid.len() as f64;
     // Centroid: element-wise mean.
     let centroid: Vec<f64> = (0..dim)
-        .map(|j| embeddings.iter().map(|e| e[j] as f64).sum::<f64>() / k)
+        .map(|j| valid.iter().map(|e| e[j] as f64).sum::<f64>() / k)
         .collect();
     // Mean squared distance from centroid.
-    let sum_sq: f64 = embeddings
+    let sum_sq: f64 = valid
         .iter()
         .map(|e| {
             (0..dim)
@@ -430,15 +437,22 @@ static LATENCY_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Update the rolling latency with a new sample.
 /// Uses an exponential moving average with α = 0.3.
+///
+/// Uses `fetch_update` for atomic read-modify-write — the orchestrator can
+/// be called concurrently from multiple threads, so a plain load→store
+/// sequence would lose updates.
 fn record_latency(duration_ms: u64) {
-    let prev = ROLLING_LATENCY_MS.load(Ordering::Relaxed);
-    let new_avg = if prev == 0 {
-        duration_ms
-    } else {
-        // EMA: new = α * sample + (1-α) * prev, with α = 0.3
-        ((0.3 * duration_ms as f64) + (0.7 * prev as f64)) as u64
-    };
-    ROLLING_LATENCY_MS.store(new_avg, Ordering::Relaxed);
+    ROLLING_LATENCY_MS
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |prev| {
+            let new_avg = if prev == 0 {
+                duration_ms
+            } else {
+                // EMA: new = α * sample + (1-α) * prev, with α = 0.3
+                ((0.3 * duration_ms as f64) + (0.7 * prev as f64)) as u64
+            };
+            Some(new_avg)
+        })
+        .ok();
     LATENCY_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 

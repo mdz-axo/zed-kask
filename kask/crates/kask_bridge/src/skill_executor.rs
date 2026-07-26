@@ -35,6 +35,12 @@ pub struct BridgeManifestExecutor {
     registry_manifests_dir: PathBuf,
     /// Path to the hKask registry templates directory (for Jinja2 template resolution).
     registry_templates_dir: PathBuf,
+    /// Tokio runtime handle — entered around manifest execution so that
+    /// `tokio::time::timeout` and other tokio APIs inside ManifestExecutor
+    /// have a reactor. The SkillTool runs on GPUI's foreground executor (not
+    /// tokio), so without this guard, any skill with a manifest would panic
+    /// with "there is no reactor running".
+    tokio_handle: tokio::runtime::Handle,
 }
 
 impl BridgeManifestExecutor {
@@ -50,6 +56,7 @@ impl BridgeManifestExecutor {
         a2a_secret: Vec<u8>,
         registry_manifests_dir: PathBuf,
         registry_templates_dir: PathBuf,
+        tokio_handle: tokio::runtime::Handle,
     ) -> Self {
         Self {
             inference,
@@ -57,6 +64,7 @@ impl BridgeManifestExecutor {
             a2a_secret,
             registry_manifests_dir,
             registry_templates_dir,
+            tokio_handle,
         }
     }
 
@@ -97,10 +105,21 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         )
         .with_template_base_path(self.registry_templates_dir.clone());
 
-        let result = executor
-            .execute_manifest(&manifest, context)
+        // Spawn manifest execution on the tokio runtime. ManifestExecutor
+        // uses tokio::time::timeout internally, which requires a tokio reactor.
+        // The SkillTool runs on GPUI's foreground executor, not tokio, so we
+        // can't hold a tokio EnterGuard across .await (it's not Send). Spawning
+        // on the tokio handle and awaiting the JoinHandle is the Send-safe way.
+        let join_handle = self.tokio_handle.spawn(async move {
+            executor
+                .execute_manifest(&manifest, context)
+                .await
+                .map_err(|e| format!("Manifest execution failed: {e}"))
+        });
+
+        let result = join_handle
             .await
-            .map_err(|e| format!("Manifest execution failed: {e}"))?;
+            .map_err(|e| format!("Manifest execution task failed: {e}"))??;
 
         // The cascade returns a HashMap<String, Value> — extract the final output.
         // Convention: the last step's result is under "step_N_result" where N is

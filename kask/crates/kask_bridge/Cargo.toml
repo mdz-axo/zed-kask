@@ -27,6 +27,7 @@ hkask-condenser = { path = "../hkask-condenser" }
 language_model = { path = "../../../crates/language_model" }
 language_model_core = { path = "../../../crates/language_model_core" }
 gpui = { path = "../../../crates/gpui" }
+gpui_tokio = { path = "../../../crates/gpui_tokio" }
 agent = { path = "../../../crates/agent" }
 settings = { path = "../../../crates/settings" }
 settings_content = { path = "../../../crates/settings_content" }

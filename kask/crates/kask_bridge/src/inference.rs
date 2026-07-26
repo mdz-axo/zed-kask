@@ -177,29 +177,36 @@ impl LanguageModelInferencePort {
         parameters: &LLMParameters,
         tools: Option<&[ChatToolDefinition]>,
     ) -> LanguageModelRequest {
+        // Images should only be attached to the last user message, not every
+        // user message in the conversation. This prevents image duplication in
+        // multi-turn conversations.
+        let last_user_idx = messages
+            .iter()
+            .rposition(|m| m.role.as_str() != "system" && m.role.as_str() != "assistant");
+
         let req_messages: Vec<LanguageModelRequestMessage> = messages
             .iter()
-            .map(|m| {
+            .enumerate()
+            .map(|(idx, m)| {
                 let role = match m.role.as_str() {
                     "system" => Role::System,
                     "assistant" => Role::Assistant,
                     _ => Role::User,
                 };
-                // For user messages with images, build a multimodal content array.
-                // For all other messages (and user messages without images), use
-                // text-only content.
-                let content = if role == Role::User && !images.is_empty() {
-                    let mut parts = Vec::with_capacity(1 + images.len());
-                    parts.push(MessageContent::Text(m.content.clone()));
-                    for img in images {
-                        parts.push(MessageContent::Image(LanguageModelImage {
-                            source: img.clone().into(),
-                        }));
-                    }
-                    parts
-                } else {
-                    vec![MessageContent::Text(m.content.clone())]
-                };
+                // Attach images only to the last user message.
+                let content =
+                    if role == Role::User && !images.is_empty() && Some(idx) == last_user_idx {
+                        let mut parts = Vec::with_capacity(1 + images.len());
+                        parts.push(MessageContent::Text(m.content.clone()));
+                        for img in images {
+                            parts.push(MessageContent::Image(LanguageModelImage {
+                                source: img.clone().into(),
+                            }));
+                        }
+                        parts
+                    } else {
+                        vec![MessageContent::Text(m.content.clone())]
+                    };
                 LanguageModelRequestMessage {
                     role,
                     content,

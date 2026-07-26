@@ -12,6 +12,7 @@ use tracing::{info, warn};
 /// Multi-provider embedding router.
 ///
 /// DeepInfra and OpenRouter use `/v1/embeddings` (OpenAI-compatible).
+#[derive(Clone)]
 pub struct EmbeddingRouter {
     config: InferenceConfig,
     deepinfra_client: Option<Arc<reqwest::Client>>,

@@ -39,6 +39,43 @@ impl TrainingServer {
                 return Err(McpToolError::invalid_argument(format!("Dataset file not found: {dataset_path}")));
             }
 
+            // G-P1: Persistence preflight — verify HuggingFace artifact persistence
+            // is configured before the expensive dataset normalization step. On
+            // Runpod, missing env vars → refuse (adapter lost on ephemeral pod).
+            // On DeepInfra/Nebius, warn (no auto-upload configured today).
+            let hf_training_result = HuggingFaceTraining::from_env()
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let persistence_findings =
+                lora_validation::validate_persistence(&self.host_id, &hf_training_result);
+            for finding in &persistence_findings {
+                let severity_str = match finding.severity {
+                    lora_validation::ValidationSeverity::Refuse => "refuse",
+                    lora_validation::ValidationSeverity::Warn => "warn",
+                    lora_validation::ValidationSeverity::Info => "info",
+                };
+                tracing::warn!(
+                    target: "reg.lora.audit",
+                    gate = finding.gate_id,
+                    severity = severity_str,
+                    message = %finding.message,
+                    source = %finding.source,
+                    "LoRA training-config persistence gate"
+                );
+            }
+            if lora_validation::has_refusals(&persistence_findings) {
+                let refusals: Vec<_> = persistence_findings
+                    .iter()
+                    .filter(|f| f.severity == lora_validation::ValidationSeverity::Refuse)
+                    .collect();
+                let messages: Vec<String> =
+                    refusals.iter().map(|f| format!("{}: {}", f.gate_id, f.message)).collect();
+                return Err(McpToolError::failed_precondition(format!(
+                    "Training persistence not configured: {}",
+                    messages.join("; ")
+                )));
+            }
+
             let retrain_mode = feedback_path.is_some();
             let mut ab_baseline: Option<AbBaseline> = None;
             let mut version: u32 = 1;

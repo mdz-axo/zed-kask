@@ -95,6 +95,10 @@ pub struct RealMemoryPort {
     /// Timestamp of the last consolidation pass. Guarded by a mutex so the
     /// ingestion path (which is `&self`) can check-and-update atomically.
     last_consolidation: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
+    /// Tokio runtime handle — entered around embedding HTTP calls so that
+    /// `reqwest` (which is tokio-backed) has a reactor. The memory port's
+    /// async methods are called from GPUI's background executor, not tokio.
+    tokio_handle: tokio::runtime::Handle,
 }
 
 impl RealMemoryPort {
@@ -111,6 +115,7 @@ impl RealMemoryPort {
         embedding_model: String,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
+        tokio_handle: tokio::runtime::Handle,
     ) -> Result<Self, String> {
         let db = Database::open(db_path, passphrase).map_err(|e| e.to_string())?;
         let pool = db.sqlite_pool().map_err(|e| e.to_string())?;
@@ -159,6 +164,7 @@ impl RealMemoryPort {
             consolidation_cadence_secs,
             confidence_floor,
             last_consolidation: Mutex::new(None),
+            tokio_handle,
         })
     }
 
@@ -177,6 +183,7 @@ impl RealMemoryPort {
         embedding_model: String,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
+        tokio_handle: tokio::runtime::Handle,
     ) -> Result<Option<Self>, String> {
         let db_path = match std::env::var("HKASK_DB_PATH") {
             Ok(p) if !p.trim().is_empty() => p,
@@ -194,6 +201,7 @@ impl RealMemoryPort {
             embedding_model,
             consolidation_cadence_secs,
             confidence_floor,
+            tokio_handle,
         )?;
         tracing::info!(
             target: "reg.memory",
@@ -364,13 +372,22 @@ impl MemoryPort for RealMemoryPort {
             // injection — when the user asks a similar question later,
             // this turn can be recalled and injected into the prompt.
             let embedding_entity = format!("embedding:thread:{thread_id}:user_input");
+            // Spawn the embedding HTTP call on the tokio runtime so reqwest
+            // has a reactor. The rest of ingest_turn doesn't need tokio.
+            let embedding_model = self.embedding_model.clone();
+            let embedding_router = self.embedding_router.clone();
+            let user_input_owned = user_input.clone();
             let vectors = self
-                .embedding_router
-                .embed_sentences(&self.embedding_model, &[user_input.as_str()])
+                .tokio_handle
+                .spawn(async move {
+                    embedding_router
+                        .embed_sentences(&embedding_model, &[user_input_owned.as_str()])
+                        .await
+                })
                 .await;
 
             match vectors {
-                Ok(vectors) => {
+                Ok(Ok(vectors)) => {
                     if let Some(vector) = vectors.into_iter().next()
                         && let Err(e) = self.semantic.store_embedding(
                             &embedding_entity,
@@ -386,7 +403,7 @@ impl MemoryPort for RealMemoryPort {
                         );
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::warn!(
                         target: "reg.memory",
                         thread_id = %thread_id,
@@ -394,6 +411,14 @@ impl MemoryPort for RealMemoryPort {
                         "Failed to embed user prompt — embedding-based recall will not work for this turn"
                     );
                     // Non-fatal — entity-based recall still works.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        thread_id = %thread_id,
+                        error = %e,
+                        "Embedding task panicked — embedding-based recall will not work for this turn"
+                    );
                 }
             }
 
@@ -433,12 +458,21 @@ impl MemoryPort for RealMemoryPort {
             //
             // Embed the query and search for similar stored embeddings.
             // This finds turns where the user asked similar questions.
+            // Spawn the embedding HTTP call on the tokio runtime so reqwest
+            // has a reactor.
+            let embedding_model = self.embedding_model.clone();
+            let embedding_router = self.embedding_router.clone();
+            let query_owned = query.to_string();
             let vectors = self
-                .embedding_router
-                .embed_sentences(&self.embedding_model, &[query])
+                .tokio_handle
+                .spawn(async move {
+                    embedding_router
+                        .embed_sentences(&embedding_model, &[query_owned.as_str()])
+                        .await
+                })
                 .await;
 
-            if let Ok(vectors) = vectors
+            if let Ok(Ok(vectors)) = vectors
                 && let Some(query_vector) = vectors.into_iter().next()
             {
                 match self.semantic.search_similar(&query_vector, limit) {
