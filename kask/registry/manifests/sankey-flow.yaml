@@ -295,7 +295,7 @@ ocap:
       gas_budget: 8000
     - resource: template
       action: render
-      template_id: sequential-inquiry/reasoning-engine
+      template_id: sequential-inquiry/sequential-inquiry-engine
       gas_budget: 8000
     - resource: manifest
       action: execute

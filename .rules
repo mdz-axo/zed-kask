@@ -175,6 +175,12 @@ Release Notes:
 - Fetch crash reports: `script/sentry-fetch <issue-id>`
 - Generate investigation prompt from crash: `script/crash-to-prompt <issue-id>`
 
+# Sankey diagrams
+
+* Sankey conservation is domain-dependent, not universal. The original engineering Sankey (Sankey 1898, Schmidt 2008) requires conservation of energy/mass, but user-journey funnels, attribution paths, and value-stream maps do not conserve. A Sankey skill must carry a per-domain conservation mode (mandatory/asserted/none), not a single global rule. Assuming universal conservation produces silent "balancing" that fabricates loss branches — the exact failure mode the "never fabricate" rule exists to prevent.
+* When a prompt references an external source (URL, financial statement, codebase), delegate extraction to a specialized skill (structured-extraction, sequential-inquiry, graph-audit) — do not ask the user to transcribe data that already exists in a machine-readable source. Transcription requests shift cognitive load to the user and introduce transcription errors.
+* Never fabricate Sankey weights. A Sankey's entire semantic value is that link width encodes flow magnitude. A fabricated width is a visualization of the LLM's guess, which is worse than no diagram. If the user declines to provide a weight, mark the edge as `value=1` (unitless placeholder) and note it in the description.
+
 # Rules Hygiene
 
 These `.rules` files are read by every agent session. Keep them high-signal.

@@ -1,0 +1,134 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [gather, interrogate, delegate, extract, probe]
+contract:
+  input:
+    domain: string
+    conservation_mode: string
+    ontology_anchor: string
+    candidate_nodes: array
+    candidate_edges: array
+    source_ref: string
+    extracted_spec: string
+  output:
+    nodes: array
+    edges: array
+    gather_notes: string
+    questions: array
+    delegation_directive: object
+energy_cap: 6144
+visibility: Public
+---
+{# Template: sankey-flow/sankey-gather.j2 #}
+{# KnowAct — GATHER: interrogation loop (Path A) or research delegation (Path B) #}
+{# hKask v0.31.0 #}
+{# PKO anchoring: questions are UserQuestionOccurrence, delegation is cross-skill #}
+
+[inference]
+temperature = 0.3
+reasoning_effort = "medium"
+verbosity = "focused"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a Sankey spec gatherer. You compute the gap between the candidate spec and a minimum-viable Sankey, then either run a direct interrogation loop (Path A) or emit a delegation directive (Path B). The hard rule: **never fabricate weights**. Unknown weights are marked `value=1` (unitless placeholder) and noted in `gather_notes`.
+
+## Classification Context
+
+- Domain: **{{ domain }}**
+- Conservation mode: **{{ conservation_mode }}**
+- Ontology anchor: **{{ ontology_anchor }}**
+
+## Candidate Spec
+
+**Nodes:**
+{{ candidate_nodes | tojson(indent=2) }}
+
+**Edges:**
+{{ candidate_edges | tojson(indent=2) }}
+
+{% if extracted_spec %}
+## Pre-Extracted Spec (Path B return)
+
+The agent has populated `extracted_spec` from a delegated extraction skill. Validate it against the minimum-viable Sankey spec and emit the finalized nodes/edges. If gaps remain, fall back to Path A interrogation for the specific gaps — do not re-delegate the whole task.
+
+**Extracted spec:**
+{{ extracted_spec }}
+
+{% endif %}
+
+{% if source_ref and not extracted_spec %}
+## Path B — Research Delegation
+
+The prompt references an external source: **{{ source_ref }}**
+
+Emit a `delegation_directive` targeting the appropriate extraction skill. The schema passed to the delegated skill must match the Sankey spec:
+
+```json
+{
+  "nodes": [{"id": "string", "label": "string", "ontology_concept": "pko:Step | fibo:ConceptName"}],
+  "edges": [{"source": "string", "target": "string", "weight": "number", "weight_unit": "string", "weight_source": "string"}]
+}
+```
+
+Delegation targets (pick one based on source type):
+- **URL** (financial statement, web page): delegate to `structured-extraction/identify-entities` with the URL and schema. For financial statements, anchor node ontology_concepts to FIBO (e.g., `fibo:Revenue`, `fibo:CostOfRevenue`, `fibo:OperatingExpense`, `fibo:NetIncome`).
+- **Ambiguous/multi-step** ("research how competitors handle onboarding"): delegate to `sequential-inquiry/sequential-inquiry-engine` to reason through what the flow actually is before extracting weights.
+- **Codebase** (crate path): delegate to `graph-audit/code-discover` to trace data flow through services/modules.
+
+After delegation, the agent will populate `extracted_spec` and re-enter this step. Do not attempt extraction yourself — delegate.
+
+{% else %}
+## Path A — Direct Interrogation
+
+No external source referenced. Run the interrogation loop.
+
+### Step 1: Compute the spec gap
+
+Check each of {nodes, edges, weights, conservation} against the minimum-viable Sankey spec:
+- **Nodes**: at least 2 source-side and 1 sink-side node, OR a recognizable chain of ≥ 3 nodes.
+- **Edges**: every adjacent node pair in the implied flow must have an edge.
+- **Weights**: every edge must have a weight (user-stated, source-read, or `value=1` placeholder — never fabricated).
+- **Conservation**: where conservation_mode is `mandatory`, inflow should equal outflow at every internal node. Where `asserted`, check if the user stated conservation. Where `none`, skip.
+
+### Step 2: Prioritize by blocking power
+
+Order: nodes → edges → weights → conservation. A missing node blocks more than a missing weight (it implies missing edges and weights downstream).
+
+### Step 3: Emit ≤ 5 constrained-answer questions
+
+Batch into a single round. Prefer multiple-choice, numeric, or "pick from this list" questions. State your default assumption and ask for confirmation (e.g., "I'm assuming throughput is conserved unless you say otherwise — correct?").
+
+**Hard limits**:
+- Never ask more than 5 questions in a single round. If you need more, ask the user to restate their intent at a higher level.
+- Never fabricate weights. If the user declines to provide a weight, mark the edge as `value=1` (unitless) and note it in `gather_notes`.
+- Track which specific items the user answered vs. deferred — do not re-ask answered items in subsequent rounds.
+
+### Step 4: Stop when viable
+
+A Sankey is viable when it has ≥ 3 nodes, ≥ 2 edges, and every edge has a weight (even if unitless). Do not keep asking to "improve" the diagram — that is what the evaluate-and-refine loop is for.
+
+{% endif %}
+
+## Output
+
+Return a JSON object. If running Path A and the spec is already viable (no questions needed), emit the finalized nodes/edges directly. If questions are needed, emit them in `questions` and leave nodes/edges as the best current candidate. If running Path B, emit the `delegation_directive` and leave nodes/edges empty (they will be populated on re-entry).
+
+```json
+{
+  "nodes": [{"id": "...", "label": "...", "ontology_concept": "pko:Step"}],
+  "edges": [{"source": "...", "target": "...", "weight": 1200, "weight_unit": "thousands of records/day", "weight_source": "user statement" | "prov:wasDerivedFrom <url>"}],
+  "gather_notes": "Any unweighted placeholders, conservation discrepancies, or assumptions stated.",
+  "questions": [
+    {"id": "q1", "text": "What are the sources of your data?", "type": "multiple-choice", "options": ["Kafka", "Postgres CDC", "S3 uploads", "other"]},
+    {"id": "q2", "text": "I'm assuming throughput is conserved unless you say otherwise — correct?", "type": "confirm", "default": true}
+  ],
+  "delegation_directive": {
+    "target_skill": "structured-extraction | sequential-inquiry | graph-audit",
+    "target_template": "structured-extraction/identify-entities | sequential-inquiry/sequential-inquiry-engine | graph-audit/code-discover",
+    "source_ref": "{{ source_ref }}",
+    "schema": {"nodes": [], "edges": []},
+    "rationale": "Why this delegation target was chosen."
+  }
+}
+```

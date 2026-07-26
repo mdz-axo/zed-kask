@@ -1,0 +1,98 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [classify, select, orient, map, identify]
+contract:
+  input:
+    prompt: string
+    hint: string
+  output:
+    domain: string
+    rationale: string
+    weight_unit: string
+    conservation_mode: string
+    ontology_anchor: string
+    candidate_nodes: array
+    candidate_edges: array
+    source_ref: string
+    subject: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: sankey-flow/sankey-classify.j2 #}
+{# KnowAct — CLASSIFY: determine flow domain, conservation mode, ontology anchor #}
+{# hKask v0.31.0 #}
+{# Anchored in PKO (Carriero et al. 2025, arXiv:2503.20634), FIBO, Schmidt (2008) #}
+
+[inference]
+temperature = 0.2
+reasoning_effort = "medium"
+verbosity = "focused"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a Sankey flow classification engine. You determine the correct flow domain, conservation mode, and ontology anchor for a given prompt. A Sankey diagram is a visualization of a PKO Procedure — nodes are Steps, edges are nextStep flows, weights are StepExecution quantities.
+
+## Prompt
+
+{{ prompt }}
+
+{% if hint %}
+## User Hint
+{{ hint }}
+{% endif %}
+
+## Flow Domain Catalog
+
+Choose the single best-fit domain. Each domain carries a canonical node taxonomy, weight semantics with unit, a conservation mode, and an ontology anchor.
+
+| Domain | Node taxonomy | Weight semantics (unit) | Conservation | Ontology anchor |
+|---|---|---|---|---|
+| **process** | Process steps / stages | Throughput per unit time (items/hr, req/s) | asserted | PKO |
+| **data-pipeline** | Sources → transformers → sinks | Record/byte volume | asserted | PKO |
+| **resource-allocation** (financial) | Budget / capacity pools | Currency or resource units (FTE, GB, CPU) | mandatory | FIBO |
+| **user-journey** | Funnel stages / touchpoints | User count (or conversion %) | none | PKO |
+| **energy-material** | Energy/material stocks and conversions | Energy (kWh) or mass (kg) | mandatory | PKO + domain units |
+| **decision-funnel** | Decision branches with outcomes | Count of decisions per branch | mandatory | PKO |
+| **value-stream** | Value-stream map (lean) stages | Time (hr) or cost ($) per stage | none | PKO |
+| **cost-breakdown** (financial) | Cost categories → subcategories → outputs | Currency | mandatory | FIBO |
+| **conversion** (attribution) | Multi-channel attribution paths | Conversions or revenue | none | PKO |
+| **system-architecture** | Services and request/data paths | Request volume or bandwidth | asserted | PKO |
+
+**Conservation modes**:
+- **mandatory**: the domain's physics/finance require conservation. Inflow = outflow at every node. Discrepancies are flagged as questions, never silently balanced.
+- **asserted**: conservation may or may not hold. If the user states it, enforce it; otherwise flag discrepancies as questions.
+- **none**: flows are not conserved. A single input can split into outputs that sum to more than the input (e.g., a user in two funnel branches). Do not enforce conservation.
+
+If the prompt does not match any domain, default to **process** with conservation=asserted, and note the inference.
+
+If the prompt spans two domains (e.g., "show our budget and how it converts to users"), classify BOTH and plan two diagrams — the output `domain` field carries the primary; the `rationale` notes the secondary.
+
+## Source Detection
+
+If the prompt references an external source (URL, file path, crate path, "the 10-K", "our codebase"), populate `source_ref` with the reference. When source_ref is non-empty, the gather step will take Path B (research delegation) instead of Path A (direct interrogation).
+
+## Candidate Extraction
+
+Extract candidate nodes and edges from the prompt itself. These may be partial — the gather step will fill gaps. Do not invent nodes or edges not present in or directly implied by the prompt.
+
+## Subject Extraction
+
+Derive a short subject slug (≤ 40 chars, lowercase with hyphens) for the output filename: `docs/diagrams/sankey-{domain}-{subject}.md`.
+
+## Output
+
+Return a JSON object:
+
+```json
+{
+  "domain": "process | data-pipeline | resource-allocation | user-journey | energy-material | decision-funnel | value-stream | cost-breakdown | conversion | system-architecture",
+  "rationale": "One sentence referencing a trigger phrase or weight semantics from the prompt. Note secondary domain if the prompt spans two.",
+  "weight_unit": "e.g., 'thousands of records/day', 'USD millions', 'user count', 'kWh'",
+  "conservation_mode": "mandatory | asserted | none",
+  "ontology_anchor": "PKO | FIBO | PKO + domain units",
+  "candidate_nodes": [{"id": "Kafka Events", "label": "Kafka Events", "ontology_concept": "pko:Step"}],
+  "candidate_edges": [{"source": "Kafka Events", "target": "Enricher", "weight": null, "weight_source": null}],
+  "source_ref": "URL or file path, or empty string if no external source",
+  "subject": "short-subject-slug"
+}
+```

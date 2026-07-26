@@ -80,10 +80,51 @@ pub struct AttributionRequest {
     pub to: String,
 }
 
+/// Aggregation method for portfolio characteristic weighted averages.
+///
+/// Mirrors the methods used by FactSet/Bloomberg/Morningstar for portfolio
+/// analytics. The default (`weighted_arithmetic`) matches the original
+/// implementation. The alternatives address known biases:
+///
+/// - `weighted_harmonic`: Correct for averaging ratios (P/E, P/B, P/S).
+///   The arithmetic mean is biased upward for ratios because it gives
+///   greater weight to high values. Morningstar switched to harmonic
+///   weighted averages for P/E, P/B, P/S, and P/CF in 2005. (Agrrawal
+///   et al. 2010; CFA Level II Reading 25.)
+/// - `weighted_median`: Robust to outliers — the median is unaffected by
+///   extreme values. Bloomberg uses this for descriptor distributions.
+/// - `winsorized`: Clamp values at the 5th and 95th percentiles before
+///   computing the weighted arithmetic mean. Bloomberg winsorizes
+///   descriptors at 5/95 for Quality and Value-Growth indices.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregationMethod {
+    /// Weighted arithmetic mean: Σ(wᵢ × xᵢ). Default; matches the original
+    /// implementation. Biased upward for ratios (P/E, P/B, P/S).
+    #[default]
+    WeightedArithmetic,
+    /// Weighted harmonic mean: 1 / Σ(wᵢ / xᵢ). Correct for ratios — gives
+    /// equal weight to each unit of the denominator (e.g., equal-dollar
+    /// weighting for P/E). Cannot handle zero or negative values; those
+    /// holdings are skipped for the affected field.
+    WeightedHarmonic,
+    /// Weighted median: the value where cumulative weight crosses 50%.
+    /// Robust to outliers. Unaffected by extreme P/E values.
+    WeightedMedian,
+    /// Winsorized weighted mean: clamp values at the 5th and 95th
+    /// percentiles, then compute the weighted arithmetic mean. Reduces
+    /// the influence of outliers without excluding them entirely.
+    Winsorized,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CharacteristicsRequest {
     pub portfolio: String,
     pub date: String,
+    /// Aggregation method for weighted averages. Defaults to
+    /// `weighted_arithmetic` when omitted.
+    #[serde(default)]
+    pub aggregation: AggregationMethod,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
