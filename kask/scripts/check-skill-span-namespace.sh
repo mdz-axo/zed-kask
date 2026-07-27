@@ -12,7 +12,7 @@
 # Exit codes: 0 = all conform, 1 = violations found
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 MANIFEST_DIR="registry/manifests"
 FAIL=0

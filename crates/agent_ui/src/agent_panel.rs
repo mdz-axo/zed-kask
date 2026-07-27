@@ -3225,13 +3225,21 @@ impl AgentPanel {
     /// switching the active view to it. Used by the `create_thread` agent tool,
     /// which passes an initial prompt, and optionally an agent and model
     /// override.
+    ///
+    /// Returns the new thread id and the `Agent` actually used to back it. The
+    /// used agent may differ from `options.agent` — for example, collaboration
+    /// workspaces clamp every request to `Agent::NativeAgent`. Callers that
+    /// report the spawned thread's identity to a model (e.g. `create_thread`)
+    /// must use this returned agent rather than the requested one, otherwise
+    /// the model is told a fiction (e.g. "Curator") about a thread that is
+    /// actually backed by a different agent.
     pub fn create_thread_with_options(
         &mut self,
         options: CreateThreadOptions,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ThreadId {
+    ) -> (ThreadId, Agent) {
         let (agent, override_used) = if self.project.read(cx).is_via_collab() {
             (Agent::NativeAgent, false)
         } else if let Some(override_agent) = options.agent {
@@ -3245,7 +3253,7 @@ impl AgentPanel {
         // last-used-agent preference. Snapshot and restore both.
         let saved_selected_agent = override_used.then(|| self.selected_agent.clone());
         let thread = self.create_agent_thread_with_server(
-            agent,
+            agent.clone(),
             None,
             None,
             options.work_dirs,
@@ -3262,7 +3270,7 @@ impl AgentPanel {
         let thread_id = thread.conversation_view.read(cx).thread_id;
         self.retained_threads
             .insert(thread_id, thread.conversation_view);
-        thread_id
+        (thread_id, agent)
     }
 
     pub fn activate_retained_thread(
@@ -4884,18 +4892,24 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             // become available here: there are currently no agent tools that
             // operate on sibling threads by session ID, so requiring one would
             // just introduce a race for no benefit.
+            //
+            // `create_thread_with_options` returns the agent that actually
+            // backs the new thread. In collaboration workspaces every request
+            // is clamped to `Agent::NativeAgent`, so reporting the requested
+            // agent (e.g. `Curator`) here would tell the calling model a
+            // fiction about a thread that is actually backed by the Zed Agent.
+            // Reporting the post-clamp agent keeps `SiblingThreadInfo`
+            // truthful and prevents the model from issuing agent-specific
+            // tool calls against a thread that does not register them.
             let resolved_agent_id = target_window.update(cx, |_root, window, cx| {
                 target_panel.update(cx, |panel, cx| {
-                    panel.create_thread_with_options(
+                    let (_thread_id, used_agent) = panel.create_thread_with_options(
                         options,
                         AgentThreadSource::AgentPanel,
                         window,
                         cx,
                     );
-                    let resolved_agent = agent_choice
-                        .clone()
-                        .unwrap_or_else(|| panel.selected_agent.clone());
-                    resolved_agent.id()
+                    used_agent.id()
                 })
             })??;
 
@@ -13387,20 +13401,30 @@ mod tests {
         });
 
         // Case 1: no agent override. The new thread should land in
-        // `retained_threads` and `selected_agent` should be unchanged.
-        let no_override_id = panel.update_in(&mut cx, |panel, window, cx| {
-            panel.create_thread_with_options(
-                CreateThreadOptions::default(),
-                AgentThreadSource::AgentPanel,
-                window,
-                cx,
-            )
-        });
+        // `retained_threads` and `selected_agent` should be unchanged. The
+        // returned agent must reflect the agent that actually backs the
+        // thread (here, the panel's selected agent), not a stale or
+        // default value — callers like `create_thread` report this agent
+        // id to the model and must not be told a fiction.
+        let (no_override_id, no_override_used_agent) =
+            panel.update_in(&mut cx, |panel, window, cx| {
+                panel.create_thread_with_options(
+                    CreateThreadOptions::default(),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            });
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
                 panel.retained_threads.contains_key(&no_override_id),
                 "thread created via create_thread_with_options should be retained"
+            );
+            assert_eq!(
+                no_override_used_agent,
+                Agent::Stub,
+                "returned agent should match the panel's selected agent when no override is requested"
             );
             assert_eq!(
                 panel.selected_agent,
@@ -13417,7 +13441,7 @@ mod tests {
         let override_agent = Agent::Custom {
             id: "override-agent".into(),
         };
-        let override_id = panel.update_in(&mut cx, |panel, window, cx| {
+        let (override_id, override_used_agent) = panel.update_in(&mut cx, |panel, window, cx| {
             panel.create_thread_with_options(
                 CreateThreadOptions {
                     agent: Some(override_agent.clone()),
@@ -13437,6 +13461,10 @@ mod tests {
             assert_ne!(
                 no_override_id, override_id,
                 "each call should produce a distinct ThreadId"
+            );
+            assert_eq!(
+                override_used_agent, override_agent,
+                "returned agent should match the requested override agent when no clamp applies"
             );
             assert_eq!(
                 panel.selected_agent,

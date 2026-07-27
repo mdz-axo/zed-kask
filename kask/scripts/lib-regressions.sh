@@ -84,6 +84,7 @@ check_regressions() {
       enforced=$((enforced + 1))
       local matches
       if [ ${#include_array[@]} -gt 0 ]; then
+        # shellcheck disable=SC2068 # intentional: each element is a separate grep flag
         matches=$(grep -rPn ${include_array[@]} "$rr_pattern" . \
           --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules \
           --exclude-dir=regressions \

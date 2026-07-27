@@ -30,7 +30,8 @@ hetzner-k3s create \
   --network-zone eu-central \
   --autoscaling-enabled
 
-export KUBECONFIG="$(pwd)/kubeconfig"
+KUBECONFIG="$(pwd)/kubeconfig"
+export KUBECONFIG
 echo "KUBECONFIG: $KUBECONFIG"
 echo ""
 

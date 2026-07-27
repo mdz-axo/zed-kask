@@ -273,8 +273,9 @@ install_desktop_entry() {
     # so the OS can launch it; APP_NAME matches paths::APP_NAME for consistency.
     local app_cli="$BIN_DIR/zed-kask"
     local app_name="Zed-Kask"
-    local app_id="dev.zed.Zed-Kask"
+    local app_id="dev.zed-kask.Zed-Kask"
     local app_icon="zed-kask"
+    local app_wm_class="dev.zed-kask.Zed-Kask"
 
     # Install the icon into the hicolor theme so the .desktop file can name it.
     local icon_dir
@@ -317,7 +318,7 @@ install_desktop_entry() {
     local desktop_file="$desktop_dir/$app_id.desktop"
 
     export DO_STARTUP_NOTIFY="true" APP_CLI="$app_cli" APP_NAME="$app_name" \
-        APP_ARGS="%U" APP_ICON="$app_icon"
+        APP_ARGS="%U" APP_ICON="$app_icon" APP_WM_CLASS="$app_wm_class"
     if command -v envsubst >/dev/null 2>&1; then
         envsubst < "$template" > "$desktop_file"
     else
@@ -325,6 +326,7 @@ install_desktop_entry() {
             -e "s|\$APP_CLI|$app_cli|g" \
             -e "s|\$APP_ARGS|%U|g" \
             -e "s|\$APP_ICON|$app_icon|g" \
+            -e "s|\$APP_WM_CLASS|$app_wm_class|g" \
             -e "s|\$DO_STARTUP_NOTIFY|true|g" \
             "$template" > "$desktop_file"
     fi
@@ -446,7 +448,7 @@ uninstall_hkask() {
 
     # Remove the desktop entry and icon so the OS stops routing zed-kask://
     # to a binary that no longer exists.
-    local app_id="dev.zed.Zed-Kask"
+    local app_id="dev.zed-kask.Zed-Kask"
     local app_icon="zed-kask"
     local data_root
     for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do

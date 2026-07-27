@@ -2666,7 +2666,7 @@
   // Isolated from upstream Zed so the two apps don't overwrite each
   // other's keychain entries. Cloud services still use `server_url`.
   // Note: changing this after signing in requires signing in again.
-  "credentials_url": "https://zed-kask.local",
+  "credentials_url": "zed-kask://credentials",
   // Settings overrides to use when using Zed Preview.
   // Mostly useful for developers who are managing multiple instances of Zed.
   "preview": {
