@@ -3,7 +3,7 @@
 
 manifest:
   id: skill-translation
-  category: infrastructure
+  category: pipeline
   name: Skill Translation
   description: >
     Convergent translation process for importing external skill definitions

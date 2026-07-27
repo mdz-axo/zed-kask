@@ -24,6 +24,7 @@ rjoule:
 steps:
   - ordinal: 1
     action: select
+    description: Select the inference model tier (fast_local, balanced, high_quality) based on the prompt and context.
     template_ref: inference/selectors/model-selector.j2
     renderer: minijinja
     output_schema:
@@ -39,6 +40,7 @@ steps:
 
   - ordinal: 2
     action: populate
+    description: Render the inference prompt template with system prompt, user prompt, and context.
     template_ref: inference/templates/prompt.j2
     renderer: minijinja
     bindings:
@@ -48,6 +50,7 @@ steps:
 
   - ordinal: 3
     action: select
+    description: Send the populated prompt to the inference endpoint and parse the response.
     target: inference_call
     renderer: inline
     template_ref: "{{ step_2_populated }}"

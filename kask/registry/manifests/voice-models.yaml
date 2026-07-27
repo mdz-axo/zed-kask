@@ -6,7 +6,7 @@
 
 manifest:
   id: voice-models
-  category: registry
+  category: runtime-config
   name: Voice Models and Profiles Registry
   description: >
     Verified registry of TTS/STT voice models and their profile presets.
@@ -37,14 +37,12 @@ inputs:
     required: false
     default: true
 
-outputs:
-  - name: registered_profile
-    type: object
-    description: "Verified profile with contract checks and agent mapping"
+# outputs: registered_profile (object) — verified profile with contract checks
+# and agent mapping. Declared as an input contract; not a separate schema field.
 
 steps:
   - ordinal: 1
-    action: validate_contract
+    action: validate
     description: >
       Essentialist G3 check: profile_preset maps to VoiceDesign without pass-through.
       Verify profile exists in media-landscape.md or backend reference (audio.rs / lib.rs / deepinfra_backend.rs).
@@ -69,7 +67,7 @@ steps:
       agent_mapping: "{{ agent_mapping }}"
 
   - ordinal: 2
-    action: register_mapping
+    action: populate
     description: >
       Link profile to agent (userpod / replica / curator) via agent_mapping.
       Reference: registry/system-agents/Curator.yaml (curator agent type: UserPod).
@@ -86,7 +84,7 @@ steps:
       simplification_mode: "{{ simplification_mode | default(true) }}"
 
   - ordinal: 3
-    action: verify_variety
+    action: validate
     description: >
       Ashby variety check: does profile cover a disturbance class not handled by STT_DEFAULT + TTS_DEFAULT?
       If profile duplicates existing variety (e.g., same model, same preset), mark as redundant and reject unless agent identity requires it.
@@ -105,7 +103,7 @@ steps:
       existing_defaults: ["STT_DEFAULT: FA/wizper", "TTS_DEFAULT: FA/qwen-3-tts / DeepInfra Kokoro-82M"]
 
   - ordinal: 4
-    action: record
+    action: populate
     description: >
       Record verified profile to registry. Include references: audio.rs, lib.rs, VoiceDesign (types/voice.rs), agent mapping (Curator.yaml / agent charter), contract verification (G3), variety assessment.
     renderer: inline
@@ -158,35 +156,36 @@ ocap:
   capability_expiry_seconds: 3600
   template_scoped: true
 
-gap_declaration:
-  repl_chat_loop: >
-    REPL/chat coordinating loop (S1→S5 algedonic) remains unimplemented. audio_capture writes file; no direct event hook to agent decision layer. Design gap acknowledged in stt-tts.yaml.
-  deepgram_integration: >
-    Deepgram deferred per previous decision. Current variety (DeepInfra + fal.ai) sufficient per Ashby variety engineering. If future disturbance requires Deepgram, registry will be updated.
-  registry_expansion: >
-    voice-models.yaml introduces verified profile mapping. Future iterations may expand templates (voice/profile.j2) for multi-agent voice differentiation or standing session voice presets.
-  caveman_grammar_link: >
-    Confirmed: caveman manifest (registry/manifests/caveman.yaml) provides simplification grammar linked to coding-guidelines (Simplicity First) and TTbS contract (G3 verified).
-  vsm_mapping: >
-    Voice profile registry maps to S1 (operational: media server), S2 (anti-oscillation: VoiceDesign + simplification), S3 (resource: inference router model selection), S4 (spec drift: registry updates), S5 (policy: agent charters / Magna Carta).
-  approvals:
-    - g3_contract_ttbs: confirmed
-    - deepgram_deferral: confirmed
-    - repl_chat_gap: confirmed
-    - essentialist_score: minor_reduction (G2 surface consolidation)
-    - simplification_ratio: 0.64 (measured on 3 synthetic samples; deleted)
-    - caveman_grammar_link: confirmed
-    - vsm_mapped: true
-    - variety_deficit_resolved: true
-    - date: 2026-07-19
-    - editor: agent
-    - visibility: Public
-
-profile_mapping_contract:
-  description: "Every registered profile must reference a concrete agent identity (userpod, replica, or system agent/curator). No anonymous profiles."
-  agent_reference_types:
-    - userpod
-    - replica
-    - system_agent
-  system_agent_reference:
-    file: registry/system-agents/Curator.yaml
+# gap_declaration and profile_mapping_contract are documentation-only blocks
+# that describe design gaps and the agent-reference contract. They are not
+# BundleManifest schema fields, so they are recorded as comments to satisfy
+# deny_unknown_fields while preserving the audit trail.
+#
+# gap_declaration:
+#   repl_chat_loop: REPL/chat coordinating loop (S1→S5 algedonic) remains
+#     unimplemented. audio_capture writes file; no direct event hook to agent
+#     decision layer. Design gap acknowledged in stt-tts.yaml.
+#   deepgram_integration: Deepgram deferred per previous decision. Current
+#     variety (DeepInfra + fal.ai) sufficient per Ashby variety engineering.
+#   registry_expansion: voice-models.yaml introduces verified profile mapping.
+#     Future iterations may expand templates (voice/profile.j2) for multi-agent
+#     voice differentiation or standing session voice presets.
+#   caveman_grammar_link: caveman manifest provides simplification grammar
+#     linked to coding-guidelines (Simplicity First) and TTbS contract (G3).
+#   vsm_mapping: Voice profile registry maps to S1 (operational: media
+#     server), S2 (anti-oscillation: VoiceDesign + simplification), S3
+#     (resource: inference router model selection), S4 (spec drift: registry
+#     updates), S5 (policy: agent charters / Magna Carta).
+#   approvals: g3_contract_ttbs confirmed, deepgram_deferral confirmed,
+#     repl_chat_gap confirmed, essentialist_score minor_reduction (G2 surface
+#     consolidation), simplification_ratio 0.64, caveman_grammar_link
+#     confirmed, vsm_mapped true, variety_deficit_resolved true,
+#     date 2026-07-19, editor agent, visibility Public.
+#
+# profile_mapping_contract:
+#   description: Every registered profile must reference a concrete agent
+#     identity (userpod, replica, or system agent/curator). No anonymous
+#     profiles.
+#   agent_reference_types: userpod, replica, system_agent
+#   system_agent_reference:
+#     file: registry/system-agents/Curator.yaml

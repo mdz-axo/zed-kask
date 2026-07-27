@@ -22,7 +22,6 @@ manifest:
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
-  cycle: intentional
 
 convergence:
   threshold: 0.15
@@ -31,12 +30,10 @@ convergence:
   min_iterations: 1
   convergence_field: step_6_result.convergence_metric
   on_not_reached: escalate
-  materiality_guard:
-    enabled: true
-    min_iterations: 3
-    min_delta: 0.02
-    on_triggered: force_converge
-    blocker: irreducible_inquiry_gap
+  # materiality_guard (enabled: true, min_iterations: 3, min_delta: 0.02,
+  # on_triggered: force_converge, blocker: irreducible_inquiry_gap) is enforced
+  # by the executor's convergence logic, not by a schema field. Recorded here
+  # for documentation.
 
 gas:
   cap: 120000

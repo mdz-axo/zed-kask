@@ -65,7 +65,7 @@ steps:
     gas_cap: 2048
     timeout_seconds: 60
   - ordinal: 4
-    action: check
+    action: validate
     description: >
       Convergence check — evaluate posture monitoring quality and coverage.
     renderer: minijinja
@@ -80,7 +80,5 @@ steps:
 # Cross-artifact invariant: manifest id matches .agents/skills/ directory name.
 # Visibility: Public. Functional role: flowdef. Category: skill.
 # Energy/gas budgets: standard patterns. No invented vocabulary terms.
-validation:
-  invariant_x5: verified
-  date: 2026-07-18
-  auditor: audit-cascade
+# validation: invariant_x5 verified (2026-07-18, audit-cascade) — recorded as
+# comment since `validation` is not a BundleManifest schema field.

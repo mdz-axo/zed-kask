@@ -50,7 +50,7 @@ rjoule:
 steps:
   # Step 1: Run memory contract tests
   - ordinal: 1
-    action: run_command
+    action: execute
     command: "cargo test -p hkask-mcp-memory --test memory_contract -- --nocapture 2>&1 | tail -20"
     description: "Run memory contract tests: privacy boundaries, perspective isolation, roundtrip integrity"
     retries: 0
@@ -61,7 +61,7 @@ steps:
   # Step 2: Classify the test output
   # Requires QaScriptRunner — receives step 1 stdout.
   - ordinal: 2
-    action: classify
+    action: select
     classifier: qa-triage
     description: "Test suite: hkask-mcp-memory contract tests. Verify privacy invariants: store_rejects_public_triple (P1 User Sovereignty), store_requires_perspective (mandatory perspective), recall_nonexistent_returns_empty (graceful miss), store_and_recall_episodic_triple (roundtrip integrity), storage_usage_reports_count (usage tracking), recall_filters_by_perspective (cross-perspective isolation, P11 Public/Private Sphere). All 6 contract tests passing indicates memory privacy boundaries are intact."
     retries: 0
@@ -75,7 +75,7 @@ steps:
 
   # Step 3: PASS — privacy boundaries intact
   - ordinal: 3
-    action: run_command
+    action: execute
     command: "echo '[QA:memory] PASS — privacy boundaries, perspective isolation verified (6/6)'"
     description: "All memory contract tests pass: P1/P11 privacy boundaries enforced"
     retries: 0
@@ -83,7 +83,7 @@ steps:
 
   # Step 4: Privacy boundary violation
   - ordinal: 4
-    action: run_command
+    action: execute
     command: "echo '[QA:memory] FAIL — memory contract tests failed. Privacy boundary may be breached: public triple acceptance, perspective bypass, or cross-perspective leak.'"
     description: "Memory contract test failure — P1/P11 privacy boundary may be compromised"
     retries: 0
@@ -91,7 +91,7 @@ steps:
 
   # Step 5: Classification low confidence
   - ordinal: 5
-    action: run_command
+    action: execute
     command: "echo '[QA:memory] WARN — classifier low confidence on test output. Manual review required for privacy-critical server.'"
     description: "Classifier returned low confidence — memory is privacy-critical"
     retries: 0

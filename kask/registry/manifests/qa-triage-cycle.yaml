@@ -34,10 +34,15 @@ gas:
   cap: 50000
   hard_limit: true
 
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
 steps:
   # Step 1: Run full contract test suite across priority crates
   - ordinal: 1
-    action: run_command
+    action: execute
     command: "cargo test -p hkask-regulation -p hkask-types -p hkask-storage -p hkask-keystore -p hkask-capability 2>&1 | tail -30"
     description: "Run contract and property tests across priority crates"
     branching:
@@ -46,7 +51,7 @@ steps:
 
   # Step 2: Classify test output
   - ordinal: 2
-    action: classify
+    action: select
     classifier: qa-triage
     description: "Test suite: hKask priority crates (regulation, types, storage, keystore, capability). Property-based tests use proptest for randomized input generation. Classify any failures by type (panic, assertion, logic error, flake) and confidence."
     branching:
@@ -59,19 +64,19 @@ steps:
 
   # Step 3: High confidence → report for auto-repair review
   - ordinal: 3
-    action: run_command
+    action: execute
     command: "echo '[QA:autonomous] High-confidence failure detected — review proposed fix in classifier output'"
     description: "High-confidence classification — candidate for auto-repair"
 
   # Step 4: Medium confidence → escalate
   - ordinal: 4
-    action: run_command
+    action: execute
     command: "echo '[QA:autonomous] Medium-confidence failure — escalate for human review'"
     description: "Medium-confidence failure needs human judgment"
 
   # Step 5: Low confidence → investigate
   - ordinal: 5
-    action: run_command
+    action: execute
     command: "echo '[QA:autonomous] Low-confidence or unparseable — flag for investigation'"
     description: "Low-confidence failure requires developer investigation"
     terminal: true
@@ -88,7 +93,7 @@ steps:
 
   # Step 7: Classifier unavailable → report
   - ordinal: 7
-    action: run_command
+    action: execute
     command: "echo '[QA:autonomous] Classifier unavailable — raw test output available for manual review'"
     description: "Classifier unavailable, manual review needed"
     terminal: true

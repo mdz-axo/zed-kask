@@ -60,8 +60,8 @@ steps:
       word, clear industry) → single-shot. Complex brands (multiple products,
       unclear audience) → iterative-refine. Visual-first brands (luxury,
       fashion) → moodboard-first.
----
-# Logo Discovery Pipeline
+
+# Logo Discovery Pipeline (documentation):
 # Phase 1: Agent renders logo-discovery-map.j2 and calls inference router
 # Phase 2: Agent parses JSON design parameters from LLM response
 # Phase 3: Agent selects generation strategy based on brand complexity

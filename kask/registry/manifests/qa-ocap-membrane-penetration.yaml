@@ -35,18 +35,24 @@ gas:
   cap: 15000
   hard_limit: true
 
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
 steps:
   # Step 1: Run capability test suite
   - ordinal: 1
-    action: run_command
+    action: execute
     command: "cargo test -p hkask-capability 2>&1 | tail -15"
+    description: "Run the hkask-capability test suite (8 tests) and capture the tail of the output."
     branching:
       success: 2
       failure: 4
 
   # Step 2: Classify test output
   - ordinal: 2
-    action: classify
+    action: select
     classifier: qa-triage
     description: "Security audit: hkask-capability test suite (8 tests, PROHIBITION-level). Verify OCAP membrane: capability token construction and verification, tool authorization gating (allowed vs denied tools), delegation token chain validation, and unauthorized call rejection. The capability system is the P4 enforcement substrate — any failure is a security incident requiring immediate investigation."
     branching:
@@ -59,20 +65,23 @@ steps:
 
   # Step 3: PASS — OCAP membrane intact
   - ordinal: 3
-    action: run_command
+    action: execute
     command: "echo '[QA:ocap] PASS — OCAP membrane intact (8/8 capability tests). P4 boundaries enforced.'"
+    description: "Report PASS — OCAP membrane intact (8/8 capability tests). P4 boundaries enforced."
     terminal: true
 
   # Step 4: FAIL — OCAP membrane breached
   - ordinal: 4
-    action: run_command
+    action: execute
     command: "echo '[QA:ocap] FAIL — OCAP membrane test failed. P4 security boundary may be compromised. Immediate investigation required.'"
+    description: "Report FAIL — OCAP membrane test failed. P4 security boundary may be compromised."
     terminal: true
 
   # Step 5: WARN — classifier uncertain
   - ordinal: 5
-    action: run_command
+    action: execute
     command: "echo '[QA:ocap] WARN — classifier uncertain on capability test output. Manual security review required (PROHIBITION-level).'"
+    description: "Report WARN — classifier uncertain on capability test output. Manual security review required."
     terminal: true
 
 ledger:

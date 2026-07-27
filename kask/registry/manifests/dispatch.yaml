@@ -37,6 +37,7 @@ rjoule:
 steps:
   - ordinal: 1
     action: select
+    description: Select a template from the registry based on the raw prompt and context.
     template_ref: registry/selectors/selector.j2
     renderer: minijinja
     matroshka_depth: "${matroshka_depth}"
@@ -54,6 +55,7 @@ steps:
 
   - ordinal: 2
     action: populate
+    description: Render the selected template with the raw prompt, context, and matroshka depth.
     template_ref: "${selected_template_id}"
     renderer: minijinja
     bindings:
@@ -63,6 +65,7 @@ steps:
 
   - ordinal: 3
     action: execute
+    description: Dispatch the populated template to its declared MCP target contract.
     target: "${template.contract.target}"
     contract: "${template.contract}"
     mcp: "${template.contract.mcp}"

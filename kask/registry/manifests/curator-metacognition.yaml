@@ -3,7 +3,7 @@
 
 manifest:
   id: curator-metacognition
-  category: infrastructure
+  category: skill
   name: Curator Metacognition
   functional_role: knowact
   description: >
@@ -62,7 +62,7 @@ steps:
       Render Kata coaching directives when capability gaps are detected.
       Uses the curator-metacognition template kata_directives section.
     renderer: minijinja
-    template_ref: curator/curator-metacognition.yaml#kata_directives
+    template_ref: curator/kata-directives
     gas_cap: 3000
     timeout_seconds: 30
     output_schema:

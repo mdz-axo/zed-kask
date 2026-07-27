@@ -44,7 +44,7 @@ rjoule:
 steps:
   # Step 1: Verify server binary exists and is executable
   - ordinal: 1
-    action: run_command
+    action: execute
     command: 'CRATE=${CRATE_NAME:-hkask-mcp-condenser}; BIN=./target/debug/$CRATE; if [ -x "$BIN" ]; then echo "BINARY_OK: $BIN"; else echo "BINARY_MISSING: $BIN not found or not executable"; exit 1; fi'
     description: "Verify MCP server binary exists and is executable"
     retries: 0
@@ -54,7 +54,7 @@ steps:
 
   # Step 2: Start server in background, verify it binds, then kill it
   - ordinal: 2
-    action: run_command
+    action: execute
     command: 'CRATE=${CRATE_NAME:-hkask-mcp-condenser}; BIN=./target/debug/$CRATE; $BIN & PID=$!; sleep 2; if kill -0 $PID 2>/dev/null; then echo "SERVER_STARTED: pid=$PID"; kill $PID 2>/dev/null; wait $PID 2>/dev/null; else echo "SERVER_FAILED_TO_START"; exit 1; fi'
     description: "Start MCP server, verify process is alive, then clean shutdown"
     retries: 0
@@ -65,7 +65,7 @@ steps:
   # Step 3: Classify server health
   # Requires QaScriptRunner — receives step 2 stdout.
   - ordinal: 3
-    action: classify
+    action: select
     classifier: qa-triage
     description: "MCP server smoke test result. Server binary exists, started successfully within 2 seconds, and accepted SIGTERM for clean shutdown. Classify as high-confidence normal if server startup and shutdown are nominal."
     retries: 0
@@ -78,7 +78,7 @@ steps:
 
   # Step 4: PASS — server is healthy
   - ordinal: 4
-    action: run_command
+    action: execute
     command: 'echo "[QA:smoke] PASS — ${CRATE_NAME:-hkask-mcp-condenser} binary OK, startup OK, shutdown OK"'
     description: "MCP server smoke test passed: binary + startup + shutdown all nominal"
     retries: 0
@@ -86,7 +86,7 @@ steps:
 
   # Step 5: WARN — classifier uncertain
   - ordinal: 5
-    action: run_command
+    action: execute
     command: 'echo "[QA:smoke] WARN — classifier uncertain about ${CRATE_NAME:-hkask-mcp-condenser} health. Manual review recommended."'
     description: "Classifier returned low confidence on server health — manual review needed"
     retries: 0
@@ -94,7 +94,7 @@ steps:
 
   # Step 6: FAIL — binary missing
   - ordinal: 6
-    action: run_command
+    action: execute
     command: 'echo "[QA:smoke] FAIL — ${CRATE_NAME:-hkask-mcp-condenser} binary not found. Run cargo build -p ${CRATE_NAME:-hkask-mcp-condenser} first."'
     description: "MCP server binary missing — build first"
     retries: 0
@@ -102,7 +102,7 @@ steps:
 
   # Step 7: FAIL — server did not start
   - ordinal: 7
-    action: run_command
+    action: execute
     command: 'echo "[QA:smoke] FAIL — ${CRATE_NAME:-hkask-mcp-condenser} failed to start or died within 2 seconds."'
     description: "MCP server startup failure — check server logs for panic or bind errors"
     retries: 0

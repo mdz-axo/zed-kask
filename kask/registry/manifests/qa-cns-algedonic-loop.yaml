@@ -33,18 +33,24 @@ gas:
   cap: 20000
   hard_limit: true
 
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+
 steps:
   # Step 1: Run Regulation test suite
   - ordinal: 1
-    action: run_command
+    action: execute
     command: "cargo test -p hkask-regulation 2>&1 | tail -20"
+    description: "Run the hkask-regulation test suite (94 tests) and capture the tail of the output."
     branching:
       success: 2
       failure: 4
 
   # Step 2: Classify test output
   - ordinal: 2
-    action: classify
+    action: select
     classifier: qa-triage
     description: "Test suite: hkask-regulation (94 tests). Verify Regulation feedback loop: algedonic signal emission, variety counter tracking and deficit detection, gas estimation, energy budget enforcement, homeostatic sensor→model→comparator→actuator loop, calibrated energy estimator accuracy, and governed inference budget tracking. The Regulation is the VSM S3 regulator — failures here mean the system cannot self-regulate."
     branching:
@@ -57,20 +63,23 @@ steps:
 
   # Step 3: PASS
   - ordinal: 3
-    action: run_command
+    action: execute
     command: "echo '[QA:regulation] PASS — Regulation feedback loop verified (94 tests)'"
+    description: "Report PASS — Regulation feedback loop verified (94 tests)."
     terminal: true
 
   # Step 4: FAIL
   - ordinal: 4
-    action: run_command
+    action: execute
     command: "echo '[QA:regulation] FAIL — Regulation test suite failed. Feedback loop may be broken: algedonic signals, variety counters, or gas enforcement.'"
+    description: "Report FAIL — Regulation test suite failed. Feedback loop may be broken."
     terminal: true
 
   # Step 5: WARN
   - ordinal: 5
-    action: run_command
+    action: execute
     command: "echo '[QA:regulation] WARN — classifier uncertain on Regulation test output. Manual review recommended.'"
+    description: "Report WARN — classifier uncertain on Regulation test output. Manual review recommended."
     terminal: true
 
 ledger:

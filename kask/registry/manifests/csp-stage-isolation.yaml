@@ -12,6 +12,17 @@ manifest:
   editor: curator-or-human-admin
   visibility: Public
 
+gas:
+  cap: 10000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 0
+  alert_threshold: 0.8
+  hard_limit: true
+
 # Stage execution configuration
 # stage_execution: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
 #   # Default timeout for stage execution (milliseconds)

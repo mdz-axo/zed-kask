@@ -106,8 +106,8 @@ steps:
     tool: image_remove_background
     description: "Remove background from the final selected logo for transparent PNG output"
     condition: "refine_rounds > 0"
----
-# Logo Iterative Refinement Pipeline
+
+# Logo Iterative Refinement Pipeline (documentation):
 # Phase 1: Generate N candidates via generate_image with logo-formal-prompt template
 # Phase 2: Vision LLM critique each candidate via describe_image
 # Phase 3: Select best candidate (highest aggregate score)

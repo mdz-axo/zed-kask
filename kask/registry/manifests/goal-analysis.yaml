@@ -67,10 +67,10 @@ inputs:
 
 ledger:
   span_namespace: reg.skill.goal-analysis
-  variety_monitoring:
-    metric: active_goals_per_user
-    threshold: 10
-    alert: "User has >10 concurrent active goals — consider delegation or abandonment"
+  # variety_monitoring config (metric: active_goals_per_user, threshold: 10,
+  # alert: "User has >10 concurrent active goals — consider delegation or abandonment")
+  # is recorded here for reference; the schema field is a boolean toggle.
+  variety_monitoring: true
 
 steps:
   - ordinal: 1

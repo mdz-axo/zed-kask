@@ -25,8 +25,8 @@ input_type: image_url
 output_type: image_blob
 latency: sync
 cost_tier: medium
----
-# Style Transfer Pipeline
+
+# Style Transfer Pipeline (documentation):
 # Step 1: Validate image_url
 # Step 2: Build request body with prompt + image_url + strength
 # Step 3: POST to primary model endpoint

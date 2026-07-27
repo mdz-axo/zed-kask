@@ -37,7 +37,7 @@ gas:
 steps:
   # Step 1: Call curator_ping — curator server starts fast, no heavy deps
   - ordinal: 1
-    action: mcp_tool
+    action: execute
     tool_name: curator_ping
     tool_params: "{}"
     description: "Call curator_ping via MCP dispatch"
@@ -48,7 +48,7 @@ steps:
 
   # Step 2: Call kanban_board_list — kanban starts fast
   - ordinal: 2
-    action: mcp_tool
+    action: execute
     tool_name: kanban_board_list
     tool_params: "{}"
     description: "Call kanban_board_list via MCP dispatch"
@@ -59,7 +59,7 @@ steps:
 
   # Step 3: Call condenser_ping
   - ordinal: 3
-    action: mcp_tool
+    action: execute
     tool_name: condenser_ping
     tool_params: "{}"
     description: "Call condenser_ping via MCP dispatch"
@@ -70,7 +70,7 @@ steps:
 
   # Step 4: PASS
   - ordinal: 4
-    action: run_command
+    action: execute
     command: "echo '[QA:mcp-dispatch] PASS — curator_ping, kanban_board_list, condenser_ping all dispatched successfully'"
     description: "All MCP tool dispatch calls succeeded"
     retries: 0
@@ -78,7 +78,7 @@ steps:
 
   # Step 5: curator_ping failed
   - ordinal: 5
-    action: run_command
+    action: execute
     command: "echo '[QA:mcp-dispatch] FAIL — curator_ping dispatch failed'"
     description: "curator_ping MCP dispatch failure"
     retries: 0
@@ -86,7 +86,7 @@ steps:
 
   # Step 6: kanban_board_list failed
   - ordinal: 6
-    action: run_command
+    action: execute
     command: "echo '[QA:mcp-dispatch] FAIL — kanban_board_list dispatch failed'"
     description: "kanban_board_list MCP dispatch failure"
     retries: 0
@@ -94,7 +94,7 @@ steps:
 
   # Step 7: condenser_ping failed
   - ordinal: 7
-    action: run_command
+    action: execute
     command: "echo '[QA:mcp-dispatch] FAIL — condenser_ping dispatch failed'"
     description: "condenser_ping MCP dispatch failure"
     retries: 0

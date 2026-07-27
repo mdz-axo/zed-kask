@@ -10,6 +10,17 @@ manifest:
   editor: curator-or-human-admin
   visibility: Public
 
+gas:
+  cap: 10000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 0
+  alert_threshold: 0.8
+  hard_limit: true
+
 # root_authority: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
 #   webid: "did:web:hkask.dev#system"
 #   secret:
