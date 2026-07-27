@@ -216,7 +216,7 @@ impl MediaServer {
     async fn require_vision(&self) -> Result<(&'static str, &'static str), McpToolError> {
         self.resolve_vision_model().await.ok_or_else(|| {
             McpToolError::unavailable(
-                "No vision-capable provider configured (set DI_API_KEY, OR_API_KEY, or TG_API_KEY)",
+                "No vision-capable provider configured (set DEEPINFRA_API_KEY, OPENROUTER_API_KEY, or TOGETHERAI_API_KEY)",
             )
         })
     }

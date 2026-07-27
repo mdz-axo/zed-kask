@@ -196,7 +196,7 @@ impl RouterModelEntry {
 ///    `LanguageModelRegistry` (with fusion, guard, and zed's configured
 ///    API keys).
 /// 2. `InferenceRouter` — constructed from `InferenceConfig::from_env()`.
-///    This uses env-var API keys (`DI_API_KEY`, `OR_API_KEY`, etc.) and the
+///    This uses env-var API keys (`DEEPINFRA_API_KEY`, `OPENROUTER_API_KEY`, etc.) and the
 ///    OS keychain. Used when running standalone or when the IPC socket is
 ///    not available.
 ///

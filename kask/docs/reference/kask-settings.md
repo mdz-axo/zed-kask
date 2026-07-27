@@ -136,9 +136,9 @@ environment. Shell env vars take precedence over keychain values.
 | `NEBIUS_SUBNET_ID` | Nebius | Data Services |
 | `HF_TOKEN` | HuggingFace | Data Services |
 | `TINKER_API_KEY` | Tinker | Data Services |
-| `DI_API_KEY` | DeepInfra | Inference Providers |
-| `FA_API_KEY` | fal.ai | Inference Providers |
-| `TG_API_KEY` | Together AI | Inference Providers |
-| `OR_API_KEY` | OpenRouter | Inference Providers |
-| `KC_API_KEY` | KiloCode | Inference Providers |
+| `DEEPINFRA_API_KEY` | DeepInfra | Inference Providers |
+| `FALAI_API_KEY` | fal.ai | Inference Providers |
+| `TOGETHERAI_API_KEY` | Together AI | Inference Providers |
+| `OPENROUTER_API_KEY` | OpenRouter | Inference Providers |
+| `KILOCODE_API_KEY` | KiloCode | Inference Providers |
 | `CLINE_API_KEY` | Cline | Inference Providers |

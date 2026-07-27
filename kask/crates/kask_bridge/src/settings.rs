@@ -450,7 +450,7 @@ pub struct KaskFusionSettings {
     /// mode. When set, the orchestrator computes epistemic tension ξ and
     /// coherence Γ from panel response embeddings; if Γ exceeds this threshold,
     /// an advisory "measured convergence" signal is emitted. Empty/disabled
-    /// by default — requires an embedding API key (`DI_API_KEY` or `OR_API_KEY`).
+    /// by default — requires an embedding API key (`DEEPINFRA_API_KEY` or `OPENROUTER_API_KEY`).
     #[serde(default)]
     pub coherence_threshold: Option<f64>,
 

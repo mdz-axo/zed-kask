@@ -4,13 +4,13 @@
 //! store → select → deploy → infer → teardown
 //!
 //! Requires:
-//!   TG_API_KEY — Together AI API key
+//!   TOGETHERAI_API_KEY — Together AI API key
 //!   HF_TOKEN — HuggingFace token (for private/gated adapter repos)
 //!   HKASK_LIVE_ADAPTER_REPO — HuggingFace repo with an adapter (e.g. "user/adapter-name")
 //!   HKASK_LIVE_BASE_MODEL — Base model family (e.g. "llama-3.3-70b")
 //!
 //! Run with:
-//!   TG_API_KEY=... HF_TOKEN=... \
+//!   TOGETHERAI_API_KEY=... HF_TOKEN=... \
 //!   HKASK_LIVE_ADAPTER_REPO=user/adapter \
 //!   HKASK_LIVE_BASE_MODEL=llama-3.3-70b \
 //!   cargo test -p hkask-mcp-training --test live_adapter -- --ignored
@@ -65,7 +65,7 @@ fn require_env(var: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires TG_API_KEY, HF_TOKEN, HKASK_LIVE_ADAPTER_REPO, HKASK_LIVE_BASE_MODEL"]
+#[ignore = "requires TOGETHERAI_API_KEY, HF_TOKEN, HKASK_LIVE_ADAPTER_REPO, HKASK_LIVE_BASE_MODEL"]
 async fn live_together_adapter_e2e() {
     let api_key = require_env("TOGETHERAI_API_KEY");
     let hf_repo = require_env("HKASK_LIVE_ADAPTER_REPO");

@@ -75,7 +75,7 @@ mds_categories: [domain]
 5. **Per-minute billing**: Fair granularity
 6. **Public IP**: Containers get public IPs once running (null while starting/failed)
 7. **Pre-built images**: `di-cont-ubuntu-torch:latest` has PyTorch + CUDA pre-installed
-8. **API key already in .env**: `DI_API_KEY` is configured
+8. **API key already in .env**: `DEEPINFRA_API_KEY` is configured
 9. **Failure reasons**: API returns `fail_reason` field (e.g. "out of capacity")
 10. **Capacity risk**: B200 capacity may be limited — test containers have failed
     with "Start failed: out of capacity" during smoke testing
@@ -85,7 +85,7 @@ mds_categories: [domain]
 ```bash
 # Create a GPU container (B200 only)
 curl -X POST https://api.deepinfra.com/v1/containers \
-  -H "Authorization: Bearer $DI_API_KEY" \
+  -H "Authorization: Bearer $DEEPINFRA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "hkask-training-abc12345",
@@ -97,17 +97,17 @@ curl -X POST https://api.deepinfra.com/v1/containers \
 
 # Check status (use container_id from create response)
 curl -s https://api.deepinfra.com/v1/containers/container-xxxxxxxx \
-  -H "Authorization: Bearer $DI_API_KEY"
+  -H "Authorization: Bearer $DEEPINFRA_API_KEY"
 # Returns: {"id":"container-xxx","name":"...","state":"running","ip":"1.2.3.4",
 #           "gpu_config":"1xB200-180GB","price_per_hour":3.69,"fail_reason":null}
 
 # List all containers
 curl -s https://api.deepinfra.com/v1/containers \
-  -H "Authorization: Bearer $DI_API_KEY"
+  -H "Authorization: Bearer $DEEPINFRA_API_KEY"
 
 # Terminate
 curl -X DELETE https://api.deepinfra.com/v1/containers/container-xxxxxxxx \
-  -H "Authorization: Bearer $DI_API_KEY"
+  -H "Authorization: Bearer $DEEPINFRA_API_KEY"
 ```
 
 ### DeepInfra GPU Configs (Verified)
@@ -179,7 +179,7 @@ hKask implements three training hosts, all implementing the `TrainingHost` trait
 
 Auto-detection (in `lib.rs::run()` and `TrainingHostConfig::default()`):
 1. `HKASK_TRAINING_HOST` env var overrides (values: `runpod`, `deepinfra`, `nebius`)
-2. If `DI_API_KEY` is set → DeepInfra
+2. If `DEEPINFRA_API_KEY` is set → DeepInfra
 3. If `NEBIUS_PROJECT_ID` is set → Nebius
 4. Otherwise → Runpod
 

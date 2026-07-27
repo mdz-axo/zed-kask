@@ -2,11 +2,11 @@
 //!
 //! # Environment Variables
 //!
-//! - `DI_BASE_URL` / `DI_API_KEY` — DeepInfra (cloud, required)
-//! - `FA_BASE_URL` / `FA_API_KEY` — fal.ai (cloud, required)
-//! - `TG_BASE_URL` / `TG_API_KEY` — Together AI (cloud, required)
-//! - `OR_BASE_URL` / `OR_API_KEY` — OpenRouter (cloud, required)
-//! - `KC_BASE_URL` / `KC_API_KEY` — KiloCode (cloud, required)
+//! - `DI_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
+//! - `FA_BASE_URL` / `FALAI_API_KEY` — fal.ai (cloud, required)
+//! - `TG_BASE_URL` / `TOGETHERAI_API_KEY` — Together AI (cloud, required)
+//! - `OR_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
+//! - `KC_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
 //! - `OM_BASE_URL` / `OM_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `CLINE_BASE_URL` / `CLINE_API_KEY` — Cline cloud gateway (required)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)

@@ -1,7 +1,7 @@
 //! Together AI backend — cloud inference via OpenAI-compatible API.
 //!
 //! Together AI exposes `/v1/chat/completions` and `/v1/models`.
-//! Requires Bearer token authentication via `TG_API_KEY`.
+//! Requires Bearer token authentication via `TOGETHERAI_API_KEY`.
 
 use crate::chat_protocol::{stream_chat_completion, vision_infer};
 use crate::config::InferenceConfig;
@@ -51,7 +51,7 @@ impl TogetherBackend {
     ) -> Result<Self, InferenceError> {
         if config.together_api_key.is_empty() {
             return Err(InferenceError::Connection(
-                "Together AI API key not configured (set TG_API_KEY)".into(),
+                "Together AI API key not configured (set TOGETHERAI_API_KEY)".into(),
             ));
         }
         Ok(Self {

@@ -3,7 +3,7 @@
 //! Tests that the InferenceRouter correctly routes to DeepInfra and Together
 //! backends with real API calls. Skipped when API keys are not set.
 //!
-//! Run with: DI_API_KEY=... TG_API_KEY=... cargo test -p hkask-inference --test live_backends -- --ignored
+//! Run with: DEEPINFRA_API_KEY=... TOGETHERAI_API_KEY=... cargo test -p hkask-inference --test live_backends -- --ignored
 
 use hkask_inference::{InferenceConfig, InferenceRouter, ProviderId};
 use hkask_types::InferencePort;
@@ -57,7 +57,7 @@ fn make_config(provider: ProviderId, base_url: &str, api_key: &str) -> Inference
 
 // [P9] Motivating: Homeostatic Self-Regulation — live DeepInfra generation with reasoning disabled
 #[tokio::test]
-#[ignore = "requires DI_API_KEY"]
+#[ignore = "requires DEEPINFRA_API_KEY"]
 async fn deepinfra_summarization() {
     let api_key = std::env::var("DEEPINFRA_API_KEY").expect("DEEPINFRA_API_KEY must be set");
 
@@ -90,7 +90,7 @@ async fn deepinfra_summarization() {
 
 // [P9] Motivating: Homeostatic Self-Regulation — live Together AI generation with reasoning disabled
 #[tokio::test]
-#[ignore = "requires TG_API_KEY"]
+#[ignore = "requires TOGETHERAI_API_KEY"]
 async fn together_summarization() {
     let api_key = std::env::var("TOGETHERAI_API_KEY").expect("TOGETHERAI_API_KEY must be set");
 

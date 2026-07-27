@@ -46,7 +46,7 @@ Media generation MCP server — image, video, audio, and 3D generation via fal.a
 
 ## Configuration
 
-Provider API keys configured via standard environment variables (`DI_API_KEY`, `FA_API_KEY`, `TG_API_KEY`, `OR_API_KEY`, `KC_API_KEY`).
+Provider API keys configured via standard environment variables (`DEEPINFRA_API_KEY`, `FALAI_API_KEY`, `TOGETHERAI_API_KEY`, `OPENROUTER_API_KEY`, `KILOCODE_API_KEY`).
 
 | Variable | Default | Description |
 |---|---|---|
@@ -60,7 +60,7 @@ All models are open-weight. Provider prefixes (`FA/`, `KC/`, etc.) route to the 
 ## Quick Start
 
 ```bash
-export FA_API_KEY="your-fal-ai-key"
+export FALAI_API_KEY="your-fal-ai-key"
 # The server starts automatically with kask
 the zed-kask editor
 # Or standalone:

@@ -648,7 +648,7 @@ status: VERIFIED
 - `PodStatus` is the rich status type — every pod returns SSH command, IP, uptime, GPU type, and failure reason
 - `HarnessAdapter` is the seam for training tooling — renders config in the harness native format (YAML for Axolotl/Ludwig, Python for TRL)
 - `RunpodHost` composes a `HarnessAdapter` directly; DeepInfra and Nebius use the shared `generate_install_script()` which calls the harness adapter
-- `TrainingHostId` auto-detects from env vars: DeepInfra (DI_API_KEY), then Nebius (NEBIUS_PROJECT_ID), then Runpod (fallback)
+- `TrainingHostId` auto-detects from env vars: DeepInfra (DEEPINFRA_API_KEY), then Nebius (NEBIUS_PROJECT_ID), then Runpod (fallback)
 - `TrainingParams` is a deep struct: it contains all hyperparameters as nested sub-structs, giving callers a single entry point
 - `LoraParams` defaults: r=16, alpha=32, dropout=0, 7 target modules (all attention + MLP projections)
 - `TrainingParams` defaults: LR=1e-4, 3 epochs, batch_size=4

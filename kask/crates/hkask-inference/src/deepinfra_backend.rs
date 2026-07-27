@@ -2,7 +2,7 @@
 //!
 //! DeepInfra exposes `/v1/chat/completions` and `/v1/models` at
 //! `https://api.deepinfra.com`. Requires Bearer token
-//! authentication via `DI_API_KEY`.
+//! authentication via `DEEPINFRA_API_KEY`.
 //!
 //! DeepInfra has the broadest open-source model catalog and the
 //! lowest per-token pricing among GPU cloud providers.
@@ -39,7 +39,7 @@ impl DeepInfraBackend {
     ) -> Result<Self, InferenceError> {
         if config.deepinfra_api_key.is_empty() {
             return Err(InferenceError::Connection(
-                "DeepInfra API key not configured (set DI_API_KEY)".into(),
+                "DeepInfra API key not configured (set DEEPINFRA_API_KEY)".into(),
             ));
         }
         Ok(Self {

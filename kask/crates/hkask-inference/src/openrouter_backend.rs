@@ -2,7 +2,7 @@
 //!
 //! OpenRouter exposes `/v1/chat/completions` and `/v1/models` at
 //! `https://openrouter.ai/api`. Requires Bearer token
-//! authentication via `OR_API_KEY`.
+//! authentication via `OPENROUTER_API_KEY`.
 //!
 //! OpenRouter provides a unified API to hundreds of models from
 //! multiple providers through a single endpoint.
@@ -119,7 +119,7 @@ impl OpenRouterBackend {
     ) -> Result<Self, InferenceError> {
         if config.openrouter_api_key.is_empty() {
             return Err(InferenceError::Connection(
-                "OpenRouter API key not configured (set OR_API_KEY)".into(),
+                "OpenRouter API key not configured (set OPENROUTER_API_KEY)".into(),
             ));
         }
         Ok(Self {
