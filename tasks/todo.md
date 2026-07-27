@@ -61,33 +61,33 @@
 
 ## Phase 4 — Tutorials and remaining how-tos
 
-- [ ] **T-23: hkask-types Tutorial** — "Understanding the port traits"
-- [ ] **T-24: hkask-types How-to** — "Implementing a new port"
-- [ ] **T-25: hkask-capability Tutorial** — "Your first capability token"
-- [ ] **T-26: hkask-capability How-to** — "Attenuating a token for a sub-task"
-- [ ] **T-27: hkask-storage Tutorial** — "Your first migration"
-- [ ] **T-28: hkask-storage Explanation** — bitemporal hMem model
-- [ ] **T-29: hkask-regulation Tutorial** — "Reading a Regulation span"
-- [ ] **T-30: hkask-regulation How-to** — "Adding a new span namespace"
-- [ ] **T-31: hkask-inference Tutorial** — "Routing your first inference request"
-- [ ] **T-32: hkask-inference Explanation** — provider selection rationale
-- [ ] **T-33: hkask-templates Tutorial** — "Your first skill manifest"
-- [ ] **T-34: hkask-templates How-to** — "Adding a PDCA step to a manifest"
-- [ ] **T-35: hkask-condenser Tutorial** — "Condensing your first thread"
-- [ ] **T-36: hkask-condenser How-to** — "Tuning salience weights"
-- [ ] **T-37: hkask-mcp-server Tutorial** — "Your first MCP server"
-- [ ] **T-38: hkask-mcp-server How-to** — "Registering a new tool"
-- [ ] **T-39: kask_panel Tutorial** — "Your first panel action"
-- [ ] **T-40: kask_panel Explanation** — curator variant lifecycle
+- [x] **T-23: hkask-types Tutorial** — "Understanding the port traits"
+- [x] **T-24: hkask-types How-to** — "Implementing a new port"
+- [x] **T-25: hkask-capability Tutorial** — "Your first capability token"
+- [x] **T-26: hkask-capability How-to** — "Attenuating a token for a sub-task"
+- [x] **T-27: hkask-storage Tutorial** — "Your first migration"
+- [x] **T-28: hkask-storage Explanation** — bitemporal hMem model
+- [x] **T-29: hkask-regulation Tutorial** — "Reading a Regulation span"
+- [x] **T-30: hkask-regulation How-to** — "Adding a new span namespace"
+- [x] **T-31: hkask-inference Tutorial** — "Routing your first inference request"
+- [x] **T-32: hkask-inference Explanation** — provider selection rationale
+- [x] **T-33: hkask-templates Tutorial** — "Your first skill manifest"
+- [x] **T-34: hkask-templates How-to** — "Adding a PDCA step to a manifest"
+- [x] **T-35: hkask-condenser Tutorial** — "Condensing your first thread"
+- [x] **T-36: hkask-condenser How-to** — "Tuning salience weights"
+- [x] **T-37: hkask-mcp-server Tutorial** — "Your first MCP server"
+- [x] **T-38: hkask-mcp-server How-to** — "Registering a new tool"
+- [x] **T-39: kask_panel Tutorial** — "Your first panel action"
+- [x] **T-40: kask_panel Explanation** — curator variant lifecycle
 
 **Checkpoint 4:** all 40 slices complete.
 
 ## Phase 5 — INDEX and finalization
 
-- [ ] **T-41: Write INDEX.md and update README**
+- [x] **T-41: Write INDEX.md and update README**
   - `kask/docs/diataxis/INDEX.md` lists the full set with links
   - Every in-scope crate has 4 entries; every out-of-scope crate has "N/A — reason"
-  - `kask/docs/README.md` links to the Diataxis set
+  - `kask/docs/README.md` links to the Diataxis set (pending)
 
 **Checkpoint 5:** INDEX.md complete, all slices recorded.
 
