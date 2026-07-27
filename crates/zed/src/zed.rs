@@ -778,8 +778,10 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx.clone());
-        let kask_panel = kask_panel::KaskPanel::load(workspace_handle.clone(), cx);
+        let mut kask_panel_context = cx.clone();
+        let kask_panel =
+            kask_panel::KaskPanel::load(workspace_handle.clone(), &mut kask_panel_context);
+        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         async fn add_panel_when_ready(
             panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,

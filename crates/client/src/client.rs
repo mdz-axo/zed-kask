@@ -1938,8 +1938,8 @@ impl ProtoClient for Client {
     }
 }
 
-/// prefix for the zed:// url scheme
-pub const ZED_URL_SCHEME: &str = "zed";
+/// URL scheme for links handled by this application.
+pub use paths::URL_SCHEME as ZED_URL_SCHEME;
 
 /// A parsed Zed link that can be handled internally by the application.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1966,7 +1966,8 @@ pub fn parse_zed_link(link: &str, cx: &App) -> Option<ZedLink> {
         .or_else(|| {
             link.strip_prefix(ZED_URL_SCHEME)
                 .and_then(|result| result.strip_prefix("://"))
-        })?;
+        })
+        .or_else(|| link.strip_prefix("zed://"))?;
 
     let mut parts = path.split('/');
 

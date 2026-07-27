@@ -4,7 +4,7 @@ use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, CliResponseSink};
 use cli::{IpcHandshake, ipc};
-use client::{ZedLink, parse_zed_link};
+use client::{ZED_URL_SCHEME, ZedLink, parse_zed_link};
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
@@ -60,7 +60,7 @@ pub enum OpenRequestKind {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
     InstallSkill {
-        /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
+        /// Full `SKILL.md` contents embedded in a skill share link.
         content: String,
     },
     DockMenuAction {
@@ -153,7 +153,12 @@ impl OpenRequest {
             }));
         }
 
+        let app_url_prefix = format!("{ZED_URL_SCHEME}://");
         for url in request.urls {
+            let app_path = url
+                .strip_prefix(&app_url_prefix)
+                .or_else(|| url.strip_prefix("zed://"));
+
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
@@ -162,34 +167,44 @@ impl OpenRequest {
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
-            } else if let Some(file) = url.strip_prefix("zed://file") {
+            } else if let Some(file) = app_path.and_then(|path| path.strip_prefix("file")) {
                 this.parse_file_path(file)
-            } else if let Some(file) = url.strip_prefix("zed://ssh") {
+            } else if let Some(file) = app_path.and_then(|path| path.strip_prefix("ssh")) {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
-            } else if let Some(extension_id) = url.strip_prefix("zed://extension/") {
+            } else if let Some(extension_id) =
+                app_path.and_then(|path| path.strip_prefix("extension/"))
+            {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
             } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
                 this.parse_skill_install_url(&url)?
-            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+            } else if let Some(agent_path) = app_path.and_then(|path| path.strip_prefix("agent")) {
                 this.parse_agent_url(agent_path)
-            } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
+            } else if matches!(app_path, Some("" | "open" | "open/")) {
                 this.kind = Some(OpenRequestKind::FocusApp);
-            } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
+            } else if let Some(schema_path) =
+                app_path.and_then(|path| path.strip_prefix("schemas/"))
+            {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
                 });
-            } else if url == "zed://settings" || url == "zed://settings/" {
+            } else if matches!(app_path, Some("settings" | "settings/")) {
                 this.kind = Some(OpenRequestKind::Setting { setting_path: None });
-            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+            } else if let Some(setting_path) =
+                app_path.and_then(|path| path.strip_prefix("settings/"))
+            {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
-            } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
+            } else if let Some(clone_path) =
+                app_path.and_then(|path| path.strip_prefix("git/clone"))
+            {
                 this.parse_git_clone_url(clone_path)?
-            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+            } else if let Some(commit_path) =
+                app_path.and_then(|path| path.strip_prefix("git/commit/"))
+            {
                 this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
@@ -233,7 +248,7 @@ impl OpenRequest {
     }
 
     fn parse_skill_install_url(&mut self, url: &str) -> Result<()> {
-        // Format: zed://skill?data=<base64url of SKILL.md contents>
+        // Format: <app-scheme>://skill?data=<base64url of SKILL.md contents>
         let content = agent_skills::decode_skill_share_link(url)?;
         self.kind = Some(OpenRequestKind::InstallSkill { content });
         Ok(())
@@ -1443,7 +1458,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://agent".into()],
+                    urls: vec!["zed-kask://agent".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1497,7 +1512,7 @@ mod tests {
         let result = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://skill?data=!!!notbase64".into()],
+                    urls: vec!["zed-kask://skill?data=!!!notbase64".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1508,7 +1523,7 @@ mod tests {
     }
 
     fn agent_url_with_prompt(prompt: &str) -> String {
-        let mut serializer = url::form_urlencoded::Serializer::new("zed://agent?".to_string());
+        let mut serializer = url::form_urlencoded::Serializer::new("zed-kask://agent?".to_string());
         serializer.append_pair("prompt", prompt);
         serializer.finish()
     }
@@ -1551,7 +1566,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://agent/?prompt=hello".into()],
+                    urls: vec!["zed-kask://agent/?prompt=hello".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1578,7 +1593,7 @@ mod tests {
     fn test_parse_focus_app_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
-        for url in ["zed://", "zed://open", "zed://open/"] {
+        for url in ["zed-kask://", "zed-kask://open", "zed-kask://open/"] {
             let request = cx.update(|cx| {
                 OpenRequest::parse(
                     RawOpenRequest {

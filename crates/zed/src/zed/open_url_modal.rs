@@ -1,3 +1,4 @@
+use client::ZED_URL_SCHEME;
 use editor::Editor;
 use gpui::{AppContext as _, DismissEvent, Entity, EventEmitter, Focusable, ReadGlobal, Styled};
 use ui::{
@@ -53,8 +54,7 @@ impl OpenUrlModal {
             return;
         }
 
-        // Handle zed:// URLs internally.
-        if url.starts_with("zed://") || url.starts_with("zed-cli://") {
+        if url.starts_with(&format!("{ZED_URL_SCHEME}://")) || url.starts_with("zed-cli://") {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![url],
                 ..Default::default()

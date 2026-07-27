@@ -33,7 +33,6 @@ use ui::prelude::*;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    item::{Item, ItemEvent, SerializableItem, TabContentParams},
     register_serializable_item,
 };
 

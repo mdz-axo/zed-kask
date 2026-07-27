@@ -17,6 +17,9 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// Forks should change this to avoid colliding with Zed's user data.
 pub const APP_NAME: &str = "Zed-Kask";
 
+/// URL scheme used for links that should open this application.
+pub const URL_SCHEME: &str = "zed-kask";
+
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
 pub const APP_NAME_LOWERCASE: &str = {
