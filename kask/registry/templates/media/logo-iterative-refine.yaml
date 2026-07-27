@@ -5,6 +5,23 @@ template_type: FlowDef
 name: media_logo_iterative_refine
 version: "1.0.0"
 description: "Generate logo candidates, critique with vision LLM, refine the best one"
+
+# This sub-manifest is invoked via action: flowdef from logo-builder step 4.
+# The parent caps gas/rjoule to its remaining budget; these caps are the
+# sub-cascade's declared allocation (parent may reduce them further).
+gas:
+  cap: 100000
+  cost_per_iteration: 5000
+  alert_threshold: 0.8
+  hard_limit: true
+
+# rJoule: inference energy for generate_image + describe_image calls.
+# Logo generation is image-model-heavy (fal.ai/flux-pro) — needs a real budget.
+rjoule:
+  cap: 4
+  alert_threshold: 0.8
+  hard_limit: true
+
 primary_model: "fal.ai/flux-pro/v1"
 critique_model: "{{ default_model }}"
 parameters:

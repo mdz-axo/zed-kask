@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
 //! Curator email — bidirectional via MXroute.
 //!
 //! Outbound: SMTP API at smtpapi.mxroute.com (alerts, notifications, test).

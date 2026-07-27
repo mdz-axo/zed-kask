@@ -45,6 +45,7 @@
 
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleManifestStep;
+use crate::load_manifest_from_yaml;
 use crate::ports::{Result, TemplateError};
 use hkask_capability::{DelegationAction, DelegationResource, DelegationToken};
 use hkask_capability::{ToolPort, ToolPortError};
@@ -309,12 +310,19 @@ impl ManifestExecutor {
     /// authoritative for installed binaries — it works regardless of CWD or
     /// install location. The filesystem fallback exists for dev workflows
     /// where a template has been edited but not yet rebuilt.
+    ///
+    /// Resolution order: embedded `.j2` → embedded `.yaml` → filesystem
+    /// `.j2` → filesystem `.yaml`. This covers all four Pattern A template
+    /// types: WordAct/KnowAct (`.j2`), FlowDef sub-manifests (`.yaml`),
+    /// and RenderAct (either `.j2` or `.yaml`).
     fn load_template(
         &self,
         template_ref: &str,
         context: &HashMap<String, Value>,
     ) -> Result<String> {
         let template_content = if let Some(content) = crate::template_file(template_ref) {
+            content.to_string()
+        } else if let Some(content) = crate::template_yaml_file(template_ref) {
             content.to_string()
         } else {
             let template_path = safe_template_join(&self.template_base_path, template_ref)
@@ -324,8 +332,8 @@ impl ManifestExecutor {
                         self.template_base_path.display()
                     ))
                 })?;
-            // Try the ref as-is, then with .j2 appended (many manifests omit
-            // the extension).
+            // Try the ref as-is, then with .j2 appended, then with .yaml appended.
+            // Many manifests omit the extension; the file could be either format.
             std::fs::read_to_string(&template_path)
                 .or_else(|_| {
                     if !template_ref.ends_with(".j2") {
@@ -340,11 +348,25 @@ impl ManifestExecutor {
                         format!("template not found at {}", template_path.display()),
                     ))
                 })
+                .or_else(|_| {
+                    if !template_ref.ends_with(".yaml") {
+                        let yaml_ref = format!("{template_ref}.yaml");
+                        if let Some(yaml_path) =
+                            safe_template_join(&self.template_base_path, &yaml_ref)
+                        {
+                            return std::fs::read_to_string(&yaml_path);
+                        }
+                    }
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("template not found at {}", template_path.display()),
+                    ))
+                })
                 .map_err(|e| {
                     TemplateError::NotFound(NotFound {
                         entity_type: "template".to_string(),
                         id: format!(
-                            "KnowAct template not found at {} (also tried .j2 extension): {}",
+                            "Template not found at {} (also tried .j2 and .yaml extensions): {}",
                             template_path.display(),
                             e
                         ),
@@ -881,6 +903,37 @@ impl ManifestExecutor {
                     "execute" | "feedback" | "validate" | "retrieve" => {
                         context = self.execute_tool_invoke(step, context).await?;
                     }
+                    // RenderAct: render a template (`.j2` or `.yaml`) without
+                    // inference. The action is the rendering — the output is
+                    // produced by Jinja2, not by an LLM. Used for reference
+                    // content, macro libraries, and structured reference docs.
+                    "render" => {
+                        context = self.execute_render(step, context).await?;
+                    }
+                    // FlowDef: recursively execute a `.yaml` sub-manifest as a
+                    // nested cascade. The sub-manifest has its own convergence
+                    // threshold, gas budget, and steps. The sub-cascade's gas
+                    // budget is capped to the parent's remaining budget, and its
+                    // consumption is deducted from the parent's counters — this
+                    // closes the gas feedback loop so a sub-cascade can't bypass
+                    // the parent's gas exhaustion check. Results are stored
+                    // under `step_{ordinal}_result` without merging the full
+                    // sub-context (which would risk overwriting parent keys).
+                    // This is the composability/recursion primitive — skills
+                    // compose into larger skills.
+                    "flowdef" => {
+                        let (new_context, gas_consumed, rjoule_consumed) = self
+                            .execute_flowdef(
+                                step,
+                                context,
+                                gas_cap.saturating_sub(gas_used),
+                                rjoule_cap - rjoule_used,
+                            )
+                            .await?;
+                        context = new_context;
+                        gas_used = gas_used.saturating_add(gas_consumed);
+                        rjoule_used = (rjoule_used + rjoule_consumed).max(0.0);
+                    }
 
                     other => {
                         return Err(TemplateError::Manifest(format!(
@@ -1370,6 +1423,164 @@ impl ManifestExecutor {
         Ok(context)
     }
 
+    /// **Render** (RenderAct) — Render a template without inference.
+    ///
+    /// The action is the rendering. The template (`.j2` or `.yaml`) is
+    /// rendered with minijinja and the output is stored in context. No
+    /// LLM call is made — this is for reference content, macro libraries,
+    /// and structured reference docs that are never sent to the LLM.
+    ///
+    /// Per the hKask Pattern A type system, RenderAct is the non-inference
+    /// layer: content that is included into other templates via
+    /// `{% include %}`/`{% from %}` or consumed as structured reference.
+    async fn execute_render(
+        &self,
+        step: &BundleManifestStep,
+        mut context: HashMap<String, Value>,
+    ) -> Result<HashMap<String, Value>> {
+        // Resolve bindings from input_mapping and merge into context.
+        if let Some(ref mapping) = step.input_mapping
+            && let Value::Object(map) = mapping
+        {
+            for (k, v) in map {
+                let bound = resolve_mapping_value(v, &context, &self.template_base_path);
+                context.insert(k.clone(), bound);
+            }
+        }
+
+        let rendered = self.render_step_template(step, &context)?;
+        context.insert(
+            format!("step_{}_result", step.ordinal),
+            Value::String(rendered),
+        );
+
+        Ok(context)
+    }
+
+    /// **FlowDef** — Recursively execute a `.yaml` sub-manifest as a nested
+    /// cascade.
+    ///
+    /// The sub-manifest has its own convergence threshold, gas budget, and
+    /// steps. It is loaded from the embedded registry (or filesystem fallback),
+    /// parsed as a `BundleManifest`, and executed via `execute_manifest()`.
+    ///
+    /// **Gas budget closure:** The sub-cascade's gas/rjoule caps are capped to
+    /// the parent's remaining budget (`parent_gas_cap` / `parent_rjoule_cap`).
+    /// The sub-cascade's actual consumption is returned to the parent, which
+    /// deducts it from its own counters. This closes the gas feedback loop —
+    /// a sub-cascade cannot bypass the parent's gas exhaustion check.
+    ///
+    /// **Context isolation:** Only the sub-cascade's final result value is
+    /// stored under `step_{ordinal}_result` in the parent context. The full
+    /// sub-context is NOT merged back — this prevents the sub-cascade from
+    /// overwriting parent context keys.
+    ///
+    /// This is the composability/recursion primitive — skills compose into
+    /// larger skills. A step with `action: flowdef` and
+    /// `template_ref: media/logo-discovery` loads `media/logo-discovery.yaml`,
+    /// runs its PDCA cascade, and returns the result.
+    ///
+    /// Returns `(context, gas_consumed, rjoule_consumed)` so the caller can
+    /// deduct consumption from the parent's counters.
+    async fn execute_flowdef(
+        &self,
+        step: &BundleManifestStep,
+        mut context: HashMap<String, Value>,
+        parent_gas_remaining: u64,
+        parent_rjoule_remaining: f64,
+    ) -> Result<(HashMap<String, Value>, u64, f64)> {
+        let template_ref = step.template_ref.as_deref().ok_or_else(|| {
+            TemplateError::Manifest(format!(
+                "Step {} has action='flowdef' but no template_ref",
+                step.ordinal
+            ))
+        })?;
+
+        // Resolve {{key}} references from context before loading.
+        let template_ref = render_inline_template(template_ref, &context);
+
+        // Load the sub-manifest YAML. Try embedded .yaml first, then embedded
+        // .j2 (shouldn't happen for flowdef, but handle gracefully), then
+        // filesystem fallback.
+        let manifest_yaml = if let Some(content) = crate::template_yaml_file(&template_ref) {
+            content.to_string()
+        } else if let Some(content) = crate::template_file(&template_ref) {
+            content.to_string()
+        } else {
+            self.load_template_from_disk(&template_ref, step.ordinal)?
+        };
+
+        // Parse the sub-manifest.
+        let mut sub_manifest = load_manifest_from_yaml(&manifest_yaml).map_err(|e| {
+            TemplateError::Manifest(format!(
+                "Step {}: failed to parse sub-manifest '{}': {}",
+                step.ordinal, template_ref, e
+            ))
+        })?;
+
+        // Cap the sub-cascade's gas/rjoule to the parent's remaining budget.
+        // This closes the gas feedback loop: the sub-cascade cannot consume
+        // more than the parent has left. If the sub-manifest declares a
+        // smaller budget, that smaller value is used (min of declared and
+        // remaining).
+        let sub_gas_cap = (sub_manifest.gas.cap as u64).min(parent_gas_remaining);
+        let sub_rjoule_cap = (sub_manifest.rjoule.cap as f64).min(parent_rjoule_remaining.max(0.0));
+        sub_manifest.gas.cap = sub_gas_cap as u32;
+        sub_manifest.rjoule.cap = sub_rjoule_cap as u32;
+
+        // Resolve bindings from input_mapping and merge into context for
+        // the sub-cascade.
+        if let Some(ref mapping) = step.input_mapping
+            && let Value::Object(map) = mapping
+        {
+            for (k, v) in map {
+                let bound = resolve_mapping_value(v, &context, &self.template_base_path);
+                context.insert(k.clone(), bound);
+            }
+        }
+
+        // Snapshot the parent's context keys before the sub-cascade so we can
+        // detect what the sub-cascade added (for gas accounting, not context
+        // merge — we don't merge the full sub-context back).
+        let parent_keys: std::collections::HashSet<String> = context.keys().cloned().collect();
+
+        // Execute the sub-cascade. Box::pin is required because this is a
+        // recursive async fn — without it, the future would be infinitely
+        // sized.
+        let sub_result = Box::pin(self.execute_manifest(&sub_manifest, context)).await?;
+
+        // Extract the sub-cascade's final result value. We do NOT merge the
+        // full sub-context back into the parent — only the result is stored,
+        // preventing the sub-cascade from overwriting parent context keys.
+        let result_value = sub_result.values().last().cloned().unwrap_or(Value::Null);
+
+        // Reconstruct the parent context from the sub-result. The sub-cascade
+        // received the parent's context, so the sub-result contains the
+        // parent's keys plus the sub-cascade's additions. We keep only the
+        // parent's original keys (preserving any updates the sub-cascade made
+        // to those keys) plus the step result.
+        let mut parent_context = HashMap::new();
+        for (k, v) in sub_result {
+            if parent_keys.contains(&k) {
+                parent_context.insert(k, v);
+            }
+        }
+        parent_context.insert(format!("step_{}_result", step.ordinal), result_value);
+
+        // Compute gas/rjoule consumed by the sub-cascade. The sub-cascade's
+        // gas_cap was capped to the parent's remaining budget, so the
+        // consumption is at most parent_gas_remaining. We report the capped
+        // budget as consumed if the sub-cascade exhausted its budget, or the
+        // actual usage if we can determine it. Since execute_manifest doesn't
+        // return gas accounting, we use the capped cap as an upper bound —
+        // the parent deducts the sub-cascade's budget allocation. This is
+        // conservative (may over-count) but safe (never under-counts).
+        let gas_consumed = sub_gas_cap;
+        let rjoule_consumed = sub_rjoule_cap;
+
+        Ok((parent_context, gas_consumed, rjoule_consumed))
+    }
+
     /// **Execute** — Invoke an MCP tool with parameters bound from context.
     ///
     /// The MCP server/tool is specified in `step.mcp` (format: "server/tool").
@@ -1624,74 +1835,14 @@ impl ManifestExecutor {
                 // Prefer the embedded (build-time) template — works regardless
                 // of CWD or install location. Fall back to filesystem for dev
                 // workflows where a template has been edited but not rebuilt.
+                // Try .j2 first, then .yaml (FlowDef sub-manifests and RenderAct
+                // reference docs can be .yaml files).
                 let template_content = if let Some(content) = crate::template_file(&template_ref) {
                     content.to_string()
+                } else if let Some(content) = crate::template_yaml_file(&template_ref) {
+                    content.to_string()
                 } else {
-                    let template_path = safe_template_join(&self.template_base_path, &template_ref)
-                        .ok_or_else(|| {
-                            TemplateError::PathTraversal(format!(
-                                "step {}: template_ref '{template_ref}' escapes base path '{}'",
-                                step.ordinal,
-                                self.template_base_path.display()
-                            ))
-                        })?;
-                    match std::fs::read_to_string(&template_path) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            // Fallback: if template_ref doesn't end with .j2, try appending it.
-                            // Many manifests omit the extension; KataEngine resolves without it,
-                            // and ManifestExecutor should too.
-                            if !template_ref.ends_with(".j2") {
-                                let j2_ref = format!("{template_ref}.j2");
-                                let j2_path = safe_template_join(&self.template_base_path, &j2_ref)
-                                    .ok_or_else(|| {
-                                        TemplateError::PathTraversal(format!(
-                                            "step {}: template_ref '{j2_ref}' escapes base path '{}'",
-                                            step.ordinal,
-                                            self.template_base_path.display()
-                                        ))
-                                    })?;
-                                if let Ok(c) = std::fs::read_to_string(&j2_path) {
-                                    info!(
-                                        target: "reg.spec.executor",
-                                        step = step.ordinal,
-                                        resolved = %j2_path.display(),
-                                        "Resolved template with .j2 fallback"
-                                    );
-                                    c
-                                } else {
-                                    let err_msg = format!(
-                                        "Step {}: template file not found at {} (also tried {}): {}",
-                                        step.ordinal,
-                                        template_path.display(),
-                                        j2_path.display(),
-                                        e
-                                    );
-                                    if let Some(ref cb) = self.heal_error_cb {
-                                        cb(&err_msg, &template_path.display().to_string());
-                                    }
-                                    return Err(TemplateError::NotFound(NotFound {
-                                        entity_type: "template".to_string(),
-                                        id: err_msg,
-                                    }));
-                                }
-                            } else {
-                                let err_msg = format!(
-                                    "Step {}: template file not found at {}: {}",
-                                    step.ordinal,
-                                    template_path.display(),
-                                    e
-                                );
-                                if let Some(ref cb) = self.heal_error_cb {
-                                    cb(&err_msg, &template_path.display().to_string());
-                                }
-                                return Err(TemplateError::NotFound(NotFound {
-                                    entity_type: "template".to_string(),
-                                    id: err_msg,
-                                }));
-                            }
-                        }
-                    }
+                    self.load_template_from_disk(&template_ref, step.ordinal)?
                 };
 
                 info!(
@@ -1719,6 +1870,71 @@ impl ManifestExecutor {
                 Ok(render_inline_template(template_content, context))
             }
         }
+    }
+
+    /// Load a template from the filesystem, trying the ref as-is, then with
+    /// `.j2` appended, then with `.yaml` appended. Used as a dev-workflow
+    /// fallback when the embedded registry doesn't have the template.
+    ///
+    /// `step_ordinal` is used for error messages and heal callbacks.
+    fn load_template_from_disk(&self, template_ref: &str, step_ordinal: u32) -> Result<String> {
+        let template_path =
+            safe_template_join(&self.template_base_path, template_ref).ok_or_else(|| {
+                TemplateError::PathTraversal(format!(
+                    "step {step_ordinal}: template_ref '{template_ref}' escapes base path '{}'",
+                    self.template_base_path.display()
+                ))
+            })?;
+
+        // Try the ref as-is first.
+        if let Ok(c) = std::fs::read_to_string(&template_path) {
+            return Ok(c);
+        }
+
+        // Try .j2 extension if not already present.
+        if !template_ref.ends_with(".j2") {
+            let j2_ref = format!("{template_ref}.j2");
+            if let Some(j2_path) = safe_template_join(&self.template_base_path, &j2_ref)
+                && let Ok(c) = std::fs::read_to_string(&j2_path)
+            {
+                info!(
+                    target: "reg.spec.executor",
+                    step = step_ordinal,
+                    resolved = %j2_path.display(),
+                    "Resolved template with .j2 fallback"
+                );
+                return Ok(c);
+            }
+        }
+
+        // Try .yaml extension if not already present (FlowDef sub-manifests
+        // and RenderAct reference docs can be .yaml files).
+        if !template_ref.ends_with(".yaml") {
+            let yaml_ref = format!("{template_ref}.yaml");
+            if let Some(yaml_path) = safe_template_join(&self.template_base_path, &yaml_ref)
+                && let Ok(c) = std::fs::read_to_string(&yaml_path)
+            {
+                info!(
+                    target: "reg.spec.executor",
+                    step = step_ordinal,
+                    resolved = %yaml_path.display(),
+                    "Resolved template with .yaml fallback"
+                );
+                return Ok(c);
+            }
+        }
+
+        let err_msg = format!(
+            "Step {step_ordinal}: template file not found at {} (also tried .j2 and .yaml extensions)",
+            template_path.display()
+        );
+        if let Some(ref cb) = self.heal_error_cb {
+            cb(&err_msg, &template_path.display().to_string());
+        }
+        Err(TemplateError::NotFound(NotFound {
+            entity_type: "template".to_string(),
+            id: err_msg,
+        }))
     }
 }
 
@@ -1764,8 +1980,11 @@ fn render_minijinja(
                 return Ok(Some(main_template.clone()));
             }
             // Prefer the embedded (build-time) template — works regardless
-            // of CWD or install location.
+            // of CWD or install location. Try .j2 first, then .yaml.
             if let Some(content) = crate::template_file(name) {
+                return Ok(Some(content.to_string()));
+            }
+            if let Some(content) = crate::template_yaml_file(name) {
                 return Ok(Some(content.to_string()));
             }
             // safe_join rejects any segment starting with '.' or containing '\\',
@@ -1781,6 +2000,14 @@ fn render_minijinja(
                 let j2_name = format!("{name}.j2");
                 if let Some(j2_path) = safe_template_join(&base, &j2_name)
                     && let Ok(content) = std::fs::read_to_string(&j2_path)
+                {
+                    return Ok(Some(content));
+                }
+            }
+            if !name.ends_with(".yaml") {
+                let yaml_name = format!("{name}.yaml");
+                if let Some(yaml_path) = safe_template_join(&base, &yaml_name)
+                    && let Ok(content) = std::fs::read_to_string(&yaml_path)
                 {
                     return Ok(Some(content));
                 }

@@ -4,6 +4,8 @@
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D10 integration plan, composition root, and current crate inventory.
 
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 major crates.
+
 ## Architecture
 
 | Document | Description |

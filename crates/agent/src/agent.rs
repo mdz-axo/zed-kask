@@ -1137,7 +1137,7 @@ impl NativeAgent {
         //    installs. These win on name conflicts with embedded skills
         //    because `apply_skill_overrides` keeps the first entry on ties,
         //    and `combine_skills` chains `global` before embedded globals.
-        // 2. Embedded kask skills — the 44 SKILL.md files shipped in this
+        // 2. Embedded kask skills — the SKILL.md files shipped in this
         //    repo's `.agents/skills/` directory, baked into the binary at
         //    build time by `agent_skills/build.rs`. These are always
         //    available regardless of install location or CWD.
@@ -4511,6 +4511,24 @@ mod internal_tests {
             .collect()
     }
 
+    /// Filter to only disk-loaded global skills (from `~/.agents/skills/`),
+    /// excluding the embedded kask globals that are always present. Tests
+    /// that create skills on disk and assert counts use this to ignore the
+    /// 42 embedded globals baked into the binary.
+    #[allow(dead_code)]
+    fn disk_global_skills(skills: &[Skill]) -> Vec<&Skill> {
+        skills
+            .iter()
+            .filter(|s| {
+                matches!(s.source, SkillSource::Global)
+                    && !s
+                        .skill_file_path
+                        .to_string_lossy()
+                        .starts_with("<embedded-global>")
+            })
+            .collect()
+    }
+
     #[test]
     fn test_combine_skills_keeps_every_entry_for_autocomplete() {
         // The autocomplete popup needs both same-named entries so the
@@ -4885,6 +4903,749 @@ mod internal_tests {
             assert_eq!(
                 thread.read(cx).project_context().read(cx).worktrees,
                 expected_worktrees
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_global_skills_load_and_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let initial_skill_dir = skills_dir.join("my-skill");
+        let initial_skill_path = initial_skill_dir.join("SKILL.md");
+        fs.create_dir(&initial_skill_dir).await.unwrap();
+        fs.insert_file(
+            &initial_skill_path,
+            b"---\nname: my-skill\ndescription: First version\n---\n\nbody-v1".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "First version");
+        });
+
+        fs.write(
+            &initial_skill_path,
+            b"---\nname: my-skill\ndescription: Second version\n---\n\nbody-v2",
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].description, "Second version");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_with_long_description_loads_with_warning(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let skill_dir = skills_dir.join("long-description");
+        let skill_path = skill_dir.join("SKILL.md");
+        let long_description = "a".repeat(agent_skills::MAX_SKILL_DESCRIPTION_LEN + 1);
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            &skill_path,
+            format!("---\nname: long-description\ndescription: {long_description}\n---\n\nbody")
+                .into_bytes(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let project_id = project.entity_id();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "long-description");
+            assert_eq!(disk[0].description, long_description);
+
+            let catalog_names: Vec<&str> = state
+                .project_context
+                .read(cx)
+                .skills()
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect();
+            assert!(
+                catalog_names.contains(&"long-description"),
+                "long-description skill should remain in the model catalog: {catalog_names:?}"
+            );
+
+            assert!(
+                state.skill_loading_issues.is_empty(),
+                "zed-kask disables description-length warnings; got {:?}",
+                state.skill_loading_issues,
+            );
+
+            (*disk[0]).clone()
+        });
+
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        cx.update(|cx| {
+            let available_skills = connection.available_skills(&session_id, cx);
+            let available_skill = available_skills
+                .iter()
+                .find(|skill| skill.name == "long-description")
+                .expect("long-description should appear in available skills");
+            assert_eq!(available_skill.description, long_description);
+            assert!(
+                available_skill.warning.is_none(),
+                "zed-kask disables description-length warnings; available skill should carry no warning, got {:?}",
+                available_skill.warning
+            );
+        });
+
+        let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
+            .await
+            .expect("body should load cleanly");
+        assert_eq!(body, "body");
+    }
+
+    #[gpui::test]
+    async fn test_symlinked_global_skills_load_and_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let external_skill_dir = PathBuf::from(path!("/external/my-skill"));
+        let skill_link_dir = skills_dir.join("my-skill");
+        let skill_link_path = skill_link_dir.join("SKILL.md");
+
+        fs.insert_tree(
+            &external_skill_dir,
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: First symlinked version\n---\n\nbody-v1"
+            }),
+        )
+        .await;
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_symlink(&skill_link_dir, external_skill_dir)
+            .await
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let project_id = project.entity_id();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "First symlinked version");
+            assert_eq!(disk[0].source, SkillSource::Global);
+            assert_eq!(disk[0].skill_file_path, skill_link_path);
+
+            let catalog_skills = state.project_context.read(cx).skills();
+            let catalog_skill = catalog_skills
+                .iter()
+                .find(|skill| skill.name == "my-skill")
+                .expect("symlinked skill should be included in the model-facing catalog");
+            assert_eq!(catalog_skill.description, "First symlinked version");
+            assert_eq!(
+                catalog_skill.location,
+                skill_link_path.to_string_lossy().as_ref()
+            );
+
+            (*disk[0]).clone()
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
+            .await
+            .unwrap();
+        assert_eq!(body, "body-v1");
+
+        fs.write(
+            &skill_link_path,
+            b"---\nname: my-skill\ndescription: Second symlinked version\n---\n\nbody-v2",
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let reloaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "Second symlinked version");
+            assert_eq!(disk[0].source, SkillSource::Global);
+            assert_eq!(disk[0].skill_file_path, skill_link_path);
+
+            let catalog_skills = state.project_context.read(cx).skills();
+            let catalog_skill = catalog_skills
+                .iter()
+                .find(|skill| skill.name == "my-skill")
+                .expect("reloaded symlinked skill should be included in the model-facing catalog");
+            assert_eq!(catalog_skill.description, "Second symlinked version");
+            assert_eq!(
+                catalog_skill.location,
+                skill_link_path.to_string_lossy().as_ref()
+            );
+
+            (*disk[0]).clone()
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &reloaded_skill.skill_file_path)
+            .await
+            .unwrap();
+        assert_eq!(body, "body-v2");
+    }
+
+    #[gpui::test]
+    async fn test_global_skills_dir_created_after_startup(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // No disk globals yet — only the embedded globals are present.
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            assert!(
+                disk_global_skills(&state.skills).is_empty(),
+                "expected no disk globals before the global skills dir exists, got {:?}",
+                disk_global_skills(&state.skills)
+            );
+        });
+
+        let new_skill_dir = skills_dir.join("late-skill");
+        fs.create_dir(&new_skill_dir).await.unwrap();
+        fs.insert_file(
+            &new_skill_dir.join("SKILL.md"),
+            b"---\nname: late-skill\ndescription: Created after startup\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "late-skill");
+            assert_eq!(disk[0].description, "Created after startup");
+        });
+    }
+
+    /// Regression test for the case where a skill is added (e.g. by the
+    /// SKILL.md file watcher) AFTER a session is registered. The system
+    /// prompt and slash-command list both read live state, so they pick
+    /// up the new skill automatically. The `SkillTool` registered on the
+    /// thread used to hold a stale snapshot of `state.skills` taken at
+    /// thread-construction time, which meant the model would see the new
+    /// skill in `<available_skills>` but get "not found" when it tried to
+    /// invoke it. The fix wires the tool to a dynamic resolver closure
+    /// that re-reads `state.skills` for the project on every invocation.
+    #[gpui::test]
+    async fn test_skills_added_after_session_visible_to_skill_tool(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(
+                disk_global_skills(&state.skills).is_empty(),
+                "expected no disk globals before the global skills dir exists, got {:?}",
+                disk_global_skills(&state.skills)
+            );
+        });
+
+        let resolve =
+            cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
+
+        cx.update(|cx| {
+            let all = resolve(cx);
+            let disk: Vec<_> = all
+                .iter()
+                .filter(|s| {
+                    matches!(s.source, SkillSource::Global)
+                        && !s
+                            .skill_file_path
+                            .to_string_lossy()
+                            .starts_with("<embedded-global>")
+                })
+                .collect();
+            assert!(disk.is_empty());
+        });
+
+        let new_skill_dir = skills_dir.join("my-skill");
+        fs.create_dir(&new_skill_dir).await.unwrap();
+        fs.insert_file(
+            &new_skill_dir.join("SKILL.md"),
+            b"---\nname: my-skill\ndescription: Created after session\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+        });
+
+        cx.update(|cx| {
+            let all = resolve(cx);
+            let disk: Vec<_> = all
+                .iter()
+                .filter(|s| {
+                    matches!(s.source, SkillSource::Global)
+                        && !s
+                            .skill_file_path
+                            .to_string_lossy()
+                            .starts_with("<embedded-global>")
+                })
+                .collect();
+            assert_eq!(
+                disk.len(),
+                1,
+                "dynamic resolver should see the new disk skill"
+            );
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "Created after session");
+        });
+
+        let skill_for_render = cx.update(|cx| {
+            let snapshot = resolve(cx);
+            snapshot
+                .iter()
+                .find(|s| s.name == "my-skill" && !s.disable_model_invocation)
+                .cloned()
+                .expect("my-skill should be model-invocable")
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &skill_for_render.skill_file_path)
+            .await
+            .expect("skill body should load");
+        let rendered = render_skill_envelope(&skill_for_render, &body);
+        assert!(
+            rendered.contains("<skill_content name=\"my-skill\">"),
+            "rendered envelope missing skill_content tag: {rendered}"
+        );
+    }
+
+    /// Subagents must inherit access to the same skills as their parent.
+    /// Production wires this up in `NativeThreadEnvironment::create_subagent_thread`,
+    /// which calls `agent.register_session(subagent, project_id, ...)` —
+    /// `register_session` is what installs the `SkillTool` on the thread
+    /// using a resolver closure keyed on `project_id`. Because the
+    /// subagent shares its parent's `project_id`, both threads end up
+    /// resolving skills against the same `state.skills`.
+    #[gpui::test]
+    async fn test_subagent_skills_lookup_matches_parent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let skill_dir = skills_dir.join("shared-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            &skill_dir.join("SKILL.md"),
+            b"---\nname: shared-skill\ndescription: A shared skill\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _parent_acp = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+
+        let parent_resolve =
+            cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
+        cx.update(|cx| {
+            let all = parent_resolve(cx);
+            let disk: Vec<_> = all
+                .iter()
+                .filter(|s| {
+                    matches!(s.source, SkillSource::Global)
+                        && !s
+                            .skill_file_path
+                            .to_string_lossy()
+                            .starts_with("<embedded-global>")
+                })
+                .collect();
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "shared-skill");
+        });
+
+        let (parent_thread, parent_project_id) = agent.read_with(cx, |agent, _cx| {
+            let session = agent
+                .sessions
+                .values()
+                .next()
+                .expect("parent session should exist");
+            (session.thread.clone(), session.project_id)
+        });
+        assert_eq!(parent_project_id, project_id);
+
+        let subagent_thread = cx.update(|cx| cx.new(|cx| Thread::new_subagent(&parent_thread, cx)));
+
+        let _subagent_acp = agent.update(cx, |agent, cx| {
+            agent.register_session(subagent_thread.clone(), parent_project_id, 1, cx)
+        });
+
+        subagent_thread.read_with(cx, |thread, _cx| {
+            assert!(thread.is_subagent());
+            assert!(
+                thread.has_registered_tool(SkillTool::NAME),
+                "subagent should have SkillTool registered after register_session"
+            );
+        });
+
+        let subagent_resolve = cx
+            .update(|_cx| super::skills_resolver_for_project(agent.downgrade(), parent_project_id));
+        cx.update(|cx| {
+            let all = subagent_resolve(cx);
+            let disk: Vec<_> = all
+                .iter()
+                .filter(|s| {
+                    matches!(s.source, SkillSource::Global)
+                        && !s
+                            .skill_file_path
+                            .to_string_lossy()
+                            .starts_with("<embedded-global>")
+                })
+                .collect();
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "shared-skill");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skills_require_worktree_trust(cx: &mut TestAppContext) {
+        use collections::{HashMap, HashSet};
+        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
+
+        init_test(cx);
+        cx.update(|cx| {
+            trusted_worktrees::init(HashMap::default(), cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\nbody"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [Path::new("/project")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/project")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Untrusted: project skills are excluded. Only embedded globals
+        // (which don't require trust) should be present.
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<_> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .collect();
+            assert!(
+                project_local.is_empty(),
+                "untrusted worktree skills should not load: {:?}",
+                project_local
+            );
+            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            assert!(
+                !names.contains(&"my-skill"),
+                "untrusted skill leaked into slash commands: {names:?}"
+            );
+        });
+
+        cx.update(|cx| {
+            let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .expect("trusted worktrees global initialized by test_with_worktree_trust");
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<_> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .collect();
+            assert_eq!(project_local.len(), 1);
+            assert_eq!(project_local[0].name, "my-skill");
+        });
+
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+            assert!(
+                skill_names.contains(&"my-skill"),
+                "trusted skill should appear in available skills: {skill_names:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_oversized_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let oversized = format!(
+            "---\nname: huge-skill\ndescription: Too big\n---\n\n{}",
+            "a".repeat(MAX_SKILL_FILE_SIZE + 1)
+        );
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": { "skills": { "huge-skill": { "SKILL.md": oversized } } }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<_> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .collect();
+            assert!(
+                project_local.is_empty(),
+                "oversized skill must not load: {:?}",
+                project_local
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
+                        && issue.message.to_string().contains("maximum size")),
+                "expected a size-limit error, got {:?}",
+                state.skill_loading_issues
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_malformed_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "good": {
+                            "SKILL.md": "---\nname: good\ndescription: Fine\n---\n\nbody"
+                        },
+                        "bad": {
+                            "SKILL.md": "this file has no frontmatter"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<&str> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .map(|s| s.name.as_str())
+                .collect();
+            assert_eq!(
+                project_local,
+                vec!["good"],
+                "only the valid skill should load"
+            );
+            assert!(
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
+                        && issue.path.ends_with("bad/SKILL.md")),
+                "expected an error for the malformed skill, got {:?}",
+                state.skill_loading_issues
             );
         });
     }

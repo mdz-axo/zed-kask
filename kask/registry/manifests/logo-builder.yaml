@@ -84,14 +84,15 @@ steps:
 
   # ── Step 2: Grasp the Current Condition ──
   - ordinal: 2
-    action: evaluate
+    action: flowdef
     description: >
       Confirm the design brief is complete and select generation strategy.
       Single-shot for simple briefs, iterative-refine for complex ones.
+      Executes the media/logo-discovery sub-manifest (FlowDef recursion).
     renderer: minijinja
     template_ref: media/logo-discovery
-    gas_cap: 3000
-    timeout_seconds: 30
+    gas_cap: 5000
+    timeout_seconds: 60
     input_mapping:
       design_params: "{{ step_1_result }}"
       style_preference: "{{ style_preference | default('') }}"

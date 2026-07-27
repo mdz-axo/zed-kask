@@ -113,6 +113,8 @@ The Kask side builds as part of the same workspace — the `kask/` crates are wo
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For Kask-specific contribution (skills, MCP servers, the architecture), start at [`kask/README.md`](./kask/README.md) and [`kask/docs/`](./kask/docs/).
 
+Per-crate documentation (tutorial, how-to, reference, explanation for each major crate) lives in the [Diataxis set](./kask/docs/diataxis/INDEX.md).
+
 ---
 
 ## Releases

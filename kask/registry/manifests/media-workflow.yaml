@@ -61,7 +61,7 @@ steps:
 
   # ── Step 2: Grasp the Current Condition ──
   - ordinal: 2
-    action: evaluate
+    action: select
     description: >
       Map pipeline steps to available Fal.ai models. Determine sync vs
       queue execution mode for each step. Validate model constraints
@@ -76,7 +76,7 @@ steps:
 
   # ── Step 3: Establish the Target Condition ──
   - ordinal: 3
-    action: validate
+    action: select
     description: >
       Validate the generated workflow JSON. Check: has input/run/display
       nodes, correct $references, valid model IDs, correct sync/queue

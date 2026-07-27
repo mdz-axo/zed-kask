@@ -757,7 +757,7 @@ include!(concat!(env!("OUT_DIR"), "/embedded_global_skills.rs"));
 /// Returns the kask skills shipped in this repo, parsed from their
 /// embedded SKILL.md files and tagged `SkillSource::Global`.
 ///
-/// These are the same 44 skills that live at `.agents/skills/` in the
+/// These are the skills that live at `.agents/skills/` in the
 /// repo. Embedding them at build time means they're available in every
 /// project — not just when a worktree containing `zed-kask/.agents/skills/`
 /// is open and trusted. They load as `Global` (the same tier as
@@ -780,7 +780,7 @@ pub fn embedded_global_skills() -> Vec<Skill> {
                 // A malformed shipped SKILL.md is a build-time bug, not a
                 // runtime user error. Log it so operators can diagnose
                 // which skill failed, but don't abort the whole catalog —
-                // one broken skill shouldn't hide the other 43.
+                // one broken skill shouldn't hide the others.
                 log::warn!(
                     "Failed to parse embedded global skill '{}': {}",
                     name,

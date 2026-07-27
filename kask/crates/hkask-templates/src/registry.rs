@@ -67,6 +67,35 @@ pub fn template_file(template_ref: &str) -> Option<&'static str> {
     None
 }
 
+/// Look up an embedded YAML template file by its `template_ref`.
+///
+/// YAML template files are FlowDef sub-manifests (composable `.yaml` pipelines)
+/// and RenderAct `.yaml` reference docs. Like `.j2` templates, template refs
+/// often omit the extension (e.g. `media/logo-discovery`), but the embedded
+/// files are keyed with it (e.g. `media/logo-discovery.yaml`). This function
+/// handles both forms.
+///
+/// Returns the raw YAML content, or `None` if no embedded YAML template
+/// matches. Callers that need to fall back to the filesystem should do so
+/// after this returns `None`.
+pub fn template_yaml_file(template_ref: &str) -> Option<&'static str> {
+    // Try the ref as-is first (handles refs that already include .yaml).
+    if let Some((_, content)) = TEMPLATE_YAML_FILES
+        .iter()
+        .find(|(key, _)| *key == template_ref)
+    {
+        return Some(*content);
+    }
+    // If the ref doesn't end with .yaml, try appending it.
+    if !template_ref.ends_with(".yaml") {
+        let with_ext = format!("{template_ref}.yaml");
+        if let Some((_, content)) = TEMPLATE_YAML_FILES.iter().find(|(key, _)| *key == with_ext) {
+            return Some(*content);
+        }
+    }
+    None
+}
+
 /// Per-skill template manifest deserialization shape.
 ///
 /// Per-skill manifests (`registry/templates/<skill>/manifest.yaml`) use:
