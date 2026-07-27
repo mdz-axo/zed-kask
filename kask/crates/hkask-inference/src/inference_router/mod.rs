@@ -790,7 +790,10 @@ mod tests {
     /// expect: "Ollama provider formats models with the ollama/ prefix" [P9]
     #[test]
     fn ollama_prefix_format() {
-        assert_eq!(ProviderId::Ollama.prefix_model("qwen3:8b"), "ollama/qwen3:8b");
+        assert_eq!(
+            ProviderId::Ollama.prefix_model("qwen3:8b"),
+            "ollama/qwen3:8b"
+        );
         assert_eq!(ProviderId::Ollama.as_str(), "OM");
     }
 

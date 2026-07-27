@@ -182,12 +182,6 @@ const DATA_SERVICES: &[(&str, &str, &str, &str)] = &[
         "https://huggingface.co/settings/tokens",
         "HF_TOKEN",
     ),
-    (
-        "tinker",
-        "Thinking Machines Tinker",
-        "https://tinker-docs.thinkingmachines.ai/tinker/",
-        "TINKER_API_KEY",
-    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -223,7 +217,6 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "runpod",
                 "serpapi",
                 "tavily",
-                "tinker",
             ],
             in_json: false,
             files: USER,
@@ -450,9 +443,7 @@ pub(crate) fn render_data_services_page(
             // These services don't have individual toggles — they're enabled
             // when their API key is present. We show them as enabled if the
             // key is in the keychain (checked via env var for display).
-            "serpapi" | "firecrawl" | "browserbase" | "hf_token" | "tinker" => {
-                std::env::var(env_var).is_ok()
-            }
+            "serpapi" | "firecrawl" | "browserbase" | "hf_token" => std::env::var(env_var).is_ok(),
             _ => false,
         };
         rows.push(render_data_service_row(

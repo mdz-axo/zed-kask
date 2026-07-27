@@ -7,8 +7,8 @@ configuration.
 ## Data Services
 
 API keys for data services (EODHD, FMP, Exa, Tavily, Brave, SerpAPI, Firecrawl,
-Browserbase, RunPod, Nebius, HuggingFace, Tinker). Keys are stored in the
-system keychain under `kask://credentials/<key>`, not in settings.json.
+Browserbase, RunPod, Nebius, HuggingFace). Keys are stored in the system
+keychain under `kask://credentials/<key>`, not in settings.json.
 
 When MCP servers start, the composition root reads keys from the keychain and
 injects them as environment variables (e.g., `HKASK_EODHD_API_KEY`,
@@ -135,7 +135,7 @@ environment. Shell env vars take precedence over keychain values.
 | `NEBIUS_PROJECT_ID` | Nebius | Data Services |
 | `NEBIUS_SUBNET_ID` | Nebius | Data Services |
 | `HF_TOKEN` | HuggingFace | Data Services |
-| `TINKER_API_KEY` | Tinker | Data Services |
+
 | `DEEPINFRA_API_KEY` | DeepInfra | Inference Providers |
 | `FALAI_API_KEY` | fal.ai | Inference Providers |
 | `TOGETHERAI_API_KEY` | Together AI | Inference Providers |

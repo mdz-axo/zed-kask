@@ -175,6 +175,7 @@ pub enum IconName {
     Indicator,
     Info,
     Json,
+    Kask,
     Keyboard,
     LineHeight,
     Link,

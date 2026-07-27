@@ -40,7 +40,6 @@ use agent_skills::{
     AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
     SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
     load_skills_from_directory, parse_skill_frontmatter, project_skills_relative_path,
-    read_skill_body_from_content,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -60,8 +59,7 @@ use language_model::{
     LanguageModelToolUseId,
 };
 use project::{
-    AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
-    trusted_worktrees::TrustedWorktrees,
+    AgentId, Project, ProjectItem, ProjectPath, Worktree, trusted_worktrees::TrustedWorktrees,
 };
 use prompt_store::{
     ProjectContext, RULES_FILE_NAMES, RuleFrontmatter, RulesFileContext, WorktreeContext,
@@ -130,6 +128,7 @@ impl SkillLoadingIssueData {
         }
     }
 
+    #[allow(dead_code)]
     fn catalog_budget_exceeded(path: PathBuf, message: String) -> Self {
         Self {
             path,
@@ -535,6 +534,7 @@ static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
 struct ProjectSkillFile {
     relative_path: Arc<RelPath>,
     display_path: PathBuf,
+    #[allow(dead_code)]
     size: u64,
 }
 
@@ -928,14 +928,13 @@ impl NativeAgent {
             if let Some(executor) = crate::manifest_executor() {
                 thread.add_tool(SkillTool::with_manifest_executor(
                     skills_resolver_for_project(weak.clone(), project_id),
-                    skill_body_resolver_for_project(project.clone(), self.fs.clone()),
                     executor.clone(),
                 ));
             } else {
-                thread.add_tool(SkillTool::with_body_resolver(
-                    skills_resolver_for_project(weak.clone(), project_id),
-                    skill_body_resolver_for_project(project.clone(), self.fs.clone()),
-                ));
+                thread.add_tool(SkillTool::new(skills_resolver_for_project(
+                    weak.clone(),
+                    project_id,
+                )));
             }
         });
 
@@ -2090,14 +2089,16 @@ impl NativeAgent {
         })
     }
 
-    /// Activate a skill in response to a `/skill-name` slash command. The
-    /// skill body is wrapped in the same `<skill_content>` envelope the
-    /// model-driven `skill` tool uses, so the conversation looks the same
-    /// regardless of who initiated the load. Any text the user typed after
-    /// the command on the same line — plus any additional content blocks
-    /// they attached (file mentions, etc.) — is appended to the same user
-    /// message after the skill envelope, so the model sees the skill
-    /// instructions followed by the user's request.
+    /// Activate a skill in response to a `/skill-name` slash command. In
+    /// zed-kask, skills execute via YAML manifests in the kask registry —
+    /// the SKILL.md body is NOT injected. If a manifest executor is
+    /// configured, the slash command runs the manifest cascade. If not,
+    /// a minimal envelope is returned (no body injection).
+    ///
+    /// Any text the user typed after the command on the same line — plus
+    /// any additional content blocks they attached (file mentions, etc.) —
+    /// is appended to the same user message after the skill envelope, so
+    /// the model sees the skill result followed by the user's request.
     fn send_skill_invocation(
         &self,
         client_user_message_id: ClientUserMessageId,
@@ -2110,8 +2111,6 @@ impl NativeAgent {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
         let path_style = state.project.read(cx).path_style(cx);
-        let read_skill_body =
-            skill_body_resolver_for_project(state.project.clone(), self.fs.clone());
 
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
@@ -2122,27 +2121,37 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            // Build the model-context message: skill envelope first, then
-            // anything the user wrote after the slash command. The first
-            // text block has its leading `/cmd` stripped so the literal
-            // command name isn't echoed into the model's context, but any
-            // text the user typed after it on the same line is preserved
-            // verbatim and appended after the envelope.
-            //
-            // Read the body on demand here — bodies live on disk between
-            // materializations to keep memory cost O(total frontmatter)
-            // rather than O(total file size).
-            let body = if let Some(embedded) = skill.embedded_body {
-                embedded.to_string()
-            } else {
-                read_skill_body(skill.clone(), cx).await.with_context(|| {
-                    format!(
-                        "Failed to read skill body from {}",
-                        skill.skill_file_path.display()
+            // zed-kask: Run the manifest cascade if a manifest executor is
+            // configured. Do NOT read or inject the SKILL.md body — it is
+            // reference-only. If no manifest executor is configured, return
+            // a minimal envelope.
+            let envelope = if let Some(executor) = crate::manifest_executor() {
+                let skill_name = skill.name.as_ref();
+                if executor.has_manifest(skill_name) {
+                    let context = std::collections::HashMap::new();
+                    match executor.execute_skill(skill_name, context).await {
+                        Ok(result_text) => {
+                            crate::tools::render_skill_envelope(&skill, &result_text)
+                        }
+                        Err(e) => {
+                            crate::tools::render_skill_envelope(
+                                &skill,
+                                &format!("Skill '{}' manifest execution failed: {}", skill_name, e),
+                            )
+                        }
+                    }
+                } else {
+                    crate::tools::render_skill_envelope(
+                        &skill,
+                        "(No manifest configured for this skill. Use the skill description as guidance.)",
                     )
-                })?
+                }
+            } else {
+                crate::tools::render_skill_envelope(
+                    &skill,
+                    "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)",
+                )
             };
-            let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
             let mut user_blocks = original_content;
@@ -3975,10 +3984,13 @@ pub fn skills_resolver_for_project(
     }
 }
 
+#[cfg(test)]
 pub fn skill_body_resolver_for_project(
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
 ) -> impl Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static {
+    use agent_skills::read_skill_body_from_content;
+    use project::WorktreeId;
     move |skill, cx| match skill.source.clone() {
         SkillSource::ProjectLocal { worktree_id, .. } => {
             let project = project.clone();
@@ -4118,6 +4130,7 @@ mod internal_tests {
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use agent_settings::COMPACTION_PROMPT;
+    use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
@@ -4126,6 +4139,7 @@ mod internal_tests {
         CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
         LanguageModelProviderName,
     };
+    use project::WorktreeId;
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};

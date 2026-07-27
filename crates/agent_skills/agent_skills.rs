@@ -87,8 +87,11 @@ pub struct Skill {
     /// slash command.
     pub disable_model_invocation: bool,
     /// For built-in skills whose content is compiled into the binary,
-    /// this holds the full SKILL.md body so the skill tool can serve it
-    /// without a filesystem read.
+    /// In upstream zed, this holds the full SKILL.md body so the skill tool
+    /// can serve it without a filesystem read. In zed-kask, SKILL.md bodies
+    /// are never injected — skills execute via YAML manifests. This field
+    /// is retained for struct compatibility but is always `None` in production.
+    #[allow(dead_code)]
     pub embedded_body: Option<&'static str>,
 }
 
@@ -666,6 +669,7 @@ pub async fn load_skill_frontmatter(
 /// `---`. Called only when a skill is being materialized for the model
 /// (via `SkillTool` or a slash invocation). The body is intentionally
 /// NOT kept in memory between materializations.
+#[allow(dead_code)]
 pub async fn read_skill_body(
     fs: &dyn Fs,
     skill_file_path: &Path,
@@ -678,6 +682,7 @@ pub async fn read_skill_body(
     read_skill_body_from_content(skill_file_path, &content)
 }
 
+#[allow(dead_code)]
 pub fn read_skill_body_from_content(
     skill_file_path: &Path,
     content: &str,

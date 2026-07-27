@@ -175,7 +175,12 @@ async fn unavailable_backend_returns_error() {
     );
 
     let result = router
-        .generate_with_model("Hello", &default_params(), Some("Together AI/some-model"), None)
+        .generate_with_model(
+            "Hello",
+            &default_params(),
+            Some("Together AI/some-model"),
+            None,
+        )
         .await;
     assert!(
         result.is_err(),
@@ -477,10 +482,17 @@ async fn generate_stream_with_model_unavailable_backend_returns_error() {
     assert!(first.is_some(), "DeepInfra/ stream should yield items");
     assert!(first.unwrap().is_ok(), "DeepInfra/ stream should succeed");
 
-    let mut stream =
-        router.generate_stream_with_model("Hello", &default_params(), Some("Together AI/some-model"), None);
+    let mut stream = router.generate_stream_with_model(
+        "Hello",
+        &default_params(),
+        Some("Together AI/some-model"),
+        None,
+    );
     let first = stream.next().await;
-    assert!(first.is_some(), "Together AI/ stream should yield at least one item");
+    assert!(
+        first.is_some(),
+        "Together AI/ stream should yield at least one item"
+    );
     assert!(
         first.unwrap().is_err(),
         "Together AI/ stream first item should be Err when backend unavailable"

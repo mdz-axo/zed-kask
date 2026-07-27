@@ -4767,6 +4767,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             let agent_choice = match request.agent_id.as_deref() {
                 None => None,
                 Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
+                Some(id) if id == agent::CURATOR_AGENT_ID.as_ref() => Some(Agent::Curator),
                 Some(id) => {
                     // Reject unknown agent ids up front so the model gets a
                     // structured error pointing at `list_agents_and_models`,
@@ -4944,6 +4945,12 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
         agents.push(agent::AvailableAgent {
             id: agent::ZED_AGENT_ID.to_string(),
             name: Agent::NativeAgent.label(),
+            is_native: true,
+            models: native_models.clone(),
+        });
+        agents.push(agent::AvailableAgent {
+            id: agent::CURATOR_AGENT_ID.to_string(),
+            name: Agent::Curator.label(),
             is_native: true,
             models: native_models,
         });
@@ -5870,6 +5877,38 @@ impl AgentPanel {
                                                 {
                                                     panel.update(cx, |panel, cx| {
                                                         panel.selected_agent = Agent::NativeAgent;
+                                                        panel.activate_new_thread(
+                                                            true,
+                                                            AgentThreadSource::AgentPanel,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                }),
+                        )
+                        .item(
+                            ContextMenuEntry::new("Curator")
+                                .when(
+                                    !showing_terminal && is_agent_selected(Agent::Curator),
+                                    |this| this.action(Box::new(NewThread)),
+                                )
+                                .icon(IconName::ZedAssistant)
+                                .icon_color(Color::Muted)
+                                .disabled(is_via_collab)
+                                .handler({
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        if let Some(workspace) = workspace.upgrade() {
+                                            workspace.update(cx, |workspace, cx| {
+                                                if let Some(panel) =
+                                                    workspace.panel::<AgentPanel>(cx)
+                                                {
+                                                    panel.update(cx, |panel, cx| {
+                                                        panel.selected_agent = Agent::Curator;
                                                         panel.activate_new_thread(
                                                             true,
                                                             AgentThreadSource::AgentPanel,
