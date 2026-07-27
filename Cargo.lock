@@ -9122,6 +9122,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-email"
+version = "0.31.0"
+dependencies = [
+ "hkask-regulation",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
+ "zed-reqwest",
+]
+
+[[package]]
 name = "hkask-forecast"
 version = "0.31.0"
 dependencies = [

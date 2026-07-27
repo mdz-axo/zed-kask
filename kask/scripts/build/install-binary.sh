@@ -50,13 +50,11 @@ detect_target() {
 
     case "$os-$arch" in
         Linux-x86_64)  echo "x86_64-unknown-linux-gnu" ;;
-        Linux-aarch64|Linux-arm64) echo "aarch64-unknown-linux-gnu" ;;
-        Darwin-x86_64) echo "x86_64-apple-darwin" ;;
-        Darwin-arm64|Darwin-aarch64) echo "aarch64-apple-darwin" ;;
-        MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) echo "x86_64-pc-windows-msvc" ;;
         *)
             log_error "Unsupported platform: $os-$arch"
-            log_error "Supported: linux-x86_64, linux-aarch64, macos-x86_64, macos-arm64, windows-x86_64"
+            log_error "Prebuilt binaries are published only for linux-x86_64."
+            log_error "To build from source on another platform, clone the repo and run:"
+            log_error "  cargo build --release --package zed <mcp-servers>"
             return 1
             ;;
     esac
@@ -64,10 +62,7 @@ detect_target() {
 
 archive_name_for_target() {
     local target="$1"
-    case "$target" in
-        *-pc-windows-msvc) echo "zed-kask-${target}.zip" ;;
-        *)                  echo "zed-kask-${target}.tar.gz" ;;
-    esac
+    echo "zed-kask-${target}.tar.gz"
 }
 
 # ============================================================================
@@ -206,29 +201,23 @@ install_binaries() {
     local staging="$1"
     mkdir -p "$BIN_DIR"
 
-    # zed-kask binary (may be zed-kask.exe on Windows)
-    local cli_src=""
-    for cand in "$staging/zed-kask" "$staging/zed-kask.exe"; do
-        if [ -f "$cand" ]; then cli_src="$cand"; break; fi
-    done
-    if [ -z "$cli_src" ]; then
+    # zed-kask binary
+    local cli_src="$staging/zed-kask"
+    if [ ! -f "$cli_src" ]; then
         log_error "zed-kask binary not found in archive"
         return 1
     fi
-    cp "$cli_src" "$BIN_DIR/"
-    chmod +x "$BIN_DIR/zed-kask" 2>/dev/null || true
+    cp "$cli_src" "$BIN_DIR/zed-kask"
+    chmod +x "$BIN_DIR/zed-kask"
 
     # MCP server binaries
     local installed_servers=0
     for server in "${MCP_SERVERS[@]}"; do
-        for cand in "$staging/$server" "$staging/$server.exe"; do
-            if [ -f "$cand" ]; then
-                cp "$cand" "$BIN_DIR/"
-                chmod +x "$BIN_DIR/$server" 2>/dev/null || true
-                installed_servers=$((installed_servers + 1))
-                break
-            fi
-        done
+        if [ -f "$staging/$server" ]; then
+            cp "$staging/$server" "$BIN_DIR/$server"
+            chmod +x "$BIN_DIR/$server"
+            installed_servers=$((installed_servers + 1))
+        fi
     done
 
     log_success "Installed zed-kask + ${installed_servers} MCP server(s) to $BIN_DIR"
@@ -244,39 +233,43 @@ install_binaries() {
 
 fallback_to_source_build() {
     local tag="$1"
+    shift  # remaining args are forwarded to install.sh
 
     if [ "${HKASK_NO_FALLBACK:-false}" = "true" ]; then
         log_error "No prebuilt binary available and HKASK_NO_FALLBACK=true"
         exit 1
     fi
 
-    log_warning "No prebuilt binary for this platform. Falling back to source build..."
+    log_warning "Falling back to source build..."
     log "This will clone the repo at tag ${tag} and build with cargo (requires Rust toolchain)."
 
-    # Fetch the installer pinned to the same tag, not from a mutable branch.
-    # For nightly, the tag is force-moved so this is still mutable — but it's
-    # the same trust boundary as the binary archive the user just tried to
-    # download from the same tag.
-    local installer_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/install.sh"
-    local sums_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/SHA256SUMS"
+    # Fetch the installer + its sourced helpers pinned to the same tag, not
+    # from a mutable branch. install.sh sources install-common.sh and reads
+    # mcp-servers.txt from ${BASH_SOURCE[0]}'s directory at runtime, so all
+    # three must be co-located in the temp dir.
+    local base_url="https://github.com/${HKASK_REPO}/releases/download/${tag}"
+    local sums_url="${base_url}/SHA256SUMS"
 
     local temp_dir
     temp_dir="$(mktemp -d)"
     trap 'rm -rf "$temp_dir"' EXIT
 
-    local installer_path="$temp_dir/install.sh"
-    if ! http_download "$installer_url" "$installer_path" 2>/dev/null; then
-        log_error "Could not download pinned installer from ${installer_url}"
-        log_error "Please download and inspect kask/scripts/build/install.sh from the repo manually:"
-        log_error "  https://github.com/${HKASK_REPO}/blob/${tag}/kask/scripts/build/install.sh"
-        exit 1
-    fi
+    local file
+    for file in install.sh install-common.sh mcp-servers.txt; do
+        if ! http_download "${base_url}/${file}" "$temp_dir/${file}" 2>/dev/null; then
+            log_error "Could not download pinned installer file: ${file}"
+            log_error "  URL: ${base_url}/${file}"
+            log_error "Please download and inspect kask/scripts/build/ from the repo manually:"
+            log_error "  https://github.com/${HKASK_REPO}/blob/${tag}/kask/scripts/build/"
+            exit 1
+        fi
+    done
 
-    # Verify the installer against SHA256SUMS if published.
+    # Verify the installer files against SHA256SUMS if published.
     local sums_path="$temp_dir/SHA256SUMS"
     if http_download "$sums_url" "$sums_path" 2>/dev/null; then
-        log "Verifying installer checksum..."
-        ( cd "$temp_dir" && grep -F "install.sh" SHA256SUMS | sha256sum -c - ) || {
+        log "Verifying installer checksums..."
+        ( cd "$temp_dir" && sha256sum -c SHA256SUMS --ignore-missing ) || {
             log_error "Installer checksum verification failed"
             exit 1
         }
@@ -288,7 +281,7 @@ fallback_to_source_build() {
         exit 1
     fi
 
-    exec bash "$installer_path" "$@"
+    exec bash "$temp_dir/install.sh" "$@"
 }
 
 # ============================================================================
@@ -297,19 +290,18 @@ fallback_to_source_build() {
 
 verify_installation() {
     local cli_path="$BIN_DIR/zed-kask"
-    [ -f "$cli_path" ] || cli_path="$BIN_DIR/zed-kask.exe"
     if [ ! -f "$cli_path" ]; then
         log_error "Binary not found at $cli_path"
         return 1
     fi
 
     local size
-    size=$(stat -c%s "$cli_path" 2>/dev/null || stat -f%z "$cli_path" 2>/dev/null || echo "unknown")
+    size=$(stat -c%s "$cli_path" 2>/dev/null || echo "unknown")
     log "CLI: $cli_path (${size} bytes)"
 
     local mcp_count=0
     for server in "${MCP_SERVERS[@]}"; do
-        if [ -x "$BIN_DIR/$server" ] || [ -x "$BIN_DIR/$server.exe" ]; then
+        if [ -x "$BIN_DIR/$server" ]; then
             mcp_count=$((mcp_count + 1))
         fi
     done

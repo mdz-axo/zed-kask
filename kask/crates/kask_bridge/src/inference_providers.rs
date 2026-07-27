@@ -157,6 +157,16 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
         }
     }
 
+    // Curator email — inject the SMTP password from the keychain when the
+    // user has configured outbound email. The non-secret email fields are
+    // injected by `mcp_env()`; only the password needs keychain access.
+    if !settings.curator.email.smtp_username.is_empty() {
+        urls.push((
+            "HKASK_SMTP_PASSWORD".to_string(),
+            format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_smtp_password"),
+        ));
+    }
+
     urls
 }
 

@@ -288,6 +288,7 @@ members = [
     "kask/crates/hkask-services-corpus",
     "kask/crates/hkask-services-context",
     "kask/crates/hkask-services-compose",
+    "kask/crates/hkask-email",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
@@ -857,6 +858,7 @@ hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-templates = { path = "kask/crates/hkask-templates" }
 hkask-memory = { path = "kask/crates/hkask-memory" }
+hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
 llm-guard = "0.2"

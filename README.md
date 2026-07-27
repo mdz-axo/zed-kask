@@ -91,13 +91,15 @@ The `nightly` tag is force-moved once a day by the release workflow (08:00 UTC).
 HKASK_CHANNEL=nightly curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
 ```
 
-### Source build (other platforms, or no prebuilt binary)
+### Source build (Linux, requires Rust toolchain)
 
-On macOS, Windows, or Linux ARM where no prebuilt archive is published, the binary installer automatically falls back to a source build pinned to the same tag and verified against `SHA256SUMS`. To run the source-build installer directly (requires the Rust toolchain):
+If you prefer to build from source, or as a fallback when the prebuilt binary download fails, the source-build installer clones the repo at the pinned tag, installs system dependencies via `script/linux`, and builds with `cargo`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 ```
+
+The binary installer (`install-binary.sh`) automatically falls back to this path if the prebuilt archive download fails, fetching the installer scripts from the release assets (tag-pinned, checksum-verified).
 
 ### Developing Zed-Kask
 
@@ -120,7 +122,8 @@ Releases are cut by pushing a `v*` tag (e.g. `v0.31.0`). The [`kask-release`](./
 Release assets:
 
 - `zed-kask-x86_64-unknown-linux-gnu.tar.gz` — `zed-kask` + all `hkask-mcp-*` binaries
-- `SHA256SUMS` — checksums for the above
+- `install.sh`, `install-common.sh`, `mcp-servers.txt` — source-build fallback scripts (tag-pinned, checksum-verified)
+- `SHA256SUMS` — checksums for all of the above
 
 See the [releases page](https://github.com/mdz-axo/zed-kask/releases) for all published versions.
 

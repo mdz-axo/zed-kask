@@ -4,14 +4,10 @@
 #
 # Trigger: push a tag matching `v*` (e.g. `v0.31.0`).
 #
-# Artifacts (one archive per target):
-#   zed-kask-<triple>.tar.gz   (Linux, macOS)
-#   zed-kask-<triple>.zip      (Windows)
-#   SHA256SUMS                  (checksums for all archives)
-#
-# Each archive contains:
-#   zed-kask            (the CLI / editor binary)
-#   hkask-mcp-*         (10 MCP server binaries)
+# Artifacts:
+#   zed-kask-x86_64-unknown-linux-gnu.tar.gz   (zed-kask + hkask-mcp-* binaries)
+#   install.sh, install-common.sh, mcp-servers.txt  (source-build fallback)
+#   SHA256SUMS                                  (checksums for all of the above)
 #
 # Users install via:
 #   curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
@@ -50,9 +46,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 is the only target with prebuilt binaries. Users on
-          # other platforms fall back to the source-build installer
-          # (kask/scripts/build/install.sh) via install-binary.sh.
+          # Linux x86_64 is the only prebuilt target. The install scripts are
+          # Linux-only — users on other platforms should build from source
+          # manually (clone the repo, cargo build --release --package zed).
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
             archive: zed-kask-x86_64-unknown-linux-gnu.tar.gz
@@ -91,8 +87,7 @@ jobs:
           done < kask/scripts/build/mcp-servers.txt
           cargo build --release --target ${{ matrix.target }} $packages
 
-      - name: Collect and archive binaries (Unix)
-        if: runner.os != 'Windows'
+      - name: Collect and archive binaries
         shell: bash
         run: |
           set -euxo pipefail
@@ -109,19 +104,6 @@ jobs:
           # Create the archive from inside release-artifacts so paths are flat
           cd release-artifacts
           ${{ matrix.archive_cmd }} "../${{ matrix.archive }}" *
-
-      - name: Collect and archive binaries (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
-          $binDir = "target/${{ matrix.target }}/release"
-          Copy-Item "$binDir/zed-kask.exe" release-artifacts/
-          Get-ChildItem "$binDir/hkask-mcp-*.exe" | ForEach-Object {
-            Copy-Item $_.FullName release-artifacts/
-          }
-          7z a ${{ matrix.archive }} release-artifacts/*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -157,7 +139,15 @@ jobs:
           # Flatten: artifacts/<archive-name>/<archive-file> → release-artifacts/
           find ./artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) \
             -exec cp {} release-artifacts/ \;
-          # Generate checksums
+          # Ship the source-build installer scripts as release assets too, so
+          # install-binary.sh's fallback can fetch them pinned to the tag
+          # (with checksum verification) instead of pulling from a mutable
+          # branch. mcp-servers.txt is required because install-common.sh
+          # loads it at runtime from the same directory.
+          cp kask/scripts/build/install.sh release-artifacts/
+          cp kask/scripts/build/install-common.sh release-artifacts/
+          cp kask/scripts/build/mcp-servers.txt release-artifacts/
+          # Generate checksums over every asset (archives + scripts).
           cd release-artifacts
           sha256sum * > SHA256SUMS
           ls -lR .

@@ -172,6 +172,52 @@ pub struct KaskCuratorSettings {
     /// Algedonic signal threshold (0.0–1.0).
     #[serde(default = "default_algedonic_threshold")]
     pub algedonic_threshold: f64,
+
+    /// Curator email configuration (outbound algedonic alerts via MXroute).
+    /// When `None` or unconfigured, the alert email sink falls back to the
+    /// log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
+    #[serde(default)]
+    pub email: KaskCuratorEmailSettings,
+}
+
+/// Curator email configuration (non-secret fields).
+///
+/// The SMTP password is stored in the OS keychain under
+/// `kask://credentials/hkask_smtp_password`, not here. The composition root
+/// reads it from the keychain and injects it as `HKASK_SMTP_PASSWORD` into
+/// MCP server child processes.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskCuratorEmailSettings {
+    /// MXroute server hostname (e.g. "tuesday.mxrouting.net").
+    #[serde(default)]
+    pub mxroute_server: String,
+
+    /// Full email address used for SMTP auth and the `From` header.
+    #[serde(default)]
+    pub smtp_username: String,
+
+    /// From address (defaults to `smtp_username` when empty).
+    #[serde(default)]
+    pub curator_email: String,
+
+    /// Alert recipient (defaults to `smtp_username` when empty).
+    #[serde(default)]
+    pub alert_email: String,
+
+    /// Comma-separated list of senders authorized to reply with curator
+    /// commands (P12 allowlist). Empty means inbound replies are rejected.
+    #[serde(default)]
+    pub authorized_emails: Vec<String>,
+
+    /// Inbox poll interval in seconds (0 = disabled). Reserved for a future
+    /// inbound IMAP path; currently unused by the outbound-only sink.
+    #[serde(default)]
+    pub inbox_poll_interval_secs: u64,
+
+    /// Digest interval in seconds (0 = disabled). Reserved for a future
+    /// periodic digest sender; currently unused by the outbound-only sink.
+    #[serde(default)]
+    pub digest_interval_secs: u64,
 }
 
 fn default_algedonic_threshold() -> f64 {
@@ -800,6 +846,56 @@ impl KaskSettings {
             );
         }
 
+        // ── Curator email (non-secret) ──
+        // The SMTP password is injected separately by `mcp_env_with_credentials`
+        // from the keychain entry `kask://credentials/hkask_smtp_password`.
+        if !self.curator.email.mxroute_server.is_empty() {
+            env.insert(
+                "HKASK_MXROUTE_SERVER".to_string(),
+                self.curator.email.mxroute_server.clone(),
+            );
+        }
+        if !self.curator.email.smtp_username.is_empty() {
+            env.insert(
+                "HKASK_SMTP_USERNAME".to_string(),
+                self.curator.email.smtp_username.clone(),
+            );
+            // `HKASK_CURATOR_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
+            // email crate; only inject when explicitly set.
+            if !self.curator.email.curator_email.is_empty() {
+                env.insert(
+                    "HKASK_CURATOR_EMAIL".to_string(),
+                    self.curator.email.curator_email.clone(),
+                );
+            }
+            // `HKASK_ALERT_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
+            // email crate; only inject when explicitly set.
+            if !self.curator.email.alert_email.is_empty() {
+                env.insert(
+                    "HKASK_ALERT_EMAIL".to_string(),
+                    self.curator.email.alert_email.clone(),
+                );
+            }
+        }
+        if !self.curator.email.authorized_emails.is_empty() {
+            env.insert(
+                "HKASK_AUTHORIZED_EMAILS".to_string(),
+                self.curator.email.authorized_emails.join(","),
+            );
+        }
+        if self.curator.email.inbox_poll_interval_secs > 0 {
+            env.insert(
+                "HKASK_INBOX_POLL_INTERVAL_SECS".to_string(),
+                self.curator.email.inbox_poll_interval_secs.to_string(),
+            );
+        }
+        if self.curator.email.digest_interval_secs > 0 {
+            env.insert(
+                "HKASK_DIGEST_INTERVAL_SECS".to_string(),
+                self.curator.email.digest_interval_secs.to_string(),
+            );
+        }
+
         env
     }
 
@@ -867,6 +963,18 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .map(|c| KaskCuratorSettings {
                     always_on: c.always_on.unwrap_or(true),
                     algedonic_threshold: c.algedonic_threshold.unwrap_or(0.8),
+                    email: c
+                        .email
+                        .map(|e| KaskCuratorEmailSettings {
+                            mxroute_server: e.mxroute_server.unwrap_or_default(),
+                            smtp_username: e.smtp_username.unwrap_or_default(),
+                            curator_email: e.curator_email.unwrap_or_default(),
+                            alert_email: e.alert_email.unwrap_or_default(),
+                            authorized_emails: e.authorized_emails.unwrap_or_default(),
+                            inbox_poll_interval_secs: e.inbox_poll_interval_secs.unwrap_or(0),
+                            digest_interval_secs: e.digest_interval_secs.unwrap_or(0),
+                        })
+                        .unwrap_or_default(),
                 })
                 .unwrap_or_default(),
             guard: c
