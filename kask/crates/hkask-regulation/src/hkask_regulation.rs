@@ -45,6 +45,7 @@ pub use metacognition::{
 pub use hkask_types::regulation::QueueDepth;
 pub use infra_span::InfraSpan;
 pub use qa_span::QaSpan;
+pub use runtime::LedgerSink;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use runtime::StoredSkillSpan;

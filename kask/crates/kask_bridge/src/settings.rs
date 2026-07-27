@@ -299,8 +299,9 @@ pub struct KaskCorpusSettings {
     #[serde(default = "default_embedding_dim")]
     pub embedding_dim: u32,
 
-    /// Embedding model override (e.g., "DeepInfra/Qwen/Qwen3-Embedding-0.6B").
-    #[serde(default)]
+    /// Embedding model override. When empty, defers to the kask router default
+    /// (`hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL`).
+    #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
 
     /// OCR concurrency — number of pages sent to the vision model in parallel.
@@ -331,6 +332,10 @@ pub struct KaskCorpusSettings {
 
 fn default_embedding_dim() -> u32 {
     1024
+}
+
+fn default_embedding_model() -> String {
+    hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
 
 fn default_ocr_concurrency() -> u32 {
@@ -817,7 +822,7 @@ impl From<KaskSettingsContent> for KaskSettings {
                 .corpus
                 .map(|cp| KaskCorpusSettings {
                     embedding_dim: cp.embedding_dim.unwrap_or(1024),
-                    embedding_model: cp.embedding_model.unwrap_or_default(),
+                    embedding_model: cp.embedding_model.unwrap_or_else(default_embedding_model),
                     ocr_concurrency: cp.ocr_concurrency.unwrap_or(4),
                     ocr_simple_max: cp.ocr_simple_max.unwrap_or(0.05),
                     ocr_moderate_max: cp.ocr_moderate_max.unwrap_or(0.15),

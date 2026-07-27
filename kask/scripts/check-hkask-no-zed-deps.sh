@@ -10,6 +10,13 @@
 # dependency direction would invert and hKask would no longer compile
 # standalone — a P5/P7 violation and a fork-coupling smell.
 #
+# Per zed-host-architecture-plan.md §13.1 (line 640), the invariant applies to
+# hKask crates — i.e. those under `kask/crates/hkask-*` and
+# `kask/mcp-servers/hkask-*`. The bridge crate `kask_bridge` and the panel
+# `kask_panel` live under `kask/crates/` too but are zed-kask-side (D8/D10),
+# NOT hKask — they are the documented bidirectional seam and are exempt by
+# construction because this scan only visits `hkask-*` paths.
+#
 # This gate detects two inversion signals in hKask Cargo.toml files:
 #   1. a `path = "..."` dependency that points into the zed-kask tree; and
 #   2. a dependency (in a `[dependencies]`/`[dev-dependencies]`/`[build-dependencies]`
@@ -33,8 +40,11 @@ trap 'rm -f "$TMPFILE"' EXIT
 # names can be a legitimate hKask-internal or crates.io dependency here.
 ZED_CRATES='gpui|gpui_tokio|gpui_platform|gpui_macros|language_model|language_model_core|language_models|language_models_cloud|context_server|agent|agent_skills|agent_ui|agent_servers|agent_settings|acp_tools|credentials_provider|zed_credentials_provider|release_channel|paths|editor|workspace|theme|settings|ui|kask_bridge|kask_panel'
 
-# All Cargo.toml in the hKask repo (root + crates + mcp-servers), excluding build output.
-manifests=$(find . -name Cargo.toml -not -path './target/*' 2>/dev/null)
+# hKask crates only — those under kask/crates/hkask-* and kask/mcp-servers/hkask-*.
+# The bridge (kask_bridge) and panel (kask_panel) live under kask/crates/ but are
+# zed-kask-side (D8/D10), not hKask — scanning them would false-positive on the
+# very bidirectional seam §13.1 exempts. See zed-host-architecture-plan.md:640.
+manifests=$(find ./crates/hkask-* ./mcp-servers/hkask-* -name Cargo.toml -not -path './target/*' 2>/dev/null)
 
 # 1. Any path-dep into the zed-kask tree (e.g. path = "../../Clones/zed-kask/...").
 echo "Checking hKask Cargo.toml for zed-kask path-deps..."

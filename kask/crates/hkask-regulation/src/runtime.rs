@@ -930,6 +930,30 @@ impl RegulationLedger {
         subscribers.push(observer);
     }
 
+    /// Broadcast a Regulation event to all subscribers whose interest mask
+    /// covers the event's span namespace.
+    ///
+    /// This is the entry point that turns a `RegulationSink::persist` call
+    /// into live observability: external emitters (MCP runtime, cybernetics
+    /// loop, memory ports) forward their spans here, and registered
+    /// `LedgerObserver`s (e.g. the Curator status surface) receive them.
+    /// Fire-and-forget — callers must not rely on broadcast completion for
+    /// correctness, matching the best-effort semantics of every existing
+    /// emitter.
+    ///
+    /// pre:  event has a valid span namespace
+    /// post: every subscriber whose `interest_mask` contains `event.span.namespace`
+    ///       has had `on_event` scheduled; unmatched subscribers are skipped
+    pub async fn publish_event(&self, event: RegulationRecord) {
+        let span_ns = event.span.namespace.clone();
+        let subscribers = self.subscribers.read().await;
+        for observer in subscribers.iter() {
+            if observer.interest_mask().iter().any(|ns| ns == &span_ns) {
+                observer.on_event(&event).await;
+            }
+        }
+    }
+
     /// Emit a backpressure signal to all subscribers.
     ///
     /// Called by the Cybernetics Loop when energy budget depletion
@@ -1024,6 +1048,47 @@ pub struct NoopEventSink;
 
 impl RegulationSink for NoopEventSink {
     fn persist(&self, _event: &RegulationRecord) -> Result<(), hkask_types::InfrastructureError> {
+        Ok(())
+    }
+}
+
+/// `RegulationSink` that forwards events into a `RegulationLedger`'s
+/// subscriber bus via `publish_event`.
+///
+/// Use this at composition roots that already hold a `RegulationLedger` and
+/// want emitted spans to reach registered `LedgerObserver`s (e.g. the Curator
+/// status surface) without standing up a durable `RegulationArchive`. The
+/// broadcast is spawned onto the captured tokio handle so the sync
+/// `RegulationSink::persist` contract is honoured without blocking the
+/// caller's async context.
+///
+/// Failures to spawn (e.g. runtime shut down) are logged and swallowed —
+/// observability is best-effort, never a correctness path.
+pub struct LedgerSink {
+    ledger: Arc<RwLock<RegulationLedger>>,
+    handle: tokio::runtime::Handle,
+}
+
+impl LedgerSink {
+    /// Capture the ledger and the currently-running tokio handle.
+    ///
+    /// pre:  called from within a running tokio runtime (so `Handle::current` succeeds)
+    /// post: returns a sink that spawns `publish_event` on `handle` for each persist
+    pub fn new(ledger: Arc<RwLock<RegulationLedger>>) -> Self {
+        Self {
+            ledger,
+            handle: tokio::runtime::Handle::current(),
+        }
+    }
+}
+
+impl RegulationSink for LedgerSink {
+    fn persist(&self, event: &RegulationRecord) -> Result<(), hkask_types::InfrastructureError> {
+        let ledger = self.ledger.clone();
+        let event = event.clone();
+        self.handle.spawn(async move {
+            ledger.read().await.publish_event(event).await;
+        });
         Ok(())
     }
 }

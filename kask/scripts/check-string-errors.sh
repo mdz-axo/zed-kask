@@ -15,8 +15,12 @@ FAIL=0
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
-# Collect all lines containing 'Result<' from library code (exclude tests and main.rs)
-grep -rn -- 'Result<' crates/ mcp-servers/ \
+# Collect all lines containing 'Result<' from hKask library code (exclude tests
+# and main.rs). Only `hkask-*` crates are scanned — the bridge crate
+# `kask_bridge` and panel `kask_panel` are zed-kask-side adapters (D8/D10)
+# that legitimately use `String` errors to cross the GPUI/tokio boundary,
+# not hKask library code. See zed-host-architecture-plan.md:640.
+grep -rn -- 'Result<' crates/hkask-* mcp-servers/hkask-* \
     --include='*.rs' \
     --exclude-dir=target \
     2>/dev/null \

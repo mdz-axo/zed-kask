@@ -19,7 +19,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-LIB="crates/hkask-forecast/src/lib.rs"
+LIB="crates/hkask-forecast/src/hkask_forecast.rs"
 CONTRACT="registry/templates/superforecasting/README.md"
 SECTION="Deterministic Primitives"
 

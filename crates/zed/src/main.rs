@@ -584,8 +584,12 @@ fn main() {
         // governed. The CyberneticsLoop runs sense→compare→compute→act
         // cycles on background tasks; the RegulationLedger tracks variety
         // and algedonic alerts; the FlatEnergyEstimator provides conservative
-        // per-call gas costs; the NoopEventSink discards Regulation spans
-        // (replace with a persistent sink when available).
+        // per-call gas costs; the LedgerSink forwards Regulation spans from
+        // the MCP runtime and the CyberneticsLoop into the ledger's
+        // subscriber bus so registered `LedgerObserver`s (e.g. the Curator
+        // status surface) actually observe them. Replacing the previous
+        // NoopEventSink is what closes the S3 monitoring path — without it,
+        // every emitted span was silently discarded.
         let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
             hkask_regulation::RegulationLedger::default(),
         ));
@@ -594,21 +598,27 @@ fn main() {
         // MetacognitionLoop receives them. This closes the feedback loop.
         let (alert_tx, alert_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        // The event sink must be constructed before the CyberneticsLoop so
+        // both the loop and the MCP runtime share one sink. `LedgerSink::new`
+        // captures the current tokio handle — this runs inside the
+        // gpui_tokio runtime registered above, so `Handle::current` succeeds.
+        let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
+            std::sync::Arc::new(hkask_regulation::LedgerSink::new(regulation_ledger.clone()));
+
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
             hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
-                .with_alerts_channel(alert_tx),
+                .with_alerts_channel(alert_tx)
+                .with_event_sink(event_sink.clone()),
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let cybernetics_loop_for_panel = cybernetics_loop.clone();
         let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
             std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
-        let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
-            std::sync::Arc::new(hkask_regulation::NoopEventSink);
         let mcp_runtime = std::sync::Arc::new(
             hkask_mcp::McpRuntime::new()
                 .with_governance(cybernetics_loop, event_sink, energy_estimator),
         );
-        log::info!("hKask regulation system wired — tool invocations are governed");
+        log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
         // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
         // the GPUI-global tokio runtime (registered above via
@@ -962,7 +972,7 @@ fn main() {
                 // (synchronous OS keychain I/O).
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
-                    .unwrap_or_else(|_| "DI/Qwen/Qwen3-Embedding-0.6B".to_string());
+                    .unwrap_or_else(|_| kask_settings.corpus.embedding_model.clone());
                 let username_for_provision = username.clone();
 
                 let provision_result = cx.background_spawn(async move {

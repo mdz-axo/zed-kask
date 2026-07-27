@@ -168,6 +168,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.curator",
     "reg.curator.consolidation",
     "reg.curator.efficiency.exceeded",
+    "reg.curator.metacognition",
     // ── Meta (curator self-observation / self-management) ──
     "reg.meta",
     "reg.meta.circuit_breaker",
@@ -397,6 +398,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.lora.audit",
     "reg.lora.report",
     "reg.lora.convergence",
+    "reg.lora.runtime",
     // ── Skill (unified cybernetic feedback — one namespace per skill) ──
     // Every skill emits reg.skill.<skill-id>.<phase> for its six PDCA phases.
     // The hierarchical is_canonical function makes reg.skill.<any-id>.* valid

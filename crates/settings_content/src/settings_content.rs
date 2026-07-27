@@ -1660,7 +1660,7 @@ pub struct KaskTrainingSettingsContent {
 pub struct KaskFusionSettingsContent {
     /// Master toggle. When `false`, fusion is disabled even if other fields are set.
     pub enabled: Option<bool>,
-    /// Judge/fuser model (provider-prefixed, e.g. `"KC/z-ai/glm-5.2"`).
+    /// Judge/fuser model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.2"`).
     pub judge_model: Option<String>,
     /// Comma-separated panel models (provider-prefixed). Empty defers to defaults.
     pub panel_models: Option<String>,

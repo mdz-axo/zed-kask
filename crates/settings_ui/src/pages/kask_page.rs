@@ -2350,7 +2350,7 @@ pub(crate) fn render_fusion_page(
     let judge_input = kask_string_input(
         "kask-fusion-judge-model",
         "Judge Model",
-        "KC/z-ai/glm-5.2",
+        "OpenRouter/z-ai/glm-5.2",
         judge_model,
         "fusion",
         "judge_model",
@@ -2359,7 +2359,7 @@ pub(crate) fn render_fusion_page(
     let panel_input = kask_string_input(
         "kask-fusion-panel-models",
         "Panel Models",
-        "Kimi2.7, Qwen3.7 Max, GLM5.2, Minimax3",
+        "OpenRouter/z-ai/glm-5.2, OpenRouter/qwen/qwen3-235b-a22b, OpenRouter/minimax/minimax3",
         panel_models,
         "fusion",
         "panel_models",
@@ -2595,8 +2595,7 @@ pub(crate) fn render_fusion_page(
                 .child(Label::new("Judge Model"))
                 .child(
                     Label::new(
-                        "Provider-prefixed judge/fuser model (e.g. \"KC/z-ai/glm-5.2\"). \
-                         Leave empty to use the kask default.",
+                        "Provider-prefixed judge/fuser model (e.g. \"OpenRouter/z-ai/glm-5.2\"). \n                         Leave empty to use the kask default (OpenRouter/z-ai/glm-5.2).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -2610,8 +2609,7 @@ pub(crate) fn render_fusion_page(
                 .child(Label::new("Panel Models"))
                 .child(
                     Label::new(
-                        "Comma-separated provider-prefixed panel models. \
-                         Leave empty to use the kask default panel.",
+                        "Comma-separated provider-prefixed panel models (e.g. \n                         \"OpenRouter/z-ai/glm-5.2, OpenRouter/qwen/qwen3-235b-a22b, \n                         OpenRouter/minimax/minimax3\"). Leave empty to use the kask \n                         default panel or auto-discovery.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
