@@ -608,7 +608,8 @@ fn main() {
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
             hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
                 .with_alerts_channel(alert_tx)
-                .with_event_sink(event_sink.clone()),
+                .with_event_sink(event_sink.clone())
+                .with_alert_email_sink(std::sync::Arc::new(LogAlertEmailSink)),
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let cybernetics_loop_for_panel = cybernetics_loop.clone();
@@ -1907,6 +1908,35 @@ impl hkask_regulation::AlertSink for ToastAlertSink {
 
 struct KaskCriticalAlertToast;
 
+/// Defense-in-depth `AlertEmailSink` that logs critical alerts via
+/// `tracing::error!` when the live alert channel (`alerts_tx`) is down.
+///
+/// The `CyberneticsLoop::act` consults `alert_email_sink` only when
+/// `alerts_tx.send` fails (channel closed) — the primary path is the live
+/// channel to the `MetacognitionLoop` → `ToastAlertSink`. This sink ensures
+/// the "CRITICAL: Algedonic alert LOST" path at `cybernetics_loop.rs:1112`
+/// is never reached: when the live channel is down, the alert is logged at
+/// `error` level so it surfaces in operator logs and crash reports.
+///
+/// A real SMTP-backed `AlertEmailSink` can replace this when email
+/// notification is configured — this is the zero-config fallback.
+#[derive(Debug)]
+struct LogAlertEmailSink;
+
+impl hkask_regulation::AlertEmailSink for LogAlertEmailSink {
+    fn send_alert_email(&self, alert: &hkask_regulation::RuntimeAlert) {
+        tracing::error!(
+            target: "reg.alert",
+            domain = %alert.domain,
+            deficit = alert.deficit,
+            threshold = alert.threshold,
+            severity = ?alert.severity,
+            message = %alert.message,
+            "Algedonic alert (live channel down — logged as email-sink fallback)"
+        );
+    }
+}
+
 /// Spawn a GPUI foreground task that drains the alert receiver and dispatches
 /// a toast for each critical alert. Returns when the sender is dropped (app
 /// shutdown). Must be called from the GPUI foreground thread.
@@ -2967,5 +2997,68 @@ fn check_for_conpty_dll() {
         }
     } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::*;
+    use hkask_regulation::AlertSink;
+
+    /// The `ToastAlertSink` → `spawn_alert_toast_drainer` channel bridge is
+    /// the only integration point between the background tokio metacognition
+    /// loop and the GPUI foreground toast dispatcher. This test pins the
+    /// channel contract: a critical `AlertEvent` sent via the sink's
+    /// `try_send` must be receivable by the drainer's `recv`. If the channel
+    /// is closed, full, or the wrong type is sent, the alert would be
+    /// silently dropped — the user would never see a critical regulation
+    /// alert.
+    ///
+    /// This test does NOT exercise the GPUI toast dispatch (that requires a
+    /// full `Workspace` fixture); it only verifies the channel hop that
+    /// bridges the `Send + Sync` boundary.
+    #[test]
+    fn toast_alert_sink_channel_delivers_critical_events() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
+        let sink = ToastAlertSink::new(tx);
+
+        // Non-critical alerts must be filtered by the sink — the drainer
+        // should never see them.
+        sink.on_alert(&hkask_regulation::AlertEvent {
+            message: "warning".into(),
+            critical: false,
+        });
+        assert!(
+            rx.try_recv().is_err(),
+            "non-critical alerts must not reach the channel"
+        );
+
+        // Critical alerts must be delivered.
+        sink.on_alert(&hkask_regulation::AlertEvent {
+            message: "well exhausted".into(),
+            critical: true,
+        });
+        let event = rx
+            .try_recv()
+            .expect("critical alert should be receivable on the drainer side");
+        assert_eq!(event.message, "well exhausted");
+        assert!(event.critical);
+    }
+
+    /// When the drainer is dropped (app shutdown), the sink must not panic —
+    /// `try_send` returns an error which the sink logs and swallows. This
+    /// pins the best-effort contract: a shutting-down app must not crash on
+    /// a late critical alert.
+    #[test]
+    fn toast_alert_sink_does_not_panic_when_channel_closed() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
+        let sink = ToastAlertSink::new(tx);
+        drop(rx); // simulate app shutdown
+
+        // This must not panic — the error is logged and swallowed.
+        sink.on_alert(&hkask_regulation::AlertEvent {
+            message: "late alert".into(),
+            critical: true,
+        });
     }
 }

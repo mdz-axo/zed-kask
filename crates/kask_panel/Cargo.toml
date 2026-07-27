@@ -28,3 +28,4 @@ project.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 futures.workspace = true
+kask_bridge.workspace = true

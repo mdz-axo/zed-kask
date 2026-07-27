@@ -106,18 +106,24 @@ run_server() {
   echo "=== QA pass: $server (dry-run=$DRY_RUN, timeout=${PER_TOOL_TIMEOUT}s) ==="
 
   # Build the server binary. Failures here are a hard error.
-  if ! (cd "$KASK_ROOT" && cargo build --bin "$server" --quiet 2>&1); then
+  # Use -p to scope to the package (workspace --bin lookup is ambiguous).
+  if ! (cd "$KASK_ROOT" && cargo build -p "$server" --bin "$server" --quiet 2>&1); then
     echo "::error:: failed to build $server"
     echo "| $server | (build) | (build) | n/a | fail | cargo build exit non-zero |" >> "$MATRIX"
     return 1
   fi
 
-  # Run the contract test crate. The qa_contract module is responsible for:
-  #   - instantiating the 7 categories per tool
-  #   - spawning the server over stdio with a controlled env
-  #   - emitting one row per (tool, category) to stdout as TAP-like lines:
-  #     qa: <server> <tool> <category> <status> <evidence>
-  #   - writing oracle reports for any fail/adversarial finding
+  # Run the contract test crate. The qa_contract module uses standard
+  # #[tokio::test] with module names matching the tool name and test names
+  # matching the category (e.g. `board_create::happy`). The driver parses
+  # cargo's test output to extract pass/fail per (tool, category) and writes
+  # the coverage matrix rows.
+  #
+  # Test naming convention (from qa_contract.rs):
+  #   mod <tool_name_without_kanban_prefix> { fn <category> }
+  # e.g. `board_create::happy`, `task_move::error_propagation_invalid_transition`
+  #
+  # The driver maps each test result to a matrix row.
   local env_prefix=()
   if [ "$DRY_RUN" -eq 1 ]; then
     env_prefix+=(env HKASK_QA_DRY_RUN=1)
@@ -130,23 +136,43 @@ run_server() {
     env HKASK_QA_REGRESSIONS_DIR="$REGRESSIONS_DIR"
   )
 
-  # The test binary is invoked via cargo test so it runs under the
-  # server's dev-dependencies. The --server-timeout bounds the whole
-  # server pass; per-tool timeout is enforced inside the test.
-  (
+  # Run tests with --nocapture and parse output. cargo test emits lines like:
+  #   test board_create::happy ... ok
+  #   test task_move::error_propagation_invalid_transition ... FAILED
+  # We extract (test_name, status) pairs and write matrix rows.
+  local test_output
+  test_output=$(
     cd "$KASK_ROOT"
     "${env_prefix[@]}" timeout "$SERVER_TIMEOUT" \
-      cargo test --package "$server" --test qa_contract -- --nocapture --test-threads=1
-  ) || {
-    local rc=$?
-    if [ "$rc" -eq 124 ]; then
-      echo "::error:: $server exceeded server-timeout ${SERVER_TIMEOUT}s"
-      echo "| $server | (timeout) | (timeout) | n/a | fail | server-timeout ${SERVER_TIMEOUT}s |" >> "$MATRIX"
-    else
-      echo "::error:: $server contract tests exited $rc"
+      cargo test --package "$server" --test qa_contract -- --nocapture --test-threads=1 2>&1
+  ) || true  # cargo test exits non-zero on any failure; we capture per-test
+
+  # Parse test result lines and write matrix rows.
+  # Lines look like: "test <mod>::<fn> ... ok" or "test <mod>::<fn> ... FAILED"
+  local pass_count=0 fail_count=0
+  while IFS= read -r line; do
+    # Match: test <name> ... ok|FAILED|ignored
+    if [[ "$line" =~ ^test\ ([a-zA-Z0-9_:]+)\ \.\.\.\ (ok|FAILED|ignored) ]]; then
+      local test_name="${BASH_REMATCH[1]}"
+      local status="${BASH_REMATCH[2]}"
+      local matrix_status
+      case "$status" in
+        ok)       matrix_status="pass"; pass_count=$((pass_count + 1)) ;;
+        FAILED)   matrix_status="fail"; fail_count=$((fail_count + 1)) ;;
+        ignored)  matrix_status="skipped-with-reason" ;;
+      esac
+      echo "| $server | $test_name | (from test name) | tdd | $matrix_status | cargo test output |" >> "$MATRIX"
     fi
+  done <<< "$test_output"
+
+  echo "  $server: $pass_count passed, $fail_count failed"
+
+  # If cargo test itself failed to run (not just test failures), check timeout.
+  if ! echo "$test_output" | grep -q '^test result:'; then
+    echo "::error:: $server contract tests did not produce a result line"
+    echo "| $server | (no-result) | (no-result) | n/a | fail | no test result line |" >> "$MATRIX"
     return 1
-  }
+  fi
 }
 
 # Main
@@ -164,7 +190,8 @@ else
 fi
 
 # Convergence check: count pending rows.
-pending=$(grep -c '| pending |' "$MATRIX" 2>/dev/null || echo 0)
+pending=$(grep -c '| pending |' "$MATRIX" 2>/dev/null || true)
+pending=${pending:-0}
 if [ "$pending" -gt 0 ]; then
   echo "::warning:: $pending pending cell(s) — not converged"
   rc=1

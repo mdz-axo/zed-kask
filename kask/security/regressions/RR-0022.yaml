@@ -1,0 +1,16 @@
+id: RR-0022
+title: "MCP tools do not emit reg.guard.* on capability denial"
+surface: mcp
+cwe: CWE-862
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+discovered_in: kask/mcp-servers/hkask-mcp-codegraph/src/hkask_mcp_codegraph.rs (ensure_indexed comment "OCAP-governed file access (#5): future integration point"), kask/mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs (capability_tier read-only in condenser_ping)
+severity: medium
+detection:
+  kind: grep
+  pattern: "capability_tier"
+  include: "kask/mcp-servers/**/src/**/*.rs"
+mitigation: "Gate tool entry on capability_tier checks; emit reg.guard.violation on denial; return McpToolError::permission_denied. Wire OCAP capability tokens through ServerContext before tool dispatch."
+ci_gate: scripts/check-kali-regressions.sh
+status: proposed
+note: "Discovered during Phase 1 inventory of the MCP server QA strategy (kask/docs/qa/mcp-server-qa-strategy.md). No tool currently emits reg.guard.* on denial — CapabilityTier is stored but only read for mode reporting. The QA routine's Category 3 (ocap-denial) asserts the structured-error contract only; it does NOT assert reg.guard.* emission until this is wired."

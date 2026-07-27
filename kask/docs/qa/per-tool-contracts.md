@@ -400,16 +400,36 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
 
 ## Coverage summary
 
-- Total tools: 199
-- LLM I/O boundary tools (Category 7 applies): 67
-- Tools with declared credentials (Category 3 applies): 184
-  (excludes codegraph's 9 — no declared creds, but `codegraph_index_embeddings`
-  reads inline keys, so Category 3 applies to that one tool only → 175)
-- Tools with external dependencies (Category 5 applies): 192
-  (excludes in-memory-only tools: `condenser_set_profile`, `condenser_stats`,
+- Total tools: 195
+- LLM I/O boundary tools (Category 7 applies): 50
+  (codegraph: 2 — `codegraph_context`, `codegraph_index_embeddings`;
+  companies: 2 — `company_screener`, `research_search`;
+  condenser: 4 — `condenser_compress`, `condenser_classify`,
+  `condenser_thread_summary`, `condenser_score_saliency`;
+  corpus: 11 — `corpus_ocr`, `corpus_build_persona`, `corpus_compose`,
+  `corpus_rewrite`, `corpus_compare`, `corpus_mashup`, `corpus_generate_qa`,
+  `corpus_generate_qa_batch`, `corpus_extract_triples`, `corpus_embed`,
+  `corpus_tag_chunks`;
+  media: 20 — `voice_design`, `generate_speech`, `transcribe`,
+  `transcribe_bundle`, `record_and_transcribe`, `describe_image`,
+  `gallery_analyze`, `extract_object`, `generate_image`, `transform_image`,
+  `upscale_image`, `generate_video`, `execute_workflow`,
+  `image_remove_background`, `image_apply_style`, `image_to_video`,
+  `video_remix`, `video_from_images`, `video_caption`, `video_meme`;
+  research: 4 — `web_search`, `web_find_similar`, `web_extract`, `web_browse`;
+  scenarios: 5 — `scenario_full`, `scenario_brainstorm`,
+  `scenario_research`, `scenario_synthesize`, `scenario_assess`;
+  training: 2 — `training_evaluate`, `training_validate_config`)
+- Tools with declared credentials (Category 3 applies): all tools on servers
+  that declare credentials (companies, corpus, curator, kata-kanban, media,
+  research, training) plus `codegraph_index_embeddings` which reads inline
+  keys. codegraph (other 8), condenser (8), scenarios (18) declare no
+  credentials → Category 3 is N/A for those.
+- Tools with external dependencies (Category 5 applies): all except the
+  in-memory-only tools: `condenser_set_profile`, `condenser_stats`,
   `corpus_convert`, `corpus_is_complex`, `corpus_chunk`, `corpus_explain`,
-  `image_create_collage`, `audio_capture`, `web_ping`)
+  `image_create_collage`, `audio_capture`, `web_ping`.
 
-The routine's total cell count is `199 × 7 = 1393`, minus the explicit
+The routine's total cell count is `195 × 7 = 1365`, minus the explicit
 N/A skips documented above. The coverage matrix converges when every
 non-N/A cell is `pass | fail | skipped-with-reason`.

@@ -254,6 +254,11 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.qa.repair_exhausted",
     "reg.qa.repair_verified",
     "reg.qa.bolero_failure",
+    // QA routine pass — emitted by scripts/qa-mcp-servers.sh per (tool, category)
+    "reg.qa.run",
+    "reg.qa.run.pass",
+    "reg.qa.run.fail",
+    "reg.qa.run.skipped",
     // ── Regulation (v0.31.0 Fermi impact-gate) ──
     "reg.outcome",
     "reg.outcome.calibration",

@@ -11047,6 +11047,7 @@ dependencies = [
  "editor",
  "futures 0.3.32",
  "gpui",
+ "kask_bridge",
  "language",
  "language_core",
  "log",

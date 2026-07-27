@@ -31,21 +31,21 @@ order:
   - kali-audit:
       phase: select → probe → report → convergence
       consumes: kask/mcp-servers/<server>/src/**/*.rs, kask/security/regressions/
-      output: kask/security/regressions/RR-NNNN.yaml (status: proposed)
+      output: "kask/security/regressions/RR-NNNN.yaml (status: proposed)"
       spans: [reg.taxonomy.*]
       note: "CWE / OWASP LLM Top 10 2025 / MITRE ATLAS v5.1 over code + LLM I/O surfaces."
 
   - supply-chain-sentinel:
       phase: select → probe → report → convergence
       consumes: kask/mcp-servers/<server>/Cargo.toml, kask/deny.toml
-      output: kask/security/regressions/RR-NNNN.yaml (status: proposed, surface: supply-chain)
+      output: "kask/security/regressions/RR-NNNN.yaml (status: proposed, surface: supply-chain)"
       spans: [reg.supply_chain.*]
       note: "Extends RR-0021's quick-xml precedent. Owns Cargo.toml; kali-audit owns src/."
 
   - runtime-posture-monitor:
       phase: select → classify → regulate → convergence
       consumes: live reg.tool + hkask.* spans emitted during the routine
-      output: kask/security/regressions/RR-NNNN.yaml (status: proposed, surface: runtime)
+      output: "kask/security/regressions/RR-NNNN.yaml (status: proposed, surface: runtime)"
       spans: [reg.runtime.*]
       note: "Observes real traffic during the routine. Do NOT observe adversarial-red-team synthetic traffic (see conflict_resolution)."
 
@@ -63,7 +63,7 @@ adversarial_red_team:
   mode: single-shot
   persistence: 1
   categories: [injection, hijack, exfiltration, tool-misuse]
-  applies_to: tools marked "LLM I/O: yes" in per-tool-contracts.md
+  applies_to: "tools marked 'LLM I/O: yes' in per-tool-contracts.md"
   output: kask/docs/qa/oracle/<server>__<tool>__adversarial.md
   spans: [reg.runtime.*]
 
@@ -94,7 +94,7 @@ evidence:
     - kask/docs/qa/coverage.md
     - kask/docs/qa/oracle/<server>__<tool>.md
   regressions:
-    - kask/security/regressions/RR-NNNN.yaml (status: proposed only — never flip to enforced)
+    - "kask/security/regressions/RR-NNNN.yaml (status: proposed only — never flip to enforced)"
 
 stop_conditions:
   - "Every non-N/A cell in coverage-matrix.md is pass | fail | skipped-with-reason."

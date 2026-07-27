@@ -741,3 +741,74 @@ pub fn fusion_model_selection() -> settings_content::LanguageModelSelection {
         speed: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_inference::openrouter_backend::FavoriteModel;
+
+    fn fav(id: &str) -> FavoriteModel {
+        FavoriteModel {
+            prefixed_id: format!("OR/{id}"),
+            id: id.to_string(),
+            name: id.to_string(),
+            intelligence_index: 50.0,
+            prompt_price_per_m: 0.5,
+            completion_price_per_m: 0.5,
+            context_length: 32_000,
+        }
+    }
+
+    #[test]
+    fn favorite_model_selections_maps_id_to_model_field() {
+        let favorites = vec![fav("z-ai/glm-5.2"), fav("qwen/qwen3-235b-a22b")];
+        let selections = favorite_model_selections(&favorites);
+        assert_eq!(selections.len(), 2);
+        assert_eq!(selections[0].provider.0, ZED_OPENROUTER_PROVIDER_ID);
+        assert_eq!(selections[0].model, "z-ai/glm-5.2");
+        assert_eq!(selections[1].model, "qwen/qwen3-235b-a22b");
+    }
+
+    #[test]
+    fn favorite_model_selections_preserves_input_order() {
+        let favorites = vec![fav("b-model"), fav("a-model")];
+        let selections = favorite_model_selections(&favorites);
+        assert_eq!(selections[0].model, "b-model");
+        assert_eq!(selections[1].model, "a-model");
+    }
+
+    #[test]
+    fn favorite_model_selections_empty_input_returns_empty() {
+        let selections = favorite_model_selections(&[]);
+        assert!(selections.is_empty());
+    }
+
+    #[test]
+    fn favorite_model_selections_disables_thinking_by_default() {
+        let selections = favorite_model_selections(&[fav("z-ai/glm-5.2")]);
+        assert!(!selections[0].enable_thinking);
+        assert!(selections[0].effort.is_none());
+        assert!(selections[0].speed.is_none());
+    }
+
+    #[test]
+    fn fusion_model_selection_uses_kask_fusion_provider() {
+        let selection = fusion_model_selection();
+        assert_eq!(selection.provider.0, FUSION_PROVIDER_ID);
+        assert_eq!(selection.model, FUSION_MODEL_ID);
+    }
+
+    #[test]
+    fn should_auto_discover_accepts_empty_and_auto() {
+        assert!(should_auto_discover(""));
+        assert!(should_auto_discover("auto"));
+        assert!(should_auto_discover("AUTO"));
+        assert!(should_auto_discover("  auto  "));
+    }
+
+    #[test]
+    fn should_auto_discover_rejects_explicit_models() {
+        assert!(!should_auto_discover("OpenRouter/z-ai/glm-5.2"));
+        assert!(!should_auto_discover("OpenRouter/a,OpenRouter/b"));
+    }
+}

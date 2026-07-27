@@ -212,3 +212,43 @@ the `Toggle` action (deploys a new item if none exists), NOT `ToggleFocus`
 (silent no-op when no item is open — produces "nothing happens" with no error).
 Dock `Panel`s register `ToggleFocus` as their `toggle_action`, so the menu
 pattern differs between docks and center-pane items.
+
+# zed-kask integration traps
+
+These traps recur when modifying the Kask↔Zed seam. Each was hit multiple
+times across audit cycles 3–6.
+
+## Tests must pin deliberate zed-kask deviations from upstream
+
+Every `// zed-kask:` comment that disables upstream behavior needs a
+corresponding test asserting the disabled behavior stays disabled. The
+upstream tests still assert the old behavior and will fail silently (CI
+normalizes them as "pre-existing failures"). When you change a production
+path with a `// zed-kask:` comment, grep the test files for the old
+assertions and update them in the same commit. Cycles 3 and 4 both found
+stale tests asserting upstream behavior that zed-kask deliberately removed
+(body injection, catalog budget, description-length warnings).
+
+## Process-global hooks set at runtime need a startup-failure signal
+
+Every `set_*` hook in `crates/agent/src/agent.rs` and `crates/zed/src/main.rs`
+that's wired conditionally must `log::warn!` when the condition fails, not
+silently leave the hook `None`. The pattern: `resolve_x().unwrap_or_default()`
+or `if condition { set_hook(Some(...)) }` without an `else` branch leaves
+the hook absent with no signal. Operators reading logs cannot distinguish
+"not configured" from "configured but broken". Always add a `log::warn!` in
+the failure branch naming the hook, the failure reason, and the remediation
+(`set HKASK_*` env var, open the panel, etc.). Cycle 5 found `a2a_secret`
+silently producing an empty secret; the same pattern exists for
+`TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
+
+## Cross-thread GPUI communication uses channels, not `AsyncApp` handles
+
+`AsyncApp` is not `Send` (GPUI is single-threaded; it holds `Rc`/`Weak<AppCell>`).
+Background tokio tasks that need to dispatch to the GPUI foreground must use a
+`tokio::sync::mpsc` channel with a foreground drainer spawned via
+`cx.spawn(async move |cx| { while let Some(...) = rx.recv().await { ... } })`,
+not capture `AsyncApp`. This applies to any `Send + Sync` trait (e.g.
+`RegulationSink`, `AlertSink`) implemented over GPUI state. Cycle 6 found
+this the hard way — the first `ToastAlertSink` impl captured `AsyncApp` and
+failed to compile as `Send + Sync`.

@@ -14,6 +14,7 @@ mod identity;
 mod inference;
 mod inference_ipc_server;
 mod inference_providers;
+mod mcp_servers;
 mod memory;
 mod settings;
 mod skill_executor;
@@ -39,6 +40,10 @@ pub use inference_providers::{
     credential_urls_for_mcp, delete_data_service_api_key, delete_provider_api_key,
     ensure_openai_compatible_entries, has_data_service_api_key, has_provider_api_key,
     provider_credential_url, write_data_service_api_key, write_provider_api_key,
+};
+pub use mcp_servers::{
+    BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BuiltinMcpServer, enabled_server_ids,
+    find_server,
 };
 pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
 pub use settings::KaskSettings;

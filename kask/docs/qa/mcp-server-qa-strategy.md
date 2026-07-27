@@ -3,7 +3,7 @@
 A per-tool QA routine for every tool exposed by every hKask MCP server, with
 explicit pass/fail criteria, skill assignments, and observability hooks.
 
-**Scope**: 10 MCP servers, 199 tools (counted from source — never fabricated).
+**Scope**: 10 MCP servers, 195 tools (counted from source — never fabricated).
 
 **Status of this document**: Phase 1 (inventory) is grounded in source reads.
 Phases 2-5 are the contract. The runnable routine lives alongside this doc
@@ -32,7 +32,7 @@ at `kask/scripts/qa-mcp-servers.sh` and the per-tool contracts at
 All servers use `hkask_mcp_server::run_server` → `run_stdio_server` (stdio
 transport). No SSE/HTTP server exists in the fleet.
 
-### Tool inventory (199 tools)
+### Tool inventory (195 tools)
 
 Tool counts: codegraph 9, companies 41, condenser 8, corpus 27, curator 11,
 kata-kanban 18, media 38, research 17, scenarios 18, training 8.
@@ -45,7 +45,7 @@ boundary, external deps, McpToolError kinds used) is in
 |---|---|---|---|
 | codegraph | 9 | yes — `codegraph_index_embeddings` calls embedding API; `codegraph_context` returns LLM-bound text | sqlite (bundled), tree-sitter, reqwest (DeepInfra/OpenRouter embeddings) |
 | companies | 41 | yes — `research_search` returns raw LLM/web claims; `company_screener` parses NL prompts | FMP, EODHD, Exa, Tavily, Brave (reqwest) |
-| condenser | 8 | yes — `condenser_classify`, `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
+| condenser | 8 | yes — `condenser_compress`, `condenser_classify`, `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
 | corpus | 27 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
 | curator | 11 | no — reads Regulation ledger, does not call LLM | sqlite (SQLCipher) |
 | kata-kanban | 18 | no — pure state machine over sqlite | sqlite (SQLCipher) |

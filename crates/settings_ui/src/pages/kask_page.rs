@@ -64,35 +64,9 @@ use crate::{SettingsPage, SettingsPageItem, SubPageLink, USER};
 /// Must match `kask_bridge::secrets::KASK_CREDENTIAL_NAMESPACE`.
 const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";
 
-/// The 10 built-in kask MCP servers (directory names under `kask/mcp-servers/`).
-/// These are the server IDs used in `KaskMcpSettingsContent::overrides`.
-const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = &[
-    (
-        "codegraph",
-        "Codegraph — code structure query and traversal",
-    ),
-    ("companies", "Companies — company research and filings"),
-    (
-        "condenser",
-        "Condenser — context condensation and summarization",
-    ),
-    ("corpus", "Corpus — document corpus and QA generation"),
-    (
-        "curator",
-        "Curator — regulation cascade and algedonic signals",
-    ),
-    ("kata-kanban", "Kata Kanban — improvement kata board"),
-    ("media", "Media — image generation and media workflows"),
-    ("research", "Research — web research and paper search"),
-    (
-        "scenarios",
-        "Scenarios — scenario planning and Wardley mapping",
-    ),
-    (
-        "training",
-        "Training — LoRA training configuration and audit",
-    ),
-];
+/// The built-in kask MCP servers (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
+/// Re-bound here as `(&str, &str)` for the settings UI's `(id, description)` pattern.
+const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS;
 
 /// Data service descriptors: (key, label, dashboard_url, env_var).
 /// The `key` is the credential key in the keychain (`kask://credentials/<key>`).

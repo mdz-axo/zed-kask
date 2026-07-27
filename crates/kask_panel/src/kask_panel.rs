@@ -55,19 +55,8 @@ pub use kanban_view::KanbanBoardView;
 pub use portfolio_view::PortfolioDashboardView;
 pub use scenarios_view::ScenariosView;
 
-/// The 10 built-in kask MCP servers (matches `kask_page.rs`).
-const BUILT_IN_MCP_SERVERS: &[&str] = &[
-    "codegraph",
-    "companies",
-    "condenser",
-    "corpus",
-    "curator",
-    "kata-kanban",
-    "media",
-    "research",
-    "scenarios",
-    "training",
-];
+/// The 10 built-in kask MCP server IDs (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
+const BUILT_IN_MCP_SERVERS: &[&str] = kask_bridge::BUILT_IN_MCP_SERVERS_IDS;
 
 // ── Global hooks (same OnceLock pattern as D1/D5/D6) ──────────────────────
 
