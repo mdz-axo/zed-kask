@@ -388,7 +388,7 @@ steps:
     timeout_seconds: 30
     condition: "step_13_result.next_action == 're-enter'"
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       prior_convergence_metric: "{{ step_13_result.convergence_metric }}"
       pdca_iteration: "{{ (pdca_iteration | default(1)) + 1 }}"
 

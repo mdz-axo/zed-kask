@@ -358,7 +358,7 @@ steps:
     condition: "{{ mode | default('code') == 'code' }}"
     description: Re-enter code mode cycle if convergence is not met.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
 
   - ordinal: 17
@@ -366,7 +366,7 @@ steps:
     condition: "{{ mode == 'semantic' }}"
     description: Re-enter semantic mode cycle if convergence is not met.
     input_mapping:
-      loop_target: 5
+      loop_target: "{{ 5 }}"
       convergence_metric: "{{ step_14_result.convergence_metric | default(1.0) }}"
 
   - ordinal: 18
@@ -374,7 +374,7 @@ steps:
     condition: "{{ mode == 'dual' }}"
     description: Re-enter dual mode cycle if convergence is not met.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       convergence_metric: "{{ step_15_result.convergence_metric | default(1.0) }}"
 
 error_handling:

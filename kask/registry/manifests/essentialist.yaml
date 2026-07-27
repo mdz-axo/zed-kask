@@ -92,7 +92,7 @@ steps:
     action: loop
     description: Re-enter elimination cycle if convergence is not met.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -141,7 +141,7 @@ steps:
       iteration's convergence_metric is carried forward so the convergence check's
       materiality guard can detect a stable-but-unconverged framing.
     input_mapping:
-      loop_target: 2
+      loop_target: "{{ 2 }}"
       prior_metric: "{{ step_4_result.convergence_metric }}"
 
 error_handling:

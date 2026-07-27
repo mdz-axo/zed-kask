@@ -249,7 +249,7 @@ steps:
       prior_expedition.next_charter_focus, along with the prior report's
       lessons_learned and pattern_signatures, closing the feedback loop.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       prior_expedition:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"

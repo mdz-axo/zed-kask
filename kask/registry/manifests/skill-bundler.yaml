@@ -136,7 +136,7 @@ steps:
     action: loop
     description: Re-enter composition cycle if convergence threshold was not met after evolution.
     input_mapping:
-      loop_target: 2
+      loop_target: "{{ 2 }}"
 
 error_handling:
   on_gas_exceeded: abort

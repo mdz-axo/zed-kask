@@ -206,13 +206,14 @@ steps:
   - ordinal: 8
     action: loop
     description: >
-      Re-enter inquiry cycle if convergence is not met. The executor exits
-      the loop when step_6_result.convergence_metric ≤ threshold (0.15).
-      The materiality guard in step 6 forces convergence_metric = 0.0 when
-      the gap is irreducible (iteration ≥ 3, delta < 0.02), which triggers
-      exit via the threshold check. On re-entry, step 1 receives
-      prior_skill_match_results from step_7_result via the executor's
-      cross-cycle input wiring.
+      Re-enter inquiry cycle if convergence is not met. The loop_target is
+      resolved dynamically from step_6_result.re_entry_target. For
+      sequential-inquiry, all corrective actions require re-running the
+      engine (step 1), so re_entry_target is always 1. The executor exits
+      the loop when convergence_metric ≤ threshold (0.15); the materiality
+      guard forces convergence_metric = 0.0 when the gap is irreducible.
+      On re-entry, step 1 receives prior_skill_match_results from
+      step_7_result via the executor's cross-cycle input wiring.
 
       STATE PERSISTENCE: Step results from the prior iteration persist
       across loop iterations. When the loop re-enters at step 1 (engine),
@@ -223,7 +224,7 @@ steps:
       step_1_result through step_5_result and step_7_result. If the
       executor does not persist step results, re-entry will fail.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ step_6_result.re_entry_target | default(1) }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -98,7 +98,7 @@ steps:
     action: loop
     description: Re-enter discovery cycle if convergence threshold is not met.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       # Carry convergence context into the next iteration.
       previous_blockers: "{{ step_3_result.blockers | default([]) }}"
       previous_metric: "{{ step_3_result.convergence_metric | default(1.0) }}"

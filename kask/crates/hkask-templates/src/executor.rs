@@ -665,8 +665,26 @@ impl ManifestExecutor {
                             .input_mapping
                             .as_ref()
                             .and_then(|m| m.get("loop_target"))
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32;
+                            .map(|v| -> u32 {
+                                // Static integer: use directly (backward compatible).
+                                if let Some(n) = v.as_u64() {
+                                    return n as u32;
+                                }
+                                // Jinja expression: render against context, then parse.
+                                // Enables targeted re-entry: the convergence check can
+                                // emit a numeric `re_entry_target` field that routes
+                                // the loop to the failing step instead of always
+                                // re-entering at a fixed ordinal.
+                                if let Some(s) = v.as_str()
+                                    && let Ok(rendered) =
+                                        render_minijinja(s, &context, &self.template_base_path)
+                                    && let Ok(n) = rendered.trim().parse::<u32>()
+                                {
+                                    return n;
+                                }
+                                0
+                            })
+                            .unwrap_or(0);
 
                         info!(
                             target: "reg.skill.cascade.step_executed",

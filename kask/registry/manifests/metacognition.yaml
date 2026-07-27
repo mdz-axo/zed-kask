@@ -261,7 +261,7 @@ steps:
       Re-enter metacognition cycle if convergence is not met. Feeds
       convergence blockers back to refine the goal.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       goal: "{{ step_5_result.blockers | default([]) | join('; ') | default(goal) }}"
 
 error_handling:

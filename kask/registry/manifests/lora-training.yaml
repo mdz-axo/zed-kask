@@ -339,7 +339,7 @@ steps:
       select-method as prior_iteration, closing the feedback loop
       mechanically rather than relying on operator-managed re-invocation.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       prior_iteration:
         convergence_metric: "{{ step_4_result.convergence_metric | default(1.0) }}"
         blockers: "{{ step_4_result.blockers | default([]) }}"

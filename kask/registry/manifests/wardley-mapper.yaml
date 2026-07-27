@@ -144,7 +144,7 @@ steps:
     timeout_seconds: 10
     description: Re-enter cycle if convergence not met.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
 
 error_handling:
   on_gas_exceeded: abort

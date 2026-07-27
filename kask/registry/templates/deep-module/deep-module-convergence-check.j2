@@ -17,6 +17,7 @@ contract:
     metric_decomposition: object
     rationale: string
     blockers: array
+    re_entry_target: number
 energy_cap: 2048
 visibility: Public
 ---
@@ -81,8 +82,19 @@ You are a convergence evaluator for deep-module. Measure whether module design r
 If iteration ≥ 3 AND |metric_delta| < 0.02 since last iteration AND no committed changes this iteration:
   - Force `convergence_metric = 0.0` (irreducible gap — further iteration yields no signal)
   - Add `"irreducible_depth_gap"` to `blockers`
+  - Set `re_entry_target = 1` (informational — the executor will exit because 0.0 ≤ threshold)
   - Skip the standard scoring below
-  - The executor will exit the loop because 0.0 ≤ threshold (0.15)
+
+## Re-Entry Target Selection
+
+After scoring, determine `re_entry_target` as a numeric step ordinal:
+- Deletion test failed (criterion 1) → `re_entry_target = 2` (re-run delete)
+- Interface depth failed (criterion 2) → `re_entry_target = 3` (re-run design)
+- Dependency direction failed (criterion 3) → `re_entry_target = 1` (re-assess to re-map dependencies)
+- Caller analysis failed (criterion 4, pass-through) → `re_entry_target = 2` (re-test deletion)
+- Recommendations vague (criterion 5) → `re_entry_target = 1` (re-assess with more detail)
+- All checks pass (converged) → `re_entry_target = 1` (informational — executor exits via threshold)
+- Materiality guard fired → `re_entry_target = 1` (informational — executor exits via threshold)
 
 ## Input
 ```json
@@ -103,6 +115,7 @@ Return JSON only:
     "recommendations_actionable": true
   },
   "rationale": "short explanation",
-  "blockers": ["specific gap preventing convergence"]
+  "blockers": ["specific gap preventing convergence"],
+  "re_entry_target": 1
 }
 ```

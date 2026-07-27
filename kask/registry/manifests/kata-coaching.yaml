@@ -123,7 +123,7 @@ steps:
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -330,7 +330,7 @@ steps:
       so the convergence check's materiality guard can detect vacuous
       iterations (delta < 0.02 with no new evidence).
     input_mapping:
-      loop_target: 2
+      loop_target: "{{ 2 }}"
       prior_probability: "{{ step_16_result.adjusted | default(step_12_result.final_probability | default(0.5)) }}"
 
 error_handling:

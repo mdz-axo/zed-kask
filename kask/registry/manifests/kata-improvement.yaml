@@ -208,7 +208,7 @@ steps:
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
       convergence_metric: "{{ step_5_result.convergence_metric | default(1.0) }}"
 
   - ordinal: 12
@@ -218,7 +218,7 @@ steps:
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 7
+      loop_target: "{{ 7 }}"
       convergence_metric: "{{ step_10_result.convergence_metric | default(1.0) }}"
 
 error_handling:

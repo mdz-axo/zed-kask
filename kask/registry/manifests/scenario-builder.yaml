@@ -157,7 +157,7 @@ steps:
       consistency, and coverage — all fixed by regenerating scenarios, not by
       re-rolling the already-bounded focal question.
     input_mapping:
-      loop_target: 4
+      loop_target: "{{ 4 }}"
       prior_convergence_metric: "{{ step_7_result.convergence_metric }}"
 
 error_handling:

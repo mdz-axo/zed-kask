@@ -246,7 +246,7 @@ steps:
       so the next convergence check's materiality guard can detect a stable-but-
       unconverged plan. Each iteration narrows the gap.
     input_mapping:
-      loop_target: 2
+      loop_target: "{{ 2 }}"
       prior_metric: "{{ step_5_result.convergence_metric }}"
       refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
 

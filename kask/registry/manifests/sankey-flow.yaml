@@ -250,7 +250,7 @@ steps:
       targets. Each iteration narrows the gap. If data_integrity = 1.0, do NOT
       loop — escalate to re-gather (the fabrication cannot be refined away).
     input_mapping:
-      loop_target: 3
+      loop_target: "{{ 3 }}"
 
 error_handling:
   on_gas_exceeded: abort

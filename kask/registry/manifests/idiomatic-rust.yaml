@@ -134,7 +134,7 @@ steps:
       If convergence is not met and the critique identified concrete
       refinement targets, loop back to design (step 2) with those targets.
     input_mapping:
-      loop_target: 2
+      loop_target: "{{ 2 }}"
 
 error_handling:
   on_gas_exceeded: abort

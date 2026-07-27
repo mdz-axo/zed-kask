@@ -197,7 +197,7 @@ steps:
       exist, loop back to GENERATE (step 3) with those directives as
       focused improvement targets. Each iteration narrows the gap.
     input_mapping:
-      loop_target: 3
+      loop_target: "{{ 3 }}"
 
 error_handling:
   on_gas_exceeded: abort

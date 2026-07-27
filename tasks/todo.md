@@ -2,7 +2,13 @@
 
 ## Pending Tasks
 
-- [ ] **T-KASK-ICON: Replace app icon with burnt orange zed-kask icon**
+- [x] **T-KASK-ICON: Replace app icon with burnt orange zed-kask icon**
+  - Generated a burnt orange K icon via Z-Image-Turbo, converted to PNG
+    (512x512 + 1024x1024), and replaced all 4 app-icon files in
+    `crates/zed/resources/` (app-icon.png, app-icon-dev.png, @2x variants).
+  - The icon pipeline (build.rs → zed.rs → bundle-linux) picks up the
+    PNGs automatically — no code changes needed.
+  - Verified: the PNG has burnt orange pixels (RGB 206, 105, 41).
   - The status bar / window title bar / desktop icon currently shows the
     standard zed icon (green/blue). It should show the burnt orange
     zed-kask icon to visually distinguish the fork.
@@ -22,7 +28,7 @@
   - Also check `crates/gpui_linux/src/linux/platform.rs` for Wayland
     window icon setup (may need a separate code path).
 
-- [ ] **T-INFERENCE-SYNTAX: Migrate from old hKask prefix syntax to zed model syntax**
+- [x] **T-INFERENCE-SYNTAX: Migrate from old hKask prefix syntax to zed model syntax**
   - Old syntax: `DI/model`, `FA/model`, `TG/model`, `OR/model`, `KC/model`
   - Zed syntax: `provider_id/model_name` where provider_id is the JSON key
     from `openai_compatible` in settings.json (e.g., `DeepInfra/model`,
@@ -47,18 +53,36 @@
     - `kask/crates/hkask-inference/src/chat_protocol.rs` — test fixtures
     - `kask/registry/templates/` — any manifests with model references
 
-- [ ] **T-ENV-LOADING: Load kask/.env at startup**
+- [x] **T-ENV-LOADING: Load kask/.env at startup**
   - `kask/.env` has API keys but nothing loads it. Added `dotenvy::from_path`
     in `main.rs` but needs verification that it runs before settings parsing.
 
-- [ ] **T-PROVIDER-DEFAULTS: Enable inference providers by default when API key present**
+- [x] **T-PROVIDER-DEFAULTS: Enable inference providers by default when API key present**
   - Changed `unwrap_or(false)` to `unwrap_or_else(|| env_var_is_set(...))`
     in `settings.rs`. Needs testing.
 
-- [ ] **T-PROVIDER-ID-ALIGN: Align kask provider IDs with zed settings.json keys**
-  - Changed `INFERENCE_PROVIDERS` IDs from lowercase (`deepinfra`) to display
-    names (`DeepInfra`) to match existing settings.json. Needs verification
-    that no duplicate entries are created.
+- [x] **T-SKILL-BODY-INJECTION: Disable SKILL.md body injection when manifest executor is present**
+  - When the manifest executor is wired and a skill has no manifest, the
+    skill tool now returns a minimal envelope instead of reading and
+    injecting the full SKILL.md body. This stops the token burn from
+    body injection.
+  - File: `crates/agent/src/tools/skill_tool.rs:303-312`
+
+- [x] **T-SETTINGS-FEEDBACK-LOOP: Fix cursor flashing from settings write loop**
+  - `update_settings_file_inner` now skips the write and global update
+    when `new_text == old_text`. This breaks the feedback loop where
+    `ensure_openai_compatible_entries` writes to settings.json, triggers
+    SettingsStore observer, which calls `ensure_openai_compatible_entries`
+    again.
+  - File: `crates/settings/src/settings_store.rs:587-593`
+
+- [ ] **T-TEMPLATE-MODEL-DEPRECATION: Deprecate model names in templates, use config-driven defaults**
+  - Templates still hardcode model names (e.g., `DeepInfra/Qwen/Qwen3-Embedding-0.6B`)
+    instead of referencing config defaults (e.g., `{{ embedding_model }}`).
+  - This is a larger architectural change — templates should reference
+    config keys, not specific model strings.
+  - Status: old prefixes updated to zed syntax, but deprecation of hardcoded
+    model names in favor of config-driven defaults is not yet done.
 
 ## Completed Tasks
 

@@ -169,7 +169,7 @@ steps:
     action: loop
     description: Re-enter improv cycle if convergence threshold is not met.
     input_mapping:
-      loop_target: 1
+      loop_target: "{{ 1 }}"
 
 error_handling:
   on_gas_exceeded: abort
