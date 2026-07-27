@@ -304,29 +304,53 @@ impl ManifestExecutor {
         parse_json_response(&result.text, 0)
     }
 
-    /// Load and render a template from the filesystem.
+    /// Load and render a template, preferring the embedded (build-time)
+    /// copy and falling back to the filesystem path. The embedded copy is
+    /// authoritative for installed binaries — it works regardless of CWD or
+    /// install location. The filesystem fallback exists for dev workflows
+    /// where a template has been edited but not yet rebuilt.
     fn load_template(
         &self,
         template_ref: &str,
         context: &HashMap<String, Value>,
     ) -> Result<String> {
-        let template_path =
-            safe_template_join(&self.template_base_path, template_ref).ok_or_else(|| {
-                TemplateError::PathTraversal(format!(
-                    "template_ref '{template_ref}' escapes base path '{}'",
-                    self.template_base_path.display()
-                ))
-            })?;
-        let template_content = std::fs::read_to_string(&template_path).map_err(|e| {
-            TemplateError::NotFound(NotFound {
-                entity_type: "template".to_string(),
-                id: format!(
-                    "KnowAct template not found at {}: {}",
-                    template_path.display(),
-                    e
-                ),
-            })
-        })?;
+        let template_content = if let Some(content) = crate::template_file(template_ref) {
+            content.to_string()
+        } else {
+            let template_path = safe_template_join(&self.template_base_path, template_ref)
+                .ok_or_else(|| {
+                    TemplateError::PathTraversal(format!(
+                        "template_ref '{template_ref}' escapes base path '{}'",
+                        self.template_base_path.display()
+                    ))
+                })?;
+            // Try the ref as-is, then with .j2 appended (many manifests omit
+            // the extension).
+            std::fs::read_to_string(&template_path)
+                .or_else(|_| {
+                    if !template_ref.ends_with(".j2") {
+                        let j2_ref = format!("{template_ref}.j2");
+                        if let Some(j2_path) = safe_template_join(&self.template_base_path, &j2_ref)
+                        {
+                            return std::fs::read_to_string(&j2_path);
+                        }
+                    }
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("template not found at {}", template_path.display()),
+                    ))
+                })
+                .map_err(|e| {
+                    TemplateError::NotFound(NotFound {
+                        entity_type: "template".to_string(),
+                        id: format!(
+                            "KnowAct template not found at {} (also tried .j2 extension): {}",
+                            template_path.display(),
+                            e
+                        ),
+                    })
+                })?
+        };
         let prompt = render_minijinja(&template_content, context, &self.template_base_path)?;
         Ok(prompt)
     }
@@ -1597,45 +1621,65 @@ impl ManifestExecutor {
                 })?;
                 let template_ref = render_inline_template(template_ref_raw, context);
 
-                let template_path = safe_template_join(&self.template_base_path, &template_ref)
-                    .ok_or_else(|| {
-                        TemplateError::PathTraversal(format!(
-                            "step {}: template_ref '{template_ref}' escapes base path '{}'",
-                            step.ordinal,
-                            self.template_base_path.display()
-                        ))
-                    })?;
-                let template_content = match std::fs::read_to_string(&template_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        // Fallback: if template_ref doesn't end with .j2, try appending it.
-                        // Many manifests omit the extension; KataEngine resolves without it,
-                        // and ManifestExecutor should too.
-                        if !template_ref.ends_with(".j2") {
-                            let j2_ref = format!("{template_ref}.j2");
-                            let j2_path = safe_template_join(&self.template_base_path, &j2_ref)
-                                .ok_or_else(|| {
-                                    TemplateError::PathTraversal(format!(
-                                        "step {}: template_ref '{j2_ref}' escapes base path '{}'",
+                // Prefer the embedded (build-time) template — works regardless
+                // of CWD or install location. Fall back to filesystem for dev
+                // workflows where a template has been edited but not rebuilt.
+                let template_content = if let Some(content) = crate::template_file(&template_ref) {
+                    content.to_string()
+                } else {
+                    let template_path = safe_template_join(&self.template_base_path, &template_ref)
+                        .ok_or_else(|| {
+                            TemplateError::PathTraversal(format!(
+                                "step {}: template_ref '{template_ref}' escapes base path '{}'",
+                                step.ordinal,
+                                self.template_base_path.display()
+                            ))
+                        })?;
+                    match std::fs::read_to_string(&template_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            // Fallback: if template_ref doesn't end with .j2, try appending it.
+                            // Many manifests omit the extension; KataEngine resolves without it,
+                            // and ManifestExecutor should too.
+                            if !template_ref.ends_with(".j2") {
+                                let j2_ref = format!("{template_ref}.j2");
+                                let j2_path = safe_template_join(&self.template_base_path, &j2_ref)
+                                    .ok_or_else(|| {
+                                        TemplateError::PathTraversal(format!(
+                                            "step {}: template_ref '{j2_ref}' escapes base path '{}'",
+                                            step.ordinal,
+                                            self.template_base_path.display()
+                                        ))
+                                    })?;
+                                if let Ok(c) = std::fs::read_to_string(&j2_path) {
+                                    info!(
+                                        target: "reg.spec.executor",
+                                        step = step.ordinal,
+                                        resolved = %j2_path.display(),
+                                        "Resolved template with .j2 fallback"
+                                    );
+                                    c
+                                } else {
+                                    let err_msg = format!(
+                                        "Step {}: template file not found at {} (also tried {}): {}",
                                         step.ordinal,
-                                        self.template_base_path.display()
-                                    ))
-                                })?;
-                            if let Ok(c) = std::fs::read_to_string(&j2_path) {
-                                // Success with .j2 extension
-                                info!(
-                                    target: "reg.spec.executor",
-                                    step = step.ordinal,
-                                    resolved = %j2_path.display(),
-                                    "Resolved template with .j2 fallback"
-                                );
-                                c
+                                        template_path.display(),
+                                        j2_path.display(),
+                                        e
+                                    );
+                                    if let Some(ref cb) = self.heal_error_cb {
+                                        cb(&err_msg, &template_path.display().to_string());
+                                    }
+                                    return Err(TemplateError::NotFound(NotFound {
+                                        entity_type: "template".to_string(),
+                                        id: err_msg,
+                                    }));
+                                }
                             } else {
                                 let err_msg = format!(
-                                    "Step {}: template file not found at {} (also tried {}): {}",
+                                    "Step {}: template file not found at {}: {}",
                                     step.ordinal,
                                     template_path.display(),
-                                    j2_path.display(),
                                     e
                                 );
                                 if let Some(ref cb) = self.heal_error_cb {
@@ -1646,20 +1690,6 @@ impl ManifestExecutor {
                                     id: err_msg,
                                 }));
                             }
-                        } else {
-                            let err_msg = format!(
-                                "Step {}: template file not found at {}: {}",
-                                step.ordinal,
-                                template_path.display(),
-                                e
-                            );
-                            if let Some(ref cb) = self.heal_error_cb {
-                                cb(&err_msg, &template_path.display().to_string());
-                            }
-                            return Err(TemplateError::NotFound(NotFound {
-                                entity_type: "template".to_string(),
-                                id: err_msg,
-                            }));
                         }
                     }
                 };
@@ -1722,15 +1752,21 @@ fn render_minijinja(
     );
 
     // Loader: the synthetic "step" name resolves to the in-memory main
-    // template; any other name (from `{% include %}`) resolves from disk
-    // under `template_base_path`, mirroring the `template_ref` resolution
-    // rules (including the `.j2` extension fallback).
+    // template; any other name (from `{% include %}`) resolves from the
+    // embedded registry first, then from disk under `template_base_path`,
+    // mirroring the `template_ref` resolution rules (including the `.j2`
+    // extension fallback).
     let main_template = template.to_string();
     let base = template_base_path.to_path_buf();
     env.set_loader(
         move |name: &str| -> std::result::Result<Option<String>, minijinja::Error> {
             if name == "step" {
                 return Ok(Some(main_template.clone()));
+            }
+            // Prefer the embedded (build-time) template — works regardless
+            // of CWD or install location.
+            if let Some(content) = crate::template_file(name) {
+                return Ok(Some(content.to_string()));
             }
             // safe_join rejects any segment starting with '.' or containing '\\',
             // preventing `{% include "../../etc/passwd" %}` path traversal.

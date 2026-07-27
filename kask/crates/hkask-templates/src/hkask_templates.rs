@@ -38,6 +38,6 @@ pub use ports::{
 };
 pub use prompt_strategy::PromptStrategy;
 
-pub use registry::{Registry, process_manifest_yaml};
+pub use registry::{Registry, process_manifest_yaml, template_file};
 pub use registry_sqlite::SqliteRegistry;
 pub use skill_loader::{SkillFrontMatter, SkillLoadResult, SkillLoader};

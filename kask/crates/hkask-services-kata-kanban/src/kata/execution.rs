@@ -81,21 +81,29 @@ impl KataEngine {
                 ))
             })?,
             Err(_) => {
-                let disk_path = std::path::PathBuf::from("registry/templates").join(template_ref);
-                let with_ext = disk_path.with_extension("j2");
-                let read_path = if with_ext.exists() {
-                    &with_ext
+                // Prefer the embedded (build-time) template — works regardless
+                // of CWD or install location. Fall back to the filesystem for
+                // dev workflows where a template has been edited but not rebuilt.
+                if let Some(content) = hkask_templates::template_file(template_ref) {
+                    content.to_string()
                 } else {
-                    &disk_path
-                };
-                std::fs::read_to_string(read_path).map_err(|_| {
-                    KataError::TemplateNotFound(format!(
-                        "Template '{}' not found in registry or at {} or {}",
-                        template_ref,
-                        disk_path.display(),
-                        with_ext.display()
-                    ))
-                })?
+                    let disk_path =
+                        std::path::PathBuf::from("registry/templates").join(template_ref);
+                    let with_ext = disk_path.with_extension("j2");
+                    let read_path = if with_ext.exists() {
+                        &with_ext
+                    } else {
+                        &disk_path
+                    };
+                    std::fs::read_to_string(read_path).map_err(|_| {
+                        KataError::TemplateNotFound(format!(
+                            "Template '{}' not found in registry, embedded, or at {} or {}",
+                            template_ref,
+                            disk_path.display(),
+                            with_ext.display()
+                        ))
+                    })?
+                }
             }
         };
 

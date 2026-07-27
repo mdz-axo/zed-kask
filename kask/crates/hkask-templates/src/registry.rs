@@ -40,6 +40,33 @@ pub fn process_manifest_yaml(skill_name: &str) -> Option<&'static str> {
         .map(|(_, yaml)| *yaml)
 }
 
+/// Look up an embedded Jinja2 template file by its `template_ref`.
+///
+/// Template refs in manifests omit the `.j2` extension (e.g.
+/// `grill-me/grill-me-assess`), but the embedded files are keyed with
+/// the extension (e.g. `grill-me/grill-me-assess.j2`). This function
+/// handles both forms: it first tries the ref as-is, then appends `.j2`
+/// if the ref doesn't already end with it.
+///
+/// Returns the raw template content, or `None` if no embedded template
+/// matches. Callers that need to fall back to the filesystem (dev
+/// workflows where a template has been edited but not yet rebuilt)
+/// should do so after this returns `None`.
+pub fn template_file(template_ref: &str) -> Option<&'static str> {
+    // Try the ref as-is first (handles refs that already include .j2).
+    if let Some((_, content)) = TEMPLATE_FILES.iter().find(|(key, _)| *key == template_ref) {
+        return Some(*content);
+    }
+    // If the ref doesn't end with .j2, try appending it.
+    if !template_ref.ends_with(".j2") {
+        let with_ext = format!("{template_ref}.j2");
+        if let Some((_, content)) = TEMPLATE_FILES.iter().find(|(key, _)| *key == with_ext) {
+            return Some(*content);
+        }
+    }
+    None
+}
+
 /// Per-skill template manifest deserialization shape.
 ///
 /// Per-skill manifests (`registry/templates/<skill>/manifest.yaml`) use:
