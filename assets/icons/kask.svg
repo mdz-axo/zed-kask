@@ -1,5 +1,20 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M6 2.5H10M5.5 4H10.5L12 5.5V13H4V5.5L5.5 4Z" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M5.5 8.5C6.2 7.5 7 7 8 7C9 7 9.8 7.5 10.5 8.5C9.8 9.5 9 10 8 10C7 10 6.2 9.5 5.5 8.5Z" stroke="black" stroke-width="1.1" stroke-linejoin="round"/>
-  <circle cx="8" cy="8.5" r="0.8" fill="black"/>
+  <!-- zed-kask panel/status icon: mini "zk" monogram on burnt orange.
+       Mirrors the app icon (zk-icon.svg) at 16x16: rounded burnt-orange
+       background, silver "zk" letters, no rays (too fine for 16px). -->
+  <defs>
+    <linearGradient id="silver16" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F5F7FA"/>
+      <stop offset="100%" stop-color="#A8B0BB"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="15" height="15" rx="3" ry="3" fill="#B25A1A"/>
+  <g fill="none" stroke="url(#silver16)" stroke-width="1.1" stroke-linejoin="miter" stroke-linecap="square">
+    <!-- z: top bar, diagonal, bottom bar (compact) -->
+    <path d="M 4 5.5 L 7.5 5.5 L 4 10.5 L 7.5 10.5"/>
+    <!-- k: stem + two diagonals from mid-right -->
+    <path d="M 9 5.5 L 9 10.5"/>
+    <path d="M 9 8 L 12 5.5"/>
+    <path d="M 9 8 L 12 10.5"/>
+  </g>
 </svg>
