@@ -38,8 +38,9 @@ use acp_thread::{
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
-    load_skills_from_directory, parse_skill_frontmatter, project_skills_relative_path,
+    SkillScopeId, SkillSource, SkillSummary, builtin_skills, embedded_global_skills,
+    global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
+    project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -1129,17 +1130,36 @@ impl NativeAgent {
             })
             .collect::<Vec<_>>();
 
-        // Load global skills
+        // Load global skills. Two sources contribute, both tagged
+        // `SkillSource::Global`:
+        //
+        // 1. Disk-loaded skills from `~/.agents/skills/` — the user's own
+        //    installs. These win on name conflicts with embedded skills
+        //    because `apply_skill_overrides` keeps the first entry on ties,
+        //    and `combine_skills` chains `global` before embedded globals.
+        // 2. Embedded kask skills — the 44 SKILL.md files shipped in this
+        //    repo's `.agents/skills/` directory, baked into the binary at
+        //    build time by `agent_skills/build.rs`. These are always
+        //    available regardless of install location or CWD.
+        //
+        // Both are `Global`, so the user sees them in the slash-command
+        //    catalog as `/:<name>` in every project.
         let global_skills_task = {
             let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
-                load_skills_from_directory(
+                let disk_globals = load_skills_from_directory(
                     &global_skills_fs,
                     &global_skills_dir,
                     SkillSource::Global,
                 )
-                .await
+                .await;
+                // Disk globals first so they win ties in `apply_skill_overrides`.
+                let mut all_globals = disk_globals;
+                for skill in embedded_global_skills() {
+                    all_globals.push(Ok(skill));
+                }
+                all_globals
             })
         };
 

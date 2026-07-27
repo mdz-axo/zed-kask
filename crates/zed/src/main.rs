@@ -282,13 +282,23 @@ fn main() {
     // configuration for kask inference providers (DEEPINFRA_API_KEY, FALAI_API_KEY,
     // TOGETHERAI_API_KEY, OPENROUTER_API_KEY, etc.) and kask runtime settings (HKASK_*).
     // Without this, the keys are invisible to the process even though they're
-    // in the file. We search for `.env` in the current directory and in
-    // `kask/.env` (the standard kask project layout).
+    // in the file.
+    //
+    // Search order:
+    // 1. `<config_dir>/.env` — the installed-binary location, alongside
+    //    `settings.json`. This is where users put their `.env` after install:
+    //    `~/.config/zed-kask/.env` on Linux,
+    //    `~/Library/Application Support/Zed-Kask/.env` on macOS,
+    //    `%APPDATA%/Zed-Kask/.env` on Windows.
+    // 2. `.env` in CWD — dev convenience (running from the repo root).
+    // 3. `kask/.env` — legacy dev layout (running from a kask project dir).
     //
     // dotenvy does NOT override existing env vars — if a key is already in
     // the process environment (e.g. from the shell), the file value is
     // ignored. This is the correct behavior: shell env > .env file.
+    let config_env = paths::config_dir().join(".env");
     for env_path in [
+        config_env.as_path(),
         std::path::Path::new(".env"),
         std::path::Path::new("kask/.env"),
     ] {

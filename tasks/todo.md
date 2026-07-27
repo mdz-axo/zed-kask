@@ -14,22 +14,29 @@
   - Every cited struct/trait has a `grep` hit (13/13 verified)
   - Class diagram renders with `DIAGRAM_ALIGNMENT` block
   - Gates passed: pragmatic-semantics (no OUGHT), pragmatic-cybernetics (9/9 implementors exist), essentialist (6 sections), brand-voice (0 taboo), grill-me Mechanism+Rationale
-- [ ] **T-02: hkask-types Explanation** — sequence diagram of port mediation
+- [x] **T-02: hkask-types Explanation** — sequence diagram of port mediation
   - Artifact exists; OUGHT claims only in design-rationale section
   - Feedback loop closes (each port has a real implementor cited)
-- [ ] **T-03: hkask-capability Reference** — class diagram of OCAP tokens
-  - Artifact exists; every symbol cited; diagram renders with `DIAGRAM_ALIGNMENT`
-- [ ] **T-04: hkask-capability Explanation** — state diagram of verification outcomes
+  - Gates passed: pragmatic-semantics, pragmatic-cybernetics, essentialist (7 sections), brand-voice
+- [x] **T-03: hkask-capability Reference** — class diagram of OCAP tokens
+  - Artifact exists; every symbol cited (20/20); diagram renders with `DIAGRAM_ALIGNMENT`
+  - Gates passed: pragmatic-semantics (no OUGHT), essentialist (6 sections), brand-voice
+- [x] **T-04: hkask-capability Explanation** — state diagram of verification outcomes
   - Artifact exists; OUGHT claims scoped to sovereignty rationale; loop closes
+  - Gates passed: pragmatic-semantics (OUGHT in rationale), essentialist (6 sections), brand-voice
 
 **Checkpoint 1:** `kask/docs/diataxis/` tree exists, INDEX.md seeded, 4 foundation artifacts pass all gates.
 
 ## Phase 2 — Core subsystems
 
-- [ ] **T-05: hkask-storage Reference** — ERD of SQLCipher schema
-- [ ] **T-06: hkask-storage How-to** — adding a new migration
-- [ ] **T-07: hkask-regulation Reference** — class diagram of Regulation ledger/loop/wallet
-- [ ] **T-08: hkask-regulation Explanation** — state diagram of homeostatic loop
+- [x] **T-05: hkask-storage Reference** — ERD of SQLCipher schema
+  - 25 tables cited to schema.sql:line or inline init_schema; ERD with Crow's Foot
+- [x] **T-06: hkask-storage How-to** — adding a new migration
+  - Procedural flowchart citing init_schema pattern + store_macros contract
+- [x] **T-07: hkask-regulation Reference** — class diagram of Regulation ledger/loop/wallet
+  - 30 symbols cited; 6 sections (merged to pass essentialist ≤7)
+- [x] **T-08: hkask-regulation Explanation** — state diagram of homeostatic loop
+  - 5-phase loop (sense→compare→compute→act→verify) verified against runtime.rs
 - [ ] **T-09: hkask-inference Reference** — class diagram of config + provider routing
 - [ ] **T-10: hkask-inference How-to** — configuring a new provider
 - [ ] **T-11: hkask-templates Reference** — ERD/class of skill manifest schema
