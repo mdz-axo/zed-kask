@@ -5,7 +5,7 @@
 //! and cloud-init for script injection.
 //!
 //! API: https://api.deepinfra.com/v1/containers
-//! Auth: Bearer token (DI_API_KEY)
+//! Auth: Bearer token (DEEPINFRA_API_KEY)
 //! Billing: Per-minute, B200 at $3.69/hr (dedicated GPU, 180GB HBM3e)
 //! GPU configs: 1xB200-180GB, 8xB200-180GB
 //! Note: DeepInfra offers B200 GPUs only (not H100). B200 is NVIDIA Blackwell,

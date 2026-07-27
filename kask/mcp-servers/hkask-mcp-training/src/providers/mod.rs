@@ -55,8 +55,8 @@ pub fn create_host(config: &TrainingHostConfig) -> Result<Box<dyn TrainingHost>,
             })))
         }
         TrainingHostId::DeepInfra => {
-            let api_key = std::env::var("DI_API_KEY")
-                .map_err(|_| ProviderError::Unavailable("DI_API_KEY not configured".to_string()))?;
+            let api_key = std::env::var("DEEPINFRA_API_KEY")
+                .map_err(|_| ProviderError::Unavailable("DEEPINFRA_API_KEY not configured".to_string()))?;
             let gpu_config = std::env::var("DEEPINFRA_GPU_CONFIG")
                 .unwrap_or_else(|_| "1xB200-180GB".to_string());
             let container_image = std::env::var("DEEPINFRA_CONTAINER_IMAGE")
@@ -140,7 +140,7 @@ impl Default for TrainingHostConfig {
         // This matches the auto-detection in lib.rs::run().
         let host = if let Ok(h) = std::env::var("HKASK_TRAINING_HOST") {
             TrainingHostId::from_str(&h).unwrap_or(TrainingHostId::Runpod)
-        } else if std::env::var("DI_API_KEY").is_ok() {
+        } else if std::env::var("DEEPINFRA_API_KEY").is_ok() {
             TrainingHostId::DeepInfra
         } else if std::env::var("NEBIUS_PROJECT_ID").is_ok() {
             TrainingHostId::Nebius

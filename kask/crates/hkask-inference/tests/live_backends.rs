@@ -59,7 +59,7 @@ fn make_config(provider: ProviderId, base_url: &str, api_key: &str) -> Inference
 #[tokio::test]
 #[ignore = "requires DI_API_KEY"]
 async fn deepinfra_summarization() {
-    let api_key = std::env::var("DI_API_KEY").expect("DI_API_KEY must be set");
+    let api_key = std::env::var("DEEPINFRA_API_KEY").expect("DEEPINFRA_API_KEY must be set");
 
     let config = make_config(ProviderId::DeepInfra, "https://api.deepinfra.com", &api_key);
     let router = InferenceRouter::new(config);
@@ -92,7 +92,7 @@ async fn deepinfra_summarization() {
 #[tokio::test]
 #[ignore = "requires TG_API_KEY"]
 async fn together_summarization() {
-    let api_key = std::env::var("TG_API_KEY").expect("TG_API_KEY must be set");
+    let api_key = std::env::var("TOGETHERAI_API_KEY").expect("TOGETHERAI_API_KEY must be set");
 
     let config = make_config(ProviderId::Together, "https://api.together.xyz", &api_key);
     let router = InferenceRouter::new(config);

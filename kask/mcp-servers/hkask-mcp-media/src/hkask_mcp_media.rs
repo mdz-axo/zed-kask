@@ -1377,15 +1377,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         },
         vec![
             hkask_mcp_server::CredentialRequirement::optional(
-                "DI_API_KEY",
+                "DEEPINFRA_API_KEY",
                 "DeepInfra API key for vision LLMs and media generation",
             ),
             hkask_mcp_server::CredentialRequirement::optional(
-                "FA_API_KEY",
+                "FALAI_API_KEY",
                 "fal.ai API key for image/video generation",
             ),
             hkask_mcp_server::CredentialRequirement::optional(
-                "TG_API_KEY",
+                "TOGETHERAI_API_KEY",
                 "Together AI API key for vision LLMs",
             ),
         ],

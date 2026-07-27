@@ -17,7 +17,7 @@ Part of hKask's code intelligence layer. Indexes the current workspace on first 
 | `codegraph_stats` | Get index statistics with optional health and meta breakdown | — |
 | `codegraph_reindex` | Force full re-index of the workspace | — |
 | `codegraph_feedback` | Record which symbols from a context_id were actually used (feedback loop) | — |
-| `codegraph_index_embeddings` | Generate embeddings for all symbols via inference router | `DI_API_KEY` or `OR_API_KEY` |
+| `codegraph_index_embeddings` | Generate embeddings for all symbols via inference router | `DEEPINFRA_API_KEY` or `OPENROUTER_API_KEY` |
 
 ## Context Budgets
 
@@ -42,7 +42,7 @@ Part of hKask's code intelligence layer. Indexes the current workspace on first 
 | Env Variable | Description | Default |
 |-------------|-------------|---------|
 | `HKASK_CODEGRAPH_DB` | SQLite database path for persistent index | In-memory (re-index on each start) |
-| `DI_API_KEY` / `OR_API_KEY` | Inference API key for embedding generation | Embeddings disabled without these |
+| `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY` | Inference API key for embedding generation | Embeddings disabled without these |
 | `HKASK_EMBEDDING_MODEL` | Embedding model for symbol vectorization | `DI/Qwen/Qwen3-Embedding-0.6B` |
 
 ## Request Types
@@ -72,7 +72,7 @@ hkask-mcp-codegraph
 HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-codegraph
 
 # With embedding support
-DI_API_KEY=your-key HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-codegraph
+DEEPINFRA_API_KEY=your-key HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-codegraph
 ```
 
 ## Dependencies

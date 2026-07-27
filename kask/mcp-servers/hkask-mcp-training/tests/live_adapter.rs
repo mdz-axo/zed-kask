@@ -67,14 +67,14 @@ fn require_env(var: &str) -> String {
 #[tokio::test]
 #[ignore = "requires TG_API_KEY, HF_TOKEN, HKASK_LIVE_ADAPTER_REPO, HKASK_LIVE_BASE_MODEL"]
 async fn live_together_adapter_e2e() {
-    let api_key = require_env("TG_API_KEY");
+    let api_key = require_env("TOGETHERAI_API_KEY");
     let hf_repo = require_env("HKASK_LIVE_ADAPTER_REPO");
     let base_model = require_env("HKASK_LIVE_BASE_MODEL");
     let _hf_token = std::env::var("HF_TOKEN").ok();
 
     // SAFETY: test-only — set API key for the Together backend
     unsafe {
-        std::env::set_var("TG_API_KEY", &api_key);
+        std::env::set_var("TOGETHERAI_API_KEY", &api_key);
     }
 
     let driver = SqliteDriver::in_memory_driver();

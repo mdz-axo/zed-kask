@@ -296,7 +296,7 @@ impl TrainingServer {
 /// Run the training MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Host selection: auto-detect from env vars, or use HKASK_TRAINING_HOST.
-    // DeepInfra is preferred when DI_API_KEY is set (B200 at $3.69/hr).
+    // DeepInfra is preferred when DEEPINFRA_API_KEY is set (B200 at $3.69/hr).
     // Nebius is used when NEBIUS_PROJECT_ID is set (H100 at $3.85/hr).
     // Runpod is the fallback when RUNPOD_API_KEY is set (H100 at $2.39/hr).
     // This matches TrainingHostConfig::default() in providers/mod.rs.
@@ -304,7 +304,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         .ok()
         .and_then(|h| TrainingHostId::from_str(&h))
         .unwrap_or_else(|| {
-            if std::env::var("DI_API_KEY").is_ok() {
+            if std::env::var("DEEPINFRA_API_KEY").is_ok() {
                 TrainingHostId::DeepInfra
             } else if std::env::var("NEBIUS_PROJECT_ID").is_ok() {
                 TrainingHostId::Nebius
@@ -454,7 +454,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 "RunPod API key (required only when using RunPod host)",
             ),
             hkask_mcp_server::CredentialRequirement::optional(
-                "DI_API_KEY",
+                "DEEPINFRA_API_KEY",
                 "DeepInfra API key (required when using DeepInfra host)",
             ),
             hkask_mcp_server::CredentialRequirement::optional(

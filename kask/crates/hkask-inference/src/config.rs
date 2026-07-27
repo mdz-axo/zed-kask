@@ -273,21 +273,21 @@ impl InferenceConfig {
         let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
         let kc = ProviderConfig::from_env("KiloCode", "https://api.kilo.ai/api/gateway");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
-        // Cline uses `CLINE_` env vars (not `CL_`) per the documented API key name.
+        // Cline uses the sanitized prefix convention (CLINE_API_KEY).
         let cline_base_url = std::env::var("CLINE_BASE_URL")
             .unwrap_or_else(|_| "https://api.cline.bot/api".to_string());
         let cline_api_key = resolve_api_key("CLINE_API_KEY");
 
         let fal_base_url =
-            std::env::var("FA_BASE_URL").unwrap_or_else(|_| "https://api.fal.ai".to_string());
+            std::env::var("FALAI_BASE_URL").unwrap_or_else(|_| "https://api.fal.ai".to_string());
 
         let fal_media_base_url =
-            std::env::var("FA_MEDIA_BASE_URL").unwrap_or_else(|_| "https://fal.run".to_string());
+            std::env::var("FALAI_MEDIA_BASE_URL").unwrap_or_else(|_| "https://fal.run".to_string());
 
-        let fal_queue_base_url = std::env::var("FA_QUEUE_BASE_URL")
+        let fal_queue_base_url = std::env::var("FALAI_QUEUE_BASE_URL")
             .unwrap_or_else(|_| "https://queue.fal.run".to_string());
 
-        let fal_api_key = resolve_api_key("FA_API_KEY");
+        let fal_api_key = resolve_api_key("FALAI_API_KEY");
 
         let openrouter_max_prompt_price_per_m = env_f64("HKASK_OR_MAX_PRICE", 1.0);
         let openrouter_min_intelligence_index = env_f64("HKASK_OR_MIN_INTELLIGENCE_INDEX", 40.0);
@@ -512,10 +512,16 @@ impl ProviderConfig {
     /// Reads `{prefix}_BASE_URL` (falls back to `default_base_url` if unset)
     /// and `{prefix}_API_KEY` (keychain-first, then env).
     pub fn from_env(prefix: &str, default_base_url: &str) -> Self {
+        // Sanitize the prefix for env var names: uppercase, remove spaces
+        // and dots. e.g. "DeepInfra" → "DEEPINFRA", "Together AI" → "TOGETHERAI",
+        // "fal.ai" → "FALAI", "ollama" → "OLLAMA".
+        // This keeps env var names valid (no spaces/dots) while the provider
+        // ID (used for routing) retains its zed-format display name.
+        let env_prefix = prefix.to_uppercase().replace([' ', '.'], "");
         Self {
-            base_url: std::env::var(format!("{}_BASE_URL", prefix))
+            base_url: std::env::var(format!("{env_prefix}_BASE_URL"))
                 .unwrap_or_else(|_| default_base_url.to_string()),
-            api_key: resolve_api_key(&format!("{}_API_KEY", prefix)),
+            api_key: resolve_api_key(&format!("{env_prefix}_API_KEY")),
         }
     }
 

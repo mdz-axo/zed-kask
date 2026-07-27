@@ -6,7 +6,7 @@
 //!
 //! Applies Otsu binarization to each page image for clean B&W output
 //! optimized for OCR. Optional fal.ai `docres` enhancement available
-//! when `HKASK_USE_FAL_DOCRES=true` and `FA_API_KEY` is set.
+//! when `HKASK_USE_FAL_DOCRES=true` and `FALAI_API_KEY` is set.
 
 use crate::ocr::PipelineError;
 use image::DynamicImage;
@@ -25,7 +25,7 @@ use std::process::Command;
 /// # Preprocessing
 /// Each page image is preprocessed for OCR quality:
 /// - Default: local Otsu binarization (O(w·h), instant, free).
-/// - Optional: fal.ai `docres` when `FA_API_KEY` is set
+/// - Optional: fal.ai `docres` when `FALAI_API_KEY` is set
 ///   (falls back to Otsu on any failure).
 ///
 /// # Dependencies
@@ -239,7 +239,7 @@ pub async fn pdf_to_images_for_pages(
 ///
 /// Default: local Otsu binarization — O(w·h), instant, free.
 /// Optional: fal.ai `docres` when `HKASK_USE_FAL_DOCRES=true` AND
-/// `FA_API_KEY` is set. ~40s latency — opt-in only.
+/// `FALAI_API_KEY` is set. ~40s latency — opt-in only.
 pub(crate) async fn preprocess_via_fal(image: &mut DynamicImage) {
     // Otsu first — always instant
     otsu_binarize(image);
@@ -253,7 +253,7 @@ pub(crate) async fn preprocess_via_fal(image: &mut DynamicImage) {
         return;
     }
 
-    let api_key = std::env::var("FA_API_KEY").unwrap_or_default();
+    let api_key = std::env::var("FALAI_API_KEY").unwrap_or_default();
 
     if api_key.is_empty() {
         tracing::warn!(target: "reg.pipeline.ocr", "HKASK_USE_FAL_DOCRES set but no API key found");
@@ -563,7 +563,7 @@ mod tests {
             .join(".env");
         dotenvy::from_filename(&env_path).ok();
 
-        let api_key = std::env::var("FA_API_KEY").unwrap_or_default();
+        let api_key = std::env::var("FALAI_API_KEY").unwrap_or_default();
 
         if api_key.is_empty() {
             eprintln!("SKIP: no fal.ai API key found");

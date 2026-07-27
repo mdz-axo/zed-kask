@@ -1198,7 +1198,7 @@ fn main() {
                                 kask_settings.fusion.openrouter_max_price,
                                 kask_settings.fusion.openrouter_min_intelligence
                             );
-                            let or_api_key = std::env::var("OR_API_KEY").unwrap_or_default();
+                            let or_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
                             let max_price = kask_settings.fusion.openrouter_max_price;
                             let min_ia = kask_settings.fusion.openrouter_min_intelligence;
                             let discovery_task = {

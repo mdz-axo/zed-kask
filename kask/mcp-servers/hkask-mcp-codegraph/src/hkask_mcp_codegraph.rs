@@ -411,11 +411,11 @@ impl CodeGraphServer {
     /// API (DeepInfra or OpenRouter), and stores the resulting vectors in the
     /// `symbols_vec` sqlite-vec table for semantic similarity search.
     ///
-    /// Requires `DI_API_KEY` or `OR_API_KEY` to be set. Uses
+    /// Requires `DEEPINFRA_API_KEY` or `OPENROUTER_API_KEY` to be set. Uses
     /// `HKASK_EMBEDDING_MODEL` (default: `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and
     /// `HKASK_EMBEDDING_DIM` (default: 1024).
     #[tool(
-        description = "Generate embeddings for all indexed symbols via the embedding API. Requires DI_API_KEY or OR_API_KEY."
+        description = "Generate embeddings for all indexed symbols via the embedding API. Requires DEEPINFRA_API_KEY or OPENROUTER_API_KEY."
     )]
     pub async fn codegraph_index_embeddings(
         &self,
@@ -458,13 +458,13 @@ impl CodeGraphServer {
             let (api_key, base_url, model_id) =
                 if let Some(stripped) = model.strip_prefix("DeepInfra/") {
                     (
-                        std::env::var("DI_API_KEY").unwrap_or_default(),
+                        std::env::var("DEEPINFRA_API_KEY").unwrap_or_default(),
                         "https://api.deepinfra.com/v1/openai".to_string(),
                         stripped.to_string(),
                     )
                 } else if let Some(stripped) = model.strip_prefix("OpenRouter/") {
                     (
-                        std::env::var("OR_API_KEY").unwrap_or_default(),
+                        std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
                         "https://openrouter.ai/api/v1".to_string(),
                         stripped.to_string(),
                     )
@@ -479,9 +479,9 @@ impl CodeGraphServer {
 
             if api_key.is_empty() {
                 let env_var = if model.starts_with("DeepInfra/") {
-                    "DI_API_KEY"
+                    "DEEPINFRA_API_KEY"
                 } else {
-                    "OR_API_KEY"
+                    "OPENROUTER_API_KEY"
                 };
                 return Ok(serde_json::json!({
                     "symbols_embedded": 0,

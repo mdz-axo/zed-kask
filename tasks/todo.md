@@ -76,13 +76,21 @@
     again.
   - File: `crates/settings/src/settings_store.rs:587-593`
 
-- [ ] **T-TEMPLATE-MODEL-DEPRECATION: Deprecate model names in templates, use config-driven defaults**
-  - Templates still hardcode model names (e.g., `DeepInfra/Qwen/Qwen3-Embedding-0.6B`)
-    instead of referencing config defaults (e.g., `{{ embedding_model }}`).
-  - This is a larger architectural change — templates should reference
-    config keys, not specific model strings.
-  - Status: old prefixes updated to zed syntax, but deprecation of hardcoded
-    model names in favor of config-driven defaults is not yet done.
+- [x] **T-TEMPLATE-MODEL-DEPRECATION: Deprecate model names in templates, use config-driven defaults**
+  - Templates now use `{{ embedding_model }}`, `{{ classifier_model }}`, etc.
+    instead of hardcoded model names.
+  - `BridgeManifestExecutor::execute_skill` injects all config-driven model
+    defaults into the template context before execution.
+  - Config defaults live in `model_constants.rs` (env-overridable).
+
+- [x] **T-ENV-STRIP: Strip .env to API keys only, move config to code defaults**
+  - `.env` now contains only API keys and credentials (122 lines).
+  - All non-API-key config (model names, provider defaults, fusion settings,
+    guard limits, cache config, etc.) is built into the code as defaults.
+  - `default_provider` changed from DeepInfra to OpenRouter.
+  - `parse_provider_code` updated to accept zed provider IDs.
+  - Media model defaults added to `model_constants.rs`.
+  - `.env.example` template created for new users (124 lines, all keys empty).
 
 ## Completed Tasks
 
