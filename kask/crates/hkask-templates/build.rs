@@ -51,7 +51,7 @@ fn main() {
         let abs = path.to_str().expect("UTF-8 manifest path");
         code.push_str(&format!("    (\"{name}\", include_str!(\"{abs}\")),\n"));
     }
-    code.push_str("]\n");
+    code.push_str("];\n");
 
     // ── Process manifests (registry/manifests/<skill>.yaml) ──
     let process_manifests_dir = kask_root.join("registry/manifests");
@@ -79,7 +79,7 @@ fn main() {
         let abs = path.to_str().expect("UTF-8 process manifest path");
         code.push_str(&format!("    (\"{name}\", include_str!(\"{abs}\")),\n"));
     }
-    code.push_str("]\n");
+    code.push_str("];\n");
 
     // ── Jinja2 template files (registry/templates/<skill>/*.j2) ──
     // Embedded so `template_ref` resolution works without filesystem access.
@@ -123,7 +123,7 @@ fn main() {
         let abs = path.to_str().expect("UTF-8 template file path");
         code.push_str(&format!("    (\"{key}\", include_str!(\"{abs}\")),\n"));
     }
-    code.push_str("]\n");
+    code.push_str("];\n");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     fs::write(out_dir.join("manifest_skills.rs"), code).expect("write generated file");
