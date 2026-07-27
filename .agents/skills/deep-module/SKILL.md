@@ -54,6 +54,10 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 4. Assess caller benefit: callers genuinely benefit from the abstraction (not pass-through).
 5. Check that depth-improvement recommendations are specific and actionable.
 6. Compute the convergence metric in [0,1]: start at 1.0, subtract for each satisfied check. 0.0 = converged (passes deletion test, ≤7 items, minimal interface); 0.15 = minor depth opportunities remain; 0.50 = significant shallow modules identified but not acted on; 1.00 = no depth analysis performed.
+7. Emit `re_entry_target` as a numeric step ordinal routing the loop to the failing step (1=assess, 2=delete, 3=design). When converged, the executor exits via the threshold check before reading `re_entry_target`.
+8. **Materiality guard**: if iteration ≥ 3 AND metric delta < 0.02 AND no committed changes, force `convergence_metric = 0.0` with blocker `irreducible_depth_gap`. The executor exits because 0.0 ≤ threshold.
+
+The convergence check consumes `primary_result` (assess), `delete_result`, and `design_result` for full-fidelity evaluation. When design is skipped (DELETE/MERGE recommendation), `design_result` is undefined and the convergence check focuses on deletion test and assessment results only.
 
 ## Registry Templates
 
@@ -62,7 +66,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 | `deep-module-assess.j2` | `KnowAct` | Assess module depth: enumerate public interface items, evaluate behavior complexity, compute depth score, classify as Deep/Adequate/Shallow/Very Shallow. Identify interface cost drivers and behavior gaps. |
 | `deep-module-delete.j2` | `KnowAct` | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
 | `deep-module-design.j2` | `KnowAct` | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
-| `deep-module-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for module-depth cycles. Outputs `convergence_metric` in [0,1], where 0 means deletion/surface/depth checks indicate an acceptable deep-module shape. |
+| `deep-module-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for module-depth cycles. Outputs `convergence_metric` in [0,1] and `re_entry_target` (numeric step ordinal for targeted re-entry). Consumes assess, delete, and design results. Includes materiality guard for irreducible gaps. |
 
 ## Fusion Mode
 
@@ -84,6 +88,12 @@ evaluation uses single-model inference.
 - No more than 7 public functions per module. If the design exceeds 7, split the module.
 - One error type per module — map, do not leak, dependency errors. One config struct, validated at construction.
 - Hide everything that callers do not strictly require.
+- Every recommendation carries a `constraint_force` field: `prohibition`, `guardrail`, `guideline`, `evidence`, or `hypothesis`.
+- Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition.
+- If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
+- Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
+- Convergence check emits `re_entry_target` for targeted re-entry (1=assess, 2=delete, 3=design).
+- Materiality guard forces convergence when iteration ≥ 3, delta < 0.02, no committed changes.
 - Jinja2 sandboxed execution: no arbitrary Python code, no file system access, no network calls, no environment variable access when safety mode is enabled.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

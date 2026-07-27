@@ -6,7 +6,7 @@ name: media_apply_style
 version: "1.0.0"
 description: "Apply style transfer to an image"
 primary_model: "fal.ai/flux/dev/image-to-image"
-fallback_model: "DeepInfra/Qwen/Qwen-Image-Edit"
+fallback_model: "{{ vision_model }}"
 parameters:
   - name: image_url
     type: string

@@ -16,6 +16,9 @@
 //! - **choice**: Evaluate a condition against context, branch by setting `_next_ordinal`.
 //! - **loop**: Re-enter the cascade from `loop_target` ordinal (defaults to 0),
 //!   incrementing the iteration counter. Respects matryoshka depth limit (7).
+//!   `loop_target` is a Jinja expression rendered against the current context,
+//!   enabling targeted re-entry: the convergence check can emit a numeric
+//!   `re_entry_target` field that routes the loop to the failing step.
 //! - **abort**: Exit the cascade with a convergence status. Emits `reg.skill.converged`.
 //! - **escalate**: Exit the cascade with an escalation error. Emits `reg.skill.escalated`.
 //!

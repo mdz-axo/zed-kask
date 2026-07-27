@@ -6,7 +6,7 @@ name: media_logo_iterative_refine
 version: "1.0.0"
 description: "Generate logo candidates, critique with vision LLM, refine the best one"
 primary_model: "fal.ai/flux-pro/v1"
-critique_model: "OpenRouter/openai/gpt-4o"
+critique_model: "{{ default_model }}"
 parameters:
   - name: name
     type: string

@@ -231,7 +231,7 @@ pub struct InferenceConfig {
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
-            default_provider: ProviderId::DeepInfra,
+            default_provider: ProviderId::OpenRouter,
             deepinfra_base_url: "https://api.deepinfra.com".to_string(),
             deepinfra_api_key: String::new(),
             fal_base_url: "https://api.fal.ai".to_string(),
@@ -410,18 +410,19 @@ fn resolve_default_provider() -> ProviderId {
 
 /// Parse a provider code string to a ProviderId.
 ///
-/// Accepted values: DI, FA, TG, RP, OR, KC, OM, CL. Anything else (including empty) → DeepInfra.
+/// Accepted values: zed provider IDs (DeepInfra, fal.ai, Together AI, RunPod,
+/// OpenRouter, KiloCode, ollama, Cline). Anything else (including empty) → OpenRouter.
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
-        "DI" => ProviderId::DeepInfra,
-        "FA" => ProviderId::Fal,
-        "TG" => ProviderId::Together,
-        "RP" => ProviderId::Runpod,
-        "OR" => ProviderId::OpenRouter,
-        "KC" => ProviderId::KiloCode,
-        "OM" => ProviderId::Ollama,
-        "CL" => ProviderId::Cline,
-        _ => ProviderId::DeepInfra,
+        "DeepInfra" => ProviderId::DeepInfra,
+        "fal.ai" => ProviderId::Fal,
+        "Together AI" => ProviderId::Together,
+        "RunPod" => ProviderId::Runpod,
+        "OpenRouter" => ProviderId::OpenRouter,
+        "KiloCode" => ProviderId::KiloCode,
+        "ollama" => ProviderId::Ollama,
+        "Cline" => ProviderId::Cline,
+        _ => ProviderId::OpenRouter,
     }
 }
 

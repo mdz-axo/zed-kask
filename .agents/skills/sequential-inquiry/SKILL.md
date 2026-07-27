@@ -34,6 +34,8 @@ Dynamic chain-of-thought reasoning engine with branching, revision, hypothesis t
 9. Emit a delegation request for a thought that needs analysis beyond reasoning alone, strictly limited to `hypothesis-framer`, `mcda`, `diagnose`, or `falsifiability`. Delegate to `falsifiability` when a counterfactual scenario must be explored or a claim's testability must be ruled on (admit), when multiple explanations need hard elimination rather than probabilistic reweighting (use `falsifiability`), or when a causal claim needs do(not X) counterfactual stress-testing.
 10. Limit delegation to one request per distinct analysis need, max 3 requests per cycle.
 11. Incorporate delegation results from the previous cycle and do not re-delegate the same thing.
+12. **Dead-letter handling**: if ALL delegation results are `invoked: false` (no delegate fired), do NOT re-emit the same delegation requests. For each unfilled request, emit a `skill_match_queries` entry instead so the skill-router can find an alternative skill outside the four fixed delegates. Add a thought explaining why the fixed delegates did not match.
+13. Incorporate `prior_skill_match_results` from skill-router dispatches (step 7) the same way as delegation results — reference the matched skill, summarize the insight, and explain how it changes or confirms your thinking.
 
 ### sequential-inquiry-delegate-hypothesis-framer
 
@@ -83,10 +85,15 @@ Dynamic chain-of-thought reasoning engine with branching, revision, hypothesis t
 4. Check for unresolved branches and pending revisions.
 5. Check if confidence is calibrated (`solution_confidence` ≥ 0.7).
 6. Check if the answer is synthesized (clear, specific, actionable).
-7. Check if all delegations are resolved.
-8. Check if delegation results are incorporated (ONLY cycle 2+).
+7. Check per-delegate incorporation (8a–8e): hypothesis-framer, mcda, diagnose, falsifiability, and skill_match results each incorporated if requested. Each criterion carries a `constraint_force` label.
+8. Check if delegation results are incorporated (Guardrail — SKIP on cycle 1; evaluate on cycle 2+).
 9. Check if the chain is stable between iterations (ONLY cycle 2+).
-10. Clamp the convergence metric to [0, 1] and return the decomposition, rationale, and blockers.
+10. **Dead-letter detection**: if the engine emitted N > 0 delegation requests and 0 delegates returned `invoked: true`, do NOT subtract for 8a–8e; add `delegation_dead_letter` to blockers.
+11. **Materiality guard**: if iteration ≥ 3 AND metric delta < 0.02 AND no new delegation requests, force `convergence_metric = 0.0` with blocker `irreducible_inquiry_gap`.
+12. Emit `re_entry_target` (always 1 for this skill — all corrective actions require re-running the engine).
+13. Clamp the convergence metric to [0, 1] and return the decomposition, rationale, blockers, and re_entry_target.
+
+Cycle detection uses `_convergence.iterations_completed` (supplied by the executor). Criteria 8 and 9 are skipped when `iterations_completed < 1` (cycle 1).
 
 ## Registry Templates
 
@@ -97,7 +104,7 @@ Dynamic chain-of-thought reasoning engine with branching, revision, hypothesis t
 | `sequential-inquiry-delegate-mcda.j2` | KnowAct | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff.  |
 | `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
 | `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. Applies the Popper/Platt/Chamberlin/Pearl method: admit → hypothesize → counterfactual → discriminate → eliminate. |
-| `sequential-inquiry-convergence-check.j2` | KnowAct | Convergence gate — evaluates whether the reasoning chain has reached a defensible answer or requires another iteration. |
+| `sequential-inquiry-convergence-check.j2` | KnowAct | Convergence gate — evaluates whether the reasoning chain has reached a defensible answer or requires another iteration. Per-delegate incorporation checks (8a–8e), dead-letter detection, materiality guard, and `re_entry_target` output for targeted re-entry. Consumes `skill_match_results` from skill-router dispatch. |
 
 ## Constraints
 
@@ -107,4 +114,10 @@ Dynamic chain-of-thought reasoning engine with branching, revision, hypothesis t
 - `sequential-inquiry-delegate-diagnose.j2`: Public.
 - `sequential-inquiry-delegate-falsifiability.j2`: Public.
 - `sequential-inquiry-convergence-check.j2`: Public.
+- Per-delegate incorporation criteria (8a–8e) are weighted at −0.024 each (total −0.12, preserving the original single-criterion weight).
+- Dead-letter detection: if all delegates return `invoked: false`, do not subtract 8a–8e; add `delegation_dead_letter` blocker.
+- Materiality guard: force `convergence_metric = 0.0` when iteration ≥ 3, delta < 0.02, no new delegation requests.
+- Cycle-conditional criteria (8, 9) use `_convergence.iterations_completed` to skip on cycle 1.
+- Engine handles dead-letter by shifting to `skill_match_queries` instead of re-emitting failed delegation requests.
+- Skill-router dispatch (step 7) is gated on `step_1_result.skill_match_queries` being non-empty.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

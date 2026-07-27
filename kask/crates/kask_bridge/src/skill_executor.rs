@@ -83,8 +83,91 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
     async fn execute_skill(
         &self,
         skill_name: &str,
-        context: HashMap<String, Value>,
+        mut context: HashMap<String, Value>,
     ) -> Result<String, String> {
+        // Inject config-driven model defaults into the template context so
+        // templates can reference {{ embedding_model }}, {{ classifier_model }},
+        // etc. instead of hardcoding model names. This is the single point
+        // where config flows into templates — templates should NEVER
+        // hardcode model names.
+        //
+        // Values come from (in priority order):
+        // 1. KaskSettings (settings.json "kask" section) — if non-empty
+        // 2. HKASK_* env vars (.env file) — via model_constants functions
+        // 3. Compile-time defaults in model_constants.rs
+        if !context.contains_key("embedding_model") {
+            context.insert(
+                "embedding_model".into(),
+                Value::String(hkask_inference::model_constants::embedding_model()),
+            );
+        }
+        if !context.contains_key("classifier_model") {
+            context.insert(
+                "classifier_model".into(),
+                Value::String(hkask_inference::model_constants::classifier_model()),
+            );
+        }
+        if !context.contains_key("ocr_model") {
+            context.insert(
+                "ocr_model".into(),
+                Value::String(hkask_inference::model_constants::ocr_model()),
+            );
+        }
+        if !context.contains_key("default_model") {
+            context.insert(
+                "default_model".into(),
+                Value::String(std::env::var("HKASK_DEFAULT_MODEL").unwrap_or_else(|_| {
+                    hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL.to_string()
+                })),
+            );
+        }
+        if !context.contains_key("qa_model") {
+            context.insert(
+                "qa_model".into(),
+                Value::String(std::env::var("HKASK_QA_MODEL").unwrap_or_else(|_| {
+                    hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL.to_string()
+                })),
+            );
+        }
+        // Media models from env vars (KaskSettings.media.* mirrors these)
+        if !context.contains_key("tts_model") {
+            context.insert(
+                "tts_model".into(),
+                Value::String(std::env::var("HKASK_MEDIA_TTS_MODEL").unwrap_or_default()),
+            );
+        }
+        if !context.contains_key("stt_model") {
+            context.insert(
+                "stt_model".into(),
+                Value::String(std::env::var("HKASK_MEDIA_STT_MODEL").unwrap_or_default()),
+            );
+        }
+        if !context.contains_key("vision_model") {
+            context.insert(
+                "vision_model".into(),
+                Value::String(std::env::var("HKASK_MEDIA_VISION_MODEL").unwrap_or_default()),
+            );
+        }
+        if !context.contains_key("image_gen_model") {
+            context.insert(
+                "image_gen_model".into(),
+                Value::String(std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").unwrap_or_default()),
+            );
+        }
+        // Fusion models from env vars
+        if !context.contains_key("judge_model") {
+            context.insert(
+                "judge_model".into(),
+                Value::String(
+                    std::env::var("HKASK_FUSION_JUDGE_MODEL")
+                        .unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2".to_string()),
+                ),
+            );
+        }
+        if !context.contains_key("panel_models") {
+            context.insert("panel_models".into(), Value::String(std::env::var("HKASK_FUSION_PANEL_MODELS").unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2,OpenRouter/qwen/qwen3-235b-a22b,OpenRouter/minimax/minimax3".to_string())));
+        }
+
         let manifest_path = self.manifest_path(skill_name);
 
         let manifest = load_manifest_from_file(&manifest_path).map_err(|e| {

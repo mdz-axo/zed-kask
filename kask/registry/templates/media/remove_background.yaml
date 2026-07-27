@@ -5,7 +5,7 @@ template_type: FlowDef
 name: media_remove_background
 version: "1.0.0"
 description: "Remove background from an image"
-primary_model: "DeepInfra/Bria/remove_background"
+primary_model: "{{ vision_model }}"
 fallback_model: "fal.ai/birefnet"
 parameters:
   - name: image_url

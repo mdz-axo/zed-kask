@@ -18,7 +18,7 @@ author: hemingway
 
 # ── Embedding Model Configuration ──────────────────────────────────────────────
 embedding:
-  model: "DeepInfra/Qwen/Qwen3-Embedding-0.6B"
+  model: "{{ embedding_model }}"
   dim: 1024
   batch_size: 64
 
