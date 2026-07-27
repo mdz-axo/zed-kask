@@ -350,22 +350,97 @@ impl ServiceConfig {
     ///
     /// pre:  when `db_provider == Postgres`, `HKASK_DATABASE_URL` must be set.
     /// post: returns a connected driver with schema initialized.
-    pub fn open_driver(&self) -> Result<std::sync::Arc<dyn hkask_storage::DatabaseDriver>, String> {
+    pub fn open_driver(
+        &self,
+    ) -> Result<std::sync::Arc<dyn hkask_storage::DatabaseDriver>, ServiceError> {
         match self.db_provider {
             DbProvider::Sqlite => {
-                let db = hkask_storage::open_database(&self.db_path, &self.db_passphrase)
-                    .map_err(|e| e.to_string())?;
-                let pool = db.sqlite_pool().map_err(|e| e.to_string())?;
+                let db = hkask_storage::open_database(&self.db_path, &self.db_passphrase).map_err(
+                    |e| ServiceError::Domain {
+                        kind: ErrorKind::ServiceUnavailable,
+                        domain: DomainKind::Storage,
+                        message: e.to_string(),
+                        source: Some(Box::new(e)),
+                    },
+                )?;
+                let pool = db.sqlite_pool().map_err(|e| ServiceError::Domain {
+                    kind: ErrorKind::ServiceUnavailable,
+                    domain: DomainKind::Storage,
+                    message: e.to_string(),
+                    source: Some(Box::new(e)),
+                })?;
                 Ok(std::sync::Arc::new(
                     hkask_storage::database::sqlite::SqliteDriver::new(pool),
                 ))
             }
             DbProvider::Postgres => {
-                let url = std::env::var("HKASK_DATABASE_URL").map_err(|_| {
-                    "HKASK_DB_PROVIDER=postgres requires HKASK_DATABASE_URL to be set".to_string()
-                })?;
-                hkask_storage::open_postgres(&url).map_err(|e| e.to_string())
+                let url =
+                    std::env::var("HKASK_DATABASE_URL").map_err(|_| ServiceError::Domain {
+                        kind: ErrorKind::BadRequest,
+                        domain: DomainKind::Storage,
+                        message: "HKASK_DB_PROVIDER=postgres requires HKASK_DATABASE_URL to be set"
+                            .to_string(),
+                        source: None,
+                    })?;
+                hkask_storage::open_postgres(&url).map_err(|e| ServiceError::Domain {
+                    kind: ErrorKind::ServiceUnavailable,
+                    domain: DomainKind::Storage,
+                    message: e.to_string(),
+                    source: Some(Box::new(e)),
+                })
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::{DomainKind, ErrorKind, ServiceError};
+
+    fn sqlite_config(path: &str) -> ServiceConfig {
+        let mut config = ServiceConfig::from_secrets(
+            "test-a2a-secret".to_string(),
+            "test-db-passphrase".to_string(),
+            TEST_USER_NAME.to_string(),
+        );
+        config.db_path = path.to_string();
+        config.db_provider = DbProvider::Sqlite;
+        config
+    }
+
+    /// Sqlite open failure must surface as `ServiceError::Domain` over
+    /// `DomainKind::Storage`, preserving the `DatabaseError` source chain
+    /// so callers can inspect the specific failure mode.
+    #[test]
+    fn open_driver_sqlite_error_is_typed_storage_domain() {
+        // A path under a non-existent directory fails at open time.
+        let config = sqlite_config("/nonexistent-dir/should-fail.db");
+        let err = match config.open_driver() {
+            Ok(_) => panic!("expected open_driver to fail on a non-existent path"),
+            Err(e) => e,
+        };
+
+        match err {
+            ServiceError::Domain {
+                kind,
+                domain,
+                source,
+                ..
+            } => {
+                assert_eq!(domain, DomainKind::Storage);
+                assert_eq!(kind, ErrorKind::ServiceUnavailable);
+                // The source chain must carry the underlying DatabaseError.
+                let source = source.expect("source chain must preserve DatabaseError");
+                let db_err = source
+                    .downcast_ref::<hkask_storage::DatabaseError>()
+                    .expect("source must be a DatabaseError");
+                assert!(
+                    !db_err.to_string().is_empty(),
+                    "source DatabaseError must carry a message, got: {db_err}"
+                );
+            }
+            other => panic!("expected ServiceError::Domain, got {other:?}"),
         }
     }
 }

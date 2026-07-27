@@ -1323,4 +1323,122 @@ mod tests {
             serde_json::json!("accepted")
         );
     }
+
+    // ── LedgerSink / publish_event ──────────────────────────────────────
+    //
+    // The composition root wires emitters (MCP runtime, CyberneticsLoop) to a
+    // RegulationSink. Replacing NoopEventSink with LedgerSink is what makes
+    // emitted spans observable. These tests pin the contract: a persisted
+    // record reaches subscribers whose interest mask matches, and does not
+    // reach subscribers whose mask does not.
+
+    /// A minimal `LedgerObserver` that records every event it receives, for
+    /// asserting on the broadcast behaviour of `publish_event` / `LedgerSink`.
+    struct CapturingObserver {
+        interest: Vec<SpanNamespace>,
+        seen: std::sync::Mutex<Vec<RegulationRecord>>,
+    }
+
+    impl CapturingObserver {
+        fn new(interest: Vec<SpanNamespace>) -> Self {
+            Self {
+                interest,
+                seen: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn seen_count(&self) -> usize {
+            self.seen.lock().unwrap().len()
+        }
+    }
+
+    use hkask_types::event::{CyclePhase, Span};
+
+    #[async_trait::async_trait]
+    impl LedgerObserver for CapturingObserver {
+        fn interest_mask(&self) -> Vec<SpanNamespace> {
+            self.interest.clone()
+        }
+
+        async fn on_event(&self, event: &RegulationRecord) {
+            self.seen.lock().unwrap().push(event.clone());
+        }
+
+        async fn on_depletion(&self, _signal: &DepletionSignal) {}
+        async fn on_backpressure(&self, _signal: &BackpressureSignal) {}
+    }
+
+    #[tokio::test]
+    async fn publish_event_broadcasts_to_matching_subscribers_only() {
+        let ledger = RegulationLedger::default();
+        let tool_ns = SpanNamespace::new("reg.tool").unwrap();
+        let memory_ns = SpanNamespace::new("reg.memory").unwrap();
+
+        let tool_observer = Arc::new(CapturingObserver::new(vec![tool_ns.clone()]));
+        let memory_observer = Arc::new(CapturingObserver::new(vec![memory_ns.clone()]));
+        ledger
+            .subscribe_async(Arc::clone(&tool_observer) as Arc<dyn LedgerObserver>)
+            .await;
+        ledger
+            .subscribe_async(Arc::clone(&memory_observer) as Arc<dyn LedgerObserver>)
+            .await;
+
+        // A reg.tool event must reach the tool observer and not the memory observer.
+        let tool_event = RegulationRecord::new(
+            WebID::from_persona(b"test"),
+            Span::new(tool_ns.clone(), "invoked"),
+            CyclePhase::Act,
+            serde_json::json!({"tool": "search"}),
+            0,
+        );
+        ledger.publish_event(tool_event).await;
+        assert_eq!(
+            tool_observer.seen_count(),
+            1,
+            "tool observer should receive its matched event"
+        );
+        assert_eq!(
+            memory_observer.seen_count(),
+            0,
+            "memory observer should not receive unmatched events"
+        );
+    }
+
+    #[tokio::test]
+    async fn ledger_sink_forwards_persisted_events_to_subscribers() {
+        // LedgerSink::persist spawns the broadcast on the current tokio handle,
+        // so this test must run inside a multi-thread runtime (the default for
+        // #[tokio::test]).
+        let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+        let tool_ns = SpanNamespace::new("reg.tool").unwrap();
+        let observer = Arc::new(CapturingObserver::new(vec![tool_ns.clone()]));
+        ledger
+            .read()
+            .await
+            .subscribe_async(Arc::clone(&observer) as Arc<dyn LedgerObserver>)
+            .await;
+
+        let sink = LedgerSink::new(ledger.clone());
+        let event = RegulationRecord::new(
+            WebID::from_persona(b"test"),
+            Span::new(tool_ns, "invoked"),
+            CyclePhase::Act,
+            serde_json::json!({"tool": "search"}),
+            0,
+        );
+        sink.persist(&event).expect("persist should be infallible");
+
+        // The broadcast is spawned fire-and-forget; yield to let it run.
+        for _ in 0..50 {
+            if observer.seen_count() > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            observer.seen_count(),
+            1,
+            "LedgerSink must forward persisted events to subscribers"
+        );
+    }
 }

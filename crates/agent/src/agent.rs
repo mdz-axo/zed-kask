@@ -4663,9 +4663,14 @@ mod internal_tests {
 
     #[test]
     fn test_select_catalog_skills_emits_issue_for_dropped_skills() {
-        // Each skill's name + description occupies ~10KB. With a 50KB
-        // budget, only the first ~5 visible skills fit; the rest must
-        // appear as loading issues so the UI can surface them.
+        // zed-kask: The catalog budget is disabled. In upstream zed, skill
+        // descriptions are injected into the system prompt, so a 50KB budget
+        // prevents token bloat. In zed-kask, skills execute via YAML manifests —
+        // the catalog is discovery-only (name + description + location). All
+        // skills are kept in the catalog so the model can discover and invoke
+        // any skill via the skill tool. This test pins that contract: even when
+        // the total description size far exceeds the upstream budget, every
+        // visible skill is kept and no budget issue is emitted.
         let description = "x".repeat(10 * 1024);
         let mut skills = Vec::new();
         let total = 10;
@@ -4685,65 +4690,26 @@ mod internal_tests {
 
         let (kept, issues) = select_catalog_skills(&skills);
 
-        assert!(
-            kept.len() < skills.len(),
-            "some skills should be dropped due to the budget (kept {} of {})",
+        assert_eq!(
+            kept.len(),
+            skills.len(),
+            "zed-kask keeps all visible skills regardless of total description size (kept {} of {})",
             kept.len(),
             skills.len(),
         );
-        assert_eq!(
-            issues.len(),
-            1,
-            "all dropped skills should be consolidated into a single issue, got {issues:?}",
-        );
-
-        let kept_size: usize = kept
-            .iter()
-            .map(|s| s.name.len() + s.description.len())
-            .sum();
         assert!(
-            kept_size <= MAX_SKILL_DESCRIPTIONS_SIZE,
-            "kept skills must fit in the budget (got {kept_size} bytes)",
+            issues.is_empty(),
+            "zed-kask disables the catalog budget; no issues should be emitted, got {issues:?}",
         );
-
-        let issue = &issues[0];
-        assert_eq!(issue.kind, SkillLoadingIssueKind::CatalogBudgetExceeded);
-        assert!(
-            issue.message.contains("50KB") && issue.message.contains("budget"),
-            "issue message {:?} should describe the budget",
-            issue.message,
-        );
-        assert_eq!(
-            issue.path,
-            skills[kept.len()].skill_file_path,
-            "issue path should match the first dropped skill",
-        );
-
-        for dropped_skill in &skills[kept.len()..total] {
-            let name = &dropped_skill.name;
-            assert!(
-                issue.message.contains(name.as_str()),
-                "issue message {:?} should mention the dropped skill name {name:?}",
-                issue.message,
-            );
-            let bullet_line = format!("- {name}");
-            assert!(
-                issue
-                    .message
-                    .lines()
-                    .any(|line| line.starts_with(&bullet_line)),
-                "issue message {:?} should contain a bullet line starting with {bullet_line:?}",
-                issue.message,
-            );
-        }
     }
 
     #[test]
     fn test_select_catalog_skills_stops_packing_after_first_overflow() {
-        // Once a model-invocable skill overflows the budget, no later
-        // skills should be admitted, even if they're small enough to fit
-        // in the remaining sliver. This keeps the cutoff deterministic by
-        // sort order rather than dependent on individual skill sizes.
+        // zed-kask: The catalog budget is disabled, so there is no overflow
+        // cutoff. All visible skills are kept regardless of order or size —
+        // the catalog is discovery-only. This test pins that contract: even
+        // when a skill's description exceeds the upstream budget, every
+        // visible skill is kept and no budget issue is emitted.
         let half_description = "a".repeat(MAX_SKILL_DESCRIPTIONS_SIZE / 2);
         let big_description = "b".repeat(MAX_SKILL_DESCRIPTIONS_SIZE);
         let small_description = "c".repeat(100);
@@ -4779,41 +4745,22 @@ mod internal_tests {
             embedded_body: None,
         };
 
-        // Sanity-check the test setup: the third skill is small enough
-        // that a greedy packer would have squeezed it in alongside the
-        // first one.
-        let leftover_after_first =
-            MAX_SKILL_DESCRIPTIONS_SIZE - (first.name.len() + first.description.len());
-        assert!(
-            third.name.len() + third.description.len() <= leftover_after_first,
-            "third skill must fit in the leftover sliver for this test to be meaningful",
-        );
-
         let skills = vec![first.clone(), second.clone(), third.clone()];
         let (kept, issues) = select_catalog_skills(&skills);
 
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(kept_names, vec![first.name.as_str()]);
-
-        assert_eq!(issues.len(), 1, "expected a single consolidated issue");
-        assert_eq!(issues[0].kind, SkillLoadingIssueKind::CatalogBudgetExceeded);
-        assert_eq!(issues[0].path, second.skill_file_path);
-        assert!(
-            issues[0].message.contains(second.name.as_str()),
-            "issue message {:?} should mention {:?}",
-            issues[0].message,
-            second.name,
+        assert_eq!(
+            kept_names,
+            vec![
+                first.name.as_str(),
+                second.name.as_str(),
+                third.name.as_str()
+            ],
+            "zed-kask keeps all visible skills regardless of size or order"
         );
         assert!(
-            issues[0].message.contains(third.name.as_str()),
-            "issue message {:?} should mention {:?}",
-            issues[0].message,
-            third.name,
-        );
-        assert!(
-            issues[0].message.contains("- "),
-            "issue message {:?} should use bullet form when multiple skills are dropped",
-            issues[0].message,
+            issues.is_empty(),
+            "zed-kask disables the catalog budget; no issues should be emitted, got {issues:?}",
         );
     }
 
@@ -5066,14 +5013,17 @@ mod internal_tests {
                 "long-description skill should remain in the model catalog: {catalog_names:?}"
             );
 
+            // zed-kask: Description length warnings are disabled. SKILL.md
+            // files are reference-only — their descriptions appear in the
+            // discovery catalog but are never injected into prompts. A long
+            // description loads cleanly with no warning issue.
             assert!(
-                state.skill_loading_issues.iter().any(|issue| {
-                    issue.kind == SkillLoadingIssueKind::DescriptionTooLong
-                        && issue.path == skill_path
-                        && issue.message.to_string().contains("1024-byte limit")
-                }),
-                "expected a description-length warning issue, got {:?}",
-                state.skill_loading_issues
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .all(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong),
+                "zed-kask disables description-length warnings; got {:?}",
+                state.skill_loading_issues,
             );
 
             (*user[0]).clone()
@@ -5088,18 +5038,15 @@ mod internal_tests {
                 .expect("long-description should appear in available skills");
             assert_eq!(available_skill.description, long_description);
             assert!(
-                available_skill
-                    .warning
-                    .as_ref()
-                    .is_some_and(|warning| warning.contains("1024-byte limit")),
-                "available skill should expose warning text, got {:?}",
+                available_skill.warning.is_none(),
+                "zed-kask disables description-length warnings; available skill should carry no warning, got {:?}",
                 available_skill.warning
             );
         });
 
         let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
             .await
-            .expect("body should load despite description-length warning");
+            .expect("body should load cleanly");
         assert_eq!(body, "body");
     }
 

@@ -299,7 +299,7 @@ pub struct KaskCorpusSettings {
     #[serde(default = "default_embedding_dim")]
     pub embedding_dim: u32,
 
-    /// Embedding model override. When empty, defers to the kask router default
+    /// Embedding model. Defaults to the kask router constant
     /// (`hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL`).
     #[serde(default = "default_embedding_model")]
     pub embedding_model: String,

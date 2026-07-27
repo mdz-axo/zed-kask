@@ -4962,12 +4962,23 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             is_native: true,
             models: native_models.clone(),
         });
-        agents.push(agent::AvailableAgent {
-            id: agent::CURATOR_AGENT_ID.to_string(),
-            name: Agent::Curator.label(),
-            is_native: true,
-            models: native_models,
-        });
+        // The Curator is a native in-process agent, but collaboration
+        // workspaces clamp every `create_thread` request to `NativeAgent`
+        // (see `create_thread_with_options`). Advertising Curator to a
+        // sibling model in collab would let it request an agent it cannot
+        // get — the response would truthfully report `NativeAgent` (post-
+        // clamp), but the model wasted a round-trip on a capability the
+        // workspace doesn't offer. Gate the advertisement on `!is_via_collab`
+        // so the catalog only lists agents the workspace can actually back.
+        let is_via_collab = panel.read(cx).project.read(cx).is_via_collab();
+        if !is_via_collab {
+            agents.push(agent::AvailableAgent {
+                id: agent::CURATOR_AGENT_ID.to_string(),
+                name: Agent::Curator.label(),
+                is_native: true,
+                models: native_models,
+            });
+        }
 
         let project = panel.read(cx).project.clone();
         let agent_server_store = project.read(cx).agent_server_store().clone();

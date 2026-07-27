@@ -1377,6 +1377,13 @@ Content.
 
     #[test]
     fn test_parse_description_too_long_loads_with_warning() {
+        // zed-kask: Description length warnings are disabled. SKILL.md files
+        // are reference-only — their descriptions appear in the discovery
+        // catalog but are never injected into prompts. Skills execute via
+        // YAML manifests in the kask registry, so description length has no
+        // token-cost impact. A long description now loads cleanly with no
+        // warning; this test pins that contract so the disabled warning
+        // can't silently regress.
         let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
             r#"---
@@ -1393,16 +1400,13 @@ Content.
             &content,
             SkillSource::Global,
         )
-        .expect("long descriptions should load with a warning");
+        .expect("long descriptions should load without a warning");
 
         assert_eq!(skill.description, long_desc);
-        assert_eq!(skill.load_warnings.len(), 1);
-        assert_eq!(
-            skill.load_warnings[0],
-            SkillLoadWarning::DescriptionTooLong {
-                actual_len: MAX_SKILL_DESCRIPTION_LEN + 1,
-                max_len: MAX_SKILL_DESCRIPTION_LEN,
-            }
+        assert!(
+            skill.load_warnings.is_empty(),
+            "zed-kask disables description-length warnings; got {:?}",
+            skill.load_warnings,
         );
     }
 

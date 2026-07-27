@@ -39,7 +39,8 @@ pub use energy::{AgentGasStatus, DEFAULT_GAS_ALERT_THRESHOLD, GasBudget, GasCost
 pub use energy_budget_management::GasBudgetManager;
 pub use energy_estimator::EnergyEstimator;
 pub use metacognition::{
-    EscalationAlert, EscalationTrigger, HealthSnapshot, MetacognitionConfig, MetacognitionLoop,
+    AlertEvent, AlertSink, EscalationAlert, EscalationTrigger, HealthSnapshot, MetacognitionConfig,
+    MetacognitionLoop,
 };
 
 pub use hkask_types::regulation::QueueDepth;

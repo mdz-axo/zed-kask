@@ -656,9 +656,19 @@ fn main() {
         // A clone of the ledger is hoisted for the kask panel's regulation
         // status bar (wired later in the `if let Some(configured)` block).
         let panel_regulation_ledger = regulation_ledger.clone();
+        // The alert sink forwards critical alerts to a GPUI foreground task
+        // that dispatches them as toasts, so the user is notified even when
+        // the Kask panel is closed. The channel bridges the background tokio
+        // task (metacognition loop) to the single-threaded GPUI foreground —
+        // `AsyncApp` is not `Send`, so the sink holds only the `Sender`.
+        let (alert_sink_tx, alert_sink_rx) =
+            tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
+        spawn_alert_toast_drainer(alert_sink_rx, cx);
+        let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger)
-                .with_alert_receiver(alert_rx),
+                .with_alert_receiver(alert_rx)
+                .with_alert_sink(alert_sink),
         );
         let metacog_loop = metacognition_loop.clone();
         gpui_tokio::Tokio::spawn(cx, async move {
@@ -683,9 +693,25 @@ fn main() {
         //
         // Hoisted out of the block below so it's in scope for the model-dependent
         // wiring block after language_models::init().
+        //
+        // When the secret cannot be resolved (no env var, no keychain entry),
+        // `unwrap_or_default()` produces an empty Vec. Downstream OCAP token
+        // minting then falls back to a zeroed Ed25519 key (warned per-invocation
+        // in `PanelToolInvoker::invoke_tool`), which means every tool
+        // invocation's signature is publicly predictable. Surface this at
+        // startup so the operator can set `HKASK_A2A_SECRET` before relying on
+        // governed tool invocation — the per-invocation warning is too late.
         let a2a_secret = hkask_keystore::keychain::resolve_a2a_secret()
             .map(|s| s.to_vec())
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "hKask a2a_secret not resolved ({}). OCAP delegation tokens will be \
+                     signed with a zeroed key — set HKASK_A2A_SECRET or store the secret \
+                     in the OS keychain before relying on governed tool invocation.",
+                    e
+                );
+                Vec::new()
+            });
 
         {
             // D6 (early): Install a logging memory port now so the global hook
@@ -1404,7 +1430,12 @@ fn main() {
                 kask_panel::set_regulation_status(Some(panel_status));
                 log::info!("Kask panel tool invoker + scoped inference + regulation status wired");
             } else {
-                log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skills will use body injection");
+                // Body injection is disabled in zed-kask: with no manifest
+                // executor wired, the `skill` tool returns the no-op envelope
+                // ("Skill manifest executor not configured..."). The log
+                // message must match the actual fallback so operators reading
+                // it are not misled.
+                log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skill invocations will return the no-op envelope");
             }
         }
 
@@ -1801,6 +1832,91 @@ impl kask_panel::RegulationStatus for PanelRegulationStatus {
             }
         })
     }
+}
+
+/// Adapter implementing `hkask_regulation::AlertSink` by forwarding critical
+/// regulation alerts to a GPUI foreground task that dispatches them as toasts.
+///
+/// The metacognition loop calls `on_alert` from a background tokio task when a
+/// critical threshold is breached (well exhaustion, variety deficit, low
+/// effectiveness). `AsyncApp` is not `Send` (GPUI is single-threaded), so the
+/// sink holds a `tokio::sync::mpsc::UnboundedSender` (which is `Send + Sync`)
+/// and a GPUI foreground task drains the receiver and dispatches toasts. This
+/// closes the algedonic escalation path from S1 (sensor) to S5 (user-facing
+/// policy) so the user is notified even when the Kask panel is closed.
+///
+/// Toast delivery is best-effort: if no window is open (headless, startup),
+/// the toast is silently dropped and the alert remains in the logs + ledger.
+struct ToastAlertSink {
+    tx: tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>,
+}
+
+impl ToastAlertSink {
+    fn new(tx: tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>) -> Self {
+        Self { tx }
+    }
+}
+
+impl hkask_regulation::AlertSink for ToastAlertSink {
+    fn on_alert(&self, event: &hkask_regulation::AlertEvent) {
+        // Only critical alerts warrant a toast — warnings are surfaced via
+        // the Kask panel status bar and the `curator_status` tool.
+        if !event.critical {
+            return;
+        }
+        // `try_send` is non-blocking; if the channel is full or the receiver
+        // was dropped (app shutting down), the alert is logged and swallowed —
+        // alert delivery is best-effort, never a correctness path.
+        if let Err(e) = self.tx.send(event.clone()) {
+            log::warn!(
+                "hKask critical alert dropped (toast channel closed/full): {e} — alert: {}",
+                event.message
+            );
+        }
+    }
+}
+
+struct KaskCriticalAlertToast;
+
+/// Spawn a GPUI foreground task that drains the alert receiver and dispatches
+/// a toast for each critical alert. Returns when the sender is dropped (app
+/// shutdown). Must be called from the GPUI foreground thread.
+fn spawn_alert_toast_drainer(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<hkask_regulation::AlertEvent>,
+    cx: &mut gpui::App,
+) {
+    cx.spawn(async move |cx| {
+        while let Some(event) = rx.recv().await {
+            // Only critical alerts reach this point (the sink filters), but
+            // double-check in case the sender contract changes.
+            if !event.critical {
+                continue;
+            }
+            let message = event.message.clone();
+            cx.update(|cx| {
+                // Find any active MultiWorkspace and show the toast on its
+                // inner workspace. If no window is open, the toast is dropped —
+                // the alert still lives in the logs and the regulation ledger.
+                if let Some(window) = cx.active_window()
+                    && let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
+                {
+                    let _ = multi_workspace.update(cx, |multi_workspace, _, cx| {
+                        let workspace = multi_workspace.workspace();
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<KaskCriticalAlertToast>(),
+                                    format!("hKask regulation alert: {message}"),
+                                ),
+                                cx,
+                            );
+                        });
+                    });
+                }
+            });
+        }
+    })
+    .detach();
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {

@@ -114,10 +114,19 @@ impl AgentTool for CuratorStatusTool {
                         .and_then(|v| v.as_u64())
                         .map(|v| v as usize);
                     let deficit = snapshot.get("variety_deficit").and_then(|v| v.as_u64());
+                    // The metacognition loop's `compare` phase produces
+                    // `EscalationAlert`s when a threshold is breached; the
+                    // count is threaded through `HealthSnapshot` →
+                    // `BridgeMetacognitionProvider` → here. Zero means no
+                    // threshold was breached in the most recent cycle.
+                    let escalation_count = snapshot
+                        .get("escalation_count")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize);
                     return Ok(CuratorStatusOutput {
                         status: "ok".to_string(),
                         regulation_effectiveness: effectiveness,
-                        escalation_count: None, // escalations not tracked yet — no escalation queue wired
+                        escalation_count,
                         critical_alerts: critical,
                         variety_counters: if input.include_variety {
                             deficit.map(|d| vec![("overall".to_string(), d)])

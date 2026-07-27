@@ -50,6 +50,39 @@ const DEFAULT_CRITICAL_ALERT_THRESHOLD: usize = 3;
 /// Default regulation effectiveness floor (below → self-calibrate).
 const DEFAULT_EFFECTIVENESS_FLOOR: f64 = 0.5;
 
+/// A user-facing alert event forwarded by the metacognition loop.
+///
+/// The metacognition loop produces `EscalationAlert`s in its `compare`
+/// phase and receives `RuntimeAlert`s from the `CyberneticsLoop`. Both are
+/// collapsed into this minimal struct before being forwarded to an
+/// `AlertSink`, so the sink implementation (e.g. a GPUI toast dispatcher)
+/// doesn't depend on either internal type.
+#[derive(Debug, Clone)]
+pub struct AlertEvent {
+    /// Short human-readable summary, suitable for a toast title.
+    pub message: String,
+    /// `true` for `Critical` severity, `false` for `Warning`/`Info`.
+    /// The sink decides whether to surface non-critical alerts; the
+    /// metacognition loop forwards every alert but only critical ones
+    /// require user action.
+    pub critical: bool,
+}
+
+/// Sink for user-facing alert events.
+///
+/// Implemented by the composition root to bridge metacognition-loop alerts
+/// to a UI notification surface (e.g. a GPUI toast). The sink is called from
+/// a background tokio task; implementations must be `Send + Sync` and must not
+/// block on GPUI foreground state — they should dispatch onto the GPUI
+/// foreground executor and return promptly.
+pub trait AlertSink: Send + Sync {
+    /// Forward an alert event to the user-facing surface.
+    ///
+    /// Errors are logged by the caller and never propagated — alert delivery
+    /// is best-effort, never a correctness path.
+    fn on_alert(&self, event: &AlertEvent);
+}
+
 /// A health snapshot captured by the metacognition loop.
 #[derive(Debug, Clone)]
 pub struct HealthSnapshot {
@@ -59,6 +92,10 @@ pub struct HealthSnapshot {
     pub variety_deficit: u64,
     pub critical_alerts: usize,
     pub regulation_effectiveness: f64,
+    /// Number of escalation alerts produced by the most recent `compare`
+    /// phase. Zero means no threshold was breached; a positive count means
+    /// the Curator should self-calibrate or surface the breach to the user.
+    pub escalation_count: usize,
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -119,6 +156,12 @@ pub struct MetacognitionLoop {
     /// manager detects variety deficits. The metacognition loop logs and
     /// forwards these to the user via the `curator_status` tool.
     alert_rx: Option<tokio::sync::Mutex<mpsc::UnboundedReceiver<CurationInput>>>,
+    /// Optional user-facing alert sink. When set, critical alerts produced
+    /// by `compare` and forwarded by the `CyberneticsLoop` are dispatched to
+    /// this sink so the composition root can surface them as a UI
+    /// notification (e.g. a toast). Best-effort: errors are logged and
+    /// swallowed.
+    alert_sink: Option<Arc<dyn AlertSink>>,
 }
 
 impl MetacognitionLoop {
@@ -137,6 +180,7 @@ impl MetacognitionLoop {
             config,
             last_snapshot: RwLock::new(None),
             alert_rx: None,
+            alert_sink: None,
         }
     }
 
@@ -151,6 +195,15 @@ impl MetacognitionLoop {
     /// `curator_status` tool → user adjusts → CyberneticsLoop re-senses.
     pub fn with_alert_receiver(mut self, rx: mpsc::UnboundedReceiver<CurationInput>) -> Self {
         self.alert_rx = Some(tokio::sync::Mutex::new(rx));
+        self
+    }
+
+    /// Wire a user-facing alert sink. Critical alerts produced by `compare`
+    /// and forwarded by the `CyberneticsLoop` are dispatched to this sink so
+    /// the composition root can surface them as a UI notification.
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_alert_sink(mut self, sink: Arc<dyn AlertSink>) -> Self {
+        self.alert_sink = Some(sink);
         self
     }
 
@@ -176,17 +229,20 @@ impl MetacognitionLoop {
         let regulation_health = ledger.regulation_health().await;
         drop(ledger); // release the read lock before acting
 
-        let snapshot = HealthSnapshot {
+        let mut snapshot = HealthSnapshot {
             timestamp: chrono::Utc::now(),
             variety_deficit: ledger_health.overall_deficit,
             critical_alerts: ledger_health.critical_count,
             regulation_effectiveness: regulation_health.effectiveness(),
             ledger_health,
             regulation_health,
+            // Filled in after `compare` produces the alerts below.
+            escalation_count: 0,
         };
 
         // ── Compare + Compute ──────────────────────────────────────────
         let alerts = self.compare(&snapshot);
+        snapshot.escalation_count = alerts.len();
 
         // ── Act ────────────────────────────────────────────────────────
         self.act(&snapshot, &alerts).await;
@@ -265,6 +321,7 @@ impl MetacognitionLoop {
 
         // Log each alert produced by the metacognition loop's own threshold checks.
         for alert in alerts {
+            let critical = matches!(alert.severity, EscalationSeverity::Critical);
             match alert.severity {
                 EscalationSeverity::Critical => {
                     tracing::warn!(
@@ -295,6 +352,15 @@ impl MetacognitionLoop {
                     );
                 }
             }
+            // Forward critical alerts to the user-facing sink. The sink
+            // is best-effort; a missing or failing sink never breaks the
+            // regulation loop.
+            if critical && let Some(ref sink) = self.alert_sink {
+                sink.on_alert(&AlertEvent {
+                    message: alert.message.clone(),
+                    critical: true,
+                });
+            }
         }
 
         // Drain incoming alerts from the CyberneticsLoop (close the loop).
@@ -314,6 +380,17 @@ impl MetacognitionLoop {
                         message = %alert.message,
                         "CyberneticsLoop algedonic alert received"
                     );
+                    // Forward critical CyberneticsLoop alerts to the same
+                    // user-facing sink so well exhaustion and variety
+                    // deficits escalate to the user, not just the logs.
+                    if alert.is_critical()
+                        && let Some(ref sink) = self.alert_sink
+                    {
+                        sink.on_alert(&AlertEvent {
+                            message: alert.message.clone(),
+                            critical: true,
+                        });
+                    }
                 }
             }
         }
@@ -330,5 +407,166 @@ impl MetacognitionLoop {
     /// until the lock is available. Safe to call from a sync context.
     pub fn last_snapshot_blocking(&self) -> Option<HealthSnapshot> {
         self.last_snapshot.read().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    /// `tick` must populate `escalation_count` from the number of alerts
+    /// produced by `compare`. With a low `variety_deficit_threshold` and a
+    /// ledger that reports a deficit, the snapshot's `escalation_count` must
+    /// be non-zero. This pins the wiring that `CuratorStatusTool` reads —
+    /// if the field stays at its initial 0, the tool would report "not
+    /// available" for a real escalation.
+    #[tokio::test]
+    async fn tick_populates_escalation_count_from_compare_alerts() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        // Force a variety deficit by incrementing variety beyond the
+        // (low) threshold, so `compare` produces at least one alert.
+        ledger
+            .write()
+            .await
+            .increment_variety("test-domain", "state-a")
+            .await;
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                variety_deficit_threshold: 0,
+                ..MetacognitionConfig::default()
+            },
+        );
+
+        loop_.tick().await;
+
+        let snapshot = loop_.last_snapshot().await.expect("tick stores a snapshot");
+        assert!(
+            snapshot.escalation_count > 0,
+            "escalation_count should reflect the alerts produced by compare, got {}",
+            snapshot.escalation_count,
+        );
+    }
+
+    /// When no threshold is breached, `escalation_count` must be zero —
+    /// `CuratorStatusTool` reports `0`, not "not available". This pins
+    /// the healthy-path contract so a regression that drops the field
+    /// or leaves it at a sentinel is caught.
+    #[tokio::test]
+    async fn tick_sets_zero_escalation_count_when_no_threshold_breached() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                variety_deficit_threshold: u64::MAX,
+                critical_alert_threshold: usize::MAX,
+                effectiveness_floor: 0.0,
+                ..MetacognitionConfig::default()
+            },
+        );
+
+        loop_.tick().await;
+
+        let snapshot = loop_.last_snapshot().await.expect("tick stores a snapshot");
+        assert_eq!(
+            snapshot.escalation_count, 0,
+            "escalation_count should be zero when no threshold is breached",
+        );
+    }
+
+    /// A capturing `AlertSink` for testing the user-facing escalation path.
+    struct CapturingAlertSink {
+        events: std::sync::Mutex<Vec<AlertEvent>>,
+    }
+
+    impl CapturingAlertSink {
+        fn new() -> Self {
+            Self {
+                events: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn events(&self) -> Vec<AlertEvent> {
+            self.events.lock().unwrap().clone()
+        }
+    }
+
+    impl AlertSink for CapturingAlertSink {
+        fn on_alert(&self, event: &AlertEvent) {
+            self.events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    /// Critical alerts produced by `compare` must reach the `AlertSink` so the
+    /// composition root can surface them to the user. This pins the
+    /// sense→escalate→user loop: if the sink call is dropped or guarded by the
+    /// wrong condition, a real escalation would stay in the logs and never
+    /// reach the operator.
+    #[tokio::test]
+    async fn tick_forwards_critical_alerts_to_alert_sink() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        // Force a variety deficit so `compare` produces a Critical alert.
+        ledger
+            .write()
+            .await
+            .increment_variety("test-domain", "state-a")
+            .await;
+        let sink = Arc::new(CapturingAlertSink::new());
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                variety_deficit_threshold: 0,
+                ..MetacognitionConfig::default()
+            },
+        )
+        .with_alert_sink(sink.clone() as Arc<dyn AlertSink>);
+
+        loop_.tick().await;
+
+        let events = sink.events();
+        assert!(
+            events.iter().any(|e| e.critical),
+            "critical alerts should reach the AlertSink, got {events:?}"
+        );
+    }
+
+    /// Non-critical (Warning/Info) alerts must NOT reach the `AlertSink` —
+    /// the sink is the user-facing escalation path, and warnings are surfaced
+    /// via the Kask panel status bar and the `curator_status` tool. This pins
+    /// the severity filter so a regression that toasts on every warning
+    /// is caught.
+    #[tokio::test]
+    async fn tick_does_not_forward_non_critical_alerts_to_alert_sink() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        // Force a deficit that triggers a Warning (deficit > threshold/2 but
+        // <= threshold). With threshold=100, deficit=75 is a Warning.
+        for i in 0..75 {
+            ledger
+                .write()
+                .await
+                .increment_variety("test-domain", &format!("state-{i}"))
+                .await;
+        }
+        let sink = Arc::new(CapturingAlertSink::new());
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                variety_deficit_threshold: 100,
+                critical_alert_threshold: usize::MAX,
+                effectiveness_floor: 0.0,
+                ..MetacognitionConfig::default()
+            },
+        )
+        .with_alert_sink(sink.clone() as Arc<dyn AlertSink>);
+
+        loop_.tick().await;
+
+        let events = sink.events();
+        assert!(
+            events.is_empty(),
+            "non-critical alerts should not reach the AlertSink, got {events:?}"
+        );
     }
 }

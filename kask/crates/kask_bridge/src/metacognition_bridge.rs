@@ -34,6 +34,7 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "variety_deficit": s.variety_deficit,
                 "critical_alerts": s.critical_alerts,
                 "regulation_effectiveness": s.regulation_effectiveness,
+                "escalation_count": s.escalation_count,
                 "healthy": s.ledger_health.healthy,
                 "total_cycles": s.regulation_health.total_cycles,
                 "accepted": s.regulation_health.accepted,

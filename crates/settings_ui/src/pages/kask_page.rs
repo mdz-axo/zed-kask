@@ -1918,7 +1918,7 @@ pub(crate) fn render_corpus_page(
     let embedding_model_input = kask_string_input(
         "kask-corpus-embedding-model",
         "Embedding Model",
-        "DI/Qwen/Qwen3-Embedding-0.6B",
+        "DeepInfra/Qwen/Qwen3-Embedding-0.6B",
         embedding_model,
         "corpus",
         "embedding_model",
@@ -2001,7 +2001,7 @@ pub(crate) fn render_media_page(
     let tts_input = kask_string_input(
         "kask-media-tts-model",
         "TTS Model",
-        "FA/qwen-3-tts",
+        "fal.ai/Qwen3-TTS",
         tts_model,
         "media",
         "tts_model",
@@ -2009,7 +2009,7 @@ pub(crate) fn render_media_page(
     let stt_input = kask_string_input(
         "kask-media-stt-model",
         "STT Model",
-        "FA/wizper",
+        "fal.ai/wizper",
         stt_model,
         "media",
         "stt_model",
@@ -2017,7 +2017,7 @@ pub(crate) fn render_media_page(
     let vision_input = kask_string_input(
         "kask-media-vision-model",
         "Vision Model",
-        "KC/qwen/qwen3-vl-235b-a22b-instruct",
+        "KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct",
         vision_model,
         "media",
         "vision_model",
@@ -2025,7 +2025,7 @@ pub(crate) fn render_media_page(
     let image_gen_input = kask_string_input(
         "kask-media-image-gen-model",
         "Image Generation Model",
-        "FA/flux-2",
+        "fal.ai/flux-2",
         image_gen_model,
         "media",
         "image_gen_model",
