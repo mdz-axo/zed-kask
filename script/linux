@@ -31,6 +31,7 @@ if [[ -n $apt ]]; then
     gcc
     g++
     libasound2-dev
+    libdbus-1-dev
     libfontconfig-dev
     libgit2-dev
     libglib2.0-dev
@@ -46,6 +47,7 @@ if [[ -n $apt ]]; then
     clang
     lld
     llvm
+    pkg-config
     jq
     git
     curl

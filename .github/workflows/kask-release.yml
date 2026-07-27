@@ -19,8 +19,8 @@ on:
     tags:
       - 'v*'
   schedule:
-    # Nightly build at 08:00 UTC — publishes to the `nightly` tag.
-    - cron: '0 8 * * *'
+    # Weekly build at 08:00 UTC each Monday — publishes to the `weekly` tag.
+    - cron: '0 8 * * 1'
   workflow_dispatch:
     inputs:
       tag:
@@ -121,7 +121,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout (for nightly tag move)
+      - name: Checkout (for weekly tag move)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -163,10 +163,10 @@ jobs:
             # Manual dispatch — use the provided tag.
             echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "schedule" ]; then
-            # Nightly build — move the `nightly` tag to the current commit.
-            git tag -f nightly ${{ github.sha }}
-            git push -f origin nightly
-            echo "tag=nightly" >> "$GITHUB_OUTPUT"
+            # Weekly build — move the `weekly` tag to the current commit.
+            git tag -f weekly ${{ github.sha }}
+            git push -f origin weekly
+            echo "tag=weekly" >> "$GITHUB_OUTPUT"
           else
             # Tag push — use the pushed tag.
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
@@ -177,19 +177,19 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: release-artifacts/*
-          # Nightly builds get a generated body; tag pushes get auto-generated notes.
+          # Weekly builds get a generated body; tag pushes get auto-generated notes.
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
-          # Nightly releases replace the previous one with the same tag.
-          make_latest: ${{ steps.tag.outputs.tag == 'nightly' && 'false' || 'true' }}
+          # Weekly releases replace the previous one with the same tag.
+          make_latest: ${{ steps.tag.outputs.tag == 'weekly' && 'false' || 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 concurrency:
-  # Serialize all release runs (tag pushes, scheduled nightlies, manual
-  # dispatches) on a single group. The nightly path force-moves the
-  # `nightly` tag and writes to GitHub Releases — concurrent runs would
+  # Serialize all release runs (tag pushes, scheduled weeklies, manual
+  # dispatches) on a single group. The weekly path force-moves the
+  # `weekly` tag and writes to GitHub Releases — concurrent runs would
   # race on both surfaces. A single group prevents that (BH-18).
   group: kask-release
   cancel-in-progress: false

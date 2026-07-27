@@ -75,20 +75,20 @@ Environment variables the installer honors:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.31.0`) or `nightly` |
-| `HKASK_CHANNEL` | `stable` | Set to `nightly` for the nightly build |
+| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.31.0`) or `weekly` |
+| `HKASK_CHANNEL` | `stable` | Set to `weekly` for the weekly build |
 | `INSTALL_DIR` | `$HOME/.local` | Install prefix; binaries land in `$INSTALL_DIR/bin` |
 | `HKASK_SYSTEM_INSTALL` | unset | Set to `true` to symlink into `/usr/local/bin` |
 | `HKASK_REPO` | `mdz-axo/zed-kask` | Override the GitHub owner/repo |
 | `HKASK_NO_FALLBACK` | unset | Set to `true` to skip the source-build fallback |
 | `HKASK_ALLOW_UNVERIFIED` | unset | Set to `true` to proceed when `SHA256SUMS` is missing |
 
-### Nightly
+### Weekly
 
-The `nightly` tag is force-moved once a day by the release workflow (08:00 UTC). Install the current nightly:
+The `weekly` tag is force-moved once a week by the release workflow (08:00 UTC each Monday). Install the current weekly build:
 
 ```bash
-HKASK_CHANNEL=nightly curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
+HKASK_CHANNEL=weekly curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
 ```
 
 ### Source build (Linux, requires Rust toolchain)
@@ -119,7 +119,7 @@ Per-crate documentation (tutorial, how-to, reference, explanation for each major
 
 ## Releases
 
-Releases are cut by pushing a `v*` tag (e.g. `v0.31.0`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A nightly build runs on schedule at 08:00 UTC, force-moving the `nightly` tag.
+Releases are cut by pushing a `v*` tag (e.g. `v0.31.0`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A weekly build runs on schedule at 08:00 UTC each Monday, force-moving the `weekly` tag.
 
 Release assets:
 

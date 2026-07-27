@@ -13,14 +13,14 @@
 #
 # Environment variables:
 #   HKASK_VERSION        Pin a release tag (default: latest release from GitHub API).
-#                        Set to "nightly" to install the nightly build.
-#   HKASK_CHANNEL        Alias for HKASK_VERSION=nightly ("nightly" or "stable")
+#                        Set to "weekly" to install the weekly build.
+#   HKASK_CHANNEL        Alias for HKASK_VERSION=weekly ("weekly" or "stable")
 #   INSTALL_DIR          Install prefix (default: $HOME/.local)
 #   HKASK_SYSTEM_INSTALL Set to "true" to symlink into /usr/local/bin
 #   HKASK_REPO           GitHub owner/repo (default: mdz-axo/zed-kask)
 #   HKASK_NO_FALLBACK    Set to "true" to skip source-build fallback
 #   HKASK_ALLOW_UNVERIFIED  Set to "true" to proceed when SHA256SUMS is missing
-#                        for a non-nightly tag (default: false — hard fail)
+#                        for a non-weekly tag (default: false — hard fail)
 
 set -euo pipefail
 
@@ -100,9 +100,9 @@ http_download() {
 resolve_tag() {
     # Explicit version wins.
     if [ -n "${HKASK_VERSION:-}" ]; then
-        # "nightly" is a special channel tag, not a version — pass through.
-        if [ "$HKASK_VERSION" = "nightly" ]; then
-            echo "nightly"
+        # "weekly" is a special channel tag, not a version — pass through.
+        if [ "$HKASK_VERSION" = "weekly" ]; then
+            echo "weekly"
             return
         fi
         # Strip leading 'v' if user passed a bare version, then re-add it.
@@ -114,15 +114,15 @@ resolve_tag() {
     fi
 
     # Channel alias.
-    if [ "${HKASK_CHANNEL:-stable}" = "nightly" ]; then
-        echo "nightly"
+    if [ "${HKASK_CHANNEL:-stable}" = "weekly" ]; then
+        echo "weekly"
         return
     fi
 
     log "Resolving latest release tag from ${HKASK_REPO}..."
     local tag
     # Use the /releases/latest endpoint, which excludes prereleases.
-    # Nightly builds are marked prerelease, so they won't show up here.
+    # Weekly builds are marked prerelease, so they won't show up here.
     tag=$(http_get "https://api.github.com/repos/${HKASK_REPO}/releases/latest" \
           | grep -m1 '"tag_name"' \
           | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
@@ -151,9 +151,9 @@ download_and_extract() {
     http_download "$archive_url" "$temp_dir/$archive" || return 1
 
     # Verify checksum if SHA256SUMS is published alongside the archive.
-    # For non-nightly tags, missing SHA256SUMS is a hard error unless the
-    # user explicitly opts in via HKASK_ALLOW_UNVERIFIED=true. Nightly tags
-    # are force-moved each night, so checksums verify download integrity but
+    # For non-weekly tags, missing SHA256SUMS is a hard error unless the
+    # user explicitly opts in via HKASK_ALLOW_UNVERIFIED=true. Weekly tags
+    # are force-moved each week, so checksums verify download integrity but
     # not release pinning — warn but proceed.
     local sums_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/SHA256SUMS"
     local sums_path="$temp_dir/SHA256SUMS"
@@ -161,8 +161,8 @@ download_and_extract() {
         log "Verifying checksum..."
         ( cd "$temp_dir" && grep -F "$archive" SHA256SUMS | sha256sum -c - )
     else
-        if [ "$tag" = "nightly" ]; then
-            log_warning "No SHA256SUMS published for nightly — proceeding (nightly tag is force-moved)"
+        if [ "$tag" = "weekly" ]; then
+            log_warning "No SHA256SUMS published for weekly — proceeding (weekly tag is force-moved)"
         elif [ "${HKASK_ALLOW_UNVERIFIED:-false}" = "true" ]; then
             log_warning "No SHA256SUMS published for ${tag} — HKASK_ALLOW_UNVERIFIED=true, proceeding"
         else
@@ -273,8 +273,8 @@ fallback_to_source_build() {
             log_error "Installer checksum verification failed"
             exit 1
         }
-    elif [ "$tag" = "nightly" ]; then
-        log_warning "No SHA256SUMS for nightly installer — proceeding (nightly is force-moved)"
+    elif [ "$tag" = "weekly" ]; then
+        log_warning "No SHA256SUMS for weekly installer — proceeding (weekly is force-moved)"
     else
         log_error "No SHA256SUMS published for ${tag} installer — refusing to execute unverified script"
         log_error "Set HKASK_ALLOW_UNVERIFIED=true to override, or build from source manually."

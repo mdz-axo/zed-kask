@@ -15,7 +15,7 @@ manifest:
 
 # Energy Budget Configuration
 gas:
-  cap: 4096
+  cap: 10000
   alert_threshold: 0.8
   hard_limit: true
 

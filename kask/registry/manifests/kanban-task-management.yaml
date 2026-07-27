@@ -29,7 +29,7 @@ manifest:
   visibility: Public
 
 gas:
-  cap: 30000
+  cap: 50000
   alert_threshold: 0.7
   hard_limit: true
 
