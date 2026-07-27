@@ -46,10 +46,10 @@ The goal is a module with high depth: behavior encapsulated / interface surface 
 {{ deletion_test_result | tojson }}
 ```
 
-{% if not deletion_test_result or deletion_test_result | trim == "" %}
+{% if not deletion_test_result %}
 ## Empty Input Guard
 
-`deletion_test_result` is empty. Return early — design requires a deletion test verdict.
+`deletion_test_result` is empty or undefined. Return early — design requires a deletion test verdict.
 
 Return JSON:
 ```json

@@ -300,17 +300,14 @@ impl AgentTool for SkillTool {
                         }
                     }
                 } else {
-                    // No hKask manifest — fall back to body injection
-                    let body = if let Some(embedded) = skill.embedded_body {
-                        embedded.to_string()
-                    } else {
-                        (self.body_resolver)(skill.clone(), cx).await.map_err(|e| {
-                            SkillToolOutput::Error {
-                                error: e.to_string(),
-                            }
-                        })?
-                    };
-                    render_skill_envelope(&skill, &body)
+                    // No hKask manifest — do NOT inject the SKILL.md body.
+                    // In zed-kask, the SKILL.md files are discovery-only
+                    // catalog entries. The skill name + description in the
+                    // <available_skills> catalog is sufficient for the model
+                    // to decide whether to invoke the skill. Injecting the
+                    // full body burns tokens and produces weird prompt
+                    // responses. Return a minimal envelope instead.
+                    render_skill_envelope(&skill, "(No manifest configured for this skill. Use the skill description as guidance.)")
                 }
             } else {
                 // No manifest executor configured — body injection (original behavior)

@@ -202,10 +202,6 @@ steps:
         solution_confidence: "{{ step_1_result.solution_confidence | default(0.0) }}"
         total_thoughts_used: "{{ step_1_result.total_thoughts_used | default(0) }}"
     condition: "step_1_result.skill_match_queries"
-    skip_output:
-      recommendations: []
-      uncovered_capabilities: []
-      coverage_assessment: "No skill_match_queries emitted by engine"
 
   - ordinal: 8
     action: loop

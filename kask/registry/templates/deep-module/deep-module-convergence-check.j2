@@ -84,18 +84,6 @@ If iteration ≥ 3 AND |metric_delta| < 0.02 since last iteration AND no committ
   - Skip the standard scoring below
   - The executor will exit the loop because 0.0 ≤ threshold (0.15)
 
-## Re-Entry Target Selection
-
-After scoring, determine `re_entry_target` based on which check failed most:
-- Deletion test failed (criterion 1) → `re_entry_target = "delete"`
-- Interface depth failed (criterion 2) → `re_entry_target = "design"`
-- Dependency direction failed (criterion 3) → `re_entry_target = "assess"` (re-map dependencies)
-- Caller analysis failed (criterion 4, pass-through) → `re_entry_target = "delete"` (re-test deletion)
-- Recommendations vague (criterion 5) → `re_entry_target = "assess"` (re-assess with more detail)
-- All checks pass (converged) → `re_entry_target = "exit"`
-
-Note: `re_entry_target` is informational only — the executor always re-enters at step 1 (assess) per the loop step's `loop_target: 1`. The field helps human reviewers and future executors understand which step's output drove the re-entry, but does not currently control loop routing.
-
 ## Input
 ```json
 {{ primary_result | tojson }}
@@ -115,7 +103,6 @@ Return JSON only:
     "recommendations_actionable": true
   },
   "rationale": "short explanation",
-  "blockers": ["specific gap preventing convergence"],
-  "re_entry_target": "assess|delete|design|exit"
+  "blockers": ["specific gap preventing convergence"]
 }
 ```
