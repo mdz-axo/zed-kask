@@ -74,6 +74,7 @@ hkask-guard = { path = "../../kask/crates/hkask-guard" }
 hkask-capability = { path = "../../kask/crates/hkask-capability" }
 hkask-types = { path = "../../kask/crates/hkask-types" }
 hkask-regulation = { path = "../../kask/crates/hkask-regulation" }
+hkask-email = { path = "../../kask/crates/hkask-email" }
 zed_credentials_provider.workspace = true
 ed25519-dalek.workspace = true
 kask_panel.workspace = true

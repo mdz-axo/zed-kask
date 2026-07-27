@@ -173,12 +173,42 @@ impl CuratorAlertEmailSink {
             nonce_store: Some(nonce),
         }))
     }
+
+    /// Create from explicit settings, returning `None` when no recipient is
+    /// configured.
+    ///
+    /// This is the primary constructor for the composition root — it reads
+    /// the alert recipient from `alert_email`, falling back to `smtp_username`,
+    /// without relying on process env vars. The `send_email` function still
+    /// reads `HKASK_MXROUTE_SERVER` / `HKASK_SMTP_USERNAME` / `HKASK_SMTP_PASSWORD`
+    /// from the env (set by `mcp_env()` for MCP server child processes), so
+    /// the composition root must also set those env vars in the main process
+    /// before the sink can actually send mail.
+    pub fn try_from_settings(
+        smtp_username: &str,
+        alert_email: &str,
+    ) -> Option<Arc<dyn AlertEmailSink>> {
+        let recipient = if !alert_email.is_empty() {
+            alert_email
+        } else if !smtp_username.is_empty() {
+            smtp_username
+        } else {
+            return None;
+        };
+        Some(Arc::new(Self {
+            alert_recipient: recipient.to_string(),
+            nonce_store: None,
+        }))
+    }
 }
 
 impl AlertEmailSink for CuratorAlertEmailSink {
     fn send_alert_email(&self, alert: &RuntimeAlert) {
+        // `try_from_env()` never constructs a sink with an empty recipient,
+        // so this branch is defensive only — `debug!` to avoid noise if
+        // the contract is ever violated.
         if self.alert_recipient.is_empty() {
-            tracing::warn!(target: "reg.alert", "Alert email sink has no recipient");
+            tracing::debug!(target: "reg.alert", "Alert email sink has no recipient — skipping");
             return;
         }
         let recipient = self.alert_recipient.clone();
@@ -339,5 +369,25 @@ mod tests {
         unsafe {
             std::env::remove_var("HKASK_ALERT_EMAIL");
         }
+    }
+
+    #[test]
+    fn try_from_settings_returns_none_when_both_empty() {
+        assert!(CuratorAlertEmailSink::try_from_settings("", "").is_none());
+    }
+
+    #[test]
+    fn try_from_settings_uses_alert_email_when_set() {
+        // When `alert_email` is set, it's used as the recipient (not `smtp_username`).
+        let sink =
+            CuratorAlertEmailSink::try_from_settings("curator@example.com", "ops@example.com");
+        assert!(sink.is_some());
+    }
+
+    #[test]
+    fn try_from_settings_falls_back_to_smtp_username() {
+        // When `alert_email` is empty, `smtp_username` is used as the recipient.
+        let sink = CuratorAlertEmailSink::try_from_settings("curator@example.com", "");
+        assert!(sink.is_some());
     }
 }

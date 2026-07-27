@@ -222,6 +222,19 @@ impl CyberneticsLoop {
         self
     }
 
+    /// Set or clear the alert email sink after construction.
+    ///
+    /// Used by the composition root to lazily wire the email sink after
+    /// settings load (the env vars `HKASK_SMTP_USERNAME` etc. are populated
+    /// from `KaskSettings::mcp_env()` in the deferred task, not at startup).
+    /// Pass `None` to disable email alerts (the zero-config default).
+    pub fn set_alert_email_sink(
+        &mut self,
+        sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
+    ) {
+        self.alert_email_sink = sink;
+    }
+
     /// Wire the direct curator directive channel: Curation → Cybernetics.
     ///
     /// expect: "The system provides configurable cybernetic self-regulation"

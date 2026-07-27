@@ -4032,16 +4032,22 @@ fn combine_skills(
     (skills, errors)
 }
 
-/// Emit a warning for each name collision between skills. Called once
+/// Emit a log line for each name collision between skills. Called once
 /// per skill load (not per query), so the log isn't spammed by repeated
 /// catalog rebuilds.
+///
+/// Project-local shadowing global, and global shadowing built-in, is
+/// *by design* (see [`combine_skills`] and [`apply_skill_overrides`]).
+/// Logging it at `warn` trains operators to ignore warnings for expected
+/// behavior. `debug` keeps the information available for diagnosis
+/// without crying wolf.
 fn log_skill_conflicts(skills: &[Skill]) {
     let mut by_name: HashMap<&str, &Skill> = HashMap::default();
     for skill in skills {
         match by_name.get(skill.name.as_str()) {
             Some(existing) => {
                 if skill.source.precedence() > existing.source.precedence() {
-                    log::warn!(
+                    log::debug!(
                         "Skill '{}' at '{}' overrides skill at '{}' for the model; both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),
@@ -4049,7 +4055,7 @@ fn log_skill_conflicts(skills: &[Skill]) {
                     );
                     by_name.insert(skill.name.as_str(), skill);
                 } else {
-                    log::warn!(
+                    log::debug!(
                         "Skill '{}' at '{}' conflicts with skill at '{}'; the model will see the first one, but both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),

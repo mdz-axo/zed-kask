@@ -23,7 +23,6 @@ use hkask_services_kata_kanban::KanbanService;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::WebID;
-use std::sync::Arc;
 
 // ── Test harness ────────────────────────────────────────────────────────────
 
@@ -151,7 +150,6 @@ mod board_create {
         // REQ: schema-violation (a) missing required field
         // rmcp Parameters<T> deserialization: a missing 'name' field fails
         // before the tool body runs. We simulate by sending JSON without it.
-        let server = make_server();
         // Construct raw JSON missing 'name' — serde will reject on the Parameters boundary.
         let raw = serde_json::json!({"columns": null});
         let result: Result<BoardCreateRequest, _> = serde_json::from_value(raw);

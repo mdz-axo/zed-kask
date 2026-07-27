@@ -598,11 +598,33 @@ fn main() {
                 kask_runtime_handle,
             ));
 
-        let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
+        // Alert email sink — outbound algedonic alert emails via MXroute.
+        //
+        // At startup, env vars aren't set yet (they come from kask settings,
+        // loaded in the deferred task below), so `try_from_env()` returns
+        // `None` and the sink stays unwired. The deferred task re-wires it
+        // from `KaskSettings` after the user resolves.
+        //
+        // When email is never configured, the sink stays `None` for the
+        // entire session — the cybernetics loop silently skips the email
+        // path. This is the zero-config default: no error, no warning. The
+        // "CRITICAL: Algedonic alert LOST" path in `cybernetics_loop.rs`
+        // only fires when ALL alert paths (live channel, archive, email) are
+        // unavailable, which is a genuine operator-visible error.
+        let alert_email_sink: Option<std::sync::Arc<dyn hkask_regulation::AlertEmailSink>> =
+            hkask_email::CuratorAlertEmailSink::try_from_env();
+
+        let cybernetics_loop_inner =
             hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
                 .with_alerts_channel(alert_tx)
-                .with_event_sink(event_sink.clone())
-                .with_alert_email_sink(std::sync::Arc::new(LogAlertEmailSink)),
+                .with_event_sink(event_sink.clone());
+        let cybernetics_loop_inner = if let Some(sink) = alert_email_sink {
+            cybernetics_loop_inner.with_alert_email_sink(sink)
+        } else {
+            cybernetics_loop_inner
+        };
+        let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
+            cybernetics_loop_inner,
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let cybernetics_loop_for_panel = cybernetics_loop.clone();
@@ -1112,6 +1134,113 @@ fn main() {
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let fusion_config = kask_settings.fusion.to_fusion_config();
                 let async_cx_for_fusion = cx.clone();
+
+                // Lazily wire the alert email sink now that kask settings have
+                // loaded. The non-secret email fields are set as process env
+                // vars so `send_email()` (called from `tokio::spawn` inside
+                // `CuratorAlertEmailSink::send_alert_email`) can read them.
+                // The SMTP password is read from the keychain by
+                // `mcp_env_with_credentials` for MCP server child processes;
+                // for the main-process alert sink we set `HKASK_SMTP_PASSWORD`
+                // from the keychain here too.
+                //
+                // When email is not configured (no `smtp_username`), the sink
+                // is `None` — the cybernetics loop silently skips the email
+                // path. This is the zero-config default: no error, no warning.
+                if !kask_settings.curator.email.smtp_username.is_empty() {
+                    // Set non-secret env vars for the main process.
+                    // `set_var` is unsafe in Rust 2024 (process-global mutation).
+                    unsafe {
+                        std::env::set_var(
+                            "HKASK_MXROUTE_SERVER",
+                            &kask_settings.curator.email.mxroute_server,
+                        );
+                        std::env::set_var(
+                            "HKASK_SMTP_USERNAME",
+                            &kask_settings.curator.email.smtp_username,
+                        );
+                        if !kask_settings.curator.email.curator_email.is_empty() {
+                            std::env::set_var(
+                                "HKASK_CURATOR_EMAIL",
+                                &kask_settings.curator.email.curator_email,
+                            );
+                        }
+                        if !kask_settings.curator.email.alert_email.is_empty() {
+                            std::env::set_var(
+                                "HKASK_ALERT_EMAIL",
+                                &kask_settings.curator.email.alert_email,
+                            );
+                        }
+                        if !kask_settings.curator.email.authorized_emails.is_empty() {
+                            std::env::set_var(
+                                "HKASK_AUTHORIZED_EMAILS",
+                                kask_settings.curator.email.authorized_emails.join(","),
+                            );
+                        }
+                    }
+
+                    // Read the SMTP password from the keychain and set it as
+                    // a process env var so `send_email()` can use it.
+                    let smtp_password_url = format!(
+                        "{}/hkask_smtp_password",
+                        kask_bridge::KASK_CREDENTIAL_NAMESPACE
+                    );
+                    let credentials_provider =
+                        cx.update(|cx| zed_credentials_provider::global(cx));
+                    let password_result = credentials_provider
+                        .read_credentials(&smtp_password_url, cx)
+                        .await;
+                    match password_result {
+                        Ok(Some((_user, password_bytes))) => {
+                            if let Ok(password_str) = std::str::from_utf8(&password_bytes) {
+                                unsafe {
+                                    std::env::set_var("HKASK_SMTP_PASSWORD", password_str);
+                                }
+                                log::info!("hKask SMTP password loaded from keychain");
+                            } else {
+                                log::warn!(
+                                    "hKask SMTP password in keychain is not valid UTF-8 — \
+                                     alert emails will fail to send"
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            log::info!(
+                                "hKask SMTP password not found in keychain — alert emails \
+                                 will fail to send until the password is configured in \
+                                 Settings → Kask → Curator Email"
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "hKask SMTP password keychain read failed: {e} — alert \
+                                 emails will fail to send until the password is configured"
+                            );
+                        }
+                    }
+
+                    // Now wire the sink. The sink is wired even if the
+                    // password wasn't found — `send_alert_email` spawns the
+                    // send in a background task and logs a warning on failure,
+                    // so a missing password degrades gracefully (no panic, no
+                    // error propagation to the cybernetics loop).
+                    let sink = hkask_email::CuratorAlertEmailSink::try_from_settings(
+                        &kask_settings.curator.email.smtp_username,
+                        &kask_settings.curator.email.alert_email,
+                    );
+                    let cybernetics_loop_for_email = cybernetics_loop_for_panel_deferred.clone();
+                    gpui_tokio::Tokio::spawn(cx, async move {
+                        let mut loop_guard = cybernetics_loop_for_email.write().await;
+                        loop_guard.set_alert_email_sink(sink);
+                    })
+                    .detach();
+                    log::info!("hKask alert email sink wired from kask settings");
+                } else {
+                    log::info!(
+                        "hKask alert email not configured — algedonic alerts rely \
+                         on the live channel and archive (zero-config default)"
+                    );
+                }
 
                 // Fusion auto-discovery (async, outside cx.update).
                 let mut discovered_favorites: Vec<kask_bridge::FavoriteModel> = Vec::new();
@@ -2083,35 +2212,6 @@ impl hkask_regulation::AlertSink for ToastAlertSink {
 }
 
 struct KaskCriticalAlertToast;
-
-/// Defense-in-depth `AlertEmailSink` that logs critical alerts via
-/// `tracing::error!` when the live alert channel (`alerts_tx`) is down.
-///
-/// The `CyberneticsLoop::act` consults `alert_email_sink` only when
-/// `alerts_tx.send` fails (channel closed) — the primary path is the live
-/// channel to the `MetacognitionLoop` → `ToastAlertSink`. This sink ensures
-/// the "CRITICAL: Algedonic alert LOST" path at `cybernetics_loop.rs:1112`
-/// is never reached: when the live channel is down, the alert is logged at
-/// `error` level so it surfaces in operator logs and crash reports.
-///
-/// A real SMTP-backed `AlertEmailSink` can replace this when email
-/// notification is configured — this is the zero-config fallback.
-#[derive(Debug)]
-struct LogAlertEmailSink;
-
-impl hkask_regulation::AlertEmailSink for LogAlertEmailSink {
-    fn send_alert_email(&self, alert: &hkask_regulation::RuntimeAlert) {
-        tracing::error!(
-            target: "reg.alert",
-            domain = %alert.domain,
-            deficit = alert.deficit,
-            threshold = alert.threshold,
-            severity = ?alert.severity,
-            message = %alert.message,
-            "Algedonic alert (live channel down — logged as email-sink fallback)"
-        );
-    }
-}
 
 /// Spawn a GPUI foreground task that drains the alert receiver and dispatches
 /// a toast for each critical alert. Returns when the sender is dropped (app
