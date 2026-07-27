@@ -20,7 +20,7 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.0
+  threshold: 0.15
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1

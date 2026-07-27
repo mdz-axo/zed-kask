@@ -51,16 +51,48 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 
 ## Translation Rules
 
-1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef), lexicon_terms, description.
+1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef/RenderAct), lexicon_terms, description.
 2. **Templates** — Produce one `.j2` file per classified step:
    - Cognitive steps → KnowAct `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
    - Workflow steps → WordAct (transformation) or FlowDef (dispatch/routing) `.j2` with same structure.
+   - Reference content → RenderAct `.j2` or `.yaml` (no inference).
    - Guardrails → Encoded as `visibility`, `energy_cap`, and constraints in `.j2` body.
-3. **State model** — hKask skills are stateless by default. Source state → `.j2` contract input/output.
-4. **Consent model** — hKask uses OCAP. User-confirmation gates → `.j2` contract visibility.
-5. **Observability** — Map to Regulation span references in `.j2` body.
-6. **Domain references** — Substitute using the domain substitution table.
-7. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef. visibility MUST be Private/Public/Shared. energy_cap MUST be 2048-8192.
+3. **Process manifest** — Produce a `registry/manifests/<skill-name>.yaml` FlowDef cascade with:
+   - `manifest.category: skill` (or `pipeline`/`runtime-config` for non-agent infrastructure)
+   - `convergence:` block (threshold 0.05-0.30, max_iterations, min_iterations, convergence_field, on_not_reached)
+   - `gas:` block (cap proportional to step count, cost_per_iteration, alert_threshold, hard_limit)
+   - `rjoule:` block (cap > 0 if any step uses inference, 0 otherwise)
+   - `steps:` array with canonical actions only
+4. **State model** — hKask skills are stateless by default. Source state → `.j2` contract input/output.
+5. **Consent model** — hKask uses OCAP. User-confirmation gates → `.j2` contract visibility.
+6. **Observability** — Map to Regulation span references in `.j2` body.
+7. **Domain references** — Substitute using the domain substitution table.
+8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct. visibility MUST be Private/Public/Shared. energy_cap MUST be 2048-8192.
+
+### Source Action → Canonical Action Mapping
+
+| Source Action | Canonical Action | Notes |
+|---------------|-----------------|-------|
+| `call`, `invoke`, `execute_tool` | `execute` | MCP tool invocation (requires `mcp:` field) |
+| `classify`, `infer`, `generate`, `select_tool` | `select` | KnowAct: render `.j2` + inference + JSON parse |
+| `render_template`, `format`, `compose` | `populate` | WordAct: render `.j2` without inference |
+| `validate_contract`, `check`, `verify` | `validate` | MCP tool validation |
+| `emit`, `record`, `log` | `feedback` | MCP tool Regulation feedback |
+| `recall`, `retrieve`, `search`, `extract` | `retrieve` | MCP tool data retrieval |
+| `index`, `register` | `populate` | WordAct: deterministic registration |
+| `evaluate` (deprecated) | `select` or `flowdef` | Use `select` for KnowAct, `flowdef` for recursion |
+| `run_command` | `execute` | Map shell commands to MCP tool dispatch |
+| `mcp_tool` | `execute` | Direct MCP tool invocation |
+| `centroid`, `coordinate`, `curator_escalation` | `feedback` or `escalate` | Map to feedback or escalate control flow |
+
+### Gas/rJoule Budget Guidelines for Translated Skills
+
+| Skill complexity | Step count | gas.cap | rjoule.cap |
+|-----------------|-----------|---------|------------|
+| Simple KnowAct | 1-3 | 5,000-10,000 | 1-2 |
+| Multi-step FlowDef | 4-7 | 50,000-150,000 | 3-5 |
+| Media generation | 5+ | 100,000+ | 5+ |
+| Infrastructure (no inference) | any | 10,000-50,000 | 0 |
 
 ## Domain Substitution Table
 
@@ -135,6 +167,7 @@ Respond with a JSON object:
 ```json
 {
   "manifest_yaml": "crate:\n  name: ...\n  ...",
+  "process_manifest_yaml": "manifest:\n  id: ...\n  category: skill\n  ...\nsteps:\n  - ordinal: 1\n    action: select\n    ...",
   "templates": [
     {
       "filename": "<step-name>.j2",
@@ -157,19 +190,30 @@ Respond with a JSON object:
         "reason": "why it was dropped"
       }
     ],
-    "unresolved": ["list of references with no hKask equivalent"]
+    "unresolved": ["list of references with no hKask equivalent"],
+    "action_mappings": [
+      {
+        "source_action": "original action name",
+        "canonical_action": "select|populate|compute|execute|feedback|validate|retrieve|render|flowdef|loop|choice|abort|escalate",
+        "rationale": "why this mapping was chosen"
+      }
+    ]
   }
 }
 ```
 
 ## Constraints
 
-- The primary deliverable is the registry crate (manifest.yaml + .j2 templates). SKILL.md is derived from it.
-- `template_type` must be KnowAct, WordAct, or FlowDef — never Cognition, Prompt, or Process.
+- The primary deliverable is the registry crate (manifest.yaml + .j2 templates) plus the process manifest (registry/manifests/<name>.yaml). SKILL.md is derived from them.
+- `template_type` must be KnowAct, WordAct, FlowDef, or RenderAct — never Cognition, Prompt, or Process.
 - `visibility` must be Private, Public, or Shared.
 - `energy_cap` must be in 2048–8192 range.
 - `lexicon_terms` must exist in the vocabulary or be proposed as new terms.
 - `contract.input` and `contract.output` must be structured JSON types.
+- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate).
+- The process manifest must have a `gas:` block with `cap > 0`.
+- The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select`.
+- The process manifest must have a `convergence:` block (for `category: skill`).
 - Every step from `step_classifications` must appear in the output (preserved, adapted, or dropped with reason).
 - Do not invent hKask tools or MCP servers that do not exist. Use the domain substitution table.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).

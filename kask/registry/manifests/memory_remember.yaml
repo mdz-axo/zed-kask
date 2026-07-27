@@ -40,20 +40,20 @@ steps:
   - ordinal: 1
     action: select
     description: Classify operation and route to episodic or semantic extraction
-    template_ref: process/memory/operation-selector
+    template_ref: memory/templates/remember
     renderer: minijinja
     fusion: true
 
   - ordinal: 2
     action: select
     description: Extract episodic hMems (first-person, agent perspective)
-    template_ref: process/memory/remember-episodic
+    template_ref: memory/templates/remember-episodic
     renderer: minijinja
     fusion: true
 
   - ordinal: 3
     action: select
     description: Extract semantic hMems (third-person, perspective-free)
-    template_ref: process/memory/remember-semantic
+    template_ref: memory/templates/remember-semantic
     renderer: minijinja
     fusion: true

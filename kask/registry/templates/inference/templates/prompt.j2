@@ -1,0 +1,13 @@
+{# Inference prompt template — renders the system/user prompt for LLM dispatch. #}
+{# Populated by the inference-dispatch pipeline before sending to the inference endpoint. #}
+<|system|>
+{{ system_prompt | default("You are a helpful assistant.") }}
+<|end|>
+<|user|>
+{{ user_prompt }}
+{% if context %}
+
+Context:
+{{ context }}
+{% endif %}
+<|end|>

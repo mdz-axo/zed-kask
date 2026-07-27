@@ -85,6 +85,43 @@ Validate **all skills** in the registry directory.
 | X2 | No orphan SKILL.md | SKILL.md without registry → incomplete | High |
 | X3 | No drift | SKILL.md does not claim behaviors registry templates do not support | Medium |
 
+### Process Manifest Compliance Checks (registry/manifests/*.yaml)
+
+These checks verify that every FlowDef process manifest is compliant with the
+ManifestExecutor's canonical action set and budget requirements. The executor
+dispatches only canonical actions; non-canonical actions cause runtime errors.
+
+| ID | Check | Pass Criteria | Severity |
+|----|-------|---------------|----------|
+| E1 | Action compliance | Every step's `action` is one of: `select`, `populate`, `compute`, `execute`, `feedback`, `validate`, `retrieve`, `render`, `flowdef`, `loop`, `choice`, `abort`, `escalate`. No `evaluate`, `run_command`, `classify`, `mcp_tool`, `check`, `call`, `emit`, `recall`, `record`, or other non-canonical actions. | Critical |
+| E2 | Gas block present | Manifest has a `gas:` block with `cap > 0`, `cost_per_iteration`, `alert_threshold`, `hard_limit`. | Critical |
+| E3 | Gas cap adequate | `gas.cap` proportional to step count: simple KnowAct (1-3 steps) ≥ 5,000; multi-step FlowDef (4-7 steps) ≥ 50,000; media generation ≥ 100,000. | Medium |
+| E4 | rJoule block present | Manifest has an `rjoule:` block. If any step uses `action: select` (inference), `rjoule.cap` must be > 0. Cap proportional to inference calls: 1-2 for simple skills, 3-5 for multi-step, 5+ for media generation. | Critical |
+| E5 | Convergence block | For `category: skill` manifests: `convergence:` block with `threshold` (0.05-0.30), `max_iterations`, `min_iterations`, `convergence_field`, `on_not_reached` ("abort" or "escalate"). | Critical |
+| E6 | Category valid | `manifest.category` is one of: `skill`, `qa-script`, `runtime-config`, `daemon-process`, `pipeline`. Only `skill` manifests are agent-invokable. | Critical |
+| E7 | Template ref resolvable | Every `template_ref` (that is not a runtime-resolved `{% raw %}{{...}}{% endraw %}` or `{% raw %}${...}{% endraw %}` expression) resolves to an embedded `.j2` or `.yaml` file in `registry/templates/`. | Critical |
+| E8 | Sub-manifest budgets | Any `template_ref` pointing to a `.yaml` sub-manifest (FlowDef recursion) must have `gas` and `rjoule` blocks in the sub-manifest. Sub-manifest `rjoule.cap` should be > 0 if the sub-manifest uses inference. | High |
+| E9 | Step description | Every step has a non-empty `description` field. | Critical |
+| E10 | Ordinal sequence | Step ordinals are sequential starting from 1 (or 0 for pre-processing steps). | Medium |
+
+### Canonical Action Semantics (Pattern A type system)
+
+| Action | Pattern A Type | Description |
+|--------|---------------|-------------|
+| `select` | KnowAct | Render `.j2` template + inference + parse JSON response |
+| `populate` | WordAct | Render `.j2` template without inference (deterministic text) |
+| `compute` | Deterministic | Invoke a `hkask_forecast::*` math primitive via `compute_ref` |
+| `execute` | MCP Tool | Invoke an MCP tool (requires `mcp:` field) |
+| `feedback` | MCP Tool | Emit Regulation feedback via MCP tool |
+| `validate` | MCP Tool | Validate a contract or condition via MCP tool |
+| `retrieve` | MCP Tool | Retrieve data via MCP tool (e.g., semantic search) |
+| `render` | RenderAct | Render `.j2` or `.yaml` without inference (reference content, macros) |
+| `flowdef` | FlowDef | Recursively execute a `.yaml` sub-manifest as a nested cascade |
+| `loop` | Control Flow | Re-enter cascade from a target ordinal |
+| `choice` | Control Flow | Evaluate condition and branch to a target ordinal |
+| `abort` | Control Flow | Exit with success (converged) |
+| `escalate` | Control Flow | Exit with error (blocked) |
+
 ## Severity Levels
 
 - **Critical**: Registry missing, invalid template_type
@@ -101,7 +138,7 @@ Respond with a JSON object:
   "validation_results": [
     {
       "skill_name": "name of validated skill",
-      "check_id": "R1|R2|...|Z1|Z2|...|X1|X2|...",
+      "check_id": "R1|R2|...|Z1|Z2|...|X1|X2|...|E1|E2|...|E10",
       "check_name": "Human-readable check name",
       "result": "pass|fail",
       "detail": "Specific evidence for pass or fail",
@@ -112,7 +149,8 @@ Respond with a JSON object:
     "registry": {"pass": 12, "fail": 0},
     "companion": {"pass": 7, "fail": 1},
     "cross_artifact": {"pass": 3, "fail": 0},
-    "total_pass": 22,
+    "executor_compliance": {"pass": 10, "fail": 0},
+    "total_pass": 32,
     "total_fail": 1
   },
   "fix_suggestions": [
@@ -131,9 +169,11 @@ Respond with a JSON object:
 
 - Every check must be evaluated for every targeted skill — no omissions.
 - Registry checks (R1–R12) are mandatory. Companion checks (Z1–Z8) are secondary.
+- Executor compliance checks (E1–E10) are mandatory for process manifests.
 - Fail results must include specific evidence.
 - Fix suggestions must be actionable.
 - Registry check failures (R1–R5) are always `critical`.
+- Executor compliance failures (E1, E2, E4, E5, E6, E7, E9) are always `critical`.
 - Safety check failures (Z5, Z6, Z7) are always `high`.
 - Missing SKILL.md (Z1 absent) is `info` — not a failure.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).

@@ -25,7 +25,7 @@ steps:
   - ordinal: 1
     action: select
     description: Select memory retrieval strategy
-    template_ref: process/memory/recall
+    template_ref: memory/templates/recall
     renderer: minijinja
 
   - ordinal: 2

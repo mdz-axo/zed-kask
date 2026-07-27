@@ -19,17 +19,25 @@ manifest:
 # Energy Budget Configuration
 gas:
   cap: 25000
+  cost_per_iteration: 100
   alert_threshold: 0.7
   hard_limit: true
-  dynamic_adjustment:
-    enabled: true
-    max_adjustment_percent: 10
-    requires_regulation_justification: true
+  # dynamic_adjustment (enabled, max_adjustment_percent: 10,
+  # requires_regulation_justification: true) is not a BundleGasConfig schema
+  # field — recorded as comment for documentation.
 
 rjoule:
   cap: 1
   alert_threshold: 0.8
   hard_limit: true
+
+convergence:
+  threshold: 0.15
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_2_result.kata_directives
+  on_not_reached: escalate
 
 # Process Steps
 steps:

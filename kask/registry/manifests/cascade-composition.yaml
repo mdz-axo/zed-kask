@@ -107,23 +107,26 @@ rjoule:
 #       timeout_ms: 30000
 
 # Energy management
-gas:
-  # Budget allocation
-  budget:
-    total_per_cascade: 50000
-    reserve_percent: 10
-
-  # Degradation strategy
-  degradation:
-    at_80_percent: skip_optional_stages
-    at_90_percent: disable_caching
-    at_95_percent: curator_escalation
-
-  # Tracking
-  tracking:
-    emit_reg_spans: true
-    track_per_stage: true
-    log_budget_remaining: false
+# gas: (removed — the canonical gas block is declared at the top of this
+# file. The legacy budget/degradation/tracking config below is preserved as
+# documentation only; deny_unknown_fields enforces the BundleGasConfig schema.)
+# gas:
+#   # Budget allocation
+#   budget:
+#     total_per_cascade: 50000
+#     reserve_percent: 10
+#
+#   # Degradation strategy
+#   degradation:
+#     at_80_percent: skip_optional_stages
+#     at_90_percent: disable_caching
+#     at_95_percent: curator_escalation
+#
+#   # Tracking
+#   tracking:
+#     emit_reg_spans: true
+#     track_per_stage: true
+#     log_budget_remaining: false
 
 # Capability attenuation
 # capabilities: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)

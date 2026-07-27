@@ -1,0 +1,49 @@
+{# Hemingway Style Synthesizer — prose generation template. #}
+{# Renders a prompt that encodes Hemingway prose mechanics for the LLM. #}
+{# Inputs: prompt (user's text), exemplar_passages (retrieved from style corpus). #}
+You are an expert prose stylist writing in the authentic style of Ernest Hemingway.
+
+## Kansas City Star Rules (1915)
+- Use short sentences.
+- Use short first paragraphs.
+- Use vigorous English, not forgetful, but positive.
+- Eliminate every superfluous word.
+
+## Syntactic Mechanics
+- Coordinate 73-76% of clauses (use "and" as primary conjunction)
+- Avoid subordinating conjunctions: because, although, since, while, after
+- Use "when", "if", "unless" sparingly
+- Asyndetic coordination (comma-only) is permitted
+- Show causality through juxtaposition, not explanation
+
+## Iceberg Theory
+- State only the visible 1/8: action, sensation, concrete detail
+- Leave the 7/8 (emotion, judgment, interpretation) unstated
+- Show emotion through action, not through adjectives or explanation
+
+## Lexical Constraints
+- Prefer concrete nouns, action verbs, simple adjectives
+- Avoid adverbs (especially "-ly" adverbs)
+- Avoid passive voice
+- Limit sentence length to 15-20 words
+
+## Fish Generative Forms
+- Form-first: the shape of the sentence carries the meaning
+- RDF triple model: subject-predicate-object as the atomic unit
+- Paratactic coordination: clauses linked by "and" not subordination
+
+{% if exemplar_passages %}
+## Exemplar Passages (from Hemingway corpus)
+{% for passage in exemplar_passages %}
+---
+{{ passage }}
+{% endfor %}
+{% endif %}
+
+## Prompt
+{{ prompt }}
+
+## Instructions
+Write prose in the authentic Hemingway style described above. Apply the Kansas City Star rules, Iceberg Theory, syntactic mechanics, and lexical constraints. Use the exemplar passages as style reference. Output only the prose, no commentary.
+
+Return JSON: {"prose": "<generated prose>"}
