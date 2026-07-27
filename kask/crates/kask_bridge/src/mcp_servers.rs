@@ -133,7 +133,7 @@ pub fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
 #[must_use]
 pub fn enabled_server_ids(
     load_default: bool,
-    overrides: &std::collections::HashMap<String, bool>,
+    overrides: &collections::HashMap<String, bool>,
 ) -> Vec<&'static str> {
     BUILT_IN_MCP_SERVERS
         .iter()
@@ -145,7 +145,7 @@ pub fn enabled_server_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use collections::HashMap;
 
     #[test]
     fn all_servers_have_unique_ids() {

@@ -42,11 +42,11 @@ pub use inference_providers::{
     provider_credential_url, write_data_service_api_key, write_provider_api_key,
 };
 pub use mcp_servers::{
-    BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BuiltinMcpServer, enabled_server_ids,
-    find_server,
+    BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BUILT_IN_MCP_SERVERS_PAIRS, BuiltinMcpServer,
+    enabled_server_ids, find_server,
 };
 pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
-pub use settings::KaskSettings;
+pub use settings::{KaskModelsSettings, KaskSettings};
 pub use skill_executor::BridgeManifestExecutor;
 pub use tool_port::BridgeToolPort;
 

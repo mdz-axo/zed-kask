@@ -1538,6 +1538,12 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub fusion: Option<KaskFusionSettingsContent>,
 
+    /// Kask-wide model configuration: default inference model, embedding model,
+    /// and classifier model. These are provider-prefixed strings (e.g.
+    /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
+    #[serde(default)]
+    pub models: Option<KaskModelsSettingsContent>,
+
     /// Inference provider toggles and API key configuration.
     ///
     /// API keys are stored in the keychain under the provider's `api_url`
@@ -1683,4 +1689,26 @@ pub struct KaskFusionSettingsContent {
     pub panel_sizing_enabled: Option<bool>,
     /// Enable substrate-aware degradation under high latency pressure.
     pub pressure_adaptive_enabled: Option<bool>,
+}
+
+/// Kask-wide model configuration (the `"kask.models"` section in settings.json).
+///
+/// These fields let the user override the kask defaults for the primary
+/// inference model, the embedding model used by the corpus/memory subsystems,
+/// and the classifier model used for guard/regulation classification tasks.
+/// All are provider-prefixed strings (e.g. `"openrouter/z-ai/glm-5.2"`).
+/// When empty, kask falls back to its built-in defaults.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskModelsSettingsContent {
+    /// Default inference model for kask subsystems (provider-prefixed).
+    /// When set, overrides the kask default for the Curator, skill cascade,
+    /// and kask panel inference (unless fusion is enabled, which takes precedence).
+    pub default_model: Option<String>,
+    /// Embedding model for corpus indexing and memory semantic recall
+    /// (provider-prefixed). When empty, falls back to the corpus MCP server's
+    /// `embedding_model` setting, then to the kask default.
+    pub embedding_model: Option<String>,
+    /// Classifier model for guard/regulation classification tasks
+    /// (provider-prefixed). When empty, falls back to the kask default.
+    pub classifier_model: Option<String>,
 }

@@ -557,19 +557,8 @@ fn main() {
         //
         // This uses a OnceLock global hook so the agent crate doesn't depend on kask_bridge.
         //
-        // The 10 built-in kask MCP servers (matches kask_page.rs and kask_panel.rs).
-        const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = &[
-            ("codegraph", "Codegraph"),
-            ("companies", "Companies"),
-            ("condenser", "Condenser"),
-            ("corpus", "Corpus"),
-            ("curator", "Curator"),
-            ("kata-kanban", "Kata Kanban"),
-            ("media", "Media"),
-            ("research", "Research"),
-            ("scenarios", "Scenarios"),
-            ("training", "Training"),
-        ];
+        // The built-in kask MCP servers come from the canonical registry in
+        // `kask_bridge::BUILT_IN_MCP_SERVERS` (single source of truth).
 
         // D3: Construct the McpRuntime (manages MCP server child processes).
         // The McpRuntime implements ToolPort — OCAP-gated tool invocation
@@ -785,13 +774,13 @@ fn main() {
         .detach();
 
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
-            BUILT_IN_MCP_SERVERS
-                .iter()
-                .filter(|(id, _)| {
-                    *kask_settings_for_mcp.mcp.overrides.get(*id).unwrap_or(&true)
-                })
-                .map(|(id, _)| id.to_string())
-                .collect()
+            kask_bridge::enabled_server_ids(
+                kask_settings_for_mcp.mcp.load_default,
+                &kask_settings_for_mcp.mcp.overrides,
+            )
+            .into_iter()
+            .map(String::from)
+            .collect()
         } else {
             Vec::new()
         };
@@ -885,6 +874,19 @@ fn main() {
         #[cfg(target_os = "macos")]
         zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
+
+        // Register the built-in kask MCP servers as zed context servers.
+        // This makes kask MCP tools appear in the agent tool picker and
+        // available to zed's agent thread. The servers are launched as stdio
+        // child processes by zed's ContextServerStore, using the binary names
+        // from kask_bridge::BUILT_IN_MCP_SERVERS. Configuration (which servers
+        // to load) is managed from kask settings (kask.mcp.load_default + overrides).
+        //
+        // The registration is reactive: a SettingsStore observer re-syncs the
+        // ContextServerDescriptorRegistry whenever kask settings change.
+        sync_kask_mcp_servers(cx);
+        cx.observe_global::<SettingsStore>(sync_kask_mcp_servers).detach();
+
         debugger_ui::init(cx);
         debugger_tools::init(cx);
         client::init(&client, cx);
@@ -1725,6 +1727,120 @@ fn main() {
             }
         })
         .detach();
+    });
+}
+
+// ── Kask MCP server registration ───────────────────────────────────────────
+//
+// Registers the built-in kask MCP servers as zed context servers via the
+// app-level ContextServerDescriptorRegistry. This makes kask MCP tools appear
+// in the agent tool picker and available to zed's agent thread. The servers
+// are launched as stdio child processes by zed's ContextServerStore.
+
+/// A ContextServerDescriptor for a built-in kask MCP server.
+///
+/// Returns the binary path (`hkask-mcp-{id}`) and env vars (kask settings +
+/// credentials + inference socket) when `command()` is called. The env is
+/// resolved at call time so credentials are fresh.
+struct KaskMcpDescriptor {
+    binary: &'static str,
+}
+
+impl project::context_server_store::registry::ContextServerDescriptor for KaskMcpDescriptor {
+    fn command(
+        &self,
+        _worktree_store: gpui::Entity<project::worktree_store::WorktreeStore>,
+        cx: &gpui::AsyncApp,
+    ) -> gpui::Task<anyhow::Result<context_server::ContextServerCommand>> {
+        let binary = self.binary.to_string();
+        cx.spawn(async move |cx| {
+            // Resolve env vars from kask settings + credentials.
+            let (settings, credential_urls, base_env) = cx.update(|cx| {
+                let settings = kask_bridge::KaskSettings::get_global(cx).clone();
+                let credential_urls = kask_bridge::credential_urls_for_mcp(&settings);
+                let env = settings.mcp_env();
+                (settings, credential_urls, env)
+            });
+
+            let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+            let std_env_map = settings
+                .mcp_env_with_credentials(&credential_urls, credentials_provider.as_ref(), cx)
+                .await;
+            let mut env_map: collections::HashMap<String, String> =
+                std_env_map.into_iter().collect();
+            env_map.extend(base_env);
+
+            // Pass the inference IPC socket path so MCP servers can route
+            // inference through zed's LanguageModelRegistry.
+            if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
+                env_map.insert(
+                    hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+                    socket_path.clone(),
+                );
+            }
+
+            Ok(context_server::ContextServerCommand {
+                path: binary.into(),
+                args: vec![],
+                env: Some(env_map),
+                timeout: None,
+            })
+        })
+    }
+
+    fn configuration(
+        &self,
+        _worktree_store: gpui::Entity<project::worktree_store::WorktreeStore>,
+        _cx: &gpui::AsyncApp,
+    ) -> gpui::Task<anyhow::Result<Option<extension::ContextServerConfiguration>>> {
+        gpui::Task::ready(Ok(None))
+    }
+}
+
+/// Reconcile the app-level `ContextServerDescriptorRegistry` with the
+/// current kask MCP settings.
+///
+/// Registers descriptors for all enabled servers and unregisters descriptors
+/// for servers that are no longer enabled. Called once at startup and again
+/// whenever `SettingsStore` changes (via `cx.observe_global::<SettingsStore>`).
+///
+/// The `ContextServerStore` (per-project) subscribes to the registry and will
+/// start/stop the actual server processes to match.
+fn sync_kask_mcp_servers(cx: &mut gpui::App) {
+    let settings = kask_bridge::KaskSettings::get_global(cx).clone();
+    let registry =
+        project::context_server_store::registry::ContextServerDescriptorRegistry::default_global(
+            cx,
+        );
+    registry.update(cx, |registry, cx| {
+        for server in kask_bridge::BUILT_IN_MCP_SERVERS {
+            let enabled = settings.mcp.load_default
+                && *settings.mcp.overrides.get(server.id).unwrap_or(&true);
+            let id: std::sync::Arc<str> = std::sync::Arc::from(server.id);
+            let already_registered = registry.context_server_descriptor(server.id).is_some();
+            if enabled && !already_registered {
+                registry.register_context_server_descriptor(
+                    id,
+                    std::sync::Arc::new(KaskMcpDescriptor {
+                        binary: server.binary,
+                    })
+                        as std::sync::Arc<
+                            dyn project::context_server_store::registry::ContextServerDescriptor,
+                        >,
+                    cx,
+                );
+                log::info!(
+                    "Registered kask MCP server '{}' as zed context server",
+                    server.id
+                );
+            } else if !enabled && already_registered {
+                registry.unregister_context_server_descriptor_by_id(server.id, cx);
+                log::info!(
+                    "Unregistered kask MCP server '{}' from zed context servers",
+                    server.id
+                );
+            }
+        }
     });
 }
 

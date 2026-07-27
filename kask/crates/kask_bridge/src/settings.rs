@@ -72,6 +72,10 @@ pub struct KaskSettings {
     #[serde(default)]
     pub fusion: KaskFusionSettings,
 
+    /// Kask-wide model configuration: default, embedding, and classifier models.
+    #[serde(default)]
+    pub models: KaskModelsSettings,
+
     /// Inference provider toggles (non-secret — API keys are in the keychain).
     #[serde(default)]
     pub inference_providers: KaskInferenceProvidersSettings,
@@ -491,6 +495,73 @@ fn default_openrouter_min_intelligence() -> f64 {
     40.0
 }
 
+/// Kask-wide model configuration.
+///
+/// Provider-prefixed model names that override the kask built-in defaults.
+/// When a field is empty, kask falls back to its default model selection
+/// (typically the zed `agent.default_model` or the fusion judge model).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskModelsSettings {
+    /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).
+    /// When set, overrides the kask default for Curator, skill cascade, and
+    /// kask panel inference (unless fusion is enabled, which takes precedence).
+    #[serde(default)]
+    pub default_model: String,
+
+    /// Embedding model for corpus indexing and memory semantic recall
+    /// (provider-prefixed). When empty, falls back to the corpus MCP server's
+    /// `embedding_model` setting, then to the kask default.
+    #[serde(default)]
+    pub embedding_model: String,
+
+    /// Classifier model for guard/regulation classification tasks
+    /// (provider-prefixed). When empty, falls back to the kask default.
+    #[serde(default)]
+    pub classifier_model: String,
+}
+
+impl KaskModelsSettings {
+    /// The kask default inference model.
+    pub const DEFAULT_INFERENCE_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
+
+    /// The kask default embedding model.
+    pub const DEFAULT_EMBEDDING_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
+
+    /// The kask default classifier model.
+    pub const DEFAULT_CLASSIFIER_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
+
+    /// Resolve the effective default inference model, falling back to the
+    /// kask default when the setting is empty.
+    #[must_use]
+    pub fn effective_default_model(&self) -> &str {
+        if self.default_model.trim().is_empty() {
+            Self::DEFAULT_INFERENCE_MODEL
+        } else {
+            &self.default_model
+        }
+    }
+
+    /// Resolve the effective embedding model, falling back to the kask default.
+    #[must_use]
+    pub fn effective_embedding_model(&self) -> &str {
+        if self.embedding_model.trim().is_empty() {
+            Self::DEFAULT_EMBEDDING_MODEL
+        } else {
+            &self.embedding_model
+        }
+    }
+
+    /// Resolve the effective classifier model, falling back to the kask default.
+    #[must_use]
+    pub fn effective_classifier_model(&self) -> &str {
+        if self.classifier_model.trim().is_empty() {
+            Self::DEFAULT_CLASSIFIER_MODEL
+        } else {
+            &self.classifier_model
+        }
+    }
+}
+
 impl Settings for KaskSettings {
     fn from_settings(s: &settings_content::SettingsContent) -> Self {
         s.kask.clone().map(|c| c.into()).unwrap_or_default()
@@ -868,6 +939,14 @@ impl From<KaskSettingsContent> for KaskSettings {
                     coherence_threshold: f.coherence_threshold,
                     panel_sizing_enabled: f.panel_sizing_enabled.unwrap_or(false),
                     pressure_adaptive_enabled: f.pressure_adaptive_enabled.unwrap_or(false),
+                })
+                .unwrap_or_default(),
+            models: c
+                .models
+                .map(|m| KaskModelsSettings {
+                    default_model: m.default_model.unwrap_or_default(),
+                    embedding_model: m.embedding_model.unwrap_or_default(),
+                    classifier_model: m.classifier_model.unwrap_or_default(),
                 })
                 .unwrap_or_default(),
             inference_providers: c
