@@ -546,7 +546,7 @@ fn main() {
         // The runtime is owned by GlobalTokio (registered below) for the
         // lifetime of the app. Dropping GlobalTokio on app shutdown will
         // shutdown_background the runtime.
-        gpui_tokio::init_from_handle(cx, kask_runtime_handle);
+        gpui_tokio::init_from_handle(cx, kask_runtime_handle.clone());
         std::mem::forget(kask_tokio_runtime);
 
         // D1 composition root: wire the hKask manifest executor into the SkillTool.
@@ -589,10 +589,14 @@ fn main() {
 
         // The event sink must be constructed before the CyberneticsLoop so
         // both the loop and the MCP runtime share one sink. `LedgerSink::new`
-        // captures the current tokio handle — this runs inside the
-        // gpui_tokio runtime registered above, so `Handle::current` succeeds.
+        // takes the tokio handle explicitly — the GPUI foreground thread is
+        // NOT inside a tokio reactor context, so `Handle::current()` would
+        // panic here. We pass the kask tokio handle captured above instead.
         let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
-            std::sync::Arc::new(hkask_regulation::LedgerSink::new(regulation_ledger.clone()));
+            std::sync::Arc::new(hkask_regulation::LedgerSink::new(
+                regulation_ledger.clone(),
+                kask_runtime_handle,
+            ));
 
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
             hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
@@ -644,7 +648,8 @@ fn main() {
         // doesn't need hkask-pods. It reads directly from RegulationLedger.
         //
         // A clone of the ledger is hoisted for the kask panel's regulation
-        // status bar (wired later in the `if let Some(configured)` block).
+        // status bar (wired later in the deferred task's model-dependent
+        // wiring block).
         let panel_regulation_ledger = regulation_ledger.clone();
         // The alert sink forwards critical alerts to a GPUI foreground task
         // that dispatches them as toasts, so the user is notified even when
@@ -681,8 +686,9 @@ fn main() {
         // D5: a2a_secret for OCAP delegation token minting.
         // Resolved via the `keyring` crate (synchronous OS keychain I/O).
         //
-        // Hoisted out of the block below so it's in scope for the model-dependent
-        // wiring block after language_models::init().
+        // Hoisted out of the deferred task's model-dependent wiring block so
+        // it's in scope for both the early logging-memory wiring and the
+        // deferred model-dependent wiring.
         //
         // When the secret cannot be resolved (no env var, no keychain entry),
         // `unwrap_or_default()` produces an empty Vec. Downstream OCAP token
@@ -711,9 +717,9 @@ fn main() {
             // after AppState::set_global). `set_memory_port` uses a Mutex (not
             // OnceLock), so the upgrade is a simple second call.
             //
-            // This is hoisted out of the `if let Some(configured)` block below so
-            // it is always installed, even when no default LanguageModel is
-            // configured yet.
+            // This is hoisted out of the model-dependent wiring block (now in
+            // the deferred task) so it is always installed, even when no default
+            // LanguageModel is configured yet.
             let logging_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
                 std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new());
             let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(logging_memory));
@@ -774,13 +780,13 @@ fn main() {
         .detach();
 
         let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
-            kask_bridge::enabled_server_ids(
-                kask_settings_for_mcp.mcp.load_default,
-                &kask_settings_for_mcp.mcp.overrides,
-            )
-            .into_iter()
-            .map(String::from)
-            .collect()
+            kask_bridge::BUILT_IN_MCP_SERVERS
+                .iter()
+                .filter(|s| {
+                    *kask_settings_for_mcp.mcp.overrides.get(s.id).unwrap_or(&true)
+                })
+                .map(|s| s.id.to_string())
+                .collect()
         } else {
             Vec::new()
         };
@@ -967,6 +973,17 @@ fn main() {
             let user_store = app_state.user_store.clone();
             let mcp_runtime_for_deferred = mcp_runtime_for_startup;
             let servers_to_start_clone = servers_to_start;
+            // Captures for the model-dependent wiring block (moved here from
+            // the synchronous startup so it runs after the user resolves and
+            // the LanguageModelRegistry is populated). See the
+            // "Process-global hooks set at runtime need a startup-failure
+            // signal" trap in .rules — these OnceLock-based hooks must be
+            // wired from the deferred task, not from startup.
+            let tool_port_for_deferred = tool_port;
+            let a2a_secret_for_deferred = a2a_secret;
+            let cybernetics_loop_for_panel_deferred = cybernetics_loop_for_panel;
+            let panel_regulation_ledger_deferred = panel_regulation_ledger;
+            let app_state_for_deferred = app_state.clone();
             cx.spawn(async move |cx| {
                 let mut current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
 
@@ -1002,6 +1019,7 @@ fn main() {
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| kask_settings.corpus.embedding_model.clone());
+                let embedding_dim = kask_settings.corpus.embedding_dim as usize;
                 let username_for_provision = username.clone();
 
                 let provision_result = cx.background_spawn(async move {
@@ -1016,6 +1034,7 @@ fn main() {
                             &passphrase,
                             user_webid,
                             embedding_model,
+                            embedding_dim,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
                             gpui_tokio::Tokio::handle_async(&*cx),
@@ -1075,23 +1094,318 @@ fn main() {
                     }
                 }
 
-                // Launch MCP servers.
+                // D1/D3/D4/D10/D12: Model-dependent kask wiring.
+                //
+                // This block was originally in the synchronous startup, but
+                // moved here because LanguageModelRegistry::default_model()
+                // returns None until the user authenticates. Running it at
+                // startup left all OnceLock-based hooks (manifest executor,
+                // panel tool invoker, scoped inference, regulation status,
+                // thread condenser) unwired when no model was configured at
+                // startup — the "Process-global hooks set at runtime need a
+                // startup-failure signal" trap from .rules.
+                //
+                // The fusion discovery is async (OpenRouter HTTP call with a
+                // 5s timeout) and must run outside cx.update (which holds the
+                // app borrow and can't pump the foreground executor). The
+                // rest is synchronous GPUI mutation and runs inside cx.update.
+                let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
+                let fusion_config = kask_settings.fusion.to_fusion_config();
+                let async_cx_for_fusion = cx.clone();
+
+                // Fusion auto-discovery (async, outside cx.update).
+                let mut discovered_favorites: Vec<kask_bridge::FavoriteModel> = Vec::new();
+                let fusion_model: Option<Arc<dyn language_model::LanguageModel>> =
+                    if let Some(mut fc) = fusion_config {
+                        if kask_bridge::should_auto_discover(&kask_settings.fusion.panel_models) {
+                            log::info!(
+                                "hKask fusion: auto-discovering panel models from OpenRouter \
+                                 (max_price=${}/M, min_ia={})",
+                                kask_settings.fusion.openrouter_max_price,
+                                kask_settings.fusion.openrouter_min_intelligence
+                            );
+                            let or_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
+                            let max_price = kask_settings.fusion.openrouter_max_price;
+                            let min_ia = kask_settings.fusion.openrouter_min_intelligence;
+                            let discovery_task = {
+                                let _tokio_guard = gpui_tokio::Tokio::handle_async(&*cx).enter();
+                                cx.background_spawn(async move {
+                                    kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
+                                })
+                            };
+                            let timeout = cx.background_executor().timer(std::time::Duration::from_secs(5));
+                            let result = futures::select_biased! {
+                                favs = discovery_task.fuse() => favs,
+                                _ = timeout.fuse() => {
+                                    log::warn!(
+                                        "hKask fusion: OpenRouter discovery timed out after 5s — \
+                                         falling back to kask_default panel"
+                                    );
+                                    Vec::new()
+                                }
+                            };
+                            if !result.is_empty() {
+                                let panel_names: Vec<String> = result.iter()
+                                    .map(|f| f.prefixed_id.clone())
+                                    .collect();
+                                log::info!(
+                                    "hKask fusion: discovered {} favorites — {:?}",
+                                    panel_names.len(),
+                                    panel_names
+                                );
+                                if let Some(panel) = hkask_types::fusion::NonEmptyVec::from_vec(panel_names) {
+                                    fc.panel = panel;
+                                }
+                                discovered_favorites = result;
+                            } else {
+                                log::info!(
+                                    "hKask fusion: no favorites discovered — using kask_default panel"
+                                );
+                            }
+                        }
+
+                        // Resolve fusion panel/judge models and construct the
+                        // FusionLanguageModel. This needs the model registry,
+                        // so it runs inside cx.update.
+                        let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
+                        if fc.judge.to_lowercase() != "algo" {
+                            names.push(fc.judge.clone());
+                        }
+                        let async_cx_for_closure = async_cx_for_fusion.clone();
+                        cx.update(|cx| {
+                            let model_registry = language_model::LanguageModelRegistry::read_global(cx);
+                            let resolved = kask_bridge::resolve_fusion_models(
+                                model_registry,
+                                &names,
+                                cx,
+                            );
+                            match kask_bridge::FusionLanguageModel::new(
+                                fc.clone(),
+                                resolved,
+                                async_cx_for_closure.clone(),
+                            ) {
+                                Some(m) => {
+                                    log::info!(
+                                        "hKask fusion enabled — mode: {}, judge: {}, panel: {:?}",
+                                        fc.mode.as_str(),
+                                        fc.judge,
+                                        fc.panel.iter().collect::<Vec<_>>()
+                                    );
+                                    Some(Arc::new(m) as Arc<dyn language_model::LanguageModel>)
+                                }
+                                None => {
+                                    log::warn!(
+                                        "hKask fusion config present but construction failed — falling back to single model"
+                                    );
+                                    None
+                                }
+                            }
+                        })
+                    } else {
+                        log::info!("hKask fusion disabled (kask.fusion.enabled = false)");
+                        None
+                    };
+
+                // Sync model-dependent wiring (inside cx.update).
+                cx.update(|cx| {
+                    let model_registry = language_model::LanguageModelRegistry::read_global(cx);
+                    if let Some(configured) = model_registry.default_model() {
+                        let async_cx = cx.to_async();
+                        let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
+                        let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
+
+                        let inference_model: Arc<dyn language_model::LanguageModel> =
+                            fusion_model.clone().unwrap_or_else(|| {
+                                let kask_default = kask_settings.models.effective_default_model();
+                                if kask_default != kask_bridge::KaskModelsSettings::DEFAULT_INFERENCE_MODEL {
+                                    if let Some(model) = kask_bridge::resolve_fusion_models(
+                                        model_registry,
+                                        &[kask_default.to_string()],
+                                        cx,
+                                    ).into_values().next() {
+                                        log::info!(
+                                            "hKask inference using kask.models.default_model: {}",
+                                            kask_default
+                                        );
+                                        return model;
+                                    }
+                                    log::warn!(
+                                        "kask.models.default_model '{}' could not be resolved \
+                                         from LanguageModelRegistry — falling back to zed default",
+                                        kask_default
+                                    );
+                                }
+                                configured.model.clone()
+                            });
+
+                        // Register the fusion provider so it appears in the agent
+                        // panel's model picker. When fusion is disabled, the provider
+                        // returns no models and doesn't appear in the picker.
+                        let fusion_provider =
+                            kask_bridge::FusionLanguageModelProvider::new(cx);
+                        language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                            registry.register_provider(Arc::new(fusion_provider), cx);
+                        });
+                        log::info!("Kask fusion language model provider registered");
+
+                        // Auto-favorite: when fusion is enabled, add the fusion model and
+                        // any discovered OpenRouter favorites to `agent.favorite_models`
+                        // so they appear in the agent panel's model picker favorites cycle
+                        // (CycleFavoriteModels action). `add_favorite_model` is idempotent
+                        // — entries already present are not duplicated. This is best-effort:
+                        // settings write failures are logged but do not block startup.
+                        let fusion_enabled = fusion_model.is_some();
+                        if fusion_enabled {
+                            let fs = app_state_for_deferred.fs.clone();
+                            let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
+                            selections.push(kask_bridge::fusion_model_selection());
+                            let favorite_count = selections.len();
+                            let discovered_count = discovered_favorites.len();
+                            settings::update_settings_file(fs, cx, move |settings, _| {
+                                let agent = settings.agent.get_or_insert_default();
+                                for selection in &selections {
+                                    agent.add_favorite_model(selection.clone());
+                                }
+                            });
+                            log::info!(
+                                "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered)",
+                                favorite_count,
+                                discovered_count
+                            );
+                        }
+
+                        let (inference_port, inference_task) =
+                            kask_bridge::LanguageModelInferencePort::new(
+                                inference_model.clone(),
+                                async_cx,
+                            );
+                        inference_task.detach();
+
+                        let guard_config = hkask_guard::GuardConfig::from_env();
+                        let content_guard = hkask_guard::ContentGuard::mandatory(&guard_config);
+                        let guarded_inference = std::sync::Arc::new(
+                            hkask_guard::GuardedInferencePort::new(
+                                std::sync::Arc::new(inference_port),
+                                content_guard,
+                            )
+                        );
+
+                        let panel_inference_port = guarded_inference.clone();
+                        let panel_tool_port = tool_port_for_deferred.clone();
+
+                        // Start the inference IPC server so MCP server child processes
+                        // can route inference through zed's LanguageModelRegistry (with
+                        // fusion, guard, and zed's configured API keys) instead of
+                        // constructing their own InferenceRouter with separate keys.
+                        match kask_bridge::InferenceIpcServer::start(
+                            guarded_inference.clone(),
+                            cx,
+                        ) {
+                            Ok(ipc_server) => {
+                                let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
+                                let _ = INFERENCE_SOCKET_PATH.set(socket_path.clone());
+                                log::info!(
+                                    "hKask inference IPC server started at {socket_path} — \
+                                     MCP servers will route inference through zed"
+                                );
+                                // Keep the server alive for the lifetime of the process.
+                                // It's stored in a detached task — the socket is cleaned
+                                // up on drop, but we don't drop it until process exit.
+                                std::mem::forget(ipc_server);
+                                // Re-sync MCP servers so the inference socket path is
+                                // included in the env passed to context server processes.
+                                // The KaskMcpDescriptor::command() resolves env at call
+                                // time, so this notification triggers maintain_servers
+                                // to restart servers with the updated env.
+                                sync_kask_mcp_servers(cx);
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to start inference IPC server: {e} — \
+                                     MCP servers will fall back to InferenceRouter with env-var keys"
+                                );
+                            }
+                        }
+
+                        let tool_port_as_dyn: std::sync::Arc<dyn hkask_capability::ToolPort> =
+                            tool_port_for_deferred.clone();
+                        let executor = std::sync::Arc::new(
+                            kask_bridge::BridgeManifestExecutor::new(
+                                guarded_inference,
+                                tool_port_as_dyn,
+                                a2a_secret_for_deferred.clone(),
+                                registry_manifests_dir,
+                                registry_templates_dir,
+                                gpui_tokio::Tokio::handle(cx),
+                            ),
+                        );
+                        agent::set_manifest_executor(Some(executor));
+                        log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
+
+                        if kask_settings.memory.auto_inject {
+                            log::info!("hKask context injection enabled — injector will be wired after agent resolves");
+                        } else {
+                            log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
+                        }
+
+                        let condenser_settings = &kask_settings.condenser;
+                        if condenser_settings.auto_compress_tool_results {
+                            let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
+                                &condenser_settings.profile,
+                                condenser_settings.auto_compress_tool_results,
+                            ));
+                            agent::set_thread_condenser(Some(condenser));
+                            log::info!(
+                                "hKask thread condenser wired — tool results will be compressed (profile: {})",
+                                condenser_settings.profile
+                            );
+                        } else {
+                            log::info!("hKask tool result compression disabled (kask.condenser.auto_compress_tool_results = false)");
+                        }
+
+                        let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
+                            tool_port: panel_tool_port,
+                            a2a_secret: a2a_secret_for_deferred.clone(),
+                            executor: cx.background_executor().clone(),
+                        });
+                        kask_panel::set_tool_invoker(Some(panel_tool_invoker));
+
+                        let panel_inference = std::sync::Arc::new(PanelScopedInference {
+                            inference: panel_inference_port,
+                            executor: cx.background_executor().clone(),
+                        });
+                        kask_panel::set_scoped_inference(Some(panel_inference));
+
+                        let panel_status = std::sync::Arc::new(PanelRegulationStatus {
+                            cybernetics_loop: cybernetics_loop_for_panel_deferred.clone(),
+                            ledger: panel_regulation_ledger_deferred.clone(),
+                            webid: hkask_types::WebID::from_persona(b"kask-panel"),
+                            executor: cx.background_executor().clone(),
+                        });
+                        kask_panel::set_regulation_status(Some(panel_status));
+                        log::info!("Kask panel tool invoker + scoped inference + regulation status wired");
+                    } else {
+                        // Body injection is disabled in zed-kask: with no manifest
+                        // executor wired, the `skill` tool returns the no-op envelope
+                        // ("Skill manifest executor not configured..."). The log
+                        // message must match the actual fallback so operators reading
+                        // it are not misled.
+                        log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skill invocations will return the no-op envelope");
+                    }
+                });
+
+                // Launch MCP servers via McpRuntime for app-global governed
+                // dispatch (OCAP/gas/regulation). These instances serve the
+                // skill cascade (FlowDef) and kask panel.
+                //
+                // Zed's ContextServerStore (per-project) launches separate
+                // instances for the agent tool picker — registered via
+                // sync_kask_mcp_servers. The two systems serve different
+                // consumers with different governance requirements; the
+                // parallel instances are by design, not a bug.
                 if !servers_to_start_clone.is_empty() {
-                    // Build the MCP env, including API keys resolved from zed's
-                    // keychain. This bridges the two keychain namespaces: the
-                    // kask keystore (hkask_keystore::keychain) and zed's
-                    // CredentialsProvider.
-                    //
-                    // McpRuntime uses tokio::sync::RwLock internally, and
-                    // start_server_with_env uses tokio::process::Command.
-                    // Both require a tokio reactor. We're inside a cx.spawn
-                    // (GPUI foreground executor), so enter the tokio runtime
-                    // context for the MCP server launches.
                     let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
                     let _tokio_guard = tokio_handle.enter();
-                    // kask settings UI writes keys via zed's CredentialsProvider
-                    // (under `kask://credentials/<key>`), while MCP servers read
-                    // env vars / hKask's Keychain (service "hkask").
                     let credential_urls = cx.update(|cx| {
                         let settings = kask_bridge::KaskSettings::get_global(cx);
                         kask_bridge::credential_urls_for_mcp(&settings)
@@ -1104,8 +1418,6 @@ fn main() {
                             cx,
                         )
                         .await;
-                    // Pass the inference IPC socket path so MCP servers can
-                    // route inference through zed's LanguageModelRegistry.
                     if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
                         mcp_env.insert(
                             hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
@@ -1125,7 +1437,7 @@ fn main() {
                             .start_server_with_env(server_id, &binary, mcp_env.clone())
                             .await
                         {
-                            Ok(()) => log::info!("Kask MCP server '{server_id}' started"),
+                            Ok(()) => log::info!("Kask MCP server '{server_id}' started (McpRuntime)"),
                             Err(e) => log::warn!(
                                 "Kask MCP server '{server_id}' failed to start: {e} \
                                  — set HKASK_MCP_{}_BIN to the binary path",
@@ -1204,272 +1516,12 @@ fn main() {
         kask_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
-        // D1/D3/D4/D10/D12: Model-dependent kask wiring.
-        //
-        // This block runs after language_model::init() and language_models::init()
-        // so that LanguageModelRegistry::read_global(cx) is available.
-        //
-        // The a2a_secret and logging memory port were wired earlier
-        // (before AppState::set_global) because they don't depend on the language
-        // model registry and are needed by the deferred agent provisioning task.
-        {
-            let async_cx = cx.to_async();
-            let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
-            let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
-
-            let model_registry = language_model::LanguageModelRegistry::read_global(cx);
-            if let Some(configured) = model_registry.default_model() {
-                let kask_settings = kask_bridge::KaskSettings::get_global(cx).clone();
-
-                // Fusion: when enabled, construct a FusionLanguageModel that
-                // delegates to hKask's fusion orchestrator. The fusion model
-                // wraps the panel + judge models resolved from the registry.
-                // When fusion is disabled (or construction fails), fall back to
-                // the single configured default model.
-                let fusion_config = kask_settings.fusion.to_fusion_config();
-                let mut discovered_favorites: Vec<kask_bridge::FavoriteModel> =
-                    Vec::new();
-                let fusion_model: Option<Arc<dyn language_model::LanguageModel>> =
-                    if let Some(mut fc) = fusion_config {
-                        // Auto-discover: when panel_models is empty or "auto",
-                        // query OpenRouter for models passing the price/intelligence
-                        // thresholds and use them as the panel.
-                        if kask_bridge::should_auto_discover(&kask_settings.fusion.panel_models) {
-                            log::info!(
-                                "hKask fusion: auto-discovering panel models from OpenRouter \
-                                 (max_price=${}/M, min_ia={})",
-                                kask_settings.fusion.openrouter_max_price,
-                                kask_settings.fusion.openrouter_min_intelligence
-                            );
-                            let or_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
-                            let max_price = kask_settings.fusion.openrouter_max_price;
-                            let min_ia = kask_settings.fusion.openrouter_min_intelligence;
-                            let discovery_task = {
-                                let _tokio_guard = gpui_tokio::Tokio::handle_async(&*cx).enter();
-                                cx.background_spawn(async move {
-                                    kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
-                                })
-                            };
-                            // Block on the foreground executor with a 5s timeout.
-                            // Discovery is best-effort — on timeout, fall back to kask_default panel.
-                            let result = cx.foreground_executor().block_on(async {
-                                let timeout = cx.background_executor().timer(std::time::Duration::from_secs(5));
-                                futures::select_biased! {
-                                    favs = discovery_task.fuse() => favs,
-                                    _ = timeout.fuse() => {
-                                        log::warn!(
-                                            "hKask fusion: OpenRouter discovery timed out after 5s — \
-                                             falling back to kask_default panel"
-                                        );
-                                        Vec::new()
-                                    }
-                                }
-                            });
-                            if !result.is_empty() {
-                                let panel_names: Vec<String> = result.iter()
-                                    .map(|f| f.prefixed_id.clone())
-                                    .collect();
-                                log::info!(
-                                    "hKask fusion: discovered {} favorites — {:?}",
-                                    panel_names.len(),
-                                    panel_names
-                                );
-                                if let Some(panel) = hkask_types::fusion::NonEmptyVec::from_vec(panel_names) {
-                                    fc.panel = panel;
-                                }
-                                discovered_favorites = result;
-                            } else {
-                                log::info!(
-                                    "hKask fusion: no favorites discovered — using kask_default panel"
-                                );
-                            }
-                        }
-
-                        let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
-                        if fc.judge.to_lowercase() != "algo" {
-                            names.push(fc.judge.clone());
-                        }
-                        let resolved = kask_bridge::resolve_fusion_models(
-                            model_registry,
-                            &names,
-                            cx,
-                        );
-                        match kask_bridge::FusionLanguageModel::new(
-                            fc.clone(),
-                            resolved,
-                            async_cx.clone(),
-                        ) {
-                            Some(m) => {
-                                log::info!(
-                                    "hKask fusion enabled — mode: {}, judge: {}, panel: {:?}",
-                                    fc.mode.as_str(),
-                                    fc.judge,
-                                    fc.panel.iter().collect::<Vec<_>>()
-                                );
-                                Some(Arc::new(m))
-                            }
-                            None => {
-                                log::warn!(
-                                    "hKask fusion config present but construction failed — falling back to single model"
-                                );
-                                None
-                            }
-                        }
-                    } else {
-                        log::info!("hKask fusion disabled (kask.fusion.enabled = false)");
-                        None
-                    };
-
-                let inference_model: Arc<dyn language_model::LanguageModel> =
-                    fusion_model.clone().unwrap_or_else(|| configured.model.clone());
-
-                // Register the fusion provider so it appears in the agent
-                // panel's model picker. When fusion is disabled, the provider
-                // returns no models and doesn't appear in the picker.
-                let fusion_provider =
-                    kask_bridge::FusionLanguageModelProvider::new(cx);
-                language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                    registry.register_provider(Arc::new(fusion_provider), cx);
-                });
-                log::info!("Kask fusion language model provider registered");
-
-                // Auto-favorite: when fusion is enabled, add the fusion model and
-                // any discovered OpenRouter favorites to `agent.favorite_models`
-                // so they appear in the agent panel's model picker favorites cycle
-                // (CycleFavoriteModels action). `add_favorite_model` is idempotent
-                // — entries already present are not duplicated. This is best-effort:
-                // settings write failures are logged but do not block startup.
-                let fusion_enabled = fusion_model.is_some();
-                if fusion_enabled {
-                    let fs = app_state.fs.clone();
-                    let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
-                    selections.push(kask_bridge::fusion_model_selection());
-                    let favorite_count = selections.len();
-                    let discovered_count = discovered_favorites.len();
-                    settings::update_settings_file(fs, cx, move |settings, _| {
-                        let agent = settings.agent.get_or_insert_default();
-                        for selection in &selections {
-                            agent.add_favorite_model(selection.clone());
-                        }
-                    });
-                    log::info!(
-                        "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered)",
-                        favorite_count,
-                        discovered_count
-                    );
-                }
-
-                let (inference_port, inference_task) =
-                    kask_bridge::LanguageModelInferencePort::new(
-                        inference_model.clone(),
-                        async_cx,
-                    );
-                inference_task.detach();
-
-                let guard_config = hkask_guard::GuardConfig::from_env();
-                let content_guard = hkask_guard::ContentGuard::mandatory(&guard_config);
-                let guarded_inference = std::sync::Arc::new(
-                    hkask_guard::GuardedInferencePort::new(
-                        std::sync::Arc::new(inference_port),
-                        content_guard,
-                    )
-                );
-
-                let panel_inference_port = guarded_inference.clone();
-                let panel_tool_port = tool_port.clone();
-
-                // Start the inference IPC server so MCP server child processes
-                // can route inference through zed's LanguageModelRegistry (with
-                // fusion, guard, and zed's configured API keys) instead of
-                // constructing their own InferenceRouter with separate keys.
-                match kask_bridge::InferenceIpcServer::start(
-                    guarded_inference.clone(),
-                    cx,
-                ) {
-                    Ok(ipc_server) => {
-                        let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
-                        let _ = INFERENCE_SOCKET_PATH.set(socket_path.clone());
-                        log::info!(
-                            "hKask inference IPC server started at {socket_path} — \
-                             MCP servers will route inference through zed"
-                        );
-                        // Keep the server alive for the lifetime of the process.
-                        // It's stored in a detached task — the socket is cleaned
-                        // up on drop, but we don't drop it until process exit.
-                        std::mem::forget(ipc_server);
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to start inference IPC server: {e} — \
-                             MCP servers will fall back to InferenceRouter with env-var keys"
-                        );
-                    }
-                }
-
-                let executor = std::sync::Arc::new(
-                    kask_bridge::BridgeManifestExecutor::new(
-                        guarded_inference,
-                        tool_port,
-                        a2a_secret.clone(),
-                        registry_manifests_dir,
-                        registry_templates_dir,
-                        gpui_tokio::Tokio::handle(cx),
-                    ),
-                );
-                agent::set_manifest_executor(Some(executor));
-                log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");
-
-                if kask_settings.memory.auto_inject {
-                    log::info!("hKask context injection enabled — injector will be wired after agent resolves");
-                } else {
-                    log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
-                }
-
-                let condenser_settings = &kask_settings.condenser;
-                if condenser_settings.auto_compress_tool_results {
-                    let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
-                        &condenser_settings.profile,
-                        condenser_settings.auto_compress_tool_results,
-                    ));
-                    agent::set_thread_condenser(Some(condenser));
-                    log::info!(
-                        "hKask thread condenser wired — tool results will be compressed (profile: {})",
-                        condenser_settings.profile
-                    );
-                } else {
-                    log::info!("hKask tool result compression disabled (kask.condenser.auto_compress_tool_results = false)");
-                }
-
-                let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
-                    tool_port: panel_tool_port,
-                    a2a_secret: a2a_secret,
-                    executor: cx.background_executor().clone(),
-                });
-                kask_panel::set_tool_invoker(Some(panel_tool_invoker));
-
-                let panel_inference = std::sync::Arc::new(PanelScopedInference {
-                    inference: panel_inference_port,
-                    executor: cx.background_executor().clone(),
-                });
-                kask_panel::set_scoped_inference(Some(panel_inference));
-
-                let panel_status = std::sync::Arc::new(PanelRegulationStatus {
-                    cybernetics_loop: cybernetics_loop_for_panel,
-                    ledger: panel_regulation_ledger,
-                    webid: hkask_types::WebID::from_persona(b"kask-panel"),
-                    executor: cx.background_executor().clone(),
-                });
-                kask_panel::set_regulation_status(Some(panel_status));
-                log::info!("Kask panel tool invoker + scoped inference + regulation status wired");
-            } else {
-                // Body injection is disabled in zed-kask: with no manifest
-                // executor wired, the `skill` tool returns the no-op envelope
-                // ("Skill manifest executor not configured..."). The log
-                // message must match the actual fallback so operators reading
-                // it are not misled.
-                log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skill invocations will return the no-op envelope");
-            }
-        }
+        // D1/D3/D4/D10/D12: Model-dependent kask wiring now runs in the
+        // deferred task (after the Zed user resolves and the
+        // LanguageModelRegistry is populated). See the deferred task above.
+        // Running it here left OnceLock-based hooks unwired when no model was
+        // configured at startup (the "Process-global hooks set at runtime
+        // need a startup-failure signal" trap from .rules).
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -1801,11 +1853,12 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
 /// current kask MCP settings.
 ///
 /// Registers descriptors for all enabled servers and unregisters descriptors
-/// for servers that are no longer enabled. Called once at startup and again
-/// whenever `SettingsStore` changes (via `cx.observe_global::<SettingsStore>`).
+/// for servers that are no longer enabled. Called once at startup, whenever
+/// `SettingsStore` changes (via `cx.observe_global::<SettingsStore>`), and
+/// after the inference IPC socket is set (so servers get the socket path).
 ///
-/// The `ContextServerStore` (per-project) subscribes to the registry and will
-/// start/stop the actual server processes to match.
+/// The `ContextServerStore` (per-project) observes the registry and will
+/// start/stop/restart the actual server processes to match.
 fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     let settings = kask_bridge::KaskSettings::get_global(cx).clone();
     let registry =
@@ -1841,6 +1894,13 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
                 );
             }
         }
+        // Always notify so the ContextServerStore re-runs maintain_servers.
+        // This is needed because the KaskMcpDescriptor::command() resolves env
+        // vars (credentials, inference socket) at call time — if the socket
+        // wasn't available when maintain_servers last ran, the running server
+        // processes have stale env. Notifying forces maintain_servers to
+        // re-evaluate and restart servers whose configuration changed.
+        cx.notify();
     });
 }
 

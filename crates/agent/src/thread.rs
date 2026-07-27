@@ -4693,14 +4693,18 @@ impl Thread {
         // it scores each tool by keyword overlap between the context and the
         // tool's description. An empty router result means "no filtering"
         // (fail-open) to avoid starving the model.
+        //
+        // zed-kask: the router only filters context-server (MCP) tools.
+        // Built-in zed tools (ALL_TOOL_NAMES) always pass through — the
+        // router was introduced to tame MCP tool floods, not to second-guess
+        // the agent-profile allowlist for core tools. Filtering built-in
+        // tools caused the agent to lose access to `fetch`, `diagnostics`,
+        // `list_directory`, etc. on ordinary coding requests, while leaving
+        // the model to discover the loss by getting "tool not found" errors
+        // mid-turn.
         if let Some(router) = crate::tool_router() {
-            let candidates: Vec<crate::tool_router::ToolCandidate> = tools
-                .iter()
-                .map(|(name, tool)| crate::tool_router::ToolCandidate {
-                    name: name.clone(),
-                    description: tool.description(),
-                })
-                .collect();
+            let built_in_names: std::collections::HashSet<&str> =
+                crate::tools::ALL_TOOL_NAMES.iter().copied().collect();
             let open_file_paths: Vec<String> = self
                 .project
                 .read(cx)
@@ -4713,15 +4717,21 @@ impl Thread {
                     })
                 })
                 .collect();
-            let context = crate::tool_router::ToolSelectionContext {
-                user_message: self.last_user_message_text(),
+            // Collect (name, description) pairs for the router. The router
+            // only needs descriptions for scoring — the full AnyAgentTool
+            // objects stay in `tools`.
+            let tool_descriptions: Vec<(SharedString, SharedString)> = tools
+                .iter()
+                .map(|(name, tool)| (name.clone(), tool.description()))
+                .collect();
+            let retained = crate::tool_router::apply_router_bypassing_built_ins(
+                router.as_ref(),
+                tool_descriptions.iter().map(|(n, d)| (n, d)),
+                self.last_user_message_text().as_deref(),
                 open_file_paths,
-                candidates,
-            };
-            let selected = router.select_tools(&context);
-            if let Some(selected) = selected {
-                tools.retain(|name, _| selected.contains(name));
-            }
+                &built_in_names,
+            );
+            tools.retain(|name, _| retained.contains(name));
         }
 
         tools

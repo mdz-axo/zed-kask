@@ -20,7 +20,7 @@ use collections::HashMap;
 /// API keys are stored in the keychain via `CredentialsProvider` (D9b).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, RegisterSetting)]
 pub struct KaskSettings {
-    /// MCP server configuration — which of the 11 built-in servers to load.
+    /// MCP server configuration — which of the 10 built-in servers to load.
     #[serde(default)]
     pub mcp: KaskMcpSettings,
 
@@ -84,7 +84,7 @@ pub struct KaskSettings {
 /// MCP server load configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskMcpSettings {
-    /// Whether to load the default MCP server set (11 servers).
+    /// Whether to load the default MCP server set (10 servers).
     /// Set to `false` to disable all kask MCP servers.
     #[serde(default = "default_true")]
     pub load_default: bool,
@@ -776,6 +776,27 @@ impl KaskSettings {
             env.insert(
                 "HKASK_TRAINING_CACHE_DIR".to_string(),
                 self.training.cache_dir.clone(),
+            );
+        }
+
+        // ── Kask-wide model overrides ──
+        // These take precedence over the per-server model settings above.
+        if !self.models.default_model.is_empty() {
+            env.insert(
+                "HKASK_DEFAULT_MODEL".to_string(),
+                self.models.default_model.clone(),
+            );
+        }
+        if !self.models.embedding_model.is_empty() {
+            env.insert(
+                "HKASK_EMBEDDING_MODEL".to_string(),
+                self.models.embedding_model.clone(),
+            );
+        }
+        if !self.models.classifier_model.is_empty() {
+            env.insert(
+                "HKASK_CLASSIFIER_MODEL".to_string(),
+                self.models.classifier_model.clone(),
             );
         }
 

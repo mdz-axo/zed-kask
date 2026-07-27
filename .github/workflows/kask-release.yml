@@ -50,26 +50,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64 is the only target with prebuilt binaries. Users on
+          # other platforms fall back to the source-build installer
+          # (kask/scripts/build/install.sh) via install-binary.sh.
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
             archive: zed-kask-x86_64-unknown-linux-gnu.tar.gz
             archive_cmd: tar -czf
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-            archive: zed-kask-aarch64-unknown-linux-gnu.tar.gz
-            archive_cmd: tar -czf
-          - target: x86_64-apple-darwin
-            runner: macos-13
-            archive: zed-kask-x86_64-apple-darwin.tar.gz
-            archive_cmd: tar -czf
-          - target: aarch64-apple-darwin
-            runner: macos-14
-            archive: zed-kask-aarch64-apple-darwin.tar.gz
-            archive_cmd: tar -czf
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2022
-            archive: zed-kask-x86_64-pc-windows-msvc.zip
-            archive_cmd: 7z a
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:

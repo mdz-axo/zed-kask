@@ -252,3 +252,54 @@ not capture `AsyncApp`. This applies to any `Send + Sync` trait (e.g.
 `RegulationSink`, `AlertSink`) implemented over GPUI state. Cycle 6 found
 this the hard way — the first `ToastAlertSink` impl captured `AsyncApp` and
 failed to compile as `Send + Sync`.
+
+## Kask MCP servers have two parallel launch paths by design
+
+Kask MCP servers (`hkask-mcp-{id}` binaries) are launched by two independent
+systems. Do not try to unify them — they serve different consumers with
+different scoping and governance requirements:
+
+1. **`McpRuntime` (app-global)** — launches one copy of each server for
+   governed dispatch (OCAP token verification, gas/rjoule budgeting,
+   `reg.tool.*` span emission). Serves the skill cascade (FlowDef) and kask
+   panel. Runs outside any project context.
+
+2. **`ContextServerStore` (per-project)** — each project launches its own
+   copies via `ContextServerDescriptorRegistry` descriptors (registered by
+   `sync_kask_mcp_servers` in `main.rs`). Serves the agent tool picker.
+   Project-scoped, no governance membrane.
+
+The `ContextServerDescriptorRegistry` is app-level (global), but the
+`ContextServerStore` that actually spawns processes is per-project. Both
+systems launching independent process instances is correct — removing either
+path breaks its consumers (removing `McpRuntime` breaks FlowDef skills;
+removing `ContextServerStore` registration hides kask tools from the agent).
+
+The `KaskMcpDescriptor::command()` method resolves env vars (credentials,
+inference socket) at call time. After `INFERENCE_SOCKET_PATH` is set (in a
+deferred task post-login), `sync_kask_mcp_servers` must be called again so
+the registry notifies `ContextServerStore` to restart servers with the
+updated env.
+
+## Model-dependent kask wiring must run in the deferred task
+
+The `set_manifest_executor`, `set_tool_invoker`, `set_scoped_inference`,
+`set_regulation_status`, and `set_thread_condenser` hooks are `OnceLock`-based
+and depend on `LanguageModelRegistry::default_model()` being populated. At
+startup (before user auth), `default_model()` returns `None`. Wiring these
+hooks synchronously at startup leaves them unwired for the entire session when
+no model is configured at startup — the "Process-global hooks set at runtime
+need a startup-failure signal" trap. They must be wired from the deferred task
+that runs after the Zed user resolves.
+
+## LazyToolRouter filters MCP tools only
+
+The `LazyToolRouter` in `crates/agent/src/tool_router.rs` was introduced to
+tame MCP tool floods, not to filter built-in zed tools.
+`Thread::enabled_tools` must skip built-in tools (those in
+`crate::tools::ALL_TOOL_NAMES`) when applying the router — filtering them
+caused the agent to lose access to `fetch`, `diagnostics`, `list_directory`,
+etc. on ordinary coding requests, with the model discovering the loss only via
+"tool not found" errors mid-turn. The filtering logic is extracted into
+`tool_router::apply_router_bypassing_built_ins` for testability without the
+process-global `TOOL_ROUTER` `OnceLock`.

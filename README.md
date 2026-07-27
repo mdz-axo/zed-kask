@@ -1,47 +1,48 @@
 # Zed-Kask
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
-[![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
+[![CI](https://github.com/mdz-axo/zed-kask/actions/workflows/run_tests.yml/badge.svg)](https://github.com/mdz-axo/zed-kask/actions/workflows/run_tests.yml)
+[![Release](https://github.com/mdz-axo/zed-kask/actions/workflows/kask-release.yml/badge.svg)](https://github.com/mdz-axo/zed-kask/actions/workflows/kask-release.yml)
 
-Welcome to **Zed-Kask** — a fork of [Zed](https://zed.dev), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter), with [hKask](#what-hkask-is) — a minimal viable container for users and AI tools — running as a local single-user install inside the editor. Multiplayer and federation ride on Zed's existing collaboration capabilities; hKask's own Matrix transport is not carried over.
+Welcome to **Zed-Kask** — a fork of [Zed](https://zed.dev), the high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter), with the [Kask](#what-kask-is) agentic AI tools integrated in-process. The focus is the integration itself: Zed's editor, collaboration, and inference surfaces joined to Kask's skills, MCP servers, regulation nervous system, and sovereign memory as native editor surfaces — one clone, one build, one CI. Multiplayer and federation ride on Zed's existing collaboration capabilities; Kask's own Matrix transport is not carried over.
 
-Zed-Kask is one clone, one build, one CI. Everything hKask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the small set of seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md).
+Zed-Kask is one clone, one build, one CI. Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the small set of seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md).
 
 ---
 
-## What hKask Is
+## What Kask Is
 
-hKask is a **minimal viable container for users and AI tools**. In Zed-Kask it runs as a **local, single-user install**: one user, one sovereign userpod, on the user's own machine. It is not an agent framework — there is no autonomous agent loop by default; the human is in the loop and skills escalate *to the user*, not away from them. The Curator is the system's cybernetic regulator, not an autonomous agent.
+Kask is a set of **agentic AI tools** — skills, MCP servers, regulation, and sovereign memory — designed to run inside a host editor rather than as a standalone platform. In Zed-Kask it runs as a **local, single-user install**: one user, one sovereign pod, on the user's own machine. It is not an agent framework — there is no autonomous agent loop by default; the human is in the loop and skills escalate *to the user*, not away from them. The Curator is the system's cybernetic regulator, not an autonomous agent.
 
 Three things sit between the user and a model:
 
-1. **Skills** — PDCA loops that compose Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation. Where other systems give you a prompt, hKask gives you a *process*.
+1. **Skills** — PDCA loops that compose Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation. Where other systems give you a prompt, Kask gives you a *process*.
 2. **MCP servers** — built-in Model Context Protocol servers (research, memory, codegraph, media, filesystem, regulation, …) exposed as tools through `rmcp`.
 3. **Inference routing** — one router across multiple providers, with fusion, circuit breakers, and per-call gas accounting.
 
-Everything else in hKask — the userpod, wallet, ledger, regulation, keystore — exists to keep the user's local session **sovereign**: per-userpod encrypted storage, OCAP dual gate, visibility gating.
+Everything else in Kask — the pod, wallet, ledger, regulation, keystore — exists to keep the user's local session **sovereign**: per-pod encrypted storage, OCAP dual gate, visibility gating.
 
 ### Federation is Zed's job
 
-hKask's own Matrix/7R7 transport is **not** carried into Zed-Kask. Federation and multi-user communication ride on **Zed's existing collaboration capabilities** (channels, rooms, voice, contact sharing). The local hKask userpod stays sovereign; reaching other users happens through Zed's comms layer, not through hKask's federation plumbing.
+Kask's own Matrix/7R7 transport is **not** carried into Zed-Kask. Federation and multi-user communication ride on **Zed's existing collaboration capabilities** (channels, rooms, voice, contact sharing). The local Kask pod stays sovereign; reaching other users happens through Zed's comms layer, not through Kask's federation plumbing.
 
 ### Sign-in is Zed's job too
 
-There is no cloud server, no Kubernetes, no hKask OAuth, and no Admin/Member roles or invite flow. Users sign in with their **existing Zed account** — that single login gates the Zed-based features (communication, collaboration, voice). The local userpod is bound to the signed-in account at startup. hKask's separate identity crate is removed entirely — identity is the Zed account, and pod identity lives in the pod runtime (`hkask-pods`) and the primitives in `hkask-types` (`PodID`, `WebID`, `UserID`, `WalletId`).
+There is no cloud server, no Kubernetes, no Kask OAuth, and no Admin/Member roles or invite flow. Users sign in with their **existing Zed account** — that single login gates the Zed-based features (communication, collaboration, voice). The local pod is bound to the signed-in account at startup. Kask's separate identity crate is removed entirely — identity is the Zed account, and pod identity lives in the pod runtime (`hkask-pods`) and the primitives in `hkask-types` (`PodID`, `WebID`, `UserID`, `WalletId`).
 
-### What hKask Is Not
+### What Kask Is Not
 
 - Not an agent framework. No autonomous agent loop by default; skills escalate *to the user*.
-- Not a multi-tenant cloud server. Zed-Kask is a local single-user install — sovereignty is the local userpod, not row-level isolation across a group.
-- Not its own transport. Federation and multiplayer go through Zed's collab/voip, not hKask's Matrix stack.
+- Not a multi-tenant cloud server. Zed-Kask is a local single-user install — sovereignty is the local pod, not row-level isolation across a group.
+- Not its own transport. Federation and multiplayer go through Zed's collab/voip, not Kask's Matrix stack.
 
-The full hKask README (architecture diagrams, the four essential patterns, crate structure, current metrics, design philosophy) lives at [`kask/README.md`](./kask/README.md). The fork's divergence manifest and upstream-sync procedure live at [`DIVERGENCE.md`](./DIVERGENCE.md).
+The full Kask README (architecture diagrams, the four essential patterns, crate structure, current metrics, design philosophy) lives at [`kask/README.md`](./kask/README.md). The fork's divergence manifest and upstream-sync procedure live at [`DIVERGENCE.md`](./DIVERGENCE.md).
 
 ---
 
 ## How the Two Fit Together
 
-Zed-Kask keeps hKask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that hKask crates never depend on Zed crates — Zed-Kask depends on hKask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
+Zed-Kask keeps Kask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that Kask crates never depend on Zed crates — Zed-Kask depends on Kask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
 
 The seam between the two sides is small and documented: ten divergence points (D1–D10) cover every edit to Zed's tree outside `kask/` — skill execution, the Curator agent, in-process MCP tools, the guard layer, sovereignty keys, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, and the Kask panel. See [`DIVERGENCE.md`](./DIVERGENCE.md) for the table and [`kask/docs/specs/`](./kask/docs/specs/) for the per-seam specifications.
 
@@ -49,9 +50,54 @@ The seam between the two sides is small and documented: ten divergence points (D
 
 ## Installation
 
-On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)).
+### Prebuilt binary (Linux x86_64)
 
-> Zed-Kask is a fork under active development and does not yet publish its own installers. Build from source using the instructions below.
+The fastest path. Downloads the latest release archive — `zed-kask` plus all `hkask-mcp-*` binaries — verifies it against the published `SHA256SUMS`, and installs to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
+```
+
+Verify the install:
+
+```bash
+zed-kask --help
+ls ~/.local/bin/hkask-mcp-*
+```
+
+If `~/.local/bin` is not on your `PATH`, start a new shell or:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Environment variables the installer honors:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.31.0`) or `nightly` |
+| `HKASK_CHANNEL` | `stable` | Set to `nightly` for the nightly build |
+| `INSTALL_DIR` | `$HOME/.local` | Install prefix; binaries land in `$INSTALL_DIR/bin` |
+| `HKASK_SYSTEM_INSTALL` | unset | Set to `true` to symlink into `/usr/local/bin` |
+| `HKASK_REPO` | `mdz-axo/zed-kask` | Override the GitHub owner/repo |
+| `HKASK_NO_FALLBACK` | unset | Set to `true` to skip the source-build fallback |
+| `HKASK_ALLOW_UNVERIFIED` | unset | Set to `true` to proceed when `SHA256SUMS` is missing |
+
+### Nightly
+
+The `nightly` tag is force-moved once a day by the release workflow (08:00 UTC). Install the current nightly:
+
+```bash
+HKASK_CHANNEL=nightly curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
+```
+
+### Source build (other platforms, or no prebuilt binary)
+
+On macOS, Windows, or Linux ARM where no prebuilt archive is published, the binary installer automatically falls back to a source build pinned to the same tag and verified against `SHA256SUMS`. To run the source-build installer directly (requires the Rust toolchain):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
+```
 
 ### Developing Zed-Kask
 
@@ -59,11 +105,24 @@ On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/dow
 - [Building Zed for Linux](./docs/src/development/linux.md)
 - [Building Zed for Windows](./docs/src/development/windows.md)
 
-The hKask side builds as part of the same workspace — the `kask/` crates are workspace members. hKask conforms to Zed's dependency versions where there are package conflicts; do not bump Zed's workspace deps to accommodate hKask.
+The Kask side builds as part of the same workspace — the `kask/` crates are workspace members. Kask conforms to Zed's dependency versions where there are package conflicts; do not bump Zed's workspace deps to accommodate Kask.
 
 ### Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For hKask-specific contribution (skills, MCP servers, the architecture), start at [`kask/README.md`](./kask/README.md) and [`kask/docs/`](./kask/docs/).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For Kask-specific contribution (skills, MCP servers, the architecture), start at [`kask/README.md`](./kask/README.md) and [`kask/docs/`](./kask/docs/).
+
+---
+
+## Releases
+
+Releases are cut by pushing a `v*` tag (e.g. `v0.31.0`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A nightly build runs on schedule at 08:00 UTC, force-moving the `nightly` tag.
+
+Release assets:
+
+- `zed-kask-x86_64-unknown-linux-gnu.tar.gz` — `zed-kask` + all `hkask-mcp-*` binaries
+- `SHA256SUMS` — checksums for the above
+
+See the [releases page](https://github.com/mdz-axo/zed-kask/releases) for all published versions.
 
 ---
 

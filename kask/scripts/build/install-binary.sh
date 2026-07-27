@@ -1,5 +1,5 @@
 #!/bin/bash
-# hKask binary installer — downloads prebuilt binaries from a GitHub Release
+# zed-kask binary installer — downloads prebuilt binaries from a GitHub Release
 # and installs them to ~/.local/bin (or /usr/local/bin with --system).
 #
 # Falls back to the source-build installer (kask/scripts/build/install.sh)

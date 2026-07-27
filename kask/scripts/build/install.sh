@@ -1,5 +1,5 @@
 #!/bin/bash
-# hKask Installation Script for Linux
+# zed-kask Installation Script for Linux
 #
 # Builds zed-kask and the kask MCP servers from source and installs them to
 # $HOME/.local/bin (or a custom dir). System dependencies are installed via
@@ -57,7 +57,7 @@ clone_repo() {
     # on the root fails. Identify the repo root by [workspace] + crates/zed/.
     if [ -f "Cargo.toml" ] && grep -q '\[workspace\]' Cargo.toml 2>/dev/null && [ -d "crates/zed" ]; then
         HKASK_SOURCE_DIR="$(pwd)"
-        log "Running from within hKask repo: $HKASK_SOURCE_DIR"
+        log "Running from within zed-kask repo: $HKASK_SOURCE_DIR"
         return 0
     fi
 
@@ -88,7 +88,7 @@ clone_repo() {
     fi
 
     local clone_dir="${XDG_CACHE_HOME:-$HOME/.cache}/hkask-build"
-    log "Cloning hKask repository (v${HKASK_VERSION})..."
+    log "Cloning zed-kask repository (v${HKASK_VERSION})..."
     rm -rf "$clone_dir"
 
     # Try the requested tag. If it doesn't exist, fail hard unless the user
@@ -184,7 +184,7 @@ build_hkask() {
     clone_repo
     local workspace_root="$HKASK_SOURCE_DIR"
 
-    log "Building hKask in $workspace_root..."
+    log "Building zed-kask in $workspace_root..."
     cd "$workspace_root"
 
     local build_args=()
@@ -210,7 +210,7 @@ build_hkask() {
 install_binary() {
     local workspace_root="$HKASK_SOURCE_DIR"
 
-    log "Installing hKask binaries..."
+    log "Installing zed-kask binaries..."
 
     mkdir -p "$BIN_DIR"
 
@@ -423,7 +423,7 @@ verify_installation() {
 # ============================================================================
 
 uninstall_hkask() {
-    log "Uninstalling hKask..."
+    log "Uninstalling zed-kask..."
 
     # Remove system symlink. Capture the result so we log accurately.
     if [ -L "$SYSTEM_BIN/zed-kask" ]; then
@@ -467,10 +467,12 @@ uninstall_hkask() {
         update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
     fi
 
-    # Remove PATH entries from shell configs
+    # Remove PATH entries from shell configs. Match both the current
+    # `# zed-kask` marker and the legacy `# hKask` marker so users who
+    # installed under the old name get cleaned up too.
     for cfg in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.profile"; do
-        if [ -f "$cfg" ] && grep -q '# hKask' "$cfg" 2>/dev/null; then
-            sed -i '/# hKask/d' "$cfg"
+        if [ -f "$cfg" ] && grep -qE '# (zed-kask|hKask)' "$cfg" 2>/dev/null; then
+            sed -i -E '/# (zed-kask|hKask)/d' "$cfg"
             sed -i "/export PATH.*$BIN_DIR/d" "$cfg"
             log "Cleaned PATH entry from $cfg"
         fi
@@ -487,7 +489,7 @@ uninstall_hkask() {
         log "Removed data directory: $data_dir"
     fi
 
-    log_success "hKask uninstalled"
+    log_success "zed-kask uninstalled"
 }
 
 # ============================================================================

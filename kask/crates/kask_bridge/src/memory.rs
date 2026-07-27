@@ -108,11 +108,13 @@ impl RealMemoryPort {
     /// and initializes an embedding router for prompt embedding.
     ///
     /// Returns `Err` if the database cannot be opened.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db_path: &str,
         passphrase: &str,
         user_webid: WebID,
         embedding_model: String,
+        embedding_dim: usize,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
         tokio_handle: tokio::runtime::Handle,
@@ -126,9 +128,14 @@ impl RealMemoryPort {
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
         let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
 
-        // Semantic store — shared knowledge graph with embeddings
+        // Semantic store — shared knowledge graph with embeddings.
+        // The embedding dimension must match the embedding model's output —
+        // a mismatch causes `DimensionMismatch` errors on every store call,
+        // silently disabling embedding-based recall. The caller resolves
+        // this from `kask_settings.corpus.embedding_dim` (default 1024,
+        // matching `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver));
-        let embedding_store = EmbeddingStore::from_driver(driver, 1024);
+        let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
         let inference_config = InferenceConfig::from_env();
@@ -181,6 +188,7 @@ impl RealMemoryPort {
     pub fn from_env(
         user_webid: WebID,
         embedding_model: String,
+        embedding_dim: usize,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
         tokio_handle: tokio::runtime::Handle,
@@ -199,6 +207,7 @@ impl RealMemoryPort {
             &passphrase,
             user_webid,
             embedding_model,
+            embedding_dim,
             consolidation_cadence_secs,
             confidence_floor,
             tokio_handle,

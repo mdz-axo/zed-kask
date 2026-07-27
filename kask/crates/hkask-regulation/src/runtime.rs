@@ -1070,15 +1070,18 @@ pub struct LedgerSink {
 }
 
 impl LedgerSink {
-    /// Capture the ledger and the currently-running tokio handle.
+    /// Capture the ledger and an explicit tokio handle to spawn broadcasts on.
     ///
-    /// pre:  called from within a running tokio runtime (so `Handle::current` succeeds)
+    /// The handle must outlive the sink (typically the app-global tokio
+    /// runtime). Passing the handle explicitly — rather than calling
+    /// `Handle::current()` — lets callers on threads without a tokio
+    /// reactor context (e.g. the GPUI foreground thread) construct the
+    /// sink without panicking.
+    ///
+    /// pre:  `handle` belongs to a running tokio runtime
     /// post: returns a sink that spawns `publish_event` on `handle` for each persist
-    pub fn new(ledger: Arc<RwLock<RegulationLedger>>) -> Self {
-        Self {
-            ledger,
-            handle: tokio::runtime::Handle::current(),
-        }
+    pub fn new(ledger: Arc<RwLock<RegulationLedger>>, handle: tokio::runtime::Handle) -> Self {
+        Self { ledger, handle }
     }
 }
 
@@ -1418,7 +1421,7 @@ mod tests {
             .subscribe_async(Arc::clone(&observer) as Arc<dyn LedgerObserver>)
             .await;
 
-        let sink = LedgerSink::new(ledger.clone());
+        let sink = LedgerSink::new(ledger.clone(), tokio::runtime::Handle::current());
         let event = RegulationRecord::new(
             WebID::from_persona(b"test"),
             Span::new(tool_ns, "invoked"),

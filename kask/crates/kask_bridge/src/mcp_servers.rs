@@ -128,24 +128,9 @@ pub fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
     BUILT_IN_MCP_SERVERS.iter().find(|s| s.id == id)
 }
 
-/// Return the list of server IDs that should be loaded, respecting
-/// `load_default` and per-server `overrides`.
-#[must_use]
-pub fn enabled_server_ids(
-    load_default: bool,
-    overrides: &collections::HashMap<String, bool>,
-) -> Vec<&'static str> {
-    BUILT_IN_MCP_SERVERS
-        .iter()
-        .filter(|s| load_default && *overrides.get(s.id).unwrap_or(&true))
-        .map(|s| s.id)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collections::HashMap;
 
     #[test]
     fn all_servers_have_unique_ids() {
@@ -172,28 +157,5 @@ mod tests {
         assert!(find_server("codegraph").is_some());
         assert!(find_server("kata-kanban").is_some());
         assert!(find_server("nonexistent").is_none());
-    }
-
-    #[test]
-    fn enabled_server_ids_respects_load_default_false() {
-        let overrides = HashMap::new();
-        let ids = enabled_server_ids(false, &overrides);
-        assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn enabled_server_ids_respects_overrides() {
-        let mut overrides = HashMap::new();
-        overrides.insert("codegraph".to_string(), false);
-        let ids = enabled_server_ids(true, &overrides);
-        assert!(!ids.contains(&"codegraph"));
-        assert!(ids.contains(&"curator"));
-    }
-
-    #[test]
-    fn enabled_server_ids_defaults_to_true_when_override_absent() {
-        let overrides = HashMap::new();
-        let ids = enabled_server_ids(true, &overrides);
-        assert_eq!(ids.len(), BUILT_IN_MCP_SERVERS.len());
     }
 }

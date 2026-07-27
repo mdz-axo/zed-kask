@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared helpers for hKask install scripts.
+# Shared helpers for zed-kask install scripts.
 #
 # Sourced by install.sh and install-binary.sh. Provides:
 #   - log/log_success/log_warning/log_error
@@ -112,10 +112,10 @@ add_to_path() {
     local added=false
     if [ "$needs_local_path" = true ]; then
         for cfg in "${configs[@]}"; do
-            if ! grep -qF '# hKask' "$cfg" 2>/dev/null; then
+            if ! grep -qF '# zed-kask' "$cfg" 2>/dev/null; then
                 {
                     echo ""
-                    echo "# hKask"
+                    echo "# zed-kask"
                     echo "export PATH=\"$BIN_DIR:\$PATH\""
                 } >> "$cfg"
                 log "Added PATH entry to $cfg"
@@ -137,11 +137,11 @@ add_to_path() {
 # print_banner — standard installer header.
 # Args: $1 = subtitle line.
 print_banner() {
-    local subtitle="${1:-hKask Installer}"
+    local subtitle="${1:-zed-kask Installer}"
     echo ""
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║                    hKask Installer                       ║"
-    echo "║        ℏKask - A Minimal Viable Container for UserPods   ║"
+    echo "║                  zed-kask Installer                      ║"
+    echo "║   Zed × Kask — integrating Zed with the Kask agentic AI  ║"
     echo "║        $subtitle"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo ""
