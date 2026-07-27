@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hkask_templates::{ManifestExecutor, load_manifest_from_file};
+use hkask_templates::{ManifestExecutor, load_manifest_from_yaml, process_manifest_yaml};
 use hkask_types::InferencePort;
 use serde_json::Value;
 
@@ -72,12 +72,37 @@ impl BridgeManifestExecutor {
         self.registry_manifests_dir
             .join(format!("{skill_name}.yaml"))
     }
+
+    /// Resolve a skill's manifest YAML, preferring the embedded (build-time)
+    /// copy and falling back to the filesystem path. The embedded copy is
+    /// authoritative for installed binaries — it works regardless of CWD or
+    /// install location. The filesystem fallback exists for dev workflows
+    /// where a manifest has been edited but not yet rebuilt.
+    fn manifest_yaml(&self, skill_name: &str) -> Option<std::borrow::Cow<'static, str>> {
+        if let Some(yaml) = process_manifest_yaml(skill_name) {
+            return Some(std::borrow::Cow::Borrowed(yaml));
+        }
+        let path = self.manifest_path(skill_name);
+        if path.is_file() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => return Some(std::borrow::Cow::Owned(content)),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read manifest '{}' at {}: {e}",
+                        skill_name,
+                        path.display()
+                    );
+                }
+            }
+        }
+        None
+    }
 }
 
 #[async_trait]
 impl agent::SkillManifestExecutor for BridgeManifestExecutor {
     fn has_manifest(&self, skill_name: &str) -> bool {
-        self.manifest_path(skill_name).exists()
+        self.manifest_yaml(skill_name).is_some()
     }
 
     async fn execute_skill(
@@ -168,16 +193,15 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             context.insert("panel_models".into(), Value::String(std::env::var("HKASK_FUSION_PANEL_MODELS").unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2,OpenRouter/qwen/qwen3-235b-a22b,OpenRouter/minimax/minimax3".to_string())));
         }
 
-        let manifest_path = self.manifest_path(skill_name);
-
-        let manifest = load_manifest_from_file(&manifest_path).map_err(|e| {
+        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
-                "Failed to load manifest '{}' at {}: {}",
-                skill_name,
-                manifest_path.display(),
-                e
+                "No manifest found for skill '{skill_name}' (checked embedded registry and {})",
+                self.manifest_path(skill_name).display()
             )
         })?;
+
+        let manifest = load_manifest_from_yaml(&manifest_yaml)
+            .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
 
         // Construct a ManifestExecutor with the bridge's InferencePort and ToolPort.
         let executor = ManifestExecutor::new(

@@ -4,6 +4,7 @@
 //! - Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles)
 //! - MCP Servers (10 built-in servers + load toggles + `load_default` master toggle)
 //! - Curator (`always_on` toggle + `algedonic_threshold`)
+//! - Curator Email (MXroute SMTP config + keychain-backed password)
 //! - Guard / Regulation (`direct_chat_strategy`)
 //! - Memory (`consolidation_cadence_secs` + `confidence_floor`)
 //!
@@ -52,7 +53,10 @@ fn unmark_recently_written(url: &str) {
 use credentials_provider::CredentialsProvider;
 use gpui::{ReadGlobal as _, ScrollHandle, Task, prelude::*};
 use settings::SettingsStore;
-use ui::{ButtonLink, ConfiguredApiCard, Divider, SwitchField, ToggleState, prelude::*};
+use ui::{
+    Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
+    prelude::*,
+};
 use util::ResultExt as _;
 use zed_credentials_provider as zed_credentials;
 
@@ -1383,6 +1387,15 @@ pub(crate) fn render_curator_email_page(
             .child(input)
     };
 
+    // Compute the test email recipient up front, before the strings are
+    // moved into `make_text_input` calls.
+    let test_email_recipient = if !alert_email.is_empty() {
+        alert_email.clone()
+    } else {
+        smtp_username.clone()
+    };
+    let test_email_enabled = !test_email_recipient.is_empty();
+
     let mxroute_input = make_text_input(
         "kask-curator-email-mxroute-server",
         "MXroute Server",
@@ -1414,24 +1427,37 @@ pub(crate) fn render_curator_email_page(
     let authorized_input = make_text_input(
         "kask-curator-email-authorized-emails",
         "Authorized Senders",
-        "Comma-separated allowlist of senders who may reply with curator commands (P12). Or set HKASK_AUTHORIZED_EMAILS.",
+        "Comma-separated allowlist of senders who may reply with curator commands (P12). Empty means inbound replies are rejected. Or set HKASK_AUTHORIZED_EMAILS.",
         authorized_emails,
         "ops@example.com, alice@example.com",
     );
     let inbox_poll_input = make_text_input(
         "kask-curator-email-inbox-poll-interval",
         "Inbox Poll Interval (secs)",
-        "Reserved for a future inbound IMAP path. 0 = disabled. Or set HKASK_INBOX_POLL_INTERVAL_SECS.",
+        "IMAP inbox poll interval for inbound command replies. 0 = disabled. Default 60. Or set HKASK_INBOX_POLL_INTERVAL_SECS.",
         inbox_poll_interval,
         "0",
     );
     let digest_input = make_text_input(
         "kask-curator-email-digest-interval",
         "Digest Interval (secs)",
-        "Reserved for a future periodic digest sender. 0 = disabled. Or set HKASK_DIGEST_INTERVAL_SECS.",
+        "Periodic escalation digest email interval. 0 = disabled. Default 86400 (daily). Or set HKASK_DIGEST_INTERVAL_SECS.",
         digest_interval,
         "0",
     );
+
+    // Test Email button — sends a test email to the alert recipient to verify
+    // MXroute credentials. Uses the alert recipient (or SMTP username) as the
+    // destination. The send runs on the kask tokio runtime via
+    // `kask_bridge::spawn_test_email`; success/failure surfaces in the logs.
+    let test_email_button = Button::new("kask-curator-email-test", "Send Test Email")
+        .style(ButtonStyle::Outlined)
+        .label_size(LabelSize::Small)
+        .tab_index(0isize)
+        .disabled(!test_email_enabled)
+        .on_click(move |_, _, cx| {
+            kask_bridge::spawn_test_email(test_email_recipient.clone(), cx);
+        });
 
     v_flex()
         .id("kask-curator-email-page")
@@ -1472,6 +1498,22 @@ pub(crate) fn render_curator_email_page(
         .child(inbox_poll_input)
         .child(Divider::horizontal())
         .child(digest_input)
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Test Configuration"))
+                .child(
+                    Label::new(
+                        "Send a test email to the alert recipient to verify MXroute \
+                         credentials. Check the logs (reg.email.sent) for the result. \
+                         Requires SMTP Username and SMTP Password to be configured.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(test_email_button),
+        )
         .into_any_element()
 }
 

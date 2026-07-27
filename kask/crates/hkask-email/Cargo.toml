@@ -3,7 +3,7 @@ name = "hkask-email"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Outbound curator email (MXroute SMTP API) and algedonic alert email sink"
+description = "Curator email (MXroute SMTP API outbound + IMAP inbound + algedonic alert email sink)"
 
 
 [lib]
@@ -11,14 +11,24 @@ path = "src/hkask_email.rs"
 
 [dependencies]
 hkask-regulation = { path = "../hkask-regulation" }
+hkask-storage = { path = "../hkask-storage" }
+hkask-types = { path = "../hkask-types" }
 
+async-imap.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+mailparse.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+tokio-rustls.workspace = true
+tokio-util = { workspace = true, features = ["compat"] }
 tracing.workspace = true
 uuid.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,178 +1,103 @@
-# Infrastructure Jinja2 Template & YAML Manifest Audit — Checklist
+# zed-kask Diataxis Documentation Pass — Checklist
 
-## Pending Tasks
+## Phase 0 — Restore governing specs (prerequisite)
 
-- [x] **T-KASK-ICON: Replace app icon with burnt orange zed-kask icon**
-  - Generated a burnt orange K icon via Z-Image-Turbo, converted to PNG
-    (512x512 + 1024x1024), and replaced all 4 app-icon files in
-    `crates/zed/resources/` (app-icon.png, app-icon-dev.png, @2x variants).
-  - The icon pipeline (build.rs → zed.rs → bundle-linux) picks up the
-    PNGs automatically — no code changes needed.
-  - Verified: the PNG has burnt orange pixels (RGB 206, 105, 41).
-  - The status bar / window title bar / desktop icon currently shows the
-    standard zed icon (green/blue). It should show the burnt orange
-    zed-kask icon to visually distinguish the fork.
-  - Icon pipeline (Linux):
-    1. `crates/zed/build.rs:icon_path()` selects `resources/app-icon{channel}.png`
-    2. `build.rs:prepare_app_icon_x11()` resizes to `OUT_DIR/app_icon.png`
-    3. `crates/zed/src/zed.rs:380` includes `OUT_DIR/app_icon.png` as the
-       X11 window icon (used by the status bar / title bar)
-    4. `crates/zed/src/zed.rs:1473` uses `resources/app-icon-dev.png` for
-       the About window
-    5. `script/bundle-linux:170` copies `resources/app-icon.png` to the
-       desktop icon directory (`share/icons/hicolor/`)
-  - Fix: replace `crates/zed/resources/app-icon.png` and
-    `app-icon-dev.png` (and `@2x` variants) with the burnt orange kask
-    icon. Generate from `kask/assets/kask-logo.svg` or a dedicated
-    app-icon SVG with the burnt orange background.
-  - Also check `crates/gpui_linux/src/linux/platform.rs` for Wayland
-    window icon setup (may need a separate code path).
+- [x] **T-00: Restore DOCUMENTATION_STANDARDS.md and MDS.md from git history**
+  - Restored both files from commit `a32a7847a4~1` to their original paths
+  - Bumped `last_updated` to 2026-07-27 with a restoration note (v0.31.1)
+  - `DIAGRAMS_INDEX.md` footnote references resolve
 
-- [x] **T-INFERENCE-SYNTAX: Migrate from old hKask prefix syntax to zed model syntax**
-  - Old syntax: `DI/model`, `FA/model`, `TG/model`, `OR/model`, `KC/model`
-  - Zed syntax: `provider_id/model_name` where provider_id is the JSON key
-    from `openai_compatible` in settings.json (e.g., `DeepInfra/model`,
-    `OpenRouter/model`, `Together AI/model`)
-  - OpenRouter should be the default provider for zed-kask / curator agent
-  - Sites to update:
-    - `kask/crates/hkask-inference/src/config.rs` — `ProviderId` enum,
-      `parse_from_model`, `prefix_model`, `looks_like_prefix`
-    - `kask/crates/hkask-inference/src/model_constants.rs` — all default
-      model constants
-    - `kask/crates/hkask-types/src/fusion.rs` — `kask_default()` defaults
-    - `kask/crates/hkask-services-core/src/settings.rs` — embedding default
-    - `kask/crates/kask_bridge/src/settings.rs` — doc comments + defaults
-    - `kask/.env` — all `HKASK_*_MODEL` vars
-    - `kask/mcp-servers/hkask-mcp-codegraph/src/hkask_mcp_codegraph.rs` —
-      prefix routing
-    - `kask/mcp-servers/hkask-mcp-corpus/` — embedding model defaults
-    - `kask/mcp-servers/hkask-mcp-training/src/huggingface.rs` — prefix
-      stripping
-    - `kask/crates/hkask-services-corpus/src/embed/utils.rs` — prefix
-      stripping
-    - `kask/crates/hkask-inference/src/chat_protocol.rs` — test fixtures
-    - `kask/registry/templates/` — any manifests with model references
+## Phase 1 — Foundation (deepest crates first)
 
-- [x] **T-ENV-LOADING: Load kask/.env at startup**
-  - `kask/.env` has API keys but nothing loads it. Added `dotenvy::from_path`
-    in `main.rs` but needs verification that it runs before settings parsing.
+- [x] **T-01: hkask-types Reference** — class diagram of shared traits
+  - Artifact at `kask/docs/diataxis/hkask-types/reference.md`
+  - Every cited struct/trait has a `grep` hit (13/13 verified)
+  - Class diagram renders with `DIAGRAM_ALIGNMENT` block
+  - Gates passed: pragmatic-semantics (no OUGHT), pragmatic-cybernetics (9/9 implementors exist), essentialist (6 sections), brand-voice (0 taboo), grill-me Mechanism+Rationale
+- [ ] **T-02: hkask-types Explanation** — sequence diagram of port mediation
+  - Artifact exists; OUGHT claims only in design-rationale section
+  - Feedback loop closes (each port has a real implementor cited)
+- [ ] **T-03: hkask-capability Reference** — class diagram of OCAP tokens
+  - Artifact exists; every symbol cited; diagram renders with `DIAGRAM_ALIGNMENT`
+- [ ] **T-04: hkask-capability Explanation** — state diagram of verification outcomes
+  - Artifact exists; OUGHT claims scoped to sovereignty rationale; loop closes
 
-- [x] **T-PROVIDER-DEFAULTS: Enable inference providers by default when API key present**
-  - Changed `unwrap_or(false)` to `unwrap_or_else(|| env_var_is_set(...))`
-    in `settings.rs`. Needs testing.
+**Checkpoint 1:** `kask/docs/diataxis/` tree exists, INDEX.md seeded, 4 foundation artifacts pass all gates.
 
-- [x] **T-SKILL-BODY-INJECTION: Disable SKILL.md body injection when manifest executor is present**
-  - When the manifest executor is wired and a skill has no manifest, the
-    skill tool now returns a minimal envelope instead of reading and
-    injecting the full SKILL.md body. This stops the token burn from
-    body injection.
-  - File: `crates/agent/src/tools/skill_tool.rs:303-312`
+## Phase 2 — Core subsystems
 
-- [x] **T-SETTINGS-FEEDBACK-LOOP: Fix cursor flashing from settings write loop**
-  - `update_settings_file_inner` now skips the write and global update
-    when `new_text == old_text`. This breaks the feedback loop where
-    `ensure_openai_compatible_entries` writes to settings.json, triggers
-    SettingsStore observer, which calls `ensure_openai_compatible_entries`
-    again.
-  - File: `crates/settings/src/settings_store.rs:587-593`
+- [ ] **T-05: hkask-storage Reference** — ERD of SQLCipher schema
+- [ ] **T-06: hkask-storage How-to** — adding a new migration
+- [ ] **T-07: hkask-regulation Reference** — class diagram of Regulation ledger/loop/wallet
+- [ ] **T-08: hkask-regulation Explanation** — state diagram of homeostatic loop
+- [ ] **T-09: hkask-inference Reference** — class diagram of config + provider routing
+- [ ] **T-10: hkask-inference How-to** — configuring a new provider
+- [ ] **T-11: hkask-templates Reference** — ERD/class of skill manifest schema
+- [ ] **T-12: hkask-templates Explanation** — sequence of ManifestExecutor invocation
+- [ ] **T-13: hkask-condenser Reference** — class diagram of condensation algorithms
+- [ ] **T-14: hkask-condenser Explanation** — state diagram of 2-phase condensation
+- [ ] **T-15: hkask-mcp-server Reference** — class diagram of MCP server framework
+- [ ] **T-16: hkask-mcp-server Explanation** — sequence of MCP server launch
 
-- [x] **T-TEMPLATE-MODEL-DEPRECATION: Deprecate model names in templates, use config-driven defaults**
-  - Templates now use `{{ embedding_model }}`, `{{ classifier_model }}`, etc.
-    instead of hardcoded model names.
-  - `BridgeManifestExecutor::execute_skill` injects all config-driven model
-    defaults into the template context before execution.
-  - Config defaults live in `model_constants.rs` (env-overridable).
+**Checkpoint 2:** all core subsystem reference + explanation artifacts pass gates.
 
-- [x] **T-ENV-STRIP: Strip .env to API keys only, move config to code defaults**
-  - `.env` now contains only API keys and credentials (122 lines).
-  - All non-API-key config (model names, provider defaults, fusion settings,
-    guard limits, cache config, etc.) is built into the code as defaults.
-  - `default_provider` changed from DeepInfra to OpenRouter.
-  - `parse_provider_code` updated to accept zed provider IDs.
-  - Media model defaults added to `model_constants.rs`.
-  - `.env.example` template created for new users (124 lines, all keys empty).
+## Phase 3 — Zed integration layer
 
-## Completed Tasks
+- [ ] **T-17: kask_bridge Reference** — class diagram of KaskSettings + bridges
+- [ ] **T-18: kask_bridge Explanation** — sequence of composition root (D1–D10)
+- [ ] **T-19: kask_panel Reference** — class diagram of panel view + curator variant
+- [ ] **T-20: kask_panel How-to** — adding a new panel action
+- [ ] **T-21: kask_bridge How-to** — wiring a new kask hook (set_* OnceLock pattern)
+- [ ] **T-22: kask_bridge Tutorial** — "Your first kask hook"
 
+**Checkpoint 3:** zed-side integration artifacts pass gates; `// zed-kask:` deviations documented.
 
-## Phase 0 — Plan & Inventory (done)
+## Phase 4 — Tutorials and remaining how-tos
 
-- [x] **T0: Inventory infrastructure `.j2`/`.yaml` artifacts**
-  - 0 `.j2` files outside `kask/registry/` (all 335 are skill-registry).
-  - 3 in-scope YAMLs: `kask/corpus/replica/company-researcher.yaml`,
-    `kask/corpus/replica/john-brooks.yaml`,
-    `kask/corpus/pipeline-capabilities-researcher.yaml`.
-  - 7 out-of-scope infra YAMLs (no Rust consumer / generator output / ops config).
+- [ ] **T-23: hkask-types Tutorial** — "Understanding the port traits"
+- [ ] **T-24: hkask-types How-to** — "Implementing a new port"
+- [ ] **T-25: hkask-capability Tutorial** — "Your first capability token"
+- [ ] **T-26: hkask-capability How-to** — "Attenuating a token for a sub-task"
+- [ ] **T-27: hkask-storage Tutorial** — "Your first migration"
+- [ ] **T-28: hkask-storage Explanation** — bitemporal hMem model
+- [ ] **T-29: hkask-regulation Tutorial** — "Reading a Regulation span"
+- [ ] **T-30: hkask-regulation How-to** — "Adding a new span namespace"
+- [ ] **T-31: hkask-inference Tutorial** — "Routing your first inference request"
+- [ ] **T-32: hkask-inference Explanation** — provider selection rationale
+- [ ] **T-33: hkask-templates Tutorial** — "Your first skill manifest"
+- [ ] **T-34: hkask-templates How-to** — "Adding a PDCA step to a manifest"
+- [ ] **T-35: hkask-condenser Tutorial** — "Condensing your first thread"
+- [ ] **T-36: hkask-condenser How-to** — "Tuning salience weights"
+- [ ] **T-37: hkask-mcp-server Tutorial** — "Your first MCP server"
+- [ ] **T-38: hkask-mcp-server How-to** — "Registering a new tool"
+- [ ] **T-39: kask_panel Tutorial** — "Your first panel action"
+- [ ] **T-40: kask_panel Explanation** — curator variant lifecycle
 
-## Phase 1 — Functional Role Discovery (done)
+**Checkpoint 4:** all 40 slices complete.
 
-- [x] **T1: graph-audit (dual mode) — replica YAML cluster**
-  - Confirmed `EmbedService::embed_corpus` → `CorpusConfig` parse path.
-  - Mapped every `CorpusConfig` field to its YAML source.
-  - Classified edges by constraint force; detected 7 Prohibition + 5 Guardrail.
-  - Output: `tasks/phase1-functional-roles.md`.
-- [x] **T2: graph-audit (dual mode) — pipeline manifest runbook**
-  - Re-verified no Rust consumer.
-  - Mapped 13 referenced MCP tools to Rust entry points (all match).
-  - Output: `tasks/phase1-functional-roles.md`.
+## Phase 5 — INDEX and finalization
 
-**Checkpoint C1**: ✅ consumer code unchanged; functional-role statements produced.
+- [ ] **T-41: Write INDEX.md and update README**
+  - `kask/docs/diataxis/INDEX.md` lists the full set with links
+  - Every in-scope crate has 4 entries; every out-of-scope crate has "N/A — reason"
+  - `kask/docs/README.md` links to the Diataxis set
 
-## Phase 2 — Logic & Semantics Audit (done)
+**Checkpoint 5:** INDEX.md complete, all slices recorded.
 
-- [x] **T3: pragmatic-semantics + pragmatic-cybernetics + essentialist — replica YAMLs**
-  - 7 Prohibition, 5 Guardrail, 2 Guideline, 3 Hypothesis.
-  - Output: `tasks/phase2-logic-semantics.md`.
-- [x] **T4: pragmatic-semantics + pragmatic-cybernetics + essentialist — pipeline manifest**
-  - 0 Prohibition, 3 Guardrail, 2 Guideline, 5 Hypothesis (3 resolved as Evidence).
-  - Output: `tasks/phase2-logic-semantics.md`.
+## Per-slice gate checklist (applies to every slice T-01..T-40)
 
-**Checkpoint C2**: ✅ Prohibition findings promoted to Phase 3.
-
-## Phase 3 — Gap Interrogation (done)
-
-- [x] **T5: sequential-inquiry + grill-me — replica YAMLs**
-  - `company-researcher.yaml`: **Gap** (Rationale/Edge-Cases/Synthesis).
-  - `john-brooks.yaml`: **Solid** (all 5 rounds).
-  - Output: `tasks/phase3-gap-analysis.md`.
-- [x] **T6: sequential-inquiry + grill-me — pipeline manifest**
-  - Runbook: **Partial** (Recall/Mechanism/Rationale Solid; Edge-Cases/Synthesis Partial).
-  - Confirmed `max_tokens: 512` = Rust default; `dedup_threshold: 0.89` diverges from default 0.85.
-  - Output: `tasks/phase3-gap-analysis.md`.
-
-**Checkpoint C3**: ✅ BUG-001 promoted to Phase 4.
-
-## Phase 4 — Bug Hunt & Diagnosis (done)
-
-- [x] **T7: bug-hunt expedition — replica YAMLs + `hkask-services-corpus`**
-  - Wrote `tests/replica_persona_parse_test.rs` (2 tests).
-  - Confirmed BUG-001 (`company-researcher.yaml` parse failure: missing `exemplar_count_min`).
-  - Discovered BUG-002 (`john-brooks.yaml` `budget` silent PerPage mismatch).
-  - Output: `tasks/phase4-bughunt-report.md`.
-- [x] **T8: diagnose — fix `company-researcher.yaml` contract drift**
-  - falsifiability: 3 ranked hypotheses; H1 (missing required) confirmed via `[DIAG-0001]`.
-  - Fix applied: 8 changes conforming YAML to `CorpusConfig`.
-  - Regression test flipped to positive assertion; instrumentation cleaned.
-  - Post-mortem written.
-- [x] **T9: diagnose — verify `john-brooks.yaml`**
-  - Parses; BUG-002 is a contract defect (deferred to Phase 5).
-
-**Checkpoint C4**: ✅ `cargo test -p hkask-services-corpus` 21 passed; `./script/clippy -p hkask-services-corpus` clean.
-
-## Phase 5 — Architectural Refactor (done — decision only)
-
-- [x] **T10: refactor-architecture decision — replica YAML cluster**
-  - Candidate: `BudgetConfig` untagged-enum variant reorder.
-  - Decision: **DEFER** with ADR (cross-crate, affects 7 out-of-scope registry YAMLs).
-  - Other candidates (`deny_unknown_fields`, surface width, runbook `verify:`): **Reject** (scope/effort).
-  - Output: `tasks/phase5-refactor-decision.md`.
-
-**Checkpoint C5**: ✅ ADR recorded; no Phase 5 code changes (correct).
-
-## Phase 6 — Convergence & Report (done)
-
-- [x] **T11: convergence check + final report**
-  - All slices converged: Slice A (replica) — fixed + tested; Slice B (runbook) — audited, no fix needed.
-  - Per-artifact health scores: company-researcher 0.85, john-brooks 0.80, runbook 0.90.
-  - Aggregate report: `tasks/audit-report.md`.
-  - 6 recommended follow-ups documented.
+- [ ] kata-improvement PDCA cycle complete (direction → current → target → experiment)
+- [ ] diataxis-diagram quality gate passes (≤ 0.15 weighted total)
+- [ ] Diagram carries `DIAGRAM_ALIGNMENT` block with `verified_against` citing code file:line
+- [ ] pragmatic-semantics: no uncited Inference claims (confidence ≤ 0.3 rejected)
+- [ ] pragmatic-semantics: OUGHT claims only in Explanation quadrant
+- [ ] pragmatic-cybernetics: feedback loop closes (documented code path exists + behaves as described)
+- [ ] essentialist: deletion test passed, ≤ 7 top-level sections, no organizational comments
+- [ ] grill-me: Mechanism round survived
+- [ ] grill-me: Rationale round survived
+- [ ] brand-voice rubric: all 8 criteria score 4+
+- [ ] brand-voice: zero taboo phrases (no hype, no em dash chains, no exclamation points)
+- [ ] DOCUMENTATION_STANDARDS §2: 6-field frontmatter present
+- [ ] DOCUMENTATION_STANDARDS §5: every design-choice `##` section has ≥1 external footnote citation
+- [ ] DOCUMENTATION_STANDARDS §11: `mds_categories` field maps to ≥1 MDS category
+- [ ] Artifact links to ≥1 source file and ≥1 sibling artifact in the same crate's Diataxis set

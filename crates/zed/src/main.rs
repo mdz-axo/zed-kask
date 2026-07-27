@@ -1205,10 +1205,11 @@ fn main() {
                             }
                         }
                         Ok(None) => {
-                            log::info!(
+                            log::warn!(
                                 "hKask SMTP password not found in keychain — alert emails \
                                  will fail to send until the password is configured in \
-                                 Settings → Kask → Curator Email"
+                                 Settings → Kask → Curator Email (smtp_username is set, \
+                                 indicating email was intended to be configured)"
                             );
                         }
                         Err(e) => {
@@ -1340,8 +1341,27 @@ fn main() {
                     let model_registry = language_model::LanguageModelRegistry::read_global(cx);
                     if let Some(configured) = model_registry.default_model() {
                         let async_cx = cx.to_async();
+                        // Manifest registry paths. These are *fallbacks* — the
+                        // authoritative manifests are embedded at build time
+                        // via `hkask-templates/build.rs` and consulted via
+                        // `process_manifest_yaml()`. The filesystem paths
+                        // exist for dev workflows (edit a manifest, rebuild).
+                        // For installed binaries, these may not resolve, and
+                        // that's fine — the embedded registry handles it.
                         let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
                         let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
+                        if !registry_manifests_dir.is_dir() {
+                            log::debug!(
+                                "hKask manifest dir '{}' not found — relying on embedded registry",
+                                registry_manifests_dir.display()
+                            );
+                        }
+                        if !registry_templates_dir.is_dir() {
+                            log::debug!(
+                                "hKask templates dir '{}' not found — relying on embedded templates",
+                                registry_templates_dir.display()
+                            );
+                        }
 
                         let inference_model: Arc<dyn language_model::LanguageModel> =
                             fusion_model.clone().unwrap_or_else(|| {

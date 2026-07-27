@@ -22,6 +22,24 @@ use std::collections::HashMap;
 // Auto-generated per-skill template manifests (from build.rs).
 include!(concat!(env!("OUT_DIR"), "/manifest_skills.rs"));
 
+/// Look up an embedded process manifest (FlowDef cascade) by skill name.
+///
+/// Process manifests live at `registry/manifests/<skill>.yaml` and are
+/// embedded at build time via `include_str!`. This is the primary lookup
+/// path for `SkillManifestExecutor::has_manifest` and `execute_skill` —
+/// it works regardless of CWD or install location because the YAML is
+/// compiled into the binary.
+///
+/// Returns the raw YAML content for the skill, or `None` if no embedded
+/// manifest exists for that name. Callers that need a parsed manifest
+/// should pass the returned string to `load_manifest_from_yaml`.
+pub fn process_manifest_yaml(skill_name: &str) -> Option<&'static str> {
+    PROCESS_MANIFEST_YAMLS
+        .iter()
+        .find(|(name, _)| *name == skill_name)
+        .map(|(_, yaml)| *yaml)
+}
+
 /// Per-skill template manifest deserialization shape.
 ///
 /// Per-skill manifests (`registry/templates/<skill>/manifest.yaml`) use:
