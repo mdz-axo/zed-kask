@@ -16,7 +16,7 @@
 #   - Governed inference budget tracking
 #
 # Runner readiness: EXECUTABLE — run_command steps work today;
-#   classify step gracefully degrades without DI_API_KEY.
+#   classify step gracefully degrades without DEEPINFRA_API_KEY.
 
 manifest:
   id: qa-regulation-algedonic-loop

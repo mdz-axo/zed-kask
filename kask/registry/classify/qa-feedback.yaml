@@ -19,7 +19,7 @@ classifier:
     For mutant passages: action=suggest, describe a fuzz target.
 
   base_url: https://api.deepinfra.com/v1/openai/chat/completions
-  api_key_env: DI_API_KEY
+  api_key_env: DEEPINFRA_API_KEY
 
   temperature: 0.0
   max_tokens: 300

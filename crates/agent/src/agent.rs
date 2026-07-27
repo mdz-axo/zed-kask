@@ -37,10 +37,10 @@ use acp_thread::{
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
-    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
-    SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId,
-    SkillSource, SkillSummary, builtin_skills, global_skills_dir, load_skills_from_directory,
-    parse_skill_frontmatter, project_skills_relative_path, read_skill_body_from_content,
+    AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
+    SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
+    load_skills_from_directory, parse_skill_frontmatter, project_skills_relative_path,
+    read_skill_body_from_content,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -1232,16 +1232,14 @@ impl NativeAgent {
 
                     let mut worktree_results = Vec::new();
                     for skill_file in skill_files {
-                        if skill_file.size > MAX_SKILL_FILE_SIZE as u64 {
-                            worktree_results.push(Err(SkillLoadError {
-                                path: skill_file.display_path.clone(),
-                                message: format!(
-                                    "SKILL.md file exceeds maximum size of {}KB",
-                                    MAX_SKILL_FILE_SIZE / 1024
-                                ),
-                            }));
-                            continue;
-                        }
+                        // zed-kask: SKILL.md files are reference-only — they are
+                        // never injected into prompts (skills execute via YAML
+                        // manifests in the kask registry). The file size limit
+                        // and warning are disabled because large SKILL.md files
+                        // are harmless when body injection is off.
+                        //
+                        // (Original zed checks skill_file.size > MAX_SKILL_FILE_SIZE
+                        // and pushes a SkillLoadError. We skip that check entirely.)
 
                         let buffer = match project
                             .update(cx, |project, cx| {
@@ -3939,67 +3937,18 @@ impl TerminalHandle for AcpTerminalHandle {
 /// (potentially ~100KB) skill bodies aren't cloned just to be discarded by
 /// `ProjectContext::new`, which only needs the summary fields.
 fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadingIssueData>) {
-    let mut kept = Vec::new();
-    let mut issues = Vec::new();
-    let mut dropped: Vec<&Skill> = Vec::new();
-    let mut total_size = 0usize;
-    let mut budget_exceeded = false;
-
-    for skill in skills {
-        if skill.disable_model_invocation {
-            continue;
-        }
-
-        let entry_size = skill.name.len() + skill.description.len();
-        if !budget_exceeded && total_size.saturating_add(entry_size) <= MAX_SKILL_DESCRIPTIONS_SIZE
-        {
-            total_size += entry_size;
-            kept.push(SkillSummary::from(skill));
-        } else {
-            // Once any model-invocable skill overflows the budget, stop
-            // packing entirely so the cutoff is deterministic by sort order
-            // rather than dependent on which skills happen to be small
-            // enough to fit in the remaining space.
-            budget_exceeded = true;
-            dropped.push(skill);
-        }
-    }
-
-    if !dropped.is_empty() {
-        let budget_kb = MAX_SKILL_DESCRIPTIONS_SIZE / 1024;
-        let first = dropped[0];
-        let message = if dropped.len() == 1 {
-            let entry_size = first.name.len() + first.description.len();
-            format!(
-                "Skill '{}' ({:.1}KB description) was dropped from the catalog because the previous skills already used the entire {}KB description budget.",
-                first.name,
-                entry_size as f64 / 1024.0,
-                budget_kb,
-            )
-        } else {
-            let mut message = format!(
-                "{} skills were dropped from the catalog because they exceeded the {}KB description budget:",
-                dropped.len(),
-                budget_kb,
-            );
-            for skill in &dropped {
-                let entry_size = skill.name.len() + skill.description.len();
-                message.push('\n');
-                message.push_str(&format!(
-                    "- {} ({:.1}KB description)",
-                    skill.name,
-                    entry_size as f64 / 1024.0,
-                ));
-            }
-            message
-        };
-        issues.push(SkillLoadingIssueData::catalog_budget_exceeded(
-            first.skill_file_path.clone(),
-            message,
-        ));
-    }
-
-    (kept, issues)
+    // zed-kask: The catalog budget is disabled. In upstream zed, skill
+    // descriptions are injected into the system prompt, so a 50KB budget
+    // prevents token bloat. In zed-kask, skills execute via YAML manifests —
+    // the catalog is discovery-only (name + description + location). All
+    // skills are kept in the catalog so the model can discover and invoke
+    // any skill via the skill tool.
+    let kept: Vec<SkillSummary> = skills
+        .iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .map(SkillSummary::from)
+        .collect();
+    (kept, Vec::new())
 }
 
 /// Build a closure that, when called, reads the latest `state.skills`

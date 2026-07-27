@@ -310,17 +310,12 @@ impl AgentTool for SkillTool {
                     render_skill_envelope(&skill, "(No manifest configured for this skill. Use the skill description as guidance.)")
                 }
             } else {
-                // No manifest executor configured — body injection (original behavior)
-                let body = if let Some(embedded) = skill.embedded_body {
-                    embedded.to_string()
-                } else {
-                    (self.body_resolver)(skill.clone(), cx).await.map_err(|e| {
-                        SkillToolOutput::Error {
-                            error: e.to_string(),
-                        }
-                    })?
-                };
-                render_skill_envelope(&skill, &body)
+                // No manifest executor configured — in zed-kask this should
+                // not happen (the manifest executor is always wired in
+                // main.rs). But if it does, do NOT inject the SKILL.md body.
+                // SKILL.md files are reference-only in zed-kask; skills execute
+                // via YAML manifests in the kask registry.
+                render_skill_envelope(&skill, "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)")
             };
 
             Ok(SkillToolOutput::Found { rendered })

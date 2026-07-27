@@ -329,15 +329,12 @@ fn validate_description_for_loading(
         return Err("Skill description cannot be empty");
     }
 
-    let mut warnings = Vec::new();
-    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
-        warnings.push(SkillLoadWarning::DescriptionTooLong {
-            actual_len: description.len(),
-            max_len: MAX_SKILL_DESCRIPTION_LEN,
-        });
-    }
-
-    Ok(warnings)
+    // zed-kask: Description length warnings are disabled. SKILL.md files
+    // are reference-only — their descriptions appear in the discovery
+    // catalog but are never injected into prompts. Skills execute via
+    // YAML manifests in the kask registry, so description length has no
+    // token-cost impact.
+    Ok(Vec::new())
 }
 
 fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
