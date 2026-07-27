@@ -41,7 +41,7 @@ Diagnose the missing config and propose recovery. Respond ONLY with a JSON array
 
 [
   {"action": "RunCommand", "command": "find . -name '*.yaml' -path '*/classify/*' 2>/dev/null"},
-  {"action": "CreateDefaultFile", "path": "registry/classify/missing_config.yaml", "content": "# Default classifier config\nclassifier: qa-triage\nmodel: DI/Qwen3.5-8B\nthreshold: 0.7\n"}
+  {"action": "CreateDefaultFile", "path": "registry/classify/missing_config.yaml", "content": "# Default classifier config\nclassifier: qa-triage\nmodel: DeepInfra/Qwen3.5-8B\nthreshold: 0.7\n"}
 ]
 
 Available actions:

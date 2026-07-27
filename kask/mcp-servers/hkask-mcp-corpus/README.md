@@ -178,7 +178,7 @@ Set a provider-prefixed model only after confirming that its provider is configu
   "text": "…source passage…",
   "chunk_id": "corpus:researcher:example:0",
   "bloom_levels": ["analyze"],
-  "model": "OR/openai/gpt-5.6-terra"
+  "model": "OpenRouter/openai/gpt-5.6-terra"
 }
 ```
 

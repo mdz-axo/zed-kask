@@ -62,9 +62,9 @@ env:
 
   HKASK_DB_POOL_SIZE: "64"
   HKASK_HTTP_POOL_MAX_IDLE: "256"
-  HKASK_CLASSIFIER_MODEL: "DI/Qwen/Qwen3-235B-A22B-Instruct-2507"
-  HKASK_QA_MODEL: "DI/zai-org/GLM-5.2"
-  HKASK_EMBEDDING_MODEL: "DI/Qwen/Qwen3-Embedding-0.6B"
+  HKASK_CLASSIFIER_MODEL: "DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507"
+  HKASK_QA_MODEL: "DeepInfra/zai-org/GLM-5.2"
+  HKASK_EMBEDDING_MODEL: "DeepInfra/Qwen/Qwen3-Embedding-0.6B"
 
 steps:
   # ═══════════════════════════════════════════════════════════════════════
@@ -265,7 +265,7 @@ steps:
       prompts_jsonl: "corpus/qa_pairs/prompts.jsonl"
       output: "corpus/qa_pairs/generated.jsonl"
       concurrency: 196
-      model: "DI/zai-org/GLM-5.2"
+      model: "DeepInfra/zai-org/GLM-5.2"
     verify:
       field: written
       min: 1

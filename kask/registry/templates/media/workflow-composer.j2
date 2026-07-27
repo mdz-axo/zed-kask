@@ -26,7 +26,7 @@ A workflow is a flat JSON object where each key is a node ID. Three node types e
     "type": "input | run | display",
     "id": "node_id",
     "depends": ["other_node_id"],
-    "app": "fal-ai/model-id",       // run nodes only
+    "app": "fal.ai/model-id",       // run nodes only
     "mode": "sync",                  // run nodes only, optional: "sync" (default) or "queue"
     "input": {},                     // input/run nodes: parameters for the model
     "fields": {}                     // display nodes only: output fields with $references
@@ -52,20 +52,20 @@ Data flows between nodes via `$node_id.field.path` references in Run.input and D
 ## Available Models
 
 ### Image Generation (sync)
-- `fal-ai/flux/schnell` — Fast image generation from text
-- `fal-ai/flux/dev` — High-quality image generation
-- `fal-ai/flux/dev/image-to-image` — Transform existing image with prompt
+- `fal.ai/flux/schnell` — Fast image generation from text
+- `fal.ai/flux/dev` — High-quality image generation
+- `fal.ai/flux/dev/image-to-image` — Transform existing image with prompt
 
 ### Image Processing (sync)
-- `fal-ai/birefnet` — Remove background from image
-- `fal-ai/florence-2-large/referring-expression-segmentation` — Segment specific objects
+- `fal.ai/birefnet` — Remove background from image
+- `fal.ai/florence-2-large/referring-expression-segmentation` — Segment specific objects
 
 ### Upscaling (queue — use mode: "queue")
-- `fal-ai/seedvr2` — Upscale image (2x, 4x)
+- `fal.ai/seedvr2` — Upscale image (2x, 4x)
 
 ### Video Generation (queue — use mode: "queue")
-- `fal-ai/minimax/video-01-live` — Generate video from text prompt
-- `fal-ai/seedance-2.0/image-to-video` — Animate still image into video
+- `fal.ai/minimax/video-01-live` — Generate video from text prompt
+- `fal.ai/seedance-2.0/image-to-video` — Animate still image into video
 
 ## Rules
 

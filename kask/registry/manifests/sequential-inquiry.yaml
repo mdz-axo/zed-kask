@@ -65,6 +65,13 @@ inputs:
   - name: thinking_budget
     type: string
     required: false
+  - name: skill_router_catalog
+    type: array
+    required: false
+    description: >
+      Installed skill catalog for skill-router matching. Injected by the
+      executor from the runtime skill registry. If absent, step 7 (skill-router
+      dispatch) is skipped and skill_match_queries go unanswered.
 
 steps:
   # ── Phase 1: Think ──────────────────────────────────────────────
@@ -169,12 +176,56 @@ steps:
       skill_match_results: "{{ step_7_result | default({}) }}"
 
   - ordinal: 7
+    action: select
+    description: >
+      Dispatch skill_match_queries emitted by the engine (step 1) to the
+      skill-router for matching against the broader installed skill catalog.
+      This step produces step_7_result, which is consumed by the engine on
+      the next cycle (via prior_skill_match_results) and by the convergence
+      check (via skill_match_results). If the engine emitted no
+      skill_match_queries, this step is skipped and returns an empty result.
+      The engine's skill_match_queries are arrays of {thought_number, query,
+      reason}; the first query's `query` field is passed as task_description,
+      and the remaining reasons are concatenated into task_context.
+    renderer: minijinja
+    template_ref: skill-router/skill-router-match
+    gas_cap: 2000
+    timeout_seconds: 30
+    input_mapping:
+      task_description: "{{ step_1_result.skill_match_queries[0].query | default('') }}"
+      task_context: "{{ step_1_result.skill_match_queries | map(attribute='reason') | join('; ') | default('') }}"
+      skill_catalog: "{{ skill_router_catalog | default([]) }}"
+      max_recommendations: 3
+      epistemic_state:
+        hypothesis: "{{ step_1_result.hypothesis | default({}) }}"
+        hypothesis_verified: "{{ step_1_result.hypothesis_verified | default(false) }}"
+        solution_confidence: "{{ step_1_result.solution_confidence | default(0.0) }}"
+        total_thoughts_used: "{{ step_1_result.total_thoughts_used | default(0) }}"
+    condition: "step_1_result.skill_match_queries"
+    skip_output:
+      recommendations: []
+      uncovered_capabilities: []
+      coverage_assessment: "No skill_match_queries emitted by engine"
+
+  - ordinal: 8
     action: loop
     description: >
-      Re-enter inquiry cycle if convergence is not met. The loop_target
-      is step 1 (engine); on the next cycle, step 1 receives
-      prior_skill_match_results from this step's prior invocation via the
-      executor's cross-cycle input wiring.
+      Re-enter inquiry cycle if convergence is not met. The executor exits
+      the loop when step_6_result.convergence_metric ≤ threshold (0.15).
+      The materiality guard in step 6 forces convergence_metric = 0.0 when
+      the gap is irreducible (iteration ≥ 3, delta < 0.02), which triggers
+      exit via the threshold check. On re-entry, step 1 receives
+      prior_skill_match_results from step_7_result via the executor's
+      cross-cycle input wiring.
+
+      STATE PERSISTENCE: Step results from the prior iteration persist
+      across loop iterations. When the loop re-enters at step 1 (engine),
+      all prior step_N_result values remain available for input_mapping
+      references. This is required because step 1 consumes prior_chain
+      from step_1_result, prior_delegation_results from steps 2–5, and
+      prior_skill_match_results from step 7. Step 6 (convergence) consumes
+      step_1_result through step_5_result and step_7_result. If the
+      executor does not persist step results, re-entry will fail.
     input_mapping:
       loop_target: 1
 
@@ -210,6 +261,10 @@ ocap:
     - resource: template
       action: render
       template_id: sequential-inquiry/sequential-inquiry-convergence-check
+      gas_budget: 2000
+    - resource: template
+      action: render
+      template_id: skill-router/skill-router-match
       gas_budget: 2000
     - resource: manifest
       action: execute

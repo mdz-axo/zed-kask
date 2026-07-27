@@ -26,7 +26,7 @@ parameters:
   - name: model
     type: string
     required: false
-    description: "LLM for classification (default: OR/openai/gpt-4o)"
+    description: "LLM for classification (default: OpenRouter/openai/gpt-4o)"
 input_type: text
 output_type: design_parameters
 latency: sync

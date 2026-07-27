@@ -102,7 +102,7 @@ steps:
     input_mapping:
       workflow: >
         {
-          "stt": { "capture": true, "transcribe_model": "FA/wizper" },
+          "stt": { "capture": true, "transcribe_model": "fal.ai/wizper" },
           "tts": { "voice": "{{ step_2_result.voice_preset }}", "text": "{{ step_2_result.tts_text }}" },
           "loop_closure": "contract_defined",
           "repl_chat_hook": "repl_chat_ref"

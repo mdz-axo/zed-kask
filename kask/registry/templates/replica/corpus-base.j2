@@ -35,7 +35,7 @@
      generation_date: string (ISO date)
      replica_class: string ("academic" | "literary" | "exemplar" | "compound")
      effort: string ("low" | "medium" | "high" — default: "medium")
-     embedding_model: string (default: "DI/Qwen/Qwen3-Embedding-0.6B")
+     embedding_model: string (default: "DeepInfra/Qwen/Qwen3-Embedding-0.6B")
      embedding_dim: number (default: 1024)
      batch_size: number (default: 64)
      chunking: { min_words, max_words, sentence_boundary }
@@ -77,7 +77,7 @@ author: {{ author_slug }}
 
 # ── Embedding configuration ────────────────────────────────────────────────
 embedding:
-  model: "{{ embedding_model | default("DI/Qwen/Qwen3-Embedding-0.6B") }}"
+  model: "{{ embedding_model | default("DeepInfra/Qwen/Qwen3-Embedding-0.6B") }}"
   dim: {{ embedding_dim | default(1024) }}
   batch_size: {{ batch_size | default(64) }}
 

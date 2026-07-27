@@ -5,8 +5,8 @@ template_type: FlowDef
 name: media_logo_iterative_refine
 version: "1.0.0"
 description: "Generate logo candidates, critique with vision LLM, refine the best one"
-primary_model: "FA/flux-pro/v1"
-critique_model: "OR/openai/gpt-4o"
+primary_model: "fal.ai/flux-pro/v1"
+critique_model: "OpenRouter/openai/gpt-4o"
 parameters:
   - name: name
     type: string

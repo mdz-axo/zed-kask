@@ -5,8 +5,8 @@ template_type: FlowDef
 name: media_apply_style
 version: "1.0.0"
 description: "Apply style transfer to an image"
-primary_model: "fal-ai/flux/dev/image-to-image"
-fallback_model: "DI/Qwen/Qwen-Image-Edit"
+primary_model: "fal.ai/flux/dev/image-to-image"
+fallback_model: "DeepInfra/Qwen/Qwen-Image-Edit"
 parameters:
   - name: image_url
     type: string

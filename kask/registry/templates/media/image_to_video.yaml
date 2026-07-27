@@ -5,8 +5,8 @@ template_type: FlowDef
 name: media_image_to_video
 version: "1.0.0"
 description: "Animate a still image into a short video clip"
-primary_model: "fal-ai/seedance-2.0/image-to-video"
-fallback_model: "fal-ai/kling-video/v3/pro/image-to-video"
+primary_model: "fal.ai/seedance-2.0/image-to-video"
+fallback_model: "fal.ai/kling-video/v3/pro/image-to-video"
 parameters:
   - name: image_url
     type: string

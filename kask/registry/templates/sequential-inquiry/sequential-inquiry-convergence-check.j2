@@ -37,13 +37,22 @@ visibility: Public
 #}
 
 {# DEPENDS-ON-EXECUTOR: `_convergence.improvement_target` is mapped from manifest `convergence.improvement_ratio`. #}
-{# DEPENDS-ON-EXECUTOR: `_convergence.previous_metric`, `_convergence.metric_delta`, `_convergence.committed_changes`
-   are supplied by the executor from the prior iteration's convergence result. #}
+{# DEPENDS-ON-EXECUTOR: `_convergence.previous_metric`, `_convergence.metric_delta`, `_convergence.committed_changes`,
+   `_convergence.iterations_completed` are supplied by the executor from the
+   prior iteration's convergence result. `iterations_completed` is 0 on the
+   first cycle and increments by 1 each completed iteration. #}
 
 [inference]
 temperature = 0.0
 verbosity = "terse"
 max_tokens = 500
+
+## Cycle Context
+
+- Iteration: {{ _convergence.iterations_completed | default(0) }}
+- Previous convergence metric: {{ _convergence.previous_metric | default(null) }}
+- Metric delta since last iteration: {{ _convergence.metric_delta | default(null) }}
+- Committed changes this iteration: {{ _convergence.committed_changes | default(false) }}
 
 Score convergence. Start at 1.0, subtract for each SATISFIED criterion.
 
@@ -54,13 +63,15 @@ Score convergence. Start at 1.0, subtract for each SATISFIED criterion.
 5. No pending revisions → -0.08  [force: guardrail]
 6. Confidence calibrated (solution_confidence ≥ 0.7) → -0.08  [force: guideline]
 7. Answer synthesized (final_answer clear, specific, actionable) → -0.08  [force: guideline]
-8a. hypothesis-framer result incorporated (if requested) → -0.03  [force: guardrail]
-8b. mcda result incorporated (if requested) → -0.03  [force: guardrail]
-8c. diagnose result incorporated (if requested) → -0.03  [force: guardrail]
-8d. falsifiability result incorporated (if requested) → -0.03  [force: guardrail]
-8e. skill_match results incorporated (if queried, cycle 2+) → -0.03  [force: guardrail]
+8a. hypothesis-framer result incorporated (if requested) → -0.024  [force: guardrail]
+8b. mcda result incorporated (if requested) → -0.024  [force: guardrail]
+8c. diagnose result incorporated (if requested) → -0.024  [force: guardrail]
+8d. falsifiability result incorporated (if requested) → -0.024  [force: guardrail]
+8e. skill_match results incorporated (if queried, cycle 2+) → -0.024  [force: guardrail]
 9. Delegation results incorporated (Guardrail — SKIP on cycle 1; evaluate on cycle 2+) → -0.07  [force: guardrail]
 10. Chain stable (ONLY cycle 2+; skip cycle 1) → -0.05  [force: guideline]
+
+**Cycle-conditional criteria**: Criteria 9 and 10 are skipped when `_convergence.iterations_completed < 1` (cycle 1). On cycle 2+ (`iterations_completed ≥ 1`), evaluate them normally.
 
 ## Delegation Dead-Letter Detection
 
@@ -71,12 +82,13 @@ If the engine emitted N > 0 delegation_requests AND 0 delegates returned `invoke
 
 ## Materiality Guard
 
-If iteration ≥ 3 AND |metric_delta| < 0.02 since last iteration AND no new delegation_requests this iteration:
+If `_convergence.iterations_completed ≥ 3` AND `|metric_delta| < 0.02` since last iteration AND no new delegation_requests this iteration:
   - Force `convergence_metric = 0.0` (irreducible gap — further iteration yields no signal)
   - Add `"irreducible_inquiry_gap"` to `blockers`
   - Skip the standard scoring above
+  - The executor will exit the loop because 0.0 ≤ threshold (0.15)
 
-Clamp to [0, 1].
+Clamp convergence_metric to [0, 1].
 
 Engine result:
 ```json

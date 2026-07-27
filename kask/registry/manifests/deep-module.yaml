@@ -117,7 +117,7 @@ steps:
     template_ref: deep-module/deep-module-design
     gas_cap: 6000
     timeout_seconds: 60
-    when: "step_2_result.recommendation in ['EXTRACT', 'DEEPEN']"
+    condition: "step_2_result.recommendation == 'EXTRACT' OR step_2_result.recommendation == 'DEEPEN'"
     skip_output:
       design_skipped: true
       reason: "Module recommended for {{ step_2_result.recommendation }} — design not applicable"
@@ -147,12 +147,21 @@ steps:
   - ordinal: 5
     action: loop
     description: >
-      Re-enter depth cycle if convergence is not met. Routes to the step
-      indicated by step_4_result.re_entry_target (assess|delete|design);
-      defaults to step 1 (assess) if re_entry_target is absent or "exit".
+      Re-enter depth cycle if convergence is not met. The executor exits
+      the loop when step_4_result.convergence_metric ≤ threshold (0.15).
+      The materiality guard in step 4 forces convergence_metric = 0.0 when
+      the gap is irreducible (iteration ≥ 3, delta < 0.02), which triggers
+      exit via the threshold check.
+
+      STATE PERSISTENCE: Step results from the prior iteration persist
+      across loop iterations. When the loop re-enters at step 1 (assess),
+      all prior step_N_result values remain available for input_mapping
+      references. This is required because step 2 (delete) consumes
+      step_1_result, step 3 (design) consumes step_2_result, and step 4
+      (convergence) consumes step_1_result, step_2_result, and step_3_result.
+      If the executor does not persist step results, re-entry will fail.
     input_mapping:
-      loop_target: "{{ step_4_result.re_entry_target | default(1) }}"
-      loop_target_exit: 0
+      loop_target: 1
 
 error_handling:
   on_gas_exceeded: abort
