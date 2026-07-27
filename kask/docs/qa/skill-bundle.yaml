@@ -1,0 +1,102 @@
+# Skill-bundle manifest for the hKask MCP server QA pass.
+# Consumed by the skill-bundler skill. See
+# kask/docs/qa/mcp-server-qa-strategy.md Phase 4 Deliverable 3.
+
+bundle: mcp-server-qa
+description: >
+  Full QA pass against one hKask MCP server: per-tool 7-category contract,
+  code-path bug hunt, security audit, supply-chain audit, runtime
+  posture observation, code-graph coverage verification.
+
+# Order matters: earlier skills produce artifacts later skills consume.
+order:
+  - task-breakdown:
+      phase: decompose
+      output: kask/docs/qa/plan.md, kask/docs/qa/todo.md
+      note: "Slice the QA work into per-server vertical slices with acceptance criteria."
+
+  - tdd:
+      phase: red-green-refactor
+      consumes: kask/docs/qa/per-tool-contracts.md
+      output: kask/mcp-servers/<server>/tests/qa_contract.rs
+      note: "Drive per-tool red-green against the 7-category contract. // REQ: <category> tags."
+
+  - bug-hunt:
+      phase: charter → probe → oracle → taxonomize → report → convergence
+      consumes: kask/mcp-servers/<server>/src/**/*.rs
+      output: kask/docs/qa/oracle/<server>__<tool>.md
+      spans: [reg.bughunt.*]
+      note: "Exploratory charters over the Rust code path. Missing-tests sub-phase surfaces the condenser/curator zero-#[cfg(test)] gap."
+
+  - kali-audit:
+      phase: select → probe → report → convergence
+      consumes: kask/mcp-servers/<server>/src/**/*.rs, kask/security/regressions/
+      output: kask/security/regressions/RR-NNNN.yaml (status: proposed)
+      spans: [reg.taxonomy.*]
+      note: "CWE / OWASP LLM Top 10 2025 / MITRE ATLAS v5.1 over code + LLM I/O surfaces."
+
+  - supply-chain-sentinel:
+      phase: select → probe → report → convergence
+      consumes: kask/mcp-servers/<server>/Cargo.toml, kask/deny.toml
+      output: kask/security/regressions/RR-NNNN.yaml (status: proposed, surface: supply-chain)
+      spans: [reg.supply_chain.*]
+      note: "Extends RR-0021's quick-xml precedent. Owns Cargo.toml; kali-audit owns src/."
+
+  - runtime-posture-monitor:
+      phase: select → classify → regulate → convergence
+      consumes: live reg.tool + hkask.* spans emitted during the routine
+      output: kask/security/regressions/RR-NNNN.yaml (status: proposed, surface: runtime)
+      spans: [reg.runtime.*]
+      note: "Observes real traffic during the routine. Do NOT observe adversarial-red-team synthetic traffic (see conflict_resolution)."
+
+  - graph-audit:
+      phase: code mode
+      consumes: hkask-mcp-codegraph MCP server
+      output: kask/docs/qa/coverage.md
+      spans: [reg.bughunt.*]
+      note: "Query the symbol graph for each tool fn; confirm a test call site exists. Coverage sub-metric."
+
+# Adversarial red-team is invoked per-tool by the qa_contract.rs test for
+# tools marked LLM I/O: yes, not as a separate bundle phase. It is listed
+# here for completeness.
+adversarial_red_team:
+  mode: single-shot
+  persistence: 1
+  categories: [injection, hijack, exfiltration, tool-misuse]
+  applies_to: tools marked "LLM I/O: yes" in per-tool-contracts.md
+  output: kask/docs/qa/oracle/<server>__<tool>__adversarial.md
+  spans: [reg.runtime.*]
+
+conflict_resolution:
+  - between: [bug-hunt, kali-audit]
+    rule: "bug-hunt finds, kali-audit classifies. Do not double-report: if bug-hunt files an oracle report, kali-audit references it rather than re-finding."
+  - between: [kali-audit, supply-chain-sentinel]
+    rule: "supply-chain-sentinel owns Cargo.toml and deny.toml; kali-audit owns src/*. RR entries: supply-chain-sentinel → surface: supply-chain; kali-audit → surface: mcp|code|llm-io."
+  - between: [adversarial-red-team, kali-audit]
+    rule: "adversarial-red-team probes the live LLM boundary (runtime); kali-audit reads the code (static). Both propose RR entries but kali-audit's are surface: mcp|llm-io, red-team's are surface: runtime."
+  - between: [runtime-posture-monitor, adversarial-red-team]
+    rule: "runtime-posture-monitor observes real traffic; adversarial-red-team generates synthetic traffic. runtime-posture-monitor MUST NOT classify red-team traffic as a runtime threat (false positive). The qa_contract.rs test tags red-team calls so runtime-posture-monitor can filter them."
+
+evidence:
+  spans_emitted:
+    - reg.tool                         # by the tools themselves (via ToolSpanGuard)
+    - reg.bughunt.*                    # by bug-hunt
+    - reg.runtime.*                    # by runtime-posture-monitor
+    - reg.supply_chain.*               # by supply-chain-sentinel
+    - reg.taxonomy.*                   # by kali-audit
+    - reg.skill.task-breakdown.*       # by task-breakdown
+    - reg.skill.tdd.*                  # by tdd
+  spans_NOT_emitted:
+    - reg.qa.run                       # Gap A — not registered in CANONICAL_NAMESPACES
+    - reg.guard.violation              # Gap B — no tool emits it on denial
+  reports:
+    - kask/docs/qa/coverage-matrix.md
+    - kask/docs/qa/coverage.md
+    - kask/docs/qa/oracle/<server>__<tool>.md
+  regressions:
+    - kask/security/regressions/RR-NNNN.yaml (status: proposed only — never flip to enforced)
+
+stop_conditions:
+  - "Every non-N/A cell in coverage-matrix.md is pass | fail | skipped-with-reason."
+  - "Same gap across 3 tools → escalate to user (materiality guard)."
+  - "Server-timeout (default 600s) exceeded → fail the server, do not loop."

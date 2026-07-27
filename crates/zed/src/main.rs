@@ -1224,6 +1224,8 @@ fn main() {
                 // When fusion is disabled (or construction fails), fall back to
                 // the single configured default model.
                 let fusion_config = kask_settings.fusion.to_fusion_config();
+                let mut discovered_favorites: Vec<kask_bridge::FavoriteModel> =
+                    Vec::new();
                 let fusion_model: Option<Arc<dyn language_model::LanguageModel>> =
                     if let Some(mut fc) = fusion_config {
                         // Auto-discover: when panel_models is empty or "auto",
@@ -1272,6 +1274,7 @@ fn main() {
                                 if let Some(panel) = hkask_types::fusion::NonEmptyVec::from_vec(panel_names) {
                                     fc.panel = panel;
                                 }
+                                discovered_favorites = result;
                             } else {
                                 log::info!(
                                     "hKask fusion: no favorites discovered — using kask_default panel"
@@ -1315,7 +1318,7 @@ fn main() {
                     };
 
                 let inference_model: Arc<dyn language_model::LanguageModel> =
-                    fusion_model.unwrap_or_else(|| configured.model.clone());
+                    fusion_model.clone().unwrap_or_else(|| configured.model.clone());
 
                 // Register the fusion provider so it appears in the agent
                 // panel's model picker. When fusion is disabled, the provider
@@ -1326,6 +1329,32 @@ fn main() {
                     registry.register_provider(Arc::new(fusion_provider), cx);
                 });
                 log::info!("Kask fusion language model provider registered");
+
+                // Auto-favorite: when fusion is enabled, add the fusion model and
+                // any discovered OpenRouter favorites to `agent.favorite_models`
+                // so they appear in the agent panel's model picker favorites cycle
+                // (CycleFavoriteModels action). `add_favorite_model` is idempotent
+                // — entries already present are not duplicated. This is best-effort:
+                // settings write failures are logged but do not block startup.
+                let fusion_enabled = fusion_model.is_some();
+                if fusion_enabled {
+                    let fs = app_state.fs.clone();
+                    let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
+                    selections.push(kask_bridge::fusion_model_selection());
+                    let favorite_count = selections.len();
+                    let discovered_count = discovered_favorites.len();
+                    settings::update_settings_file(fs, cx, move |settings, _| {
+                        let agent = settings.agent.get_or_insert_default();
+                        for selection in &selections {
+                            agent.add_favorite_model(selection.clone());
+                        }
+                    });
+                    log::info!(
+                        "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered)",
+                        favorite_count,
+                        discovered_count
+                    );
+                }
 
                 let (inference_port, inference_task) =
                     kask_bridge::LanguageModelInferencePort::new(

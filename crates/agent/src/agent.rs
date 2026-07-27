@@ -38,7 +38,7 @@ use acp_thread::{
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
-    SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
+    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
     load_skills_from_directory, parse_skill_frontmatter, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -87,8 +87,6 @@ pub struct RulesLoadingError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SkillLoadingIssueKind {
     LoadFailed,
-    DescriptionTooLong,
-    CatalogBudgetExceeded,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -112,28 +110,6 @@ impl SkillLoadingIssueData {
             path: error.path,
             message: error.message,
             kind: SkillLoadingIssueKind::LoadFailed,
-        }
-    }
-
-    fn from_load_warning(skill: &Skill, warning: &SkillLoadWarning) -> Self {
-        let kind = match warning {
-            SkillLoadWarning::DescriptionTooLong { .. } => {
-                SkillLoadingIssueKind::DescriptionTooLong
-            }
-        };
-        Self {
-            path: skill.skill_file_path.clone(),
-            message: warning.message(),
-            kind,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn catalog_budget_exceeded(path: PathBuf, message: String) -> Self {
-        Self {
-            path,
-            message,
-            kind: SkillLoadingIssueKind::CatalogBudgetExceeded,
         }
     }
 }
@@ -1307,14 +1283,11 @@ impl NativeAgent {
                 .into_iter()
                 .map(SkillLoadingIssueData::from_load_error)
                 .collect::<Vec<_>>();
-            for skill in &skills {
-                skill_issues.extend(
-                    skill
-                        .load_warnings
-                        .iter()
-                        .map(|warning| SkillLoadingIssueData::from_load_warning(skill, warning)),
-                );
-            }
+            // zed-kask: `load_warnings` is always empty — description-length
+            // warnings are disabled (see `validate_description_for_loading`).
+            // The upstream loop that mapped `SkillLoadWarning` →
+            // `SkillLoadingIssueData` is removed because the only warning
+            // variant (`DescriptionTooLong`) is never produced.
 
             // Apply project-overrides-global before catalog selection
             // so the model sees at most one entry per name. The full
@@ -5016,12 +4989,10 @@ mod internal_tests {
             // zed-kask: Description length warnings are disabled. SKILL.md
             // files are reference-only — their descriptions appear in the
             // discovery catalog but are never injected into prompts. A long
-            // description loads cleanly with no warning issue.
+            // description loads cleanly with no warning issue. The only
+            // `SkillLoadingIssueKind` variant in zed-kask is `LoadFailed`.
             assert!(
-                state
-                    .skill_loading_issues
-                    .iter()
-                    .all(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong),
+                state.skill_loading_issues.is_empty(),
                 "zed-kask disables description-length warnings; got {:?}",
                 state.skill_loading_issues,
             );

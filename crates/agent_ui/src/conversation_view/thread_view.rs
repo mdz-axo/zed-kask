@@ -17,7 +17,6 @@ use agent::{
     SkillLoadingIssuesUpdated, ThreadSandbox, VerifiedSandboxStatus,
 };
 use agent_settings::UserAgentsMd;
-use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
@@ -700,20 +699,6 @@ fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Opti
 
     let full_path = file.full_path(cx).display().to_string();
     (!full_path.is_empty()).then_some(full_path)
-}
-
-fn skill_issue_file_label(path: &std::path::Path) -> String {
-    let file_name = path.file_name().and_then(|name| name.to_str());
-    let parent_name = path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .and_then(|name| name.to_str());
-
-    match (parent_name, file_name) {
-        (Some(parent_name), Some(file_name)) => format!("{parent_name}/{file_name}"),
-        (_, Some(file_name)) => file_name.to_string(),
-        _ => path.display().to_string(),
-    }
 }
 
 pub fn open_markdown_in_workspace(
@@ -11325,20 +11310,14 @@ impl ThreadView {
     fn render_skill_loading_issues(&self, cx: &mut Context<Self>) -> Vec<Callout> {
         let border_position = self.callout_border_position();
 
-        let description_warnings = self
+        // zed-kask: Only `LoadFailed` issues are produced — description-length
+        // warnings and catalog-budget exceeded issues are disabled (see
+        // `validate_description_for_loading` and `select_catalog_skills`).
+        // The upstream `DescriptionTooLong` / `CatalogBudgetExceeded` arms
+        // are removed because those issue kinds are never produced.
+        let callouts = self
             .skill_loading_issues
             .iter()
-            .filter(|issue| issue.kind == SkillLoadingIssueKind::DescriptionTooLong)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let long_description_warning =
-            self.render_skill_description_warnings(description_warnings, cx);
-
-        let other_warnings = self
-            .skill_loading_issues
-            .iter()
-            .filter(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong)
             .enumerate()
             .map(|(index, issue)| {
                 let abs_path = issue.path.clone();
@@ -11348,10 +11327,6 @@ impl ThreadView {
 
                 let title = match issue.kind {
                     SkillLoadingIssueKind::LoadFailed => "Skill Failed to Load",
-                    SkillLoadingIssueKind::DescriptionTooLong => unreachable!(),
-                    SkillLoadingIssueKind::CatalogBudgetExceeded => {
-                        "Skill Omitted from Model Catalog"
-                    }
                 };
 
                 Callout::new()
@@ -11392,107 +11367,10 @@ impl ThreadView {
             })
             .collect::<Vec<_>>();
 
-        long_description_warning
+        callouts
             .into_iter()
-            .chain(other_warnings)
             .map(|callout| callout.border_position(border_position))
             .collect()
-    }
-
-    fn render_skill_description_warnings(
-        &self,
-        description_warnings: Vec<SkillLoadingIssue>,
-        cx: &mut Context<Self>,
-    ) -> Option<Callout> {
-        if description_warnings.is_empty() {
-            return None;
-        }
-
-        let warning_count = description_warnings.len();
-        let title = if warning_count == 1 {
-            "1 Skill Loaded with a Long Description".to_string()
-        } else {
-            format!("{warning_count} Skills Loaded with Long Descriptions")
-        };
-
-        let rows = description_warnings
-            .iter()
-            .enumerate()
-            .map(|(index, issue)| {
-                let abs_path = issue.path.clone();
-                let workspace = self.workspace.clone();
-                let full_path = issue.path.display().to_string();
-                let file_label = skill_issue_file_label(&issue.path);
-
-                ButtonLike::new(("skill-description-warning-file", index))
-                    .full_width()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Dash)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(Label::new(file_label).size(LabelSize::Small)),
-                    )
-                    .tooltip(move |_, cx| {
-                        Tooltip::with_meta("Open Skill", None, full_path.clone(), cx)
-                    })
-                    .on_click(cx.listener(move |_, _, window, cx| {
-                        let abs_path = abs_path.clone();
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                workspace
-                                    .open_abs_path(
-                                        abs_path,
-                                        workspace::OpenOptions::default(),
-                                        window,
-                                        cx,
-                                    )
-                                    .detach_and_log_err(cx);
-                            })
-                            .ok();
-                    }))
-                    .into_any_element()
-            })
-            .collect::<Vec<_>>();
-
-        let callout = Callout::new()
-            .icon(IconName::Warning)
-            .severity(Severity::Warning)
-            .title(title)
-            .description_slot(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Label::new(format!(
-                            "Ensure skill descriptions are at most {MAX_SKILL_DESCRIPTION_LEN} bytes; longer ones may consume more model-context tokens."
-                        ))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                    )
-                    .children(rows),
-            );
-
-        let targets = description_warnings;
-
-        Some(
-            callout.dismiss_action(
-                IconButton::new("dismiss-skill-description-warnings", IconName::Close)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Dismiss"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.skill_loading_issues
-                            .retain(|issue| !targets.contains(issue));
-                        for target in &targets {
-                            this.dismissed_skill_loading_issues.insert(target.clone());
-                        }
-                        cx.notify();
-                    })),
-            ),
-        )
     }
 
     fn render_external_source_prompt_warning(&self, cx: &mut Context<Self>) -> Callout {

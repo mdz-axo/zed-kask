@@ -23,8 +23,12 @@ pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 pub use fusion_model::{
     FUSION_MODEL_ID, FUSION_PROVIDER_ID, FusionLanguageModel, FusionLanguageModelProvider,
-    discover_favorites, resolve_fusion_models, should_auto_discover,
+    discover_favorites, favorite_model_selections, fusion_model_selection, resolve_fusion_models,
+    should_auto_discover,
 };
+/// Re-export so the composition root can name the type without depending on
+/// `hkask-inference` directly.
+pub use hkask_inference::openrouter_backend::FavoriteModel;
 pub use identity::{
     ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
 };

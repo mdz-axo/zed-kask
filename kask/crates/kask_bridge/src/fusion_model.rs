@@ -689,3 +689,55 @@ pub fn should_auto_discover(panel_models: &str) -> bool {
     let trimmed = panel_models.trim().to_lowercase();
     trimmed.is_empty() || trimmed == "auto"
 }
+
+/// The zed provider ID for OpenRouter models.
+///
+/// `FavoriteModel.prefixed_id` uses the 2-letter code `"OR/..."`, but zed's
+/// `LanguageModelRegistry` registers OpenRouter under the ID `"openrouter"`.
+/// Favorites stored in `agent.favorite_models` must use the zed provider ID
+/// so the model picker can match them against registered providers.
+const ZED_OPENROUTER_PROVIDER_ID: &str = "openrouter";
+
+/// Convert discovered OpenRouter favorites into `LanguageModelSelection` entries
+/// suitable for `agent.favorite_models` in settings.json.
+///
+/// Each `FavoriteModel.id` (e.g. `"z-ai/glm-5.2"`) becomes the model field,
+/// paired with the zed OpenRouter provider ID. Entries are returned in the
+/// same order as the input (sorted by intelligence index descending from
+/// `discover_favorites`).
+///
+/// This is a pure conversion — it does not write to settings. The composition
+/// root calls `update_settings_file` to persist the result.
+#[must_use]
+pub fn favorite_model_selections(
+    favorites: &[hkask_inference::openrouter_backend::FavoriteModel],
+) -> Vec<settings_content::LanguageModelSelection> {
+    favorites
+        .iter()
+        .map(|f| settings_content::LanguageModelSelection {
+            provider: settings_content::LanguageModelProviderSetting(
+                ZED_OPENROUTER_PROVIDER_ID.to_string(),
+            ),
+            model: f.id.clone(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        })
+        .collect()
+}
+
+/// Build a `LanguageModelSelection` for the fusion model itself.
+///
+/// The fusion model is registered under provider ID `kask-fusion` with model
+/// ID `fusion`. Adding it to `agent.favorite_models` lets users cycle to it
+/// via the `CycleFavoriteModels` action in the agent panel.
+#[must_use]
+pub fn fusion_model_selection() -> settings_content::LanguageModelSelection {
+    settings_content::LanguageModelSelection {
+        provider: settings_content::LanguageModelProviderSetting(FUSION_PROVIDER_ID.to_string()),
+        model: FUSION_MODEL_ID.to_string(),
+        enable_thinking: false,
+        effort: None,
+        speed: None,
+    }
+}
