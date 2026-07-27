@@ -1,6 +1,7 @@
-//! Kask Panel — native GPUI dock panel for per-MCP-server interaction (D10).
+//! Kask Panel — native GPUI center-pane item for per-MCP-server interaction (D10).
 //!
-//! A dockable panel that provides per-server access to the 10 built-in kask MCP
+//! A center-pane `Item` (opens in the same area as the terminal / editor / extensions
+//! view — not a dock) that provides per-server access to the 10 built-in kask MCP
 //! servers. The interaction model is a chat-like interface:
 //! - **Regular text** → scoped inference (LLM acts as intermediary, calling
 //!   only the selected server's tools)
@@ -14,14 +15,20 @@
 //! The panel uses global hooks (`set_tool_invoker` / `set_scoped_inference`)
 //! so it doesn't depend on `kask_bridge`. The composition root injects the
 //! bridge adapters.
+//!
+//! **Center-pane hosting:** `KaskPanel` implements `Item` (not `Panel`), so it
+//! opens via `workspace.add_item_to_active_pane(...)` into the center pane
+//! (the same surface that hosts the terminal, editor, and extensions view).
+//! The `Toggle` action deploys a new panel if none is open, or focuses the
+//! existing one. This is the same pattern `TerminalView` uses.
 
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use editor::{CompletionProvider, Editor, EditorMode, MultiBuffer};
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Pixels, Render, Task, WeakEntity, Window, prelude::*,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, Task,
+    WeakEntity, Window, prelude::*,
 };
 use language::Buffer;
 use language_core::CodeLabel;
@@ -32,7 +39,7 @@ use text::ToOffset;
 use ui::prelude::*;
 use workspace::{
     Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    item::{Item, ItemEvent, SerializableItem, TabContentParams},
     register_serializable_item,
 };
 
@@ -43,9 +50,6 @@ use zed_actions::kask_panel::{
 mod kanban_view;
 mod portfolio_view;
 mod scenarios_view;
-
-const KASK_PANEL_KEY: &str = "KaskPanel";
-const MIN_PANEL_WIDTH: Pixels = px(300.);
 
 pub use kanban_view::KanbanBoardView;
 pub use portfolio_view::PortfolioDashboardView;
@@ -193,7 +197,7 @@ fn server_welcome(server: &str) -> String {
     )
 }
 
-/// The kask panel — a dockable panel for per-MCP-server chat + tool invocation.
+/// The kask panel — a center-pane `Item` for per-MCP-server chat + tool invocation.
 pub struct KaskPanel {
     _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -268,17 +272,6 @@ impl KaskPanel {
             });
         });
         panel
-    }
-
-    pub fn load(
-        workspace: WeakEntity<Workspace>,
-        cx: &mut AsyncWindowContext,
-    ) -> Task<anyhow::Result<Entity<Self>>> {
-        cx.spawn(async move |cx| {
-            workspace.update_in(cx, |workspace, window, cx| {
-                Ok(Self::new(workspace, window, cx))
-            })?
-        })
     }
 
     fn selected_server_name(&self) -> &'static str {
@@ -866,55 +859,91 @@ impl Focusable for KaskPanel {
     }
 }
 
-impl EventEmitter<PanelEvent> for KaskPanel {}
+impl EventEmitter<ItemEvent> for KaskPanel {}
 
-impl Panel for KaskPanel {
-    fn persistent_name() -> &'static str {
+impl Item for KaskPanel {
+    type Event = ItemEvent;
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> gpui::SharedString {
+        format!("Kask — {}", self.selected_server_name()).into()
+    }
+
+    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
+        h_flex()
+            .gap_1()
+            .child(
+                self.tab_icon(_window, _cx)
+                    .unwrap_or_else(|| Icon::new(IconName::Kask)),
+            )
+            .child(
+                Label::new(self.tab_content_text(params.detail.unwrap_or_default(), _cx))
+                    .color(params.text_color()),
+            )
+            .into_any_element()
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::Kask).color(Color::Muted))
+    }
+
+    fn tab_tooltip_text(&self, _cx: &App) -> Option<gpui::SharedString> {
+        Some("Kask Panel — per-MCP-server chat + tool invocation".into())
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("Kask Panel Opened")
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
+    }
+
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(ItemEvent)) {}
+}
+
+impl SerializableItem for KaskPanel {
+    fn serialized_item_kind() -> &'static str {
         "KaskPanel"
     }
 
-    fn panel_key() -> &'static str {
-        KASK_PANEL_KEY
+    fn cleanup(
+        _workspace_id: workspace::WorkspaceId,
+        _alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        Task::ready(Ok(()))
     }
 
-    fn position(&self, _window: &Window, _cx: &App) -> DockPosition {
-        DockPosition::Right
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        _cx.spawn(async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
+                KaskPanel::new(workspace, window, cx)
+            })
+        })
     }
 
-    fn position_is_valid(&self, position: DockPosition) -> bool {
-        position != DockPosition::Bottom
-    }
-
-    fn set_position(
+    fn serialize(
         &mut self,
-        _position: DockPosition,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Task<anyhow::Result<()>>> {
+        // Stateless item — nothing to persist beyond the fact that it's open.
+        None
     }
 
-    fn default_size(&self, _window: &Window, _cx: &App) -> Pixels {
-        px(400.)
-    }
-
-    fn min_size(&self, _window: &Window, _cx: &App) -> Option<Pixels> {
-        Some(MIN_PANEL_WIDTH)
-    }
-
-    fn icon(&self, _window: &Window, _cx: &App) -> Option<IconName> {
-        Some(IconName::Kask)
-    }
-
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Kask Panel")
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(Toggle)
-    }
-
-    fn activation_priority(&self) -> u32 {
-        4
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
     }
 }
 
@@ -956,8 +985,13 @@ impl Render for KaskPanel {
     }
 }
 
-/// Initialize the kask panel and its related center-pane views.
+/// Initialize the kask panel — registers the center-pane item and actions.
+///
+/// `Toggle` opens a new kask panel in the active center pane (or focuses an
+/// existing one). `ToggleFocus` always focuses an existing panel (no-op if
+/// none is open). This mirrors how `TerminalView::deploy` works.
 pub fn init(cx: &mut App) {
+    register_serializable_item::<KaskPanel>(cx);
     register_serializable_item::<KanbanBoardView>(cx);
     register_serializable_item::<PortfolioDashboardView>(cx);
     register_serializable_item::<ScenariosView>(cx);
@@ -965,12 +999,31 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &Toggle, window, cx| {
-                if !workspace.toggle_panel_focus::<KaskPanel>(window, cx) {
-                    workspace.close_panel::<KaskPanel>(window, cx);
+                // If a KaskPanel is already open in the active pane, focus it;
+                // otherwise add a new one to the active center pane.
+                let active_pane = workspace.active_pane().clone();
+                let existing_focus = active_pane
+                    .read(cx)
+                    .items_of_type::<KaskPanel>()
+                    .next()
+                    .map(|panel| panel.focus_handle(cx));
+                if let Some(focus) = existing_focus {
+                    focus.focus(window, cx);
+                } else {
+                    let panel = KaskPanel::new(workspace, window, cx);
+                    workspace.add_item_to_active_pane(Box::new(panel), None, true, window, cx);
                 }
             });
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
-                workspace.toggle_panel_focus::<KaskPanel>(window, cx);
+                let active_pane = workspace.active_pane().clone();
+                let existing_focus = active_pane
+                    .read(cx)
+                    .items_of_type::<KaskPanel>()
+                    .next()
+                    .map(|panel| panel.focus_handle(cx));
+                if let Some(focus) = existing_focus {
+                    focus.focus(window, cx);
+                }
             });
             workspace.register_action(|workspace, _: &ToggleKanbanBoard, window, cx| {
                 // If a KanbanBoardView is already open in the active pane, focus it;

@@ -256,6 +256,93 @@ install_binary() {
     log_success "Installed zed-kask + $installed_servers MCP server(s) to $BIN_DIR"
 }
 
+# install_desktop_entry — render zed.desktop.in and install it so the OS
+# routes zed-kask:// URLs to the zed-kask binary. Without this, the
+# x-scheme-handler/zed-kask MIME type declared in the template never reaches
+# the user's applications directory and OS-level deep links won't open.
+install_desktop_entry() {
+    local workspace_root="$HKASK_SOURCE_DIR"
+    local template="$workspace_root/crates/zed/resources/zed.desktop.in"
+
+    if [ ! -f "$template" ]; then
+        log_warning "zed.desktop.in not found at $template — skipping desktop entry"
+        return 0
+    fi
+
+    # Render the .desktop template. APP_CLI must point at the installed binary
+    # so the OS can launch it; APP_NAME matches paths::APP_NAME for consistency.
+    local app_cli="$BIN_DIR/zed-kask"
+    local app_name="Zed-Kask"
+    local app_id="dev.zed.Zed-Kask"
+    local app_icon="zed-kask"
+
+    # Install the icon into the hicolor theme so the .desktop file can name it.
+    local icon_dir
+    local data_root
+    if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
+        data_root="/usr/local/share"
+    else
+        data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
+    fi
+    icon_dir="$data_root/icons/hicolor/512x512/apps"
+    mkdir -p "$icon_dir"
+    # Icon filename follows the release channel: app-icon.png for stable,
+    # app-icon-<channel>.png otherwise (matches script/bundle-linux logic).
+    local channel
+    if [ -f "$workspace_root/crates/zed/RELEASE_CHANNEL" ]; then
+        channel="$(< "$workspace_root/crates/zed/RELEASE_CHANNEL")"
+    else
+        channel="${RELEASE_CHANNEL:-dev}"
+    fi
+    local icon_suffix=""
+    if [ "$channel" != "stable" ]; then
+        icon_suffix="-$channel"
+    fi
+    local src_icon="$workspace_root/crates/zed/resources/app-icon${icon_suffix}.png"
+    if [ ! -f "$src_icon" ]; then
+        # Fall back to the stable icon if the channel-specific one is missing.
+        src_icon="$workspace_root/crates/zed/resources/app-icon.png"
+    fi
+    if [ -f "$src_icon" ]; then
+        cp "$src_icon" "$icon_dir/$app_icon.png"
+        log "Installed icon: $icon_dir/$app_icon.png (from $(basename "$src_icon"))"
+    else
+        log_warning "No source icon found — desktop entry will lack an icon"
+    fi
+
+    # Render the template. envsubst is part of gettext-utils; fall back to sed
+    # if it is unavailable so the script works on minimal images.
+    local desktop_dir="$data_root/applications"
+    mkdir -p "$desktop_dir"
+    local desktop_file="$desktop_dir/$app_id.desktop"
+
+    export DO_STARTUP_NOTIFY="true" APP_CLI="$app_cli" APP_NAME="$app_name" \
+        APP_ARGS="%U" APP_ICON="$app_icon"
+    if command -v envsubst >/dev/null 2>&1; then
+        envsubst < "$template" > "$desktop_file"
+    else
+        sed -e "s|\$APP_NAME|$app_name|g" \
+            -e "s|\$APP_CLI|$app_cli|g" \
+            -e "s|\$APP_ARGS|%U|g" \
+            -e "s|\$APP_ICON|$app_icon|g" \
+            -e "s|\$DO_STARTUP_NOTIFY|true|g" \
+            "$template" > "$desktop_file"
+    fi
+    chmod +x "$desktop_file"
+    log "Installed desktop entry: $desktop_file"
+
+    # Refresh the MIME cache so the new scheme handler is picked up promptly.
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$desktop_dir" 2>/dev/null || true
+    fi
+    # xdg-mime registers the handler with the desktop database.
+    if command -v xdg-mime >/dev/null 2>&1; then
+        xdg-mime default "$app_id.desktop" x-scheme-handler/zed-kask 2>/dev/null || true
+    fi
+
+    log_success "Registered zed-kask:// URL scheme handler"
+}
+
 setup_environment() {
     log "Setting up environment..."
 
@@ -356,6 +443,27 @@ uninstall_hkask() {
         fi
     done
     log "Removed MCP server binaries"
+
+    # Remove the desktop entry and icon so the OS stops routing zed-kask://
+    # to a binary that no longer exists.
+    local app_id="dev.zed.Zed-Kask"
+    local app_icon="zed-kask"
+    local data_root
+    for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do
+        local desktop_file="$data_root/applications/$app_id.desktop"
+        local icon_file="$data_root/icons/hicolor/512x512/apps/$app_icon.png"
+        if [ -f "$desktop_file" ]; then
+            rm -f "$desktop_file"
+            log "Removed desktop entry: $desktop_file"
+        fi
+        if [ -f "$icon_file" ]; then
+            rm -f "$icon_file"
+            log "Removed icon: $icon_file"
+        fi
+    done
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
+    fi
 
     # Remove PATH entries from shell configs
     for cfg in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.profile"; do
@@ -540,6 +648,7 @@ main() {
 
             build_hkask
             install_binary
+            install_desktop_entry
             setup_environment
 
             verify_installation

@@ -204,3 +204,11 @@ Rules emerge from validated patterns, not one-off observations. The workflow is:
 1. Agent notes a pattern during a session.
 2. Team validates the pattern in code review.
 3. A dedicated commit adds the rule with context on *why* it exists.
+
+# Center-pane Item Toggle vs ToggleFocus
+
+For center-pane `Item` views (not dock `Panel`s), the View menu entry must use
+the `Toggle` action (deploys a new item if none exists), NOT `ToggleFocus`
+(silent no-op when no item is open — produces "nothing happens" with no error).
+Dock `Panel`s register `ToggleFocus` as their `toggle_action`, so the menu
+pattern differs between docks and center-pane items.

@@ -29,7 +29,7 @@ mds_categories: [composition, trust, lifecycle]
 > | D9a | Settings section | ✅ **DONE** | `KaskSettings` struct registered with zed's settings system; `"kask"` section in settings.json. Covers MCP, data services, curator, guard, memory. |
 > | D9b | Credentials namespace | ✅ **DONE** | `keyring` crate directly (synchronous OS keychain) (kask namespace: `kask://credentials/<key>`). `InferenceConfig::from_secrets()` reads API keys via `keyring` crate with env var fallback. |
 > | D9c | Settings UI page | ✅ **DONE** | `crates/settings_ui/src/pages/kask_page.rs` — top-level "Kask" page with 5 sub-pages: Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles), MCP Servers (10 built-in servers + `load_default` master toggle + per-server overrides), Curator (`always_on` + `algedonic_threshold`), Guard (`direct_chat_strategy`), Memory (`consolidation_cadence_secs` + `confidence_floor`). Registered in `page_data.rs::settings_data()` after `ai_page`. `credentials_provider` added as direct dep of `settings_ui`. |
-> | D10 | Kask panel | ✅ **DONE** | `crates/kask_panel/` — native GPUI `Panel` implementing `workspace::dock::Panel`. Dockable (right dock). Chat-like interface: regular text → scoped inference (LLM + selected server's tools), `/tool args` → direct tool invocation (OCAP-gated). `ToolInvoker` + `ScopedInference` global hooks (OnceLock pattern). `PanelToolInvoker` adapter wraps `BridgeToolPort` with `DelegationToken` from `a2a_secret`. `PanelScopedInference` adapter wraps `GuardedInferencePort`. Both wired in composition root. `kask_panel::Toggle`/`ToggleFocus` actions. Panel loaded in `zed.rs::initialize_panels()`. `kask_panel::init(cx)` called in `main.rs`. |
+> | D10 | Kask panel | ✅ **DONE** | `crates/kask_panel/` — native GPUI center-pane `Item` implementing `workspace::item::Item` (NOT a dock `Panel`; opens via `workspace.add_item_to_active_pane(...)` so it doesn't block other settings/panels). Chat-like interface: regular text → scoped inference (LLM + selected server's tools), `/tool args` → direct tool invocation (OCAP-gated). `ToolInvoker` + `ScopedInference` global hooks (OnceLock pattern). `PanelToolInvoker` adapter wraps `BridgeToolPort` with `DelegationToken` from `a2a_secret`. `PanelScopedInference` adapter wraps `GuardedInferencePort`. Both wired in composition root. `kask_panel::Toggle` (deploys/focuses) / `ToggleFocus` (focus-only, no-op if none open) actions. Deployed on demand via `kask_panel::init(cx)` (called in `main.rs`); NOT registered in `zed.rs::initialize_panels()`. `Item::tab_icon` returns `Icon::new(IconName::Kask)`. |
 >
 > **Composition root** (`crates/zed/src/main.rs`, after `gpui_tokio::init`):
 > 1. Constructs `keyring crate` (from `kask_bridge`) over zed's `CredentialsProvider` and injects it into `hkask_keystore::keyring crate` (D5)
@@ -149,7 +149,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | D7 | App-identity | `crates/paths/src/paths.rs`, `crates/release_channel/src/lib.rs`, `crates/zed/src/zed/mac_only_instance.rs`, `crates/zed/Cargo.toml` | ✅ DONE | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
 | D8 | Bridge + adapters | `kask/crates/kask_bridge/` | ✅ DONE | `InferencePort` over `LanguageModel`, `keyring` crate directly (synchronous OS keychain), `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
 | D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` | ✅ DONE | `KaskSettings` struct + `"kask"` section in settings.json; `keyring` crate directly (synchronous OS keychain) (kask namespace). Settings UI page pending (Phase 8). |
-| D10 | Kask panel | `crates/kask_panel/` | ✅ DONE | Native GPUI `Panel` implementing `workspace::dock::Panel`. Right dock. Server selector (10 built-in MCP servers). `kask_panel::Toggle`/`ToggleFocus` actions. Loaded in `zed.rs::initialize_panels()`. Tool invocation wiring (global `ToolPort` hook) is next. |
+| D10 | Kask panel | `crates/kask_panel/` | ✅ DONE | Native GPUI center-pane `Item` implementing `workspace::item::Item` (not a dock `Panel`). Server selector (10 built-in MCP servers). `kask_panel::Toggle`/`ToggleFocus` actions. Deployed on demand via `kask_panel::init(cx)`; NOT loaded in `zed.rs::initialize_panels()`. Tool invocation wiring (global `ToolPort` hook) is next. |
 
 **Discipline:** D1–D10 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
 
@@ -355,7 +355,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 22. **`keyring` crate trait location** (D9b, R9) — define in `hkask-types` (keeps hKask↛zed-kask) and implement on the zed-kask side over `CredentialsProvider`?
 23. **Config-migration precedence** (T6.3) — settings.json > keychain > env-var fallback; one-time import vs continuous env fallback?
 24. **Kask panel implementation** (D10) — confirm native GPUI (option B) vs ratatui-in-terminal (option A) for MVP.
-25. **Kask panel dock position** — right or bottom; auto-launch on startup?
+25. **Kask panel dock position** — ~~right or bottom; auto-launch on startup?~~ RESOLVED: not a dock — center-pane `Item`, deployed on demand via `Toggle` action.
 26. **Kask panel command scope** — direct `:tool args` + scoped inference (read+write via OCAP); any read-only restrictions per server?
 
 ---
@@ -474,7 +474,7 @@ Precedence: explicit settings.json > imported keychain > env-var fallback (durin
 **Decision: (B).** More idiomatic zed-native, eliminates the PTY/IPC boundary (and the need to retain the daemon listener), and simplifies deletion. (A) remains a reuse-fast fallback if the GPUI rebuild proves too costly for MVP.
 
 ### 12.3 Design (D10 — native GPUI kask panel)
-- **zed side:** new `Panel` impl `crates/kask_panel` (implements `pub trait Panel`, `crates/workspace/src/dock.rs`; `DockPosition` right or bottom). Renders: a list of the 11 on-disk MCP servers (10 loaded by default + curator unloaded, from the in-process tool registry, §2.4); selecting one opens a per-server sub-view.
+- **zed side:** new `Item` impl `crates/kask_panel` (implements `pub trait Item`, `crates/workspace/src/item.rs`; opens in the center pane via `workspace.add_item_to_active_pane(...)` — NOT a dock `Panel`, so it coexists with other settings/panels). Renders: a list of the 11 on-disk MCP servers (10 loaded by default + curator unloaded, from the in-process tool registry, §2.4); selecting one opens a per-server sub-view.
 - **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the OCAP-gated path (same `GovernedTool`/gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
 - **OCAP:** the panel invokes tools under the userpod's `DelegationToken` exactly as the agent does — direct invocation does NOT bypass OCAP (mirrors the ratatui `ToolInvokeBridge` invariant). Double-gate (F10) applies: panel invokes are still `GovernedTool`-gated.
 - **hKask side:** delete the entire ratatui TUI (T5.3) — `mcp_scoped` is reimplemented natively; no slimmed ratatui binary, no view socket. (This **reverses** an earlier ratatui-terminal idea: cleaner.)
@@ -492,9 +492,9 @@ Precedence: explicit settings.json > imported keychain > env-var fallback (durin
 
 ### 12.6 GPUI reuse map (option B, grounded in zed's own code)
 
-**Panel trait + registration** (`crates/workspace/src/dock.rs`):
-- `impl Panel for KaskPanel` requires: `persistent_name()` → `"KaskPanel"`, `panel_key()`, `position(&self, window, cx) -> DockPosition`, `default_size()`, `min_size()`, `icon() -> Option<IconName>`, `icon_tooltip()`, `toggle_action() -> Box<dyn Action>`, `activation_priority()`, `enabled()`, plus `Render`, `Focusable`, `EventEmitter<PanelEvent>`. **Copy-template: `agent_ui/src/agent_panel.rs:4954` (`impl Panel for AgentPanel`).**
-- Register: `cx.new(|cx| KaskPanel::new(...))` then `workspace.add_panel(panel, window, cx)` (`crates/workspace/src/workspace.rs:2554`); add a `ToggleKaskPanel` action (mirror `ToggleFocus`). Dock position/size persist into the **`kask.panel.dock`** settings field (§11/D9a) — not zed's `agent` settings — via `settings::update_settings_file` (mirror AgentPanel `set_position`).
+**Item trait + registration** (`crates/workspace/src/item.rs`):
+- `impl Item for KaskPanel` requires: `tab_content_text()`, `tab_content()`, `tab_icon() -> Option<Icon>` (returns `Icon::new(IconName::Kask)`), `tab_tooltip_text()`, `telemetry_event_text()`, `show_toolbar()`, `to_item_events()`, plus `Render`, `Focusable`, `EventEmitter<ItemEvent>`, and `SerializableItem` (for workspace restoration). **Copy-template: `workspace/src/shared_screen.rs` (`impl Item for SharedScreen`).**
+- Register: `register_serializable_item::<KaskPanel>(cx)` in `kask_panel::init(cx)`; deploy on demand via the `Toggle` action handler (`workspace.add_item_to_active_pane(Box::new(panel), None, true, window, cx)`). NOT registered in `zed.rs::initialize_panels()` — center-pane items are on-demand, not auto-loaded docks.
 
 **Visual language — `use ui::prelude::*`** (`crates/ui/src/prelude.rs`); reuse components + theme tokens (NO hardcoded colors/fonts):
 - Components: `Button`/`IconButton`, `Label` (`LabelSize`), `Icon`/`IconName`/`IconSize`, `list::List` (server catalog), `TabBar` (open per-server windows as tabs), `context_menu`/`popover_menu` (per-tool menus), `scrollbar`, `data_table` (structured JSON tool results), `chip`/`indicator` (server status dots), `divider`, `callout` (errors), `Tooltip`, `keybinding_hint`.
@@ -507,12 +507,12 @@ Precedence: explicit settings.json > imported keychain > env-var fallback (durin
 **Structure (`crates/kask_panel`):**
 - `KaskPanel { servers: [11 on-disk — 10 loaded by default + curator unloaded — from in-process registry, §2.4], active: ServerId, tabs: open windows, input: Entity<Editor>, results: view, tool/inference handles (D3/D8) }`.
 - Render: header (`TabBar` of open servers, or `List` catalog when none) + active view (`Editor` input + results). All via `ui` components + theme tokens.
-- Dock icon: reuse an existing `IconName`, or add `IconName::Kask` (small addition to `crates/ui/src/icon.rs`).
+- Tab icon: `Item::tab_icon` returns `Icon::new(IconName::Kask).color(Color::Muted)` (added `IconName::Kask` to `crates/icons/src/icons.rs` + `assets/icons/kask.svg`).
 
-**Minimal divergence:** one new crate `crates/kask_panel` + one `ToggleKaskPanel` action + one `add_panel` call at workspace init + (optional) one `IconName` + `kask.panel.*` in the settings section (§11). No core zed panel/`ui`/`editor` modifications.
+**Minimal divergence:** one new crate `crates/kask_panel` + `Toggle`/`ToggleFocus` actions + `register_serializable_item` in `kask_panel::init` + (optional) one `IconName` + `kask.panel.*` in the settings section (§11). No core zed panel/`ui`/`editor` modifications.
 
 **Reference files to copy from:**
-- `agent_ui/src/agent_panel.rs` — Panel impl boilerplate, render structure, dock persistence.
+- `agent_ui/src/agent_panel.rs` — Item impl boilerplate, render structure (note: AgentPanel is a dock `Panel`; KaskPanel is a center-pane `Item` — copy the `Item` pattern from `workspace/src/shared_screen.rs` instead).
 - `agent_ui/src/message_editor.rs` — input `Editor` + completion provider.
 - `agent_ui/src/conversation_view/` — message/tool-result rendering.
 - `agent_ui/src/context_server_configuration.rs` — MCP server list UI (catalog style).
@@ -549,7 +549,7 @@ zed-kask app startup constructs the individual hKask components directly (~~`Kas
 4. **Build the bridge:** `InferencePort`-over-`LanguageModel` (+guard), `ToolPort`-over-tool-registry, `keyring` crate-over-`CredentialsProvider`, `CuratorTurnPort`, `MemoryPort`; inject into `ManifestExecutor`/Curator/MCP servers/kask panel.
 5. **Wire the regulation system:** construct `RegulationLedger::default()` + `CyberneticsLoop::new(ledger)` + `FlatEnergyEstimator` (10 gas per call, in `hkask-mcp`) + `NoopEventSink` and call `McpRuntime::with_governance()`. Startup log: "hKask regulation system wired — tool invocations are governed". `hkask-regulation` and `tokio` are now dependencies of `zed`.
 6. **Spawn** the regulation + Curator metacognition tokio loops on the `gpui_tokio` runtime (R1) — the loop driver.
-7. **Register** the **UserPod** + **Curator** native agents (D2) and the **KaskPanel** (D10); add `ToggleKaskPanel` + `workspace.add_panel`.
+7. **Register** the **UserPod** + **Curator** native agents (D2) and call `kask_panel::init(cx)` (D10) which registers the `KaskPanel` center-pane `Item` + `Toggle`/`ToggleFocus` actions. KaskPanel is NOT a dock panel — it deploys on demand via `Toggle` into the active center pane.
 8. **Deferred userpod provisioning (D6 late):** after `AppState::set_global`, a spawned task watches `UserStore::current_user()`. When the Zed user resolves: `provision_userpod(username)` creates the directory structure, ensures a DB passphrase (auto-generate random English word if none, via the `keyring` crate directly), and calls `set_memory_port(BridgeMemoryPort(RealMemoryPort))` to replace the logging port. MCP servers are launched with `HKASK_MCP_HOST`/`HKASK_USERPOD_NAME` set from the sanitized username.
 9. **Migrate** config (T6.3) on first launch.
 

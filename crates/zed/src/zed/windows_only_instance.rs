@@ -2,6 +2,7 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use client::ZED_URL_SCHEME;
 use parking_lot::Mutex;
 use release_channel::app_identifier;
 use util::ResultExt;
@@ -126,7 +127,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             match std::fs::canonicalize(&path) {
                 Ok(path) => paths.push(path.to_string_lossy().into_owned()),
                 Err(error) => {
-                    if path.starts_with("zed://")
+                    if path.starts_with(&format!("{ZED_URL_SCHEME}://"))
                         || path.starts_with("http://")
                         || path.starts_with("https://")
                         || path.starts_with("file://")

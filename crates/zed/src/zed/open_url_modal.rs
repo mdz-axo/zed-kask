@@ -28,7 +28,7 @@ impl OpenUrlModal {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("zed://...", window, cx);
+            editor.set_placeholder_text(&format!("{ZED_URL_SCHEME}://..."), window, cx);
             editor
         });
 
