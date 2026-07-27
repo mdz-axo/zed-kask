@@ -127,7 +127,7 @@ convergence:
 # Per-step infrastructure caps (render, validate, converge) get 2× the prior
 # cap at medium, 3× at high. Network steps keep their existing caps regardless.
 gas:
-  cap: 40000
+  cap: 150000
   alert_threshold: 0.85
   hard_limit: true
 

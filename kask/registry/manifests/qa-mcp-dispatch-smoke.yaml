@@ -30,7 +30,7 @@ manifest:
     All steps require QaScriptRunner with mcp_tool support.
 
 gas:
-  cap: 10000
+  cap: 50000
   alert_threshold: 0.9
   hard_limit: true
 

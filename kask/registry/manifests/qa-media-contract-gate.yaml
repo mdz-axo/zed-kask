@@ -22,7 +22,7 @@ manifest:
     via MCP dispatch. Media server has the largest tool surface (36 tools).
 
 gas:
-  cap: 25000
+  cap: 50000
   hard_limit: true
 
 rjoule:

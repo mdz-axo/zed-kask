@@ -32,7 +32,7 @@ manifest:
     Default target: hkask-mcp-condenser.
 
 gas:
-  cap: 15000
+  cap: 50000
   alert_threshold: 0.8
   hard_limit: true
 
