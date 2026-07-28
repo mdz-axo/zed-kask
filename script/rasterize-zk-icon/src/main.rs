@@ -165,38 +165,35 @@ fn main() {
     let svg = root.join("kask").join("assets").join("zk-icon.svg");
     assert!(svg.exists(), "source SVG not found: {svg:?}");
 
-    // Desktop / window / about icons (dev channel = Kask product).
-    let dev_png = root
-        .join("crates")
-        .join("zed")
-        .join("resources")
-        .join("app-icon-dev.png");
-    let dev_png_2x = root
-        .join("crates")
-        .join("zed")
-        .join("resources")
-        .join("app-icon-dev@2x.png");
-    let dev_ico = root
-        .join("crates")
-        .join("zed")
-        .join("resources")
-        .join("windows")
-        .join("app-icon-dev.ico");
-
-    write_png(&rasterize(&svg, 512), &dev_png);
-    write_png(&rasterize(&svg, 1024), &dev_png_2x);
-    write_ico(&svg, &[16, 32, 48, 64, 128, 256], &dev_ico);
+    // All release channels share the same zk monogram — there is no
+    // per-channel variant of the logo. We rasterize once per channel suffix
+    // so every build (stable, dev, nightly, preview) ships the zk icon,
+    // not just dev. Previously only dev was refreshed and the other channels
+    // silently kept the upstream Zed "K" icon, which surfaced as "still
+    // seeing the old icon" when a user built on a non-dev channel.
+    let resources = root.join("crates").join("zed").join("resources");
+    let windows = resources.join("windows");
+    let channels: &[(&str, &str)] = &[
+        ("stable", ""),
+        ("dev", "-dev"),
+        ("nightly", "-nightly"),
+        ("preview", "-preview"),
+    ];
+    for (_name, suffix) in channels {
+        let png = resources.join(format!("app-icon{suffix}.png"));
+        let png_2x = resources.join(format!("app-icon{suffix}@2x.png"));
+        let ico = windows.join(format!("app-icon{suffix}.ico"));
+        write_png(&rasterize(&svg, 512), &png);
+        write_png(&rasterize(&svg, 1024), &png_2x);
+        write_ico(&svg, &[16, 32, 48, 64, 128, 256], &ico);
+    }
 
     // macOS document-type icon. `bundle-mac` copies this into the .app bundle
     // as `Contents/Resources/Document.icns` (referenced by DocumentTypes.plist
     // via CFBundleTypeIconFile "Document"). cargo-bundle builds the app icon
-    // itself from the bundle-dev PNGs above, so we only need to refresh the
-    // document icon here.
-    let document_icns = root
-        .join("crates")
-        .join("zed")
-        .join("resources")
-        .join("Document.icns");
+    // itself from the bundle-{channel} PNGs above, so we only need to refresh
+    // the document icon here.
+    let document_icns = resources.join("Document.icns");
     write_icns(&svg, &document_icns);
 
     println!("done.");

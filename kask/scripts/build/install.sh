@@ -285,8 +285,13 @@ install_desktop_entry() {
     else
         data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
     fi
-    icon_dir="$data_root/icons/hicolor/512x512/apps"
-    mkdir -p "$icon_dir"
+    # Install icons at multiple resolutions so the launcher always finds a
+    # crisp variant. Some desktop shells (GNOME on HiDPI, KDE) prefer the
+    # 1024x1024 entry and fall back to 512x512; missing sizes can cause the
+    # launcher to serve a stale or wrong icon from a sibling app.
+    local icon_dir_512="$data_root/icons/hicolor/512x512/apps"
+    local icon_dir_1024="$data_root/icons/hicolor/1024x1024/apps"
+    mkdir -p "$icon_dir_512" "$icon_dir_1024"
     # Icon filename follows the release channel: app-icon.png for stable,
     # app-icon-<channel>.png otherwise (matches script/bundle-linux logic).
     local channel
@@ -300,15 +305,21 @@ install_desktop_entry() {
         icon_suffix="-$channel"
     fi
     local src_icon="$workspace_root/crates/zed/resources/app-icon${icon_suffix}.png"
+    local src_icon_2x="$workspace_root/crates/zed/resources/app-icon${icon_suffix}@2x.png"
     if [ ! -f "$src_icon" ]; then
         # Fall back to the stable icon if the channel-specific one is missing.
         src_icon="$workspace_root/crates/zed/resources/app-icon.png"
+        src_icon_2x="$workspace_root/crates/zed/resources/app-icon@2x.png"
     fi
     if [ -f "$src_icon" ]; then
-        cp "$src_icon" "$icon_dir/$app_icon.png"
-        log "Installed icon: $icon_dir/$app_icon.png (from $(basename "$src_icon"))"
+        cp "$src_icon" "$icon_dir_512/$app_icon.png"
+        log "Installed icon: $icon_dir_512/$app_icon.png (from $(basename "$src_icon"))"
     else
         log_warning "No source icon found — desktop entry will lack an icon"
+    fi
+    if [ -f "$src_icon_2x" ]; then
+        cp "$src_icon_2x" "$icon_dir_1024/$app_icon.png"
+        log "Installed icon: $icon_dir_1024/$app_icon.png (from $(basename "$src_icon_2x"))"
     fi
 
     # Render the template. envsubst is part of gettext-utils; fall back to sed
@@ -340,6 +351,14 @@ install_desktop_entry() {
     # xdg-mime registers the handler with the desktop database.
     if command -v xdg-mime >/dev/null 2>&1; then
         xdg-mime default "$app_id.desktop" x-scheme-handler/zed-kask 2>/dev/null || true
+    fi
+
+    # Best-effort icon cache refresh. GTK resolves icons by scanning the
+    # hicolor directory, so the icon works even when this fails.
+    local hicolor_root="$data_root/icons/hicolor"
+    if [ -d "$hicolor_root" ]; then
+        gtk-update-icon-cache -f "$hicolor_root" 2>/dev/null || true
+        touch "$hicolor_root" 2>/dev/null || true
     fi
 
     log_success "Registered zed-kask:// URL scheme handler"
@@ -453,15 +472,21 @@ uninstall_hkask() {
     local data_root
     for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do
         local desktop_file="$data_root/applications/$app_id.desktop"
-        local icon_file="$data_root/icons/hicolor/512x512/apps/$app_icon.png"
+        local icon_file_512="$data_root/icons/hicolor/512x512/apps/$app_icon.png"
+        local icon_file_1024="$data_root/icons/hicolor/1024x1024/apps/$app_icon.png"
         if [ -f "$desktop_file" ]; then
             rm -f "$desktop_file"
             log "Removed desktop entry: $desktop_file"
         fi
-        if [ -f "$icon_file" ]; then
-            rm -f "$icon_file"
-            log "Removed icon: $icon_file"
+        if [ -f "$icon_file_512" ]; then
+            rm -f "$icon_file_512"
+            log "Removed icon: $icon_file_512"
         fi
+        if [ -f "$icon_file_1024" ]; then
+            rm -f "$icon_file_1024"
+            log "Removed icon: $icon_file_1024"
+        fi
+        gtk-update-icon-cache -f "$data_root/icons/hicolor" 2>/dev/null || true
     done
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true

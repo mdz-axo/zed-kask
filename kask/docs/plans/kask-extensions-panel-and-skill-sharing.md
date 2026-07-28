@@ -243,17 +243,22 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
    ```
 4. Implement `Item` for `KaskExtensionsPage` (mirror `ExtensionsPage`'s impl). Tab title: "Kask Extensions". Tab icon: `Icon::new(IconName::Kask)` (reuse the existing kask icon).
 5. Register a `ToggleKaskExtensions` action (deploy/focus) and a `ToggleKaskExtensionsFocus` action (focus-only). Wire via `kask_extensions_ui::init(cx)` called from `main.rs` (mirror `kask_panel::init`). Both actions are required per the `.rules` trap "Center-pane Item Toggle vs ToggleFocus".
-6. Replace the `ExtensionStore` reads with placeholder data: a hardcoded list of 3-5 fake `KaskArtifactMetadata` entries so the UI is testable without a backend.
-7. **Tests:** pin that the page renders; pin that the search field filters the placeholder list; pin that `ToggleKaskExtensions` deploys the page.
+6. Add a View dropdown menu entry "Kask Extensions" dispatching `ToggleKaskExtensions`, placed near the existing "Kask Panel" entry in `crates/zed/src/zed/app_menus.rs`. Per the `.rules` trap, center-pane Items use `Toggle` (not `ToggleFocus`) so the menu deploys a new item if none exists.
+7. Add a status bar button (bottom bar) so the user can open the panel by clicking an icon, mirroring `kask_panel::panel_button::KaskPanelButton`. The button is a `StatusItemView` registered via `status_bar.add_right_item(...)` in `crates/zed/src/zed.rs`. Icon: `IconName::Share` (visual language for sharing/trading skills in the marketplace). Tooltip: "Toggle Kask Extensions".
+8. Replace the `ExtensionStore` reads with placeholder data: a hardcoded list of 3-5 fake `KaskArtifactMetadata` entries so the UI is testable without a backend.
+9. **Tests:** pin that the page renders; pin that the search field filters the placeholder list; pin that `ToggleKaskExtensions` deploys the page.
 
 **Eliminated (essentialist G1 FAIL):** `KaskArtifactFilter` enum with 4 stub variants. v1 is skills-only (§0); a filter dropdown with 4 dead entries is premature surface. Add the filter in Phase 4+ when there's something real to filter.
 
 **Files touched:**
 - `crates/kask_extensions_ui/` (new crate)
 - `crates/kask_extensions_ui/src/kask_extensions_ui.rs`
+- `crates/kask_extensions_ui/src/panel_button.rs` (status bar button)
 - `crates/kask_extensions_ui/Cargo.toml`
 - `Cargo.toml` (workspace)
 - `crates/zed/src/main.rs` (call `kask_extensions_ui::init(cx)`)
+- `crates/zed/src/zed/app_menus.rs` (View menu entry)
+- `crates/zed/src/zed.rs` (register status bar button)
 
 **Acceptance:** user can open the Kask Extensions Panel from the command palette / menu; it renders with placeholder data; search filters the list. `cargo check -p kask_extensions_ui` passes.
 
