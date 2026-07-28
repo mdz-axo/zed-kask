@@ -70,6 +70,26 @@ impl SkillLoadWarning {
     }
 }
 
+/// Visibility of a skill on the kask marketplace. `Private` is the safe
+/// default — no skill is published without explicit user action. `Public`
+/// means the user has opted the skill into the marketplace publish pipeline.
+///
+/// This is a *flag* on a skill the user authored (typically
+/// `SkillSource::Global`). It is distinct from `SkillSource::Public`, which
+/// is the *source* of a skill installed *from* the marketplace. See the
+/// "Kask Extensions Panel & Skill Sharing" plan §2.2 for the distinction.
+// zed-kask: `Private` is the default so a missing `visibility` frontmatter
+// field never silently publishes a skill. Pinned by
+// `test_skill_visibility_defaults_to_private` and
+// `test_skill_metadata_missing_visibility_field_defaults_to_private`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillVisibility {
+    #[default]
+    Private,
+    Public,
+}
+
 /// Represents a loaded skill with all its metadata and content.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -86,6 +106,11 @@ pub struct Skill {
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
     pub disable_model_invocation: bool,
+    /// Marketplace visibility flag. `Private` (default) means the skill is
+    /// not shared; `Public` means the user has opted it into the publish
+    /// pipeline. Distinct from `SkillSource::Public` (which marks a skill
+    /// *installed from* the marketplace).
+    pub visibility: SkillVisibility,
     /// For built-in skills whose content is compiled into the binary,
     /// In upstream zed, this holds the full SKILL.md body so the skill tool
     /// can serve it without a filesystem read. In zed-kask, SKILL.md bodies
@@ -109,23 +134,40 @@ pub enum SkillSource {
         worktree_id: SkillScopeId,
         worktree_root_name: Arc<str>,
     },
+    /// Installed from the kask marketplace. Lives under
+    /// `~/.agents/skills/_marketplace/{source_user}/{skill_name}/` so it
+    /// never overwrites a locally-authored skill of the same name. The
+    /// `original_skill_id` is the canonical id (`{source_user}/{skill_name}`)
+    /// the marketplace catalog indexes it under.
+    // zed-kask: marketplace-installed skills are a new source variant distinct
+    // from `Global`. Precedence is intentionally *lower* than `Global` so a
+    // user's locally-authored skill of the same name shadows the marketplace
+    // copy (see `test_skill_source_public_precedence_between_built_in_and_global`).
+    Public {
+        source_user: Arc<str>,
+        original_skill_id: Arc<str>,
+    },
 }
 
 impl SkillSource {
     /// Precedence for resolving same-named skills. Higher values shadow
-    /// lower ones: `ProjectLocal` > `Global` > `BuiltIn`. Two sources
-    /// returning equal precedence (e.g. two project-local skills from
-    /// different worktrees) leave the winner up to the caller, which by
+    /// lower ones: `ProjectLocal` > `Global` > `Public` > `BuiltIn`. Two
+    /// sources returning equal precedence (e.g. two project-local skills
+    /// from different worktrees) leave the winner up to the caller, which by
     /// convention keeps the first one in iteration order.
     ///
     /// Adding a new `SkillSource` variant should be a one-line change
     /// here — every consumer routes through this method so the hierarchy
     /// stays in sync.
+    // zed-kask: `Public` (marketplace-installed) sits between `BuiltIn` and
+    // `Global` so a local skill of the same name wins. Pinned by
+    // `test_skill_source_public_precedence_between_built_in_and_global`.
     pub fn precedence(&self) -> u8 {
         match self {
             Self::BuiltIn => 0,
-            Self::Global => 1,
-            Self::ProjectLocal { .. } => 2,
+            Self::Public { .. } => 1,
+            Self::Global => 2,
+            Self::ProjectLocal { .. } => 3,
         }
     }
 
@@ -143,6 +185,10 @@ impl SkillSource {
     /// inserted text.
     /// Human-readable label for this source, used in the UI to
     /// distinguish skills from different origins.
+    //
+    // zed-kask: `Public` returns the namespaced `"{source_user}/{skill_name}"`
+    // form so the marketplace listing identity is preserved on installed
+    // skills. Pinned by `test_skill_source_public_display_label_is_namespaced`.
     pub fn display_label(&self) -> &str {
         match self {
             Self::BuiltIn => "built-in",
@@ -150,12 +196,15 @@ impl SkillSource {
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
+            Self::Public {
+                original_skill_id, ..
+            } => original_skill_id.as_ref(),
         }
     }
 
     pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::BuiltIn | Self::Global => "",
+            Self::BuiltIn | Self::Global | Self::Public { .. } => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -172,9 +221,12 @@ impl SkillSource {
     /// named `global` and fails if none exists. The popup always
     /// inserts the unambiguous form (`/:<name>` for globals), so this
     /// strictness only affects users typing by memory.
+    // zed-kask: `Public` (marketplace-installed) skills behave like `Global`
+    // for slash-command scoping — they use the empty prefix and match the
+    // empty scope. Pinned by `test_skill_source_public_matches_empty_scope`.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::BuiltIn | Self::Global => scope.is_empty(),
+            Self::BuiltIn | Self::Global | Self::Public { .. } => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
@@ -211,6 +263,10 @@ pub struct SkillMetadata {
     pub description: String,
     #[serde(default, rename = "disable-model-invocation")]
     pub disable_model_invocation: bool,
+    /// Marketplace visibility flag. Defaults to `Private` so a missing field
+    /// never silently publishes a skill.
+    #[serde(default)]
+    pub visibility: SkillVisibility,
 }
 
 /// Minimal skill info for system prompt.
@@ -286,6 +342,7 @@ pub fn parse_skill_frontmatter(
         skill_file_path: skill_file_path.to_path_buf(),
         load_warnings,
         disable_model_invocation: metadata.disable_model_invocation,
+        visibility: metadata.visibility,
         embedded_body: None,
     })
 }
@@ -726,6 +783,7 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
         skill_file_path: synthetic_path,
         load_warnings: Vec::new(),
         disable_model_invocation: metadata.disable_model_invocation,
+        visibility: metadata.visibility,
         embedded_body: Some(body.trim()),
     })
 }
@@ -812,6 +870,7 @@ fn parse_embedded_global_skill(name: &str, content: &'static str) -> Result<Skil
         skill_file_path: synthetic_path,
         load_warnings: Vec::new(),
         disable_model_invocation: metadata.disable_model_invocation,
+        visibility: metadata.visibility,
         embedded_body: None,
     })
 }
@@ -1907,6 +1966,7 @@ description: A skill with no body content
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         };
 

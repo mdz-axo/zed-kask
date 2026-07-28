@@ -1562,7 +1562,7 @@ impl NativeAgent {
             for skill in state.skills.iter() {
                 match &skill.source {
                     SkillSource::BuiltIn => {}
-                    SkillSource::Global => {
+                    SkillSource::Global | SkillSource::Public { .. } => {
                         if !seen_global {
                             global_skills.push(skill.clone());
                         }
@@ -4013,7 +4013,7 @@ pub fn skill_body_resolver_for_project(
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }
-        SkillSource::BuiltIn | SkillSource::Global => {
+        SkillSource::BuiltIn | SkillSource::Global | SkillSource::Public { .. } => {
             let fs = fs.clone();
             cx.background_spawn(async move {
                 agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
@@ -4152,6 +4152,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         }
     }
@@ -4486,6 +4487,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         }
     }
@@ -4499,6 +4501,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: Some("built-in body"),
         }
     }
@@ -4701,6 +4704,7 @@ mod internal_tests {
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
                 load_warnings: Vec::new(),
                 disable_model_invocation: false,
+                visibility: SkillVisibility::Private,
                 embedded_body: None,
             });
         }
@@ -4739,6 +4743,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         };
         let second = Skill {
@@ -4749,6 +4754,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         };
         let third = Skill {
@@ -4759,6 +4765,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         };
 
@@ -4798,6 +4805,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: true,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         };
         let visible = Skill {
@@ -4808,6 +4816,7 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
+            visibility: SkillVisibility::Private,
             embedded_body: None,
         };
 

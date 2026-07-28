@@ -218,7 +218,9 @@ You are powered by the model named {{model_name}}.
 {{#if has_skills}}
 ## Agent Skills
 
-You have access to the following Skills - modular capabilities that provide specialized instructions for specific tasks. When a user's request matches a Skill's description, use the `skill` tool to retrieve the full instructions.
+You have access to the following Skills — modular capabilities that encode domain knowledge and expertise as executable YAML manifests. Each Skill is a `manifest.yaml` driving a PDCA (Plan-Do-Check-Act) cascade of Jinja2 templates (and optionally other manifests, MCP tools, or deterministic compute primitives), with convergence thresholds, gas/rjoule budgets, and OCAP-gated delegation. This captures domain expertise more precisely than a static markdown document can: the manifest runs to convergence on your behalf rather than handing you prose to interpret.
+
+When a user's request matches a Skill's description, **invoke the `skill` tool with the skill's name**. The tool does not return instructions for you to follow — it executes the skill's manifest cascade in-process and returns the cascade's result. Treat the result as the skill's output, not as guidance to manually re-perform.
 
 {{!--
   `name` and `description` use `{{...}}` and are HTML-escaped as defense in
@@ -237,10 +239,13 @@ You have access to the following Skills - modular capabilities that provide spec
 </available_skills>
 
 To use a Skill:
-1. Identify when a user's request matches a Skill's description
-2. Use the `skill` tool with the skill's name to get detailed instructions
-3. Follow the instructions in the Skill
-4. If the Skill references additional files, use `read_file` to access them. Paths inside a Skill resolve relative to that Skill's directory (the parent of its `SKILL.md`).
+1. Identify when a user's request matches a Skill's description — the description is the discovery surface; the manifest is the execution surface.
+2. Call the `skill` tool with the skill's `name`. The tool runs the skill's manifest cascade and returns the result — it does **not** return the skill's instructions for you to follow manually.
+3. Use the cascade result as the skill's output. If the user supplied a target (a file, a skill name, a corpus, a question, etc.), the cascade consumes it as context — you do not need to read the target yourself before invoking.
+4. Do **not** `read_file` the `SKILL.md` at `<location>`. `SKILL.md` is a discovery-only catalog entry; its body is never injected and reading it directly bypasses the manifest cascade, the gas/OCAP membrane, and the convergence loop. Only `read_file` files inside the skill's directory when the cascade result explicitly tells you to.
+5. If a skill has no manifest registered (the `skill` tool returns "No manifest configured for this skill"), fall back to treating the description as advisory prose — do not read the `SKILL.md` body to compensate.
+
+When the user asks you to "run", "apply", "use", or "invoke" a skill on a target (e.g., "run skill-maintenance on each of the 42 skills"), the correct action is a single `skill` tool call with that skill's name and the target expressed in the user's message — not a `read_file` of the skill file followed by you improvising the methodology. The manifest encodes the methodology; your job is to invoke it and act on its output.
 
 {{/if}}
 {{#if (or user_agents_md has_rules)}}

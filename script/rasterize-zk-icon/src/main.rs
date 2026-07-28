@@ -1,10 +1,12 @@
-//! One-off: rasterize `kask/assets/zk-icon.svg` to the PNG sizes zed expects
-//! for the desktop / window / about icons, and emit a Windows `.ico`.
+//! One-off: rasterize `kask/assets/zk-icon.svg` to the icon assets zed
+//! expects for the desktop / window / about icons, the Windows `.ico`, and
+//! the macOS document-type `.icns`.
 //!
 //! Outputs (relative to repo root):
-//!   crates/zed/resources/app-icon-dev.png        (512x512)
-//!   crates/zed/resources/app-icon-dev@2x.png     (1024x1024)
+//!   crates/zed/resources/app-icon-dev.png         (512x512)
+//!   crates/zed/resources/app-icon-dev@2x.png      (1024x1024)
 //!   crates/zed/resources/windows/app-icon-dev.ico (multi-size)
+//!   crates/zed/resources/Document.icns            (macOS document icon)
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -108,6 +110,56 @@ fn write_ico(svg_path: &Path, sizes: &[u32], out: &Path) {
     println!("wrote {} ({} sizes)", out.display(), entries.len());
 }
 
+/// Build a macOS `.icns` from the source SVG. We emit the modern PNG-based
+/// OSTypes so the icon renders correctly on macOS 10.14+ (the minimum zed
+/// targets). Each entry is a PNG payload. The set covers 16..1024 px so
+/// Finder, Dock, and Spotlight all resolve a crisp variant.
+fn write_icns(svg_path: &Path, out: &Path) {
+    // (ostype, pixel size). OSTypes per Apple's icns spec:
+    //   ic07=128, ic08=256, ic09=512, ic10=1024,
+    //   ic11=32@2x (64px), ic12=64@2x (128px),
+    //   ic13=256@2x (512px), ic14=512@2x (1024px),
+    //   icp4=16, icp5=32, icp6=64 (legacy small packed).
+    let entries: &[(&[u8; 4], u32)] = &[
+        (b"icp4", 16),
+        (b"icp5", 32),
+        (b"icp6", 64),
+        (b"ic07", 128),
+        (b"ic08", 256),
+        (b"ic09", 512),
+        (b"ic10", 1024),
+        (b"ic11", 64),
+        (b"ic12", 128),
+        (b"ic13", 512),
+        (b"ic14", 1024),
+    ];
+
+    let mut payload: Vec<u8> = Vec::new();
+    payload.extend_from_slice(b"icns"); // magic
+    // total file length (including the 8-byte header), filled after assembly.
+    payload.extend_from_slice(&0u32.to_be_bytes());
+
+    for &(ostype, size) in entries {
+        let pixmap = rasterize(svg_path, size);
+        let png = pixmap.encode_png().expect("encode png for icns");
+        payload.extend_from_slice(ostype);
+        // entry length includes the 8-byte ostype+length prefix.
+        let entry_len = 8u32 + png.len() as u32;
+        payload.extend_from_slice(&entry_len.to_be_bytes());
+        payload.extend_from_slice(&png);
+    }
+
+    // Patch the total file length in the header.
+    let total_len = payload.len() as u32;
+    payload[4..8].copy_from_slice(&total_len.to_be_bytes());
+
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).expect("create parent dir");
+    }
+    fs::write(out, &payload).unwrap_or_else(|e| panic!("write {out:?}: {e}"));
+    println!("wrote {} ({} entries)", out.display(), entries.len());
+}
+
 fn main() {
     let root = repo_root();
     let svg = root.join("kask").join("assets").join("zk-icon.svg");
@@ -134,6 +186,18 @@ fn main() {
     write_png(&rasterize(&svg, 512), &dev_png);
     write_png(&rasterize(&svg, 1024), &dev_png_2x);
     write_ico(&svg, &[16, 32, 48, 64, 128, 256], &dev_ico);
+
+    // macOS document-type icon. `bundle-mac` copies this into the .app bundle
+    // as `Contents/Resources/Document.icns` (referenced by DocumentTypes.plist
+    // via CFBundleTypeIconFile "Document"). cargo-bundle builds the app icon
+    // itself from the bundle-dev PNGs above, so we only need to refresh the
+    // document icon here.
+    let document_icns = root
+        .join("crates")
+        .join("zed")
+        .join("resources")
+        .join("Document.icns");
+    write_icns(&svg, &document_icns);
 
     println!("done.");
 }

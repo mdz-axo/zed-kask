@@ -47,9 +47,16 @@ pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
         agent_skills::SkillSource::BuiltIn => "built-in",
         agent_skills::SkillSource::Global => "global",
         agent_skills::SkillSource::ProjectLocal { .. } => "project-local",
+        // zed-kask: marketplace-installed skills are labeled with their
+        // namespaced id (e.g. `alice/bug-hunt`) via `display_label`, but the
+        // envelope source tag uses a stable literal so the model can pattern-match
+        // it. Pinned by `test_skill_source_public_matches_empty_scope`.
+        agent_skills::SkillSource::Public { .. } => "marketplace",
     };
     let worktree = match &skill.source {
-        agent_skills::SkillSource::BuiltIn | agent_skills::SkillSource::Global => None,
+        agent_skills::SkillSource::BuiltIn
+        | agent_skills::SkillSource::Global
+        | agent_skills::SkillSource::Public { .. } => None,
         agent_skills::SkillSource::ProjectLocal {
             worktree_root_name, ..
         } => Some(worktree_root_name.clone()),

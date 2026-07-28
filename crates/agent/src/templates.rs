@@ -350,4 +350,98 @@ mod tests {
         assert!(!rendered.contains("The user has specified the following rules"));
         assert!(!rendered.contains("Rules title:"));
     }
+
+    // zed-kask: The Agent Skills section diverges from upstream. Upstream
+    // describes skills as markdown bodies the model retrieves and follows
+    // manually ("use the `skill` tool to retrieve the full instructions",
+    // "If the Skill references additional files, use `read_file`..."). In
+    // zed-kask, skills execute via YAML manifests driving a PDCA cascade of
+    // Jinja2 templates — the `skill` tool runs the cascade and returns its
+    // result; the SKILL.md body is discovery-only and must not be read.
+    // This test pins the divergent wording so the upstream text cannot
+    // silently regress (per the .rules "Tests must pin deliberate zed-kask
+    // deviations from upstream" trap).
+    #[test]
+    fn test_system_prompt_skills_section_describes_manifest_cascade() {
+        use agent_skills::SkillSummary;
+        use prompt_store::ProjectContext;
+
+        // Construct a SkillSummary directly so the test doesn't break when
+        // `Skill` gains fields in unrelated work (e.g. the marketplace
+        // visibility flag). The template only consumes `SkillSummary`.
+        let summary = SkillSummary {
+            name: "skill-maintenance".to_string(),
+            description: "Skill lifecycle management.".to_string(),
+            location: "/skills/skill-maintenance/SKILL.md".to_string(),
+        };
+        let project = ProjectContext::new(vec![]).with_skills(vec![summary]);
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["skill".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        // The section must describe the manifest cascade, not body retrieval.
+        assert!(
+            rendered.contains("PDCA (Plan-Do-Check-Act) cascade of Jinja2 templates"),
+            "skills section must describe the PDCA/Jinja2 manifest cascade"
+        );
+        assert!(
+            rendered.contains("OCAP-gated delegation"),
+            "skills section must mention OCAP-gated delegation"
+        );
+        assert!(
+            rendered.contains("gas/rjoule budgets"),
+            "skills section must mention gas/rjoule budgets"
+        );
+
+        // The tool executes the cascade and returns its result — it does
+        // not return instructions for the model to follow manually.
+        assert!(
+            rendered.contains("it executes the skill's manifest cascade in-process and returns the cascade's result"),
+            "skills section must state the tool executes the cascade, not retrieves instructions"
+        );
+        assert!(
+            rendered.contains(
+                "does **not** return the skill's instructions for you to follow manually"
+            ),
+            "skills section must explicitly disclaim manual instruction following"
+        );
+
+        // The model must be told NOT to read_file the SKILL.md body.
+        assert!(
+            rendered.contains("Do **not** `read_file` the `SKILL.md`"),
+            "skills section must forbid reading the SKILL.md body"
+        );
+        assert!(
+            rendered.contains("discovery-only catalog entry"),
+            "skills section must label SKILL.md as discovery-only"
+        );
+
+        // The upstream phrasing that taught the bypass must be gone.
+        assert!(
+            !rendered.contains("use the `skill` tool to retrieve the full instructions"),
+            "upstream 'retrieve the full instructions' phrasing must be removed"
+        );
+        assert!(
+            !rendered.contains(
+                "If the Skill references additional files, use `read_file` to access them"
+            ),
+            "upstream 'read_file additional files' instruction must be removed"
+        );
+
+        // The catalog itself is still rendered.
+        assert!(
+            rendered.contains("<name>skill-maintenance</name>"),
+            "available_skills catalog must still list the skill by name"
+        );
+    }
 }
