@@ -540,13 +540,10 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::MemoryLife => &[Calibrate, Escalate],
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
         SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
-        SignalMetric::DiskUsagePct => &[Prune, Escalate],
-        SignalMetric::McpServerHealth => &[CircuitBreak, Calibrate, Escalate],
         // ── Observational (no substitution — Notify is terminal) ──
         SignalMetric::StorageUsage
         | SignalMetric::TripleCount
         | SignalMetric::LowConfidenceCount
-        | SignalMetric::SnapshotInterval
         | SignalMetric::ConsolidationCandidates
         | SignalMetric::PendingEscalations
         | SignalMetric::SeamCoverage
@@ -698,8 +695,6 @@ mod tests {
         assert!(!default_substitution_ladder(SignalMetric::InferenceAvailable).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::InferenceGasRemaining).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::InferenceModelAvailable).is_empty());
-        assert!(!default_substitution_ladder(SignalMetric::DiskUsagePct).is_empty());
-        assert!(!default_substitution_ladder(SignalMetric::McpServerHealth).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::WalletBalanceRatio).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::WalletKeyHealth).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::AlgedonicEvents).is_empty());
@@ -718,7 +713,6 @@ mod tests {
         assert!(default_substitution_ladder(SignalMetric::StorageUsage).is_empty());
         assert!(default_substitution_ladder(SignalMetric::TripleCount).is_empty());
         assert!(default_substitution_ladder(SignalMetric::LowConfidenceCount).is_empty());
-        assert!(default_substitution_ladder(SignalMetric::SnapshotInterval).is_empty());
         assert!(default_substitution_ladder(SignalMetric::ConsolidationCandidates).is_empty());
         assert!(default_substitution_ladder(SignalMetric::PendingEscalations).is_empty());
         assert!(default_substitution_ladder(SignalMetric::SeamCoverage).is_empty());

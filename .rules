@@ -388,3 +388,19 @@ produces false gradients or wastes audit cycles hunting for a symbol that
 doesn't exist. Before treating a `.rules` trap as the expected field, grep
 for the artifact name in `crates/` — if no match, the `.rules` entry is
 itself a finding (stale refactor, topological hole).
+
+## Kask settings defaults must live in `Default` impls — the single source of truth
+
+Do not encode kask settings defaults in `#[serde(default = "...")]` attributes
+on `KaskSettings` or its subsection structs (dead code — the settings system
+deserializes `SettingsContent`, not `KaskSettings`, so the serde attributes
+never fire), in `From<Content>` literals (use `unwrap_or(default.field)` where
+`default = Self::default()`), or in `mcp_env()` comparison literals (compare
+against `Default::default().field`, not a magic number). The drift class
+(serde says `true`, `Default` says `false`, `mcp_env` says `1024`) silently
+disabled all 10 kask MCP servers when users omitted `kask.mcp` and panicked in
+`EmbeddingStore::from_driver` when users omitted `kask.corpus`. `Default` is
+the single source of truth; `From` and `mcp_env` read from it. The settings UI
+(`kask_page.rs`) must also resolve via `From<Content>` rather than applying its
+own `unwrap_or(false)` — otherwise the UI shows toggles as off while the
+runtime sees them as on (the inference-providers display bug).

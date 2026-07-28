@@ -65,8 +65,8 @@ use crate::components::{SettingsInputField, SettingsSectionHeader};
 use crate::{SettingsPage, SettingsPageItem, SubPageLink, USER};
 
 /// The URL prefix for kask-namespaced credentials in the keychain.
-/// Must match `kask_bridge::secrets::KASK_CREDENTIAL_NAMESPACE`.
-const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";
+/// Re-exported from `kask_bridge` so there's a single source of truth.
+use kask_bridge::KASK_CREDENTIAL_NAMESPACE;
 
 /// The built-in kask MCP servers (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
 /// Re-bound here as `(&str, &str)` for the settings UI's `(id, description)` pattern.
@@ -731,17 +731,24 @@ pub(crate) fn render_inference_providers_page(
 ) -> AnyElement {
     let provider = zed_credentials::global(cx);
     let raw = raw_kask_settings(cx);
-    let inference = raw.and_then(|c| c.inference_providers).unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    // `KaskInferenceProvidersSettings::default()` reads env vars
+    // (`DEEPINFRA_API_KEY`, etc.), so a user with an API key set sees the
+    // toggle as on even without an explicit `kask.inference_providers` entry.
+    let inference: kask_bridge::KaskInferenceProvidersSettings = raw
+        .and_then(|c| c.inference_providers)
+        .map(Into::into)
+        .unwrap_or_default();
 
     let mut rows: Vec<AnyElement> = Vec::new();
     for desc in kask_bridge::INFERENCE_PROVIDERS {
         let enabled = match desc.id {
-            "deepinfra" => inference.deepinfra_enabled.unwrap_or(false),
-            "fal" => inference.fal_enabled.unwrap_or(false),
-            "together" => inference.together_enabled.unwrap_or(false),
-            "openrouter" => inference.openrouter_enabled.unwrap_or(false),
-            "kilocode" => inference.kilocode_enabled.unwrap_or(false),
-            "cline" => inference.cline_enabled.unwrap_or(false),
+            "deepinfra" => inference.deepinfra_enabled,
+            "fal" => inference.fal_enabled,
+            "together" => inference.together_enabled,
+            "openrouter" => inference.openrouter_enabled,
+            "kilocode" => inference.kilocode_enabled,
+            "cline" => inference.cline_enabled,
             _ => false,
         };
         rows.push(render_inference_provider_row(

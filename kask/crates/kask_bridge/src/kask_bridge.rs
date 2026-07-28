@@ -47,7 +47,8 @@ pub use mcp_servers::{
 };
 pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
 pub use settings::{
-    KaskCuratorEmailSettings, KaskCuratorSettings, KaskModelsSettings, KaskSettings,
+    KaskCuratorEmailSettings, KaskCuratorSettings, KaskInferenceProvidersSettings,
+    KaskModelsSettings, KaskSettings,
 };
 pub use skill_executor::BridgeManifestExecutor;
 pub use tool_port::BridgeToolPort;

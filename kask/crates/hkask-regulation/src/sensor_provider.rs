@@ -142,10 +142,7 @@ impl Default for SensorBus {
 /// ├── LoopId::Inference   → SensorBus
 /// ├── LoopId::Episodic    → SensorBus
 /// ├── LoopId::Semantic    → SensorBus
-/// ├── LoopId::Curation    → SensorBus
-/// ├── LoopId::Snapshot    → SensorBus
-/// ├── LoopId::StorageGuard → SensorBus
-/// └── LoopId::McpServerGuard → SensorBus
+/// └── LoopId::Curation    → SensorBus
 /// ```
 ///
 /// Each loop's `sense()` method calls `registry.sense_all(loop_id)` instead
@@ -214,9 +211,6 @@ impl SensorRegistry {
             LoopId::Semantic,
             LoopId::Curation,
             LoopId::Cybernetics,
-            LoopId::Snapshot,
-            LoopId::StorageGuard,
-            LoopId::McpServerGuard,
         ];
         all_loops
             .iter()
@@ -667,7 +661,7 @@ mod tests {
         let empty_loops = catalog.loops_without_sensors();
         assert!(empty_loops.contains(&LoopId::Cybernetics));
         assert!(empty_loops.contains(&LoopId::Inference));
-        assert!(empty_loops.contains(&LoopId::StorageGuard));
+        assert!(empty_loops.contains(&LoopId::Curation));
 
         // Register a sensor for Cybernetics
         catalog.register_for(

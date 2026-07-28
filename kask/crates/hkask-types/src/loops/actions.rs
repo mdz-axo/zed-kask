@@ -271,7 +271,7 @@ pub enum ActionType {
     /// Informational notification — no action required, positive signal.
     /// Used for non-urgent health improvements (e.g., seam coverage increased).
     Notify,
-    /// Prune (delete) data to free space (StorageGuard Loop 7).
+    /// Prune (delete) data to free space.
     /// Used for autonomous disk space management — export pruning, old artifact cleanup.
     /// Pre-authorized by user via P2 Affirmative Consent configuration.
     Prune,
