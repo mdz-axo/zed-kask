@@ -1144,6 +1144,11 @@ fn main() {
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
                 let fusion_config = kask_settings.fusion.to_fusion_config();
                 let async_cx_for_fusion = cx.clone();
+                // Capture whether fusion is configured before `fusion_config` is
+                // consumed by the `if let Some(mut fc)` block below. Used later
+                // to decide whether to write auto-favorites even when the fusion
+                // model itself fails to construct.
+                let fusion_configured = fusion_config.is_some();
 
                 // Lazily wire the alert email sink now that kask settings have
                 // loaded. The non-secret email fields are set as process env
@@ -1407,19 +1412,28 @@ fn main() {
                         });
                         log::info!("Kask fusion language model provider registered");
 
-                        // Auto-favorite: when fusion is enabled, add the fusion model and
-                        // any discovered OpenRouter favorites to `agent.favorite_models`
-                        // so they appear in the agent panel's model picker favorites cycle
-                        // (CycleFavoriteModels action). `add_favorite_model` is idempotent
-                        // — entries already present are not duplicated. This is best-effort:
-                        // settings write failures are logged but do not block startup.
-                        let fusion_enabled = fusion_model.is_some();
-                        if fusion_enabled {
+                        // Auto-favorite: when fusion is configured (enabled in
+                        // settings), add the fusion model and any discovered
+                        // OpenRouter favorites to `agent.favorite_models` so
+                        // they appear in the agent panel's model picker favorites
+                        // cycle (CycleFavoriteModels action). This is decoupled
+                        // from `fusion_model` construction success: discovered
+                        // favorites should appear in the picker even if the
+                        // fusion model itself failed to construct (e.g. because
+                        // the OpenRouter provider hadn't fetched its model list
+                        // yet at startup). The user can still cycle to the
+                        // discovered models and select them manually.
+                        // `add_favorite_model` is idempotent — entries already
+                        // present are not duplicated. This is best-effort:
+                        // settings write failures are logged but do not block
+                        // startup.
+                        if fusion_configured {
                             let fs = app_state_for_deferred.fs.clone();
                             let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
                             selections.push(kask_bridge::fusion_model_selection());
                             let favorite_count = selections.len();
                             let discovered_count = discovered_favorites.len();
+                            let fusion_constructed = fusion_model.is_some();
                             settings::update_settings_file(fs, cx, move |settings, _| {
                                 let agent = settings.agent.get_or_insert_default();
                                 for selection in &selections {
@@ -1427,9 +1441,10 @@ fn main() {
                                 }
                             });
                             log::info!(
-                                "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered)",
+                                "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered); fusion model {}",
                                 favorite_count,
-                                discovered_count
+                                discovered_count,
+                                if fusion_constructed { "constructed" } else { "NOT constructed — favorites still written" },
                             );
                         }
 
@@ -2150,14 +2165,29 @@ struct PanelScopedInference {
 }
 
 impl kask_panel::ScopedInference for PanelScopedInference {
-    fn infer(&self, _server: &str, prompt: &str) -> gpui::Task<Result<String, String>> {
+    fn infer(
+        &self,
+        _server: &str,
+        prompt: &str,
+        system_prompt: &str,
+    ) -> gpui::Task<Result<String, String>> {
         let inference = self.inference.clone();
         let prompt = prompt.to_string();
+        let system_prompt = system_prompt.to_string();
 
         self.executor.spawn(async move {
             let params = hkask_types::template::LLMParameters::default();
+            // Build a message array with the system prompt as the leading
+            // `system` message so the provider sees the context-aware
+            // instructions (which MCP server, tool list, interaction model)
+            // as distinct from the user's prompt. This is the correct path
+            // for chat/REPL — see `InferencePort::generate_with_messages`.
+            let messages = vec![
+                hkask_types::ChatMessage::system(system_prompt),
+                hkask_types::ChatMessage::user(prompt),
+            ];
             let result = inference
-                .generate(&prompt, &params, None)
+                .generate_with_messages(&messages, &params, None, None)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(result.text)

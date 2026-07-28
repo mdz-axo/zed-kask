@@ -411,6 +411,18 @@ pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
     pub custom_headers: Option<HashMap<String, String>>,
+    /// Whether to auto-discover models via the provider's `/v1/models` endpoint.
+    /// When `true` (the default), the provider fetches its model list on
+    /// authentication and merges the result with `available_models`. The API
+    /// key's presence is the effective opt-in — discovery only runs once the
+    /// user has authenticated. Set to `false` to use only the statically
+    /// configured `available_models`.
+    #[serde(default = "default_auto_discover")]
+    pub auto_discover: bool,
+}
+
+fn default_auto_discover() -> bool {
+    true
 }
 
 #[with_fallible_options]

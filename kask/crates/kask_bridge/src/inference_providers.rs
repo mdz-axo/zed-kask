@@ -214,12 +214,16 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
             let provider_id: std::sync::Arc<str> = std::sync::Arc::from(provider.id);
             if enabled {
                 // Only insert if not already present — don't overwrite
-                // user-configured available_models or custom headers.
+                // user-configured available_models, custom headers, or
+                // auto_discover setting. The kask-surfaced providers default to
+                // `auto_discover: true` so models appear in the picker as soon
+                // as the user enters an API key (API-key presence is the opt-in).
                 openai_compatible.entry(provider_id).or_insert_with(|| {
                     OpenAiCompatibleSettingsContent {
                         api_url: provider.api_url.to_string(),
                         available_models: Vec::new(),
                         custom_headers: None,
+                        auto_discover: true,
                     }
                 });
             } else {

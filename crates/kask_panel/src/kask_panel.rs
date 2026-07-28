@@ -36,6 +36,7 @@ use project::lsp_store::CompletionDocumentation;
 use project::{Completion, CompletionResponse, CompletionSource};
 use serde_json::Value;
 use text::ToOffset;
+use ui::WithScrollbar;
 use ui::prelude::*;
 use workspace::{
     Workspace,
@@ -48,10 +49,12 @@ use zed_actions::kask_panel::{
 };
 
 mod kanban_view;
+mod panel_button;
 mod portfolio_view;
 mod scenarios_view;
 
 pub use kanban_view::KanbanBoardView;
+pub use panel_button::KaskPanelButton;
 pub use portfolio_view::PortfolioDashboardView;
 pub use scenarios_view::ScenariosView;
 
@@ -98,7 +101,18 @@ pub trait ToolInvoker: Send + Sync {
 /// The bridge provides the implementation.
 pub trait ScopedInference: Send + Sync {
     /// Run scoped inference with only the selected server's tools in scope.
-    fn infer(&self, server: &str, prompt: &str) -> Task<Result<String, String>>;
+    ///
+    /// `system_prompt` carries the context-aware system prompt the bridge
+    /// builds from the selected server's identity and tool list. The panel
+    /// constructs it via `build_system_prompt` so the LLM knows which MCP
+    /// server it is acting as, what tools it has, and how to interact with
+    /// the user.
+    fn infer(
+        &self,
+        server: &str,
+        prompt: &str,
+        system_prompt: &str,
+    ) -> Task<Result<String, String>>;
 }
 
 /// A snapshot of regulation/gas status for the status bar.
@@ -168,7 +182,19 @@ fn regulation_status() -> Option<&'static Arc<dyn RegulationStatus>> {
 /// A per-server welcome message explaining what the server does and how to
 /// interact with it. Mirrors the deleted hKask TUI's per-window welcome text.
 fn server_welcome(server: &str) -> String {
-    let description = match server {
+    let description = server_description(server);
+    format!(
+        "{server} — {description}.\nType /tool_name args for direct invocation, or a natural language message for scoped inference.\nType /help for commands, /tools to list this server's tools."
+    )
+}
+
+/// Human-readable description for a built-in MCP server.
+///
+/// Mirrors the descriptions in `kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS`,
+/// kept here as a static lookup so the panel can render the welcome message
+/// without a bridge round-trip.
+fn server_description(server: &str) -> &'static str {
+    match server {
         "codegraph" => "code structure query and traversal",
         "companies" => "company research and filings",
         "condenser" => "context condensation and summarization",
@@ -180,17 +206,88 @@ fn server_welcome(server: &str) -> String {
         "scenarios" => "scenario planning and Wardley mapping",
         "training" => "LoRA training configuration and audit",
         _ => "MCP server",
-    };
-    format!(
-        "{server} — {description}.\nType /tool_name args for direct invocation, or a natural language message for scoped inference.\nType /help for commands, /tools to list this server's tools."
-    )
+    }
 }
+
+/// Build a context-aware system prompt for scoped inference.
+///
+/// The prompt tells the LLM which MCP server it is acting as, what that
+/// server does, what tools it has (names + descriptions), and how to
+/// interact with the user. For the curator server, it additionally instructs
+/// the LLM to remember issues raised in the panel so they can be surfaced
+/// in future sessions.
+///
+/// This is the single source of truth for the panel's system prompt — the
+/// bridge's `PanelScopedInference` adapter receives it via the
+/// `ScopedInference::infer` trait method and passes it to the inference port
+/// as the leading `system` message.
+fn build_system_prompt(server: &str, tools: &[ToolDescriptor]) -> String {
+    let description = server_description(server);
+    let mut prompt = format!(
+        "You are the {server} MCP server — {description}.\n\
+         You are interacting with the user through the kask panel. The user's \
+         messages are scoped to your server's tools only.\n\n\
+         ## Your capabilities\n\
+         You have access to the following tools:"
+    );
+
+    if tools.is_empty() {
+        prompt.push_str("\n  (no tools discovered — the server may not be connected)");
+    } else {
+        for tool in tools {
+            prompt.push_str(&format!("\n  - /{} — {}", tool.name, tool.description));
+        }
+    }
+
+    prompt.push_str(
+        "\n\n\
+         ## Interaction model\n\
+         - The user can type natural language messages (you respond using \
+           your tools as needed) or `/tool_name args` (direct tool invocation \
+           that bypasses you).\n\
+         - When the user asks you to do something, call the relevant tool(s) \
+           and explain the result.\n\
+         - If the user's request is outside your server's scope, say so \
+           clearly and suggest which other server might handle it.\n",
+    );
+
+    // The curator is the default server and has a special role: it remembers
+    // issues raised in the panel so they can be surfaced in future sessions.
+    // This is the panel-side instruction; the curator MCP server itself
+    // persists issues via its own regulation cascade.
+    if server == "curator" {
+        prompt.push_str(
+            "\n\
+             ## Curator-specific guidance\n\
+             You are the curator — the regulation cascade and algedonic \
+             signal hub. Remember any issues, obstacles, or feedback the \
+             user raises about the kask panel itself (UX, missing features, \
+             bugs, configuration problems) so you can surface them in future \
+             sessions. When the user reports an issue, acknowledge it and \
+             note that it has been recorded for follow-up.\n",
+        );
+    }
+
+    prompt
+}
+
+/// The index of the default selected server in `BUILT_IN_MCP_SERVERS`.
+///
+/// The curator is the default because it is the regulation cascade hub —
+/// it remembers issues raised in the panel and surfaces them in future
+/// sessions. Users can switch to other servers via the selector buttons.
+const DEFAULT_SERVER_INDEX: usize = 4; // "curator"
 
 /// The kask panel — a center-pane `Item` for per-MCP-server chat + tool invocation.
 pub struct KaskPanel {
     _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     /// Currently selected server (index into `BUILT_IN_MCP_SERVERS`).
+    ///
+    /// Defaults to `curator` (index 4) — the curator is the regulation
+    /// cascade hub and the natural default for panel interactions. It
+    /// remembers issues raised in the panel and surfaces them in future
+    /// sessions.
     selected_server: usize,
     /// Per-server conversation history (preserved when switching servers).
     conversations: std::collections::HashMap<usize, Vec<KaskMessage>>,
@@ -207,6 +304,11 @@ pub struct KaskPanel {
     /// Whether a regulation status fetch is in progress (guards against
     /// overlapping fetches on every render).
     status_fetching: bool,
+    /// Scroll handle for the messages container. Used to auto-scroll to the
+    /// bottom when new messages arrive so the latest message is always
+    /// visible (without this, the chat overflows past the bottom of the
+    /// viewport and the user cannot see or scroll to it).
+    messages_scroll_handle: gpui::ScrollHandle,
 }
 
 impl KaskPanel {
@@ -241,7 +343,7 @@ impl KaskPanel {
             Self {
                 _workspace: workspace.weak_handle(),
                 focus_handle: cx.focus_handle(),
-                selected_server: 0,
+                selected_server: DEFAULT_SERVER_INDEX,
                 conversations: std::collections::HashMap::new(),
                 input_editor,
                 busy: false,
@@ -249,6 +351,7 @@ impl KaskPanel {
                 cached_tools: None,
                 regulation_snapshot: RegulationSnapshot::default(),
                 status_fetching: false,
+                messages_scroll_handle: gpui::ScrollHandle::new(),
             }
         });
         // Wire the completion provider now that we have a weak handle.
@@ -287,7 +390,39 @@ impl KaskPanel {
         self.selected_server = index;
         // Invalidate the tool cache — it's per-server.
         self.cached_tools = None;
+        // Scroll to the bottom of the (possibly different) conversation so
+        // the latest message is visible after the switch.
+        self.scroll_messages_to_bottom(cx);
         cx.notify();
+    }
+
+    /// Scroll the messages container to the bottom so the latest message is
+    /// visible. Called after every message push and on server switch.
+    fn scroll_messages_to_bottom(&self, _cx: &mut Context<Self>) {
+        self.messages_scroll_handle.scroll_to_bottom();
+    }
+
+    /// Lazily fetch the selected server's tool list in the background and
+    /// cache it. Used by `run_scoped_inference` so the next inference call
+    /// has a complete system prompt. Fire-and-forget — does not push any
+    /// messages to the conversation.
+    fn fetch_tools_background(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = tool_invoker() else {
+            return;
+        };
+        let server = self.selected_server_name().to_string();
+        let index = self.selected_server;
+        let task = invoker.list_tools(&server);
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if let Ok(tools) = result {
+                    this.cached_tools = Some((index, tools));
+                    cx.notify();
+                }
+            })
+        })
+        .detach();
     }
 
     fn submit_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -333,6 +468,7 @@ impl KaskPanel {
                     role: KaskMessageRole::System,
                     content: "Commands:\n  /help              — show this help\n  /clear             — clear the conversation\n  /tools             — list this server's tools\n  /tool_name args    — direct tool invocation (bypasses LLM)\n  <natural language> — scoped inference (LLM calls the server's tools)".to_string(),
                 });
+                self.scroll_messages_to_bottom(cx);
                 cx.notify();
             }
             "clear" => {
@@ -344,6 +480,7 @@ impl KaskPanel {
                         content: format!("Cleared. {server} conversation reset."),
                     }],
                 );
+                self.scroll_messages_to_bottom(cx);
                 cx.notify();
             }
             "tools" => {
@@ -375,6 +512,7 @@ impl KaskPanel {
                 role: KaskMessageRole::System,
                 content,
             });
+            self.scroll_messages_to_bottom(cx);
             cx.notify();
             return;
         }
@@ -384,6 +522,7 @@ impl KaskPanel {
                 role: KaskMessageRole::System,
                 content: format!("Fetching tools from {server}…"),
             });
+            self.scroll_messages_to_bottom(cx);
             cx.notify();
 
             let task = invoker.list_tools(&server);
@@ -419,6 +558,7 @@ impl KaskPanel {
                             });
                         }
                     }
+                    this.scroll_messages_to_bottom(cx);
                     cx.notify();
                 })
             })
@@ -428,6 +568,7 @@ impl KaskPanel {
                 role: KaskMessageRole::System,
                 content: "Tool invoker not wired — set_tool_invoker() not called.".to_string(),
             });
+            self.scroll_messages_to_bottom(cx);
             cx.notify();
         }
     }
@@ -441,6 +582,7 @@ impl KaskPanel {
         });
         self.busy = true;
         self.spinner_frame = 0;
+        self.scroll_messages_to_bottom(cx);
         cx.notify();
 
         let args_value = parse_args(&args);
@@ -468,6 +610,7 @@ impl KaskPanel {
                         }),
                     }
                     this.busy = false;
+                    this.scroll_messages_to_bottom(cx);
                     cx.notify();
                 })
             })
@@ -478,6 +621,7 @@ impl KaskPanel {
                 content: "Tool invoker not wired — set_tool_invoker() not called.".to_string(),
             });
             self.busy = false;
+            self.scroll_messages_to_bottom(cx);
             cx.notify();
         }
     }
@@ -491,10 +635,24 @@ impl KaskPanel {
         });
         self.busy = true;
         self.spinner_frame = 0;
+        self.scroll_messages_to_bottom(cx);
         cx.notify();
 
         if let Some(inference) = scoped_inference() {
-            let task = inference.infer(&server, prompt);
+            // Build the system prompt from the cached tool list. If the cache
+            // is empty or stale, the system prompt will note that no tools
+            // were discovered — the LLM can still respond, just without tool
+            // awareness. The cache is populated by `/tools` or the lazy fetch
+            // below.
+            let tools: Vec<ToolDescriptor> = self
+                .cached_tools
+                .as_ref()
+                .filter(|(idx, _)| *idx == self.selected_server)
+                .map(|(_, tools)| tools.clone())
+                .unwrap_or_default();
+            let system_prompt = build_system_prompt(&server, &tools);
+
+            let task = inference.infer(&server, prompt, &system_prompt);
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 this.update(cx, |this, cx| {
@@ -509,10 +667,23 @@ impl KaskPanel {
                         }),
                     }
                     this.busy = false;
+                    this.scroll_messages_to_bottom(cx);
                     cx.notify();
                 })
             })
             .detach();
+
+            // Lazily fetch the tool list in the background if we don't have
+            // it cached yet, so the next inference call has a complete system
+            // prompt. This is fire-and-forget — the result is stored in
+            // `cached_tools` and used on subsequent calls.
+            if self
+                .cached_tools
+                .as_ref()
+                .map_or(true, |(idx, _)| *idx != self.selected_server)
+            {
+                self.fetch_tools_background(cx);
+            }
         } else {
             self.current_messages().push(KaskMessage {
                 role: KaskMessageRole::System,
@@ -520,6 +691,7 @@ impl KaskPanel {
                     .to_string(),
             });
             self.busy = false;
+            self.scroll_messages_to_bottom(cx);
             cx.notify();
         }
     }
@@ -560,7 +732,7 @@ impl KaskPanel {
             )
     }
 
-    fn render_messages(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_messages(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border;
         let bg_color = cx.theme().colors().editor_background;
 
@@ -619,6 +791,7 @@ impl KaskPanel {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.messages_scroll_handle)
             .p_2()
             .gap_2()
             .rounded_sm()
@@ -627,6 +800,7 @@ impl KaskPanel {
             .bg(bg_color)
             .children(message_elements)
             .children(spinner_element)
+            .vertical_scrollbar_for(&self.messages_scroll_handle, cx)
     }
 
     fn render_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -651,9 +825,11 @@ impl KaskPanel {
                             .color(Color::Muted),
                     )
                     .child(
-                        Button::new("send-btn", "Send")
+                        IconButton::new("send-btn", IconName::Send)
                             .style(ButtonStyle::Filled)
+                            .icon_color(Color::Accent)
                             .disabled(self.busy)
+                            .tooltip(move |window, cx| ui::Tooltip::text("Send")(window, cx))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.submit_input(window, cx);
                             })),
@@ -939,7 +1115,7 @@ impl SerializableItem for KaskPanel {
 }
 
 impl Render for KaskPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Ensure the conversation for the selected server is initialized
         // (lazy welcome message on first render).
         self.current_messages();
@@ -971,7 +1147,7 @@ impl Render for KaskPanel {
                     .child(Label::new("Kask Panel").size(LabelSize::Large)),
             )
             .child(self.render_server_selector(cx))
-            .child(self.render_messages(cx))
+            .child(self.render_messages(window, cx))
             .child(self.render_status_bar(cx))
             .child(self.render_input(cx))
             .into_any_element()

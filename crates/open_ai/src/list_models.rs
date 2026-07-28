@@ -118,7 +118,7 @@ pub async fn list_models(
     let mut response = client
         .send(request)
         .await
-        .map_err(|e| ListModelsError::HttpSend(e.into()))?;
+        .map_err(ListModelsError::HttpSend)?;
 
     let mut body = String::new();
     response

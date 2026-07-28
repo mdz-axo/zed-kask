@@ -47,6 +47,7 @@ use crate::bundle::BundleManifest;
 use crate::bundle::BundleManifestStep;
 use crate::load_manifest_from_yaml;
 use crate::ports::{Result, TemplateError};
+use crate::template_renderer::{TemplateRenderer, render_minijinja};
 use hkask_capability::{DelegationAction, DelegationResource, DelegationToken};
 use hkask_capability::{ToolPort, ToolPortError};
 use hkask_guard::{SpotlightMode, Spotlighter};
@@ -56,37 +57,14 @@ use hkask_types::ToolTaint;
 use hkask_types::WebID;
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, ChatToolFunction, InferencePort, InferenceResult};
-use minijinja::UndefinedBehavior;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 /// Error healing callback: (error_string, operation_name).
 type HealCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-/// Default base path for template files relative to the project root.
-const DEFAULT_TEMPLATE_BASE_PATH: &str = "registry/templates";
-
-/// Safely join a base path with a template reference, rejecting path traversal.
-///
-/// Mirrors minijinja's internal `safe_join`: any segment starting with `.`
-/// or containing a backslash is rejected. This prevents `{% include "../../etc/passwd" %}`
-/// and `template_ref: "../../../secrets"` from reading files outside the base.
-///
-/// Returns `None` if the template_ref would escape the base path.
-fn safe_template_join(base: &std::path::Path, template_ref: &str) -> Option<PathBuf> {
-    let mut rv = base.to_path_buf();
-    for segment in template_ref.split('/') {
-        if segment.starts_with('.') || segment.contains('\\') {
-            return None;
-        }
-        rv.push(segment);
-    }
-    Some(rv)
-}
 
 /// Extract the PDCA feedback phase from a template_ref string.
 ///
@@ -154,7 +132,7 @@ pub struct ManifestExecutor {
     /// Base filesystem path for resolving template_ref values.
     /// When `step.renderer == "minijinja"`, `step.template_ref` is resolved
     /// relative to this path. Defaults to `registry/templates/`.
-    template_base_path: PathBuf,
+    template_renderer: TemplateRenderer,
     /// Optional heal callback: (error_string, operation_name).
     heal_error_cb: Option<HealCallback>,
     /// Spotlighter for transforming untrusted tool outputs (Layer 2 defense).
@@ -190,7 +168,9 @@ impl ManifestExecutor {
             tools,
             default_params,
             a2a_secret: Zeroizing::new(a2a_secret),
-            template_base_path: PathBuf::from(DEFAULT_TEMPLATE_BASE_PATH),
+            template_renderer: TemplateRenderer::new(std::path::PathBuf::from(
+                crate::template_renderer::DEFAULT_TEMPLATE_BASE_PATH,
+            )),
             heal_error_cb: None,
             spotlighter: Spotlighter::new(SpotlightMode::Delimit),
             runtime_policy: None,
@@ -201,8 +181,8 @@ impl ManifestExecutor {
     /// Set the template base path for resolving template_ref values.
     /// Useful for integration tests that need to point to a test fixture directory.
     #[must_use]
-    pub fn with_template_base_path(mut self, path: PathBuf) -> Self {
-        self.template_base_path = path;
+    pub fn with_template_base_path(mut self, path: std::path::PathBuf) -> Self {
+        self.template_renderer = TemplateRenderer::new(path);
         self
     }
 
@@ -311,69 +291,14 @@ impl ManifestExecutor {
     /// install location. The filesystem fallback exists for dev workflows
     /// where a template has been edited but not yet rebuilt.
     ///
-    /// Resolution order: embedded `.j2` → embedded `.yaml` → filesystem
-    /// `.j2` → filesystem `.yaml`. This covers all four Pattern A template
-    /// types: WordAct/KnowAct (`.j2`), FlowDef sub-manifests (`.yaml`),
-    /// and RenderAct (either `.j2` or `.yaml`).
+    /// Delegates to `TemplateRenderer` — the resolution ladder lives there.
     fn load_template(
         &self,
         template_ref: &str,
         context: &HashMap<String, Value>,
     ) -> Result<String> {
-        let template_content = if let Some(content) = crate::template_file(template_ref) {
-            content.to_string()
-        } else if let Some(content) = crate::template_yaml_file(template_ref) {
-            content.to_string()
-        } else {
-            let template_path = safe_template_join(&self.template_base_path, template_ref)
-                .ok_or_else(|| {
-                    TemplateError::PathTraversal(format!(
-                        "template_ref '{template_ref}' escapes base path '{}'",
-                        self.template_base_path.display()
-                    ))
-                })?;
-            // Try the ref as-is, then with .j2 appended, then with .yaml appended.
-            // Many manifests omit the extension; the file could be either format.
-            std::fs::read_to_string(&template_path)
-                .or_else(|_| {
-                    if !template_ref.ends_with(".j2") {
-                        let j2_ref = format!("{template_ref}.j2");
-                        if let Some(j2_path) = safe_template_join(&self.template_base_path, &j2_ref)
-                        {
-                            return std::fs::read_to_string(&j2_path);
-                        }
-                    }
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("template not found at {}", template_path.display()),
-                    ))
-                })
-                .or_else(|_| {
-                    if !template_ref.ends_with(".yaml") {
-                        let yaml_ref = format!("{template_ref}.yaml");
-                        if let Some(yaml_path) =
-                            safe_template_join(&self.template_base_path, &yaml_ref)
-                        {
-                            return std::fs::read_to_string(&yaml_path);
-                        }
-                    }
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("template not found at {}", template_path.display()),
-                    ))
-                })
-                .map_err(|e| {
-                    TemplateError::NotFound(NotFound {
-                        entity_type: "template".to_string(),
-                        id: format!(
-                            "Template not found at {} (also tried .j2 and .yaml extensions): {}",
-                            template_path.display(),
-                            e
-                        ),
-                    })
-                })?
-        };
-        let prompt = render_minijinja(&template_content, context, &self.template_base_path)?;
+        let template_content = self.template_renderer.load(template_ref, 0)?;
+        let prompt = self.template_renderer.render(&template_content, context)?;
         Ok(prompt)
     }
 
@@ -587,7 +512,7 @@ impl ManifestExecutor {
                 // by evaluate_step_condition (supports ==, !=, <, <=, >, >=, AND/OR/NOT).
                 if let Some(ref cond) = step.condition {
                     let resolved_cond = if cond.contains("{{") {
-                        match render_minijinja(cond, &context, &self.template_base_path) {
+                        match self.template_renderer.render(cond, &context) {
                             Ok(rendered) => rendered.trim().to_string(),
                             Err(e) => {
                                 info!(
@@ -716,7 +641,8 @@ impl ManifestExecutor {
                             .and_then(|m| m.get("loop_target"))
                             .and_then(|v| v.as_str())
                             .and_then(|s| {
-                                render_minijinja(s, &context, &self.template_base_path)
+                                self.template_renderer
+                                    .render(s, &context)
                                     .ok()
                                     .and_then(|rendered| rendered.trim().parse::<u32>().ok())
                             })
@@ -791,8 +717,11 @@ impl ManifestExecutor {
                                 if k == "loop_target" {
                                     continue;
                                 }
-                                let bound =
-                                    resolve_mapping_value(v, &context, &self.template_base_path);
+                                let bound = resolve_mapping_value(
+                                    v,
+                                    &context,
+                                    self.template_renderer.base_path(),
+                                );
                                 context.insert(k.clone(), bound);
                             }
                         }
@@ -1305,7 +1234,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, &self.template_base_path);
+                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
                 context.insert(k.clone(), bound);
             }
         }
@@ -1370,9 +1299,12 @@ impl ManifestExecutor {
 
         // rJoule tracking — cost per token comes from inference provider.
         // Token count is tracked; rJoule deduction wired when provider reports cost.
+        // TODO: wire rJoule deduction once InferenceResult reports token counts.
+        // For now, gas tracking (below) is the only budget enforcement; rJoule
+        // is checked at the cascade-loop level via the cap, not per-call.
         if rjoule_enabled {
-            let tokens = result_text.len() as f64 / 4.0; // rough token estimate
-            let _ = tokens;
+            // Placeholder: once InferenceResult exposes token usage, deduct here:
+            // *rjoule_used += (result_text.len() as f64 / 4.0) * COST_PER_TOKEN_RJOULE;
         }
 
         // Gas tracking — deduct one iteration of compute
@@ -1482,7 +1414,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, &self.template_base_path);
+                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
                 context.insert(k.clone(), bound);
             }
         }
@@ -1536,7 +1468,7 @@ impl ManifestExecutor {
         })?;
 
         // Resolve {{key}} references from context before loading.
-        let template_ref = render_inline_template(template_ref, &context);
+        let template_ref = TemplateRenderer::render_inline(template_ref, &context);
 
         // Load the sub-manifest YAML. Try embedded .yaml first, then embedded
         // .j2 (shouldn't happen for flowdef, but handle gracefully), then
@@ -1546,7 +1478,8 @@ impl ManifestExecutor {
         } else if let Some(content) = crate::template_file(&template_ref) {
             content.to_string()
         } else {
-            self.load_template_from_disk(&template_ref, step.ordinal)?
+            self.template_renderer
+                .load_from_disk(&template_ref, step.ordinal)?
         };
 
         // Parse the sub-manifest.
@@ -1573,7 +1506,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, &self.template_base_path);
+                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
                 context.insert(k.clone(), bound);
             }
         }
@@ -1591,7 +1524,11 @@ impl ManifestExecutor {
         // Extract the sub-cascade's final result value. We do NOT merge the
         // full sub-context back into the parent — only the result is stored,
         // preventing the sub-cascade from overwriting parent context keys.
-        let result_value = sub_result.values().last().cloned().unwrap_or(Value::Null);
+        //
+        // The final result is the highest-ordinal `step_N_result` key —
+        // HashMap iteration order is randomized, so we can't use `.last()`.
+        // This mirrors the bridge's `extract_final_step_result` logic.
+        let result_value = extract_final_step_result(&sub_result);
 
         // Reconstruct the parent context from the sub-result. The sub-cascade
         // received the parent's context, so the sub-result contains the
@@ -1637,7 +1574,7 @@ impl ManifestExecutor {
         })?;
 
         // Resolve ${variable} references in the MCP reference against context
-        let mcp_ref = render_inline_template(mcp_ref_raw, &context);
+        let mcp_ref = TemplateRenderer::render_inline(mcp_ref_raw, &context);
 
         let input: Value = step
             .input_mapping
@@ -1847,7 +1784,7 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
 ///
 /// Dispatches based on `step.renderer`:
 /// - `"minijinja"` — Load template from `step.template_ref` (a file path
-///   like `curator/system_state_gather.j2`) relative to `template_base_path`,
+///   like `curator/system_state_gather.j2`) relative to the renderer's base path,
 ///   then render with full Jinja2 syntax via minijinja.
 /// - Inline/absent — Render `step.template_ref` or `step.renderer` as a
 ///   simple template string with `{{key}}` substitution.
@@ -1874,7 +1811,7 @@ impl ManifestExecutor {
 
         match renderer {
             "minijinja" => {
-                // template_ref is a file path relative to template_base_path.
+                // template_ref is a file path relative to the renderer's base path.
                 // Resolve {{key}} references from context before loading.
                 let template_ref_raw = step.template_ref.as_deref().ok_or_else(|| {
                     TemplateError::Manifest(format!(
@@ -1882,20 +1819,11 @@ impl ManifestExecutor {
                         step.ordinal
                     ))
                 })?;
-                let template_ref = render_inline_template(template_ref_raw, context);
+                let template_ref = TemplateRenderer::render_inline(template_ref_raw, context);
 
-                // Prefer the embedded (build-time) template — works regardless
-                // of CWD or install location. Fall back to filesystem for dev
-                // workflows where a template has been edited but not rebuilt.
-                // Try .j2 first, then .yaml (FlowDef sub-manifests and RenderAct
-                // reference docs can be .yaml files).
-                let template_content = if let Some(content) = crate::template_file(&template_ref) {
-                    content.to_string()
-                } else if let Some(content) = crate::template_yaml_file(&template_ref) {
-                    content.to_string()
-                } else {
-                    self.load_template_from_disk(&template_ref, step.ordinal)?
-                };
+                // Delegate resolution + loading to the renderer. The renderer
+                // owns the embedded→filesystem ladder and the .j2/.yaml fallbacks.
+                let template_content = self.template_renderer.load(&template_ref, step.ordinal)?;
 
                 info!(
                     target: "reg.spec.executor",
@@ -1904,8 +1832,7 @@ impl ManifestExecutor {
                     "Rendering minijinja template"
                 );
 
-                let prompt =
-                    render_minijinja(&template_content, context, &self.template_base_path)?;
+                let prompt = self.template_renderer.render(&template_content, context)?;
                 Ok((prompt, template_content))
             }
             _ => {
@@ -1921,183 +1848,35 @@ impl ManifestExecutor {
                         ))
                     })?;
 
-                let rendered = render_inline_template(template_content, context);
+                let rendered = TemplateRenderer::render_inline(template_content, context);
                 Ok((rendered, template_content.to_string()))
             }
         }
     }
-
-    /// Load a template from the filesystem, trying the ref as-is, then with
-    /// `.j2` appended, then with `.yaml` appended. Used as a dev-workflow
-    /// fallback when the embedded registry doesn't have the template.
-    ///
-    /// `step_ordinal` is used for error messages and heal callbacks.
-    fn load_template_from_disk(&self, template_ref: &str, step_ordinal: u32) -> Result<String> {
-        let template_path =
-            safe_template_join(&self.template_base_path, template_ref).ok_or_else(|| {
-                TemplateError::PathTraversal(format!(
-                    "step {step_ordinal}: template_ref '{template_ref}' escapes base path '{}'",
-                    self.template_base_path.display()
-                ))
-            })?;
-
-        // Try the ref as-is first.
-        if let Ok(c) = std::fs::read_to_string(&template_path) {
-            return Ok(c);
-        }
-
-        // Try .j2 extension if not already present.
-        if !template_ref.ends_with(".j2") {
-            let j2_ref = format!("{template_ref}.j2");
-            if let Some(j2_path) = safe_template_join(&self.template_base_path, &j2_ref)
-                && let Ok(c) = std::fs::read_to_string(&j2_path)
-            {
-                info!(
-                    target: "reg.spec.executor",
-                    step = step_ordinal,
-                    resolved = %j2_path.display(),
-                    "Resolved template with .j2 fallback"
-                );
-                return Ok(c);
-            }
-        }
-
-        // Try .yaml extension if not already present (FlowDef sub-manifests
-        // and RenderAct reference docs can be .yaml files).
-        if !template_ref.ends_with(".yaml") {
-            let yaml_ref = format!("{template_ref}.yaml");
-            if let Some(yaml_path) = safe_template_join(&self.template_base_path, &yaml_ref)
-                && let Ok(c) = std::fs::read_to_string(&yaml_path)
-            {
-                info!(
-                    target: "reg.spec.executor",
-                    step = step_ordinal,
-                    resolved = %yaml_path.display(),
-                    "Resolved template with .yaml fallback"
-                );
-                return Ok(c);
-            }
-        }
-
-        let err_msg = format!(
-            "Step {step_ordinal}: template file not found at {} (also tried .j2 and .yaml extensions)",
-            template_path.display()
-        );
-        if let Some(ref cb) = self.heal_error_cb {
-            cb(&err_msg, &template_path.display().to_string());
-        }
-        Err(TemplateError::NotFound(NotFound {
-            entity_type: "template".to_string(),
-            id: err_msg,
-        }))
-    }
 }
 
-/// Render a template using minijinja (full Jinja2 syntax).
+/// Deterministically extract the final step's result from a cascade context.
 ///
-/// Supports `{% for %}`, `{{ var }}`, `| filter`, `{% if %}`, `{% include %}`
-/// etc. The main template is registered under the synthetic name `"step"`;
-/// `{% include "path/frag.j2" %}` references resolve relative to
-/// `template_base_path` (the same root used for `template_ref` values).
-fn render_minijinja(
-    template: &str,
-    context: &HashMap<String, Value>,
-    template_base_path: &std::path::Path,
-) -> Result<String> {
-    let mut env = minijinja::Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Lenient);
-
-    // Register custom filters
-    env.add_filter(
-        "truncate",
-        |state: &minijinja::State, value: String, max_len: usize| -> String {
-            let _ = state;
-            if value.len() <= max_len {
-                value
-            } else {
-                let mut truncated: String = value.chars().take(max_len).collect();
-                truncated.push_str("...");
-                truncated
-            }
-        },
-    );
-
-    // Loader: the synthetic "step" name resolves to the in-memory main
-    // template; any other name (from `{% include %}`) resolves from the
-    // embedded registry first, then from disk under `template_base_path`,
-    // mirroring the `template_ref` resolution rules (including the `.j2`
-    // extension fallback).
-    let main_template = template.to_string();
-    let base = template_base_path.to_path_buf();
-    env.set_loader(
-        move |name: &str| -> std::result::Result<Option<String>, minijinja::Error> {
-            if name == "step" {
-                return Ok(Some(main_template.clone()));
-            }
-            // Prefer the embedded (build-time) template — works regardless
-            // of CWD or install location. Try .j2 first, then .yaml.
-            if let Some(content) = crate::template_file(name) {
-                return Ok(Some(content.to_string()));
-            }
-            if let Some(content) = crate::template_yaml_file(name) {
-                return Ok(Some(content.to_string()));
-            }
-            // safe_join rejects any segment starting with '.' or containing '\\',
-            // preventing `{% include "../../etc/passwd" %}` path traversal.
-            let primary = match safe_template_join(&base, name) {
-                Some(p) => p,
-                None => return Ok(None),
-            };
-            if let Ok(content) = std::fs::read_to_string(&primary) {
-                return Ok(Some(content));
-            }
-            if !name.ends_with(".j2") {
-                let j2_name = format!("{name}.j2");
-                if let Some(j2_path) = safe_template_join(&base, &j2_name)
-                    && let Ok(content) = std::fs::read_to_string(&j2_path)
-                {
-                    return Ok(Some(content));
-                }
-            }
-            if !name.ends_with(".yaml") {
-                let yaml_name = format!("{name}.yaml");
-                if let Some(yaml_path) = safe_template_join(&base, &yaml_name)
-                    && let Ok(content) = std::fs::read_to_string(&yaml_path)
-                {
-                    return Ok(Some(content));
-                }
-            }
-            Ok(None)
-        },
-    );
-
-    // Convert HashMap<String, Value> to minijinja context via serde
-    let context_value = serde_json::to_value(context)
-        .map_err(|e| TemplateError::Render(format!("Failed to serialize context: {}", e)))?;
-    let minijinja_context = minijinja::Value::from_serialize(&context_value);
-
-    // Validate the main template parses, surfacing syntax errors with a
-    // clear message (the loader resolves "step" lazily on first access).
-    env.add_template("step", template)
-        .map_err(|e| TemplateError::Render(format!("Invalid template: {}", e)))?;
-
-    env.get_template("step")
-        .and_then(|tmpl| tmpl.render(minijinja_context))
-        .map_err(|e| TemplateError::Render(format!("Template render error: {}", e)))
-}
-
-/// Render an inline template using simple `{{key}}` substitution.
-fn render_inline_template(template: &str, context: &HashMap<String, Value>) -> String {
-    let mut result = template.to_string();
-    for (key, value) in context {
-        let placeholder = format!("{{{{{}}}}}", key);
-        let replacement = match value {
-            Value::String(s) => s.clone(),
-            other => other.to_string(),
-        };
-        result = result.replace(&placeholder, &replacement);
-    }
-    result
+/// `execute_manifest` stores each step's output under a `step_{ordinal}_result`
+/// key. HashMap iteration order is randomized, so `values().last()` would pick
+/// an arbitrary step. This function parses the ordinal from each `step_N_result`
+/// key and returns the value of the highest ordinal as a `Value`. Falls back to
+/// `Value::Null` if no `step_N_result` keys are present.
+///
+/// Used by `execute_flowdef` to extract the sub-cascade's final result without
+/// merging the full sub-context back into the parent.
+fn extract_final_step_result(context: &HashMap<String, Value>) -> Value {
+    context
+        .iter()
+        .filter_map(|(key, value)| {
+            key.strip_prefix("step_")
+                .and_then(|rest| rest.strip_suffix("_result"))
+                .and_then(|n| n.parse::<u32>().ok())
+                .map(|ordinal| (ordinal, value))
+        })
+        .max_by_key(|(ordinal, _)| *ordinal)
+        .map(|(_, v)| v.clone())
+        .unwrap_or(Value::Null)
 }
 
 /// Parse a JSON response from an inference call.
@@ -2148,19 +1927,64 @@ fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
 /// instead of emitting prose and hoping `parse_json_response` can extract
 /// JSON from it.
 fn extract_contract_output(template_content: &str) -> Option<Value> {
-    // The frontmatter is YAML between `---` separators. Templates use `---`
-    // as both opener and closer (YAML frontmatter convention).
-    let mut sections = template_content.splitn(3, "---");
-    let _before = sections.next()?; // typically empty or a comment
-    let frontmatter = sections.next()?; // the YAML block
+    // hKask templates use a frontmatter format where:
+    // - The frontmatter starts at the beginning of the file (optionally after
+    //   leading Jinja comments `{# ... #}` and a `[inference]` marker line)
+    //   and ends at the first `---` separator.
+    // - The frontmatter is YAML containing `template_type`, `lexicon_terms`,
+    //   `contract`, `energy_cap`, `visibility`, etc.
+    // - The body after `---` is the Jinja2 template.
+    //
+    // We find the `\n---\n` separator and parse everything before it as YAML.
+    // Leading Jinja comments (`{# ... #}`) are stripped — they're not valid YAML
+    // and would cause the parser to fail. The `[inference]` marker is also
+    // stripped for the same reason.
+    let separator_pos = template_content.find("\n---\n")?;
+    let frontmatter = &template_content[..separator_pos];
 
-    // Parse the frontmatter as YAML and extract contract.output.
-    // serde_yaml_neo is already a dependency of this crate (used by
-    // manifest_loader.rs and skill_loader.rs for YAML parsing).
+    // Strip Jinja comments ({# ... #}) — they can appear anywhere in the
+    // frontmatter and are not valid YAML.
+    let stripped = strip_jinja_comments(frontmatter);
+    let frontmatter = stripped.trim();
+    let frontmatter = frontmatter
+        .strip_prefix("[inference]")
+        .unwrap_or(frontmatter)
+        .trim();
+
     let parsed: Value = serde_yaml_neo::from_str(frontmatter).ok()?;
     let contract = parsed.get("contract")?;
     let output = contract.get("output")?;
     Some(output.clone())
+}
+
+/// Strip Jinja comments (`{# ... #}`) from a string. Comments can span
+/// multiple lines. Uses a simple state machine rather than regex to avoid
+/// the regex dependency.
+fn strip_jinja_comments(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '{' && chars.peek() == Some(&'#') {
+            // Skip until we find #}
+            chars.next(); // consume '#'
+            let mut found_close = false;
+            while let Some(c) = chars.next() {
+                if c == '#' && chars.peek() == Some(&'}') {
+                    chars.next(); // consume '}'
+                    found_close = true;
+                    break;
+                }
+            }
+            if !found_close {
+                // Unterminated comment — append the rest as-is
+                result.push('{');
+                result.push('#');
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 /// Convert a `contract.output` block (field name → type string) into a
@@ -2726,5 +2550,264 @@ mod tests {
         assert_eq!(result.unwrap(), "hello world");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── Structured output (tool-calling) tests ───────────────────────────
+
+    use crate::bundle::cascade::CascadePhase;
+
+    #[test]
+    fn extract_contract_output_parses_simple_types() {
+        let template = "[inference]\ntemplate_type: KnowAct\ncontract:\n  input:\n    topic: string\n  output:\n    convergence_metric: number\n    rationale: string\n    blockers: array\n---\nYou are a convergence evaluator.\n";
+        let output = extract_contract_output(template).expect("should find contract.output");
+        let fields = output.as_object().expect("output should be an object");
+        assert_eq!(fields.len(), 3);
+        assert_eq!(
+            fields.get("convergence_metric").and_then(|v| v.as_str()),
+            Some("number")
+        );
+        assert_eq!(
+            fields.get("rationale").and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            fields.get("blockers").and_then(|v| v.as_str()),
+            Some("array")
+        );
+    }
+
+    #[test]
+    fn extract_contract_output_returns_none_without_frontmatter() {
+        let template = "You are an evaluator. Respond with JSON.";
+        assert!(extract_contract_output(template).is_none());
+    }
+
+    #[test]
+    fn extract_contract_output_returns_none_without_contract() {
+        let template = "[inference]\ntemplate_type: KnowAct\n---\nYou are an evaluator.\n";
+        assert!(extract_contract_output(template).is_none());
+    }
+
+    #[test]
+    fn extract_contract_output_strips_jinja_comments() {
+        // Some templates have leading Jinja comments ({# ... #}) before the
+        // [inference] block. The parser must strip them before YAML parsing.
+        let template = "{# goal: Test comment stripping #}\n{# Second comment #}\n[inference]\ntemplate_type: KnowAct\ncontract:\n  output:\n    result: string\n---\nBody\n";
+        let output = extract_contract_output(template)
+            .expect("should find contract.output despite Jinja comments");
+        assert_eq!(
+            output.get("result").and_then(|v| v.as_str()),
+            Some("string")
+        );
+    }
+
+    #[test]
+    fn contract_output_to_schema_converts_simple_types() {
+        let output = serde_json::json!({
+            "convergence_metric": "number",
+            "rationale": "string",
+            "blockers": "array",
+            "passed": "boolean",
+            "metadata": "object"
+        });
+        let schema = contract_output_to_schema(&output);
+        assert_eq!(schema.get("type").and_then(|v| v.as_str()), Some("object"));
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("should have properties");
+        assert_eq!(
+            props
+                .get("convergence_metric")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("number")
+        );
+        assert_eq!(
+            props
+                .get("rationale")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            props
+                .get("blockers")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("array")
+        );
+        assert_eq!(
+            props
+                .get("passed")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            props
+                .get("metadata")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    #[test]
+    fn contract_output_to_schema_passes_through_json_schema() {
+        let output = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "score": {"type": "number"}
+            },
+            "required": ["score"]
+        });
+        let schema = contract_output_to_schema(&output);
+        assert_eq!(
+            schema, output,
+            "pre-existing JSON Schema should pass through"
+        );
+    }
+
+    #[test]
+    fn contract_output_to_schema_defaults_unknown_types_to_string() {
+        let output = serde_json::json!({
+            "custom_field": "some_unknown_type"
+        });
+        let schema = contract_output_to_schema(&output);
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("should have properties");
+        assert_eq!(
+            props
+                .get("custom_field")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("string"),
+            "unknown types should default to string"
+        );
+    }
+
+    #[test]
+    fn build_structured_output_tool_creates_valid_definition() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "result": {"type": "string"}
+            }
+        });
+        let tool = build_structured_output_tool(schema.clone());
+        assert_eq!(tool.tool_type, "function");
+        assert_eq!(tool.function.name, "emit_result");
+        assert!(!tool.function.description.is_empty());
+        assert_eq!(tool.function.parameters, schema);
+    }
+
+    #[test]
+    fn resolve_output_schema_prefers_manifest_schema() {
+        let step = BundleManifestStep {
+            ordinal: 1,
+            action: "select".to_string(),
+            description: "test".to_string(),
+            renderer: Some("minijinja".to_string()),
+            template_ref: Some("test/template".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 1000,
+            timeout_seconds: 30,
+            input_mapping: None,
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "from_manifest": {"type": "string"}
+                }
+            })),
+            phase: CascadePhase::Core,
+            condition: None,
+            fusion: None,
+        };
+        let template_content =
+            "[inference]\ncontract:\n  output:\n    from_manifest: string\n---\nbody\n";
+        let schema = resolve_output_schema(&step, template_content).expect("should resolve");
+        assert_eq!(
+            schema
+                .get("properties")
+                .and_then(|v| v.get("from_manifest"))
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("string"),
+            "manifest schema should take priority"
+        );
+        assert!(
+            schema
+                .get("properties")
+                .and_then(|v| v.get("from_template"))
+                .is_none(),
+            "template schema should not be used when manifest schema is present"
+        );
+    }
+
+    #[test]
+    fn resolve_output_schema_falls_back_to_template_contract() {
+        let step = BundleManifestStep {
+            ordinal: 1,
+            action: "select".to_string(),
+            description: "test".to_string(),
+            renderer: Some("minijinja".to_string()),
+            template_ref: Some("test/template".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 1000,
+            timeout_seconds: 30,
+            input_mapping: None,
+            output_schema: None,
+            phase: CascadePhase::Core,
+            condition: None,
+            fusion: None,
+        };
+        let template_content = "[inference]\ncontract:\n  output:\n    from_template: string\n    score: number\n---\nbody\n";
+        let schema =
+            resolve_output_schema(&step, template_content).expect("should resolve from template");
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("should have properties");
+        assert_eq!(
+            props
+                .get("from_template")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(
+            props
+                .get("score")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("number")
+        );
+    }
+
+    #[test]
+    fn resolve_output_schema_returns_none_without_any_schema() {
+        let step = BundleManifestStep {
+            ordinal: 1,
+            action: "select".to_string(),
+            description: "test".to_string(),
+            renderer: Some("minijinja".to_string()),
+            template_ref: Some("test/template".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 1000,
+            timeout_seconds: 30,
+            input_mapping: None,
+            output_schema: None,
+            phase: CascadePhase::Core,
+            condition: None,
+            fusion: None,
+        };
+        let template_content = "No frontmatter here.";
+        assert!(resolve_output_schema(&step, template_content).is_none());
     }
 }

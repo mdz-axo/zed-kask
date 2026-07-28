@@ -1,7 +1,7 @@
 use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -12,6 +12,7 @@ use language_model::{
 };
 use open_ai::{
     ResponseStreamEvent,
+    list_models::list_models,
     responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
     stream_completion,
 };
@@ -36,6 +37,9 @@ pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
     pub custom_headers: CustomHeaders,
+    /// Whether to auto-discover models via the provider's `/v1/models` endpoint.
+    /// Defaults to `true` — API key presence is the effective opt-in.
+    pub auto_discover: bool,
 }
 
 impl ApiCompatibleProviderSettings for OpenAiCompatibleSettings {
@@ -46,11 +50,123 @@ impl ApiCompatibleProviderSettings for OpenAiCompatibleSettings {
 
 pub type State = ApiCompatibleProviderState<OpenAiCompatibleSettings>;
 
+/// Discovery state for auto-discovering models via the provider's `/v1/models`
+/// endpoint. Held alongside the shared `ApiCompatibleProviderState` so the
+/// generic state stays generic (Anthropic-compatible providers don't carry
+/// unused discovery fields).
+///
+/// Mirrors the OpenRouter `State` pattern: a `fetch_models_task` is spawned on
+/// authenticate / settings change, and `fetched_models` is merged into
+/// `provided_models` by the provider.
+pub struct DiscoveryState {
+    /// Models discovered via `/v1/models`. Empty until a successful fetch.
+    fetched_models: Vec<AvailableModel>,
+    /// In-flight fetch task. Replaced on re-authentication or settings change.
+    fetch_models_task: Option<Task<Result<()>>>,
+}
+
+impl DiscoveryState {
+    fn new() -> Self {
+        Self {
+            fetched_models: Vec::new(),
+            fetch_models_task: None,
+        }
+    }
+
+    /// Spawn (or replace) the fetch-models task. Reads the api_key and api_url
+    /// from the shared state. When `auto_discover` is false, this is a no-op.
+    fn restart_fetch_models_task(
+        &mut self,
+        state: Entity<State>,
+        http_client: Arc<dyn HttpClient>,
+        provider_name: LanguageModelProviderName,
+        cx: &mut Context<Self>,
+    ) {
+        let state_read = state.read(cx);
+        let auto_discover = state_read.settings.auto_discover;
+        let api_url = state_read.settings.api_url.clone();
+        let extra_headers = state_read.settings.custom_headers.clone();
+        let api_key = state_read
+            .api_key_state
+            .key(&api_url)
+            .map(|k| k.to_string());
+        // Release the borrow before spawning the task.
+        let _ = state_read;
+
+        if !auto_discover {
+            return;
+        }
+
+        let Some(api_key) = api_key else {
+            log::warn!(
+                "OpenAI-compatible provider {provider_name}: auto_discover is enabled but no API key is set — set the {provider_name} API key to discover models"
+            );
+            return;
+        };
+
+        let state_for_notify = state.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let result = list_models(http_client.as_ref(), &api_url, &api_key, &extra_headers)
+                .await
+                .map(|models| {
+                    models
+                        .into_iter()
+                        .map(|m| {
+                            let supports_tools = m.supports_tools();
+                            let supports_images = m.supports_images();
+                            let display_name = {
+                                let name = m.name.clone().unwrap_or_default();
+                                if name.is_empty() { None } else { Some(name) }
+                            };
+                            AvailableModel {
+                                name: m.id,
+                                display_name,
+                                max_tokens: m.context_length.unwrap_or(128_000),
+                                max_output_tokens: m.max_output_tokens,
+                                max_completion_tokens: None,
+                                reasoning_effort: None,
+                                capabilities: ModelCapabilities {
+                                    tools: supports_tools,
+                                    images: supports_images,
+                                    parallel_tool_calls: supports_tools,
+                                    prompt_cache_key: false,
+                                    chat_completions: true,
+                                    interleaved_reasoning: false,
+                                    max_tokens_parameter: false,
+                                },
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                });
+            match result {
+                Ok(models) => {
+                    this.update(cx, |this, cx| {
+                        this.fetched_models = models;
+                        cx.notify();
+                    })
+                    .ok();
+                    // Notify the shared state so the LanguageModelRegistry
+                    // re-reads `provided_models` and the picker updates.
+                    state_for_notify.update(cx, |_, cx| cx.notify());
+                }
+                Err(e) => {
+                    log::warn!(
+                        "OpenAI-compatible provider {provider_name}: model discovery from {api_url} failed: {e}"
+                    );
+                }
+            }
+            Ok(())
+        });
+        self.fetch_models_task.replace(task);
+    }
+}
+
 pub struct OpenAiCompatibleLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    discovery_state: Entity<DiscoveryState>,
 }
 
 impl OpenAiCompatibleLanguageModelProvider {
@@ -71,11 +187,43 @@ impl OpenAiCompatibleLanguageModelProvider {
             cx,
         );
 
+        let provider_name = LanguageModelProviderName::from(id.clone());
+        let http_client_for_discovery = http_client.clone();
+        let state_for_discovery = state.clone();
+        let discovery_state = cx.new(|cx| {
+            // Re-trigger discovery when the shared state notifies (settings or
+            // api-key change). The shared state calls cx.notify() in
+            // `update_settings` and after `authenticate`/`set_api_key`.
+            let observe_http = http_client_for_discovery.clone();
+            let observe_name = provider_name.clone();
+            cx.observe(
+                &state,
+                move |this: &mut DiscoveryState, observed_state, cx| {
+                    this.restart_fetch_models_task(
+                        observed_state,
+                        observe_http.clone(),
+                        observe_name.clone(),
+                        cx,
+                    );
+                },
+            )
+            .detach();
+            let mut discovery = DiscoveryState::new();
+            discovery.restart_fetch_models_task(
+                state_for_discovery.clone(),
+                http_client_for_discovery.clone(),
+                provider_name.clone(),
+                cx,
+            );
+            discovery
+        });
+
         Self {
             id: id.clone().into(),
             name: id.into(),
             http_client,
             state,
+            discovery_state,
         }
     }
 
@@ -114,10 +262,14 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.state
+        let settings_models = &self.state.read(cx).settings.available_models;
+        if let Some(model) = settings_models.first() {
+            return Some(self.create_language_model(model.clone()));
+        }
+        // Fall back to the first discovered model when no static models are configured.
+        self.discovery_state
             .read(cx)
-            .settings
-            .available_models
+            .fetched_models
             .first()
             .map(|model| self.create_language_model(model.clone()))
     }
@@ -127,12 +279,25 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
-            .settings
-            .available_models
-            .iter()
-            .map(|model| self.create_language_model(model.clone()))
+        let settings_models = &self.state.read(cx).settings.available_models;
+        let discovered_models = &self.discovery_state.read(cx).fetched_models;
+
+        // Merge: settings models first (user-configured takes precedence),
+        // then discovered models not already present by name.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut models: Vec<AvailableModel> = Vec::new();
+        for model in settings_models {
+            seen.insert(model.name.clone());
+            models.push(model.clone());
+        }
+        for model in discovered_models {
+            if seen.insert(model.name.clone()) {
+                models.push(model.clone());
+            }
+        }
+        models
+            .into_iter()
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 

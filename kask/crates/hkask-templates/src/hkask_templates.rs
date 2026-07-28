@@ -19,6 +19,7 @@ pub mod registry;
 pub mod registry_sqlite;
 pub mod skill_loader;
 pub mod taint_context;
+pub mod template_renderer;
 pub mod vocabulary;
 
 pub use bundle::BundleManifest;

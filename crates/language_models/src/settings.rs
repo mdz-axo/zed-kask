@@ -188,6 +188,7 @@ impl settings::Settings for AllLanguageModelSettings {
                                 value.custom_headers,
                                 &[],
                             ),
+                            auto_discover: value.auto_discover,
                         },
                     )
                 })
