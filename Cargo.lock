@@ -26045,6 +26045,7 @@ dependencies = [
  "journal",
  "json_schema_store",
  "kask_bridge",
+ "kask_extensions_ui",
  "kask_panel",
  "keymap_editor",
  "language",

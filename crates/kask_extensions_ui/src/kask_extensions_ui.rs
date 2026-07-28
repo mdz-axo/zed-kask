@@ -1,6 +1,9 @@
 mod components;
 mod extension_suggest;
 mod extension_version_selector;
+mod panel_button;
+
+pub use panel_button::KaskExtensionsButton;
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -39,7 +42,6 @@ use workspace::{
     item::{Item, ItemEvent},
     workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
-use zed_actions::ExtensionCategoryFilter;
 
 use crate::components::ExtensionCard;
 use crate::extension_version_selector::{
@@ -47,8 +49,13 @@ use crate::extension_version_selector::{
 };
 
 actions!(
-    zed,
+    kask_extensions,
     [
+        /// Deploys a new Kask Extensions page if none is open, else focuses the
+        /// existing one. Used by the View menu entry and the status bar button.
+        Toggle,
+        /// Focuses an existing Kask Extensions page (no-op if none is open).
+        ToggleFocus,
         /// Installs an extension from a local directory for development.
         InstallDevExtension,
     ]
@@ -113,59 +120,43 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
+        // zed-kask: `Toggle` deploys a new KaskExtensionsPage if none is open
+        // in the active pane, else focuses the existing one. `ToggleFocus`
+        // only focuses. Per the `.rules` trap "Center-pane Item Toggle vs
+        // ToggleFocus", the View menu entry uses `Toggle` (not `ToggleFocus`)
+        // so it deploys a new item if none exists.
         workspace
-            .register_action(
-                move |workspace, action: &zed_actions::Extensions, window, cx| {
-                    let provides_filter = action.category_filter.map(|category| match category {
-                        ExtensionCategoryFilter::Themes => ExtensionProvides::Themes,
-                        ExtensionCategoryFilter::IconThemes => ExtensionProvides::IconThemes,
-                        ExtensionCategoryFilter::Languages => ExtensionProvides::Languages,
-                        ExtensionCategoryFilter::Grammars => ExtensionProvides::Grammars,
-                        ExtensionCategoryFilter::LanguageServers => {
-                            ExtensionProvides::LanguageServers
-                        }
-                        ExtensionCategoryFilter::ContextServers => {
-                            ExtensionProvides::ContextServers
-                        }
-                        ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
-                        ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
-                    });
+            .register_action(move |workspace, _: &Toggle, window, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<KaskExtensionsPage>());
 
-                    let existing = workspace
-                        .active_pane()
-                        .read(cx)
-                        .items()
-                        .find_map(|item| item.downcast::<KaskExtensionsPage>());
-
-                    if let Some(existing) = existing {
-                        existing.update(cx, |extensions_page, cx| {
-                            if provides_filter.is_some() {
-                                extensions_page.change_provides_filter(provides_filter, cx);
-                            }
-                            if let Some(id) = action.id.as_ref() {
-                                extensions_page.focus_extension(id, window, cx);
-                            }
-                        });
-
-                        workspace.activate_item(&existing, true, true, window, cx);
-                    } else {
-                        let extensions_page = KaskExtensionsPage::new(
-                            workspace,
-                            provides_filter,
-                            action.id.as_deref(),
-                            window,
-                            cx,
-                        );
-                        workspace.add_item_to_active_pane(
-                            Box::new(extensions_page),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        )
-                    }
-                },
-            )
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                } else {
+                    let extensions_page =
+                        KaskExtensionsPage::new(workspace, None, None, window, cx);
+                    workspace.add_item_to_active_pane(
+                        Box::new(extensions_page),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    )
+                }
+            })
+            .register_action(move |workspace, _: &ToggleFocus, window, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<KaskExtensionsPage>());
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                }
+            })
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
                 let store = ExtensionStore::global(cx);
                 let prompt = workspace.prompt_for_open_path(

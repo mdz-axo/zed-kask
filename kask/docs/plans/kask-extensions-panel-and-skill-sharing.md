@@ -31,7 +31,7 @@ mds_categories: [composition, trust, lifecycle, curation]
 - Auto-update of installed marketplace skills. v1 notifies the user; the user explicitly reinstalls.
 - Embeddings, userpods, MCP-server configs as marketplace artifacts. v1 is skills-only; the catalog schema is designed to extend.
 - A review/approval workflow for published skills. v1 trusts the publisher's GitHub identity (mirroring Zed's extension marketplace).
-- Skill ratings, comments, or social features.
+- Skill ratings, comments, or social features beyond upvotes/downvotes.
 
 ## 1. Existing Pieces (load-bearing)
 
@@ -87,7 +87,7 @@ Listings are namespaced by the publisher's GitHub username (sourced from the Zed
 
 ### 2.5 Only the latest version is offered
 
-The `kask_artifact_version` table has a unique index on `(publisher, skill_name)` and uses `INSERT ... ON CONFLICT REPLACE` to keep just the newest row. The UI never shows a version picker. v2 will add pinning; v1 keeps the surface minimal.
+The `kask_skill_versions` table uses a composite PK `(kask_skill_id, version)` (mirroring `extension_versions`), but v1 only ever inserts one row per skill — the latest. The periodic poll overwrites prior versions. The UI never shows a version picker. v2 will add pinning; v1 keeps the surface minimal.
 
 ### 2.6 Lazy drain on page-leave
 
@@ -224,7 +224,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ---
 
-### Phase 3 — `KaskExtensionsPage` UI shell (no backend)
+### Phase 3 — `KaskExtensionsPage` UI shell (no backend) ✅ COMPLETE
 
 **Goal:** the forked `ExtensionsPage` exists as a center-pane `Item`, renders a search field and a list, and shows placeholder data. No network yet.
 
@@ -268,57 +268,97 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ### Phase 4 — Marketplace backend (server-side)
 
-**Goal:** the collab server can store and serve kask-artifact metadata. No client wiring yet.
+**Goal:** the collab server can store and serve kask skill metadata, mirroring the extension marketplace architecture exactly: S3 is the source of truth, Postgres is a cache built by periodic polling, publishing is direct-to-S3, downloads redirect to S3 presigned URLs.
+
+**Architecture (mirrors `crates/collab/src/api/extensions.rs` + `crates/collab/src/db/queries/extensions.rs`):**
+- **Publishing:** the client packages the skill dir into `archive.tar.gz` + `manifest.json` and uploads both directly to S3 at `kask-skills/{source_user}/{skill_name}/{version}/`. No `PUT` endpoint.
+- **Catalog:** `fetch_kask_skills_from_blob_store_periodically` runs every 5 minutes, lists S3 objects under `kask-skills/`, downloads new `manifest.json` files, upserts into Postgres.
+- **Discovery:** `GET /api/kask-skills` reads Postgres.
+- **Download:** `GET /api/kask-skills/:id/download` increments download count in Postgres, redirects to S3 presigned URL.
+- **Votes:** `POST /api/kask-skills/:id/vote` (authenticated, +1/-1), stored in a `kask_skill_votes` table.
 
 **Tasks:**
-1. Add Postgres tables (migration in `crates/collab/src/db/tables/`):
+1. Add `KaskSkillManifest` and `KaskSkillMetadata` to `crates/cloud_api_types/src/kask_skill.rs` (mirror `extension.rs`):
+   ```rust
+   pub struct KaskSkillManifest {
+       pub source_user: String,       // authenticated github_login
+       pub skill_name: String,
+       pub version: String,           // timestamp-based; only latest kept
+       pub description: String,
+       pub dependencies: Vec<String>,
+       pub tarball_sha256: String,
+   }
+   pub struct KaskSkillMetadata {
+       pub id: String,                // "{source_user}/{skill_name}"
+       pub manifest: KaskSkillManifest,
+       pub published_at: DateTime<Utc>,
+       pub download_count: u64,
+       pub upvote_count: i64,
+       pub downvote_count: i64,
+   }
+   pub struct GetKaskSkillsResponse { pub data: Vec<KaskSkillMetadata> }
+   ```
+2. Add Postgres tables (migration in `crates/collab/migrations/` and `crates/collab/migrations.sqlite/`):
    ```sql
-   CREATE TABLE kask_artifacts (
-     id TEXT PRIMARY KEY,              -- "{source_user}/{skill_name}"
+   CREATE TABLE kask_skills (
+     id SERIAL PRIMARY KEY,
      source_user TEXT NOT NULL,
      skill_name TEXT NOT NULL,
      description TEXT NOT NULL,
+     latest_version TEXT NOT NULL,
      total_download_count BIGINT NOT NULL DEFAULT 0,
-     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     upvote_count BIGINT NOT NULL DEFAULT 0,
+     downvote_count BIGINT NOT NULL DEFAULT 0,
      UNIQUE (source_user, skill_name)
    );
-
-   CREATE TABLE kask_artifact_versions (
-     artifact_id TEXT NOT NULL REFERENCES kask_artifacts(id) ON DELETE CASCADE,
+   CREATE TABLE kask_skill_versions (
+     kask_skill_id INTEGER NOT NULL REFERENCES kask_skills(id) ON DELETE CASCADE,
      version TEXT NOT NULL,
-     manifest_json JSONB NOT NULL,     -- full manifest.yaml as JSON
-     tarball_s3_key TEXT NOT NULL,
-     tarball_size_bytes BIGINT NOT NULL,
+     published_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL,
+     dependencies TEXT NOT NULL DEFAULT '',
      tarball_sha256 TEXT NOT NULL,
-     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      download_count BIGINT NOT NULL DEFAULT 0,
-     PRIMARY KEY (artifact_id)        -- only one version per artifact (v1)
+     PRIMARY KEY (kask_skill_id, version)
+   );
+   CREATE TABLE kask_skill_votes (
+     kask_skill_id INTEGER NOT NULL REFERENCES kask_skills(id) ON DELETE CASCADE,
+     user_id INTEGER NOT NULL,
+     vote SMALLINT NOT NULL,   -- +1 or -1
+     voted_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW() NOT NULL,
+     PRIMARY KEY (kask_skill_id, user_id)
    );
    ```
-   The `PRIMARY KEY (artifact_id)` on the versions table enforces "only latest version" at the schema level.
-2. Add `crates/collab/src/db/queries/kask_artifacts.rs` with `get_kask_artifacts`, `get_kask_artifact`, `upsert_kask_artifact_version`, `delete_kask_artifact` (mirror `queries/extensions.rs`).
-3. Add `crates/collab/src/api/kask_artifacts.rs` with an axum router:
-   - `GET /api/kask-artifacts?query=<search>` — list (simple search; no `provides` filter — that's an extension-compatibility concept with no skill equivalent)
-   - `GET /api/kask-artifacts/{id}` — single
-   - `PUT /api/kask-artifacts/{id}` — publish/upsert (authenticated; publisher must equal `{source_user}` in the ID)
-   - `DELETE /api/kask-artifacts/{id}` — unpublish (authenticated; same check)
-   - `GET /api/kask-artifacts/{id}/tarball` — redirect to S3 presigned URL
-4. Wire the router in `crates/collab/src/main.rs` (mirror the extensions router wiring).
-5. **Tests:** integration tests in `crates/collab/tests/integration/db_tests/kask_artifact_tests.rs` mirroring `extension_tests.rs`. Pin: upsert replaces the prior version; delete cascades to versions; the `(source_user, skill_name)` uniqueness holds.
-
-**Eliminated (essentialist G1 FAIL):** `fetch_kask_artifacts_from_blob_store_periodically`. In v1 the PUT endpoint writes to both S3 and Postgres directly, so the periodic S3→Postgres sync is redundant. Add it in v2 if direct-to-S3 publishing is needed.
+   The composite PK on `kask_skill_versions` allows multiple versions (v2 pinning); v1 only ever inserts one row per skill (the latest), matching the extension pattern.
+3. Add SeaORM entities: `crates/collab/src/db/tables/kask_skill.rs`, `kask_skill_version.rs`, `kask_skill_vote.rs` (mirror `extension.rs` / `extension_version.rs`).
+4. Add `crates/collab/src/db/queries/kask_skills.rs` with `get_kask_skills`, `get_kask_skill`, `get_known_kask_skill_versions`, `insert_kask_skill_versions`, `record_kask_skill_download`, `vote_kask_skill` (mirror `queries/extensions.rs`).
+5. Add `crates/collab/src/api/kask_skills.rs` with an axum router:
+   - `GET /api/kask-skills` — list (reads Postgres, ordered by download_count desc)
+   - `GET /api/kask-skills/:id` — single
+   - `GET /api/kask-skills/:id/download` — increment download count, redirect to S3 presigned URL at `kask-skills/{source_user}/{skill_name}/{version}/archive.tar.gz`
+   - `POST /api/kask-skills/:id/vote` — authenticated; upsert vote (+1/-1); update aggregate counts on the skill row
+6. Add `fetch_kask_skills_from_blob_store_periodically` (mirror `fetch_extensions_from_blob_store_periodically`) — lists S3 objects under `kask-skills/`, finds new `manifest.json` files, downloads, parses, upserts into Postgres.
+7. Wire the router + periodic fetch in `crates/collab/src/main.rs` (mirror the extensions wiring).
+8. **Tests:** integration tests in `crates/collab/tests/integration/db_tests/kask_skill_tests.rs` mirroring `extension_tests.rs`. Pin: upsert replaces the prior version; delete cascades to versions; the `(source_user, skill_name)` uniqueness holds; vote upsert changes the aggregate counts.
 
 **Files touched:**
-- `crates/collab/src/db/tables/` (new migration)
-- `crates/collab/src/db/queries/kask_artifacts.rs` (new)
-- `crates/collab/src/api/kask_artifacts.rs` (new)
+- `crates/cloud_api_types/src/kask_skill.rs` (new)
+- `crates/cloud_api_types/src/lib.rs` (re-export)
+- `crates/collab/migrations/20251208000000_test_schema.sql` (add tables)
+- `crates/collab/migrations.sqlite/20221109000000_test_schema.sql` (add tables)
+- `crates/collab/src/db/tables/kask_skill.rs` (new)
+- `crates/collab/src/db/tables/kask_skill_version.rs` (new)
+- `crates/collab/src/db/tables/kask_skill_vote.rs` (new)
+- `crates/collab/src/db/tables.rs` (re-export)
+- `crates/collab/src/db/queries/kask_skills.rs` (new)
+- `crates/collab/src/db/queries.rs` (re-export)
+- `crates/collab/src/api/kask_skills.rs` (new)
 - `crates/collab/src/api.rs` (re-export)
-- `crates/collab/src/main.rs` (wire router)
-- `crates/collab/tests/integration/db_tests/kask_artifact_tests.rs` (new)
+- `crates/collab/src/main.rs` (wire router + periodic fetch)
+- `crates/collab/tests/integration/db_tests/kask_skill_tests.rs` (new)
 
-**Acceptance:** the collab server's `/api/kask-artifacts` endpoints respond; integration tests pass.
+**Acceptance:** the collab server's `/api/kask-skills` endpoints respond; integration tests pass; the periodic fetch loop runs without error on an empty S3 bucket.
 
-**Estimated effort:** 2 days
+**Estimated effort:** 2-3 days
 
 ---
 
@@ -326,38 +366,45 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 **Goal:** end-to-end. Toggling a skill to Public publishes it; clicking Install in the Kask Extensions Panel installs it.
 
+**Architecture (mirrors `extension_cli` + `ExtensionStore::install_extension`):**
+- **Publish:** client packages skill dir → `archive.tar.gz` + `manifest.json` → uploads both directly to S3 at `kask-skills/{source_user}/{skill_name}/{version}/`. `source_user` = authenticated user's `github_login`. No collab server involvement in the upload (the periodic poll picks it up).
+- **Install:** client calls `GET /api/kask-skills` (catalog) → `GET /api/kask-skills/:id/download` (S3 presigned redirect) → downloads tarball → verifies SHA256 → extracts into `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+
 **Tasks:**
-1. Implement the publish pipeline (client side, in a new `crates/kask_extensions_ui/src/publish.rs` or in `crates/agent_skills/src/publish.rs`):
+1. Implement the publish pipeline (client side, in a new `crates/kask_extensions_ui/src/publish.rs`):
    - Read `SKILL.md` + `manifest.yaml` + all `*.j2` templates from the skill directory.
-   - Run Jinja2 sandbox static analysis (Phase 5 task: refuse templates with `import os`, `import subprocess`, file/network calls outside safety mode). Reuse the existing sandbox contract documented in skill `Constraints` sections.
-   - Validate declared dependencies are published (query `GET /api/kask-artifacts/{dep_id}` for each; refuse if any 404s).
-   - Package as tar.gz.
-   - Compute SHA256.
-   - `PUT /api/kask-artifacts/{source_user}/{skill_name}` with manifest JSON + tarball metadata.
-   - Upload tarball to S3 (via a presigned URL the server returns, or via the collab server as an intermediary — mirror the extension publish path).
+   - Run Jinja2 sandbox static analysis (refuse templates with `import os`, `import subprocess`, file/network calls outside safety mode). Reuse the existing sandbox contract documented in skill `Constraints` sections.
+   - Validate declared dependencies are published (query `GET /api/kask-skills/{dep_id}` for each; refuse if any 404s).
+   - Package as `archive.tar.gz` (mirror `extension_cli::main` — copy resources to a temp dir, `tar -czvf`).
+   - Compute SHA256 of the tarball.
+   - Write `manifest.json` (`KaskSkillManifest` serialized to JSON).
+   - Upload both to S3 at `kask-skills/{source_user}/{skill_name}/{version}/archive.tar.gz` and `.../manifest.json`. Use the same S3 client + credentials the extension CLI uses.
+   - `source_user` = the authenticated user's `github_login` (from `client::User`).
    - On any failure: `log::warn!` with skill ID, failure reason, remediation. Do not roll back the local `visibility` flag.
 2. Implement the unpublish pipeline:
-   - `DELETE /api/kask-artifacts/{source_user}/{skill_name}`.
+   - Delete the S3 objects at `kask-skills/{source_user}/{skill_name}/` (prefix delete).
+   - The collab server's periodic poll will remove the Postgres row on the next cycle (or we add a `DELETE /api/kask-skills/:id` endpoint that deletes from both S3 and Postgres — simpler for v1).
    - The local skill stays on disk; only the marketplace listing is removed.
    - On failure: `log::warn!`; retain the pending state in the queue for retry.
-3. Wire the `SkillVisibilityQueue` drain task (from Phase 2) to call the publish/unpublish pipelines.
-4. Implement the install path in `KaskExtensionsPage`:
-   - On "Install" click: `GET /api/kask-artifacts/{id}` → `GET /api/kask-artifacts/{id}/tarball` → download → verify SHA256 → extract into `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+3. Wire the `SkillVisibilityQueue` drain task (from Phase 2) to call the publish/unpublish pipelines. Add the window-close and 30s debounce drain triggers here (deferred from Phase 2 — they only matter once the drain does real network work).
+4. Implement the install path in `KaskExtensionsPage` (mirror `ExtensionStore::install_extension`):
+   - On "Install" click: `GET /api/kask-skills/{id}` → `GET /api/kask-skills/{id}/download` → download → verify SHA256 → extract into `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
    - Register in `SkillIndex` with `SkillSource::Public { source_user, original_skill_id }`.
    - Call `SkillsUpdatedHook` so the Settings page and the agent's skill catalog refresh.
    - Emit a `KaskArtifactInstalled` event (mirror `Event::ExtensionInstalled`) so the agent panel syncs.
 5. Implement the uninstall path: remove the directory, deregister from `SkillIndex`, fire `SkillsUpdatedHook`, emit `KaskArtifactUninstalled`.
 6. Implement the "Update available" badge: on `KaskExtensionsPage` render, compare the installed version (stored in a local manifest in the `_marketplace/` dir) against the latest from the catalog. Show a badge if they differ. Clicking "Update" re-runs the install path.
-7. Replace the placeholder data in `KaskExtensionsPage` (from Phase 3) with `fetch_kask_artifacts` calls.
-8. **Tests:** end-to-end test with a test collab server (mirror `test_extension_store_with_test_extension`); pin that publish + install round-trips; pin that uninstall removes the directory; pin that the "Update available" badge appears when versions differ.
+7. Implement the vote UI: upvote/downvote buttons on each skill row in `KaskExtensionsPage`. On click: `POST /api/kask-skills/:id/vote` with `+1` or `-1`. Update the row's counts from the response.
+8. Replace the placeholder data in `KaskExtensionsPage` (from Phase 3) with `fetch_kask_skills` calls.
+9. **Tests:** end-to-end test with a test collab server (mirror `test_extension_store_with_test_extension`); pin that publish + install round-trips; pin that uninstall removes the directory; pin that the "Update available" badge appears when versions differ; pin that voting updates the counts.
 
 **Files touched:**
-- `crates/agent_skills/src/publish.rs` (new) OR `crates/kask_extensions_ui/src/publish.rs` (new)
-- `crates/kask_extensions_ui/src/kask_extensions_ui.rs` (install/uninstall/update)
-- `crates/settings_ui/src/pages/skills_visibility.rs` (wire drain to pipelines)
+- `crates/kask_extensions_ui/src/publish.rs` (new)
+- `crates/kask_extensions_ui/src/kask_extensions_ui.rs` (install/uninstall/update/vote)
+- `crates/settings_ui/src/pages/skills_visibility.rs` (wire drain to pipelines + window-close/debounce triggers)
 - `crates/agent_skills/src/agent_skills.rs` (register `Public` skills in `SkillIndex`)
 
-**Acceptance:** a user on one machine can toggle a skill to Public, and a user on another machine can see it in the Kask Extensions Panel and install it. The installed skill loads and executes via the existing `ManifestExecutor` cascade. End-to-end test passes.
+**Acceptance:** a user on one machine can toggle a skill to Public, and a user on another machine can see it in the Kask Extensions Panel and install it. The installed skill loads and executes via the existing `ManifestExecutor` cascade. Voting works. End-to-end test passes.
 
 **Estimated effort:** 4-5 days
 
