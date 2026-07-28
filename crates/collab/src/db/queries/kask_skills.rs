@@ -6,6 +6,8 @@ use sea_orm::sea_query::{Expr, IntoCondition};
 
 use super::*;
 use crate::Error;
+use crate::db::queries::extensions::convert_time_to_chrono;
+use crate::db::{KaskSkillId, UserId};
 use crate::db::{KaskSkillId, UserId};
 
 /// A new kask skill version discovered in the blob store by the periodic poll.
@@ -406,12 +408,4 @@ fn metadata_from_skill_and_version(
         upvote_count: skill.upvote_count,
         downvote_count: skill.downvote_count,
     }
-}
-
-pub fn convert_time_to_chrono(time: time::PrimitiveDateTime) -> chrono::DateTime<Utc> {
-    chrono::DateTime::from_naive_utc_and_offset(
-        #[allow(deprecated)]
-        chrono::NaiveDateTime::from_timestamp_opt(time.assume_utc().unix_timestamp(), 0).unwrap(),
-        Utc,
-    )
 }

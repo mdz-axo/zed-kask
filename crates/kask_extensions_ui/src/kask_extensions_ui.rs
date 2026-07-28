@@ -1,6 +1,4 @@
 mod components;
-mod extension_suggest;
-mod extension_version_selector;
 mod panel_button;
 mod publish;
 
@@ -49,9 +47,6 @@ use workspace::{
 };
 
 use crate::components::ExtensionCard;
-use crate::extension_version_selector::{
-    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
-};
 
 actions!(
     kask_extensions,
@@ -61,66 +56,10 @@ actions!(
         Toggle,
         /// Focuses an existing Kask Extensions page (no-op if none is open).
         ToggleFocus,
-        /// Installs an extension from a local directory for development.
-        InstallDevExtension,
     ]
 );
 
-/// Rebuilds an installed dev extension.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, gpui::Action)]
-#[action(namespace = zed)]
-#[serde(deny_unknown_fields)]
-pub struct RebuildDevExtension {
-    /// The ID of the dev extension to rebuild.
-    ///
-    /// Default: opens a picker if multiple dev extensions are installed.
-    #[serde(default)]
-    pub extension_id: Option<String>,
-}
-
-#[derive(Default)]
-struct DevExtensionNotInstalledError {
-    extension_id: Option<SharedString>,
-}
-
-impl WorkspaceError for DevExtensionNotInstalledError {
-    fn primary_message(&self) -> SharedString {
-        match &self.extension_id {
-            Some(extension_id) => {
-                format!("Dev extension '{extension_id}' is not installed.").into()
-            }
-            None => "No dev extensions are installed.".into(),
-        }
-    }
-
-    fn primary_action(&self) -> ErrorAction {
-        ErrorAction::new("Install Dev Extension", InstallDevExtension)
-    }
-
-    fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Warning
-    }
-}
-
-fn update_rebuild_dev_extension_visibility(store: &Entity<ExtensionStore>, cx: &mut App) {
-    let has_dev_extensions = store.read(cx).dev_extensions().next().is_some();
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        if has_dev_extensions {
-            filter.show_action_types(&[TypeId::of::<RebuildDevExtension>()]);
-        } else {
-            filter.hide_action_types(&[TypeId::of::<RebuildDevExtension>()]);
-        }
-    });
-}
-
 pub fn init(cx: &mut App) {
-    let store = ExtensionStore::global(cx);
-    update_rebuild_dev_extension_visibility(&store, cx);
-    cx.observe(&store, |store, cx| {
-        update_rebuild_dev_extension_visibility(&store, cx);
-    })
-    .detach();
-
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -161,147 +100,9 @@ pub fn init(cx: &mut App) {
                 if let Some(existing) = existing {
                     workspace.activate_item(&existing, true, true, window, cx);
                 }
-            })
-            .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
-                let store = ExtensionStore::global(cx);
-                let prompt = workspace.prompt_for_open_path(
-                    gpui::PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: None,
-                    },
-                    DirectoryLister::Local(
-                        workspace.project().clone(),
-                        workspace.app_state().fs.clone(),
-                    ),
-                    window,
-                    cx,
-                );
-
-                let workspace_handle = cx.entity().downgrade();
-                window
-                    .spawn(cx, async move |cx| {
-                        let extension_path = match prompt.await.map_err(anyhow::Error::from) {
-                            Ok(Some(mut paths)) => paths.pop()?,
-                            Ok(None) => return None,
-                            Err(err) => {
-                                workspace_handle
-                                    .update(cx, |workspace, cx| {
-                                        workspace.show_error(
-                                            workspace::workspace_error::PortalError::new(
-                                                err.to_string(),
-                                            ),
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                                return None;
-                            }
-                        };
-
-                        let install_task = store.update(cx, |store, cx| {
-                            store.install_dev_extension(extension_path, cx)
-                        });
-
-                        match install_task.await {
-                            Ok(_) => {}
-                            Err(err) => {
-                                log::error!("Failed to install dev extension: {:?}", err);
-                                workspace_handle
-                                    .update(cx, |workspace, cx| {
-                                        // NOTE: using `anyhow::context` here ends up not printing
-                                        // the error
-                                        workspace.show_error(
-                                            format!("Failed to install dev extension: {}", err),
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }
-
-                        Some(())
-                    })
-                    .detach();
-            })
-            .register_action(move |workspace, action: &RebuildDevExtension, window, cx| {
-                if let Some(target_id) = action.extension_id.as_deref() {
-                    let extension_id = ExtensionStore::global(cx)
-                        .read(cx)
-                        .dev_extensions()
-                        .find_map(|m| {
-                            if m.id.as_ref() == target_id {
-                                Some(m.id.clone())
-                            } else {
-                                None
-                            }
-                        });
-                    if let Some(extension_id) = extension_id {
-                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.rebuild_dev_extension(extension_id, cx);
-                        });
-                    } else {
-                        workspace.show_error(
-                            DevExtensionNotInstalledError {
-                                extension_id: Some(SharedString::from(target_id.to_owned())),
-                            },
-                            cx,
-                        );
-                    }
-                    return;
-                }
-
-                let dev_extensions = ExtensionStore::global(cx)
-                    .read(cx)
-                    .dev_extensions()
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                match dev_extensions.len() {
-                    0 => {
-                        workspace.show_error(DevExtensionNotInstalledError::default(), cx);
-                    }
-                    1 => {
-                        let extension_id = dev_extensions[0].id.clone();
-                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.rebuild_dev_extension(extension_id, cx);
-                        });
-                    }
-                    _ => {
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            let delegate = DevExtensionRebuildPickerDelegate::new(dev_extensions);
-                            Picker::uniform_list(delegate, window, cx)
-                        });
-                    }
-                }
             });
-
-        cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
-            if let project::Event::LanguageNotFound(buffer) = event {
-                extension_suggest::suggest(buffer.clone(), window, cx);
-            }
-        })
-        .detach();
     })
     .detach();
-}
-
-#[allow(dead_code)]
-fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
-    match provides {
-        ExtensionProvides::Themes => "Themes",
-        ExtensionProvides::IconThemes => "Icon Themes",
-        ExtensionProvides::Languages => "Languages",
-        ExtensionProvides::Grammars => "Grammars",
-        ExtensionProvides::LanguageServers => "Language Servers",
-        ExtensionProvides::ContextServers => "MCP Servers",
-        ExtensionProvides::AgentServers => "Agent Servers",
-        ExtensionProvides::SlashCommands => "Slash Commands",
-        ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
-        ExtensionProvides::Snippets => "Snippets",
-        ExtensionProvides::DebugAdapters => "Debug Adapters",
-    }
 }
 
 // zed-kask: kask skill status mirrors ExtensionStatus but for kask skills.
@@ -2258,15 +2059,7 @@ impl Render for KaskExtensionsPage {
                             .w_full()
                             .gap_1p5()
                             .justify_between()
-                            .child(Headline::new("Extensions").size(HeadlineSize::Large))
-                            .child(
-                                Button::new("install-dev-extension", "Install Dev Extension")
-                                    .style(ButtonStyle::Outlined)
-                                    .size(ButtonSize::Medium)
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(Box::new(InstallDevExtension), cx)
-                                    }),
-                            ),
+                            .child(Headline::new("Kask Extensions").size(HeadlineSize::Large)),
                     )
                     .child(
                         h_flex()

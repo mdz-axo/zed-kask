@@ -4743,7 +4743,7 @@ mod internal_tests {
                 load_warnings: Vec::new(),
                 disable_model_invocation: false,
                 visibility: SkillVisibility::Private,
-            dependencies: Vec::new(),
+                dependencies: Vec::new(),
                 embedded_body: None,
             });
         }

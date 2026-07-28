@@ -14,6 +14,7 @@
 //! and do not capture `AsyncApp`. They return results via the GPUI
 //! foreground task that spawned them.
 
+use chrono::Datelike;
 use std::path::{Path, PathBuf};
 
 use agent_skills::Skill;
@@ -393,17 +394,12 @@ pub async fn vote_skill(
 /// Format: `YYYY-MM-DD.N` where N increments if published multiple times
 /// in the same day.
 pub fn generate_version() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let days = secs / 86400;
-    // Days since epoch → date. Simple calculation, no calendar crate.
-    let year = 1970 + (days / 365) as u32;
-    let day_of_year = days % 365;
-    let month = (day_of_year / 30 + 1).min(12);
-    let day = (day_of_year % 30 + 1).min(28);
-    let sub = (secs % 86400) / 60 / 60; // hour as sub-version
-    format!("{:04}-{:02}-{:02}.{}", year, month, day, sub)
+    let now = chrono::Utc::now();
+    format!(
+        "{:04}-{:02}-{:02}.{}",
+        now.year(),
+        now.month(),
+        now.day(),
+        now.hour()
+    )
 }
