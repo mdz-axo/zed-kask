@@ -55,7 +55,6 @@ impl CorpusServer {
                         "path": cache_path.display().to_string(),
                         "size_bytes": content.len(),
                     });
-                    self.record_experience("corpus_cache", &label, "success", result.clone());
                     Ok(result)
                 }
                 Err(e) => Err(McpToolError::internal(format!(
@@ -208,7 +207,6 @@ impl CorpusServer {
                 }
             }
 
-            self.record_experience("corpus_query", &query, "success", result.clone());
             Ok(result)
         })
         .await
@@ -293,7 +291,6 @@ impl CorpusServer {
                 "h_mems_purged": purged_h_mems,
                 "h_mem_errors": h_mem_errors,
             });
-            self.record_experience("corpus_purge_qa", &req.prefix, "success", result.clone());
             Ok(result)
         })
         .await

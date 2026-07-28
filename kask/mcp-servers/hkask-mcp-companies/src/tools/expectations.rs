@@ -111,12 +111,6 @@ impl CompaniesServer {
 
             let output = serde_json::json!(analysis);
 
-            self.record_experience(
-                "expectations_gap",
-                &format!("symbol={}", req.symbol),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         })
         .await

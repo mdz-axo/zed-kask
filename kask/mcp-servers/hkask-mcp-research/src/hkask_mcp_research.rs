@@ -50,8 +50,6 @@ hkask_mcp_server::mcp_server!(
     }
 );
 
-impl ResearchServer {
-
 // ── RSS helpers ──
 
 pub fn spawn_db<F, T>(

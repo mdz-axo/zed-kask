@@ -25,7 +25,6 @@ impl CorpusServer {
         }
 
         execute_tool(self, "corpus_convert", async {
-            let path_clone = path.clone();
             hkask_mcp_server::validate_path("path", &path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
 
@@ -481,7 +480,6 @@ impl CorpusServer {
         }): Parameters<OcrRequest>,
     ) -> String {
         execute_tool(self, "corpus_ocr", async {
-            let path_clone = path.clone();
             hkask_mcp_server::validate_path("path", &path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
 
@@ -534,7 +532,6 @@ impl CorpusServer {
         Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
     ) -> String {
         execute_tool(self, "corpus_is_complex", async {
-            let path_clone = path.clone();
             hkask_mcp_server::validate_path("path", &path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
             let (format, _, _) = convert::detect_format(&path);

@@ -168,14 +168,14 @@ impl CompaniesServer {
             validate_symbol(&symbol)?;
             let limit_str = (limit.unwrap_or(10) as usize).min(40).to_string();
 
-            let result = self.fetch(
-     "key_metrics",
-     &symbol,
-     &[("limit", &limit_str)],
- )
-            .await;
-
-            let metrics = match result {
+            let metrics = match self
+                .fetch(
+                    "key_metrics",
+                    &symbol,
+                    &[("limit", &limit_str)],
+                )
+                .await
+            {
                 Ok(v) => v,
                 Err(e) => {
                     return Err(e);

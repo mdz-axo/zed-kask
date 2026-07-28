@@ -78,7 +78,7 @@ async fn live_together_adapter_e2e() {
     }
 
     let driver = SqliteDriver::in_memory_driver();
-    let store = Arc::new(AdapterStore::from_driver(driver));
+    let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
     let owner = WebID::from_persona(b"live-test-user");
     let provenance = TrainingProvenance {

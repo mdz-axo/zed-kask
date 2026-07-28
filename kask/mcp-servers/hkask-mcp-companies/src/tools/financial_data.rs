@@ -16,9 +16,7 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "company_profile", async {
             validate_symbol(&symbol)?;
-            let result = self.fetch("company_profile", &symbol, &[]).await;
-            result
-        })
+self.fetch("company_profile", &symbol, &[]).await        })
         .await
     }
 
@@ -29,9 +27,7 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "stock_quote", async {
             validate_symbol(&symbol)?;
-            let result = self.fetch("stock_quote", &symbol, &[]).await;
-            result
-        })
+self.fetch("stock_quote", &symbol, &[]).await        })
         .await
     }
 
@@ -43,11 +39,9 @@ impl CompaniesServer {
         execute_tool(self, "income_statement", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            let result = self
+self
                 .fetch("income_statement", &symbol, &[("limit", &limit_str)])
-                .await;
-            result
-        })
+                .await        })
         .await
     }
 
@@ -59,11 +53,9 @@ impl CompaniesServer {
         execute_tool(self, "balance_sheet", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            let result = self
+self
                 .fetch("balance_sheet", &symbol, &[("limit", &limit_str)])
-                .await;
-            result
-        })
+                .await        })
         .await
     }
 
@@ -75,11 +67,9 @@ impl CompaniesServer {
         execute_tool(self, "cash_flow_statement", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            let result = self
+self
                 .fetch("cash_flow_statement", &symbol, &[("limit", &limit_str)])
-                .await;
-            result
-        })
+                .await        })
         .await
     }
 
@@ -91,11 +81,9 @@ impl CompaniesServer {
         execute_tool(self, "key_metrics", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            let result = self
+self
                 .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
-                .await;
-            result
-        })
+                .await        })
         .await
     }
 
@@ -106,11 +94,9 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "historical_price", async {
             validate_symbol(&symbol)?;
-            let result = self
+self
                 .fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
-                .await;
-            result
-        })
+                .await        })
         .await
     }
 
@@ -133,14 +119,13 @@ impl CompaniesServer {
             match fmp_result {
                 Ok(v) => Ok(v),
                 Err(_fmp_err) => {
-                    let eodhd_result = providers::eodhd_search_get(
+                    providers::eodhd_search_get(
                         &self.client,
                         &query,
                         &limit_str,
                         &self.eodhd_api_key,
                     )
-                    .await;
-                    eodhd_result
+                    .await
                 }
             }
         })

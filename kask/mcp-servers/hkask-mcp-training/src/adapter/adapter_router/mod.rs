@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn list_compatible_providers() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         let router = AdapterRouter::new(store);
@@ -812,7 +812,7 @@ mod tests {
             std::env::set_var("RUNPOD_API_KEY", "test-key");
         }
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -835,7 +835,7 @@ mod tests {
             std::env::set_var("RUNPOD_API_KEY", "test-key");
         }
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -862,7 +862,7 @@ mod tests {
             std::env::set_var("RUNPOD_API_KEY", "test-key");
         }
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -883,7 +883,7 @@ mod tests {
     #[test]
     fn estimate_composition() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn estimate_composition_incompatible() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         // This adapter uses llama-3.3-70b, which is compatible with all backends.
         // Test that DeepInfra (not registered as adapter backend) returns ProviderUnavailable
@@ -928,7 +928,7 @@ mod tests {
         // This test uses Runpod backend which has a specific model family allowlist.
         // We create an adapter with a base model family NOT in the allowlist.
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let storage_dir = test_storage_dir();
         let storage_path = storage_dir.path().to_string_lossy().to_string();
@@ -982,7 +982,7 @@ mod tests {
             std::env::set_var("RUNPOD_API_KEY", "test-key");
         }
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn select_provider_returns_sorted_by_cost() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -1020,7 +1020,7 @@ mod tests {
         // When only one provider is compatible, single_candidate is set
         // but requires_confirmation is always true (P2)
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn select_provider_budget_filter() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -1064,7 +1064,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let driver = SqliteDriver::in_memory_driver();
-            let store = Arc::new(AdapterStore::from_driver(driver));
+            let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
             let adapter = make_test_adapter("solidity-audit");
             store.store(&adapter).expect("store");
@@ -1098,7 +1098,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let driver = SqliteDriver::in_memory_driver();
-            let store = Arc::new(AdapterStore::from_driver(driver));
+            let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
             let adapter = make_test_adapter("solidity-audit");
             store.store(&adapter).expect("store");
@@ -1126,7 +1126,7 @@ mod tests {
             std::env::set_var("RUNPOD_API_KEY", "test-key");
         }
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         // 1. Store adapter
         let adapter = make_test_adapter("solidity-audit");
@@ -1169,7 +1169,7 @@ mod tests {
     #[test]
     fn end_to_end_budget_enforcement() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let adapter = make_test_adapter("solidity-audit");
         store.store(&adapter).expect("store");
@@ -1193,7 +1193,7 @@ mod tests {
     #[test]
     fn end_to_end_version_management() {
         let driver = SqliteDriver::in_memory_driver();
-        let store = Arc::new(AdapterStore::from_driver(driver));
+        let store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store init"));
 
         let mut v1 = make_test_adapter("solidity-audit");
         v1.version = Some("1".into());

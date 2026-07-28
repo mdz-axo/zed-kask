@@ -458,12 +458,6 @@ impl CorpusServer {
                     "Tagging run degraded — failure rate exceeds threshold"
                 );
             }
-            self.record_experience(
-                "corpus_tag_chunks",
-                &format!("{} chunks", total),
-                outcome,
-                result.clone(),
-            );
             Ok(result)
         })
         .await

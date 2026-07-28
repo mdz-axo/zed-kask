@@ -196,8 +196,10 @@ const ADAPTER_SELECT: &str = "SELECT adapter_id, expertise_name, expertise_domai
 
 impl AdapterStore {
     /// Initialize schema — called automatically by `from_driver()`.
-    fn init_schema(driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>) {
-        let _ = driver
+    fn init_schema(
+        driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS trained_adapters (
                         adapter_id          TEXT PRIMARY KEY NOT NULL,
@@ -245,8 +247,8 @@ impl AdapterStore {
                         created_at      TEXT NOT NULL DEFAULT (datetime('now')),
                         FOREIGN KEY (adapter_id) REFERENCES trained_adapters(adapter_id)
                     );",
-            )
-            .ok();
+            )?;
+        Ok(())
     }
 
     /// Store a trained adapter.
@@ -667,7 +669,7 @@ mod tests {
     fn make_store() -> AdapterStore {
         let driver = SqliteDriver::in_memory_pool().expect("in-memory pool");
         let sqlite = SqliteDriver::new(driver);
-        AdapterStore::from_driver(Arc::new(sqlite))
+        AdapterStore::from_driver(Arc::new(sqlite)).expect("adapter store init")
     }
 
     #[test]

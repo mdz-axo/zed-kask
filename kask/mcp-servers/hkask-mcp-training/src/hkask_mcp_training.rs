@@ -381,7 +381,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         // Canonical adapter store: crate::adapter::AdapterStore stores
                         // TrainedLoRAAdapter in trained_adapters + active_endpoints + lora_blobs.
                         // Schema initialized by from_driver().
-                        let store = crate::adapter::AdapterStore::from_driver(hmem_driver);
+                        let store = crate::adapter::AdapterStore::from_driver(hmem_driver)
+                            .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
 
                         // Build the canonical adapter router (used by AdapterPort for
                         // deployment, status, teardown — the MCP server no longer wraps these).
@@ -397,7 +398,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             .map_err(|e| anyhow::anyhow!("in-memory pool: {e}"))?;
                         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
                             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
-                        let store = crate::adapter::AdapterStore::from_driver(driver);
+                        let store = crate::adapter::AdapterStore::from_driver(driver)
+                            .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
                         (None, Arc::new(store), None, None)
                     }
                 };

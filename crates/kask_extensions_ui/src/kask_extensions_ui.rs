@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code, unused_variables)]
 mod components;
 mod panel_button;
 mod publish;
@@ -1259,7 +1260,7 @@ impl KaskExtensionsPage {
                 })
             })?;
 
-            let extension_versions = extension_versions_task.await?;
+            let _extension_versions = extension_versions_task.await?;
 
             workspace.update_in(cx, |_workspace, _window, _cx| {
                 // zed-kask: version selector removed — kask skills only have
