@@ -29,7 +29,7 @@ use hkask_types::WebID;
 /// Build an in-memory KanbanServer with the hmems table initialized.
 fn make_server() -> KanbanServer {
     let driver = SqliteDriver::in_memory_driver();
-    let store = HMemStore::from_driver(driver);
+    let store = HMemStore::from_driver(driver).expect("hmem store init");
     store
         .driver()
         .execute_batch(

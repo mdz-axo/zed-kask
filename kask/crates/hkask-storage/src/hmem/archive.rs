@@ -333,7 +333,7 @@ mod tests {
         let pool = SqliteDriver::in_memory_pool().expect("pool");
         let driver: Arc<dyn crate::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new(pool));
-        let store = HMemStore::from_driver(driver);
+        let store = HMemStore::from_driver(driver).expect("hmem store init");
         let webid = WebID::from_persona(b"test-archive-user");
         let driver = store.driver();
         for i in 0..3 {
@@ -424,7 +424,7 @@ mod tests {
         let pool = SqliteDriver::in_memory_pool().expect("pool");
         let driver: Arc<dyn crate::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new(pool));
-        let target = HMemStore::from_driver(driver);
+        let target = HMemStore::from_driver(driver).expect("hmem store init");
         let receipt = archive.restore_into(&target, &webid).expect("restore");
         assert_eq!(receipt.triple_count, 3, "should import all triples");
 
@@ -458,7 +458,7 @@ mod tests {
         let pool = SqliteDriver::in_memory_pool().expect("pool");
         let driver: Arc<dyn crate::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new(pool));
-        let target = HMemStore::from_driver(driver);
+        let target = HMemStore::from_driver(driver).expect("hmem store init");
         archive
             .restore_into(&target, &webid)
             .expect("first restore");

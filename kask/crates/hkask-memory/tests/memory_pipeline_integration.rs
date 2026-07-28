@@ -36,9 +36,9 @@ fn setup() -> (Arc<EpisodicMemory>, Arc<SemanticMemory>) {
         .expect("init schema");
     let episodic = Arc::new(EpisodicMemory::new(HMemStore::from_driver(Arc::clone(
         &driver,
-    ))));
+    )).expect("hmem store init")));
     let semantic = Arc::new(SemanticMemory::new(
-        HMemStore::from_driver(Arc::clone(&driver)),
+        HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
         EmbeddingStore::from_driver(Arc::clone(&driver), 1024),
     ));
     (episodic, semantic)
@@ -152,7 +152,7 @@ fn consolidation_bridge_counts_candidates() {
 
 #[test]
 fn memory_life_default_is_180_days() {
-    let episodic = EpisodicMemory::new(HMemStore::from_driver(make_driver()));
+    let episodic = EpisodicMemory::new(HMemStore::from_driver(make_driver()).expect("hmem store init"));
 
     assert!((episodic.memory_life_days() - 180.0).abs() < 0.01);
 }
@@ -160,7 +160,7 @@ fn memory_life_default_is_180_days() {
 #[test]
 fn memory_life_configurable() {
     let episodic =
-        EpisodicMemory::new(HMemStore::from_driver(make_driver())).with_memory_life_days(365.0);
+        EpisodicMemory::new(HMemStore::from_driver(make_driver()).expect("hmem store init")).with_memory_life_days(365.0);
 
     assert!((episodic.memory_life_days() - 365.0).abs() < 0.01);
 }
@@ -189,7 +189,7 @@ fn memory_decay_formula() {
 
 #[test]
 fn episodic_storage_budget() {
-    let episodic = EpisodicMemory::new(HMemStore::from_driver(make_driver()));
+    let episodic = EpisodicMemory::new(HMemStore::from_driver(make_driver()).expect("hmem store init"));
     assert_eq!(episodic.storage_budget(), 10_000);
 }
 
@@ -199,7 +199,7 @@ fn episodic_storage_budget() {
 fn semantic_memory_life_default_is_180_days() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
-        HMemStore::from_driver(Arc::clone(&driver)),
+        HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
         EmbeddingStore::from_driver(driver, 1024),
     );
 
@@ -210,7 +210,7 @@ fn semantic_memory_life_default_is_180_days() {
 fn semantic_memory_life_configurable() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
-        HMemStore::from_driver(Arc::clone(&driver)),
+        HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
         EmbeddingStore::from_driver(driver, 1024),
     )
     .with_memory_life_days(365.0);
@@ -222,7 +222,7 @@ fn semantic_memory_life_configurable() {
 fn semantic_decay_applied_on_recall() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
-        HMemStore::from_driver(Arc::clone(&driver)),
+        HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
         EmbeddingStore::from_driver(driver, 1024),
     );
     let perspective = test_perspective();
@@ -256,7 +256,7 @@ fn semantic_decay_applied_on_recall() {
 fn semantic_recall_touches_recalled_at() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
-        HMemStore::from_driver(Arc::clone(&driver)),
+        HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
         EmbeddingStore::from_driver(driver, 1024),
     );
     let perspective = test_perspective();
@@ -392,7 +392,7 @@ fn memory_life_negative_decays_to_zero() {
 fn semantic_zero_memory_life_preserves_fresh_triples() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
-        HMemStore::from_driver(Arc::clone(&driver)),
+        HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
         EmbeddingStore::from_driver(driver, 1024),
     )
     .with_memory_life_days(0.0);
@@ -416,7 +416,7 @@ fn semantic_zero_memory_life_preserves_fresh_triples() {
 #[test]
 fn episodic_zero_memory_life_preserves_fresh_triples() {
     let episodic =
-        EpisodicMemory::new(HMemStore::from_driver(make_driver())).with_memory_life_days(0.0);
+        EpisodicMemory::new(HMemStore::from_driver(make_driver()).expect("hmem store init")).with_memory_life_days(0.0);
     let perspective = test_perspective();
 
     let h_mem = HMem::new("event", "happened", serde_json::json!("yes"), perspective)

@@ -159,7 +159,7 @@ impl RealMemoryPort {
                  (ensure this matches the configured embedding model)"
             );
         }
-        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver));
+        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 

@@ -69,7 +69,6 @@
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, validate_identifier};
-use hkask_types::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 
 pub mod aggregation;
@@ -254,32 +253,6 @@ impl CompaniesServer {
         .await
         .map_err(|error| McpToolError::internal(format!("forecast task failed: {error}")))?
         .map_err(map_portfolio_error)
-    }
-
-    /// Log a tool call's outcome as a debug trace.
-    ///
-    /// This is a debug-only log (target `hkask.mcp.companies.memory`) — it does
-    /// NOT persist to episodic/semantic memory. The "no daemon — in-process
-    /// only" comment reflects that the former daemon-backed persistence path
-    /// was removed and never replaced. If a future consumer needs experience
-    /// persistence, wire this to `EpisodicMemory`/`SemanticMemory` (the stores
-    /// are already constructed in `run()`).
-    fn record_experience(
-        &self,
-        tool: &str,
-        input_summary: &str,
-        outcome: &str,
-        detail: serde_json::Value,
-    ) {
-        tracing::debug!(
-            target: "hkask.mcp.companies.memory",
-            tool = %tool,
-            input = %input_summary,
-            outcome = %outcome,
-            detail = ?detail,
-            timestamp = %now_rfc3339(),
-            "Tool outcome recorded (no daemon — in-process only)",
-        );
     }
 }
 

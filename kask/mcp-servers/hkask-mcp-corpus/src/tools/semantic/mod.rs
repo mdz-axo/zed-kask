@@ -189,7 +189,6 @@ impl CorpusServer {
                         },
                         "tokens_used": response.usage.total_tokens,
                     });
-                    self.record_experience("corpus_generate_qa", &chunk_id, "success", result.clone());
                     Ok(result)
                 }
                 Err(e) => Err(McpToolError::unavailable(format!("QA generation failed: {}", e))),
@@ -461,12 +460,6 @@ impl CorpusServer {
                     "QA batch run degraded — failure rate exceeds threshold"
                 );
             }
-            self.record_experience(
-                "corpus_generate_qa_batch",
-                &format!("batch: {} prompts", total),
-                outcome,
-                result.clone(),
-            );
             Ok(result)
         }).await
     }
@@ -872,12 +865,6 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             "failed": failed,
             "h_mems_stored": h_mems_stored,
         });
-        self.record_experience(
-            "corpus_extract_triples",
-            &format!("batch: {} chunks", total_chunks),
-            "success",
-            result.clone(),
-        );
         Ok(result)
     }
 
@@ -1104,12 +1091,6 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 "Embedding run degraded — failure rate exceeds threshold"
             );
         }
-        self.record_experience(
-            "corpus_embed",
-            &format!("batch: {} chunks", total),
-            outcome,
-            result.clone(),
-        );
         Ok(result)
     }
 }

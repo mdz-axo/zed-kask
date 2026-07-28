@@ -268,12 +268,6 @@ impl CompaniesServer {
                 "framework": "Comparable company analysis. Valuation multiples (P/E, P/B, P/S) from peer companies alongside DCF intrinsic value. Multiples provide market-relative context; DCF provides fundamentals-anchored valuation.",
             });
 
-            self.record_experience(
-                "comparable_analysis",
-                &format!("symbol={}", req.symbol),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         })
         .await
@@ -388,7 +382,6 @@ impl CompaniesServer {
                 "framework": "Tornado chart sensitivity analysis. Varies each DCF driver by +/- range_pct while holding others constant. Drivers ranked by impact on intrinsic value per share. Identifies which assumptions most affect the valuation.",
             });
 
-            self.record_experience("sensitivity_analysis", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }
@@ -503,7 +496,6 @@ impl CompaniesServer {
                 "framework": "Monte Carlo DCF. Runs N simulations with each assumption sampled uniformly within +/- configured ranges. Produces intrinsic value distribution (percentiles), probability of undervaluation, and histogram. Quantifies valuation uncertainty from assumption ranges."
             });
 
-            self.record_experience("monte_carlo_dcf", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }
@@ -700,7 +692,6 @@ impl CompaniesServer {
                 "framework": "Tetlock GJP Superforecasting pipeline: Fermi decomposition → outside/inside view calibration → Bayesian-ready probability estimates → scenario-weighted intrinsic value. Probabilities are probability-weighted scenario intrinsic values compared to market price. Brier score tracking available when outcomes are recorded via result_feedback.",
             });
 
-            self.record_experience("calibrate_forecast", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }
@@ -912,27 +903,6 @@ impl CompaniesServer {
                 .await?;
             }
 
-            self.record_experience(
-                "forecast_record",
-                &format!("symbol={}", req.symbol),
-                "outcome_recorded",
-                serde_json::json!({
-                    "symbol": req.symbol,
-                    "forecast_date": req.forecast_date,
-                    "horizon": req.horizon,
-                    "forecast_multiple": req.forecast_multiple,
-                    "forecast_price_change": req.forecast_price_change,
-                    "outcome_date": req.outcome_date,
-                    "actual_multiple": req.actual_multiple,
-                    "actual_price_change": req.actual_price_change,
-                    "multiple_brier": multiple_brier,
-                    "return_brier": return_brier,
-                    "combined_brier": combined,
-                    "decomposition": decomposition,
-                    "forecast_id": req.forecast_id,
-                    "timestamp": now_rfc3339(),
-                }),
-            );
 
             let mut output = serde_json::json!({
                 "status": "recorded",
@@ -967,7 +937,6 @@ impl CompaniesServer {
                 output["forecast_id"] = serde_json::Value::String(fid.clone());
             }
 
-            self.record_experience("forecast_record", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }
@@ -998,19 +967,6 @@ impl CompaniesServer {
             let has_feedback = score.is_some() || !comments.is_empty();
 
             // Record feedback as an experience linked to the original tool.
-            self.record_experience(
-                &tool,
-                &query,
-                "user_rated",
-                serde_json::json!({
-                    "tool": tool,
-                    "query": query,
-                    "score": score,
-                    "comments": comments,
-                    "has_feedback": has_feedback,
-                    "timestamp": now_rfc3339(),
-                }),
-            );
 
             // Kanban-style learning: feedback updates in-process state.
             // Extracts symbol from query to track per-symbol provider quality.

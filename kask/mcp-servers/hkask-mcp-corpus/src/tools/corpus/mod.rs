@@ -114,12 +114,6 @@ impl CorpusServer {
                 McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
             })?;
 
-            self.record_experience(
-                "corpus_dedup_chunks",
-                &format!("{} → {}", chunks.len(), keep_indices.len()),
-                "success",
-                result.clone(),
-            );
             Ok(result)
         })
         .await
@@ -504,12 +498,6 @@ impl CorpusServer {
                 "reduction_pct": (1.0 - consolidated.len() as f64 / chunks.len().max(1) as f64) * 100.0,
             });
 
-            self.record_experience(
-                "corpus_consolidate_chunks",
-                &format!("{} → {}", chunks.len(), consolidated.len()),
-                "success",
-                result.clone(),
-            );
             Ok(result)
         })
         .await
@@ -876,12 +864,6 @@ impl CorpusServer {
                 "prompts_written": ti,
                 "output": req.output,
             });
-            self.record_experience(
-                "corpus_build_prompts",
-                &format!("{} prompts from {} chunks", ti, total),
-                "success",
-                result.clone(),
-            );
             Ok(result)
         })
         .await
@@ -1013,12 +995,6 @@ impl CorpusServer {
                 "stored_h_mems": stored,
                 "output": req.output,
             });
-            self.record_experience(
-                "corpus_ingest_qa",
-                &format!("{} deduped from {}", deduped_count, qas.len()),
-                "success",
-                result.clone(),
-            );
             Ok(result)
         })
         .await

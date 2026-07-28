@@ -51,7 +51,6 @@ use hkask_memory::SemanticMemory;
 use hkask_services_core::settings::HkaskSettings;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
-use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 #[allow(unused_imports)]
 use schemars::JsonSchema;
@@ -222,30 +221,6 @@ impl CorpusServer {
             });
         }
         passages.len()
-    }
-
-    /// Log a tool call's outcome as a debug trace.
-    ///
-    /// Debug-only log (target `hkask.mcp.docproc.memory`) — does NOT persist
-    /// to episodic/semantic memory. The former daemon-backed persistence path
-    /// was removed and never replaced. If a future consumer needs experience
-    /// persistence, wire this to `EpisodicMemory`/`SemanticMemory`.
-    pub fn record_experience(
-        &self,
-        tool: &str,
-        input_summary: &str,
-        outcome: &str,
-        detail: serde_json::Value,
-    ) {
-        tracing::debug!(
-            target: "hkask.mcp.docproc.memory",
-            tool = %tool,
-            input = %input_summary,
-            outcome = %outcome,
-            detail = ?detail,
-            timestamp = %now_rfc3339(),
-            "Tool outcome recorded (no daemon — in-process only)",
-        );
     }
 }
 

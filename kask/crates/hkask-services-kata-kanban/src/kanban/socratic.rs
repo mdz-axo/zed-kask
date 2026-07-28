@@ -379,7 +379,7 @@ mod tests {
 
     fn make_svc() -> (KanbanService, WebID, BoardId) {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver);
+        let store = HMemStore::from_driver(driver).expect("hmem store init");
         let service = KanbanService::new(store);
         let owner = hkask_types::WebID::new();
         let cols = vec![

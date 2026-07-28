@@ -20,7 +20,7 @@ mod tests {
         let pool = SqliteDriver::in_memory_pool().expect("in-memory pool");
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new(pool));
-        HMemStore::from_driver(driver)
+        HMemStore::from_driver(driver).expect("hmem store init")
     }
 
     fn default_columns() -> Vec<ColumnDef> {

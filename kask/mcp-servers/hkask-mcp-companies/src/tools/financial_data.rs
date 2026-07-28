@@ -131,9 +131,7 @@ impl CompaniesServer {
                     .await;
 
             match fmp_result {
-                Ok(v) => {
-                    Ok(v)
-                }
+                Ok(v) => Ok(v),
                 Err(_fmp_err) => {
                     let eodhd_result = providers::eodhd_search_get(
                         &self.client,
@@ -142,12 +140,6 @@ impl CompaniesServer {
                         &self.eodhd_api_key,
                     )
                     .await;
-                    match &eodhd_result {
-                        Ok(v) => {
-                        }
-                        Err(e) => {
-                        }
-                    }
                     eodhd_result
                 }
             }

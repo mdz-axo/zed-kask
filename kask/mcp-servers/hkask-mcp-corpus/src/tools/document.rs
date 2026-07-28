@@ -88,7 +88,6 @@ impl CorpusServer {
                         "empty_pages": outcome.report.empty_pages,
                         "error_count": outcome.errors.len(),
                     });
-                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     return Ok(result);
                 }
 
@@ -144,12 +143,6 @@ impl CorpusServer {
                                 "empty_pages": outcome.report.empty_pages,
                                 "error_count": outcome.errors.len(),
                             });
-                            self.record_experience(
-                                "corpus_convert",
-                                &path_clone,
-                                "success",
-                                result.clone(),
-                            );
                             return Ok(result);
                         }
                         Err(e) => {
@@ -173,12 +166,6 @@ impl CorpusServer {
                                 "text": text,
                                 "word_count": text.split_whitespace().count(),
                             });
-                            self.record_experience(
-                                "corpus_convert",
-                                &path_clone,
-                                "success",
-                                result.clone(),
-                            );
                             return Ok(result);
                         }
                         Err(e) => {
@@ -213,7 +200,6 @@ impl CorpusServer {
                         "format": format, "path": path,
                         "method": "text_extraction", "text": text, "word_count": word_count,
                     });
-                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     return Ok(result);
                 }
 
@@ -285,12 +271,6 @@ impl CorpusServer {
                                 "empty_pages": outcome.report.empty_pages,
                                 "error_count": outcome.errors.len(),
                             });
-                            self.record_experience(
-                                "corpus_convert",
-                                &path_clone,
-                                "success",
-                                result.clone(),
-                            );
                             return Ok(result);
                         }
                         Ok(_) => {
@@ -349,7 +329,6 @@ impl CorpusServer {
                             "error_count": outcome.errors.len(),
                             "cross_validations": outcome.cross_validations.len(),
                         });
-                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     return Ok(result);
                         }
                         Err(e) => {
@@ -384,7 +363,6 @@ impl CorpusServer {
                             doc_structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>()
                         );
                     }
-                    self.record_experience("corpus_convert", &path_clone, "success", result.clone());
                     Ok(result)
                 }
                 ExtractOutcome::NeedsOcr {
@@ -422,12 +400,6 @@ impl CorpusServer {
                                         "word_count": final_word_count,
                                         "extraction_word_count": word_count,
                                     });
-                                    self.record_experience(
-                                        "corpus_convert",
-                                        &path_clone,
-                                        "success",
-                                        result.clone(),
-                                    );
                                     Ok(result)
                                 }
                                 Err(e) => {
@@ -538,7 +510,6 @@ impl CorpusServer {
                         "text": text,
                         "word_count": text.split_whitespace().count(),
                     });
-                    self.record_experience("corpus_ocr", &path_clone, "success", result.clone());
                     Ok(result)
                 }
                 Err(e) => Err(McpToolError::unavailable(e.to_string())),
@@ -614,7 +585,6 @@ impl CorpusServer {
                 "ocr_pages": ocr_page_count,
                 "needs_ocr": needs_ocr,
             });
-            self.record_experience("corpus_is_complex", &path_clone, "success", result.clone());
             Ok(result)
         })
         .await
@@ -842,7 +812,6 @@ impl CorpusServer {
 
                 let mut result = result;
                 result["indexed"] = json!(indexed);
-                self.record_experience("corpus_chunk", &source_label, "success", result.clone());
                 Ok(result)
             } else {
                 // Single-tier
@@ -891,7 +860,6 @@ impl CorpusServer {
                     "stripped_gutenberg": strip_gutenberg.unwrap_or(false),
                     "indexed": indexed,
                 });
-                self.record_experience("corpus_chunk", &source_label, "success", result.clone());
                 Ok(result)
             }
         })

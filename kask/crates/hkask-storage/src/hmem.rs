@@ -680,7 +680,7 @@ mod tests {
     use crate::database::value::DbValue;
     fn make_store() -> HMemStore {
         let driver = SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver);
+        let store = HMemStore::from_driver(driver).expect("hmem store init");
         store
             .driver()
             .execute_batch(

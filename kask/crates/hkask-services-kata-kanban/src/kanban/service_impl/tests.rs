@@ -7,7 +7,7 @@ use hkask_types::id::BoardId;
 
 fn make_store() -> HMemStore {
     let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-    let store = HMemStore::from_driver(driver);
+    let store = HMemStore::from_driver(driver).expect("hmem store init");
     store
         .driver()
         .execute_batch(
