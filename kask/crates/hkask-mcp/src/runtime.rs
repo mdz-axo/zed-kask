@@ -540,13 +540,16 @@ impl hkask_capability::ToolPort for McpRuntime {
                 // Regulation: emit invoked + completed spans (best-effort, non-blocking).
                 let status = if result.is_ok() { "success" } else { "failure" };
                 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
-                let _ = sink.persist(&RegulationRecord::new(
+                let record = RegulationRecord::new(
                     agent,
                     Span::from_kind(SpanKind::GasSettled),
                     CyclePhase::Act,
                     serde_json::json!({ "server": server, "tool": tool, "cost": actual, "status": status }),
                     0,
-                ));
+                );
+                if let Err(e) = sink.persist(&record) {
+                    tracing::warn!(target: "hkask.mcp", error = %e, "Failed to persist reg.mcp gas-settled span");
+                }
 
                 result
             } else {

@@ -12,6 +12,30 @@ fn ocr_model() -> String {
 /// OCR system prompt — instructs the vision model to extract text faithfully.
 const OCR_SYSTEM_PROMPT: &str = "Extract all text from this document image. Output the text exactly as it appears, preserving the document structure and layout as closely as possible. If the document contains tables, preserve them in a readable format. Do not add commentary or description — only the extracted text.";
 
+/// Resolve the RunPod OCR endpoint and API key from the environment.
+///
+/// Both `RUNPOD_API_KEY` and `RUNPOD_OCR_ENDPOINT` must be set — there is no
+/// baked-in default endpoint. A previous version hardcoded an account-specific
+/// RunPod endpoint ID, which leaked operator infrastructure into the binary
+/// and broke for any other deployment. Operators must configure their own
+/// RunPod serverless endpoint.
+fn runpod_credentials() -> Result<(String, String), ServiceError> {
+    let runpod_key = std::env::var("RUNPOD_API_KEY").map_err(|_| ServiceError::Domain {
+        domain: DomainKind::Wallet,
+        kind: ErrorKind::BadRequest,
+        source: None,
+        message: "RUNPOD_API_KEY not set — OCR fallback requires a RunPod API key".into(),
+    })?;
+    let ocr_endpoint = std::env::var("RUNPOD_OCR_ENDPOINT")
+        .map_err(|_| ServiceError::Domain {
+            domain: DomainKind::Wallet,
+            kind: ErrorKind::BadRequest,
+            source: None,
+            message: "RUNPOD_OCR_ENDPOINT not set — OCR fallback requires a RunPod serverless endpoint URL (e.g. https://api.runpod.ai/v2/<endpoint-id>/runsync)".into(),
+        })?;
+    Ok((ocr_endpoint, runpod_key))
+}
+
 /// Attempt OCR on PDF bytes using pdftoppm decimation + per-page vision OCR.
 ///
 /// 1. Writes PDF bytes to a temp file.
@@ -37,9 +61,7 @@ pub async fn ocr_pdf_bytes(bytes: &[u8], url: &str) -> Result<String, ServiceErr
 
     // Fallback: send raw PDF bytes as base64 to kask-ocr runsync
     let b64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-    let runpod_key = std::env::var("RUNPOD_API_KEY").unwrap_or_default();
-    let ocr_endpoint = std::env::var("RUNPOD_OCR_ENDPOINT")
-        .unwrap_or_else(|_| "https://api.runpod.ai/v2/hsldzov6932wf5/runsync".into());
+    let (ocr_endpoint, runpod_key) = runpod_credentials()?;
     let client = reqwest::Client::new();
     let prompt = format!("data:application/pdf;base64,{b64_data}\n\n{OCR_SYSTEM_PROMPT}");
     let body = serde_json::json!({"input": {"prompt": prompt}});
@@ -136,9 +158,7 @@ async fn ocr_via_decimation(bytes: &[u8], _model: &str) -> anyhow::Result<String
     }
 
     // OCR each page via kask-ocr runsync endpoint
-    let runpod_key = std::env::var("RUNPOD_API_KEY").unwrap_or_default();
-    let ocr_endpoint = std::env::var("RUNPOD_OCR_ENDPOINT")
-        .unwrap_or_else(|_| "https://api.runpod.ai/v2/hsldzov6932wf5/runsync".into());
+    let (ocr_endpoint, runpod_key) = runpod_credentials()?;
     let client = reqwest::Client::new();
 
     let mut texts: Vec<String> = Vec::with_capacity(page_images.len());

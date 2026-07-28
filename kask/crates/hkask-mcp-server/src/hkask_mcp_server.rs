@@ -6,29 +6,14 @@
 //! - URL validation, identifier validation, HTTP helpers
 //! - Macros: validate_field!, impl_tool_context!, mcp_server!
 
-pub const BUILTIN_SERVERS: &[(&str, &str)] = &[
-    ("condenser", "hkask-mcp-condenser"),
-    ("research", "hkask-mcp-research"),
-    ("companies", "hkask-mcp-companies"),
-    ("curator", "hkask-mcp-curator"),
-    ("media", "hkask-mcp-media"),
-    ("corpus", "hkask-mcp-corpus"),
-    ("training", "hkask-mcp-training"),
-    ("kanban", "hkask-mcp-kata-kanban"),
-    ("codegraph", "hkask-mcp-codegraph"),
-    ("scenarios", "hkask-mcp-scenarios"),
-];
-
 pub(crate) mod security;
 pub mod server;
 
-// ── Canonical MCP server registry ─────────────────────────────────────────
-// Single source of truth for all (server_id, binary_name) mappings.
-// Every consumer that starts MCP servers MUST use this list.
-//
-// Subsets are permitted only for intentionally-sandboxed environments
-// (e.g., API server may exclude filesystem for security), but must
-// reference this constant as the upper bound.
+// NOTE: The canonical MCP server registry lives in
+// `kask_bridge::mcp_servers::BUILT_IN_MCP_SERVERS` (id + binary + description).
+// Do NOT re-introduce a parallel list here — it drifts (the previous
+// `BUILTIN_SERVERS` used id `"kanban"` while the canonical list uses
+// `"kata-kanban"`, and the two contradicted each other silently).
 
 pub use server::{
     CapabilityTier, CredentialRequirement, ExperienceCallback, McpError, ServerContext,

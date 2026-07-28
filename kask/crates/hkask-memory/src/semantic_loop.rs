@@ -194,7 +194,9 @@ impl SemanticLoop {
                 observation,
                 0,
             );
-            let _ = sink.persist(&event);
+            if let Err(e) = sink.persist(&event) {
+                tracing::warn!(target: "hkask.memory", error = %e, "Failed to persist reg.memory span");
+            }
         }
     }
 }

@@ -16,7 +16,8 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "company_profile", async {
             validate_symbol(&symbol)?;
-self.fetch("company_profile", &symbol, &[]).await        })
+            self.fetch("company_profile", &symbol, &[]).await
+        })
         .await
     }
 
@@ -27,7 +28,8 @@ self.fetch("company_profile", &symbol, &[]).await        })
     ) -> String {
         execute_tool(self, "stock_quote", async {
             validate_symbol(&symbol)?;
-self.fetch("stock_quote", &symbol, &[]).await        })
+            self.fetch("stock_quote", &symbol, &[]).await
+        })
         .await
     }
 
@@ -39,9 +41,9 @@ self.fetch("stock_quote", &symbol, &[]).await        })
         execute_tool(self, "income_statement", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-self
-                .fetch("income_statement", &symbol, &[("limit", &limit_str)])
-                .await        })
+            self.fetch("income_statement", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -53,9 +55,9 @@ self
         execute_tool(self, "balance_sheet", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-self
-                .fetch("balance_sheet", &symbol, &[("limit", &limit_str)])
-                .await        })
+            self.fetch("balance_sheet", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -67,9 +69,9 @@ self
         execute_tool(self, "cash_flow_statement", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-self
-                .fetch("cash_flow_statement", &symbol, &[("limit", &limit_str)])
-                .await        })
+            self.fetch("cash_flow_statement", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -81,9 +83,9 @@ self
         execute_tool(self, "key_metrics", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-self
-                .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
-                .await        })
+            self.fetch("key_metrics", &symbol, &[("limit", &limit_str)])
+                .await
+        })
         .await
     }
 
@@ -94,9 +96,9 @@ self
     ) -> String {
         execute_tool(self, "historical_price", async {
             validate_symbol(&symbol)?;
-self
-                .fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
-                .await        })
+            self.fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
+                .await
+        })
         .await
     }
 

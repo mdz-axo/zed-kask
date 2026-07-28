@@ -68,7 +68,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
         id: "scenarios",
         binary: "hkask-mcp-scenarios",
-        description: "Scenarios — scenario planning and Wardley mapping",
+        description: "Scenarios — scenario planning and forecasting",
     },
     BuiltinMcpServer {
         id: "training",
@@ -112,10 +112,7 @@ pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
     ("kata-kanban", "Kata Kanban — improvement kata board"),
     ("media", "Media — image generation and media workflows"),
     ("research", "Research — web research and paper search"),
-    (
-        "scenarios",
-        "Scenarios — scenario planning and Wardley mapping",
-    ),
+    ("scenarios", "Scenarios — scenario planning and forecasting"),
     (
         "training",
         "Training — LoRA training configuration and audit",
