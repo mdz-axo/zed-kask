@@ -10,7 +10,8 @@ hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
 hkask-types = { path = "../../crates/hkask-types" }
 hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-memory = { path = "../../crates/hkask-memory" }
-hkask-services-context = { path = "../../crates/hkask-services-context" }
+hkask-services-core = { path = "../../crates/hkask-services-core" }
+hkask-regulation = { path = "../../crates/hkask-regulation" }
 hkask-capability = { path = "../../crates/hkask-capability" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

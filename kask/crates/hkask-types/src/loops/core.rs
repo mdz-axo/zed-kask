@@ -7,7 +7,7 @@
 use super::actions::{ActionType, RegulatoryAction};
 use super::signals::{Deviation, DeviationDirection, SignalMetric};
 
-/// Loop identifiers for the 6-loop model.
+/// Loop identifiers for the 5-loop model.
 ///
 /// VSM correspondence:
 /// - Loop 1:  Inference    (S1 Implementation)
@@ -15,11 +15,10 @@ use super::signals::{Deviation, DeviationDirection, SignalMetric};
 /// - Loop 2b: Semantic     (S2 Coordination — shared memory)
 /// - Loop 5:  Curation     (S4 Intelligence — meta-observer)
 /// - Loop 6:  Cybernetics  (S3 Control — homeostatic regulation)
-/// - Loop 6b: Snapshot     (S3 Control — scheduled CAS snapshots)
-/// - Loop 7: StorageGuard  (S3 Control — autonomous disk space management)
 ///
 /// No Loop 3: Control absorbed into Cybernetics (intentional).
 /// No Loop 4: VSM S4 = Curation (Loop 5).
+/// StorageGuard and McpServerGuard loops were folded into Cybernetics.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -30,10 +29,6 @@ pub enum LoopId {
     Semantic,
     Curation,
     Cybernetics,
-    Snapshot,
-    StorageGuard,
-    /// Loop 8: McpServerGuard (S3 Control — proactive MCP server health monitoring)
-    McpServerGuard,
 }
 
 impl std::fmt::Display for LoopId {
@@ -44,9 +39,6 @@ impl std::fmt::Display for LoopId {
             LoopId::Semantic => write!(f, "semantic"),
             LoopId::Curation => write!(f, "curation"),
             LoopId::Cybernetics => write!(f, "cybernetics"),
-            LoopId::Snapshot => write!(f, "snapshot"),
-            LoopId::StorageGuard => write!(f, "storage_guard"),
-            LoopId::McpServerGuard => write!(f, "mcp_server_guard"),
         }
     }
 }

@@ -40,17 +40,41 @@
   },
   "lsp": {
     "rust-analyzer": {
+      "enabled": false,
       "initialization_options": {
         "procMacro": {
           "processes": 4,
         },
       },
     },
+    // zed-kask: enable language servers for the file types the kask
+    // codebase relies on (templates, manifests, configs, scripts).
+    "bash-language-server": {
+      "enabled": true,
+    },
+    "yaml-language-server": {
+      "enabled": true,
+    },
+    "taplo": {
+      "enabled": true,
+    },
+  },
+  // zed-kask: auto-install extensions that provide language support
+  // (tree-sitter grammars + LSPs) for file types used throughout the
+  // kask registry and configs. bash and yaml LSPs are built-in.
+  "auto_install_extensions": {
+    "html": true,
+    "toml": true,
+    "csv": true,
+    "jinja": true,
   },
   "file_types": {
     "Dockerfile": ["Dockerfile*[!dockerignore]"],
     "JSONC": ["**/assets/**/*.json", "renovate.json"],
     "Git Ignore": ["dockerignore"],
+    // zed-kask: map kask template extensions to Jinja so the jinja
+    // extension's grammar and tooling apply by default.
+    "Jinja": ["**/*.j2", "**/*.jinja", "**/*.jinja2"],
   },
   "hard_tabs": false,
   "formatter": "auto",

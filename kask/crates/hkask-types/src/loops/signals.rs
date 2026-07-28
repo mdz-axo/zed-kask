@@ -58,19 +58,11 @@ pub enum SignalMetric {
     /// Metacognition critical alert count (Curation Loop 5)
     MetacognitionCriticalAlerts,
 
-    /// Seconds since last CAS snapshot vs. policy interval (Cybernetics Loop 6)
-    SnapshotInterval,
     /// Wallet rJoule balance ratio (0.0 = empty, 1.0 = full relative to 30-day avg)
     WalletBalanceRatio,
 
     /// Wallet API key health (1.0 = exhausted/expired, 0.0 = healthy)
     WalletKeyHealth,
-    /// Disk usage percentage on /data volume (StorageGuard Loop 7).
-    /// 0.0 = empty, 100.0 = full. Set-points: warn 80.0, critical 95.0.
-    DiskUsagePct,
-    /// MCP server health ratio (McpServerGuard Loop 8).
-    /// 1.0 = all servers alive, 0.0 = all dead. Set-point: 1.0.
-    McpServerHealth,
     /// Public seam coverage ratio per crate (seam watcher, 0.0–100.0)
     SeamCoverage,
     /// A regulatory action has been ineffective over multiple cycles.
@@ -127,12 +119,9 @@ impl SignalMetric {
             SignalMetric::MetacognitionVarietyDeficit => "metacognition_variety_deficit",
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
 
-            SignalMetric::SnapshotInterval => "snapshot_interval",
             SignalMetric::WalletBalanceRatio => "wallet_balance_ratio",
 
             SignalMetric::WalletKeyHealth => "wallet_key_health",
-            SignalMetric::DiskUsagePct => "disk_usage_pct",
-            SignalMetric::McpServerHealth => "mcp_server_health",
             SignalMetric::SeamCoverage => "seam_coverage",
             SignalMetric::ActionIneffective => "action_ineffective",
             SignalMetric::RegulatoryPlateau => "regulatory_plateau",

@@ -2121,6 +2121,9 @@
     ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"],
+    // zed-kask: map kask template extensions to Jinja so the jinja
+    // extension's grammar and tooling apply by default.
+    "Jinja": ["**/*.j2", "**/*.jinja", "**/*.jinja2"],
   },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
@@ -2144,6 +2147,12 @@
   // and change the value to `false`.
   "auto_install_extensions": {
     "html": true,
+    // zed-kask: auto-install extensions that provide language support
+    // (tree-sitter grammars + LSPs) for file types used throughout the
+    // kask registry and configs. bash and yaml LSPs are built-in.
+    "toml": true,
+    "csv": true,
+    "jinja": true,
   },
   // The capabilities granted to extensions.
   //
@@ -2544,6 +2553,26 @@
     //         }
     //     }
     // }
+    //
+    // zed-kask: rust-analyzer is disabled by default. The kask codebase
+    // relies on the agent's own diagnostics pipeline rather than the
+    // in-editor LSP, and rust-analyzer's indexing of large workspaces can
+    // dominate CPU on first load. Users can re-enable it in their personal
+    // settings.
+    "rust-analyzer": {
+      "enabled": false,
+    },
+    // zed-kask: enable language servers for the file types the kask
+    // codebase relies on (templates, manifests, configs, scripts).
+    "bash-language-server": {
+      "enabled": true,
+    },
+    "yaml-language-server": {
+      "enabled": true,
+    },
+    "taplo": {
+      "enabled": true,
+    },
   },
   // DAP Specific settings.
   "dap": {

@@ -9404,7 +9404,8 @@ dependencies = [
  "hkask-capability",
  "hkask-mcp-server",
  "hkask-memory",
- "hkask-services-context",
+ "hkask-regulation",
+ "hkask-services-core",
  "hkask-storage",
  "hkask-types",
  "rmcp",
@@ -9615,32 +9616,6 @@ dependencies = [
  "proptest 1.10.0",
  "serde",
  "tracing",
-]
-
-[[package]]
-name = "hkask-services-context"
-version = "0.31.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "hkask-capability",
- "hkask-guard",
- "hkask-inference",
- "hkask-keystore",
- "hkask-mcp",
- "hkask-mcp-server",
- "hkask-memory",
- "hkask-regulation",
- "hkask-services-core",
- "hkask-storage",
- "hkask-templates",
- "hkask-types",
- "parking_lot",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]

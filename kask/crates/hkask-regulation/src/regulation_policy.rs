@@ -243,17 +243,6 @@ impl RegulationPolicy {
                     }],
                 },
                 RegulationRule {
-                    metric: SnapshotInterval,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Notify,
-                        reason: "snapshot_interval_exceeded",
-                        data: None,
-                        metric_name: None,
-                    }],
-                },
-                RegulationRule {
                     metric: ConsolidationCandidates,
                     direction: AboveSetPoint,
                     proposed: &[ProposedAction {
@@ -421,30 +410,6 @@ impl RegulationPolicy {
                         target: Inference,
                         action_type: Calibrate,
                         reason: "model_unavailable",
-                        data: None,
-                        metric_name: None,
-                    }],
-                },
-                // DiskUsagePct (StorageGuard Loop 7) → Prune
-                RegulationRule {
-                    metric: DiskUsagePct,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: StorageGuard,
-                        action_type: Prune,
-                        reason: "disk_usage_exceeded",
-                        data: None,
-                        metric_name: None,
-                    }],
-                },
-                // McpServerHealth (McpServerGuard Loop 8) → CircuitBreak
-                RegulationRule {
-                    metric: McpServerHealth,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: McpServerGuard,
-                        action_type: CircuitBreak,
-                        reason: "mcp_server_unhealthy",
                         data: None,
                         metric_name: None,
                     }],
@@ -643,11 +608,8 @@ mod tests {
             SignalMetric::GoalExpiredCount,
             SignalMetric::MetacognitionVarietyDeficit,
             SignalMetric::MetacognitionCriticalAlerts,
-            SignalMetric::SnapshotInterval,
             SignalMetric::WalletBalanceRatio,
             SignalMetric::WalletKeyHealth,
-            SignalMetric::DiskUsagePct,
-            SignalMetric::McpServerHealth,
             SignalMetric::SeamCoverage,
             SignalMetric::ActionIneffective,
             SignalMetric::RegulatoryPlateau,
