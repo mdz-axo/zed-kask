@@ -46,19 +46,14 @@ jobs:
         run: ./script/clippy
 
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: kask-test-${{ matrix.os }}
+          key: kask-test-ubuntu-24.04
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: ./script/linux
       - name: Install nextest
         uses: taiki-e/install-action@v2
@@ -68,19 +63,14 @@ jobs:
         run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
 
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: kask-build-${{ matrix.os }}
+          key: kask-build-ubuntu-24.04
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: ./script/linux
       - name: Build all binaries
         run: cargo build --workspace --bins

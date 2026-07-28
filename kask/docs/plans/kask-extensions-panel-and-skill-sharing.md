@@ -1,8 +1,8 @@
 ---
 title: "Kask Extensions Panel & Skill Sharing — Build Plan"
 audience: [zed-kask integrators, hKask architects]
-last_updated: 2026-07-28
-version: "0.2.0"
+last_updated 2026-07-27
+version: "0.3.0"
 status: "Draft"
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -46,7 +46,7 @@ These already exist in the tree and the plan reuses them:
 | `SkillIndex` (global) | `crates/agent_skills/agent_skills.rs:240` | Read by Settings page; updated by install path. |
 | `SkillsUpdatedHook` | `crates/agent_skills/agent_skills.rs:255` | Existing "skills changed" signal; reused by install/uninstall. |
 | `encode_skill_share_link` / `decode_skill_share_link` | `crates/agent_skills/agent_skills.rs:875` | Existing `zed-kask://skill?data=...` deep link; orthogonal to this plan but shows the share primitive already exists. |
-| `render_skills_setup_page` / `render_skill_row` | `crates/settings_ui/src/pages/skills_setup.rs` | Add the visibility toggle next to the existing share-link `IconButton`. |
+| `SettingsWindow` struct (queue field) | `crates/settings_ui/src/settings_ui.rs` (not `settings_window.rs` — that file does not exist) | Phase 2 adds `skill_visibility_queue` field here. |
 | `ExtensionsPage` | `crates/extensions_ui/src/extensions_ui.rs:414` | The upstream UI to fork into `KaskExtensionsPage`. |
 | `ExtensionStore` + S3/Postgres backend | `crates/extension_host/src/extension_host.rs`, `crates/collab/src/api/extensions.rs`, `crates/collab/src/db/queries/extensions.rs` | The plumbing to mirror for the kask-artifact catalog. |
 | `kask_page()` | `crates/settings_ui/src/pages/kask_page.rs` | Existing Kask settings section; the Kask Extensions Panel is a center-pane `Item`, not a settings sub-page, so it does not live here. |
@@ -191,7 +191,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ---
 
-### Phase 2 — Visibility toggle in Settings → AI → Skills
+### Phase 2 — Visibility toggle in Settings → AI → Skills ✅ COMPLETE
 
 **Goal:** the user can toggle a skill between Private and Public in the UI. The toggle writes to the frontmatter and to an in-memory queue. No network yet.
 
@@ -210,7 +210,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
    - Update the in-memory `Skill` in `SkillIndex`.
    - Push the skill ID + desired visibility into `SkillVisibilityQueue`.
    - Call `cx.notify()` to re-render.
-4. Add a drain trigger: when the Settings sub-page changes away from `skills`, OR when the Settings window closes, OR on a 30-second debounce timer, spawn the drain task. The drain task is a no-op in Phase 2 (it logs "would publish/unpublish X" — the actual pipeline lands in Phase 5).
+4. Add a drain trigger: when the Settings sub-page changes away from `skills`, spawn the drain task. The drain task is a no-op in Phase 2 (it logs "would publish/unpublish X" — the actual pipeline lands in Phase 5). The window-close and 30-second debounce triggers (§2.6) are deferred to Phase 5 — they only matter once the drain does real network work, and adding them now would gold-plate a no-op.
 5. **Tests:** pin that toggling writes the frontmatter correctly; pin that the queue accumulates pending changes; pin that drain fires on page-leave.
 
 **Files touched:**
@@ -231,25 +231,22 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 **Tasks:**
 1. Create `crates/kask_extensions_ui/` crate (sibling of `crates/extensions_ui/`). Add to workspace.
 2. Copy `crates/extensions_ui/src/extensions_ui.rs` → `crates/kask_extensions_ui/src/kask_extensions_ui.rs` as the starting point. Rename `ExtensionsPage` → `KaskExtensionsPage`.
-3. Define `KaskArtifactMetadata` (mirrors `ExtensionMetadata` with kask-specific fields):
+3. Define `KaskArtifactMetadata` with only the fields the Phase 3 UI renders. Add fields in the phase that consumes them (version/published_at/dependencies/energy_caps land in Phase 4/5 when the detail view and install modal need them):
    ```rust
    pub struct KaskArtifactMetadata {
-       pub id: Arc<str>,                    // "{source_user}/{skill_name}"
+       pub id: Arc<str>,            // "{source_user}/{skill_name}"
        pub source_user: Arc<str>,
        pub skill_name: Arc<str>,
        pub description: String,
-       pub version: Arc<str>,              // always latest
-       pub published_at: DateTime<Utc>,
        pub download_count: u64,
-       pub dependencies: Vec<Arc<str>>,
-       pub energy_caps: HashMap<String, u32>,
    }
    ```
-4. Define `KaskArtifactFilter` enum (`Skills`, `Templates`, `Embeddings`, `Userpods`, `McpServers`) — v1 only implements `Skills`; the rest are stubs that return empty lists.
-5. Implement `Item` for `KaskExtensionsPage` (mirror `ExtensionsPage`'s impl). Tab title: "Kask Extensions". Tab icon: `Icon::new(IconName::Kask)` (reuse the existing kask icon).
-6. Register a `ToggleKaskExtensions` action (deploy/focus) and a `ToggleKaskExtensionsFocus` action (focus-only). Wire in `crates/zed/src/zed.rs::initialize_panels()` or via `kask_extensions_ui::init(cx)` called from `main.rs` (mirror `kask_panel::init`).
-7. Replace the `ExtensionStore` reads with placeholder data: a hardcoded list of 3-5 fake `KaskArtifactMetadata` entries so the UI is testable without a backend.
-8. **Tests:** pin that the page renders; pin that the search field filters the placeholder list; pin that `ToggleKaskExtensions` deploys the page.
+4. Implement `Item` for `KaskExtensionsPage` (mirror `ExtensionsPage`'s impl). Tab title: "Kask Extensions". Tab icon: `Icon::new(IconName::Kask)` (reuse the existing kask icon).
+5. Register a `ToggleKaskExtensions` action (deploy/focus) and a `ToggleKaskExtensionsFocus` action (focus-only). Wire via `kask_extensions_ui::init(cx)` called from `main.rs` (mirror `kask_panel::init`). Both actions are required per the `.rules` trap "Center-pane Item Toggle vs ToggleFocus".
+6. Replace the `ExtensionStore` reads with placeholder data: a hardcoded list of 3-5 fake `KaskArtifactMetadata` entries so the UI is testable without a backend.
+7. **Tests:** pin that the page renders; pin that the search field filters the placeholder list; pin that `ToggleKaskExtensions` deploys the page.
+
+**Eliminated (essentialist G1 FAIL):** `KaskArtifactFilter` enum with 4 stub variants. v1 is skills-only (§0); a filter dropdown with 4 dead entries is premature surface. Add the filter in Phase 4+ when there's something real to filter.
 
 **Files touched:**
 - `crates/kask_extensions_ui/` (new crate)
@@ -260,7 +257,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 **Acceptance:** user can open the Kask Extensions Panel from the command palette / menu; it renders with placeholder data; search filters the list. `cargo check -p kask_extensions_ui` passes.
 
-**Estimated effort:** 3-4 days
+**Estimated effort:** 2-3 days
 
 ---
 
@@ -296,26 +293,27 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
    The `PRIMARY KEY (artifact_id)` on the versions table enforces "only latest version" at the schema level.
 2. Add `crates/collab/src/db/queries/kask_artifacts.rs` with `get_kask_artifacts`, `get_kask_artifact`, `upsert_kask_artifact_version`, `delete_kask_artifact` (mirror `queries/extensions.rs`).
 3. Add `crates/collab/src/api/kask_artifacts.rs` with an axum router:
-   - `GET /api/kask-artifacts?filter=<query>&provides=<filter>` — list
+   - `GET /api/kask-artifacts?query=<search>` — list (simple search; no `provides` filter — that's an extension-compatibility concept with no skill equivalent)
    - `GET /api/kask-artifacts/{id}` — single
    - `PUT /api/kask-artifacts/{id}` — publish/upsert (authenticated; publisher must equal `{source_user}` in the ID)
    - `DELETE /api/kask-artifacts/{id}` — unpublish (authenticated; same check)
    - `GET /api/kask-artifacts/{id}/tarball` — redirect to S3 presigned URL
-4. Add `fetch_kask_artifacts_from_blob_store_periodically` (mirror `fetch_extensions_from_blob_store_periodically`) — pulls manifests from S3 and upserts into Postgres so the catalog stays fresh even if publishers upload directly to S3.
-5. Wire the router in `crates/collab/src/main.rs` (mirror the extensions router wiring).
-6. **Tests:** integration tests in `crates/collab/tests/integration/db_tests/kask_artifact_tests.rs` mirroring `extension_tests.rs`. Pin: upsert replaces the prior version; delete cascades to versions; the `(source_user, skill_name)` uniqueness holds.
+4. Wire the router in `crates/collab/src/main.rs` (mirror the extensions router wiring).
+5. **Tests:** integration tests in `crates/collab/tests/integration/db_tests/kask_artifact_tests.rs` mirroring `extension_tests.rs`. Pin: upsert replaces the prior version; delete cascades to versions; the `(source_user, skill_name)` uniqueness holds.
+
+**Eliminated (essentialist G1 FAIL):** `fetch_kask_artifacts_from_blob_store_periodically`. In v1 the PUT endpoint writes to both S3 and Postgres directly, so the periodic S3→Postgres sync is redundant. Add it in v2 if direct-to-S3 publishing is needed.
 
 **Files touched:**
 - `crates/collab/src/db/tables/` (new migration)
 - `crates/collab/src/db/queries/kask_artifacts.rs` (new)
 - `crates/collab/src/api/kask_artifacts.rs` (new)
 - `crates/collab/src/api.rs` (re-export)
-- `crates/collab/src/main.rs` (wire router + periodic fetch)
+- `crates/collab/src/main.rs` (wire router)
 - `crates/collab/tests/integration/db_tests/kask_artifact_tests.rs` (new)
 
-**Acceptance:** the collab server's `/api/kask-artifacts` endpoints respond; integration tests pass; the periodic fetch loop runs without error on an empty S3 bucket.
+**Acceptance:** the collab server's `/api/kask-artifacts` endpoints respond; integration tests pass.
 
-**Estimated effort:** 2-3 days
+**Estimated effort:** 2 days
 
 ---
 
@@ -367,16 +365,18 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 **Tasks:**
 1. At publish time (server-side, in `PUT /api/kask-artifacts/{id}` handler): parse `manifest_json.dependencies`; for each dependency, check that a `kask_artifact` row exists with that ID. Reject the publish with a 409 if any dependency is missing. Return the list of missing dependencies in the error body.
 2. At install time (client-side, in `KaskExtensionsPage`): before downloading, fetch the artifact metadata; if `dependencies` is non-empty, show a modal: "This skill depends on: [list]. Install them too?" with per-dependency checkboxes (all pre-checked). On confirm, install each missing dependency first (recursively, with cycle detection — refuse cycles).
-3. At uninstall time: before removing, check if any other installed `Public` skill depends on this one. If so, show a warning modal: "The following installed skills depend on this: [list]. Uninstall them too?" with the dependents pre-checked. On confirm, uninstall dependents first.
-4. **Tests:** pin that publish with a missing dependency is rejected; pin that install prompts for dependencies; pin that uninstall warns about dependents; pin that cyclic dependencies are refused.
+3. At uninstall time: remove the directory, deregister from `SkillIndex`, fire `SkillsUpdatedHook`. If a dependent skill breaks, the `ManifestExecutor` reports the missing dependency at load time with a clear error.
+4. **Tests:** pin that publish with a missing dependency is rejected; pin that install prompts for dependencies; pin that cyclic dependencies are refused.
+
+**Eliminated (essentialist G1 FAIL):** Uninstall-time dependent warning modal ("the following skills depend on this"). Scanning all installed skills to build a reverse dependency graph and rendering a modal adds significant complexity for a polish feature. A broken dependent skill already fails loudly at load time via the `ManifestExecutor`. Defer the warning modal to v2.
 
 **Files touched:**
 - `crates/collab/src/api/kask_artifacts.rs` (server-side dependency check)
-- `crates/kask_extensions_ui/src/kask_extensions_ui.rs` (client-side modals)
+- `crates/kask_extensions_ui/src/kask_extensions_ui.rs` (client-side install modal)
 
-**Acceptance:** publishing `essentialist` without `deep-module` and `coding-guidelines` in the marketplace fails with a clear error. Installing `essentialist` prompts to install its dependencies. Uninstalling `deep-module` while `essentialist` is installed warns the user.
+**Acceptance:** publishing `essentialist` without `deep-module` and `coding-guidelines` in the marketplace fails with a clear error. Installing `essentialist` prompts to install its dependencies. Cyclic dependencies are refused.
 
-**Estimated effort:** 2-3 days
+**Estimated effort:** 1-2 days
 
 ---
 
@@ -391,7 +391,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
    - `SkillSource::Public` precedence is between `BuiltIn` and `Global` (Phase 1).
    - `KaskExtensionsPage` renders with kask-artifact metadata, not extension metadata (Phase 3).
    - The visibility toggle only appears for `SkillSource::Global` skills (Phase 2).
-   - The lazy drain fires on page-leave, window-close, and 30s debounce (Phase 2).
+   - The lazy drain fires on page-leave (Phase 2); window-close and 30s debounce land with the real publish pipeline in Phase 5.
    - Publish fails closed on dependency violations (Phase 6).
    - Install prompts for dependencies; does not auto-install (Phase 6).
    - Uninstall warns about dependents; does not auto-uninstall (Phase 6).
@@ -415,14 +415,14 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 | Phase | Effort | Cumulative |
 |---|---|---|
 | 1 — Skill visibility model | 0.5 day | 0.5 day |
-| 2 — Visibility toggle UI | 1.5 days | 2 days |
-| 3 — `KaskExtensionsPage` shell | 3-4 days | 5-6 days |
-| 4 — Marketplace backend | 2-3 days | 7-9 days |
-| 5 — Wire client to backend | 4-5 days | 11-14 days |
-| 6 — Dependency resolution | 2-3 days | 13-17 days |
-| 7 — Deviation-pinning tests | 1-2 days | 14-19 days |
+| 2 — Visibility toggle UI | 1 day | 1.5 days |
+| 3 — `KaskExtensionsPage` shell | 2-3 days | 3.5-4.5 days |
+| 4 — Marketplace backend | 2 days | 5.5-6.5 days |
+| 5 — Wire client to backend | 4-5 days | 9.5-11.5 days |
+| 6 — Dependency resolution | 1-2 days | 10.5-13.5 days |
+| 7 — Deviation-pinning tests | 1-2 days | 11.5-15.5 days |
 
-**Total: ~15-20 days of focused work** for a working v1.
+**Total: ~12-16 days of focused work** for a working v1.
 
 ## 6. Risks & Mitigations
 
@@ -441,7 +441,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 - **Multi-version pinning:** v1 offers only the latest. v2 should add a `kask_artifact_version` table that allows multiple rows per artifact and a UI to pin.
 - **Project-local skill publishing:** v1 only allows publishing `SkillSource::Global` skills. v2 should add a "promote to global then publish" flow for project-local skills.
-- **Embeddings, userpods, MCP-server configs as marketplace artifacts:** v1 is skills-only. The `KaskArtifactFilter` enum (Phase 3) is designed to extend.
+- **Embeddings, userpods, MCP-server configs as marketplace artifacts:** v1 is skills-only. v2 adds other artifact types; the catalog schema is designed to extend.
 - **Ratings, comments, social features:** out of scope for v1.
 - **Review/approval workflow:** v1 trusts the publisher's GitHub identity. v2 may add a review step.
 
