@@ -9,6 +9,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
+#[cfg(test)]
 use settings_content::KaskCorpusSettingsContent;
 use settings_content::KaskSettingsContent;
 
