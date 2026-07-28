@@ -2,8 +2,8 @@
 //!
 //! Extracted from `CyberneticsLoop` per the Fowler audit (H8). Two consumers
 //! justify the extraction: `CyberneticsLoop` (production regulation) and
-//! `GovernedTool` (tool invocation membrane). The hold-settle pattern
-//! (reserve → call → settle) is the core contract.
+//! `McpRuntime::invoke` / `ToolGovernance` (tool invocation membrane, in `hkask-mcp`).
+//! The hold-settle pattern (reserve → call → settle) is the core contract.
 //!
 //! # Gas Budget Lifecycle
 //!
@@ -44,7 +44,8 @@ struct OverrideRecord {
 ///
 /// Owns the gas budget map and active override tracking. Extracted from
 /// `CyberneticsLoop` to concentrate gas budget logic and allow direct access
-/// from `GovernedTool` without going through the full loop.
+/// from `McpRuntime::invoke` (via `CyberneticsLoop::reserve_gas` / `settle_gas`)
+/// without going through the full loop.
 pub struct GasBudgetManager {
     gas_budgets: Arc<RwLock<HashMap<WebID, GasBudget>>>,
     /// Wallet-backed budgets — checked before gas budgets.

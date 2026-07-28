@@ -90,7 +90,7 @@ pub struct CyberneticsLoop {
     /// Direct alerts channel: Cybernetics → Curation (CurationInput).
     alerts_tx: Option<mpsc::UnboundedSender<CurationInput>>,
     alert_email_sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
-    /// Direct tool consumption channel: GovernedTool → Cybernetics.
+    /// Direct tool consumption channel: McpRuntime::invoke → Cybernetics.
     /// Direct curator directive channel: Curation → Cybernetics.
     curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
     /// Loop-quality telemetry from the most recent tick cycle.

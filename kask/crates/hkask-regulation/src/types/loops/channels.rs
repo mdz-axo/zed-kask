@@ -11,9 +11,9 @@ use hkask_types::WebID;
 // RuntimeAlert is the canonical type in crate::algedonic.
 // Re-imported here so CurationInput::Alert(RuntimeAlert) compiles.
 
-// ── Tool consumption channel: GovernedTool → Cybernetics ─────────────────────
+// ── Tool consumption channel: McpRuntime::invoke → Cybernetics ────────────
 
-/// Per-tool gas consumption report from GovernedTool to Cybernetics.
+/// Per-tool gas consumption report from `McpRuntime::invoke` (in `hkask-mcp`) to Cybernetics.
 ///
 /// Replaces `LoopPayload::ToolConsumption`. Sent on a dedicated
 /// `tokio::sync::mpsc::Sender<ToolConsumptionEvent>` channel.

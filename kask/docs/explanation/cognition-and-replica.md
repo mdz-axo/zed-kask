@@ -236,7 +236,7 @@ The bridging function is `SpanNamespace::from_observable()` — it takes any `im
 
 The emission contract has three participants:
 
-- **Emitter** — Any system component that creates a `RegulationRecord`. `GovernedTool::invoke()` is the canonical emitter for tool invocations; `CyberneticsLoop` emits regulation spans; the Curator emits curation spans. The emitter constructs the event with `RegulationRecord::new(observer_webid, span, phase, observation, recursion_depth)`, optionally chaining `.with_outcome()`, `.with_regulation()`, `.with_parent()`, and `.with_visibility()`.
+- **Emitter** — Any system component that creates a `RegulationRecord`. `McpRuntime::invoke()` is the canonical emitter for tool invocations; `CyberneticsLoop` emits regulation spans; the Curator emits curation spans. The emitter constructs the event with `RegulationRecord::new(observer_webid, span, phase, observation, recursion_depth)`, optionally chaining `.with_outcome()`, `.with_regulation()`, `.with_parent()`, and `.with_visibility()`.
 
 - **Sink** — `RegulationSink` (line 640) is the persistence trait. It has a single method: `fn persist(&self, event: &RegulationRecord) -> Result<(), InfrastructureError>`. The production implementation is `RegulationArchive` in `hkask-storage`. The sink is the durable boundary — once persisted, the event is available for Regulation sensing, Curator review, and forensic audit.
 
@@ -248,7 +248,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs:111` defines 
 
 | Variant | Namespace | Purpose |
 |---------|-----------|---------|
-| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 11 on-disk servers (codegraph, companies, condenser, curator, docproc, kata-kanban, media, replica, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. |
+| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 10 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. |
 | `Inference` | `reg.inference` | LLM request/response |
 | `AgentPod` | `reg.agent_pod` | Pod lifecycle events |
 | `Gas` | `reg.gas` | Energy consumption tracking |
@@ -278,7 +278,7 @@ The `LedgerStoragePort::replay_weighted()` method provides time-decayed event re
 
 ```mermaid
 flowchart TD
-    EMITTER["Emitter\n(GovernedTool, CyberneticsLoop,\nCurator)"]
+    EMITTER["Emitter\n(McpRuntime::invoke, CyberneticsLoop,\nCurator)"]
     EVENT["RegulationRecord\nid, timestamp, observer_webid,\nspan, phase, observation,\nregulation, outcome, parent_event"]
     SINK["RegulationSink\npersist() trait"]
     STORE["RegulationArchive\n(hkask-storage)"]

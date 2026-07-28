@@ -13,7 +13,8 @@
 //! # Coexistence with GasBudget
 //! `WalletBackedBudget` is an additional budget type, not a replacement.
 //! The existing gas system continues for non-wallet-backed agents.
-//! Both coexist in the `GovernedTool` membrane via `GasBudgetManager`.
+//! Both coexist in the `McpRuntime::invoke` / `ToolGovernance` membrane
+//! (in `hkask-mcp`) via `GasBudgetManager`.
 
 use crate::energy::{GasCost, GasError};
 use chrono::Utc;

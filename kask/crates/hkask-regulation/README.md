@@ -28,7 +28,8 @@ Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of
 | `RegulationLedger` | Central Regulation state machine with health, variety, alerts |
 | `CyberneticsLoop` | Loop 6 regulation cycle |
 
-| `GovernedTool` | OCAP-gated tool invocation boundary |
+The OCAP-gated tool invocation membrane (`McpRuntime::invoke` / `ToolGovernance`) lives in `hkask-mcp`; it consumes this crate's `CyberneticsLoop`, `GasBudget`, and `ToolStats` primitives via the hold-settle pattern.
+
 | `GasBudget` | Energy budget with hJoule accounting |
 | `CircuitBreaker` | Fail-open regulation circuit breaker |
 | `SetPoints` | Configurable regulatory thresholds |

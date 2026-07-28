@@ -840,8 +840,8 @@ impl SemanticMemory {
     // This is safe because these are data operations, not authority operations.
     // Semantic h_mems are shared/public knowledge (visibility: Shared,
     // perspective: None) — deleting or querying them doesn't bypass the OCAP
-    // membrane. The ConsolidationToken and GovernedTool membrane control who
-    // can *trigger* the operations; these methods just execute them.
+    // membrane. The ConsolidationToken and the McpRuntime::invoke / ToolGovernance
+    // membrane control who can *trigger* the operations; these methods just execute them.
 
     /// Delete a semantic h_mem by ID (budget enforcement / consolidation cleanup).
     ///

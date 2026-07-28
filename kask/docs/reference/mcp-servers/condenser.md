@@ -68,7 +68,6 @@ flowchart TD
         Episodic["EpisodicMemory\n(optional, SQLite-backed)"]
         Semantic["SemanticMemory\n(optional, SQLite + embeddings)"]
         EmbeddingStore["EmbeddingStore\n1024-dim KNN search"]
-        Daemon["Daemon\nstore_experience\n(DEAD in zed-kask — always None;\nthread-level memory via RealMemoryPort D6 replaces it)"]
     end
     Client -->|"tool call"| Server
     Server --> Ping
@@ -111,8 +110,8 @@ flowchart TD
     ScoreSaliency -->|"score result count"| SaliencyModule
     Semantic --> EmbeddingStore
     
-    Compress -.->|"record_experience\n(DEAD — daemon path is a no-op in zed-kask)"| Daemon
-    ThreadSummary -.->|"record_experience\n(DEAD — daemon path is a no-op in zed-kask)"| Daemon
+    Compress -->|"record_experience\n(in-process; episodic.store when configured, else debug log)"| Episodic
+    ThreadSummary -->|"record_experience\n(in-process; episodic.store when configured, else debug log)"| Episodic
     
     CondenseHistory --> Phase1
     Phase1 -->|"CondenserEngine\nProfile::Heavy"| Engine
@@ -124,8 +123,8 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
 verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-condenser/src/lib.rs (CondenserServer tool router), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms); condense_history 2-phase now invoked from zed's crates/agent (deleted hkask-services-chat); InferencePort node relabeled to GuardedInferencePort over LanguageModelInferencePort (D4/D8); Daemon node annotated as dead (always None in zed-kask; thread-level memory via RealMemoryPort D6)
-status: VERIFIED (v3 — InferencePort relabeled to GuardedInferencePort/LanguageModelInferencePort; daemon edges annotated as dead no-ops)
+verified_against: mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs (CondenserServer tool router + record_experience), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms); condense_history 2-phase invoked from zed's crates/agent; InferencePort node = GuardedInferencePort over LanguageModelInferencePort (D4/D8); record_experience edges point at live EpisodicMemory (in-process episodic.store when configured, else debug log) — no daemon, no DaemonClient
+status: VERIFIED (v4 — Daemon node removed; record_experience edges repointed to live EpisodicMemory)
 -->
 
 ## Key paths
@@ -134,7 +133,7 @@ status: VERIFIED (v3 — InferencePort relabeled to GuardedInferencePort/Languag
 - **Classify:** `condenser_classify` → `classify_tool` maps tool name → `ContextCategory`
 - **Saliency:** `condenser_score_saliency` → `domain_saliency` (line + `OntologyAnchor`) → against persona / memory / memory-fallback
 - **Auto-condense (in-process agent loop):** `condense_history` → Phase 1 (CPU pre-compress via `CondenserEngine` Heavy profile) → Phase 2 (LLM summarize via `InferencePort`)
-- **Learning loop:** The daemon `record_experience` path is **dead in zed-kask** (the daemon was deleted in the 2026-07-25 cleanup; `DaemonClient` is retained only for compile-stability and is always `None`). The call is a no-op. Thread-level memory is captured via `RealMemoryPort` (D6) — the in-process `MemoryPort` trait ingests thread turns via `cx.background_spawn()` at turn completion. `recommend_algorithm` / `suggest_profile` continue to read the in-process ring buffer (200 max observations) to override the static `default_for` selection; the ring buffer is the live learning substrate, not the daemon.
+- **Learning loop:** `condenser_compress` and `condenser_thread_summary` call `record_experience` in-process after the engine produces a result. When episodic persistence is configured (`HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`), `record_experience` builds a first-person `HMem` and stores it via `EpisodicMemory::store`; otherwise it emits a debug log (`hkask.mcp.condenser.memory`) so the server still runs in memory-only mode. There is no daemon, no `DaemonClient`, and no fire-and-forget task — recording is a synchronous in-process call owned by the server. `recommend_algorithm` / `suggest_profile` continue to read the in-process ring buffer (200 max observations) to override the static `default_for` selection; the ring buffer is the live learning substrate.
 
 ## Cross-links
 

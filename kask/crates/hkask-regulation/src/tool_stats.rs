@@ -5,8 +5,9 @@
 //! success/failure outcomes, enabling:
 //!
 //! - **Layer 1 (cost):** Reserve at the 90th percentile instead of a point estimate,
-//!   tightening with more observations. Wired into GovernedTool as a distribution-based
-//!   override of the EnergyEstimator's point estimate.
+//!   tightening with more observations. Wired into the `McpRuntime::invoke` /
+//!   `ToolGovernance` membrane (in `hkask-mcp`) as a distribution-based override of
+//!   the EnergyEstimator's point estimate.
 //! - **Layer 2 (reliability):** Pre-escalate when success probability drops below
 //!   a threshold, detecting degrading tools before they fail.
 //! - **Layer 3 (auto-calibration):** Cost data feeds back into the estimator —
@@ -65,9 +66,10 @@ pub struct ToolReliabilityAlert {
 
 /// Thread-safe statistical learner for all MCP tools.
 ///
-/// Owned by `RegState`. Called by `GovernedTool` at settle time to record
-/// outcomes. Queried by `GovernedTool` at reserve time for distribution-based
-/// estimates via `reserve_estimate()`.
+/// Owned by `RegState`. Called by `McpRuntime::invoke` (via `CyberneticsLoop::settle_gas`)
+/// at settle time to record outcomes. Queried by `McpRuntime::invoke` (via
+/// `CyberneticsLoop::reserve_gas`) at reserve time for distribution-based estimates
+/// via `reserve_estimate()`.
 pub struct ToolStats {
     state: RwLock<HashMap<String, ToolState>>,
     reliability_threshold: f64,

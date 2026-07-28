@@ -179,7 +179,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | F7 | Model providers — zed-kask owns router; hKask keeps guard + `InferencePort` trait | resolved by the fork (D4) |
 | F8 | `kask` CLI subcommands | delete matrix/deploy/serve; keep repair/admin (thin) — wallet subcommand deleted with `hkask-wallet` |
 | F9 | Backward-compat shims (~~pod-kind alias~~, `persona_yaml` two-source, pre-v0.31 migration, `kask tui -f`) | delete — pod abstraction removed |
-| F10 | Double-gate — zed-kask `tool_permissions` (UI pre-filter) × hKask `GovernedTool` (OCAP+gas, final) | define fail-fast → Curator escalation |
+| F10 | Double-gate — zed-kask `tool_permissions` (UI pre-filter) × hKask `McpRuntime::invoke` / `ToolGovernance` (OCAP+gas, final) | define fail-fast → Curator escalation |
 | F11 | Always-on Curator — no daemon ⇒ Curator runs only while zed-kask runs | acceptable for local MVP; background/federation deferred |
 | F12 | `hkask-mcp-filesystem` overlaps zed-kask file access | deletion-test |
 
@@ -218,7 +218,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 - **T3.1 (D2)** Curator registered as native in-process agent (`Agent::Curator` variant in `agent_ui`). ✅
 - **T3.2 (D3)** `BridgeToolPort` wraps `McpRuntime` (implements `ToolPort` with OCAP/gas/spans). MCP servers run as child processes. ✅
 - **T3.3 (D3 full R4)** ~~Refactor MCP servers off `DaemonClient` to direct in-process handles.~~ ✅ **RESOLVED differently:** daemon transport deleted outright (not refactored to in-process handles). Identity is `ServerContext.webid` resolved from `HKASK_WEBID` (no `userpod`/`MCPBootstrap`). MCP servers run standalone with env-derived identity.
-- **T3.4 (F10)** Double-gate reconciliation: zed-kask approval = UI pre-filter; `GovernedTool` = final gate. ⬜ **NOT STARTED**
+- **T3.4 (F10)** Double-gate reconciliation: zed-kask approval = UI pre-filter; `McpRuntime::invoke` / `ToolGovernance` = final gate. ⬜ **NOT STARTED**
 - **Checkpoint 3:** Curator selectable; tools callable with full regulation observability. ✅ (daemon path deleted; regulation system wired via `McpRuntime::with_governance()`)
 
 ### Phase 4 — Thread → memory + thread watcher (D6) ✅
@@ -475,8 +475,8 @@ Precedence: explicit settings.json > imported keychain > env-var fallback (durin
 
 ### 12.3 Design (D10 — native GPUI kask panel)
 - **zed side:** new `Item` impl `crates/kask_panel` (implements `pub trait Item`, `crates/workspace/src/item.rs`; opens in the center pane via `workspace.add_item_to_active_pane(...)` — NOT a dock `Panel`, so it coexists with other settings/panels). Renders: a list of the 10 on-disk MCP servers (from the in-process tool registry, §2.4); selecting one opens a per-server sub-view.
-- **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the OCAP-gated path (same `GovernedTool`/gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
-- **OCAP:** the panel invokes tools under the userpod's `DelegationToken` exactly as the agent does — direct invocation does NOT bypass OCAP (mirrors the ratatui `ToolInvokeBridge` invariant). Double-gate (F10) applies: panel invokes are still `GovernedTool`-gated.
+- **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the OCAP-gated path (same `McpRuntime::invoke` / `ToolGovernance` /gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
+- **OCAP:** the panel invokes tools under the caller's `DelegationToken` (scoped to `webid`) exactly as the agent does — direct invocation does NOT bypass OCAP (mirrors the ratatui `ToolInvokeBridge` invariant). Double-gate (F10) applies: panel invokes are still `McpRuntime::invoke` / `ToolGovernance`-gated.
 - **hKask side:** delete the entire ratatui TUI (T5.3) — `mcp_scoped` is reimplemented natively; no slimmed ratatui binary, no view socket. (This **reverses** an earlier ratatui-terminal idea: cleaner.)
 
 ### 12.4 Tasks
@@ -486,7 +486,7 @@ Precedence: explicit settings.json > imported keychain > env-var fallback (durin
 - **Refine T5.3** — delete the **entire** `hkask-repl/tui` (chat + `mcp_scoped` + transcript/voice); `mcp_scoped` is now native (T-s3). (No view socket, no daemon-listener retention — simpler than option A.)
 
 ### 12.5 grill-me / diagnose
-- **Does direct invocation bypass sovereignty?** No — it reuses the OCAP-gated `GovernedTool` path (mirrors the ratatui `ToolInvokeBridge` `DelegationToken` invariant); only the LLM is bypassed, not OCAP/gas. Verified against the `mcp_scoped.rs` doc comment.
+- **Does direct invocation bypass sovereignty?** No — it reuses the OCAP-gated `McpRuntime::invoke` / `ToolGovernance` path (mirrors the ratatui `ToolInvokeBridge` `DelegationToken` invariant); only the LLM is bypassed, not OCAP/gas. Verified against the `mcp_scoped.rs` doc comment.
 - **Why not reuse ratatui (A)?** (A) needs a PTY + an in-process view/control socket (retain the daemon listener) for a separate process to reach the in-process runtime — re-introducing an IPC boundary we removed. (B) talks to in-process tools directly, no IPC, and lets us fully delete the ratatui TUI. Trade-off: (B) rebuilds the UI in GPUI; accepted for a cleaner, more minimal result.
 - **Variety/regulation:** direct one-on-one invokes still emit `reg.tool.*` and consume gas (T-s4) — the cybernetic loop sees panel activity, so regulation is not bypassed.
 

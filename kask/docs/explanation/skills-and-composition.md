@@ -409,7 +409,7 @@ Convergence is validated by `FlowDefValidationReport` in `hkask-types::flowdef_v
 
 Every skill execution consumes **gas** from the agent's energy budget:
 
-1. `GovernedTool` estimates cost via `EnergyEstimator::estimate_cost()`
+1. `McpRuntime::invoke` / `ToolGovernance` estimates cost via `EnergyEstimator::estimate_cost()`
 2. Gas is **reserved** before invocation (hold-settle pattern)
 3. After invocation, actual gas is **settled** — if actual < reserved, the difference is refunded
 

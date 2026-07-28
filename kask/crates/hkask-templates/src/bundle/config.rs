@@ -175,7 +175,7 @@ impl Default for OcapConfig {
     }
 }
 
-/// Regulation monitoring configuration. Loaded from manifest YAML, spans handled by GovernedTool at runtime.
+/// Regulation monitoring configuration. Loaded from manifest YAML, spans handled by `McpRuntime::invoke` / `ToolGovernance` (in `hkask-mcp`) at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BundleLedgerConfig {

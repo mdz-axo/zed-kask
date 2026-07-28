@@ -2,8 +2,8 @@
 //!
 //! At template registration time, capability validation checks that the registering
 //! agent holds the required OCAP tokens for the template's declared capability
-//! requirements. At runtime, OCAP enforcement is handled by `GovernedTool` in
-//! `hkask-regulation::governed_tool`. This validator covers the registration-time concern:
+//! requirements. At runtime, OCAP enforcement is handled by `McpRuntime::invoke` /
+//! `ToolGovernance` in `hkask-mcp`. This validator covers the registration-time concern:
 //! ensuring template capability declarations are consistent with the agent's
 //! granted capabilities.
 
@@ -17,7 +17,7 @@ use hkask_capability::{CapabilitySpec, DelegationToken, capabilities_match};
 /// using `capabilities_match` (which respects the action hierarchy: Execute ≥ Write ≥ Read).
 ///
 /// This is a registration-time gate. Runtime enforcement is delegated to
-/// `GovernedTool` in `hkask-regulation`.
+/// `McpRuntime::invoke` / `ToolGovernance` in `hkask-mcp`.
 pub struct CapabilityAwareValidator;
 
 impl CapabilityAwareValidator {

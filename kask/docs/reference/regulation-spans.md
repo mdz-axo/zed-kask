@@ -232,8 +232,8 @@ All namespaced under `reg.wallet.*`. Emitted through `crates/hkask-regulation/sr
 > removed. hKask now runs in-process inside zed-kask; there is no HTTP API surface to meter.
 > `ApiRequestSpan` is retained below as a historical reference only. The span enum, the
 > `reg.api.request` namespace, and the `ApiMeter` learning loop are **no longer emitted**. Gas
-> consumption for in-process callers is settled by `GovernedTool` / `GovernedInference` and
-> tracked via `reg.gas.*` spans (§3.1).
+> consumption for in-process callers is settled by `McpRuntime::invoke` / `ToolGovernance`
+> (tool) and `GovernedInference` (inference) and tracked via `reg.gas.*` spans (§3.1).
 
 **File (deleted):** `crates/hkask-regulation/src/api_metering.rs` (span enum) · `crates/hkask-api/src/middleware/api_key_auth.rs` (emission point — both deleted)
 
