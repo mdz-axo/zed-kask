@@ -1,8 +1,8 @@
 ---
 title: "Kask Extensions Panel & Skill Sharing — Build Plan"
 audience: [zed-kask integrators, hKask architects]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-28
+version: "0.2.0"
 status: "Draft"
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -39,12 +39,13 @@ These already exist in the tree and the plan reuses them:
 
 | Piece | Location | Role in this plan |
 |---|---|---|
-| `Skill` struct | `crates/agent_skills/src/agent_skills.rs:75` | Add `visibility: SkillVisibility` field. |
-| `SkillSource` enum | `crates/agent_skills/src/agent_skills.rs:100` | Add `Public { source_user, original_skill_id }` variant; update `precedence()`. |
-| `SkillMetadata` (frontmatter) | `crates/agent_skills/src/agent_skills.rs:209` | Add `visibility` field with `#[serde(default)]`. |
-| `SkillIndex` (global) | `crates/agent_skills/src/agent_skills.rs:188` | Read by Settings page; updated by install path. |
-| `SkillsUpdatedHook` | `crates/agent_skills/src/agent_skills.rs:203` | Existing "skills changed" signal; reused by install/uninstall. |
-| `encode_skill_share_link` / `decode_skill_share_link` | `crates/agent_skills/src/agent_skills.rs:875` | Existing `zed-kask://skill?data=...` deep link; orthogonal to this plan but shows the share primitive already exists. |
+| `SkillVisibility` enum | `crates/agent_skills/agent_skills.rs:87` | Added in Phase 1. `Private` default, `Public` opt-in. |
+| `Skill` struct | `crates/agent_skills/agent_skills.rs:95` | Add `visibility: SkillVisibility` field. |
+| `SkillSource` enum | `crates/agent_skills/agent_skills.rs:125` | Add `Public { source_user, original_skill_id }` variant; update `precedence()`. |
+| `SkillMetadata` (frontmatter) | `crates/agent_skills/agent_skills.rs:261` | Add `visibility` field with `#[serde(default)]`. |
+| `SkillIndex` (global) | `crates/agent_skills/agent_skills.rs:240` | Read by Settings page; updated by install path. |
+| `SkillsUpdatedHook` | `crates/agent_skills/agent_skills.rs:255` | Existing "skills changed" signal; reused by install/uninstall. |
+| `encode_skill_share_link` / `decode_skill_share_link` | `crates/agent_skills/agent_skills.rs:875` | Existing `zed-kask://skill?data=...` deep link; orthogonal to this plan but shows the share primitive already exists. |
 | `render_skills_setup_page` / `render_skill_row` | `crates/settings_ui/src/pages/skills_setup.rs` | Add the visibility toggle next to the existing share-link `IconButton`. |
 | `ExtensionsPage` | `crates/extensions_ui/src/extensions_ui.rs:414` | The upstream UI to fork into `KaskExtensionsPage`. |
 | `ExtensionStore` + S3/Postgres backend | `crates/extension_host/src/extension_host.rs`, `crates/collab/src/api/extensions.rs`, `crates/collab/src/db/queries/extensions.rs` | The plumbing to mirror for the kask-artifact catalog. |
@@ -156,7 +157,7 @@ flowchart TD
 
 Each phase is independently shippable. Phases 1–3 land client-side without any server changes; Phase 4 adds the marketplace backend; Phase 5 wires the client to the backend; Phases 6–7 add policy and tests.
 
-### Phase 1 — Skill visibility model (client-only, no UI)
+### Phase 1 — Skill visibility model (client-only, no UI) ✅ COMPLETE
 
 **Goal:** the data model exists and parses correctly. No UI, no network.
 

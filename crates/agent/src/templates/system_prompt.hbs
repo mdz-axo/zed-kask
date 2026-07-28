@@ -240,7 +240,7 @@ When a user's request matches a Skill's description, **invoke the `skill` tool w
 
 To use a Skill:
 1. Identify when a user's request matches a Skill's description — the description is the discovery surface; the manifest is the execution surface.
-2. Call the `skill` tool with the skill's `name`. The tool runs the skill's manifest cascade and returns the result — it does **not** return the skill's instructions for you to follow manually.
+2. Call the `skill` tool with the skill's `name` and the user's request as `task`. The tool runs the skill's manifest cascade and returns the result — it does **not** return the skill's instructions for you to follow manually. Pass the user's full intent (target, question, scope, constraints) as `task` so the cascade can reference `\{{ task }}` in its templates.
 3. Use the cascade result as the skill's output. If the user supplied a target (a file, a skill name, a corpus, a question, etc.), the cascade consumes it as context — you do not need to read the target yourself before invoking.
 4. Do **not** `read_file` the `SKILL.md` at `<location>`. `SKILL.md` is a discovery-only catalog entry; its body is never injected and reading it directly bypasses the manifest cascade, the gas/OCAP membrane, and the convergence loop. Only `read_file` files inside the skill's directory when the cascade result explicitly tells you to.
 5. If a skill has no manifest registered (the `skill` tool returns "No manifest configured for this skill"), fall back to treating the description as advisory prose — do not read the `SKILL.md` body to compensate.

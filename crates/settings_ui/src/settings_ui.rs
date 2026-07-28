@@ -964,6 +964,9 @@ pub struct SettingsWindow {
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
+    /// Pending marketplace visibility changes, drained lazily on page-leave /
+    /// window-close / 30s debounce. See `skills_visibility::SkillVisibilityQueue`.
+    pub(crate) skill_visibility_queue: pages::SkillVisibilityQueue,
     /// State for the active "add OpenAI/Anthropic-compatible provider" form sub-page, if open.
     pub(crate) llm_provider_form: Option<LlmProviderForm>,
     /// Stable focus handle for the LLM "Add Provider" button, so it can show a
@@ -1998,6 +2001,7 @@ impl SettingsWindow {
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
             last_copied_skill_directory_path: None,
+            skill_visibility_queue: pages::SkillVisibilityQueue::default(),
             llm_provider_form: None,
             llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
@@ -4400,10 +4404,19 @@ impl SettingsWindow {
     pub(crate) fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.regex_validation_error = None;
         self.sandbox_host_validation_error = None;
-        if let Some(popped) = self.sub_page_stack.pop()
-            && popped.link.r#type == SubPageType::SkillCreator
-        {
-            self.skill_creator_page = None;
+        if let Some(popped) = self.sub_page_stack.pop() {
+            if popped.link.r#type == SubPageType::SkillCreator {
+                self.skill_creator_page = None;
+            }
+            // zed-kask: Drain the visibility queue when navigating off the
+            // Skills sub-page. The drain task is a no-op in Phase 2 (logs
+            // intent); the actual publish/unpublish pipelines land in Phase 5.
+            // Pinned by `test_drain_fires_on_skills_page_leave` (Phase 7).
+            if popped.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH)
+                && !self.skill_visibility_queue.is_empty()
+            {
+                pages::spawn_drain(&mut self.skill_visibility_queue, cx).detach();
+            }
         }
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
@@ -5315,6 +5328,7 @@ pub mod test {
                 custom_agent_form: None,
                 external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
+                skill_visibility_queue: pages::SkillVisibilityQueue::default(),
             }
         }
     }
@@ -5454,6 +5468,7 @@ pub mod test {
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
+            skill_visibility_queue: pages::SkillVisibilityQueue::default(),
         };
 
         settings_window.build_filter_table();

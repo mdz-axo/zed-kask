@@ -1,28 +1,39 @@
-name: zed
-title: Zed
+name: zed-kask
+title: Zed-Kask
 base: core24
 version: "$RELEASE_VERSION"
-summary: The editor for what's next
+summary: Zed editor with the Kask agentic AI tools in-process
 description: |
-  Zed is a modern open-source code editor, built from the ground up in Rust with
-  a GPU-accelerated renderer. We help you build software faster than ever before.
+  Zed-Kask is a fork of Zed, the high-performance, multiplayer code editor built
+  in Rust with a GPU-accelerated renderer, with the Kask agentic AI tools —
+  skills, MCP servers, regulation nervous system, and sovereign memory —
+  integrated as native editor surfaces. One clone, one build, one CI.
 grade: stable
 confinement: classic
 compression: lzo
-website: https://zed.dev/
-source-code: https://github.com/zed-industries/zed
-issues: https://github.com/zed-industries/zed/issues
-contact: https://zed.dev/community-links#support-and-feedback
+website: https://github.com/mdz-axo/zed-kask
+source-code: https://github.com/mdz-axo/zed-kask
+issues: https://github.com/mdz-axo/zed-kask/issues
+contact: https://github.com/mdz-axo/zed-kask/issues
 
+# zed-kask publishes a weekly build every Monday at 08:00 UTC (see
+# .github/workflows/kask-release.yml). The `weekly` tag is force-moved to the
+# current main commit and the GitHub Release assets are refreshed. Point
+# `source:` at the weekly tag so `snapcraft` always pulls the latest weekly
+# build; override $RELEASE_VERSION (and $RELEASE_TAG) at build time to pin a
+# specific release.
 parts:
-  zed:
+  zed-kask:
     plugin: dump
-    source: "https://github.com/zed-industries/zed/releases/download/v$RELEASE_VERSION/zed-linux-x86_64.tar.gz"
+    source: "https://github.com/mdz-axo/zed-kask/releases/download/$RELEASE_TAG/zed-kask-x86_64-unknown-linux-gnu.tar.gz"
 
     organize:
-      # These renames seem to not be necessary, but it's tidier.
-      bin: usr/bin
-      libexec: usr/libexec
+      # The zed-kask release archive has a flat layout: zed-kask + hkask-mcp-*
+      # binaries at the archive root. Map the editor binary into the snap's
+      # usr/bin so the desktop entry's Exec resolves. The MCP server binaries
+      # stay at the archive root (snap classic confinement puts the snap's
+      # root on PATH).
+      zed-kask: usr/bin/zed-kask
 
     stage-packages:
       - libasound2t64
@@ -52,8 +63,8 @@ parts:
       - -usr/share/man
 
 apps:
-  zed:
-    command: usr/bin/zed
-    common-id: dev.zed.Zed
+  zed-kask:
+    command: usr/bin/zed-kask
+    common-id: dev.zed-kask.Zed-Kask
     environment:
       ZED_BUNDLE_TYPE: snap

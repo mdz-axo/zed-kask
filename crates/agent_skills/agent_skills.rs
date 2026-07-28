@@ -236,7 +236,7 @@ impl SkillSource {
 
 /// App-wide index of loaded skills, published by NativeAgent and read
 /// by any UI that needs to display the skill list (e.g. Settings UI).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SkillIndex {
     pub global_skills: Vec<Skill>,
     pub project_skills: Vec<ProjectSkillGroup>,
@@ -992,10 +992,15 @@ mod tests {
 
     #[test]
     fn test_skill_source_precedence_is_total_and_ordered() {
-        // Pin the hierarchy: project-local > global > built-in. Every
-        // override and conflict-resolution site routes through this,
+        // Pin the hierarchy: project-local > global > public (marketplace) > built-in.
+        // Every override and conflict-resolution site routes through this,
         // so the rest of the codebase relies on it being correct.
         let built_in = SkillSource::BuiltIn.precedence();
+        let public = SkillSource::Public {
+            source_user: "alice".into(),
+            original_skill_id: "alice/bug-hunt".into(),
+        }
+        .precedence();
         let global = SkillSource::Global.precedence();
         let project = SkillSource::ProjectLocal {
             worktree_id: SkillScopeId(1),
@@ -1003,7 +1008,11 @@ mod tests {
         }
         .precedence();
 
-        assert!(built_in < global, "global must shadow built-in");
+        assert!(
+            built_in < public,
+            "public (marketplace) must shadow built-in"
+        );
+        assert!(public < global, "global must shadow public (marketplace)");
         assert!(global < project, "project-local must shadow global");
 
         // Two project-local skills from different worktrees tie. The
@@ -1016,6 +1025,128 @@ mod tests {
         }
         .precedence();
         assert_eq!(project, other_project);
+    }
+
+    // zed-kask: `SkillSource::Public` (marketplace-installed) precedence sits
+    // between `BuiltIn` and `Global` so a locally-authored skill of the same
+    // name shadows the marketplace copy. This is the core deviation from
+    // upstream (which has no marketplace source variant). Pinned here so a
+    // future refactor that reorders the precedence match arms fails loudly.
+    #[test]
+    fn test_skill_source_public_precedence_between_built_in_and_global() {
+        let built_in = SkillSource::BuiltIn.precedence();
+        let public = SkillSource::Public {
+            source_user: "alice".into(),
+            original_skill_id: "alice/bug-hunt".into(),
+        }
+        .precedence();
+        let global = SkillSource::Global.precedence();
+
+        assert!(
+            built_in < public && public < global,
+            "Public must sit strictly between BuiltIn and Global: built_in={}, public={}, global={}",
+            built_in,
+            public,
+            global
+        );
+    }
+
+    // zed-kask: `SkillSource::Public::display_label` returns the namespaced
+    // `{source_user}/{skill_name}` form so the marketplace listing identity
+    // is preserved on installed skills. Upstream has no `Public` variant.
+    #[test]
+    fn test_skill_source_public_display_label_is_namespaced() {
+        let source = SkillSource::Public {
+            source_user: "alice".into(),
+            original_skill_id: "alice/bug-hunt".into(),
+        };
+        assert_eq!(source.display_label(), "alice/bug-hunt");
+    }
+
+    // zed-kask: `SkillSource::Public` behaves like `Global` for slash-command
+    // scoping — empty prefix, matches the empty scope. This means a
+    // marketplace-installed skill is invoked as `/:<name>`, same as a global.
+    // Upstream has no `Public` variant.
+    #[test]
+    fn test_skill_source_public_matches_empty_scope() {
+        let source = SkillSource::Public {
+            source_user: "alice".into(),
+            original_skill_id: "alice/bug-hunt".into(),
+        };
+        assert_eq!(source.scope_prefix(), "");
+        assert!(source.matches_scope(""));
+        assert!(!source.matches_scope("alice"));
+        assert!(!source.matches_scope("global"));
+    }
+
+    // zed-kask: `SkillVisibility` defaults to `Private` so a missing
+    // `visibility` frontmatter field never silently publishes a skill.
+    // This is the safe-default contract (plan §2.1). Pinned here so a future
+    // change to the `Default` impl fails loudly.
+    #[test]
+    fn test_skill_visibility_defaults_to_private() {
+        let default: SkillVisibility = Default::default();
+        assert_eq!(default, SkillVisibility::Private);
+    }
+
+    // zed-kask: A SKILL.md frontmatter with no `visibility` field must parse
+    // to `SkillVisibility::Private`. This pins the serde default so a missing
+    // field never silently publishes (plan §2.1, `.rules` "process-global hooks
+    // need a startup-failure signal" — a missing field must not silently opt in).
+    #[test]
+    fn test_skill_metadata_missing_visibility_field_defaults_to_private() {
+        let content = r"---
+name: my-skill
+description: A test skill.
+---
+
+Body.
+";
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/my-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("should parse");
+        assert_eq!(skill.visibility, SkillVisibility::Private);
+    }
+
+    // zed-kask: A SKILL.md frontmatter with `visibility: public` must parse
+    // to `SkillVisibility::Public`. This pins the serde rename_all=lowercase
+    // so the frontmatter field name stays stable.
+    #[test]
+    fn test_skill_metadata_explicit_public_visibility_parses() {
+        let content = r"---
+name: my-skill
+description: A test skill.
+visibility: public
+---
+
+Body.
+";
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/my-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("should parse");
+        assert_eq!(skill.visibility, SkillVisibility::Public);
+    }
+
+    // zed-kask: Built-in and embedded-global skills also default to
+    // `Private` visibility — they cannot be published (built-ins are part of
+    // the binary; embedded globals are shipped by the repo). This pins that
+    // the parse functions populate `visibility` from metadata.
+    #[test]
+    fn test_builtin_skill_visibility_defaults_to_private() {
+        // `builtin_skills` returns the create-skill built-in; it should be
+        // Private by default since its SKILL.md has no visibility field.
+        let skills = builtin_skills();
+        let skill = skills
+            .iter()
+            .find(|s| s.name == "create-skill")
+            .expect("create-skill built-in should be present");
+        assert_eq!(skill.visibility, SkillVisibility::Private);
     }
 
     #[test]

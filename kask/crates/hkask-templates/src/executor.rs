@@ -55,7 +55,7 @@ use hkask_types::NotFound;
 use hkask_types::ToolTaint;
 use hkask_types::WebID;
 use hkask_types::template::LLMParameters;
-use hkask_types::{InferencePort, InferenceResult};
+use hkask_types::{ChatToolDefinition, ChatToolFunction, InferencePort, InferenceResult};
 use minijinja::UndefinedBehavior;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -1310,7 +1310,7 @@ impl ManifestExecutor {
             }
         }
 
-        let prompt = self.render_step_template(step, &context)?;
+        let (prompt, raw_template_content) = self.render_step_template_with_raw(step, &context)?;
 
         let mut params = self.default_params.clone();
 
@@ -1330,12 +1330,29 @@ impl ManifestExecutor {
             }
         }
 
-        // Single-model or fusion path — the fusion routing above handles it.
-        let result_text = {
+        // Resolve the output schema for this step. If a schema is available
+        // (from step.output_schema or the template's contract.output frontmatter),
+        // declare a synthetic tool and pass it via the `tools` parameter. The
+        // model is forced to call the tool (emitting JSON conforming to the
+        // schema) instead of emitting free-text prose. This is the LangGraph/Swarm
+        // pattern: enforce the output contract at the inference API layer.
+        //
+        // This fixes the systemic "No JSON found in inference response" failure:
+        // 79/364 templates don't instruct JSON output, and many more have fenced
+        // examples that the parser confuses for the actual result. Tool-calling
+        // eliminates the parsing heuristic entirely — the API guarantees JSON.
+        let output_schema = resolve_output_schema(step, &raw_template_content);
+        let structured_tool = output_schema
+            .as_ref()
+            .map(|schema| build_structured_output_tool(schema.clone()));
+        let tools: Option<&[ChatToolDefinition]> =
+            structured_tool.as_ref().map(|t| std::slice::from_ref(t));
+
+        let (result_text, tool_calls): (String, Vec<hkask_types::StructuredToolCall>) = {
             let timeout_dur = std::time::Duration::from_secs(step.timeout_seconds as u64);
             let result: InferenceResult = match tokio::time::timeout(
                 timeout_dur,
-                self.inference.generate(&prompt, &params, None),
+                self.inference.generate(&prompt, &params, tools),
             )
             .await
             {
@@ -1348,7 +1365,7 @@ impl ManifestExecutor {
                     )));
                 }
             };
-            result.text
+            (result.text, result.tool_calls)
         };
 
         // rJoule tracking — cost per token comes from inference provider.
@@ -1361,7 +1378,29 @@ impl ManifestExecutor {
         // Gas tracking — deduct one iteration of compute
         *gas_used = gas_used.saturating_add(gas_cost_per_iter);
 
-        let parsed: Value = parse_json_response(&result_text, step.ordinal)?;
+        // Extract the parsed result. If the model called the structured-output
+        // tool, use the tool call arguments directly (the API guaranteed JSON
+        // conforming to the schema). Otherwise, fall back to parsing the text
+        // response (for models that don't support tool calling, or when no
+        // schema was available).
+        let parsed: Value = if let Some(tool_call) = tool_calls.first() {
+            info!(
+                target: "reg.skill.cascade.step_executed",
+                step = step.ordinal,
+                structured_output = true,
+                "Model emitted structured tool call — extracting args"
+            );
+            tool_call.args.clone()
+        } else {
+            if output_schema.is_some() {
+                warn!(
+                    target: "reg.skill.cascade.step_executed",
+                    step = step.ordinal,
+                    "Model did not call structured-output tool — falling back to text parsing"
+                );
+            }
+            parse_json_response(&result_text, step.ordinal)?
+        };
         context.insert(format!("step_{}_result", step.ordinal), parsed);
 
         // Inject dual-budget context for template awareness
@@ -1818,6 +1857,19 @@ impl ManifestExecutor {
         step: &BundleManifestStep,
         context: &HashMap<String, Value>,
     ) -> Result<String> {
+        let (prompt, _raw_content) = self.render_step_template_with_raw(step, context)?;
+        Ok(prompt)
+    }
+
+    /// Render a step's template and return both the rendered prompt and the
+    /// raw template content (before rendering). The raw content is used to
+    /// extract the `contract.output` frontmatter for structured-output tool
+    /// calling — the schema lives in the frontmatter, not the rendered prompt.
+    fn render_step_template_with_raw(
+        &self,
+        step: &BundleManifestStep,
+        context: &HashMap<String, Value>,
+    ) -> Result<(String, String)> {
         let renderer = step.renderer.as_deref().unwrap_or("");
 
         match renderer {
@@ -1852,7 +1904,9 @@ impl ManifestExecutor {
                     "Rendering minijinja template"
                 );
 
-                render_minijinja(&template_content, context, &self.template_base_path)
+                let prompt =
+                    render_minijinja(&template_content, context, &self.template_base_path)?;
+                Ok((prompt, template_content))
             }
             _ => {
                 // Inline mode: template_ref or renderer contains the template string
@@ -1867,7 +1921,8 @@ impl ManifestExecutor {
                         ))
                     })?;
 
-                Ok(render_inline_template(template_content, context))
+                let rendered = render_inline_template(template_content, context);
+                Ok((rendered, template_content.to_string()))
             }
         }
     }
@@ -2077,6 +2132,133 @@ fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
         "Step {}: No JSON found in inference response",
         step_ordinal
     )))
+}
+
+/// Extract the `contract.output` block from a `.j2` template's frontmatter.
+///
+/// The frontmatter is YAML between the start of the file and the `---`
+/// separator. The `contract.output` block declares field names and their
+/// types as a simple `name: type` mapping (e.g. `convergence_metric: number`).
+/// This function parses that block and returns it as a `serde_json::Value`
+/// map (field name → type string), or `None` if no contract is found.
+///
+/// This is the schema source for structured-output tool calling — the
+/// executor converts this into a JSON Schema and passes it as a synthetic
+/// tool so the model is forced to emit JSON conforming to the contract,
+/// instead of emitting prose and hoping `parse_json_response` can extract
+/// JSON from it.
+fn extract_contract_output(template_content: &str) -> Option<Value> {
+    // The frontmatter is YAML between `---` separators. Templates use `---`
+    // as both opener and closer (YAML frontmatter convention).
+    let mut sections = template_content.splitn(3, "---");
+    let _before = sections.next()?; // typically empty or a comment
+    let frontmatter = sections.next()?; // the YAML block
+
+    // Parse the frontmatter as YAML and extract contract.output.
+    // serde_yaml_neo is already a dependency of this crate (used by
+    // manifest_loader.rs and skill_loader.rs for YAML parsing).
+    let parsed: Value = serde_yaml_neo::from_str(frontmatter).ok()?;
+    let contract = parsed.get("contract")?;
+    let output = contract.get("output")?;
+    Some(output.clone())
+}
+
+/// Convert a `contract.output` block (field name → type string) into a
+/// JSON Schema suitable for tool-calling.
+///
+/// The contract output is a simple mapping like:
+/// ```yaml
+/// output:
+///   convergence_metric: number
+///   rationale: string
+///   blockers: array
+/// ```
+///
+/// This converts to a JSON Schema object with `type: object`, `properties`
+/// mapping each field to its JSON type, and no `required` fields (the model
+/// can omit optional fields). The type mapping is:
+/// - `string` → `{"type": "string"}`
+/// - `number` / `float` / `integer` → `{"type": "number"}`
+/// - `boolean` → `{"type": "boolean"}`
+/// - `array` → `{"type": "array"}`
+/// - `object` → `{"type": "object"}`
+/// - any other type → `{"type": "string"}` (safe default)
+///
+/// If the contract output is already a JSON Schema (has `type` or `properties`
+/// at the top level), it's returned as-is.
+fn contract_output_to_schema(output: &Value) -> Value {
+    // If it's already a JSON Schema object, return as-is.
+    if output.is_object() && (output.get("type").is_some() || output.get("properties").is_some()) {
+        return output.clone();
+    }
+
+    // Otherwise, it's a field-name → type-string mapping.
+    let Some(fields) = output.as_object() else {
+        return output.clone();
+    };
+
+    let mut properties = serde_json::Map::new();
+    for (field_name, field_type) in fields {
+        let type_str = field_type.as_str().unwrap_or("string");
+        let json_type = match type_str {
+            "string" | "str" => "string",
+            "number" | "float" | "double" => "number",
+            "integer" | "int" | "i32" | "i64" | "u32" | "u64" => "number",
+            "boolean" | "bool" => "boolean",
+            "array" => "array",
+            "object" => "object",
+            _ => "string", // safe default for unknown types
+        };
+        properties.insert(field_name.clone(), serde_json::json!({"type": json_type}));
+    }
+
+    serde_json::json!({
+        "type": "object",
+        "properties": properties,
+    })
+}
+
+/// Build a synthetic `ChatToolDefinition` for structured output.
+///
+/// The tool is named `emit_result` and its parameters are the JSON Schema
+/// derived from the contract output. When passed to the inference call,
+/// the model is forced to call this tool (emitting JSON conforming to the
+/// schema) instead of emitting free-text prose. The executor then extracts
+/// the result from `InferenceResult.tool_calls[0].args`.
+///
+/// This is the LangGraph/Swarm pattern: enforce the output contract at the
+/// inference API layer, not the prompt layer. The model physically cannot
+/// emit prose when a tool is the only allowed response format.
+fn build_structured_output_tool(schema: Value) -> ChatToolDefinition {
+    ChatToolDefinition {
+        tool_type: "function".to_string(),
+        function: ChatToolFunction {
+            name: "emit_result".to_string(),
+            description: "Emit the structured result for this step. Call this tool with the JSON object matching the schema.".to_string(),
+            parameters: schema,
+        },
+    }
+}
+
+/// Resolve the output schema for a `select` step.
+///
+/// Priority:
+/// 1. `step.output_schema` (manifest-declared, if present)
+/// 2. `contract.output` from the template frontmatter (parsed at runtime)
+///
+/// Returns a JSON Schema suitable for tool-calling, or `None` if no schema
+/// is available (in which case the executor falls back to text parsing).
+fn resolve_output_schema(step: &BundleManifestStep, template_content: &str) -> Option<Value> {
+    // Priority 1: manifest-declared output_schema.
+    if let Some(ref schema) = step.output_schema {
+        if schema.is_object() {
+            return Some(schema.clone());
+        }
+    }
+
+    // Priority 2: contract.output from the template frontmatter.
+    let contract_output = extract_contract_output(template_content)?;
+    Some(contract_output_to_schema(&contract_output))
 }
 
 /// Bind parameters from an input mapping to values from the context.

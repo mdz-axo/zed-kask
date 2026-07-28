@@ -1800,40 +1800,29 @@ pub(crate) fn render_memory_page(
         )
         .child(Divider::horizontal())
         .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Auto-Inject Memories"))
-                .child(
-                    Label::new("Whether to automatically inject recalled memories into prompts.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    SwitchField::new(
-                        "kask-memory-auto-inject",
-                        Some("Auto-Inject Memories"),
-                        Some(
-                            "Whether to automatically inject recalled memories into prompts."
-                                .into(),
-                        ),
-                        auto_inject,
-                        move |state, _window, cx| {
-                            let value = *state == ToggleState::Selected;
-                            SettingsStore::global(cx).update_settings_file(
-                                <dyn fs::Fs>::global(cx),
-                                move |settings, _| {
-                                    settings
-                                        .kask
-                                        .get_or_insert_default()
-                                        .memory
-                                        .get_or_insert_default()
-                                        .auto_inject = Some(value);
-                                },
-                            );
-                        },
-                    )
-                    .tab_index(0),
+            SwitchField::new(
+                "kask-memory-auto-inject",
+                Some("Auto-Inject Memories"),
+                Some(
+                    "Whether to automatically inject recalled memories into prompts.".into(),
                 ),
+                auto_inject,
+                move |state, _window, cx| {
+                    let value = *state == ToggleState::Selected;
+                    SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        move |settings, _| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .memory
+                                .get_or_insert_default()
+                                .auto_inject = Some(value);
+                        },
+                    );
+                },
+            )
+            .tab_index(0),
         )
         .into_any_element()
 }

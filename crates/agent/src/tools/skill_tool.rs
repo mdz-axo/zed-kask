@@ -88,6 +88,15 @@ pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
 pub struct SkillToolInput {
     /// The name of the skill to retrieve
     pub name: String,
+    /// The user's task for the skill to act on. This is the natural-language
+    /// request that triggered the skill activation — it is injected into the
+    /// manifest cascade context as `task` so templates can reference `{{ task }}`
+    /// instead of running blind. When the model invokes the skill tool, this
+    /// field carries the user's intent; when a slash command activates the
+    /// skill, the trailing text after the command is used. Defaults to empty
+    /// for backward compatibility with callers that only pass `name`.
+    #[serde(default)]
+    pub task: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,6 +283,9 @@ impl AgentTool for SkillTool {
             // cascade is executed instead of body injection. The SKILL.md
             // frontmatter stays the discovery-only catalog entry.
             let _skill_name = input.name.clone();
+            // Clone the task before `input` is moved into `initial_title`
+            // below, so we can inject it into the manifest cascade context.
+            let task = input.task.clone();
             let is_builtin = skill.source == agent_skills::SkillSource::BuiltIn;
             if !is_builtin {
                 let authorize = cx.update(|cx| {
@@ -293,7 +305,15 @@ impl AgentTool for SkillTool {
                 // envelope (body injection is disabled in zed-kask).
                 let skill_name = skill.name.as_ref();
                 if executor.has_manifest(skill_name) {
-                    let context = std::collections::HashMap::new();
+                    // Inject the user's task into the cascade context so templates
+                    // can reference `{{ task }}`. Without this, the cascade runs
+                    // blind — templates get model defaults but never the actual
+                    // request the user wants the skill to act on.
+                    let mut context = std::collections::HashMap::new();
+                    context.insert(
+                        "task".to_string(),
+                        serde_json::Value::String(task.clone()),
+                    );
                     match executor.execute_skill(skill_name, context).await {
                         Ok(result_text) => render_skill_envelope(&skill, &result_text),
                         Err(e) => {
@@ -866,12 +886,16 @@ mod tests {
     /// Stub `SkillManifestExecutor` for tests.
     ///
     /// Returns a fixed cascade output for a known skill name, simulating the
-    /// hKask manifest cascade without standing up the bridge. `has_manifest`
-    /// reports `true` only for skills the stub knows about, mirroring the
-    /// real executor's registry lookup.
+    /// real executor's registry lookup. The `known` set reports `true` only
+    /// for skills the stub knows about, mirroring the real executor's registry
+    /// lookup.
     struct StubManifestExecutor {
         known: std::collections::HashSet<String>,
         output: String,
+        /// Captures the context passed to the most recent `execute_skill` call
+        /// so tests can assert that `task` (and other fields) are injected.
+        last_context:
+            std::sync::Mutex<Option<std::collections::HashMap<String, serde_json::Value>>>,
     }
 
     impl StubManifestExecutor {
@@ -882,7 +906,17 @@ mod tests {
             Self {
                 known: known.into_iter().map(|s| s.into()).collect(),
                 output: output.into(),
+                last_context: std::sync::Mutex::new(None),
             }
+        }
+
+        /// Return a clone of the context passed to the most recent
+        /// `execute_skill` call, or `None` if it was never called.
+        fn last_context(&self) -> Option<std::collections::HashMap<String, serde_json::Value>> {
+            self.last_context
+                .lock()
+                .expect("last_context mutex poisoned")
+                .clone()
         }
     }
 
@@ -891,8 +925,12 @@ mod tests {
         async fn execute_skill(
             &self,
             skill_name: &str,
-            _context: std::collections::HashMap<String, serde_json::Value>,
+            context: std::collections::HashMap<String, serde_json::Value>,
         ) -> Result<String, String> {
+            *self
+                .last_context
+                .lock()
+                .expect("last_context mutex poisoned") = Some(context);
             if self.known.contains(skill_name) {
                 Ok(self.output.clone())
             } else {
@@ -946,6 +984,89 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_skill_tool_manifest_executor_injects_task_into_context(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (skill, _body) =
+            create_test_skill("task-skill", "A skill that consumes {{ task }}", "# Body");
+        let skills = Arc::new(vec![skill]);
+
+        let executor = Arc::new(StubManifestExecutor::new(
+            ["task-skill"],
+            "Cascade ran with task context.",
+        ));
+        let executor_for_assert: Arc<StubManifestExecutor> = executor.clone();
+        let tool = Arc::new(SkillTool::with_manifest_executor(
+            move |_cx| skills.clone(),
+            executor,
+        ));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({
+            "name": "task-skill",
+            "task": "audit the 42 registered skills"
+        }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+
+        let SkillToolOutput::Found { rendered } = output else {
+            panic!("expected Found, got: {output:?}");
+        };
+        assert!(
+            rendered.contains("Cascade ran with task context."),
+            "cascade output must appear: {rendered}"
+        );
+
+        let ctx = executor_for_assert
+            .last_context()
+            .expect("execute_skill was not called");
+        let task_value = ctx
+            .get("task")
+            .expect("`task` must be injected into the cascade context");
+        assert_eq!(
+            task_value,
+            &serde_json::Value::String("audit the 42 registered skills".to_string()),
+            "the user's task must be passed through to the cascade as `task`"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_manifest_executor_defaults_task_to_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Callers that omit `task` (e.g. legacy model invocations) must still
+        // work — `task` defaults to empty string via #[serde(default)].
+        let (skill, _body) = create_test_skill("default-task-skill", "A skill", "# Body");
+        let skills = Arc::new(vec![skill]);
+
+        let executor = Arc::new(StubManifestExecutor::new(["default-task-skill"], "ok"));
+        let executor_for_assert: Arc<StubManifestExecutor> = executor.clone();
+        let tool = Arc::new(SkillTool::with_manifest_executor(
+            move |_cx| skills.clone(),
+            executor,
+        ));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "default-task-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let _output = task.await.unwrap();
+
+        let ctx = executor_for_assert
+            .last_context()
+            .expect("execute_skill was not called");
+        let task_value = ctx
+            .get("task")
+            .expect("`task` key must be present even when omitted by the caller");
+        assert_eq!(
+            task_value,
+            &serde_json::Value::String(String::new()),
+            "omitted `task` must default to an empty string, not be absent"
+        );
+    }
+
+    #[gpui::test]
     async fn test_skill_tool_manifest_executor_surfaces_cascade_errors(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -980,6 +1101,45 @@ mod tests {
         assert!(
             !rendered.contains("# Body"),
             "SKILL.md body must not be injected even when no manifest is registered: {rendered}"
+        );
+    }
+
+    // zed-kask: `render_skill_envelope` emits `<source>marketplace</source>` for
+    // `SkillSource::Public` skills (not the namespaced id, which is in
+    // `display_label`). This pins the stable literal the model pattern-matches
+    // against; upstream has no `Public` variant.
+    #[test]
+    fn test_render_skill_envelope_public_source_label_is_marketplace() {
+        let skill = Skill {
+            name: "bug-hunt".to_string(),
+            description: "Bug hunting skill.".to_string(),
+            source: SkillSource::Public {
+                source_user: "alice".into(),
+                original_skill_id: "alice/bug-hunt".into(),
+            },
+            directory_path: std::path::PathBuf::from(
+                "/home/user/.agents/skills/_marketplace/alice/bug-hunt",
+            ),
+            skill_file_path: std::path::PathBuf::from(
+                "/home/user/.agents/skills/_marketplace/alice/bug-hunt/SKILL.md",
+            ),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            visibility: agent_skills::SkillVisibility::Private,
+            embedded_body: None,
+        };
+        let rendered = render_skill_envelope(&skill, "body content");
+        assert!(
+            rendered.contains("<source>marketplace</source>"),
+            "Public source must render as 'marketplace' in the envelope: {rendered}"
+        );
+        assert!(
+            !rendered.contains("<source>alice/bug-hunt</source>"),
+            "Namespaced id must not appear in the source tag (it's in display_label, not the envelope): {rendered}"
+        );
+        assert!(
+            !rendered.contains("<worktree>"),
+            "Public skills have no worktree: {rendered}"
         );
     }
 }

@@ -2118,10 +2118,29 @@ impl NativeAgent {
             // configured. Do NOT read or inject the SKILL.md body — it is
             // reference-only. If no manifest executor is configured, return
             // a minimal envelope.
+            //
+            // The user's task (text from `original_content`) is injected into
+            // the cascade context as `task` so templates can reference
+            // `{{ task }}`. Without this, the cascade runs blind.
+            let user_task = original_content
+                .iter()
+            // Find the first text block — the user's typed request.
+                .find_map(|block| {
+                    if let acp::ContentBlock::Text(text) = block {
+                        Some(text.text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
             let envelope = if let Some(executor) = crate::manifest_executor() {
                 let skill_name = skill.name.as_ref();
                 if executor.has_manifest(skill_name) {
-                    let context = std::collections::HashMap::new();
+                    let mut context = std::collections::HashMap::new();
+                    context.insert(
+                        "task".to_string(),
+                        serde_json::Value::String(user_task.clone()),
+                    );
                     match executor.execute_skill(skill_name, context).await {
                         Ok(result_text) => {
                             crate::tools::render_skill_envelope(&skill, &result_text)
@@ -2710,7 +2729,15 @@ static MANIFEST_EXECUTOR: std::sync::OnceLock<Option<Arc<dyn SkillManifestExecut
 ///
 /// `None` disables the manifest executor (reverts to body injection).
 pub fn set_manifest_executor(executor: Option<Arc<dyn SkillManifestExecutor>>) {
-    let _ = MANIFEST_EXECUTOR.set(executor);
+    if let Err(prev) = MANIFEST_EXECUTOR.set(executor) {
+        log::warn!(
+            "set_manifest_executor: hook already set — second wiring attempt dropped. \
+             This usually means the deferred post-login task re-ran (re-login, multi-window, \
+             or retry). The previously-wired executor remains active. Remediation: if skills \
+             are not executing, restart the app to re-wire from a clean process."
+        );
+        let _ = prev; // explicit: the rejected payload is intentionally dropped
+    }
 }
 
 /// Get the global manifest executor, if set.

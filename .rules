@@ -303,3 +303,17 @@ etc. on ordinary coding requests, with the model discovering the loss only via
 "tool not found" errors mid-turn. The filtering logic is extracted into
 `tool_router::apply_router_bypassing_built_ins` for testability without the
 process-global `TOOL_ROUTER` `OnceLock`.
+
+## Skill invocation is `skill` tool call, not `read_file(SKILL.md)`
+
+When a user asks to "run", "apply", "use", or "invoke" a skill on a target
+(e.g., "run skill-maintenance on each of the 42 skills"), the correct agent
+action is a single `skill` tool call with the skill's name and the target as
+context. Do not `read_file` the `SKILL.md` body and improvise the methodology
+— the manifest encodes the methodology; the catalog `description` only tells
+the agent which skill to invoke. The system-prompt skills section
+(`crates/agent/src/templates/system_prompt.hbs`) pins this for the model;
+this rule pins it for agent sessions that read `.rules`. The failure mode is
+the agent `read_file`-ing `~/.agents/skills/<name>/SKILL.md` and then
+researching/questioning the skill instead of running its cascade — observed
+when asked to run `skill-maintenance` across the corpus.

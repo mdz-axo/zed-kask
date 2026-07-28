@@ -1,4 +1,4 @@
-use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
+use agent_skills::{Skill, SkillIndex, SkillSource, SkillVisibility, encode_skill_share_link};
 use fs::RemoveOptions;
 use gpui::{App, ClipboardItem, PromptLevel, ScrollHandle, SharedString, prelude::*};
 
@@ -179,6 +179,45 @@ fn render_skill_row(
                 )
                 .detach();
             }))
+        })
+        // zed-kask: Marketplace visibility toggle. Only renders for
+        // `SkillSource::Global` skills — built-ins are part of the binary
+        // and can't be published; project-local skills defer to v2 (plan §2.2).
+        // `Lock` = Private (default), `LockOff` = Public (opt-in to publish).
+        // Pinned by `test_visibility_toggle_only_for_global_skills` (Phase 7).
+        .when(matches!(skill.source, SkillSource::Global), |this| {
+            let visibility = skill.visibility;
+            let (vis_icon, vis_tooltip, vis_color) = match visibility {
+                SkillVisibility::Private => (
+                    IconName::Lock,
+                    "Private — click to publish to marketplace",
+                    Color::Muted,
+                ),
+                SkillVisibility::Public => (
+                    IconName::LockOff,
+                    "Public — click to unpublish from marketplace",
+                    Color::Accent,
+                ),
+            };
+            // Clone the skill so the toggle handler can call
+            // `handle_visibility_toggle` without borrowing `skill`.
+            let toggle_skill = skill.clone();
+            this.child(
+                IconButton::new(
+                    SharedString::from(format!("visibility-{}", skill.name)),
+                    vis_icon,
+                )
+                .tab_index(0_isize)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(vis_color)
+                .tooltip(Tooltip::text(vis_tooltip))
+                .on_click(cx.listener(
+                    move |settings_window, _event, _window, cx| {
+                        crate::pages::handle_visibility_toggle(&toggle_skill, settings_window, cx);
+                    },
+                )),
+            )
         })
         .child(Label::new(skill.name.clone()))
         .when_some(warning_message, |this, warning_message| {
