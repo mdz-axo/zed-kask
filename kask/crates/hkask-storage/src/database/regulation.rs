@@ -22,6 +22,12 @@ pub(crate) fn extract_table(sql: &str) -> &str {
 ///
 /// The regulator consumes these events on `target: "reg.storage"` to
 /// track latency distributions, error rates, and throughput per table.
+///
+/// Emitted at `debug!` level (not `info!`) because the storage layer fires
+/// one event per SQL operation — under multi-thread load with recall +
+/// ingestion + consolidation all hitting the same SQLite pool, `info!`-level
+/// events dominate the tracing cost. The regulator subscribes to `reg.storage`
+/// explicitly, so it sees `debug!` events regardless of the default level.
 pub(crate) fn emit_storage_span(
     operation: &str,
     table: &str,
@@ -29,7 +35,7 @@ pub(crate) fn emit_storage_span(
     rows: usize,
     error: bool,
 ) {
-    tracing::info!(
+    tracing::debug!(
         target: "reg.storage",
         operation = operation,
         table = table,

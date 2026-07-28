@@ -315,6 +315,24 @@ impl HMemStore {
             &[DbValue::Text(entity.to_string())],
         )
     }
+    /// Query h_mems by entity prefix (LIKE 'prefix%').
+    ///
+    /// Used by recall paths that need to load all h_mems for a family of
+    /// entities (e.g. all `chat:thread:*` entities for episodic keyword
+    /// search). The prefix must not contain SQL LIKE wildcards (`%` or `_`)
+    /// — they would be interpreted as wildcards.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — query by entity prefix
+    /// pre:  prefix is non-empty and contains no LIKE wildcards
+    /// post: returns Vec of h_mems whose entity starts with `prefix`
+    #[must_use = "result must be used"]
+    pub fn query_by_entity_prefix(&self, prefix: &str) -> Result<Vec<HMem>, HMemError> {
+        self.query_rows(
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE entity LIKE ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &[DbValue::Text(format!("{}%", prefix))],
+        )
+    }
     /// Query h_mems by entity and attribute.
     ///
     /// expect: "The system provides durable storage for h_mem data"

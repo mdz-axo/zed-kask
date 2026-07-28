@@ -154,13 +154,58 @@ impl EpisodicMemory {
     ///
     /// Emits `reg.memory.decay` span for each h_mem that undergoes decay.
     ///
+    /// **Touch behavior:** resets `recalled_at` on every deduped h_mem. Use
+    /// `query_for_deduped_untouched` for recall paths that only inspect
+    /// candidates (e.g. context injection pre-filter) — touching every
+    /// recalled h_mem turns recall into a write storm under multi-thread
+    /// load (one UPDATE per row per recall call).
+    ///
     /// expect: "I can recall deduplicated episodic h_mems with confidence decay"
     /// \[P3\] Motivating: Generative Space — recalls deduplicated episodic h_mems for an entity
     /// \[P9\] Constraining: Homeostatic Self-Regulation — applies confidence decay and temporal attention at recall
     /// pre:  entity is non-empty, perspective is valid
     /// post: returns `Vec<HMem>` filtered by perspective, decayed, deduped, sorted by recency
     /// post: confidence decayed via e^(-λt) for each h_mem
+    /// post: `recalled_at` touched on each deduped h_mem (resets decay clock)
     pub fn query_for_deduped(
+        &self,
+        entity: &str,
+        perspective: WebID,
+    ) -> Result<Vec<HMem>, EpisodicMemoryError> {
+        let deduped = self.query_for_deduped_untouched(entity, perspective)?;
+
+        // Touch recalled_at on each deduped h_mem — resets the decay clock.
+        // Memory that gets used stays fresh; memory that doesn't decays.
+        for t in &deduped {
+            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
+                tracing::warn!(
+                    target: "reg.memory.decay",
+                    triple_id = %t.id,
+                    error = %e,
+                    "Failed to touch_recall episodic h_mem — decay clock not reset"
+                );
+            }
+        }
+
+        Ok(deduped)
+    }
+
+    /// Query by entity for specific perspective with deduplication and decay,
+    /// **without** touching `recalled_at`.
+    ///
+    /// Same as `query_for_deduped` but performs no writes. Use this for recall
+    /// paths that inspect many candidates but only act on a few (e.g. context
+    /// injection pre-filter, saliency scoring). The caller can touch only the
+    /// h_mems that actually get used via `touch_recall`.
+    ///
+    /// expect: "I can recall deduplicated episodic h_mems with confidence decay"
+    /// \[P3\] Motivating: Generative Space — recalls deduplicated episodic h_mems for an entity
+    /// \[P9\] Constraining: Homeostatic Self-Regulation — applies confidence decay and temporal attention at recall
+    /// pre:  entity is non-empty, perspective is valid
+    /// post: returns `Vec<HMem>` filtered by perspective, decayed, deduped, sorted by recency
+    /// post: confidence decayed via e^(-λt) for each h_mem
+    /// post: `recalled_at` is NOT modified — caller touches used h_mems explicitly
+    pub fn query_for_deduped_untouched(
         &self,
         entity: &str,
         perspective: WebID,
@@ -193,20 +238,52 @@ impl EpisodicMemory {
 
         let deduped = recall_dedup::dedup_h_mems(filtered);
 
-        // Touch recalled_at on each deduped h_mem — resets the decay clock.
-        // Memory that gets used stays fresh; memory that doesn't decays.
-        for t in &deduped {
-            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
-                tracing::warn!(
-                    target: "reg.memory.decay",
-                    triple_id = %t.id,
-                    error = %e,
-                    "Failed to touch_recall episodic h_mem — decay clock not reset"
-                );
-            }
-        }
-
         Ok(deduped)
+    }
+
+    /// Touch `recalled_at` on a single h_mem, resetting its decay clock.
+    ///
+    /// Use after `query_for_deduped_untouched` for the h_mems that actually
+    /// get used (e.g. injected into the prompt). Returns Ok(()) on success or
+    /// if the h_mem no longer exists (graceful — the decay clock simply isn't
+    /// reset, which is the same as not touching).
+    pub fn touch_recall(&self, id: &hkask_storage::HMemId) -> Result<(), EpisodicMemoryError> {
+        self.h_mem_store.touch_recall(id).map_err(Into::into)
+    }
+
+    /// Query by entity **prefix** for a perspective, without touching
+    /// `recalled_at`. Same as `query_for_deduped_untouched` but uses a
+    /// `LIKE 'prefix%'` match instead of an exact entity match.
+    ///
+    /// Used by `recall_context` to load all `chat:thread:*` episodic h_mems
+    /// in a single query, then filter by keyword overlap in memory. The
+    /// previous implementation queried the exact entity `"chat:thread:"`
+    /// (no thread_id suffix), which never matched the stored entities
+    /// `"chat:thread:<thread_id>"` — so the episodic keyword search was
+    /// dead code. This prefix variant fixes that.
+    ///
+    /// expect: "I can recall deduplicated episodic h_mems with confidence decay"
+    /// \[P3\] Motivating: Generative Space — recalls episodic h_mems by entity prefix
+    /// pre:  prefix is non-empty, perspective is valid
+    /// post: returns `Vec<HMem>` filtered by perspective, decayed, deduped, sorted by recency
+    /// post: `recalled_at` is NOT modified — caller touches used h_mems explicitly
+    pub fn query_for_deduped_untouched_by_prefix(
+        &self,
+        prefix: &str,
+        perspective: WebID,
+    ) -> Result<Vec<HMem>, EpisodicMemoryError> {
+        let h_mems = self.h_mem_store.query_by_entity_prefix(prefix)?;
+        let mut filtered: Vec<HMem> = h_mems
+            .into_iter()
+            .filter(|t| t.access.perspective == Some(perspective))
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect();
+        filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
+        Ok(recall_dedup::dedup_h_mems(filtered))
     }
 
     // Query — all episodic memories

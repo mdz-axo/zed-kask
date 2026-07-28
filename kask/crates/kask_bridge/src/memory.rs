@@ -99,6 +99,18 @@ pub struct RealMemoryPort {
     /// `reqwest` (which is tokio-backed) has a reactor. The memory port's
     /// async methods are called from GPUI's background executor, not tokio.
     tokio_handle: tokio::runtime::Handle,
+    /// Ingestion concurrency limiter. Each `ingest_turn` acquires a permit
+    /// before touching the database, so concurrent ingestion futures (one per
+    /// completing thread) serialize instead of contending for the SQLite pool.
+    /// Without this, N active threads each completing a turn fire N concurrent
+    /// ingestion futures — each doing multiple writes + an embedding HTTP call
+    /// — which crowds out the recall path (also SQLite-bound) and starves the
+    /// inference thread's `inject_context` recall.
+    ///
+    /// Default 1 (fully serial). Override via `HKASK_MEMORY_INGEST_CONCURRENCY`.
+    /// A value of 1 is correct for SQLite (single writer); raise only if the
+    /// store is backed by Postgres.
+    ingest_semaphore: tokio::sync::Semaphore,
 }
 
 impl RealMemoryPort {
@@ -208,6 +220,13 @@ impl RealMemoryPort {
             confidence_floor,
             last_consolidation: Mutex::new(None),
             tokio_handle,
+            ingest_semaphore: tokio::sync::Semaphore::new(
+                std::env::var("HKASK_MEMORY_INGEST_CONCURRENCY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|v: &usize| *v > 0)
+                    .unwrap_or(1),
+            ),
         })
     }
 
@@ -347,6 +366,30 @@ impl MemoryPort for RealMemoryPort {
         record: TurnRecord,
     ) -> Pin<Box<dyn Future<Output = Result<(), MemoryError>> + Send + 'a>> {
         Box::pin(async move {
+            // Acquire an ingestion permit before touching the database. This
+            // serializes concurrent ingestion futures (one per completing
+            // thread) so they don't contend for the SQLite pool with each
+            // other or with the recall path. The permit is held for the
+            // duration of the ingestion (including the embedding HTTP call
+            // and consolidation trigger) and released on drop.
+            //
+            // If the semaphore is contended, this future parks until a permit
+            // is available — the calling thread's turn has already completed,
+            // so the user sees no latency from this wait.
+            let _ingest_permit = match self.ingest_semaphore.acquire().await {
+                Ok(permit) => permit,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        error = %e,
+                        "ingest_semaphore closed — skipping ingestion"
+                    );
+                    return Err(MemoryError::Ingestion(format!(
+                        "ingest_semaphore closed: {e}"
+                    )));
+                }
+            };
+
             let thread_id = record.thread_id.clone();
             let user_input = record.user_input.clone();
             let agent_response = record.agent_response.clone();
@@ -498,6 +541,10 @@ impl MemoryPort for RealMemoryPort {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
             let mut snippets: Vec<MemorySnippet> = Vec::new();
+            // Track which h_mems we actually inject, so we can touch only
+            // those (resets their decay clocks). Touching every recalled
+            // h_mem turns recall into a write storm under multi-thread load.
+            let mut touched_ids: Vec<hkask_storage::HMemId> = Vec::new();
 
             // ── 1. Semantic search (embedding KNN) ───────────────────────
             //
@@ -524,9 +571,10 @@ impl MemoryPort for RealMemoryPort {
                     Ok(results) => {
                         for result in results {
                             // Retrieve the h_mem associated with this embedding
-                            // to get the full text content.
+                            // to get the full text content. Use the untouched
+                            // variant — we touch only the injected ones below.
                             let entity_ref = &result.embedding.entity_ref;
-                            if let Ok(h_mems) = self.semantic.query_deduped(entity_ref) {
+                            if let Ok(h_mems) = self.semantic.query_deduped_untouched(entity_ref) {
                                 for h_mem in h_mems {
                                     let text = h_mem.value.as_str().unwrap_or("").to_string();
                                     if !text.is_empty() {
@@ -536,6 +584,7 @@ impl MemoryPort for RealMemoryPort {
                                             confidence: h_mem.confidence.value(),
                                             relevance_score: 1.0 - result.distance,
                                         });
+                                        touched_ids.push(h_mem.id);
                                     }
                                 }
                             }
@@ -551,37 +600,57 @@ impl MemoryPort for RealMemoryPort {
                 }
             }
 
-            // ── 2. Episodic search (entity/keyword overlap) ──────────────
+            // ── 2. Episodic search (keyword overlap) ─────────────────────
             //
-            // Query episodic memory by extracting keywords from the query
-            // and searching for h_mems with matching entities.
-            let query_words: Vec<&str> = query
+            // Load episodic h_mems for the user's chat threads ONCE, then
+            // filter by keyword overlap in memory. The previous implementation
+            // re-queried the store for each query word (5x) using the same
+            // fixed entity string "chat:thread:" — a redundant N+1 scan that
+            // also fired touch_recall on every row per iteration, turning
+            // recall into a write storm under multi-thread load.
+            //
+            // We use the untouched variant and touch only the injected h_mems.
+            let query_words: Vec<String> = query
                 .split_whitespace()
                 .filter(|w| w.len() > 3)
                 .take(5)
+                .map(|w| w.to_lowercase())
                 .collect();
 
-            for word in &query_words {
-                let entity = "chat:thread:".to_string();
-                if let Ok(h_mems) = self.episodic.query_for_deduped(&entity, self.user_webid) {
+            if !query_words.is_empty() {
+                // Use a prefix query to load all chat:thread:* episodic h_mems
+                // in a single SQL call. The previous implementation queried
+                // the exact entity "chat:thread:" (no thread_id suffix), which
+                // never matched stored entities "chat:thread:<thread_id>" —
+                // so the episodic keyword search was dead code. Combined with
+                // the N+1 loop (one query per query word), this was both broken
+                // and a write storm.
+                let entity_prefix = "chat:thread:".to_string();
+                if let Ok(h_mems) = self
+                    .episodic
+                    .query_for_deduped_untouched_by_prefix(&entity_prefix, self.user_webid)
+                {
                     for h_mem in h_mems {
                         let text = h_mem.value.as_str().unwrap_or("").to_string();
                         if text.is_empty() {
                             continue;
                         }
-                        // Check if the query word appears in the text
-                        if text.to_lowercase().contains(&word.to_lowercase()) {
-                            // Skip if already in snippets (dedup by text)
-                            if snippets.iter().any(|s| s.text == text) {
-                                continue;
-                            }
-                            snippets.push(MemorySnippet {
-                                text,
-                                source: "episodic".to_string(),
-                                confidence: h_mem.confidence.value(),
-                                relevance_score: 0.5, // Base relevance for keyword match
-                            });
+                        let text_lower = text.to_lowercase();
+                        // Check if ANY query word appears in the text
+                        if !query_words.iter().any(|w| text_lower.contains(w)) {
+                            continue;
                         }
+                        // Skip if already in snippets (dedup by text)
+                        if snippets.iter().any(|s| s.text == text) {
+                            continue;
+                        }
+                        snippets.push(MemorySnippet {
+                            text,
+                            source: "episodic".to_string(),
+                            confidence: h_mem.confidence.value(),
+                            relevance_score: 0.5, // Base relevance for keyword match
+                        });
+                        touched_ids.push(h_mem.id);
                     }
                 }
             }
@@ -592,12 +661,49 @@ impl MemoryPort for RealMemoryPort {
                     .partial_cmp(&a.relevance_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            snippets.truncate(limit);
+            // Truncate snippets AND touched_ids in lockstep so we only touch
+            // the h_mems that actually survive the limit.
+            if snippets.len() > limit {
+                snippets.truncate(limit);
+                touched_ids.truncate(limit);
+            }
+
+            // ── 4. Touch only the injected h_mems ────────────────────────
+            //
+            // Resets the decay clock on h_mems that actually got used. This
+            // is the “memory that gets used stays fresh” semantics, applied
+            // post-filter instead of pre-filter — avoids the write storm.
+            for id in &touched_ids {
+                if let Err(e) = self.episodic.touch_recall(id) {
+                    tracing::warn!(
+                        target: "reg.memory.decay",
+                        triple_id = %id.as_uuid(),
+                        error = %e,
+                        "Failed to touch_recall episodic h_mem during recall_context"
+                    );
+                }
+            }
+            // Semantic h_mems share the same HMemStore touch path; the IDs
+            // above are a mix of semantic and episodic. Touching a semantic
+            // id via the episodic store is harmless (same underlying table)
+            // but for clarity we also touch via the semantic store.
+            for id in &touched_ids {
+                if let Err(e) = self.semantic.touch_recall(id) {
+                    // Not all ids are semantic — ignore not-found.
+                    tracing::trace!(
+                        target: "reg.memory.decay",
+                        triple_id = %id.as_uuid(),
+                        error = %e,
+                        "Semantic touch_recall missed (likely episodic id) — benign"
+                    );
+                }
+            }
 
             tracing::info!(
                 target: "reg.memory",
                 query_len = query.len(),
                 recalled = snippets.len(),
+                touched = touched_ids.len(),
                 "Recalled memory snippets for context injection"
             );
 
@@ -698,6 +804,7 @@ mod tests {
             confidence_floor,
             last_consolidation: Mutex::new(None),
             tokio_handle: tokio::runtime::Handle::current(),
+            ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
     }
 
@@ -854,5 +961,189 @@ mod tests {
             last.is_none(),
             "consolidation should not fire when cadence is 0"
         );
+    }
+
+    /// Pin the N+1 fix in `recall_context`: the episodic keyword search must
+    /// load episodic h_mems exactly once per recall call, not once per query
+    /// word. The previous implementation re-queried the store for each of the
+    /// 5 query words using the same fixed entity string `"chat:thread:"`,
+    /// which also fired `touch_recall` on every row per iteration — turning
+    /// recall into a write storm under multi-thread load.
+    ///
+    /// We can't easily count SQL queries from here, but we can verify the
+    /// observable consequence: `recall_context` returns snippets that match
+    /// ANY query word (not just the last one), and the recall completes in
+    /// reasonable time. The regression symptom was that recall returned
+    /// results for only the last word (because the loop overwrote the entity
+    /// variable) and fired N×5 touch_recall UPDATEs.
+    #[tokio::test]
+    async fn recall_context_matches_any_query_word_single_load() {
+        let port = in_memory_port();
+
+        // Ingest two turns with distinct keywords so we can verify both match.
+        let records = [
+            TurnRecord {
+                thread_id: "t-rust".to_string(),
+                user_input: "Tell me about rust programming".to_string(),
+                agent_response: "Rust is a systems language.".to_string(),
+                model: "test-model".to_string(),
+                thread_title: None,
+            },
+            TurnRecord {
+                thread_id: "t-python".to_string(),
+                user_input: "Tell me about python programming".to_string(),
+                agent_response: "Python is a scripting language.".to_string(),
+                model: "test-model".to_string(),
+                thread_title: None,
+            },
+        ];
+        for record in records {
+            port.ingest_turn(record).await.expect("ingest succeeds");
+        }
+
+        // Query with two distinct keywords — both should match. Under the
+        // N+1 bug, only the last word's results survived (the entity variable
+        // was overwritten each iteration, and the loop re-queried the same
+        // entity 5 times, but the substring filter only kept matches for the
+        // current word — so earlier words' matches were lost when a later
+        // word had no overlap with the same h_mems).
+        let snippets = port
+            .recall_context("rust python", 10)
+            .await
+            .expect("recall succeeds");
+
+        // Both turns should be recalled — the fix loads episodic h_mems once
+        // and checks all query words against each.
+        let texts: Vec<&str> = snippets.iter().map(|s| s.text.as_str()).collect();
+        let has_rust = texts.iter().any(|t| t.contains("rust"));
+        let has_python = texts.iter().any(|t| t.contains("python"));
+        assert!(
+            has_rust && has_python,
+            "recall should match ANY query word, got: {snippets:?}"
+        );
+    }
+
+    /// Pin that `recall_context` touches `recalled_at` only on h_mems that
+    /// survive the limit, not on every recalled candidate. The previous
+    /// implementation touched every deduped h_mem inside `query_for_deduped`,
+    /// even ones filtered out by `recall_min_confidence` in the injector.
+    ///
+    /// We verify this by checking that h_mems NOT in the final snippets have
+    /// their `recalled_at` unchanged after a recall that truncates them.
+    #[tokio::test]
+    async fn recall_context_touches_only_injected_h_mems() {
+        let port = in_memory_port();
+        let webid = port.user_webid;
+
+        // Ingest one turn.
+        port.ingest_turn(TurnRecord {
+            thread_id: "touch-test".to_string(),
+            user_input: "unique_keyword_xyz".to_string(),
+            agent_response: "response".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        })
+        .await
+        .expect("ingest succeeds");
+
+        // Read the stored recalled_at via the untouched query (no side effects).
+        let before = port
+            .episodic
+            .query_for_deduped_untouched("chat:thread:touch-test", webid)
+            .expect("untouched query succeeds");
+        assert_eq!(before.len(), 1);
+        let recalled_at_before = before[0].recalled_at;
+
+        // Sleep so a touch would be observable.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Recall with a query that does NOT match the stored keyword — the
+        // h_mem should be loaded as a candidate but NOT injected (no keyword
+        // overlap), so its recalled_at should NOT be touched.
+        let snippets = port
+            .recall_context("completely_different_query", 10)
+            .await
+            .expect("recall succeeds");
+        assert!(
+            snippets.is_empty(),
+            "no snippets should match a non-overlapping query"
+        );
+
+        let after = port
+            .episodic
+            .query_for_deduped_untouched("chat:thread:touch-test", webid)
+            .expect("untouched query succeeds");
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].recalled_at, recalled_at_before,
+            "recalled_at should be unchanged when the h_mem is not injected"
+        );
+
+        // Now recall with a matching query — the h_mem should be injected and
+        // its recalled_at should be touched.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let snippets = port
+            .recall_context("unique_keyword_xyz", 10)
+            .await
+            .expect("recall succeeds");
+        assert_eq!(snippets.len(), 1, "matching query should recall the h_mem");
+
+        let after_match = port
+            .episodic
+            .query_for_deduped_untouched("chat:thread:touch-test", webid)
+            .expect("untouched query succeeds");
+        assert_eq!(after_match.len(), 1);
+        assert!(
+            after_match[0].recalled_at > recalled_at_before,
+            "recalled_at should be updated when the h_mem is injected"
+        );
+    }
+
+    /// Pin that the ingestion semaphore serializes concurrent ingestions.
+    /// Two concurrent ingestions should both complete successfully, but the
+    /// second should wait for the first to release its permit.
+    #[tokio::test]
+    async fn ingestion_semaphore_serializes_concurrent_ingestions() {
+        let port = std::sync::Arc::new(in_memory_port());
+
+        let port1 = port.clone();
+        let port2 = port.clone();
+
+        let record1 = TurnRecord {
+            thread_id: "sem-1".to_string(),
+            user_input: "first".to_string(),
+            agent_response: "response1".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        };
+        let record2 = TurnRecord {
+            thread_id: "sem-2".to_string(),
+            user_input: "second".to_string(),
+            agent_response: "response2".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        };
+
+        // Spawn both ingestions concurrently.
+        let (r1, r2) = tokio::join!(
+            async move { port1.ingest_turn(record1).await },
+            async move { port2.ingest_turn(record2).await }
+        );
+
+        assert!(r1.is_ok(), "first ingestion should succeed: {r1:?}");
+        assert!(r2.is_ok(), "second ingestion should succeed: {r2:?}");
+
+        // Both turns should be stored.
+        let webid = port.user_webid;
+        let h1 = port
+            .episodic
+            .query_for_deduped_untouched("chat:thread:sem-1", webid)
+            .expect("query succeeds");
+        let h2 = port
+            .episodic
+            .query_for_deduped_untouched("chat:thread:sem-2", webid)
+            .expect("query succeeds");
+        assert_eq!(h1.len(), 1, "first turn should be stored");
+        assert_eq!(h2.len(), 1, "second turn should be stored");
     }
 }

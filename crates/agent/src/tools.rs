@@ -63,6 +63,32 @@ where
     }
 }
 
+/// Deserialize an `Option<u64>` that may have been provided as a numeric string
+/// (e.g. `"300000"` instead of `300000`). Some models emit integers as strings;
+/// we coerce rather than reject to avoid wasting a turn on a retry.
+pub(crate) fn deserialize_optional_u64_from_maybe_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum U64OrString {
+        Number(u64),
+        String(String),
+    }
+
+    match Option::<U64OrString>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(U64OrString::Number(n)) => Ok(Some(n)),
+        Some(U64OrString::String(s)) => s
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|error| D::Error::custom(format!("failed to parse u64 from string: {error}"))),
+    }
+}
+
 pub use apply_code_action_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;

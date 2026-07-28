@@ -147,6 +147,11 @@ impl SemanticMemory {
     /// Applies Wozniak-Gorzelanczyk (1995) forgetting curve decay at recall
     /// and resets the recall clock via touch_recall — same model as episodic memory.
     ///
+    /// **Touch behavior:** resets `recalled_at` on every deduped h_mem. Use
+    /// `query_deduped_untouched` for recall paths that only inspect candidates
+    /// (e.g. context injection pre-filter) — touching every recalled h_mem
+    /// turns recall into a write storm under multi-thread load.
+    ///
     /// expect: "I can recall deduplicated semantic h_mems with embedding similarity"
     /// \[P3\] Motivating: Generative Space — recalls deduplicated shared semantic h_mems
     /// \[P4\] Constraining: Clear Boundaries — filters to Shared/Public visibility
@@ -155,6 +160,40 @@ impl SemanticMemory {
     /// post: returns `Vec<HMem>` filtered to Shared/Public visibility, decayed, deduped
     /// post: recalled_at touched for each returned h_mem (resets decay clock)
     pub fn query_deduped(&self, entity: &str) -> Result<Vec<HMem>, SemanticMemoryError> {
+        let deduped = self.query_deduped_untouched(entity)?;
+
+        // Touch recalled_at on each deduped h_mem — resets the decay clock.
+        // Memory that gets used stays fresh; memory that doesn't decays.
+        for t in &deduped {
+            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
+                tracing::warn!(
+                    target: "reg.memory.decay",
+                    triple_id = %t.id,
+                    error = %e,
+                    "Failed to touch_recall semantic h_mem — decay clock not reset"
+                );
+            }
+        }
+
+        Ok(deduped)
+    }
+
+    /// Query by entity with deduplication and confidence decay, **without**
+    /// touching `recalled_at`.
+    ///
+    /// Same as `query_deduped` but performs no writes. Use this for recall
+    /// paths that inspect many candidates but only act on a few (e.g. context
+    /// injection pre-filter, saliency scoring). The caller can touch only the
+    /// h_mems that actually get used via `touch_recall`.
+    ///
+    /// expect: "I can recall deduplicated semantic h_mems with embedding similarity"
+    /// \[P3\] Motivating: Generative Space — recalls deduplicated shared semantic h_mems
+    /// \[P4\] Constraining: Clear Boundaries — filters to Shared/Public visibility
+    /// \[P9\] Constraining: Homeostatic Self-Regulation — applies confidence decay at recall
+    /// pre:  entity is non-empty
+    /// post: returns `Vec<HMem>` filtered to Shared/Public visibility, decayed, deduped
+    /// post: `recalled_at` is NOT modified — caller touches used h_mems explicitly
+    pub fn query_deduped_untouched(&self, entity: &str) -> Result<Vec<HMem>, SemanticMemoryError> {
         let h_mems = self.h_mem_store.query_by_entity(entity)?;
         let filtered: Vec<HMem> = h_mems
             .into_iter()
@@ -180,20 +219,17 @@ impl SemanticMemory {
 
         let deduped = recall_dedup::dedup_h_mems(filtered);
 
-        // Touch recalled_at on each deduped h_mem — resets the decay clock.
-        // Memory that gets used stays fresh; memory that doesn't decays.
-        for t in &deduped {
-            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
-                tracing::warn!(
-                    target: "reg.memory.decay",
-                    triple_id = %t.id,
-                    error = %e,
-                    "Failed to touch_recall semantic h_mem — decay clock not reset"
-                );
-            }
-        }
-
         Ok(deduped)
+    }
+
+    /// Touch `recalled_at` on a single h_mem, resetting its decay clock.
+    ///
+    /// Use after `query_deduped_untouched` for the h_mems that actually get
+    /// used (e.g. injected into the prompt). Returns Ok(()) on success or if
+    /// the h_mem no longer exists (graceful — the decay clock simply isn't
+    /// reset, which is the same as not touching).
+    pub fn touch_recall(&self, id: &hkask_storage::HMemId) -> Result<(), SemanticMemoryError> {
+        self.h_mem_store.touch_recall(id).map_err(Into::into)
     }
 
     /// Store a semantic h_mem (must be Shared/Public, no perspective).
