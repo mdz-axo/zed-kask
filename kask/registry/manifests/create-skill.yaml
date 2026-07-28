@@ -1,18 +1,24 @@
 # Create Skill Process Manifest
-# ℏKask v0.31.0 — kask-native skill creation as phased PDCA
-# Decomposed into: Describe → Scaffold → Validate → Convergence
+# ℏKask v0.31.0 — kask-native skill creation with ontological grounding
+# Decomposed into: Research → Describe → Scaffold → Validate → Convergence
 #
 # Overrides the built-in Zed create-skill, which only produces SKILL.md
 # files. The kask-native version produces the full registry-first
-# structure: template manifest + .j2 templates + process manifest +
-# SKILL.md companion.
+# structure with ontological grounding: a research phase finds
+# academic/industry anchors for the skill's domain, the PDCA shape
+# emerges from those anchors (not from a generic template), and the
+# artifacts are annotated with ontology references.
+#
+# Core principle: each skill is idiosyncratic. The PDCA shape emerges
+# from the domain's ontological anchors. Do not generalize the shape
+# across skills.
 #
 # Delegates to skill-maintenance-build for scaffolding and
 # skill-maintenance-validate for validation.
 #
-# Feedback loop: describe accepts prior_validation_failures
-# (next_describe_focus, fix_suggestions) and consumes them to amplify the
-# next describe phase. Convergence check emits next_describe_focus when
+# Feedback loop: research accepts prior_validation_failures
+# (next_research_focus, fix_suggestions) and consumes them to amplify the
+# next research phase. Convergence check emits next_research_focus when
 # not converged.
 
 manifest:
@@ -20,16 +26,20 @@ manifest:
   category: skill
   name: Create Skill
   description: >
-    Convergent kask-native skill creation process. Captures the skill's
-    purpose, name, PDCA phases, delegates, and span namespace from a
-    natural-language description; scaffolds the full registry crate
+    Convergent kask-native skill creation process with ontological
+    grounding. Searches the academic and industry literature for the
+    skill's domain to find ontological anchors (process ontologies,
+    quality criteria, entity types, existing ontologies); derives the
+    PDCA shape from those anchors (not from a generic template — each
+    skill is idiosyncratic); captures the specification (name, purpose,
+    delegates, ontology annotations); scaffolds the full registry crate
     (template manifest + .j2 templates + process manifest + SKILL.md
     companion) by delegating to skill-maintenance-build; validates the
     scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10 by delegating
     to skill-maintenance-validate; and iterates until validation passes
     or escalation is required. Overrides the built-in Zed create-skill,
-    which only produces SKILL.md files — insufficient for kask, where the
-    SKILL.md is a discovery-only catalog entry and the implementation
+    which only produces SKILL.md files — insufficient for kask, where
+    the SKILL.md is a discovery-only catalog entry and the implementation
     lives in the registry.
   functional_role: flowdef
   version: 0.31.0
@@ -40,11 +50,15 @@ convergence:
   # Rationale: 0.25 — skill creation should converge quickly. If
   # validation passes all critical and high-severity checks, the skill
   # is ready to install. Medium/low failures are fixable post-install.
+  # When not converged, the convergence check emits next_research_focus
+  # (not next_describe_focus) because failures often indicate the
+  # ontological anchors were insufficient — the research phase needs to
+  # re-run, not just the describe phase.
   threshold: 0.25
   improvement_gate: threshold_only
   max_iterations: 3
   min_iterations: 1
-  convergence_field: step_4_result.convergence_metric
+  convergence_field: step_5_result.convergence_metric
   on_not_reached: escalate
 
 gas:
@@ -64,15 +78,14 @@ inputs:
     required: true
     description: >
       Natural-language description of the skill to create. Should include
-      the skill's purpose, target domain, and any structural preferences
-      (e.g., "follow the bug-hunt pattern").
+      the skill's purpose, target domain, and any structural preferences.
   - name: prior_validation_failures
     type: object
     required: false
     description: >
       Output of a previous create-skill iteration's validation. Closes
-      the feedback loop: the describe phase consumes
-      prior_validation_failures.next_describe_focus and
+      the feedback loop: the research phase consumes
+      prior_validation_failures.next_research_focus and
       prior_validation_failures.fix_suggestions to direct the next
       iteration. When absent, the creation runs as a first pass.
 
@@ -91,18 +104,20 @@ steps:
   - ordinal: 1
     action: select
     description: >
-      Capture the skill's purpose, name, PDCA phases, delegates, and span
-      namespace from the user's natural-language description. Choose a
-      name (lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun,
-      no reserved prefixes). Identify the PDCA phases (most follow the
-      bug-hunt pattern: a phased pipeline with feedback loop closure).
-      Identify which skills this skill will compose (delegates). Identify
-      the span namespace (reg.<skill_name>.*). Consumes
+      Search the academic and industry literature for the skill's domain
+      to find ontological anchors — the processes, quality criteria,
+      entity types, and existing ontologies that define how the domain
+      works. Record each anchor with citation and how it shapes the
+      skill. Select the ontology reference set (PKO, Dublin Core, GOLEM,
+      MovieLabs OMC, ESO, or domain-specific). Derive the PDCA shape
+      from the anchors — the shape emerges from the domain's process
+      structure, not from a generic template. The research phase is
+      first because the anchors determine everything else. Consumes
       prior_validation_failures when present (feedback loop closure).
     renderer: minijinja
-    template_ref: create-skill/create-skill-describe
-    gas_cap: 4096
-    timeout_seconds: 60
+    template_ref: create-skill/create-skill-research
+    gas_cap: 6144
+    timeout_seconds: 120
     input_mapping:
       user_description: "{{ user_description }}"
       prior_validation_failures: "{{ prior_validation_failures | default({}) }}"
@@ -110,21 +125,37 @@ steps:
   - ordinal: 2
     action: select
     description: >
-      Generate the full registry crate structure. Delegates to
-      skill-maintenance-build for the mechanical scaffolding. Produces:
-      (1) template manifest (kask/registry/templates/<name>/manifest.yaml);
-      (2) .j2 templates with [inference] frontmatter; (3) process manifest
-      (kask/registry/manifests/<name>.yaml) with canonical actions,
-      gas/rjoule/convergence blocks, OCAP capabilities; (4) SKILL.md
-      companion (.agents/skills/<name>/SKILL.md).
+      Capture the skill's specification, informed by the research phase's
+      ontological anchors. Choose a name. Confirm the PDCA phases — these
+      are the phases that emerged from the research, not a generic
+      template. Each phase is grounded in an ontological anchor.
+      Identify delegates, span namespace, and ontology annotations.
+    renderer: minijinja
+    template_ref: create-skill/create-skill-describe
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      user_description: "{{ user_description }}"
+      research: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Generate the full registry crate structure with ontology-annotated
+      artifacts. Delegates to skill-maintenance-build for the mechanical
+      scaffolding. Produces: (1) template manifest with ontology-annotated
+      template entries; (2) .j2 templates with contracts whose types come
+      from the ontology; (3) process manifest with the idiosyncratic PDCA
+      shape (not a generic template), gas/rjoule/convergence blocks, OCAP
+      capabilities; (4) SKILL.md companion with ontology references.
     renderer: minijinja
     template_ref: create-skill/create-skill-scaffold
     gas_cap: 8192
     timeout_seconds: 120
     input_mapping:
-      skill_spec: "{{ step_1_result }}"
+      skill_spec: "{{ step_2_result }}"
 
-  - ordinal: 3
+  - ordinal: 4
     action: select
     description: >
       Validate the scaffolded crate against all check categories.
@@ -136,36 +167,41 @@ steps:
     gas_cap: 4096
     timeout_seconds: 60
     input_mapping:
-      scaffolded_crate: "{{ step_2_result }}"
+      scaffolded_crate: "{{ step_3_result }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: select
     description: >
       Compute convergence metric for create-skill PDCA cycles. Metric is
       0.0 if validation passed all critical and high-severity checks;
       0.25 if only medium/low failures remain; 0.5+ if critical or high
-      failures remain. When not converged, emits next_describe_focus to
-      direct the next iteration's describe phase.
+      failures remain. When not converged, emits next_research_focus to
+      direct the next iteration's research phase — the failures may
+      indicate that the ontological anchors were insufficient or the
+      PDCA shape didn't emerge correctly from them.
     renderer: minijinja
     template_ref: create-skill/create-skill-convergence-check
     gas_cap: 2048
     timeout_seconds: 30
     input_mapping:
-      validation_results: "{{ step_3_result }}"
+      validation_results: "{{ step_4_result }}"
     fusion: false
 
-  - ordinal: 5
+  - ordinal: 6
     action: loop
     description: >
       Re-enter create-skill cycle if convergence is not met. Routes
-      step_4_result.next_describe_focus back to step 1 as
-      prior_validation_failures.next_describe_focus, along with the
-      validation's fix_suggestions, closing the feedback loop.
+      step_5_result.next_research_focus back to step 1 (research, not
+      describe) as prior_validation_failures.next_research_focus, along
+      with the validation's fix_suggestions, closing the feedback loop.
+      The loop targets research because failures often indicate the
+      ontological anchors were insufficient — the research phase needs
+      to re-run to find better anchors or derive a better PDCA shape.
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_validation_failures:
-        next_describe_focus: "{{ step_4_result.next_describe_focus | default('') }}"
-        fix_suggestions: "{{ step_3_result.fix_suggestions | default([]) }}"
+        next_research_focus: "{{ step_5_result.next_research_focus | default('') }}"
+        fix_suggestions: "{{ step_4_result.fix_suggestions | default([]) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -176,6 +212,10 @@ error_handling:
 
 ocap:
   required_capabilities:
+    - resource: template
+      action: render
+      template_id: create-skill/create-skill-research
+      gas_budget: 6144
     - resource: template
       action: render
       template_id: create-skill/create-skill-describe

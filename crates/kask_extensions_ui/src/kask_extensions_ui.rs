@@ -438,6 +438,8 @@ pub struct KaskExtensionsPage {
     http_client: Option<Arc<http_client::HttpClientWithUrl>>,
     // zed-kask: track the fs for install/uninstall
     fs: Option<Arc<dyn fs::Fs>>,
+    // zed-kask: track the client for credentials (auth headers)
+    client: Option<Arc<client::Client>>,
     upsells: BTreeSet<Feature>,
 }
 
@@ -497,6 +499,7 @@ impl KaskExtensionsPage {
                 outstanding_operations: collections::BTreeMap::default(),
                 http_client: Some(http_client),
                 fs: Some(fs),
+                client: Some(app_state.client.clone()),
                 upsells: BTreeSet::default(),
                 query_editor,
             };
@@ -863,7 +866,39 @@ impl KaskExtensionsPage {
             return;
         };
         let sha256 = skill.manifest.tarball_sha256.clone();
+        let dependencies = skill.manifest.dependencies.clone();
         let skill_id_str = skill_id.to_string();
+
+        // zed-kask: Check if the skill's dependencies are installed. If not,
+        // log a warning so the user knows they need to install them too.
+        // We don't block the install — the user may want to install deps
+        // separately. But we notify them so they're not surprised when the
+        // skill fails at runtime.
+        if !dependencies.is_empty() {
+            let installed_names: std::collections::HashSet<String> = cx
+                .try_global::<agent_skills::SkillIndex>()
+                .map(|idx| idx.global_skills.iter().map(|s| s.name.clone()).collect())
+                .unwrap_or_default();
+            let missing: Vec<&str> = dependencies
+                .iter()
+                .filter(|dep| !installed_names.contains(*dep))
+                .map(|s| s.as_str())
+                .collect();
+            if !missing.is_empty() {
+                log::warn!(
+                    "kask-extensions: skill '{}' depends on {} that are not installed: {}. \
+                     The skill will be installed but will fail at runtime until its dependencies are installed. \
+                     Install them via the Kask Extensions panel.",
+                    skill_id,
+                    if missing.len() == 1 {
+                        "a skill"
+                    } else {
+                        "skills"
+                    },
+                    missing.join(", "),
+                );
+            }
+        }
 
         self.outstanding_operations
             .insert(skill_id.clone(), KaskSkillStatus::Installing);
@@ -990,10 +1025,25 @@ impl KaskExtensionsPage {
             );
             return;
         };
+        let Some(client) = self.client.clone() else {
+            log::warn!(
+                "kask-extensions: no client available; cannot vote on skill '{}'.",
+                skill_id
+            );
+            return;
+        };
+        let Some(credentials) = client.credentials() else {
+            log::warn!(
+                "kask-extensions: not logged in; cannot vote on skill '{}'. \
+                 Remediation: sign in to Zed to vote.",
+                skill_id
+            );
+            return;
+        };
 
         let skill_id_str = skill_id.to_string();
         cx.spawn(async move |this, cx| {
-            let result = vote_skill(&http_client, &skill_id_str, vote).await;
+            let result = vote_skill(&http_client, &credentials, &skill_id_str, vote).await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok((up, down)) => {

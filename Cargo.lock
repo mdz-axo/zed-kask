@@ -11146,6 +11146,7 @@ dependencies = [
  "theme_settings",
  "tokio",
  "ui",
+ "urlencoding",
  "util",
  "vim_mode_setting",
  "workspace",

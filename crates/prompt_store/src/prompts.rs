@@ -183,6 +183,7 @@ mod tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
         let summary = SkillSummary::from(&skill);

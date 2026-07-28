@@ -3,7 +3,6 @@ use std::sync::Arc;
 use collab::db::Database;
 use collab::db::UserId;
 use collab::db::queries::kask_skills::NewKaskSkillVersion;
-use collab::db::queries::kask_skills::convert_time_to_chrono;
 
 use crate::test_both_dbs;
 

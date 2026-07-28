@@ -359,6 +359,24 @@ impl Database {
         })
         .await
     }
+
+    /// zed-kask: Delete a kask skill and all its versions/votes from Postgres.
+    /// Called when a user unpublishes their skill. The ON DELETE CASCADE
+    /// on the versions and votes tables handles the cleanup.
+    pub async fn delete_kask_skill(&self, source_user: &str, skill_name: &str) -> Result<bool> {
+        self.transaction(|tx| async move {
+            let result = kask_skill::Entity::delete_many()
+                .filter(
+                    kask_skill::Column::SourceUser
+                        .eq(source_user)
+                        .and(kask_skill::Column::SkillName.eq(skill_name)),
+                )
+                .exec(&*tx)
+                .await?;
+            Ok(result.rows_affected > 0)
+        })
+        .await
+    }
 }
 
 fn metadata_from_skill_and_version(

@@ -55,6 +55,7 @@ tokio.workspace = true
 hex.workspace = true
 bytes.workspace = true
 futures.workspace = true
+urlencoding.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

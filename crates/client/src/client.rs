@@ -663,6 +663,13 @@ impl Client {
             .map(|credentials| credentials.user_id)
     }
 
+    /// zed-kask: Returns the current credentials for authenticated API requests.
+    /// Used by the kask skill publish/vote/unpublish pipelines to set the
+    /// `Authorization` header.
+    pub fn credentials(&self) -> Option<Credentials> {
+        self.state.read().credentials.clone()
+    }
+
     pub fn peer_id(&self) -> Option<PeerId> {
         if let Status::Connected { peer_id, .. } = &*self.status().borrow() {
             Some(*peer_id)

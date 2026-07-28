@@ -39,8 +39,8 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
     SkillScopeId, SkillSource, SkillSummary, builtin_skills, embedded_global_skills,
-    global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
-    project_skills_relative_path,
+    global_skills_dir, load_marketplace_skills, load_skills_from_directory,
+    parse_skill_frontmatter, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -4188,6 +4188,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         }
     }
@@ -4523,6 +4524,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         }
     }
@@ -4537,6 +4539,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: Some("built-in body"),
         }
     }
@@ -4740,6 +4743,7 @@ mod internal_tests {
                 load_warnings: Vec::new(),
                 disable_model_invocation: false,
                 visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
                 embedded_body: None,
             });
         }
@@ -4779,6 +4783,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
         let second = Skill {
@@ -4790,6 +4795,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
         let third = Skill {
@@ -4801,6 +4807,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
 
@@ -4841,6 +4848,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: true,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
         let visible = Skill {
@@ -4852,6 +4860,7 @@ mod internal_tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
 

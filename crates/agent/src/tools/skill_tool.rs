@@ -276,6 +276,35 @@ impl AgentTool for SkillTool {
                 (skill.clone(), path_string)
             };
 
+            // zed-kask: Check that all declared dependencies are installed
+            // before running the cascade. This fails fast with a clear error
+            // instead of wasting tokens on a cascade that will fail
+            // mid-execution when a delegate template is missing.
+            if !skill.dependencies.is_empty() {
+                let installed_names: std::collections::HashSet<&str> = snapshot
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect();
+                let missing: Vec<&str> = skill
+                    .dependencies
+                    .iter()
+                    .filter(|dep| !installed_names.contains(dep.as_str()))
+                    .map(|s| s.as_str())
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(SkillToolOutput::Error {
+                        error: format!(
+                            "Skill '{}' depends on {} that are not installed: {}. \
+                             Install them via the Kask Extensions panel (View → Kask Extensions) \
+                             or create them locally before running this skill.",
+                            input.name,
+                            if missing.len() == 1 { "a skill" } else { "skills" },
+                            missing.join(", "),
+                        ),
+                    });
+                }
+            }
+
             // For built-in skills the body is already in memory (compiled
             // into the binary). For user skills, read on demand from disk.
             //
@@ -1126,6 +1155,7 @@ mod tests {
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: agent_skills::SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
         let rendered = render_skill_envelope(&skill, "body content");

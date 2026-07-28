@@ -14,22 +14,23 @@ contract:
     convergence_method: string
     rationale: string
     blockers: array
-    next_describe_focus: string
+    next_research_focus: string
 energy_cap: 2048
 visibility: Public
 ---
 {# Template: create-skill/create-skill-convergence-check.j2 #}
 {# Functional Role: KnowAct — convergence check #}
-{# Produces: convergence_metric, next_describe_focus #}
+{# Produces: convergence_metric, next_research_focus #}
 {# goal: Compute convergence metric for create-skill PDCA cycles. #}
 {#
   Group: B (Analysis/Diagnosis)
   Convergence method: validation pass/fail count
   Measures: Fraction of critical and high-severity checks that passed.
   Threshold: 0.25 — skill creation should converge quickly.
-  When not converged, emits next_describe_focus to direct the next
-  iteration's describe phase (e.g., "fix Z5: add visibility: public to
-  SKILL.md frontmatter"). This closes the feedback loop.
+  When not converged, emits next_research_focus (not next_describe_focus)
+  because failures often indicate the ontological anchors were
+  insufficient — the research phase needs to re-run to find better
+  anchors or derive a better PDCA shape. This closes the feedback loop.
 #}
 
 [inference]
@@ -65,14 +66,17 @@ Clamp to [0, 1].
 ## Step 3 — Convergence Decision
 
 - If convergence_metric ≤ 0.25: CONVERGED. The skill can be installed.
-- If convergence_metric > 0.25: NOT CONVERGED. Emit next_describe_focus.
+- If convergence_metric > 0.25: NOT CONVERGED. Emit next_research_focus.
 
-## Step 4 — Next Describe Focus (when not converged)
+## Step 4 — Next Research Focus (when not converged)
 
-Produce a next_describe_focus directive that closes the feedback loop. Examples:
-- "Fix Z5: add `visibility: public` to SKILL.md frontmatter"
-- "Fix Z8: SKILL.md says max_iterations: 5 but process manifest says 3 — reconcile"
-- "Fix E1: process manifest uses `evaluate` action — replace with `select` or `flowdef`"
+Produce a next_research_focus directive that closes the feedback loop.
+The focus targets the RESEARCH phase (not the describe phase) because
+failures often indicate the ontological anchors were insufficient or the
+PDCA shape didn't emerge correctly from them. Examples:
+- "Z8 drift: SKILL.md says max_iterations: 5 but process manifest says 3 — the research phase didn't ground the convergence criteria well enough; re-research convergence thresholds for this domain"
+- "E1 non-canonical action: the research phase derived a PDCA shape with an 'evaluate' step — re-research to find the canonical action that maps to this domain's concept"
+- "Z5 missing visibility: the research phase didn't annotate the SKILL.md frontmatter with Dublin Core visibility — re-research Dublin Core metadata conventions"
 
 ## Step 5 — Blockers
 
@@ -80,4 +84,4 @@ List any hard blockers requiring external intervention.
 
 ## Output
 
-Produce a JSON object with: convergence_metric, convergence_method, rationale, blockers, next_describe_focus.
+Produce a JSON object with: convergence_metric, convergence_method, rationale, blockers, next_research_focus.

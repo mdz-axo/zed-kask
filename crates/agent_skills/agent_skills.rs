@@ -111,6 +111,10 @@ pub struct Skill {
     /// pipeline. Distinct from `SkillSource::Public` (which marks a skill
     /// *installed from* the marketplace).
     pub visibility: SkillVisibility,
+    /// Skill names this skill depends on. Checked at invocation time so the
+    /// user gets a clear error before tokens are spent on a cascade that
+    /// will fail mid-execution.
+    pub dependencies: Vec<String>,
     /// For built-in skills whose content is compiled into the binary,
     /// In upstream zed, this holds the full SKILL.md body so the skill tool
     /// can serve it without a filesystem read. In zed-kask, SKILL.md bodies
@@ -267,6 +271,14 @@ pub struct SkillMetadata {
     /// never silently publishes a skill.
     #[serde(default)]
     pub visibility: SkillVisibility,
+    /// Skill names this skill depends on. At invocation time, the skill tool
+    /// checks that all dependencies are installed and returns a clear error
+    /// before running the cascade (saves tokens by failing fast).
+    /// Dependencies are skill names (not IDs) — e.g. `deep-module`, not
+    /// `alice/deep-module`. Any installed skill of that name satisfies the
+    /// dependency, regardless of source.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
 /// Minimal skill info for system prompt.
@@ -343,6 +355,7 @@ pub fn parse_skill_frontmatter(
         load_warnings,
         disable_model_invocation: metadata.disable_model_invocation,
         visibility: metadata.visibility,
+        dependencies: metadata.dependencies,
         embedded_body: None,
     })
 }
@@ -661,7 +674,11 @@ pub async fn load_marketplace_skills(
         if !fs.is_dir(&user_path).await {
             continue;
         }
-        let source_user = user_path.file_name().to_string_lossy().to_string();
+        let source_user = user_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
 
         // List skill_name directories under each source_user.
         let Ok(mut skill_entries) = fs.read_dir(&user_path).await else {
@@ -671,7 +688,11 @@ pub async fn load_marketplace_skills(
             if !fs.is_dir(&skill_path).await {
                 continue;
             }
-            let skill_name = skill_path.file_name().to_string_lossy().to_string();
+            let skill_name = skill_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let skill_file = skill_path.join("SKILL.md");
             if !fs.is_file(&skill_file).await {
                 continue;
@@ -837,6 +858,7 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
         load_warnings: Vec::new(),
         disable_model_invocation: metadata.disable_model_invocation,
         visibility: metadata.visibility,
+        dependencies: metadata.dependencies,
         embedded_body: Some(body.trim()),
     })
 }
@@ -924,6 +946,7 @@ fn parse_embedded_global_skill(name: &str, content: &'static str) -> Result<Skil
         load_warnings: Vec::new(),
         disable_model_invocation: metadata.disable_model_invocation,
         visibility: metadata.visibility,
+        dependencies: metadata.dependencies,
         embedded_body: None,
     })
 }
@@ -2151,6 +2174,7 @@ description: A skill with no body content
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
+            dependencies: Vec::new(),
             embedded_body: None,
         };
 

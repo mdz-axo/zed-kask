@@ -238,9 +238,16 @@ or `if condition { set_hook(Some(...)) }` without an `else` branch leaves
 the hook absent with no signal. Operators reading logs cannot distinguish
 "not configured" from "configured but broken". Always add a `log::warn!` in
 the failure branch naming the hook, the failure reason, and the remediation
-(`set HKASK_*` env var, open the panel, etc.). Cycle 5 found `a2a_secret`
-silently producing an empty secret; the same pattern exists for
-`TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
+(`set HKASK_*` env var, open the panel, etc.). Cycle 5 found the
+`a2a_secret` resolution path silently producing an empty secret; the same
+pattern exists for `TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
+
+When a deferred task wires multiple `set_*` hooks inside a single `if`
+block, the `else` branch warn must name ALL hooks left unwired, not just
+one. An operator reading the log sees "manifest executor not wired" and
+misses that 4 other hooks are also unwired. The warn is the effector that
+drives operator remediation; if it only names 1 of 5 hooks, the operator
+cannot remediate correctly.
 
 ## Cross-thread GPUI communication uses channels, not `AsyncApp` handles
 
@@ -343,3 +350,14 @@ producing generic outputs unrelated to the user's intent. The `SkillToolInput.ta
 field exists for this purpose; do not remove it or bypass it. The failure mode
 is silent (no error, just wrong output) and was present at both call sites
 before the fix.
+
+## Convention priors drawn from .rules must be verified against the codebase
+
+A `.rules` trap used as a "convention prior" (expected-field model for
+gradient analysis or audit) must be verified against the codebase before
+use. `.rules` entries can be stale — renamed functions, inlined variables,
+removed hooks. A convention prior that references a nonexistent artifact
+produces false gradients or wastes audit cycles hunting for a symbol that
+doesn't exist. Before treating a `.rules` trap as the expected field, grep
+for the artifact name in `crates/` — if no match, the `.rules` entry is
+itself a finding (stale refactor, topological hole).

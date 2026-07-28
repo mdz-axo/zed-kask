@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     Extension, Json, Router,
-    extract::Path,
+    extract::{Path, Query},
     http::StatusCode,
     response::Redirect,
     routing::{get, post},
@@ -149,7 +149,23 @@ async fn upload_kask_skill(
     Query(params): Query<UploadKaskSkillParams>,
     body: axum::body::Bytes,
 ) -> Result<StatusCode> {
-    let Principal::User(_user) = principal;
+    let Principal::User(user) = principal;
+
+    // zed-kask: Verify the S3 key's source_user matches the authenticated
+    // user's github_login. This prevents user bob from publishing under
+    // alice's namespace.
+    // Expected key format: kask-skills/{source_user}/{skill_name}/{version}/...
+    let key_source_user = params.key.split('/').nth(1).unwrap_or("");
+    if key_source_user != user.username {
+        Err(Error::Http(
+            StatusCode::FORBIDDEN,
+            format!(
+                "cannot upload to namespace '{}': authenticated user is '{}'",
+                key_source_user, user.github_login
+            ),
+            Default::default(),
+        ))?
+    }
 
     let Some((blob_store_client, bucket)) = app
         .blob_store_client
@@ -170,7 +186,7 @@ async fn upload_kask_skill(
         .body(body.into())
         .send()
         .await
-        .context("uploading kask skill to S3")?;
+        .map_err(|e| Error::Internal(anyhow::anyhow!("uploading kask skill to S3: {e}")))?;
 
     Ok(StatusCode::CREATED)
 }
@@ -191,8 +207,9 @@ async fn delete_kask_skill(
         .context("kask skill id must be \"{source_user}/{skill_name}\"")?;
 
     // zed-kask: Only the publisher can unpublish their own skill.
-    // The user's github_login must match the source_user in the id.
-    if user.github_login != source_user {
+    // The user's username must match the source_user in the id.
+    // (The client uses user.username as the source_user namespace.)
+    if user.username != source_user {
         Err(Error::Http(
             StatusCode::FORBIDDEN,
             "only the publisher can unpublish their skill".into(),
@@ -209,26 +226,33 @@ async fn delete_kask_skill(
         let prefix = format!("kask-skills/{}/{}/", source_user, skill_name);
         let list = blob_store_client
             .list_objects()
-            .bucket(bucket)
+            .bucket(&bucket)
             .prefix(&prefix)
             .send()
-            .await?;
+            .await
+            .map_err(|e| Error::Internal(e.into()))?;
         for object in list.contents.unwrap_or_default() {
             if let Some(key) = object.key {
                 blob_store_client
                     .delete_object()
-                    .bucket(bucket)
+                    .bucket(&bucket)
                     .key(&key)
                     .send()
-                    .await?;
+                    .await
+                    .map_err(|e| Error::Internal(e.into()))?;
             }
         }
     }
 
-    // Delete from Postgres. The periodic poll will also notice the S3
-    // deletion and clean up, but we do it now for immediacy.
-    // (The delete_kask_skill DB method would need to be added; for now
-    // the periodic poll handles it.)
+    // Delete from Postgres (cascades to versions and votes).
+    let deleted = app.db.delete_kask_skill(source_user, skill_name).await?;
+    if !deleted {
+        log::info!(
+            "kask-extensions: skill '{}/{}' was not in Postgres (may have been already removed)",
+            source_user,
+            skill_name
+        );
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
