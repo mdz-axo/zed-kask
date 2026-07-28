@@ -29,6 +29,9 @@ pub enum McpError {
     #[error("Storage error: {0}")]
     Storage(#[from] hkask_storage::DatabaseError),
 
+    #[error("Infrastructure error: {0}")]
+    Infrastructure(#[from] hkask_types::InfrastructureError),
+
     #[error("Transport error: {0}")]
     Transport(Box<rmcp::RmcpError>),
 }

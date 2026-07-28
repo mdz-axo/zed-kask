@@ -13,7 +13,7 @@ use crate::define_driver_store;
 use hkask_capability::{
     DelegationAction, DelegationResource, DelegationToken, TokenRegistry, TokenRegistryError,
 };
-use hkask_types::WebID;
+use hkask_types::{InfrastructureError, WebID};
 
 define_driver_store!(TokenRegistryStore);
 
@@ -23,8 +23,10 @@ impl TokenRegistryStore {
     /// expect: "Token issuance is persisted for consent audit"
     /// `[P2]` Motivating: Affirmative Consent — audit trail for delegation tokens
     /// post: delegation_tokens table created if not exists
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
                 "CREATE TABLE IF NOT EXISTS delegation_tokens (
                 id TEXT PRIMARY KEY,
                 resource TEXT NOT NULL,
@@ -45,7 +47,8 @@ impl TokenRegistryStore {
             CREATE INDEX IF NOT EXISTS idx_tokens_recipient ON delegation_tokens(delegated_to, issued_at);
             CREATE INDEX IF NOT EXISTS idx_tokens_revoked ON delegation_tokens(revoked);
             "
-        );
+        )?;
+        Ok(())
     }
 
     fn row_to_token(

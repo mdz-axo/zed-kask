@@ -44,8 +44,10 @@ impl SovereigntyBoundaryStore {
     /// expect: "My user data and sovereignty boundaries are stored under my control"
     /// \[P1\] Motivating: User Sovereignty — schema for sovereignty boundaries
     /// post: sovereignty_boundaries table created if not exists
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS sovereignty_boundaries (
                 id TEXT PRIMARY KEY,
@@ -60,7 +62,8 @@ impl SovereigntyBoundaryStore {
             CREATE INDEX IF NOT EXISTS idx_sovereignty_webid ON sovereignty_boundaries(webid);
             CREATE INDEX IF NOT EXISTS idx_sovereignty_updated ON sovereignty_boundaries(updated_at);
             "
-        );
+        )?;
+        Ok(())
     }
     /// Store sovereignty boundary for a WebID
     /// Store a sovereignty boundary entry.

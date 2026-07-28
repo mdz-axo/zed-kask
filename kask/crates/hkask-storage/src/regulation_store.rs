@@ -75,8 +75,10 @@ impl RegulationArchive {
     /// expect: "The system provides durable storage for event data"
     /// \[P3\] Motivating: Generative Space — reg_records schema
     /// post: reg_records and reg_cursors tables exist
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS reg_records (
                 id TEXT PRIMARY KEY,
                 timestamp TEXT NOT NULL,
@@ -98,8 +100,9 @@ impl RegulationArchive {
                 value INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
             );"
-        );
+        )?;
         tracing::info!(target: "hkask.storage", "RegulationArchive schema initialized");
+        Ok(())
     }
 
     /// Replay events with exponentially decaying weights.

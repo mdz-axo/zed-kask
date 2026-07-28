@@ -7,17 +7,19 @@
 
 /// Define a store struct backed by a `DatabaseDriver`.
 ///
-/// Generates `from_driver(driver)` which calls `Self::init_schema(driver)`.
-/// The store MUST implement `fn init_schema(driver: &Arc<dyn DatabaseDriver>)`
-/// in a separate `impl` block. For stores with no tables, provide an empty body.
+/// Generates `from_driver(driver)` which calls `Self::init_schema(driver)` and
+/// propagates any schema-init failure. The store MUST implement
+/// `fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), InfrastructureError>`
+/// in a separate `impl` block. For stores with no tables, return `Ok(())`.
 ///
 /// # Example
 /// ```ignore
 /// define_driver_store!(UserStore);
 ///
 /// impl UserStore {
-///     fn init_schema(driver: &Arc<dyn DatabaseDriverTrait>) {
-///         driver.execute_batch("CREATE TABLE IF NOT EXISTS users (...);").ok();
+///     fn init_schema(driver: &Arc<dyn DatabaseDriverTrait>) -> Result<(), hkask_types::InfrastructureError> {
+///         driver.execute_batch("CREATE TABLE IF NOT EXISTS users (...);")?;
+///         Ok(())
 ///     }
 /// }
 /// ```
@@ -31,10 +33,14 @@ macro_rules! define_driver_store {
         }
         impl $name {
             /// Create a new store backed by the given driver.
-            /// Calls `Self::init_schema(driver)` for idempotent schema setup.
-            pub fn from_driver(driver: std::sync::Arc<dyn $crate::DatabaseDriverTrait>) -> Self {
-                $name::init_schema(&driver);
-                Self { driver }
+            /// Calls `Self::init_schema(driver)` for idempotent schema setup
+            /// and propagates any schema-init failure rather than proceeding
+            /// with a missing table.
+            pub fn from_driver(
+                driver: std::sync::Arc<dyn $crate::DatabaseDriverTrait>,
+            ) -> Result<Self, hkask_types::InfrastructureError> {
+                $name::init_schema(&driver)?;
+                Ok(Self { driver })
             }
             /// Access the underlying driver for direct queries.
             pub fn driver(&self) -> &std::sync::Arc<dyn $crate::DatabaseDriverTrait> {

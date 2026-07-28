@@ -130,8 +130,10 @@ impl GalleryStore {
     /// \[P3\] Motivating: Generative Space — schema for galleries, images, tags, faces
     /// pre:  conn is a valid SQLite connection
     /// post: gallery tables created if not exists
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS galleries (
                 id TEXT PRIMARY KEY,
                 root_path TEXT NOT NULL UNIQUE,
@@ -186,7 +188,8 @@ impl GalleryStore {
             );
             CREATE INDEX IF NOT EXISTS idx_face_registry_status
                 ON face_registry(status);",
-        );
+        )?;
+        Ok(())
     }
     /// Create a new gallery. Returns the gallery record.
     ///

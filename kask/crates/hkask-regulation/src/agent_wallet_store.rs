@@ -27,8 +27,10 @@ impl From<DbError> for AgentWalletError {
 }
 
 impl WalletStore {
-    fn init_schema(driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS agent_wallets (
                 agent_webid TEXT PRIMARY KEY NOT NULL,
                 wallet_id INTEGER NOT NULL,
@@ -36,7 +38,8 @@ impl WalletStore {
                 rjoule_balance INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );",
-        );
+        )?;
+        Ok(())
     }
 
     pub fn insert_wallet(

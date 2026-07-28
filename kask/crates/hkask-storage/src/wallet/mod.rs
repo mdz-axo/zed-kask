@@ -16,7 +16,7 @@ mod tests;
 pub mod transactions;
 
 use crate::define_driver_store;
-use hkask_types::WalletError;
+use hkask_types::{InfrastructureError, WalletError};
 
 define_driver_store!(WalletStore);
 
@@ -32,8 +32,10 @@ impl WalletStore {
     /// expect: "The system provides durable storage for wallet data"
     /// \[P3\] Motivating: Generative Space — wallet schema
     /// post: all wallet tables exist
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS wallet_balances (
                 wallet_id TEXT PRIMARY KEY NOT NULL,
                 balance_rj INTEGER NOT NULL DEFAULT 0,
@@ -94,8 +96,9 @@ impl WalletStore {
                 expires_at TEXT NOT NULL,
                 spent INTEGER NOT NULL DEFAULT 0
             );",
-        );
+        )?;
         tracing::info!(target: "hkask.storage", "WalletStore schema initialized");
+        Ok(())
     }
 
     /// Enable SQLite WAL (Write-Ahead Logging) mode for better concurrency.

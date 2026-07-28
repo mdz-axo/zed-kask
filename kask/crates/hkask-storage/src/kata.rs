@@ -33,8 +33,10 @@ pub enum KataHistoryError {
 impl_from_db_error!(KataHistoryError, Infra);
 
 impl KataHistoryStore {
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS kata_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 agent_name TEXT NOT NULL,
@@ -45,7 +47,8 @@ impl KataHistoryStore {
                 gas_consumed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );",
-        );
+        )?;
+        Ok(())
     }
 
     /// Record a kata practice session.

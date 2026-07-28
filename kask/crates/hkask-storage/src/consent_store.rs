@@ -34,8 +34,10 @@ impl ConsentStore {
     /// expect: "My consent records are stored with explicit affirmative consent"
     /// \[P2\] Motivating: Affirmative Consent — schema for consent records
     /// post: consent_records table created if not exists
-    fn init_schema(driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>) {
-        let _ = driver.execute_batch(
+    fn init_schema(
+        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<(), InfrastructureError> {
+        driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS consent_records (
                 id TEXT PRIMARY KEY,
                 webid TEXT NOT NULL UNIQUE,
@@ -46,7 +48,8 @@ impl ConsentStore {
             );
             CREATE INDEX IF NOT EXISTS idx_consent_active ON consent_records(active);
             ",
-        );
+        )?;
+        Ok(())
     }
     /// Store (upsert) a consent record for a WebID
     /// Store a consent record.
