@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use agent_skills::Skill;
 use anyhow::{Context as _, Result, bail};
-use async_compression::futures::bufread::GzipEncoder;
+use async_compression::futures::bufread::{GzipDecoder, GzipEncoder};
 use async_tar::Builder;
 use bytes::Bytes;
 use cloud_api_types::KaskSkillManifest;
@@ -309,7 +309,7 @@ pub async fn install_skill(
     fs.create_dir(&install_dir).await?;
 
     // Decompress and extract.
-    let decompressed = GzipEncoder::new(tar_gz_bytes.as_slice());
+    let decompressed = GzipDecoder::new(tar_gz_bytes.as_slice());
     let archive = async_tar::Archive::new(decompressed);
     archive.unpack(&install_dir).await?;
 

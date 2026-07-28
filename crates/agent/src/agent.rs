@@ -1146,6 +1146,7 @@ impl NativeAgent {
         //    catalog as `/:<name>` in every project.
         let global_skills_task = {
             let global_skills_dir = global_skills_dir();
+            let marketplace_skills_dir = global_skills_dir.join("_marketplace");
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
                 let disk_globals = load_skills_from_directory(
@@ -1154,8 +1155,15 @@ impl NativeAgent {
                     SkillSource::Global,
                 )
                 .await;
+                // zed-kask: Load marketplace-installed skills from
+                // `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+                // These are `SkillSource::Public` — precedence is lower than
+                // `Global` so a local skill of the same name wins (plan §2.3).
+                let marketplace_skills =
+                    load_marketplace_skills(&global_skills_fs, &marketplace_skills_dir).await;
                 // Disk globals first so they win ties in `apply_skill_overrides`.
                 let mut all_globals = disk_globals;
+                all_globals.extend(marketplace_skills);
                 for skill in embedded_global_skills() {
                     all_globals.push(Ok(skill));
                 }

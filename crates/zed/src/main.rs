@@ -1562,9 +1562,23 @@ fn main() {
                         // Body injection is disabled in zed-kask: with no manifest
                         // executor wired, the `skill` tool returns the no-op envelope
                         // ("Skill manifest executor not configured..."). The log
-                        // message must match the actual fallback so operators reading
-                        // it are not misled.
-                        log::warn!("No default LanguageModel configured — hKask manifest executor not wired; skill invocations will return the no-op envelope");
+                        // message must name ALL hooks left unwired by this branch, not
+                        // just the manifest executor — operators reading the log need
+                        // to know the full scope of the startup-failure. This is the
+                        // "Process-global hooks set at runtime need a startup-failure
+                        // signal" trap from .rules: the warn must cover the full
+                        // ensemble of model-dependent hooks, not just one.
+                        log::warn!(
+                            "No default LanguageModel configured — hKask model-dependent hooks not wired: \
+                             manifest executor (skill invocations return no-op envelope), \
+                             thread condenser (tool results not compressed), \
+                             panel tool invoker (panel cannot dispatch tools), \
+                             scoped inference (panel cannot run inference), \
+                             regulation status (panel cannot emit regulation spans). \
+                             Remediation: configure a default LanguageModel in Settings → \
+                             or sign in to your model provider. The deferred task will re-run \
+                             on next login and wire these hooks."
+                        );
                     }
                 });
 

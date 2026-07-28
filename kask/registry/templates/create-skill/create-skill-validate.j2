@@ -1,0 +1,106 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- validate
+- check
+- verify
+- audit
+- compliance
+contract:
+  input:
+    scaffolded_crate: object
+  output:
+    validation_results: object
+    pass_count: number
+    fail_count: number
+    executor_compliance: object
+    fix_suggestions: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: create-skill/create-skill-validate.j2 #}
+{# Functional Role: KnowAct — Validate scaffolded crate #}
+{# Produces: validate #}
+{# Phase 3 — VALIDATE (CHECK: run skill-maintenance-validate) #}
+{# hKask v0.31.0 — Create Skill #}
+{#
+  Delegates to skill-maintenance-validate. This template provides the
+  scaffolded crate; skill-maintenance-validate runs the actual checks.
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a kask skill validator. Validate the scaffolded crate against all check categories.
+
+## Scaffolded Crate
+
+```json
+{{ scaffolded_crate | tojson }}
+```
+
+## Step 1 — Registry Checks (R1-R12)
+
+Validate:
+- R1: Template manifest structure (crate, version, description, templates array)
+- R2: Each template entry has id, name, path, type, lexicon_terms, description
+- R3: template_type values are KnowAct/WordAct/FlowDef/RenderAct
+- R4: .j2 files have valid [inference] frontmatter (template_type, lexicon_terms, contract, energy_cap, visibility)
+- R5: contract input/output fields are well-formed
+- R6: lexicon_terms non-empty and match across manifest and .j2 frontmatter
+- R7: visibility is Public/Private/Shared and consistent
+- R8: energy_cap in 2048-8192 range
+- R9: generates_spans declared for executable templates
+- R10: template paths resolve to actual files
+- R11: crate version matches hKask version pin
+- R12: template ids are namespaced as <crate>/<template_name>
+
+## Step 2 — Companion Checks (Z1-Z8)
+
+Validate:
+- Z1: SKILL.md companion exists
+- Z2: SKILL.md frontmatter has name and description
+- Z3: SKILL.md name matches crate name
+- Z4: SKILL.md description quality
+- Z5: SKILL.md frontmatter has visibility field
+- Z6: SKILL.md Registry Templates table present and complete
+- Z7: SKILL.md Constraints section present
+- Z8: SKILL.md content consistent with registry (no drift in numbers, names, structure)
+
+## Step 3 — Cross-Artifact Checks (X1-X4)
+
+Validate:
+- X1: Process manifest template_refs resolve to templates declared in template manifest
+- X2: Process manifest step ordinals are sequential and unique
+- X3: Names match across all artifacts
+- X4: OCAP required_capabilities match templates actually used
+
+## Step 4 — Executor Compliance (E1-E10)
+
+Validate:
+- E1: Process manifest uses only canonical actions
+- E2: gas block present with cap, cost_per_iteration, alert_threshold, hard_limit
+- E3: rjoule block present; cap > 0 when inference steps exist
+- E4: convergence block present with all required fields
+- E5: convergence.threshold in [0.05, 0.30]
+- E6: convergence.convergence_field resolvable to a step_N_result path
+- E7: convergence.on_not_reached is abort or escalate
+- E8: category is skill
+- E9: every step with action: select has a resolvable template_ref
+- E10: error_handling block present
+
+## Step 5 — Produce Fix Suggestions
+
+For any failures, produce actionable fix suggestions with:
+- check: which check failed
+- severity: critical/high/medium/low
+- issue: what's wrong
+- fix: how to fix it (specific file, line, change)
+
+## Output
+
+Produce a JSON object with: validation_results (per-check pass/fail with evidence), pass_count, fail_count, executor_compliance ({pass_count, fail_count}), fix_suggestions (array).

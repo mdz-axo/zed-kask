@@ -635,7 +635,60 @@ pub async fn load_skills_from_directory(
     results
 }
 
-/// Find every `<skills_root>/<name>/SKILL.md` directly under `directory`.
+/// zed-kask: Load marketplace-installed skills from
+/// `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+///
+/// The marketplace directory has a two-level namespace: `_marketplace/`
+/// contains `{source_user}/` directories, each of which contains
+/// `{skill_name}/` directories, each of which contains `SKILL.md`.
+/// This function scans both levels and loads each skill with
+/// `SkillSource::Public { source_user, original_skill_id }`.
+pub async fn load_marketplace_skills(
+    fs: &Arc<dyn Fs>,
+    marketplace_dir: &Path,
+) -> Vec<Result<Skill, SkillLoadError>> {
+    if !fs.is_dir(marketplace_dir).await {
+        return Vec::new();
+    }
+
+    let mut all_results = Vec::new();
+
+    // List source_user directories.
+    let Ok(mut user_entries) = fs.read_dir(marketplace_dir).await else {
+        return Vec::new();
+    };
+    while let Some(Ok(user_path)) = user_entries.next().await {
+        if !fs.is_dir(&user_path).await {
+            continue;
+        }
+        let source_user = user_path.file_name().to_string_lossy().to_string();
+
+        // List skill_name directories under each source_user.
+        let Ok(mut skill_entries) = fs.read_dir(&user_path).await else {
+            continue;
+        };
+        while let Some(Ok(skill_path)) = skill_entries.next().await {
+            if !fs.is_dir(&skill_path).await {
+                continue;
+            }
+            let skill_name = skill_path.file_name().to_string_lossy().to_string();
+            let skill_file = skill_path.join("SKILL.md");
+            if !fs.is_file(&skill_file).await {
+                continue;
+            }
+
+            let original_skill_id = format!("{}/{}", source_user, skill_name);
+            let source = SkillSource::Public {
+                source_user: Arc::from(source_user.as_str()),
+                original_skill_id: Arc::from(original_skill_id.as_str()),
+            };
+            let result = load_skill_frontmatter(fs.clone(), skill_file, source).await;
+            all_results.push(result);
+        }
+    }
+
+    all_results
+}
 ///
 /// Discovery is intentionally one level deep: a skill is the immediate
 /// child directory of the skills root, and `SKILL.md` is the file that

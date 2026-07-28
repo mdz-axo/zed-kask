@@ -1,0 +1,110 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- describe
+- capture
+- name
+- purpose
+- phases
+- delegates
+contract:
+  input:
+    user_description: string
+    research: object
+  output:
+    skill_name: string
+    skill_purpose: string
+    pdca_phases: array
+    delegate_skills: array
+    span_namespace: string
+    ontology_annotations: object
+    reference_skills: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: create-skill/create-skill-describe.j2 #}
+{# Functional Role: KnowAct — Capture skill specification from research #}
+{# Produces: describe #}
+{# Phase 2 — DESCRIBE (PLAN: capture specification, informed by research) #}
+{# hKask v0.31.0 — Create Skill #}
+{#
+  The describe phase consumes the research phase's output. The PDCA
+  shape has already emerged from the ontological anchors — this phase
+  captures the full specification (name, purpose, delegates, ontology
+  annotations) around that shape.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a kask skill architect. Capture the specification for a new kask skill, informed by the research phase's ontological anchors.
+
+## User Description
+
+{{ user_description }}
+
+## Research Phase Output (ontological anchors + PDCA shape)
+
+```json
+{{ research | tojson }}
+```
+
+## Step 1 — Choose Name
+
+The skill name must be:
+- lowercase letters and numbers only, with single hyphens as separators
+- 2-40 characters
+- verb-noun or noun-noun (e.g., `bug-hunt`, `gradient-hunter`, `skill-maintenance`)
+- no reserved prefixes (no `zed-`, `kask-`, `hkask-`)
+- must match the directory name that will contain the SKILL.md
+
+## Step 2 — Capture Purpose
+
+State the skill's purpose in 1-2 sentences. What does it do? When should an agent invoke it? Ground the purpose in the ontological anchors — reference the domain's concepts, not generic terms.
+
+## Step 3 — Confirm PDCA Phases
+
+The research phase derived the PDCA shape from the ontological anchors. Confirm and refine the phases. Each phase should be:
+- Named after a domain concept (not a generic PDCA letter)
+- Grounded in an ontological anchor
+- Producing entity types from the ontology
+- Contributing to a convergence criterion
+
+Do NOT default to a generic Plan-Do-Check-Act. Do NOT copy the bug-hunt pattern unless this skill IS a bug-hunt. The shape is idiosyncratic to this skill's domain.
+
+## Step 4 — Identify Delegates
+
+Which existing skills will this skill compose? Common delegates:
+- `graph-audit` (code mode) — topology extraction
+- `pragmatic-cybernetics` — variety engineering, feedback loop analysis
+- `falsifiability` — counterfactual hypothesis testing
+- `metacognition` — perspective rotation, ellipsis detection
+- `diagnose` — cybernetic debugging
+- `bug-hunt` — exploratory testing
+- `skill-maintenance` — lifecycle management
+- `self-improvement` — nested PDCA + outer Kata
+- `gpa-evolution` — evolutionary optimization
+
+## Step 5 — Identify Span Namespace
+
+The skill will emit spans under `reg.<skill_name>.*`. Each phase emits one span, named after the phase's domain concept (not a generic phase number).
+
+## Step 6 — Record Ontology Annotations
+
+Record how each artifact will be annotated with ontology terms:
+- Template contract types (from the ontology's entity types)
+- Span namespace concepts (from the ontology's process concepts)
+- Convergence metric concepts (from the ontology's quality criteria)
+- SKILL.md description (references the ontological anchors)
+
+## Step 7 — Identify Reference Skills
+
+Which existing skills should be used as structural references? (The scaffold phase will mirror their registry structure — manifest format, .j2 frontmatter, process manifest shape — but NOT their PDCA phases. The PDCA phases come from the research, not from the reference.)
+
+## Output
+
+Produce a JSON object with: skill_name, skill_purpose, pdca_phases (array of {name, description, ontological_anchor, entity_types, quality_criterion}), delegate_skills (array of names), span_namespace, ontology_annotations (object), reference_skills (array of names).

@@ -1,0 +1,202 @@
+# Create Skill Process Manifest
+# ℏKask v0.31.0 — kask-native skill creation as phased PDCA
+# Decomposed into: Describe → Scaffold → Validate → Convergence
+#
+# Overrides the built-in Zed create-skill, which only produces SKILL.md
+# files. The kask-native version produces the full registry-first
+# structure: template manifest + .j2 templates + process manifest +
+# SKILL.md companion.
+#
+# Delegates to skill-maintenance-build for scaffolding and
+# skill-maintenance-validate for validation.
+#
+# Feedback loop: describe accepts prior_validation_failures
+# (next_describe_focus, fix_suggestions) and consumes them to amplify the
+# next describe phase. Convergence check emits next_describe_focus when
+# not converged.
+
+manifest:
+  id: create-skill
+  category: skill
+  name: Create Skill
+  description: >
+    Convergent kask-native skill creation process. Captures the skill's
+    purpose, name, PDCA phases, delegates, and span namespace from a
+    natural-language description; scaffolds the full registry crate
+    (template manifest + .j2 templates + process manifest + SKILL.md
+    companion) by delegating to skill-maintenance-build; validates the
+    scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10 by delegating
+    to skill-maintenance-validate; and iterates until validation passes
+    or escalation is required. Overrides the built-in Zed create-skill,
+    which only produces SKILL.md files — insufficient for kask, where the
+    SKILL.md is a discovery-only catalog entry and the implementation
+    lives in the registry.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  # Rationale: 0.25 — skill creation should converge quickly. If
+  # validation passes all critical and high-severity checks, the skill
+  # is ready to install. Medium/low failures are fixable post-install.
+  threshold: 0.25
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_4_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 150000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: user_description
+    type: string
+    required: true
+    description: >
+      Natural-language description of the skill to create. Should include
+      the skill's purpose, target domain, and any structural preferences
+      (e.g., "follow the bug-hunt pattern").
+  - name: prior_validation_failures
+    type: object
+    required: false
+    description: >
+      Output of a previous create-skill iteration's validation. Closes
+      the feedback loop: the describe phase consumes
+      prior_validation_failures.next_describe_focus and
+      prior_validation_failures.fix_suggestions to direct the next
+      iteration. When absent, the creation runs as a first pass.
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+  mode: best-of-n
+  skills:
+    - skill-maintenance
+  max_rounds: 3
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Capture the skill's purpose, name, PDCA phases, delegates, and span
+      namespace from the user's natural-language description. Choose a
+      name (lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun,
+      no reserved prefixes). Identify the PDCA phases (most follow the
+      bug-hunt pattern: a phased pipeline with feedback loop closure).
+      Identify which skills this skill will compose (delegates). Identify
+      the span namespace (reg.<skill_name>.*). Consumes
+      prior_validation_failures when present (feedback loop closure).
+    renderer: minijinja
+    template_ref: create-skill/create-skill-describe
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      user_description: "{{ user_description }}"
+      prior_validation_failures: "{{ prior_validation_failures | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Generate the full registry crate structure. Delegates to
+      skill-maintenance-build for the mechanical scaffolding. Produces:
+      (1) template manifest (kask/registry/templates/<name>/manifest.yaml);
+      (2) .j2 templates with [inference] frontmatter; (3) process manifest
+      (kask/registry/manifests/<name>.yaml) with canonical actions,
+      gas/rjoule/convergence blocks, OCAP capabilities; (4) SKILL.md
+      companion (.agents/skills/<name>/SKILL.md).
+    renderer: minijinja
+    template_ref: create-skill/create-skill-scaffold
+    gas_cap: 8192
+    timeout_seconds: 120
+    input_mapping:
+      skill_spec: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Validate the scaffolded crate against all check categories.
+      Delegates to skill-maintenance-validate. Checks R1-R12 (registry),
+      Z1-Z8 (companion), X1-X4 (cross-artifact), E1-E10 (executor
+      compliance). Produces fix suggestions for any failures.
+    renderer: minijinja
+    template_ref: create-skill/create-skill-validate
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      scaffolded_crate: "{{ step_2_result }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Compute convergence metric for create-skill PDCA cycles. Metric is
+      0.0 if validation passed all critical and high-severity checks;
+      0.25 if only medium/low failures remain; 0.5+ if critical or high
+      failures remain. When not converged, emits next_describe_focus to
+      direct the next iteration's describe phase.
+    renderer: minijinja
+    template_ref: create-skill/create-skill-convergence-check
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      validation_results: "{{ step_3_result }}"
+    fusion: false
+
+  - ordinal: 5
+    action: loop
+    description: >
+      Re-enter create-skill cycle if convergence is not met. Routes
+      step_4_result.next_describe_focus back to step 1 as
+      prior_validation_failures.next_describe_focus, along with the
+      validation's fix_suggestions, closing the feedback loop.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_validation_failures:
+        next_describe_focus: "{{ step_4_result.next_describe_focus | default('') }}"
+        fix_suggestions: "{{ step_3_result.fix_suggestions | default([]) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: create-skill/create-skill-describe
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: create-skill/create-skill-scaffold
+      gas_budget: 8192
+    - resource: template
+      action: render
+      template_id: create-skill/create-skill-validate
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: create-skill/create-skill-convergence-check
+      gas_budget: 2048
+    - resource: manifest
+      action: execute
+      template_id: create-skill
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

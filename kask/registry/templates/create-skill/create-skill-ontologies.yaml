@@ -1,0 +1,136 @@
+# Ontology reference set for create-skill
+# hKask v0.31.0
+#
+# Each skill is grounded in ontological anchors — the academic and
+# industry processes that define how the skill's domain works. The
+# create-skill research phase selects from (and extends) this ontology
+# set based on the skill's domain.
+#
+# The ontology selection is not exhaustive — the research phase may find
+# additional domain-specific ontologies. The point is that the skill's
+# artifacts should be annotated with the ontology terms that define its
+# domain's process.
+
+ontologies:
+  - id: pko
+    name: "Procedural Knowledge Ontology"
+    citation: "Carriero et al. 2025, ESWC (arXiv:2503.20634)"
+    domain: "Industrial processes, procedures, workflows"
+    use_when: "The skill models a procedure with specification/execution separation"
+    key_concepts:
+      - Procedure (specification)
+      - Step
+      - StepExecution (execution instance)
+      - Resource
+      - Outcome
+    pdc_shape_implied: "Plan (specify procedure) → Execute (run steps) → Verify (check outcomes)"
+    annotation_pattern: "Template contracts use Procedure/Step/StepExecution types; spans use reg.<skill>.step_<n>"
+    url: "https://github.com/perks-project/pk-ontology"
+
+  - id: dublin_core
+    name: "Dublin Core Metadata Element Set"
+    citation: "DCMI 1995-2025"
+    domain: "Metadata, documentation, cataloging"
+    use_when: "The skill produces or manages metadata artifacts"
+    key_concepts:
+      - Title
+      - Creator
+      - Subject
+      - Description
+      - Source
+      - Coverage
+      - Contributor
+    pdc_shape_implied: "Describe (capture metadata) → Validate (check completeness) → Publish"
+    annotation_pattern: "SKILL.md frontmatter uses Dublin Core terms; manifest descriptions follow DC conventions"
+    url: "https://www.dublincore.org/"
+
+  - id: golem
+    name: "GOLEM Ontology for Narrative and Fiction"
+    citation: "Pianzola et al. 2024 (MDPI Ontologies)"
+    domain: "Narrative, fiction, storytelling"
+    use_when: "The skill models narrative structure, characters, events, settings"
+    key_concepts:
+      - Narrative
+      - Character
+      - Event
+      - Setting
+      - Plot
+      - Reader response
+    pdc_shape_implied: "Model (narrative structure) → Analyze (characters/events) → Compare (cross-narrative)"
+    annotation_pattern: "Template contracts use Narrative/Character/Event types; spans use reg.<skill>.narrative.*"
+    url: "https://github.com/GOLEM-lab/golem-ontology"
+
+  - id: movielabs_omc
+    name: "MovieLabs Ontology for Media Creation"
+    citation: "MovieLabs 2021-2025 (v2.8)"
+    domain: "Media production workflows"
+    use_when: "The skill models media creation pipelines (capture → post → distribution)"
+    key_concepts:
+      - Creative Work
+      - Asset
+      - Workflow
+      - Participant
+      - Version
+      - Pipeline stage
+    pdc_shape_implied: "Capture → Process → Post → Distribute (pipeline stages from OMC)"
+    annotation_pattern: "Template contracts use CreativeWork/Asset/Workflow types; spans use reg.<skill>.pipeline.*"
+    url: "https://github.com/MovieLabs/OMC"
+
+  - id: eso
+    name: "Event and Implied Situation Ontology"
+    citation: "Segers et al. 2015-2016 (LREC)"
+    domain: "Event structures, scientific inquiry"
+    use_when: "The skill models events with pre/post situations and entity roles"
+    key_concepts:
+      - Event (dynamic and static)
+      - Situation (pre-event, post-event)
+      - Role
+      - Entity
+      - Property
+    pdc_shape_implied: "Before (pre-situation) → Event → After (post-situation) → Infer (implied situations)"
+    annotation_pattern: "Template contracts use Event/Situation/Role types; spans use reg.<skill>.event.*"
+    url: "https://github.com/RoxaneSegers/ESO-Ontology"
+
+  - id: domain_specific
+    name: "Domain-specific ontology (found by research phase)"
+    citation: "Varies — the research phase finds ontologies specific to the skill's domain"
+    domain: "Any"
+    use_when: "The skill's domain has a canonical ontology not covered above"
+    key_concepts:
+      - "Varies by domain"
+    pdc_shape_implied: "Emerges from the domain's process structure"
+    annotation_pattern: "Template contracts use the domain ontology's types; spans follow the domain's naming"
+    url: "N/A — found by research phase"
+    examples:
+      - "Spin glass theory (Parisi 1979) for gradient-hunter — frustration, metastable valleys, ultrametricity"
+      - "Beizer bug taxonomy for bug-hunt — requirements, structural, data, coding, interface, integration, timing"
+      - "Ren et al. 2026 self-induced update operator for self-improvement — θ/Σ pathways, intrinsic/extrinsic signals"
+      - "Toyota Improvement Kata for kata-improvement — direction, current condition, target condition, experiment"
+      - "Weinberg quality definition for bug-hunt — 'value to some person who matters'"
+
+# How ontological anchoring shapes the skill
+anchoring_pattern:
+  pdc_shape: >
+    The ontology's process structure implies the skill's phase structure.
+    The research phase derives the PDCA shape from the anchors, not from
+    a generic template.
+  template_contracts: >
+    The ontology's entity types become the template contract's input/output
+    types. PKO's Procedure/Step/StepExecution become contract fields. ESO's
+    Event/Situation/Role become contract fields.
+  span_namespaces: >
+    The ontology's concepts become span names. reg.gradient.detect follows
+    the gradient ontology; reg.bughunt.oracle follows the Weinberg oracle.
+  convergence_criteria: >
+    The ontology's quality criteria become the convergence metric. PKO's
+    execution completeness becomes a coverage metric. The gradient-hunter's
+    fractal recurrence becomes a stabilization metric.
+
+# Anti-pattern: generic shapes
+anti_patterns:
+  - name: "Copy bug-hunt pattern for non-bug-hunt skill"
+    why_wrong: "The bug-hunt shape (Charter → Probe → Oracle → Taxonomize → Report → Convergence) follows Hendrickson/Bach/Weinberg/Beizer. Copying the shape without those anchors produces a hollow skill."
+  - name: "Use a generic Plan-Do-Check-Act for everything"
+    why_wrong: "Generic PDCA has no ontological anchors. The skill's phases should be named after the domain's concepts, not after generic PDCA letters."
+  - name: "Pick a pattern from a menu"
+    why_wrong: "Each skill is idiosyncratic. The shape emerges from the research, not from a selection."

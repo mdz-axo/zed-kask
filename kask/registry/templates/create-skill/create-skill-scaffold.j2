@@ -1,0 +1,303 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- scaffold
+- generate
+- manifest
+- template
+- flowdef
+- build
+contract:
+  input:
+    skill_spec: object
+  output:
+    template_manifest: string
+    j2_templates: array
+    process_manifest: string
+    skill_md: string
+    delegate_notes: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: create-skill/create-skill-scaffold.j2 #}
+{# Functional Role: KnowAct — Generate full registry crate #}
+{# Produces: scaffold #}
+{# Phase 2 — SCAFFOLD (DO: generate manifest + templates + process manifest + SKILL.md) #}
+{# hKask v0.31.0 — Create Skill #}
+{#
+  Delegates to skill-maintenance-build for the mechanical scaffolding.
+  This template provides the specification; skill-maintenance-build
+  generates the actual artifacts.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are a kask skill scaffolder. Generate the full registry crate structure for the specified skill.
+
+## Skill Specification
+
+```json
+{{ skill_spec | tojson }}
+```
+
+## Step 1 — Generate Template Manifest
+
+Generate the template manifest (`kask/registry/templates/<name>/manifest.yaml`):
+
+```yaml
+crate:
+  name: <skill_name>
+  version: "0.31.0"
+  description: >
+    <skill_purpose, expanded with PDCA phase names, delegates, span namespace>
+
+templates:
+  - id: <skill_name>/<phase-1>
+    name: "<phase description>"
+    path: <phase-1>.j2
+    type: KnowAct
+    lexicon_terms: [<relevant terms>]
+    description: >
+      <phase description>
+    generates_spans:
+      - reg.<skill_name>.<phase-1>
+  # ... one entry per phase ...
+  # Reference documents (RenderAct type) if any:
+  - id: <skill_name>/<reference-name>
+    name: "Reference: <description>"
+    path: <reference-name>.yaml
+    type: RenderAct
+    lexicon_terms: [<terms>]
+    description: >
+      <reference description>
+```
+
+## Step 2 — Generate .j2 Templates
+
+For each PDCA phase, generate a .j2 template with:
+
+```
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- <term>
+- <term>
+contract:
+  input:
+    <field>: <type>
+  output:
+    <field>: <type>
+energy_cap: <2048-8192>
+visibility: Public
+---
+{# Template: <skill_name>/<phase>.j2 #}
+{# Functional Role: KnowAct — <phase purpose> #}
+{# Produces: <output fields> #}
+{# Phase N — <PHASE NAME> (<PDCA role>: <description>) #}
+{# hKask v0.31.0 — <Skill Name> #}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = <2048-6144>
+thinking_budget = "full"
+
+<system prompt for this phase>
+
+## <Inputs from prior phases or skill inputs>
+
+{{ <input_field> | tojson }}
+
+## Step 1 — <action>
+
+<instructions>
+
+## Output
+
+Produce a JSON object with: <output fields>.
+```
+
+For reference documents (RenderAct), generate .yaml files (no [inference] frontmatter).
+
+## Step 3 — Generate Process Manifest
+
+Generate the process manifest (`kask/registry/manifests/<name>.yaml`):
+
+```yaml
+manifest:
+  id: <skill_name>
+  category: skill
+  name: <Skill Name>
+  description: >
+    <full description>
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  threshold: <0.05-0.30>
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_N_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: <50000-150000>
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: <2-5>
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: <input>
+    type: <type>
+    required: <bool>
+    description: >
+      <description>
+  - name: prior_iteration
+    type: object
+    required: false
+    description: >
+      Output of a previous iteration. Closes the feedback loop.
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+  mode: best-of-n
+  skills:
+    - <delegate skill>
+  max_rounds: 3
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      <phase description>
+    renderer: minijinja
+    template_ref: <skill_name>/<phase-1>
+    gas_cap: <2048-8192>
+    timeout_seconds: <30-300>
+    input_mapping:
+      <field>: "{{ <input> }}"
+      prior_iteration: "{{ prior_iteration | default({}) }}"
+  # ... one step per phase ...
+  - ordinal: N
+    action: select
+    description: >
+      <convergence check description>
+    renderer: minijinja
+    template_ref: <skill_name>/<convergence-check>
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_(N-1)_result }}"
+    fusion: false
+  - ordinal: N+1
+    action: loop
+    description: >
+      Re-enter cycle if convergence is not met. Routes
+      step_N_result.next_<focus>_focus back to step 1.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_iteration:
+        lessons_learned: "{{ step_(N-1)_result.lessons_learned | default([]) }}"
+        pattern_signatures: "{{ step_(N-1)_result.pattern_signatures | default([]) }}"
+        next_<focus>_focus: "{{ step_N_result.next_<focus>_focus | default('') }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: <skill_name>/<phase-1>
+      gas_budget: <gas_cap>
+    # ... one entry per template ...
+    - resource: manifest
+      action: execute
+      template_id: <skill_name>
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+```
+
+## Step 4 — Generate SKILL.md Companion
+
+Generate the SKILL.md (`.agents/skills/<name>/SKILL.md`):
+
+```markdown
+---
+name: <skill_name>
+visibility: public
+description: >
+  <description, ≤1024 bytes>
+---
+
+# <Skill Name>
+
+<one-paragraph summary>
+
+## When to Use
+
+- <bullet per trigger>
+
+Do NOT use for:
+- <bullet per exclusion>
+
+## PDCA Loop
+
+<mermaid flowchart or text diagram of the PDCA loop>
+
+## Improvement Measure
+
+<convergence metric description>
+
+## Composed Skills
+
+| Skill | Role | When Invoked |
+|-------|------|-------------|
+| <delegate> | <role> | <when> |
+
+## Instructions
+
+### Phase 1 — <Name>
+
+<instructions>
+
+## Registry Templates
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| <template> | <type> | <purpose> |
+
+## Constraints
+
+- <constraint>
+- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+```
+
+## Output
+
+Produce a JSON object with: template_manifest (string), j2_templates (array of {path, content}), process_manifest (string), skill_md (string), delegate_notes (string).

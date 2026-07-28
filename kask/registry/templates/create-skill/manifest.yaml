@@ -1,0 +1,95 @@
+# Template crate manifest for create-skill skill
+# hKask v0.31.0
+
+crate:
+  name: create-skill
+  version: "0.31.0"
+  description: >
+    Create a new kask skill as a complete registry crate: manifest.yaml +
+    .j2 templates + process manifest (FlowDef with gas/rjoule/convergence
+    blocks) + SKILL.md companion. Overrides the built-in Zed create-skill,
+    which only produces SKILL.md files. The kask-native version produces
+    the full registry-first structure: template manifest with
+    KnowAct/WordAct/FlowDef/RenderAct types, .j2 templates with [inference]
+    frontmatter (contract, lexicon_terms, energy_cap, visibility,
+    generates_spans), process manifest with canonical actions
+    (select/populate/compute/execute/feedback/validate/retrieve/render/
+    flowdef/loop/choice/abort/escalate), gas/rjoule budgets, convergence
+    block, OCAP capabilities, and the SKILL.md companion derived from the
+    registry crate. Delegates to skill-maintenance-build for the
+    mechanical scaffolding and skill-maintenance-validate for post-creation
+    validation. Decomposed into phased templates: Describe → Scaffold →
+    Validate → Convergence. Emits reg.create_skill.* spans. Any userpod
+    may invoke this skill.
+
+templates:
+  - id: create-skill/create-skill-describe
+    name: "Capture skill purpose, name, PDCA phases, delegates, span namespace"
+    path: create-skill-describe.j2
+    type: KnowAct
+    lexicon_terms: [describe, capture, name, purpose, phases, delegates]
+    description: >
+      Capture the skill's purpose from the user's natural-language
+      description. Choose a name (lowercase, hyphenated, 2-40 chars,
+      verb-noun or noun-noun, no reserved prefixes). Identify the PDCA
+      phases the skill will have (most follow the bug-hunt pattern: a
+      phased pipeline with feedback loop closure). Identify which skills
+      this skill will compose (delegates). Identify the span namespace
+      (reg.<skill_name>.*).
+    generates_spans:
+      - reg.create_skill.describe
+
+  - id: create-skill/create-skill-scaffold
+    name: "Generate full registry crate (manifest + templates + process manifest + SKILL.md)"
+    path: create-skill-scaffold.j2
+    type: KnowAct
+    lexicon_terms: [scaffold, generate, manifest, template, flowdef, build]
+    description: >
+      Generate the full registry crate structure. Delegates to
+      skill-maintenance-build for the mechanical scaffolding. Produces:
+      (1) template manifest (kask/registry/templates/<name>/manifest.yaml)
+      with crate metadata and template entries; (2) .j2 templates with
+      [inference] frontmatter (template_type, lexicon_terms, contract,
+      energy_cap, visibility, generates_spans); (3) process manifest
+      (kask/registry/manifests/<name>.yaml) with canonical actions,
+      gas/rjoule/convergence blocks, OCAP capabilities; (4) SKILL.md
+      companion (.agents/skills/<name>/SKILL.md) derived from the registry
+      crate.
+    generates_spans:
+      - reg.create_skill.scaffold
+
+  - id: create-skill/create-skill-validate
+    name: "Validate scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10"
+    path: create-skill-validate.j2
+    type: KnowAct
+    lexicon_terms: [validate, check, verify, audit, compliance]
+    description: >
+      Validate the scaffolded crate against all check categories.
+      Delegates to skill-maintenance-validate. Checks: R1-R12 (registry:
+      manifest structure, .j2 frontmatter, template_type, contract,
+      lexicon_terms, visibility, energy_cap, generates_spans, path
+      resolution, version pin, id namespacing); Z1-Z8 (companion: SKILL.md
+      frontmatter, name match, description quality, template table,
+      constraints, consistency); X1-X4 (cross-artifact: template_refs
+      resolve, ordinals sequential, names match, OCAP matches templates);
+      E1-E10 (executor compliance: canonical actions only, gas/rjoule/
+      convergence blocks present, convergence_field resolvable,
+      template_refs resolvable, error_handling present).
+    generates_spans:
+      - reg.create_skill.validate
+
+  - id: create-skill/create-skill-convergence-check
+    name: "Check validation passed; emit next_describe_focus if not converged"
+    path: create-skill-convergence-check.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
+    description: >
+      Compute normalized convergence metric for create-skill PDCA cycles.
+      Metric is 0.0 if validation passed all critical and high-severity
+      checks; 0.25 if only medium/low failures remain; 0.5+ if critical
+      or high failures remain. When not converged, emits
+      next_describe_focus to direct the next iteration's describe phase
+      (e.g., "fix Z5: add visibility: public to SKILL.md frontmatter").
+      Threshold 0.25 — skill creation should converge quickly.
+    generates_spans:
+      - reg.create_skill.convergence
