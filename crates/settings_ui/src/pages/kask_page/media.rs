@@ -9,11 +9,15 @@ pub(crate) fn render_media_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let media = raw.and_then(|c| c.media).unwrap_or_default();
-    let tts_model = media.tts_model.unwrap_or_default();
-    let stt_model = media.stt_model.unwrap_or_default();
-    let vision_model = media.vision_model.unwrap_or_default();
-    let image_gen_model = media.image_gen_model.unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let media: kask_bridge::KaskMediaSettings = raw
+        .and_then(|c| c.media)
+        .map(Into::into)
+        .unwrap_or_default();
+    let tts_model = media.tts_model;
+    let stt_model = media.stt_model;
+    let vision_model = media.vision_model;
+    let image_gen_model = media.image_gen_model;
 
     let tts_input = kask_string_input(
         "kask-media-tts-model",

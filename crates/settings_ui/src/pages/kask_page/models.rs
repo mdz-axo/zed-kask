@@ -10,10 +10,14 @@ pub(crate) fn render_models_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let models = raw.and_then(|c| c.models).unwrap_or_default();
-    let default_model = models.default_model.unwrap_or_default();
-    let embedding_model = models.embedding_model.unwrap_or_default();
-    let classifier_model = models.classifier_model.unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let models: kask_bridge::KaskModelsSettings = raw
+        .and_then(|c| c.models)
+        .map(Into::into)
+        .unwrap_or_default();
+    let default_model = models.default_model;
+    let embedding_model = models.embedding_model;
+    let classifier_model = models.classifier_model;
 
     let default_model_input = kask_string_input(
         "kask-models-default",

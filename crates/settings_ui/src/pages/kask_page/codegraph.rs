@@ -9,8 +9,12 @@ pub(crate) fn render_codegraph_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let codegraph = raw.and_then(|c| c.codegraph).unwrap_or_default();
-    let db_path = codegraph.db_path.unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let codegraph: kask_bridge::KaskCodegraphSettings = raw
+        .and_then(|c| c.codegraph)
+        .map(Into::into)
+        .unwrap_or_default();
+    let db_path = codegraph.db_path;
 
     let db_input = kask_string_input(
         "kask-codegraph-db-path",

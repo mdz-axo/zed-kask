@@ -10,24 +10,16 @@ pub(crate) fn render_memory_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let memory = raw.and_then(|c| c.memory).unwrap_or_default();
-    let cadence = memory
-        .consolidation_cadence_secs
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "300".to_string());
-    let confidence_floor = memory
-        .confidence_floor
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "0.3".to_string());
-    let recall_limit = memory
-        .recall_limit
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "5".to_string());
-    let recall_min_confidence = memory
-        .recall_min_confidence
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "0.3".to_string());
-    let auto_inject = memory.auto_inject.unwrap_or(true);
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let memory: kask_bridge::KaskMemorySettings = raw
+        .and_then(|c| c.memory)
+        .map(Into::into)
+        .unwrap_or_default();
+    let cadence = memory.consolidation_cadence_secs.to_string();
+    let confidence_floor = memory.confidence_floor.to_string();
+    let recall_limit = memory.recall_limit.to_string();
+    let recall_min_confidence = memory.recall_min_confidence.to_string();
+    let auto_inject = memory.auto_inject;
 
     let cadence_input = SettingsInputField::new("kask-memory-consolidation-cadence")
         .tab_index(0)

@@ -7,9 +7,8 @@
 //! These port traits live in `hkask-memory` — their natural domain. Under the
 //! **promotion rule** (see ADR-042), a port trait lives in the domain crate that
 //! first consumes it. When a second consumer needs it, the trait is promoted to
-//! a shared crate. These traits have two consumers (`hkask-agents`,
-//! `hkask-services-context`) and so belong here in `hkask-memory`, not in any
-//! individual consumer.
+//! a shared crate. These traits have multiple consumers and so belong here in
+//! `hkask-memory`, not in any individual consumer.
 //!
 //! # OCAP Discipline
 //!

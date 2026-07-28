@@ -440,6 +440,16 @@ pub struct KaskTrainingSettings {
 /// through a panel of models judged by `judge_model` according to `mode`.
 /// Mirrors `hkask_types::FusionConfig` but lives in the non-secret settings
 /// layer so users can edit it in the settings UI.
+///
+/// **Two-layer default design (intentional):** `judge_model` and `panel_models`
+/// default to empty strings in `Default`. When empty, `to_fusion_config()`
+/// falls back to `FusionConfig::kask_default()`, which reads env vars
+/// (`HKASK_FUSION_JUDGE_MODEL`, `HKASK_FUSION_PANEL_MODELS`) and falls back to
+/// hardcoded model names. This two-layer design lets operators override fusion
+/// models via env vars without changing settings.json, while users can set
+/// explicit models in settings.json when they want persistence. Do not merge
+/// these layers — putting env-var-reading in `Default` would make it
+/// non-deterministic (the same anti-pattern as the inference-providers fix).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskFusionSettings {
     /// Master toggle. When false, fusion is disabled.
@@ -517,6 +527,13 @@ impl Default for KaskFusionSettings {
 /// Provider-prefixed model names that override the kask built-in defaults.
 /// When a field is empty, kask falls back to its default model selection
 /// (typically the zed `agent.default_model` or the fusion judge model).
+///
+/// **Two-layer default design (intentional):** `default_model`, `embedding_model`,
+/// and `classifier_model` default to empty strings in `Default`. When empty, the
+/// `effective_*` methods fall back to the `DEFAULT_*_MODEL` constants. This lets
+/// users override individual models in settings.json while keeping the kask
+/// built-in defaults as the fallback. Do not merge these layers — the constants
+/// are the kask opinion, the settings fields are the user override.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).

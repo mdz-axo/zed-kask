@@ -9,11 +9,13 @@ pub(crate) fn render_corpus_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let corpus = raw.and_then(|c| c.corpus).unwrap_or_default();
-    let embedding_model = corpus.embedding_model.unwrap_or_default();
-    let template_root = corpus
-        .template_root
-        .unwrap_or_else(|| "registry".to_string());
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let corpus: kask_bridge::KaskCorpusSettings = raw
+        .and_then(|c| c.corpus)
+        .map(Into::into)
+        .unwrap_or_default();
+    let embedding_model = corpus.embedding_model;
+    let template_root = corpus.template_root;
 
     let embedding_model_input = kask_string_input(
         "kask-corpus-embedding-model",

@@ -10,8 +10,10 @@ pub(crate) fn render_mcp_servers_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let mcp = raw.and_then(|c| c.mcp).unwrap_or_default();
-    let load_default = mcp.load_default.unwrap_or(true);
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let mcp: kask_bridge::KaskMcpSettings =
+        raw.and_then(|c| c.mcp).map(Into::into).unwrap_or_default();
+    let load_default = mcp.load_default;
     let overrides = &mcp.overrides;
 
     let master_toggle = SwitchField::new(

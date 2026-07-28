@@ -53,7 +53,7 @@ primary divergence seams:
 The following are added to the root `Cargo.toml` `[workspace.members]` array.
 Upstream merges never conflict with these paths.
 
-- `kask/crates/` — 25 hKask crates (`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-templates`, `hkask-guard`, `hkask-capability`, `hkask-keystore`, `hkask-ledger`, `hkask-mcp`, `hkask-mcp-server`, `hkask-inference`, `hkask-condenser`, `hkask-bridge-dublincore`, `hkask-services-core`, `hkask-services-inference`, `hkask-services-kata-kanban`, `hkask-services-runtime`, `hkask-services-corpus`, `hkask-services-context`, `hkask-services-compose`, `hkask-email`, `hkask-forecast`, `hkask-goal`, `kask_bridge`)
+- `kask/crates/` — 18 hKask crates (`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-templates`, `hkask-guard`, `hkask-capability`, `hkask-keystore`, `hkask-ledger`, `hkask-mcp`, `hkask-mcp-server`, `hkask-inference`, `hkask-condenser`, `hkask-bridge-dublincore`, `hkask-services-core`, `hkask-email`, `hkask-forecast`, `hkask-goal`, `kask_bridge`). The `hkask-services-{context,corpus,compose,inference,kata-kanban,runtime}` crates were folded into their sole MCP server consumers.
 - `kask/mcp-servers/` — 10 MCP server crates (`hkask-mcp-{codegraph,companies,condenser,corpus,curator,kata-kanban,media,research,scenarios,training}`)
 - `crates/kask_panel` — zed-kask-side kask panel (D10)
 - `crates/kask_extensions_ui` — zed-kask-side kask skill marketplace UI

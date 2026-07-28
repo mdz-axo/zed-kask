@@ -6,7 +6,7 @@
 //! extraction, but with different implementations:
 //!
 //! - **EmbedService** uses word-count chunking, rule-based entity tagging,
-//!   plain embedding, and `hkask_services_runtime` triple extraction.
+//!   plain embedding, and `crate::runtime` triple extraction.
 //! - **docproc tools** use token-count chunking, LLM-based ontology tagging,
 //!   INSTRUCTOR-method ontology-anchored embedding, and hallucination-guarded
 //!   triple extraction.
@@ -56,7 +56,7 @@ pub trait EmbeddingStrategy: Send + Sync {
 /// A triple extraction strategy — extracts RDF triples from text.
 ///
 /// Implementations:
-/// - `RuntimeTripleExtractor` — used by `EmbedService` (via `hkask_services_runtime`)
+/// - `RuntimeTripleExtractor` — used by `EmbedService` (via `crate::runtime`)
 /// - `CorpusTripleExtractor` — used by `corpus_extract_triples` (Jinja2 template + hallucination guard)
 #[allow(dead_code)] // Forward-declared for docproc integration
 pub trait TripleExtractionStrategy: Send + Sync {

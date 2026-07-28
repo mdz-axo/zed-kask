@@ -9,9 +9,13 @@ pub(crate) fn render_training_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let training = raw.and_then(|c| c.training).unwrap_or_default();
-    let host = training.host.unwrap_or_default();
-    let cache_dir = training.cache_dir.unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let training: kask_bridge::KaskTrainingSettings = raw
+        .and_then(|c| c.training)
+        .map(Into::into)
+        .unwrap_or_default();
+    let host = training.host;
+    let cache_dir = training.cache_dir;
 
     let host_input = kask_string_input(
         "kask-training-host",

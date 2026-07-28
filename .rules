@@ -403,7 +403,9 @@ disabled all 10 kask MCP servers when users omitted `kask.mcp` and panicked in
 the single source of truth; `From` and `mcp_env` read from it. The settings UI
 (`kask_page.rs`) must also resolve via `From<Content>` rather than applying its
 own `unwrap_or(false)` — otherwise the UI shows toggles as off while the
-runtime sees them as on (the inference-providers display bug).
+runtime sees them as on (the inference-providers display bug). All 14 kask
+settings UI sub-pages resolve `Content` → `Settings` via `From` and read
+concrete fields — no inlined `unwrap_or` defaults in the UI.
 
 ## Kask MCP server credentials and config are scoped per-server
 

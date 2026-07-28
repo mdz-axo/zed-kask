@@ -9,10 +9,12 @@ pub(crate) fn render_guard_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let guard = raw.and_then(|c| c.guard).unwrap_or_default();
-    let strategy = guard
-        .direct_chat_strategy
-        .unwrap_or_else(|| "cascade_only".to_string());
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let guard: kask_bridge::KaskGuardSettings = raw
+        .and_then(|c| c.guard)
+        .map(Into::into)
+        .unwrap_or_default();
+    let strategy = guard.direct_chat_strategy;
 
     let strategy_input = SettingsInputField::new("kask-guard-direct-chat-strategy")
         .tab_index(0)

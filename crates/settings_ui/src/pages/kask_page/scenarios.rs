@@ -9,8 +9,12 @@ pub(crate) fn render_scenarios_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let scenarios = raw.and_then(|c| c.scenarios).unwrap_or_default();
-    let data_dir = scenarios.data_dir.unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let scenarios: kask_bridge::KaskScenariosSettings = raw
+        .and_then(|c| c.scenarios)
+        .map(Into::into)
+        .unwrap_or_default();
+    let data_dir = scenarios.data_dir;
 
     let data_dir_input = kask_string_input(
         "kask-scenarios-data-dir",

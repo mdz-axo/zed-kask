@@ -12,23 +12,23 @@ pub(crate) fn render_data_services_page(
 ) -> AnyElement {
     let provider = zed_credentials::global(cx);
     let raw = raw_kask_settings(cx);
-    let data_services = raw.and_then(|c| c.data_services).unwrap_or_default();
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let data_services: kask_bridge::KaskDataServiceSettings = raw
+        .and_then(|c| c.data_services)
+        .map(Into::into)
+        .unwrap_or_default();
 
     let mut rows: Vec<AnyElement> = Vec::new();
     for (key, label, dashboard_url, env_var) in DATA_SERVICES {
         let enabled = match *key {
-            "eodhd" => data_services.eodhd_enabled.unwrap_or(false),
-            "fmp" => data_services.fmp_enabled.unwrap_or(false),
-            "exa" => data_services.exa_enabled.unwrap_or(false),
-            "tavily" => data_services.tavily_enabled.unwrap_or(false),
-            "brave" => data_services.brave_enabled.unwrap_or(false),
-            "runpod" => data_services.runpod_enabled.unwrap_or(false),
-            "runpod_s3_access_key" | "runpod_s3_secret" => {
-                data_services.runpod_enabled.unwrap_or(false)
-            }
-            "nebius_project_id" | "nebius_subnet_id" => {
-                data_services.nebius_enabled.unwrap_or(false)
-            }
+            "eodhd" => data_services.eodhd_enabled,
+            "fmp" => data_services.fmp_enabled,
+            "exa" => data_services.exa_enabled,
+            "tavily" => data_services.tavily_enabled,
+            "brave" => data_services.brave_enabled,
+            "runpod" => data_services.runpod_enabled,
+            "runpod_s3_access_key" | "runpod_s3_secret" => data_services.runpod_enabled,
+            "nebius_project_id" | "nebius_subnet_id" => data_services.nebius_enabled,
             // These services don't have individual toggles — they're enabled
             // when their API key is present. We show them as enabled if the
             // key is in the keychain (checked via env var for display).

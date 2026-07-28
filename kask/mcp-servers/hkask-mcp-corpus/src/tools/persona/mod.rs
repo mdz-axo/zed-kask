@@ -6,14 +6,14 @@
 //!
 //!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
 //!
-//! All persona tools delegate to `hkask_services_compose` for prose generation
+//! All persona tools delegate to `crate::compose` for prose generation
 //! and `hkask_storage::EmbeddingStore` for centroid retrieval.
 
+use crate::compose::cosine_distance;
+use crate::corpus::EmbedService;
 use crate::*;
 use hkask_inference::EmbeddingRouter;
-use crate::compose::cosine_distance;
 use hkask_services_core::HkaskSettings;
-use crate::corpus::EmbedService;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};
 use schemars::JsonSchema;
@@ -254,7 +254,7 @@ impl CorpusServer {
     /// `EmbedService::embed_corpus` which performs its own chunking (word-count
     /// based via `WordCountChunker`), tagging (rule-based entity matching),
     /// embedding (plain, no INSTRUCTOR annotation), and triple extraction
-    /// (via `hkask_services_runtime`).
+    /// (via `crate::runtime`).
     ///
     /// The `docproc_*` tools (chunk, tag_chunks, embed, extract_triples) are the
     /// **QA training output branch** — they use token-count chunking, LLM-based

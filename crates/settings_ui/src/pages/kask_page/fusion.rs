@@ -43,31 +43,26 @@ pub(crate) fn render_fusion_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let fusion = raw.and_then(|c| c.fusion).unwrap_or_default();
-    let enabled = fusion.enabled.unwrap_or(false);
-    let judge_model = fusion.judge_model.unwrap_or_default();
-    let panel_models = fusion.panel_models.unwrap_or_default();
-    let mode = fusion.mode.unwrap_or_else(|| "synthesis".to_string());
-    let algo_method = fusion.algo_method.unwrap_or_else(|| "merge".to_string());
-    let skills = fusion.skills.unwrap_or_default();
-    let max_rounds = fusion
-        .max_rounds
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "5".to_string());
-    let openrouter_max_price = fusion
-        .openrouter_max_price
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "1.0".to_string());
-    let openrouter_min_intelligence = fusion
-        .openrouter_min_intelligence
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "40.0".to_string());
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let fusion: kask_bridge::KaskFusionSettings = raw
+        .and_then(|c| c.fusion)
+        .map(Into::into)
+        .unwrap_or_default();
+    let enabled = fusion.enabled;
+    let judge_model = fusion.judge_model;
+    let panel_models = fusion.panel_models;
+    let mode = fusion.mode;
+    let algo_method = fusion.algo_method;
+    let skills = fusion.skills;
+    let max_rounds = fusion.max_rounds.to_string();
+    let openrouter_max_price = fusion.openrouter_max_price.to_string();
+    let openrouter_min_intelligence = fusion.openrouter_min_intelligence.to_string();
     let coherence_threshold = fusion
         .coherence_threshold
         .map(|v| format!("{v}"))
         .unwrap_or_default();
-    let panel_sizing_enabled = fusion.panel_sizing_enabled.unwrap_or(false);
-    let pressure_adaptive_enabled = fusion.pressure_adaptive_enabled.unwrap_or(false);
+    let panel_sizing_enabled = fusion.panel_sizing_enabled;
+    let pressure_adaptive_enabled = fusion.pressure_adaptive_enabled;
 
     let enabled_toggle = SwitchField::new(
         "kask-fusion-enabled",

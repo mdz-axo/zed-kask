@@ -9,12 +9,13 @@ pub(crate) fn render_companies_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let companies = raw.and_then(|c| c.companies).unwrap_or_default();
-    let staleness_days = companies
-        .chronic_staleness_days
-        .map(|v| format!("{v}"))
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let companies: kask_bridge::KaskCompaniesSettings = raw
+        .and_then(|c| c.companies)
+        .map(Into::into)
         .unwrap_or_default();
-    let fermi_defaults = companies.fermi_defaults.unwrap_or_default();
+    let staleness_days = companies.chronic_staleness_days.to_string();
+    let fermi_defaults = companies.fermi_defaults;
 
     let staleness_input = kask_string_input(
         "kask-companies-staleness-days",
