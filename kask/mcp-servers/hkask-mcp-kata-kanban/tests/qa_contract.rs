@@ -19,7 +19,7 @@
 
 use hkask_mcp_kata_kanban::KanbanServer;
 use hkask_mcp_kata_kanban::types::*;
-use hkask_services_kata_kanban::KanbanService;
+use crate::KanbanService;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::WebID;

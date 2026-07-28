@@ -9422,15 +9422,22 @@ name = "hkask-mcp-kata-kanban"
 version = "0.31.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "hkask-inference",
  "hkask-mcp-server",
- "hkask-services-kata-kanban",
+ "hkask-regulation",
+ "hkask-services-core",
  "hkask-storage",
+ "hkask-templates",
  "hkask-types",
+ "minijinja",
  "proptest 1.11.0",
  "rmcp",
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "serde_yaml_neo",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
@@ -9668,26 +9675,6 @@ dependencies = [
  "hkask-inference",
  "hkask-services-core",
  "hkask-types",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "hkask-services-kata-kanban"
-version = "0.31.0"
-dependencies = [
- "chrono",
- "hkask-inference",
- "hkask-regulation",
- "hkask-services-core",
- "hkask-storage",
- "hkask-templates",
- "hkask-types",
- "minijinja",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]

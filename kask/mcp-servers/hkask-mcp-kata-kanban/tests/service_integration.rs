@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use hkask_services_kata_kanban::kanban::{ColumnDef, KanbanService, TaskSpec};
-    use hkask_services_kata_kanban::{KataEngine, KataManifest, TaskGasAccountantFn};
+    use hkask_mcp_kata_kanban::kanban::{ColumnDef, KanbanService, TaskSpec};
+    use hkask_mcp_kata_kanban::{KataEngine, KataManifest, TaskGasAccountantFn};
     use hkask_storage::HMemStore;
     use hkask_storage::database::sqlite::SqliteDriver;
     use hkask_templates::SqliteRegistry;

@@ -135,10 +135,11 @@ pub struct KaskDataServiceSettings {
 /// `openai_compatible.<provider_id>` entry to settings.json so zed's
 /// OpenAI-compatible provider machinery registers it.
 ///
-/// `Default` auto-enables providers whose API key is present in the process
-/// environment, so a user with `DEEPINFRA_API_KEY` set gets DeepInfra enabled
-/// without an explicit `kask.inference_providers.deepinfra_enabled: true`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// `Default` returns all-false (pure, no side effects). The env-var-based
+/// auto-enable logic lives in `From<KaskInferenceProvidersSettingsContent>`,
+/// which is the only production path. This keeps `Default` deterministic for
+/// tests and `KaskSettings::default()`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskInferenceProvidersSettings {
     /// Enable DeepInfra (OpenAI-compatible inference).
     pub deepinfra_enabled: bool,
@@ -157,19 +158,6 @@ pub struct KaskInferenceProvidersSettings {
 
     /// Enable Cline (open source unified API for models and tools).
     pub cline_enabled: bool,
-}
-
-impl Default for KaskInferenceProvidersSettings {
-    fn default() -> Self {
-        Self {
-            deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
-            fal_enabled: std::env::var("FALAI_API_KEY").is_ok(),
-            together_enabled: std::env::var("TOGETHERAI_API_KEY").is_ok(),
-            openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
-            kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
-            cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
-        }
-    }
 }
 
 /// Curator configuration.

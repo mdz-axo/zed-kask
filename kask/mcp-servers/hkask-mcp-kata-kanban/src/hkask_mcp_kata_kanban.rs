@@ -9,15 +9,27 @@
 
 #![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
+pub mod kanban;
+pub mod kata;
 pub mod pko;
 pub mod types;
+
+// Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
+pub use kanban::{
+    Board, ColumnDef, KanbanError, KanbanService, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
+    TaskStatus, UnjamFix, UnjamItem, Verification, VerificationCriterion, socratic,
+};
+pub use kata::{
+    ImprovementDirection, ImprovementSignal, KataEngine, KataError, KataHistory, KataManifest,
+    KataResult, KataState, KataStep, PracticeEntry, StepExperience, TaskGasAccountantFn,
+};
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic};
-use hkask_services_kata_kanban::KanbanError;
-use hkask_services_kata_kanban::KanbanService;
-use hkask_services_kata_kanban::{TaskFilter, TaskSpec, VerificationCriterion};
+use crate::KanbanError;
+use crate::KanbanService;
+use crate::{TaskFilter, TaskSpec, VerificationCriterion};
 use hkask_storage::HMemStore;
 use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
