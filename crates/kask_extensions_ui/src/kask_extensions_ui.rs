@@ -12,7 +12,9 @@ use std::time::Duration;
 use std::{any::TypeId, ops::Range, sync::Arc};
 
 use anyhow::Context as _;
-use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
+use cloud_api_types::{
+    ExtensionMetadata, ExtensionProvides, GetKaskSkillsResponse, KaskSkillMetadata,
+};
 use collections::{BTreeMap, BTreeSet};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -30,6 +32,7 @@ use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsContent};
+#[allow(unused_imports)]
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -284,6 +287,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+#[allow(dead_code)]
 fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     match provides {
         ExtensionProvides::Themes => "Themes",
@@ -300,14 +304,22 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     }
 }
 
-#[derive(Clone)]
-pub enum ExtensionStatus {
+// zed-kask: kask skill status mirrors ExtensionStatus but for kask skills.
+// Tracks whether a skill is installed, installing, or not installed.
+#[derive(Clone, Debug)]
+pub enum KaskSkillStatus {
     NotInstalled,
     Installing,
-    Upgrading,
     Installed(Arc<str>),
     Removing,
+    Upgrading,
 }
+
+#[allow(dead_code)]
+// zed-kask: ExtensionStatus is kept as a type alias for the dead extension
+// render code that hasn't been removed yet. The new kask render path uses
+// KaskSkillStatus. This will be removed when the dead code is cleaned up.
+type ExtensionStatus = KaskSkillStatus;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ExtensionFilter {
@@ -317,6 +329,7 @@ enum ExtensionFilter {
 }
 
 impl ExtensionFilter {
+    #[allow(dead_code)]
     pub fn include_dev_extensions(&self) -> bool {
         match self {
             Self::All | Self::Installed => true,
@@ -394,10 +407,12 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
+#[allow(dead_code)]
 fn extension_button_id(extension_id: &Arc<str>, operation: ExtensionOperation) -> ElementId {
     (SharedString::from(extension_id.clone()), operation as usize).into()
 }
 
+#[allow(dead_code)]
 struct ExtensionCardButtons {
     install_or_uninstall: Button,
     upgrade: Option<Button>,
@@ -410,45 +425,50 @@ pub struct KaskExtensionsPage {
     is_fetching_extensions: bool,
     fetch_failed: bool,
     filter: ExtensionFilter,
-    remote_extension_entries: Vec<ExtensionMetadata>,
-    dev_extension_entries: Vec<Arc<ExtensionManifest>>,
-    filtered_remote_extension_indices: Vec<usize>,
-    filtered_dev_extension_indices: Vec<usize>,
+    // zed-kask: kask skill catalog entries (replaces remote_extension_entries)
+    remote_skill_entries: Vec<KaskSkillMetadata>,
+    filtered_remote_skill_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
-    provides_filter: Option<ExtensionProvides>,
     _subscriptions: [gpui::Subscription; 2],
-    extension_fetch_task: Option<Task<()>>,
+    skill_fetch_task: Option<Task<()>>,
+    // zed-kask: track in-flight install/uninstall operations by skill id
+    outstanding_operations: collections::BTreeMap<Arc<str>, KaskSkillStatus>,
+    // zed-kask: track the HTTP client for catalog fetches and install/vote
+    http_client: Option<Arc<http_client::HttpClientWithUrl>>,
+    // zed-kask: track the fs for install/uninstall
+    fs: Option<Arc<dyn fs::Fs>>,
     upsells: BTreeSet<Feature>,
 }
 
+#[allow(dead_code)]
 impl KaskExtensionsPage {
     pub fn new(
         workspace: &Workspace,
-        provides_filter: Option<ExtensionProvides>,
-        focus_extension_id: Option<&str>,
+        _provides_filter: Option<ExtensionProvides>,
+        _focus_skill_id: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
+            let _workspace_handle = workspace.weak_handle();
+            let app_state = workspace::AppState::global(cx);
+            let http_client = app_state.client.http_client();
+            let fs = app_state.fs.clone();
+
+            // zed-kask: subscribe to ExtensionStore for dev-extension
+            // rebuild visibility (kept from the fork). The kask catalog is
+            // fetched separately via the kask skills API.
             let store = ExtensionStore::global(cx);
-            let workspace_handle = workspace.weak_handle();
             let subscriptions = [
                 cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
                 cx.subscribe_in(
                     &store,
                     window,
-                    move |this, _, event, window, cx| match event {
+                    move |this, _, event, _window, cx| match event {
                         extension_host::Event::ExtensionsUpdated => {
-                            this.fetch_extensions_debounced(None, cx)
+                            this.fetch_kask_skills(cx);
                         }
-                        extension_host::Event::ExtensionInstalled(extension_id) => this
-                            .on_extension_installed(
-                                workspace_handle.clone(),
-                                extension_id,
-                                window,
-                                cx,
-                            ),
                         _ => {}
                     },
                 ),
@@ -456,10 +476,7 @@ impl KaskExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", window, cx);
-                if let Some(id) = focus_extension_id {
-                    input.set_text(format!("id:{id}"), window, cx);
-                }
+                input.set_placeholder_text("Search kask skills...", window, cx);
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
@@ -472,23 +489,18 @@ impl KaskExtensionsPage {
                 is_fetching_extensions: false,
                 fetch_failed: false,
                 filter: ExtensionFilter::All,
-                dev_extension_entries: Vec::new(),
-                filtered_remote_extension_indices: Vec::new(),
-                filtered_dev_extension_indices: Vec::new(),
-                remote_extension_entries: Vec::new(),
+                remote_skill_entries: Vec::new(),
+                filtered_remote_skill_indices: Vec::new(),
                 query_contains_error: false,
-                provides_filter,
-                extension_fetch_task: None,
                 _subscriptions: subscriptions,
-                query_editor,
+                skill_fetch_task: None,
+                outstanding_operations: collections::BTreeMap::default(),
+                http_client: Some(http_client),
+                fs: Some(fs),
                 upsells: BTreeSet::default(),
+                query_editor,
             };
-            this.fetch_extensions(
-                this.search_query(cx),
-                Some(BTreeSet::from_iter(this.provides_filter)),
-                None,
-                cx,
-            );
+            this.fetch_kask_skills(cx);
             this
         })
     }
@@ -563,41 +575,25 @@ impl KaskExtensionsPage {
     }
 
     fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
-        self.filtered_remote_extension_indices.clear();
-        self.filtered_remote_extension_indices.extend(
-            self.remote_extension_entries
-                .iter()
-                .enumerate()
-                .filter(|(_, extension)| match self.filter {
-                    ExtensionFilter::All => true,
-                    ExtensionFilter::Installed => {
-                        let status = Self::extension_status(&extension.id, cx);
-                        matches!(status, ExtensionStatus::Installed(_))
-                    }
-                    ExtensionFilter::NotInstalled => {
-                        let status = Self::extension_status(&extension.id, cx);
-
-                        matches!(status, ExtensionStatus::NotInstalled)
-                    }
-                })
-                .filter(|(_, extension)| match self.provides_filter {
-                    Some(provides) => extension.manifest.provides.contains(&provides),
-                    None => true,
-                })
-                .map(|(ix, _)| ix),
-        );
-
-        self.filtered_dev_extension_indices.clear();
-        self.filtered_dev_extension_indices.extend(
-            self.dev_extension_entries
-                .iter()
-                .enumerate()
-                .filter(|(_, manifest)| match self.provides_filter {
-                    Some(provides) => manifest.provides().contains(&provides),
-                    None => true,
-                })
-                .map(|(ix, _)| ix),
-        );
+        let filter = self.filter;
+        let indices: Vec<usize> = self
+            .remote_skill_entries
+            .iter()
+            .enumerate()
+            .filter(|(_, skill)| match filter {
+                ExtensionFilter::All => true,
+                ExtensionFilter::Installed => {
+                    let status = self.skill_status(&skill.id, cx);
+                    matches!(status, KaskSkillStatus::Installed(_))
+                }
+                ExtensionFilter::NotInstalled => {
+                    let status = self.skill_status(&skill.id, cx);
+                    matches!(status, KaskSkillStatus::NotInstalled)
+                }
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        self.filtered_remote_skill_indices = indices;
 
         cx.notify();
     }
@@ -607,97 +603,88 @@ impl KaskExtensionsPage {
         cx.notify();
     }
 
-    fn fetch_extensions(
-        &mut self,
-        search: Option<String>,
-        provides_filter: Option<BTreeSet<ExtensionProvides>>,
-        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
-        cx: &mut Context<Self>,
-    ) {
+    /// zed-kask: Fetch the kask skill catalog from `GET /api/kask-skills`.
+    /// Replaces the extension fetch. The catalog is the source of truth for
+    /// what skills are available to install.
+    fn fetch_kask_skills(&mut self, cx: &mut Context<Self>) {
+        let Some(http_client) = self.http_client.clone() else {
+            log::warn!(
+                "kask-extensions: no HTTP client available; cannot fetch skill catalog. \
+                 Remediation: ensure the user is logged in."
+            );
+            return;
+        };
+
         self.is_fetching_extensions = true;
         self.fetch_failed = false;
         cx.notify();
 
-        let extension_store = ExtensionStore::global(cx);
-
-        let dev_extensions = extension_store
-            .read(cx)
-            .dev_extensions()
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let remote_extensions =
-            if let Some(id) = search.as_ref().and_then(|s| s.strip_prefix("id:")) {
-                let versions =
-                    extension_store.update(cx, |store, cx| store.fetch_extension_versions(id, cx));
-                cx.foreground_executor().spawn(async move {
-                    let versions = versions.await?;
-                    let latest = versions
-                        .into_iter()
-                        .max_by_key(|v| v.published_at)
-                        .context("no extension found")?;
-                    Ok(vec![latest])
-                })
-            } else {
-                extension_store.update(cx, |store, cx| {
-                    store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
-                })
-            };
-
+        let url = http_client.build_zed_api_url("/api/kask-skills", &[]);
         cx.spawn(async move |this, cx| {
-            let dev_extensions = if let Some(search) = search {
-                let match_candidates = dev_extensions
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, manifest)| StringMatchCandidate::new(ix, &manifest.name))
-                    .collect::<Vec<_>>();
+            let result = async {
+                let url = url?;
+                let mut response = http_client
+                    .get(url.as_ref(), http_client::AsyncBody::empty(), true)
+                    .await?;
+                let mut body = Vec::new();
+                futures::AsyncReadExt::read_to_end(response.body_mut(), &mut body)
+                    .await
+                    .context("error reading kask skills response")?;
+                if response.status().is_client_error() {
+                    let text = String::from_utf8_lossy(body.as_slice());
+                    anyhow::bail!(
+                        "status error {}, response: {text:?}",
+                        response.status().as_u16()
+                    );
+                }
+                let response: GetKaskSkillsResponse = serde_json::from_slice(&body)?;
+                Ok::<_, anyhow::Error>(response.data)
+            }
+            .await;
 
-                let matches = match_strings(
-                    &match_candidates,
-                    &search,
-                    false,
-                    true,
-                    match_candidates.len(),
-                    &Default::default(),
-                    cx.background_executor().clone(),
-                )
-                .await;
-                matches
-                    .into_iter()
-                    .map(|mat| dev_extensions[mat.candidate_id].clone())
-                    .collect()
-            } else {
-                dev_extensions
-            };
-
-            let fetch_result = remote_extensions.await;
-
-            let result = this.update(cx, |this, cx| {
-                cx.notify();
-                this.dev_extension_entries = dev_extensions;
+            this.update(cx, |this, cx| {
                 this.is_fetching_extensions = false;
-
-                match fetch_result {
-                    Ok(extensions) => {
+                match result {
+                    Ok(skills) => {
                         this.fetch_failed = false;
-                        this.remote_extension_entries = extensions;
+                        this.remote_skill_entries = skills;
                         this.filter_extension_entries(cx);
-                        if let Some(callback) = on_complete {
-                            callback(this, cx);
-                        }
-                        Ok(())
                     }
                     Err(err) => {
                         this.fetch_failed = true;
                         this.filter_extension_entries(cx);
-                        Err(err)
+                        log::warn!(
+                            "kask-extensions: failed to fetch skill catalog: {err:#}. \
+                             Remediation: check network connectivity and server availability."
+                        );
                     }
                 }
-            });
-
-            result?
+                cx.notify();
+            })
+            .ok();
         })
-        .detach_and_log_err(cx);
+        .detach();
+    }
+
+    /// zed-kask: Check the install status of a kask skill. Mirrors
+    /// `extension_status` but checks the `SkillIndex` for installed
+    /// marketplace skills and the `outstanding_operations` map for in-flight
+    /// operations.
+    fn skill_status(&self, skill_id: &str, cx: &mut Context<Self>) -> KaskSkillStatus {
+        if let Some(status) = self.outstanding_operations.get(skill_id) {
+            return status.clone();
+        }
+        // Check if the skill is installed in the SkillIndex.
+        if let Some(index) = cx.try_global::<agent_skills::SkillIndex>() {
+            let is_installed = index
+                .global_skills
+                .iter()
+                .any(|s| matches!(&s.source, agent_skills::SkillSource::Public { original_skill_id, .. } if original_skill_id.as_ref() == skill_id));
+            if is_installed {
+                return KaskSkillStatus::Installed("latest".into());
+            }
+        }
+        KaskSkillStatus::NotInstalled
     }
 
     fn render_extensions(
@@ -706,25 +693,339 @@ impl KaskExtensionsPage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<ExtensionCard> {
-        let dev_extension_entries_len = if self.filter.include_dev_extensions() {
-            self.filtered_dev_extension_indices.len()
-        } else {
-            0
+        let mut cards = Vec::new();
+        for ix in range {
+            if ix >= self.filtered_remote_skill_indices.len() {
+                break;
+            }
+            let skill_ix = self.filtered_remote_skill_indices[ix];
+            let skill = self.remote_skill_entries[skill_ix].clone();
+            let card = self.render_skill_card(skill, cx);
+            cards.push(card);
+        }
+        cards
+    }
+
+    /// zed-kask: Render a kask skill card with install/uninstall/vote buttons.
+    fn render_skill_card(
+        &mut self,
+        skill: KaskSkillMetadata,
+        cx: &mut Context<Self>,
+    ) -> ExtensionCard {
+        let status = self.skill_status(&skill.id, cx);
+        let skill_id = skill.id.clone();
+        let skill_id_for_uninstall = skill.id.clone();
+        let skill_id_for_vote_up = skill.id.clone();
+        let skill_id_for_vote_down = skill.id.clone();
+        let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
+        let marketplace_dir = util::paths::home_dir().join(".agents/skills/_marketplace");
+
+        ExtensionCard::new().child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Label::new(skill.id.clone()).color(Color::Default))
+                                .child(
+                                    Label::new(format!("↓ {}", skill.download_count))
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(format!("▲ {}", skill.upvote_count))
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(format!("▼ {}", skill.downvote_count))
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(Label::new(skill.manifest.description.clone()).color(Color::Muted)),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .when(matches!(status, KaskSkillStatus::NotInstalled), |this| {
+                            this.child(
+                                Button::new(
+                                    SharedString::from(format!("install-{}", skill_id)),
+                                    "Install",
+                                )
+                                .style(ButtonStyle::Filled)
+                                .disabled(matches!(status, KaskSkillStatus::Installing))
+                                .on_click(cx.listener(
+                                    move |this, _event, _window, cx| {
+                                        this.install_kask_skill(
+                                            skill_id.clone(),
+                                            http_client.clone(),
+                                            fs.clone(),
+                                            marketplace_dir.clone(),
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                        })
+                        .when(matches!(status, KaskSkillStatus::Installed(_)), |this| {
+                            this.child(
+                                Button::new(
+                                    SharedString::from(format!(
+                                        "uninstall-{}",
+                                        skill_id_for_uninstall
+                                    )),
+                                    "Uninstall",
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .disabled(matches!(status, KaskSkillStatus::Removing))
+                                .on_click(cx.listener(
+                                    move |this, _event, _window, cx| {
+                                        this.uninstall_kask_skill(
+                                            skill_id_for_uninstall.clone(),
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                        })
+                        .when(matches!(status, KaskSkillStatus::Installing), |this| {
+                            this.child(Label::new("Installing...").color(Color::Muted))
+                        })
+                        .when(matches!(status, KaskSkillStatus::Removing), |this| {
+                            this.child(Label::new("Removing...").color(Color::Muted))
+                        })
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("vote-up-{}", skill_id_for_vote_up)),
+                                IconName::ThumbsUp,
+                            )
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(
+                                move |this, _event, _window, cx| {
+                                    this.vote_kask_skill(skill_id_for_vote_up.clone(), 1, cx);
+                                },
+                            )),
+                        )
+                        .child(
+                            IconButton::new(
+                                SharedString::from(format!("vote-down-{}", skill_id_for_vote_down)),
+                                IconName::ThumbsDown,
+                            )
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(
+                                move |this, _event, _window, cx| {
+                                    this.vote_kask_skill(skill_id_for_vote_down.clone(), -1, cx);
+                                },
+                            )),
+                        ),
+                ),
+        )
+    }
+
+    /// zed-kask: Install a kask skill from the marketplace.
+    fn install_kask_skill(
+        &mut self,
+        skill_id: Arc<str>,
+        http_client: Option<Arc<http_client::HttpClientWithUrl>>,
+        fs: Option<Arc<dyn fs::Fs>>,
+        marketplace_dir: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(http_client) = http_client else {
+            log::warn!(
+                "kask-extensions: no HTTP client available; cannot install skill '{}'. \
+                 Remediation: ensure the user is logged in.",
+                skill_id
+            );
+            return;
         };
-        range
-            .map(|ix| {
-                if ix < dev_extension_entries_len {
-                    let dev_ix = self.filtered_dev_extension_indices[ix];
-                    let extension = &self.dev_extension_entries[dev_ix];
-                    self.render_dev_extension(extension, cx)
-                } else {
-                    let extension_ix =
-                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
-                    let extension = &self.remote_extension_entries[extension_ix];
-                    self.render_remote_extension(extension, cx)
+        let Some(fs) = fs else {
+            log::warn!(
+                "kask-extensions: no filesystem available; cannot install skill '{}'. \
+                 Remediation: ensure the app state is initialized.",
+                skill_id
+            );
+            return;
+        };
+
+        // Find the skill in the catalog to get the SHA256.
+        let Some(skill) = self.remote_skill_entries.iter().find(|s| s.id == skill_id) else {
+            log::warn!(
+                "kask-extensions: skill '{}' not found in catalog; cannot install.",
+                skill_id
+            );
+            return;
+        };
+        let sha256 = skill.manifest.tarball_sha256.clone();
+        let skill_id_str = skill_id.to_string();
+
+        self.outstanding_operations
+            .insert(skill_id.clone(), KaskSkillStatus::Installing);
+        cx.notify();
+
+        let http_client = http_client;
+        let fs = fs.clone();
+        cx.spawn(async move |this, cx| {
+            let result = install_skill(
+                fs.as_ref(),
+                &http_client,
+                &skill_id_str,
+                &sha256,
+                &marketplace_dir,
+            )
+            .await;
+            this.update(cx, |this, cx| {
+                this.outstanding_operations.remove(&skill_id);
+                match result {
+                    Ok(_install_dir) => {
+                        log::info!(
+                            "kask-extensions: successfully installed skill '{}'",
+                            skill_id
+                        );
+                        // Fire SkillsUpdatedHook so the Settings page refreshes.
+                        let hook = cx
+                            .try_global::<agent_skills::SkillsUpdatedHook>()
+                            .map(|h| h.0.clone());
+                        if let Some(hook) = hook {
+                            hook(cx);
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "kask-extensions: failed to install skill '{}': {err:#}. \
+                             Remediation: check network connectivity and disk space.",
+                            skill_id
+                        );
+                    }
                 }
+                cx.notify();
             })
-            .collect()
+            .ok();
+        })
+        .detach();
+    }
+
+    /// zed-kask: Uninstall a kask skill.
+    fn uninstall_kask_skill(&mut self, skill_id: Arc<str>, cx: &mut Context<Self>) {
+        let Some(fs) = self.fs.clone() else {
+            log::warn!(
+                "kask-extensions: no filesystem available; cannot uninstall skill '{}'.",
+                skill_id
+            );
+            return;
+        };
+
+        let (source_user, skill_name) = match skill_id.split_once('/') {
+            Some(parts) => parts,
+            None => {
+                log::warn!(
+                    "kask-extensions: invalid skill id '{}'; cannot uninstall.",
+                    skill_id
+                );
+                return;
+            }
+        };
+
+        let install_dir = util::paths::home_dir()
+            .join(".agents/skills/_marketplace")
+            .join(source_user)
+            .join(skill_name);
+
+        self.outstanding_operations
+            .insert(skill_id.clone(), KaskSkillStatus::Removing);
+        cx.notify();
+
+        let skill_id_for_hook = skill_id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = fs
+                .remove_dir(
+                    &install_dir,
+                    fs::RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.outstanding_operations.remove(&skill_id);
+                match result {
+                    Ok(()) => {
+                        log::info!(
+                            "kask-extensions: successfully uninstalled skill '{}'",
+                            skill_id_for_hook
+                        );
+                        let hook = cx
+                            .try_global::<agent_skills::SkillsUpdatedHook>()
+                            .map(|h| h.0.clone());
+                        if let Some(hook) = hook {
+                            hook(cx);
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "kask-extensions: failed to uninstall skill '{}': {err:#}.",
+                            skill_id_for_hook
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// zed-kask: Vote on a kask skill (+1 or -1).
+    fn vote_kask_skill(&mut self, skill_id: Arc<str>, vote: i8, cx: &mut Context<Self>) {
+        let Some(http_client) = self.http_client.clone() else {
+            log::warn!(
+                "kask-extensions: no HTTP client available; cannot vote on skill '{}'.",
+                skill_id
+            );
+            return;
+        };
+
+        let skill_id_str = skill_id.to_string();
+        cx.spawn(async move |this, cx| {
+            let result = vote_skill(&http_client, &skill_id_str, vote).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok((up, down)) => {
+                        // Update the local catalog entry with the new counts.
+                        if let Some(skill) = this
+                            .remote_skill_entries
+                            .iter_mut()
+                            .find(|s| s.id.as_ref() == skill_id_str)
+                        {
+                            skill.upvote_count = up;
+                            skill.downvote_count = down;
+                        }
+                        log::info!(
+                            "kask-extensions: voted {} on skill '{}': ▲{} ▼{}",
+                            vote,
+                            skill_id_str,
+                            up,
+                            down
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "kask-extensions: failed to vote on skill '{}': {err:#}.",
+                            skill_id_str
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_dev_extension(
@@ -1369,12 +1670,28 @@ impl KaskExtensionsPage {
     }
 
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
-        self.fetch_extensions_debounced(
-            Some(Box::new(|this, cx| {
+        // zed-kask: debounce the catalog fetch, then filter locally.
+        // The kask skills API returns the full catalog; search filtering
+        // happens client-side via `filter_extension_entries`.
+        self.skill_fetch_task = Some(cx.spawn(async move |this, cx| {
+            let search = this
+                .update(cx, |this, cx| this.search_query(cx))
+                .ok()
+                .flatten();
+
+            if search.is_some() {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+            };
+
+            this.update(cx, |this, cx| {
+                this.fetch_kask_skills(cx);
+                this.filter_extension_entries(cx);
                 this.scroll_to_top(cx);
-            })),
-            cx,
-        );
+            })
+            .ok();
+        }));
         self.refresh_feature_upsells(cx);
     }
 
@@ -1385,48 +1702,15 @@ impl KaskExtensionsPage {
         self.refresh_search(cx);
     }
 
+    // zed-kask: provides_filter is extension-specific; kask skills have no
+    // provides concept. This method is kept as a no-op for API compatibility
+    // with any callers that still reference it.
     pub fn change_provides_filter(
         &mut self,
-        provides_filter: Option<ExtensionProvides>,
+        _provides_filter: Option<ExtensionProvides>,
         cx: &mut Context<Self>,
     ) {
-        self.provides_filter = provides_filter;
         self.refresh_search(cx);
-    }
-
-    fn fetch_extensions_debounced(
-        &mut self,
-        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
-        cx: &mut Context<KaskExtensionsPage>,
-    ) {
-        self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
-            let search = this
-                .update(cx, |this, cx| this.search_query(cx))
-                .ok()
-                .flatten();
-
-            // Only debounce the fetching of extensions if we have a search
-            // query.
-            //
-            // If the search was just cleared then we can just reload the list
-            // of extensions without a debounce, which allows us to avoid seeing
-            // an intermittent flash of a "no extensions" state.
-            if search.is_some() {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
-            };
-
-            this.update(cx, |this, cx| {
-                this.fetch_extensions(
-                    search,
-                    Some(BTreeSet::from_iter(this.provides_filter)),
-                    on_complete,
-                    cx,
-                );
-            })
-            .ok();
-        }));
     }
 
     pub fn search_query(&self, cx: &mut App) -> Option<String> {
@@ -1985,63 +2269,12 @@ impl Render for KaskExtensionsPage {
                             ),
                     ),
             )
-            .child(
-                h_flex()
-                    .id("filter-row")
-                    .gap_2()
-                    .py_2p5()
-                    .px_4()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .overflow_x_scroll()
-                    .child(
-                        Button::new("filter-all-categories", "All")
-                            .when(self.provides_filter.is_none(), |button| {
-                                button.style(ButtonStyle::Filled)
-                            })
-                            .when(self.provides_filter.is_some(), |button| {
-                                button.style(ButtonStyle::Subtle)
-                            })
-                            .toggle_state(self.provides_filter.is_none())
-                            .on_click(cx.listener(|this, _event, _, cx| {
-                                this.change_provides_filter(None, cx);
-                            })),
-                    )
-                    .children(
-                        ExtensionProvides::iter()
-                            .filter(|provides| match provides {
-                                ExtensionProvides::AgentServers
-                                | ExtensionProvides::Grammars // grammars do not add anything of value to users currently
-                                | ExtensionProvides::IndexedDocsProviders
-                                | ExtensionProvides::SlashCommands => false,
-                                _ => true,
-                            })
-                            .map(|provides| {
-                                let label = extension_provides_label(provides);
-                                let button_id =
-                                    SharedString::from(format!("filter-category-{}", label));
-
-                                Button::new(button_id, label)
-                                    .style(if self.provides_filter == Some(provides) {
-                                        ButtonStyle::Filled
-                                    } else {
-                                        ButtonStyle::Subtle
-                                    })
-                                    .toggle_state(self.provides_filter == Some(provides))
-                                    .on_click({
-                                        cx.listener(move |this, _event, _, cx| {
-                                            this.change_provides_filter(Some(provides), cx);
-                                        })
-                                    })
-                            }),
-                    ),
-            )
+            // zed-kask: provides filter row removed — kask skills have no
+            // provides concept (v1 is skills-only per plan §0).
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                let mut count = self.filtered_remote_extension_indices.len();
-                if self.filter.include_dev_extensions() {
-                    count += self.filtered_dev_extension_indices.len();
-                }
+                // zed-kask: count is just the filtered skill entries.
+                let count = self.filtered_remote_skill_indices.len();
 
                 if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()

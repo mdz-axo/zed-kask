@@ -14,6 +14,7 @@ use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::ModalView;
 
+#[allow(dead_code)]
 pub struct ExtensionVersionSelector {
     picker: Entity<Picker<ExtensionVersionSelectorDelegate>>,
 }
@@ -45,6 +46,7 @@ impl ExtensionVersionSelector {
     }
 }
 
+#[allow(dead_code)]
 pub struct ExtensionVersionSelectorDelegate {
     fs: Arc<dyn Fs>,
     selector: WeakEntity<ExtensionVersionSelector>,
@@ -53,6 +55,7 @@ pub struct ExtensionVersionSelectorDelegate {
     matches: Vec<StringMatch>,
 }
 
+#[allow(dead_code)]
 impl ExtensionVersionSelectorDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,

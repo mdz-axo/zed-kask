@@ -1,0 +1,126 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- hypothesize
+- reason
+- classify
+- rubin
+- allostery
+- trap
+contract:
+  input:
+    gradients: array
+    prior: object
+    target_region: object
+  output:
+    gradient_hypotheses: array
+    delegate_notes: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: gradient-hunter/gradient-hypothesize.j2 #}
+{# Functional Role: KnowAct — Generate reason hypotheses #}
+{# Produces: hypothesize #}
+{# Phase 4 — HYPOTHESIZE (CHECK: Rubin + spin glass + allostery taxonomy) #}
+{# hKask v0.31.0 — Gradient Hunter #}
+{#
+  For each gradient, generate multiple hypotheses for why it exists.
+  Use the seven-class reason taxonomy (adapted from Rubin 1976 + spin
+  glass + allostery). Delegate to falsifiability for counterfactual
+  discrimination and to metacognition for prior perspective rotation.
+#}
+
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a gradient reason analyst. For each detected gradient, generate multiple hypotheses for why it exists.
+
+## Detected Gradients
+
+```json
+{{ gradients | tojson }}
+```
+
+## Prior
+
+```json
+{{ prior | tojson }}
+```
+
+## Step 1 — Apply Reason Taxonomy
+
+For each gradient, generate hypotheses using the seven-class reason taxonomy:
+
+| Reason class | Rubin analog | Meaning | Action |
+|---|---|---|---|
+| Intentional boundary | MCAR (ignorable) | Gradient is by design. | Document. Verify intentional. |
+| Explainable gap | MAR (ignorable with covariates) | Desert exists because of observed covariate. | Fix covariate or document scope. |
+| Forgotten wire | MNAR (non-ignorable) | Missing artifact should depend on itself. | Fix. Missing wire is the cause. |
+| Stale refactor | MNAR (non-ignorable, drift) | Refactor moved populated side, left desert behind. | Fix. Update desert side. |
+| Scope creep | MNAR (non-ignorable, missing abstraction) | Populated side has structure desert side lacks. | Fix. Extract abstraction. |
+| Metastable trap | Spin glass (non-ergodic) | Desert is a valley system relaxed into; cannot leave without crossing barrier. Artifact is unreachable, not missing. | Inject energy at barrier. Reshape landscape. |
+| Broken allosteric coupling | Allostery (ensemble redistribution) | Desert is a conformation/strategy that should be populated but isn't. Effector isn't shifting ensemble. | Restore coupling at distal site. For orchestrators: wire task to strategy ensemble. |
+
+## Step 2 — Generate Multiple Hypotheses per Gradient
+
+For each gradient, generate at least 2-3 hypotheses from different reason
+classes. Do not jump to a single explanation. The shape of the gradient
+suggests likely reason families (see gradient-shapes.yaml), but do not
+collapse to the first match — a frustrated landscape could still be an
+intentional boundary in disguise.
+
+## Step 3 — Counterfactual Discrimination (delegate falsifiability)
+
+For each hypothesis, apply counterfactual reasoning:
+- "If this desert were intentional (MCAR), what else would be true?"
+- "If it's a forgotten wire (MNAR), what else would be true?"
+- "If it's a metastable trap (spin glass), what else would be true?"
+- "If it's a broken allosteric coupling, what else would be true?"
+
+Find evidence that discriminates between hypotheses. Delegate to
+`falsifiability` for structured counterfactual hypothesis testing when
+the discrimination is non-obvious.
+
+## Step 4 — Prior Perspective Rotation (delegate metacognition)
+
+Different priors surface different gradients. Delegate to `metacognition`
+to rotate perspectives on the prior model. If a gradient disappears under
+a different prior, it was a prior artifact, not a real finding — note
+this in delegate_notes.
+
+## Step 5 — Special Case: Non-Monotonic Gradients (spin glass)
+
+When the gradient shape is a frustrated landscape, the Rubin missingness
+taxonomy partially breaks down. The artifact isn't missing in the
+MCAR/MAR/MNAR sense — it's unreachable without crossing an energy barrier.
+The hypothesis generation shifts:
+- Instead of "why is this absent?", ask "what constraint is the system
+  satisfying locally that prevents it from reaching the globally expected
+  state?"
+- Identify the competing constraints (frustration).
+- The barrier is the intervention point. Crossing it requires injecting
+  energy (a deferred task, a startup signal, a reconfiguration) — not
+  just adding the missing artifact.
+- Ultrametricity check: are there valleys within valleys? A surface-level
+  fix may leave the system in a shallower valley. Probe for deeper valleys.
+
+## Step 6 — Special Case: Allosteric Coupling (orchestrator corollary)
+
+When the gradient shape is an allosteric population shift, the missingness
+is in the coupling, not the artifact. The intervention is at the distal
+allosteric site (the effector binding site), not at the desert. For agentic
+orchestrators: wire the task/context to the strategy ensemble, not the
+strategy itself.
+
+## Output
+
+For each gradient, produce a gradient_hypotheses entry with:
+- gradient_id
+- hypotheses: array of {hypothesis, reason_class, evidence_for, evidence_against}
+- recommended_reason: which hypothesis, with confidence (0.0–1.0)
+- intervention_point: where to act (desert | populated side | distal allosteric site | barrier)
+- delegate_notes: what falsifiability/metacognition contributed

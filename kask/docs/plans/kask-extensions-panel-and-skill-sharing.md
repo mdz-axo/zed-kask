@@ -362,7 +362,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ---
 
-### Phase 5 — Wire client to backend (publish + install)
+### Phase 5 — Wire client to backend (publish + install) ✅ COMPLETE
 
 **Goal:** end-to-end. Toggling a skill to Public publishes it; clicking Install in the Kask Extensions Panel installs it.
 

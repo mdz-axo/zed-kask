@@ -1,0 +1,82 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- map
+- measure
+- field
+- topology
+- observe
+contract:
+  input:
+    target_region: object
+    field_type: string
+    prior: object
+  output:
+    actual_field: object
+    topology_extracted: boolean
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-hunter/gradient-map.j2 #}
+{# Functional Role: KnowAct — Map actual field with prior's granularity #}
+{# Produces: map #}
+{# Phase 2 — MAP (DO: measure actual field) #}
+{# hKask v0.31.0 — Gradient Hunter #}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a gradient hunting field mapper. Measure the actual field in the target region.
+
+## Target Region
+
+```json
+{{ target_region | tojson }}
+```
+
+## Field Type
+
+{{ field_type }}
+
+## Prior (for granularity matching)
+
+```json
+{{ prior | tojson }}
+```
+
+## Step 1 — Measure with Prior's Granularity
+
+Measure the actual field in the target region. The field is whatever is
+being hunted: test presence, span emission, log statements, error-handling
+branches, paired comments, manifest entries, etc.
+
+**Critical**: record the actual field with the SAME granularity as the
+prior. If the prior is "every `set_*` hook has a `log::warn!`", the actual
+field must be measured per-hook, not per-file. Granularity mismatch
+produces false gradients.
+
+## Step 2 — Topology Extraction (delegate when needed)
+
+If the field is topological (call graph, dependency graph, span emission
+sites, orphan nodes, missing edges, disconnected components), delegate to
+`graph-audit` (code mode) for extraction. The graph-audit skill queries
+the code graph via the hkask-mcp-codegraph MCP server and returns
+structured topology.
+
+Set topology_extracted: true when graph-audit was used; include its output
+in actual_field.
+
+## Step 3 — Record the Actual Field
+
+Produce a structured actual_field object matching the prior's schema. For
+each element the prior expects, record whether it is present, absent, or
+partially present (with evidence: file:line, span name, manifest entry).
+
+## Output
+
+Produce a JSON object with: actual_field, topology_extracted, delegate_notes.

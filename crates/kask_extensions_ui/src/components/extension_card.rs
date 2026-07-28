@@ -16,6 +16,7 @@ impl ExtensionCard {
         }
     }
 
+    #[allow(dead_code)]
     pub fn overridden_by_dev_extension(mut self, overridden: bool) -> Self {
         self.overridden_by_dev_extension = overridden;
         self

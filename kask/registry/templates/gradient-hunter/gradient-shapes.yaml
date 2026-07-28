@@ -1,0 +1,230 @@
+# Gradient shape ontology reference for gradient-hunter skill
+# hKask v0.31.0
+#
+# Eight gradient shapes drawn from seven academic domains. Each shape is a
+# fractal pattern that recurs at different scales and in different domains.
+# The gradient-hunter recognizes the shape regardless of the domain it
+# appears in.
+#
+# Substrate ontology (spin glass) explains WHY gradients exist at all:
+# non-ergodic systems store work and information in metastable states, so
+# every "desert" is potentially a valley the system is trapped in, not an
+# absence. The surface ontologies describe the SHAPE of the gradient at a
+# boundary; the substrate explains why there is a boundary.
+
+shapes:
+  - id: sharp_cliff
+    name: "Sharp cliff"
+    ontology: image_processing
+    anchor: "Step edge (Canny; Martin-Fowlkes-Malik)"
+    meaning: >
+      Populated → empty in one step. Discontinuity in the field itself.
+    reason_family: "Forgotten wire, missing abstraction, scope boundary drawn wrong"
+    fractal_recurrence:
+      - "pixel scale: Canny edge"
+      - "function scale: test-coverage cliff"
+      - "subsystem scale: telemetry cliff"
+      - "organization scale: governance boundary"
+
+  - id: roof_edge
+    name: "Roof edge"
+    ontology: image_processing
+    anchor: "Roof edge (discontinuity in derivative)"
+    meaning: >
+      Field is continuous but its rate of change jumps. Present everywhere,
+      but density drops abruptly.
+    reason_family: "Scope creep, gradual neglect past a boundary"
+    fractal_recurrence:
+      - "pixel scale: roof edge in intensity derivative"
+      - "module scale: comment density falloff past a boundary"
+      - "system scale: telemetry density falloff past a service boundary"
+
+  - id: wombling_boundary
+    name: "Wombling boundary"
+    ontology: spatial_statistics
+    anchor: "Wombling (Womble 1951; Banerjee & Gelfand 2006)"
+    meaning: >
+      A curve along which the gradient orthogonal to the curve is large.
+      The boundary itself is the finding.
+    reason_family: "Intentional design boundary OR a forgotten seam"
+    fractal_recurrence:
+      - "spatial scale: disease-rate boundary"
+      - "subsystem scale: MCP two-launch-path topology"
+      - "governance scale: OCAP token verification boundary"
+
+  - id: regression_discontinuity
+    name: "Regression discontinuity"
+    ontology: causal_inference
+    anchor: "RDD (Thistlethwaite & Campbell 1960)"
+    meaning: >
+      A jump in outcome at a known threshold/running variable. Sharp =
+      deterministic; fuzzy = probabilistic; kink = slope change not level.
+    reason_family: "Treatment effect at the threshold"
+    fractal_recurrence:
+      - "policy scale: threshold-based program eligibility"
+      - "code scale: complexity threshold past which testing stops"
+      - "config scale: feature flag threshold past which behavior jumps"
+
+  - id: topological_hole
+    name: "Topological hole"
+    ontology: computational_topology
+    anchor: "Persistent homology (Edelsbrunner; Carlsson 2009)"
+    meaning: >
+      Populated on both sides, empty in the middle. A void that persists
+      across scales (long barcode bar). b₁ (loop) or b₂ (void).
+    reason_family: "Stale refactor, forgotten migration"
+    fractal_recurrence:
+      - "point cloud scale: persistent homology b₁ loop"
+      - "code graph scale: missing-test hole (populated on both sides)"
+      - "sensor network scale: coverage gap"
+
+  - id: oracle_gap
+    name: "Oracle gap"
+    ontology: software_engineering
+    anchor: "Oracle gap (Petrova et al. ISSRE 2023)"
+    meaning: >
+      Coverage is high but mutation score is low — tests execute but don't
+      assert. The gap between two metrics is the finding.
+    reason_family: "Weak oracle, superficial tests, copy-pasted tests without assertions"
+    fractal_recurrence:
+      - "function scale: line coverage vs mutation score"
+      - "integration scale: endpoint exercised vs endpoint asserted"
+      - "governance scale: policy enforced vs policy verified"
+
+  - id: frustrated_landscape
+    name: "Frustrated landscape"
+    ontology: statistical_physics
+    anchor: "Spin glass (Parisi 1979; Sherrington-Kirkpatrick 1975; Nobel 2021)"
+    meaning: >
+      The energy gradient is non-monotonic — unlike the smooth monotonic
+      landscape entropy predicts for an ergodic system, the spin glass
+      landscape is rugged: local minima, valleys within valleys (ultrametric
+      hierarchy), barriers between near-degenerate states. Following the
+      local gradient gets you stuck in a metastable valley, not the global
+      optimum. The gradient does NOT point toward the expected region.
+      SUBSTRATE ONTOLOGY: explains why gradients exist at all — non-ergodic
+      systems store work and information in metastable states.
+    reason_family: >
+      Competing constraints that cannot all be satisfied simultaneously
+      (frustration). The system is stuck in a local optimum that is not the
+      global optimum. The gradient itself is misleading — the desert exists
+      because the system is trapped, not because the populated region is
+      absent.
+    fractal_recurrence:
+      - "spin glass scale: Parisi valleys, ultrametric hierarchy"
+      - "hook-wiring scale: deferred-task trap (can't reach wired state without crossing user-auth barrier)"
+      - "dependency graph scale: stalemate (competing constraints, no monotonic resolution)"
+
+  - id: allosteric_population_shift
+    name: "Allosteric population shift"
+    ontology: biochemistry_biophysics
+    anchor: "Allostery (Monod-Wyman-Changeux 1965; Monod & Jacob 1961; Klinman & Kohen 2013)"
+    meaning: >
+      The catalyst is polymorphic — it exists as an ensemble of pre-existing
+      conformations (T/R states, morpheeins). The gradient is not a single
+      barrier but a population shift across the ensemble: binding at a distal
+      allosteric site redistributes the conformational populations, changing
+      activity at the active site without a direct path. Action-at-a-distance
+      through ensemble redistribution. Quantum tunneling adds a sub-angstrom
+      gradient: protein fluctuations gate the tunneling barrier width.
+      AGENTIC ORCHESTRATOR COROLLARY: an agentic AI orchestrator (skill
+      cascade, McpRuntime vs ContextServerStore two-launch-path, tool router)
+      is a polymorphic catalyst — it exists as an ensemble of possible
+      orchestration strategies, the user's task is the effector that binds at
+      the distal site, and the population shift redistributes which strategies
+      are active without the orchestrator having a direct causal path to every
+      element it catalyzes.
+    reason_family: >
+      The desert is a conformation (or orchestration strategy) that should be
+      populated but isn't — or is over-populated when it shouldn't be. The
+      reason is a missing or broken allosteric coupling: the effector (task,
+      context, user intent) isn't shifting the ensemble. The intervention is
+      not to add the missing conformation but to restore the population-shift
+      coupling — wire the distal site to the ensemble.
+    fractal_recurrence:
+      - "protein scale: T→R ensemble redistribution"
+      - "orchestrator scale: skill-cascade strategy shift (task redistributes active skills)"
+      - "MCP scale: tool-router ensemble shift (LazyToolRouter redistributes tool ensemble)"
+
+# Reason classification (adapted from Rubin 1976 + spin glass + allostery)
+reason_classes:
+  - id: intentional_boundary
+    rubin_analog: "MCAR (ignorable)"
+    meaning: "The gradient is by design."
+    action: "Document the boundary. Verify it is actually intentional."
+
+  - id: explainable_gap
+    rubin_analog: "MAR (ignorable with covariates)"
+    meaning: "The desert exists because of an observed covariate."
+    action: "Fix the covariate or document the scope difference."
+
+  - id: forgotten_wire
+    rubin_analog: "MNAR (non-ignorable)"
+    meaning: "The missing artifact should depend on itself."
+    action: "Fix. The gradient is the symptom; the missing wire is the cause."
+
+  - id: stale_refactor
+    rubin_analog: "MNAR (non-ignorable, drift)"
+    meaning: "A refactor moved the populated side but left the desert behind."
+    action: "Fix. Update the desert side to match the refactored populated side."
+
+  - id: scope_creep
+    rubin_analog: "MNAR (non-ignorable, missing abstraction)"
+    meaning: "The populated side has structure the desert side lacks."
+    action: "Fix. Extract the missing abstraction."
+
+  - id: metastable_trap
+    rubin_analog: "Spin glass (non-ergodic)"
+    meaning: >
+      The desert is a valley the system has relaxed into and cannot leave
+      without crossing an energy barrier. The artifact isn't missing — it's
+      unreachable given the current landscape.
+    action: >
+      Inject energy at the barrier. Reshape the landscape (a deferred task,
+      a startup signal, a reconfiguration) so the system can relax into the
+      intended state.
+
+  - id: broken_allosteric_coupling
+    rubin_analog: "Allostery (ensemble redistribution)"
+    meaning: >
+      The desert is a conformation (or orchestration strategy) that should
+      be populated but isn't. The artifact exists in the ensemble but the
+      population is wrong because the effector isn't shifting the ensemble.
+    action: >
+      Restore the coupling. Don't add the missing conformation/strategy —
+      restore the population-shift mechanism. The intervention is at the
+      distal allosteric site, not at the desert. For agentic orchestrators:
+      wire the task/context to the strategy ensemble, not the strategy itself.
+
+# Prior sources (in order of preference)
+prior_sources:
+  - id: sibling_prior
+    name: "Sibling prior"
+    description: >
+      Find a populated region structurally similar to the target. The
+      populated region's field is the prior. Strongest source.
+  - id: convention_prior
+    name: "Convention prior"
+    description: >
+      Derive the expected field from a documented convention (e.g., a
+      .rules trap). Medium strength.
+  - id: principle_prior
+    name: "Principle prior"
+    description: >
+      Derive the expected field from a design principle. Weakest source;
+      use when no sibling or convention prior is available.
+
+# Priority ordering for report ranking
+priority_ordering:
+  - rank: 1
+    rule: "Broken allosteric coupling > Metastable trap > MNAR > MAR > MCAR"
+    rationale: "Broken couplings and trapped valleys are the deepest bugs."
+  - rank: 2
+    rule: "Fractal recurrence"
+    rationale: "A shape that recurs at multiple scales/domains is the system's characteristic pattern."
+  - rank: 3
+    rule: "Magnitude"
+    rationale: "Sharp cliffs before gradual falloffs."
+  - rank: 4
+    rule: "Populated-side criticality"
+    rationale: "A gradient next to a hot path is more important than one next to a cold path."

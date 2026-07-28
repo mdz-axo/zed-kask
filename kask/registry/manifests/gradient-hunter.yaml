@@ -1,0 +1,308 @@
+# Gradient Hunter Process Manifest
+# ℏKask v0.31.0 — Gradient analysis as phased PDCA
+# Decomposed into: Prior → Map → Detect → Hypothesize → Report → Convergence
+#
+# Substrate ontology: Parisi spin glass theory (non-ergodicity, frustration,
+# metastable valleys). The substrate explains WHY gradients exist at all —
+# non-ergodic systems store work and information in metastable states, so
+# every "desert" is potentially a valley the system is trapped in, not an
+# absence.
+#
+# Surface ontologies (8 gradient shapes from 7 academic domains):
+#   - Sharp cliff (image processing — Canny step edge)
+#   - Roof edge (image processing — derivative discontinuity)
+#   - Wombling boundary (spatial statistics — Womble 1951)
+#   - Regression discontinuity (causal inference — Thistlethwaite & Campbell 1960)
+#   - Topological hole (computational topology — persistent homology)
+#   - Oracle gap (software engineering — Petrova et al. ISSRE 2023)
+#   - Frustrated landscape (statistical physics — Parisi 1979; Nobel 2021) — SUBSTRATE
+#   - Allosteric population shift (biochemistry — Monod-Wyman-Changeux 1965)
+#     with agentic-orchestrator corollary
+#
+# Reason taxonomy (7 classes): Rubin MCAR/MAR/MNAR + spin glass metastable
+# trap + allostery broken coupling.
+#
+# Feedback loop: prior accepts prior_iteration (lessons_learned,
+# pattern_signatures, next_prior_focus) and consumes it to amplify the next
+# prior. Convergence check emits next_prior_focus when not converged.
+
+manifest:
+  id: gradient-hunter
+  category: skill
+  name: Gradient Hunter
+  description: >
+    Convergent gradient-analysis process. Runs a structured, phased hunt for
+    steep gradients between populated and unpopulated regions of a
+    codebase/telemetry/test field: builds a prior model of the expected
+    field (sibling/convention/principle), maps the actual field with
+    matching granularity, detects gradients and classifies their shape
+    using eight ontological anchors (sharp cliff, roof edge, wombling
+    boundary, regression discontinuity, topological hole, oracle gap,
+    frustrated landscape, allosteric population shift), generates reason
+    hypotheses via the seven-class taxonomy (Rubin MCAR/MAR/MNAR + spin
+    glass metastable trap + allostery broken coupling), and produces a
+    structured report with lessons_learned and pattern_signatures that
+    feed the next iteration. Computes convergence via process-stabilization
+    + field-coverage metrics and iterates until the gradient surface is
+    directionally stable or escalation is required.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  # Rationale: 0.25 — same as bug-hunt. Gradient analysis is exploratory,
+  # not exhaustive. A 0.25 threshold means detected gradients are
+  # directionally stable and characteristic patterns are identified, but
+  # not every gradient surface has been exhaustively mapped. For deeper
+  # investigation of a specific gradient, chain with `diagnose` or
+  # `falsifiability`.
+  #
+  # convergence_field reads the composite convergence_metric
+  # (process_stabilization + field_coverage). When not converged, the
+  # convergence step emits next_prior_focus, which the loop step routes
+  # back into prior as prior_iteration.next_prior_focus.
+  threshold: 0.25
+  improvement_gate: threshold_only
+  max_iterations: 3
+  min_iterations: 1
+  convergence_field: step_6_result.convergence_metric
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: target_region
+    type: object
+    required: true
+    description: >
+      The region to hunt gradients in. Includes crate path, file paths,
+      span namespaces, hook names, or other scoping identifiers.
+  - name: field_type
+    type: string
+    required: true
+    description: >
+      What field is being hunted: test presence, span emission, log
+      statements, error-handling branches, paired comments, manifest
+      entries, etc.
+  - name: prior_iteration
+    type: object
+    required: false
+    description: >
+      Output of a previous gradient-hunt iteration on the same target.
+      Closes the feedback loop: the prior phase consumes
+      prior_iteration.lessons_learned and prior_iteration.pattern_signatures
+      to amplify the next prior, and consumes
+      prior_iteration.next_prior_focus (emitted by the convergence check
+      when not converged) to direct the next iteration. When absent, the
+      hunt runs as a first pass with no prior context.
+
+fusion:
+  judge: deepseek-v4-pro
+  panel:
+    - Kimi2.7
+    - Qwen3.7 Max
+    - GLM5.2
+  mode: best-of-n
+  skills:
+    - pragmatic-cybernetics
+  max_rounds: 3
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Build a prior model of the expected field. Without a prior, you can
+      only detect absences, not gradients. The prior comes from one of
+      three sources in order of preference: sibling prior (a populated
+      region structurally similar to the target), convention prior (a
+      documented convention like a .rules trap), or principle prior (a
+      design principle). Records source, scope, and confidence. Delegates
+      to pragmatic-cybernetics for variety engineering when no sibling or
+      convention prior is available. Consumes prior_iteration when present
+      (feedback loop closure).
+    renderer: minijinja
+    template_ref: gradient-hunter/gradient-prior
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      target_region: "{{ target_region }}"
+      field_type: "{{ field_type }}"
+      prior_iteration: "{{ prior_iteration | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Map the actual field in the target region with the same granularity
+      as the prior. The field is whatever is being hunted: test presence,
+      span emission, log statements, error-handling branches, paired
+      comments, manifest entries. Delegates to graph-audit (code mode)
+      for topology extraction when hunting topology gradients (orphan
+      nodes, missing edges, disconnected components).
+
+      Design note: This phase may require the agent to execute MCP tools
+      (graph-audit, grep, read_file) between template calls. In pure
+      FlowDef execution (ManifestExecutor), the actual_field should be
+      pre-populated before invoking the flow. In Zed sessions, the agent
+      orchestrates the mapping manually between prior and detect.
+    renderer: minijinja
+    template_ref: gradient-hunter/gradient-map
+    gas_cap: 4096
+    timeout_seconds: 300
+    input_mapping:
+      target_region: "{{ target_region }}"
+      field_type: "{{ field_type }}"
+      prior: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Compare prior to actual. Classify each gradient by its shape using
+      the eight ontological anchors (sharp cliff, roof edge, wombling
+      boundary, regression discontinuity, topological hole, oracle gap,
+      frustrated landscape, allosteric population shift). Record location,
+      shape, scale, domain, fractal recurrence (does this shape appear at
+      other scales or in other domains?), populated side, desert side,
+      magnitude. The fractal recurrence check is mandatory — a shape that
+      recurs at multiple scales/domains is the system's characteristic
+      pattern. References gradient-shapes.yaml for the shape taxonomy.
+    renderer: minijinja
+    template_ref: gradient-hunter/gradient-detect
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      prior: "{{ step_1_result }}"
+      actual_field: "{{ step_2_result }}"
+      target_region: "{{ target_region }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      For each detected gradient, generate multiple hypotheses for why it
+      exists using the seven-class reason taxonomy: intentional boundary
+      (MCAR), explainable gap (MAR), forgotten wire (MNAR), stale refactor
+      (MNAR drift), scope creep (MNAR missing abstraction), metastable
+      trap (spin glass non-ergodic), broken allosteric coupling (ensemble
+      redistribution). Delegates to falsifiability for counterfactual
+      discrimination ("if this desert were intentional, what else would
+      be true?") and to metacognition for prior perspective rotation
+      (different priors surface different gradients). Special cases:
+      non-monotonic gradients (frustrated landscape) require identifying
+      the competing constraints and the barrier; allosteric gradients
+      require restoring the distal coupling, not adding the missing
+      conformation.
+    renderer: minijinja
+    template_ref: gradient-hunter/gradient-hypothesize
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      gradients: "{{ step_3_result.gradients | default([]) }}"
+      prior: "{{ step_1_result }}"
+      target_region: "{{ target_region }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Compile detected gradients and their reason hypotheses into a
+      structured, prioritized report. Each gradient entry includes
+      location, shape, ontology anchor, scale, domain, fractal recurrence,
+      prior, populated side, desert side, magnitude, reason hypotheses,
+      recommended reason, intervention point, and action. Prioritizes by
+      reason class (broken allosteric coupling > metastable trap > MNAR >
+      MAR > MCAR), then fractal recurrence, then magnitude, then
+      populated-side criticality. Emits lessons_learned and
+      pattern_signatures for the next iteration's prior (feedback loop
+      closure).
+    renderer: minijinja
+    template_ref: gradient-hunter/gradient-report
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      gradients: "{{ step_3_result.gradients | default([]) }}"
+      gradient_hypotheses: "{{ step_4_result.gradient_hypotheses | default([]) }}"
+      prior: "{{ step_1_result }}"
+
+  - ordinal: 6
+    action: select
+    description: >
+      Compute normalized convergence metric for gradient-hunt PDCA cycles.
+      Composite of process_stabilization_metric (gradient overlap across
+      iterations — are new iterations surfacing genuinely new gradients or
+      re-confirming prior ones?) and field_coverage_estimate (fraction of
+      the expected field that has been mapped). When not converged, emits
+      next_prior_focus to direct the next iteration's prior (feedback loop
+      closure). Threshold 0.25 — analysis skills use looser threshold
+      because false precision is worse than honest uncertainty.
+    renderer: minijinja
+    template_ref: gradient-hunter/gradient-convergence-check
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      primary_result: "{{ step_5_result.gradient_report | default(step_5_result) }}"
+      prior: "{{ step_1_result }}"
+    fusion: false
+
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter gradient-hunt cycle if convergence is not met. Routes
+      step_6_result.next_prior_focus back to step 1 as
+      prior_iteration.next_prior_focus, along with the prior report's
+      lessons_learned and pattern_signatures, closing the feedback loop.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_iteration:
+        lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
+        pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"
+        next_prior_focus: "{{ step_6_result.next_prior_focus | default('') }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: gradient-hunter/gradient-prior
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: gradient-hunter/gradient-map
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: gradient-hunter/gradient-detect
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: gradient-hunter/gradient-hypothesize
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: gradient-hunter/gradient-report
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: gradient-hunter/gradient-convergence-check
+      gas_budget: 2048
+    - resource: manifest
+      action: execute
+      template_id: gradient-hunter
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

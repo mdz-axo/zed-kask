@@ -1,0 +1,117 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- prior
+- model
+- expect
+- sibling
+- convention
+- principle
+contract:
+  input:
+    target_region: object
+    field_type: string
+    prior_iteration: object|null
+  output:
+    prior_source: string
+    prior_description: string
+    prior_scope: string
+    prior_confidence: number
+    expected_field: object
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-hunter/gradient-prior.j2 #}
+{# Functional Role: KnowAct — Build prior model of expected field #}
+{# Produces: prior #}
+{# Phase 1 — PRIOR (PLAN: build expected-field model) #}
+{# hKask v0.31.0 — Gradient Hunter #}
+{#
+  The prior is your model of the expected field. Without it, you cannot
+  detect gradients — only absences. A weak prior surfaces false gradients;
+  a strong prior surfaces real ones.
+
+  Feedback loop: when prior_iteration is present, consume its
+  next_prior_focus to amplify this prior rather than starting from scratch.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a gradient hunting strategist. Build a prior model of the expected field for the target region.
+
+## Target Region
+
+```json
+{{ target_region | tojson }}
+```
+
+## Field Type
+
+{{ field_type }}
+
+{% if prior_iteration and prior_iteration | length > 0 %}
+## Prior Iteration Feedback (loop closure)
+
+This is iteration N+1. The previous iteration produced:
+
+```json
+{{ prior_iteration | tojson }}
+```
+
+- **next_prior_focus**: if present, this is the convergence check's directed
+  focus for the next iteration. Make it the primary target unless already
+  exhausted.
+- **lessons_learned**: distill into 1-3 concrete adjustments to the prior.
+- **pattern_signatures**: extend the expected_field with derived signatures.
+{% else %}
+## Prior Iteration Feedback
+No prior iteration — this is a first pass. Build the prior from scratch.
+{% endif %}
+
+## Step 1 — Select Prior Source
+
+Select one of three prior sources, in order of preference:
+
+1. **Sibling prior** — find a populated region structurally similar to the
+   target. The populated region's field is the prior. Example: to audit
+   `set_a2a_secret`'s failure signal, use `set_tool_invoker`'s failure
+   signal as the prior (both are `set_*` hooks in the same file).
+2. **Convention prior** — derive the expected field from a documented
+   convention. Example: the `.rules` trap "process-global hooks set at
+   runtime need a startup-failure signal" is a convention prior.
+3. **Principle prior** — derive the expected field from a design principle.
+   Example: "every public surface should have at least one test asserting
+   its happy path and one asserting its error path."
+
+If no sibling or convention prior is available, delegate to
+`pragmatic-cybernetics` for variety engineering — model what variety
+*should* be present given the system's purpose.
+
+## Step 2 — Record the Prior
+
+State explicitly:
+- **prior_source**: sibling | convention | principle
+- **prior_description**: which sibling/convention/principle, named concretely
+- **prior_scope**: what region the prior applies to
+- **prior_confidence**: 0.0–1.0 (high/medium/low)
+- **expected_field**: the structured expected field, with the same granularity
+  you will use to measure the actual field
+
+## Step 3 — Substrate Check
+
+Before finalizing, consider the spin glass substrate: is the target region
+likely to be non-ergodic? If the system stores information or work here,
+the "expected field" may be a metastable valley the system is trapped in,
+not a smooth expectation. Note this in delegate_notes if relevant — it
+will affect how the detect phase interprets absences.
+
+## Output
+
+Produce a JSON object with: prior_source, prior_description, prior_scope,
+prior_confidence, expected_field, delegate_notes.

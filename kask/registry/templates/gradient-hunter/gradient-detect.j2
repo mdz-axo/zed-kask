@@ -1,0 +1,119 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- detect
+- classify
+- shape
+- gradient
+- fractal
+- scale
+contract:
+  input:
+    prior: object
+    actual_field: object
+    target_region: object
+  output:
+    gradients: array
+    fractal_recurrence_summary: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: gradient-hunter/gradient-detect.j2 #}
+{# Functional Role: KnowAct — Detect gradients and classify shape #}
+{# Produces: detect #}
+{# Phase 3 — DETECT (DO: classify shape, scale, domain, fractal recurrence) #}
+{# hKask v0.31.0 — Gradient Hunter #}
+{#
+  Compare prior to actual. Classify each gradient by its shape using the
+  eight ontological anchors. The shape tells you what kind of finding you
+  have before you investigate the reason.
+
+  The fractal recurrence check is MANDATORY. A gradient classified without
+  checking whether its shape recurs at other scales or domains is incomplete.
+#}
+
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a gradient detection analyst. Compare the prior to the actual field and detect gradients.
+
+## Prior (expected field)
+
+```json
+{{ prior | tojson }}
+```
+
+## Actual Field
+
+```json
+{{ actual_field | tojson }}
+```
+
+## Target Region
+
+```json
+{{ target_region | tojson }}
+```
+
+## Step 1 — Detect Gradients
+
+Compare prior to actual. For each location where the prior expects
+something and the actual field differs, record a gradient. A gradient
+exists wherever there is a boundary between populated and unpopulated
+regions of the field.
+
+## Step 2 — Classify Shape
+
+Classify each gradient by its shape using the eight ontological anchors
+(see gradient-shapes.yaml reference):
+
+| Shape | Ontology | Anchor |
+|---|---|---|
+| Sharp cliff | Image processing | Step edge (Canny) |
+| Roof edge | Image processing | Discontinuity in derivative |
+| Wombling boundary | Spatial statistics | Womble 1951; Banerjee & Gelfand 2006 |
+| Regression discontinuity | Causal inference | RDD (Thistlethwaite & Campbell 1960) |
+| Topological hole | Computational topology | Persistent homology (Edelsbrunner; Carlsson 2009) |
+| Oracle gap | Software engineering | Oracle gap (Petrova et al. ISSRE 2023) |
+| Frustrated landscape | Statistical physics | Spin glass (Parisi 1979; Nobel 2021) — SUBSTRATE |
+| Allosteric population shift | Biochemistry | Allostery (Monod-Wyman-Changeux 1965) |
+
+For each gradient, the shape tells you what kind of finding you have:
+- **Sharp cliff**: populated → empty in one step. Forgotten wire.
+- **Roof edge**: continuous but rate of change jumps. Scope creep.
+- **Wombling boundary**: curve along which orthogonal gradient is large. Intentional boundary or forgotten seam.
+- **Regression discontinuity**: jump at a known threshold. Treatment effect at threshold.
+- **Topological hole**: populated on both sides, empty in the middle. Stale refactor.
+- **Oracle gap**: high coverage, low mutation score. Weak oracle.
+- **Frustrated landscape**: non-monotonic gradient, metastable valley. System is trapped (SUBSTRATE — explains why gradients exist at all).
+- **Allosteric population shift**: ensemble redistribution, action-at-a-distance. Broken coupling (agentic orchestrator corollary: orchestrator is polymorphic catalyst).
+
+## Step 3 — Record Scale, Domain, Fractal Recurrence
+
+For each gradient, record:
+- **location**: file/function/namespace/hook
+- **shape**: which ontological category
+- **scale**: line | function | module | subsystem | system
+- **domain**: tests | telemetry | config | governance | dependency graph | other
+- **fractal_recurrence**: does this shape appear at other scales or in other
+  domains in the same system? If so, WHERE? The recurrence is itself a
+  finding — the system has a characteristic gradient pattern.
+- **populated_side**: what's present (with evidence)
+- **desert_side**: what's absent
+- **magnitude**: high (sharp cliff) | medium | low (gradual falloff)
+
+## Step 4 — Fractal Recurrence Summary
+
+After classifying all gradients, produce a fractal_recurrence_summary:
+which shapes recur at multiple scales or domains? The recurrence is the
+system's characteristic pattern and is more important than any isolated
+gradient.
+
+## Output
+
+Produce a JSON object with: gradients (array of gradient objects),
+fractal_recurrence_summary.

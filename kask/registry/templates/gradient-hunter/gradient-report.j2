@@ -1,0 +1,120 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- report
+- rank
+- prioritize
+- document
+- act
+contract:
+  input:
+    gradients: array
+    gradient_hypotheses: array
+    prior: object
+  output:
+    gradient_report: array
+    priority_ranking: array
+    lessons_learned: array
+    pattern_signatures: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-hunter/gradient-report.j2 #}
+{# Functional Role: KnowAct — Compile structured gradient report #}
+{# Produces: report #}
+{# Phase 5 — REPORT (ACT: prioritize and document) #}
+{# hKask v0.31.0 — Gradient Hunter #}
+{#
+  Compile detected gradients into a structured report. Prioritize by
+  reason class, then fractal recurrence, then magnitude, then populated-
+  side criticality. Emit lessons_learned and pattern_signatures for the
+  next iteration's prior (feedback loop closure).
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a gradient hunting reporter. Compile the detected gradients and their reason hypotheses into a structured, prioritized report.
+
+## Detected Gradients
+
+```json
+{{ gradients | tojson }}
+```
+
+## Gradient Hypotheses
+
+```json
+{{ gradient_hypotheses | tojson }}
+```
+
+## Prior
+
+```json
+{{ prior | tojson }}
+```
+
+## Step 1 — Compile Gradient Report Entries
+
+For each gradient, produce a report entry:
+
+```
+GRADIENT: <one-line description>
+  Location: <file/function/namespace/hook>
+  Shape: <sharp cliff | roof edge | wombling boundary | regression discontinuity | topological hole | oracle gap | frustrated landscape | allosteric population shift>
+  Ontology anchor: <which of the eight>
+  Scale: <line | function | module | subsystem | system>
+  Domain: <tests | telemetry | config | governance | dependency graph | other>
+  Fractal recurrence: <does this shape appear at other scales/domains? where?>
+  Prior: <sibling | convention | principle> — <which, with confidence>
+  Populated side: <what's present, with evidence>
+  Desert side: <what's absent>
+  Magnitude: <high | medium | low>
+  Reason hypotheses:
+    1. <hypothesis> — <reason class> — <evidence for/against>
+    2. <hypothesis> — <reason class> — <evidence for/against>
+  Recommended reason: <which hypothesis, with confidence>
+  Intervention point: <desert | populated side | distal allosteric site | barrier>
+  Action: <document | fix wire | update stale | extract abstraction | inject energy at barrier | restore allosteric coupling> — <specific next step>
+```
+
+## Step 2 — Priority Ranking
+
+Rank gradients by:
+1. **Broken allosteric coupling > Metastable trap > MNAR > MAR > MCAR** —
+   broken couplings and trapped valleys are the deepest bugs; non-ignorable
+   gaps are bugs; ignorable gaps are documentation.
+2. **Fractal recurrence** — a shape that recurs at multiple scales or in
+   multiple domains is a more important finding than an isolated gradient.
+   The recurrence is the system's characteristic pattern.
+3. **Magnitude** — sharp cliffs before gradual falloffs.
+4. **Populated-side criticality** — a gradient next to a hot path is more
+   important than one next to a cold path.
+
+## Step 3 — Lessons Learned (feedback loop closure)
+
+Distill 1-3 concrete lessons from this iteration that the next iteration's
+prior should consume. Examples:
+- "The `set_*` hook family has inconsistent failure-signal patterns —
+  sibling prior is weak for this family; use convention prior instead."
+- "Frustrated-landscape gradients cluster around the deferred-task wiring;
+  next iteration should target the deferred-task barrier directly."
+- "Allosteric gradients appear at both the MCP scale and the orchestrator
+  scale — fractal recurrence confirmed; characteristic pattern."
+
+## Step 4 — Pattern Signatures
+
+Produce pattern_signatures: machine-readable signatures for detecting
+similar gradients elsewhere. Each signature includes shape, reason class,
+and distinguishing features. The next iteration's detect phase can use
+these to scan for recurrence.
+
+## Output
+
+Produce a JSON object with: gradient_report (array of ranked entries),
+priority_ranking (ordered list of gradient_ids), lessons_learned (array),
+pattern_signatures (array).
