@@ -32,6 +32,7 @@ release_channel.workspace = true
 semver.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 strum.workspace = true
@@ -42,6 +43,18 @@ util.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+# kask-extensions: Phase 5 — publish/install/vote wiring
+agent_skills.workspace = true
+client.workspace = true
+http_client.workspace = true
+async-compression.workspace = true
+async-tar.workspace = true
+sha2.workspace = true
+smol.workspace = true
+tokio.workspace = true
+hex.workspace = true
+bytes.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

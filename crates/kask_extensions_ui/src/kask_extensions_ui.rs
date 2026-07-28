@@ -2,8 +2,10 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 mod panel_button;
+mod publish;
 
 pub use panel_button::KaskExtensionsButton;
+pub use publish::{generate_version, install_skill, publish_skill, unpublish_skill, vote_skill};
 
 use std::sync::OnceLock;
 use std::time::Duration;

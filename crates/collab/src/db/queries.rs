@@ -5,6 +5,7 @@ pub mod channels;
 pub mod contacts;
 pub mod contributors;
 pub mod extensions;
+pub mod kask_skills;
 pub mod notifications;
 pub mod projects;
 pub mod rooms;

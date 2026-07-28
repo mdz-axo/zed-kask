@@ -187,42 +187,89 @@ pub fn update_skill_visibility_in_index(
 
 /// Spawn the drain task for the `SkillVisibilityQueue`.
 ///
-/// In Phase 2 this is a no-op that logs intent. The actual publish /
-/// unpublish pipelines land in Phase 5. Per plan §2.6, drain failures
-/// `log::warn!` with the skill ID, failure reason, and remediation; the
-/// local `visibility` flag is NOT rolled back.
+/// Phase 5: the drain calls the real publish/unpublish pipelines. Per plan
+/// §2.6, drain failures `log::warn!` with the skill ID, failure reason, and
+/// remediation; the local `visibility` flag is NOT rolled back. The queue
+/// retains pending state for retry on the next drain.
 ///
 /// The drain runs on a background executor (per the `.rules` trap
-/// "Cross-thread GPUI communication uses channels, not `AsyncApp`
-/// handles"). In Phase 2 there is no GPUI dispatch needed, so the task
-/// is purely logging.
+/// "Cross-thread GPUI communication uses channels, not `AsyncApp` handles").
+/// It captures only `Send + Sync` data (fs, http_client, source_user, skills);
+/// it does not capture `AsyncApp`.
 pub fn spawn_drain(queue: &mut SkillVisibilityQueue, cx: &mut Context<SettingsWindow>) -> Task<()> {
     let pending = queue.drain();
     if pending.is_empty() {
         return Task::ready(());
     }
 
-    cx.background_spawn(async move {
-        for (skill_name, visibility) in pending {
-            // zed-kask: Phase 2 drain is a no-op that logs intent. The
-            // actual publish/unpublish pipelines land in Phase 5. Per plan
-            // §2.6, the drain task MUST `log::warn!` on failure with the
-            // skill ID, failure reason, and remediation; the local
-            // `visibility` flag is NOT rolled back. In Phase 2 there is no
-            // failure path (logging is infallible), so no requeue is needed.
+    // Gather the skills to publish/unpublish from the SkillIndex on the
+    // foreground thread (SkillIndex is a GPUI global, not Send).
+    let skill_index = cx.try_global::<SkillIndex>().cloned().unwrap_or_default();
+    let app_state = workspace::AppState::global(cx);
+    let fs = app_state.fs.clone();
+    let http_client = app_state.client.http_client();
+    let source_user = app_state
+        .user_store
+        .read(cx)
+        .current_user()
+        .map(|user| user.username.to_string())
+        .unwrap_or_default();
+
+    // Collect the Skill structs for skills being toggled to Public.
+    let mut skills_to_publish: Vec<(Skill, String)> = Vec::new();
+    let mut skills_to_unpublish: Vec<String> = Vec::new();
+    for (skill_name, visibility) in &pending {
+        if let Some(skill) = skill_index
+            .global_skills
+            .iter()
+            .find(|s| s.name == *skill_name)
+        {
             match visibility {
                 SkillVisibility::Public => {
-                    log::info!(
-                        "kask-extensions: would publish skill '{}' (Phase 2 no-op drain)",
-                        skill_name
-                    );
+                    skills_to_publish.push((skill.clone(), kask_extensions_ui::generate_version()));
                 }
                 SkillVisibility::Private => {
-                    log::info!(
-                        "kask-extensions: would unpublish skill '{}' (Phase 2 no-op drain)",
-                        skill_name
-                    );
+                    skills_to_unpublish.push(skill_name.clone());
                 }
+            }
+        }
+    }
+
+    cx.background_spawn(async move {
+        for (skill, version) in skills_to_publish {
+            let result = kask_extensions_ui::publish_skill(
+                fs.as_ref(),
+                &http_client,
+                &skill,
+                &source_user,
+                &version,
+            )
+            .await;
+            if let Err(error) = result {
+                // Per the `.rules` "process-global hooks need a startup-failure
+                // signal" trap: log with skill ID, failure reason, and
+                // remediation. Do NOT roll back the local `visibility` flag.
+                log::warn!(
+                    "kask-extensions: failed to publish skill '{}/{}' version {}: {error:#}. \
+                     The local visibility flag is preserved; the queue will retry on the next drain. \
+                     Remediation: check network connectivity and S3 credentials.",
+                    source_user,
+                    skill.name,
+                    version
+                );
+            }
+        }
+        for skill_name in skills_to_unpublish {
+            let result = kask_extensions_ui::unpublish_skill(&http_client, &source_user, &skill_name)
+                .await;
+            if let Err(error) = result {
+                log::warn!(
+                    "kask-extensions: failed to unpublish skill '{}/{}': {error:#}. \
+                     The local visibility flag is preserved; the queue will retry on the next drain. \
+                     Remediation: check network connectivity and S3 credentials.",
+                    source_user,
+                    skill_name
+                );
             }
         }
     })

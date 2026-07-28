@@ -2,6 +2,7 @@ mod buffer_tests;
 mod channel_tests;
 mod db_tests;
 mod extension_tests;
+mod kask_skill_tests;
 mod migrations;
 
 use std::sync::Arc;

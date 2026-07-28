@@ -87,10 +87,12 @@ async fn main() -> Result<()> {
 
                 if mode.is_api() {
                     fetch_extensions_from_blob_store_periodically(state.clone());
+                    collab::api::fetch_kask_skills_from_blob_store_periodically(state.clone());
 
                     app = app
                         .merge(collab::api::events::router())
                         .merge(collab::api::extensions::router())
+                        .merge(collab::api::kask_skills::router())
                 }
 
                 app = app.layer(Extension(state.clone()));
