@@ -14,7 +14,7 @@
 //! and do not capture `AsyncApp`. They return results via the GPUI
 //! foreground task that spawned them.
 
-use chrono::Datelike;
+use chrono::{Datelike, Timelike};
 use std::path::{Path, PathBuf};
 
 use agent_skills::Skill;

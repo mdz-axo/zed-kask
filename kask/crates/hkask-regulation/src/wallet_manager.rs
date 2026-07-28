@@ -242,7 +242,9 @@ mod tests {
 
     fn make_manager() -> WalletManager {
         let pool = SqliteDriver::in_memory_pool().expect("in-memory pool");
-        let store = Arc::new(WalletStore::from_driver(Arc::new(SqliteDriver::new(pool))));
+        let store = Arc::new(
+            WalletStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("wallet store init"),
+        );
         WalletManager::new(store)
     }
 

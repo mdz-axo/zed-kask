@@ -437,7 +437,6 @@ impl CompaniesServer {
                     | (_, _, Err(e), _, _)
                     | (_, _, _, Err(e), _)
                     | (_, _, _, _, Err(e)) => {
-                        self.record_experience("dcf_valuation", &format!("symbol={}", req.symbol), "error", serde_json::json!({"error": e.to_json_string()}));
                         return Err(e);
                     }
                 };
@@ -588,7 +587,6 @@ impl CompaniesServer {
                 "framework": "Two-stage 11-line-item DCF: History-calibrated projections through income statement (revenue, COGS, D&A) and balance sheet (NWC, capex) to FCF. Terminal value via Gordon Growth perpetuity (capped at r - 0.5%). Enterprise value to equity bridge via net debt. Damodaran (2012) Investment Valuation. Use forecast_record with the forecast_id to decompose actual outcomes against these projections.",
             });
 
-            self.record_experience("dcf_valuation", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }
@@ -617,7 +615,6 @@ impl CompaniesServer {
                     | (_, _, Err(e), _, _)
                     | (_, _, _, Err(e), _)
                     | (_, _, _, _, Err(e)) => {
-                        self.record_experience("reverse_dcf", &format!("symbol={}", req.symbol), "error", serde_json::json!({"error": e.to_json_string()}));
                         return Err(e);
                     }
                 };
@@ -752,7 +749,6 @@ impl CompaniesServer {
                 },
             });
 
-            self.record_experience("reverse_dcf", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }
@@ -874,7 +870,6 @@ impl CompaniesServer {
                 "framework": "Schwartz 2x2 scenario matrix: revenue growth x gross margin. Four scenarios: Bull (high/high), Land Grab (high/low), Cash Cow (low/high), Bear (low/low). Each scenario runs through the two-stage DCF model. The range of intrinsic values represents the uncertainty around the single-point DCF estimate.",
             });
 
-            self.record_experience("scenario_analysis", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }

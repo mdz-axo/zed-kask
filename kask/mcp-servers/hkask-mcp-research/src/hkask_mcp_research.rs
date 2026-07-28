@@ -13,7 +13,6 @@ use base64::Engine;
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool, validate_tool_url,
 };
-use hkask_types::time::now_rfc3339;
 use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use rusqlite::Connection;
@@ -52,25 +51,6 @@ hkask_mcp_server::mcp_server!(
 );
 
 impl ResearchServer {
-    /// Record a tool call as a narrative experience in the agent's memory.
-    pub fn record_experience(
-        &self,
-        tool: &str,
-        input_summary: &str,
-        outcome: &str,
-        detail: serde_json::Value,
-    ) {
-        tracing::debug!(
-            target: "hkask.mcp.research.memory",
-            tool = %tool,
-            input = %input_summary,
-            outcome = %outcome,
-            detail = ?detail,
-            timestamp = %now_rfc3339(),
-            "Tool outcome recorded (no daemon — in-process only)",
-        );
-    }
-}
 
 // ── RSS helpers ──
 
@@ -184,12 +164,6 @@ impl ResearchServer {
             );
 
             if let Some(cached) = self.cache.get(&ckey).await {
-                self.record_experience(
-                    "web_search",
-                    &req.query,
-                    "cache_hit",
-                    serde_json::json!({"results": "served from cache"}),
-                );
                 return Ok(cached);
             }
 
@@ -239,17 +213,6 @@ impl ResearchServer {
                 .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
 
             self.cache.insert(ckey, output.clone()).await;
-
-            self.record_experience(
-                "web_search",
-                &req.query,
-                "success",
-                serde_json::json!({
-                    "results_count": search_output.count,
-                    "strategy": search_output.strategy,
-                    "top_result": search_output.results.first().map(|r| r.title.clone()),
-                }),
-            );
 
             Ok(output)
         })
@@ -359,12 +322,6 @@ impl ResearchServer {
             let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
 
             if let Some(cached) = self.cache.get(&ckey).await {
-                self.record_experience(
-                    "web_extract",
-                    &url,
-                    "cache_hit",
-                    serde_json::json!({"format": fmt}),
-                );
                 return Ok(cached);
             }
 
@@ -387,17 +344,6 @@ impl ResearchServer {
             if let Ok(ref json) = json_result {
                 self.cache.insert(ckey, json.clone()).await;
             }
-
-            self.record_experience(
-                "web_extract",
-                &url,
-                if json_result.is_ok() {
-                    "success"
-                } else {
-                    "error"
-                },
-                serde_json::json!({"format": fmt}),
-            );
 
             json_result
         })

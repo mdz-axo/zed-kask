@@ -107,7 +107,8 @@ impl SemanticMemory {
         let pool = db.sqlite_pool()?;
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new(pool));
-        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))
+            .map_err(|e| hkask_storage::DatabaseError::SqlCipher(e.to_string()))?;
         let embedding_store = EmbeddingStore::from_driver(driver, dim);
         Ok(Self::new(h_mem_store, embedding_store))
     }

@@ -122,6 +122,23 @@ pub enum KaskSkillStatus {
 // KaskSkillStatus. This will be removed when the dead code is cleaned up.
 type ExtensionStatus = KaskSkillStatus;
 
+#[allow(dead_code)]
+fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
+    match provides {
+        ExtensionProvides::Themes => "Themes",
+        ExtensionProvides::IconThemes => "Icon Themes",
+        ExtensionProvides::Languages => "Languages",
+        ExtensionProvides::Grammars => "Grammars",
+        ExtensionProvides::LanguageServers => "Language Servers",
+        ExtensionProvides::ContextServers => "MCP Servers",
+        ExtensionProvides::AgentServers => "Agent Servers",
+        ExtensionProvides::SlashCommands => "Slash Commands",
+        ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
+        ExtensionProvides::Snippets => "Snippets",
+        ExtensionProvides::DebugAdapters => "Debug Adapters",
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ExtensionFilter {
     All,
@@ -1244,17 +1261,10 @@ impl KaskExtensionsPage {
 
             let extension_versions = extension_versions_task.await?;
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                let fs = workspace.project().read(cx).fs().clone();
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    let delegate = ExtensionVersionSelectorDelegate::new(
-                        fs,
-                        cx.entity().downgrade(),
-                        extension_versions,
-                    );
-
-                    ExtensionVersionSelector::new(delegate, window, cx)
-                });
+            workspace.update_in(cx, |_workspace, _window, _cx| {
+                // zed-kask: version selector removed — kask skills only have
+                // one version (the latest). This dead code path is kept for
+                // structural compatibility with the fork.
             })?;
 
             anyhow::Ok(())

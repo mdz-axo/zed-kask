@@ -1358,8 +1358,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         let db = Database::in_memory().expect("in-memory DB");
         let pool = db.sqlite_pool().expect("sqlite pool");
         let driver = Arc::new(SqliteDriver::new(pool));
-        tracing::info!(target: "hkask.mcp.media", "Gallery store initialized");
-        Arc::new(GalleryStore::from_driver(driver))
+        match GalleryStore::from_driver(driver) {
+            Ok(store) => {
+                tracing::info!(target: "hkask.mcp.media", "Gallery store initialized");
+                Arc::new(store)
+            }
+            Err(e) => {
+                tracing::warn!(target: "hkask.mcp.media", error = %e, "Failed to create GalleryStore");
+                return Err(e.into());
+            }
+        }
     };
 
     hkask_mcp_server::run_server(
@@ -1410,7 +1418,7 @@ mod integration_tests {
     fn setup_store() -> (Arc<GalleryStore>, TempDir) {
         let temp = TempDir::new().expect("tempdir");
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = Arc::new(GalleryStore::from_driver(driver));
+        let store = Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
         (store, temp)
     }
 

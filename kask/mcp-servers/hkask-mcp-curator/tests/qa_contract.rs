@@ -41,9 +41,10 @@ fn make_server_with_stores() -> CuratorServer {
         EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("escalation queue"),
     );
     let pool = SqliteDriver::in_memory_pool().expect("pool");
-    let regulation_store = Arc::new(RegulationArchive::from_driver(Arc::new(SqliteDriver::new(
-        pool,
-    ))));
+    let regulation_store = Arc::new(
+        RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)))
+            .expect("regulation archive init"),
+    );
     CuratorServer::new(
         WebID::new(),
         Some(escalation_queue),

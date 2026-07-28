@@ -10,7 +10,7 @@ use crate::codegraph::indexer::pipeline::IndexPipeline;
 use crate::codegraph::types::Direction;
 use crate::codegraph::{ContextBudget, graph};
 use hkask_mcp_server::run_server;
-use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
+use hkask_mcp_server::server::{CapabilityTier, CredentialRequirement, McpToolError, execute_tool};
 use hkask_types::WebID;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
@@ -622,7 +622,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ))
         },
-        vec![],
+        vec![CredentialRequirement::optional(
+            "HKASK_CODEGRAPH_DB",
+            "Path to the codegraph SQLite database (in-memory if absent)",
+        )],
     )
     .await
 }

@@ -43,12 +43,6 @@ impl CompaniesServer {
             let metrics = match metrics_result {
                 Ok(v) => v,
                 Err(e) => {
-                    self.record_experience(
-                        "moat_check",
-                        &format!("symbol={}", symbol),
-                        "error",
-                        serde_json::json!({"error": e.to_json_string()}),
-                    );
                     return Err(e);
                 }
             };
@@ -60,12 +54,6 @@ impl CompaniesServer {
                     "moat": "insufficient_data",
                     "reason": "No gross margin data available for this symbol",
                 });
-                self.record_experience(
-                    "moat_check",
-                    &format!("symbol={}", symbol),
-                    "insufficient_data",
-                    output.clone(),
-                );
                 return Ok(output);
             }
 
@@ -98,12 +86,6 @@ impl CompaniesServer {
                 },
                 "data_periods": gross_margins.len(),
             });
-            self.record_experience(
-                "moat_check",
-                &format!("symbol={}", symbol),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         })
         .await
@@ -137,12 +119,6 @@ impl CompaniesServer {
             let (metrics, balance_sheets) = match (metrics_result, bs_result) {
                 (Ok(m), Ok(b)) => (m, b),
                 (Err(e), _) | (_, Err(e)) => {
-                    self.record_experience(
-                        "management_scorecard",
-                        &format!("symbol={}", symbol),
-                        "error",
-                        serde_json::json!({"error": e.to_json_string()}),
-                    );
                     return Err(e);
                 }
             };
@@ -177,12 +153,6 @@ impl CompaniesServer {
                 "data_periods": roic_nums.len(),
                 "framework": "MAIA: Good = decreasing capital with improving returns, OR increasing capital with improving returns. Bad = increasing capital with decreasing returns.",
             });
-            self.record_experience(
-                "management_scorecard",
-                &format!("symbol={}", symbol),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         }).await
     }
@@ -208,12 +178,6 @@ impl CompaniesServer {
             let metrics = match result {
                 Ok(v) => v,
                 Err(e) => {
-                    self.record_experience(
-                        "working_capital_cycle",
-                        &format!("symbol={}", symbol),
-                        "error",
-                        serde_json::json!({"error": e.to_json_string()}),
-                    );
                     return Err(e);
                 }
             };
@@ -277,12 +241,6 @@ impl CompaniesServer {
                 "data_points": periods.len(),
                 "framework": "MAIA CFO scorecard: stability of working capital management through economic conditions. The level is structural; consistency is management skill.",
             });
-            self.record_experience(
-                "working_capital_cycle",
-                &format!("symbol={}", symbol),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         }).await
     }
@@ -371,12 +329,6 @@ impl CompaniesServer {
                 "framework": "FMP Stock Screener. Parses natural language screening prompts into FMP screener API parameters. Use criteria_overrides to adjust parsed criteria. Reply with a modified prompt or criteria_overrides to refine results."
             });
 
-            self.record_experience(
-                "company_screener",
-                &format!("prompt={}", &req.prompt[..req.prompt.len().min(80)]),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         })
         .await
@@ -438,7 +390,6 @@ impl CompaniesServer {
                 "framework": "Multi-provider fundamental research search (Exa, Tavily, Brave). Claims are classified by category and numeric values extracted. Use with thesis_test, scenario_weight, or guidance_check skills for structured financial analysis mapping claims to DCF assumptions."
             });
 
-            self.record_experience("research_search", &format!("symbol={}", req.symbol), "success", output.clone());
             Ok(output)
         }).await
     }

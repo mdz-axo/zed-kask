@@ -212,28 +212,6 @@ impl CompaniesServer {
         .await
     }
 
-    /// Record the outcome of a fetch-based tool call as a daemon experience.
-    /// Deduplicates the Ok/Err match pattern shared across all financial-data tools.
-    fn record_fetch_outcome(
-        &self,
-        tool: &str,
-        symbol: &str,
-        result: &Result<serde_json::Value, McpToolError>,
-    ) {
-        match result {
-            Ok(v) => {
-                self.record_experience(tool, &format!("symbol={}", symbol), "success", v.clone());
-            }
-            Err(e) => {
-                self.record_experience(
-                    tool,
-                    &format!("symbol={}", symbol),
-                    "error",
-                    serde_json::json!({"error": e.to_json_string()}),
-                );
-            }
-        }
-    }
     async fn save_forecast(&self, forecast: PersistedForecast) -> Result<(), McpToolError> {
         let portfolio = self.portfolio.clone();
         tokio::task::spawn_blocking(move || portfolio.save_forecast(&forecast))
@@ -278,7 +256,14 @@ impl CompaniesServer {
         .map_err(map_portfolio_error)
     }
 
-    /// Record a tool call as a narrative experience in the agent's memory.
+    /// Log a tool call's outcome as a debug trace.
+    ///
+    /// This is a debug-only log (target `hkask.mcp.companies.memory`) — it does
+    /// NOT persist to episodic/semantic memory. The "no daemon — in-process
+    /// only" comment reflects that the former daemon-backed persistence path
+    /// was removed and never replaced. If a future consumer needs experience
+    /// persistence, wire this to `EpisodicMemory`/`SemanticMemory` (the stores
+    /// are already constructed in `run()`).
     fn record_experience(
         &self,
         tool: &str,

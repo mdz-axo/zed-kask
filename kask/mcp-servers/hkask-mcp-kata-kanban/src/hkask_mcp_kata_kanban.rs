@@ -921,7 +921,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let pool = db.sqlite_pool().map_err(|e| anyhow::anyhow!("pool: {e}"))?;
                 let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
                     Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
-                let store = HMemStore::from_driver(driver);
+                let store = HMemStore::from_driver(driver)
+                    .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 store
                     .driver()
                     .execute_batch(

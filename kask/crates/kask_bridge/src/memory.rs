@@ -125,7 +125,7 @@ impl RealMemoryPort {
             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
 
         // Episodic store — first-person, Private, perspective-bound
-        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
         let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
 
         // Semantic store — shared knowledge graph with embeddings.
@@ -651,10 +651,10 @@ mod tests {
         confidence_floor: f64,
     ) -> RealMemoryPort {
         let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
-        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
         let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
 
-        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver));
+        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
         let embedding_store = EmbeddingStore::from_driver(driver, 1024);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 

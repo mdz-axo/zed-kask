@@ -82,7 +82,12 @@ impl CondenserServer {
         self.episodic.is_some()
     }
 
-    /// Record a tool call as a narrative experience in the agent's memory.
+    /// Record a tool call's outcome to episodic memory.
+    ///
+    /// Persists the experience as a first-person `HMem` in the episodic store
+    /// when persistence is configured (`HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`).
+    /// Falls back to a debug log when the episodic store is absent so the
+    /// server still operates in memory-only mode.
     pub fn record_experience(
         &self,
         tool: &str,
@@ -90,15 +95,39 @@ impl CondenserServer {
         outcome: &str,
         detail: serde_json::Value,
     ) {
-        tracing::debug!(
-            target: "hkask.mcp.condenser.memory",
-            tool = %tool,
-            input = %input_summary,
-            outcome = %outcome,
-            detail = ?detail,
-            timestamp = %now_rfc3339(),
-            "Tool outcome recorded (no daemon — in-process only)",
-        );
+        let entity = format!("condenser:{tool}");
+        let value = serde_json::json!({
+            "input": input_summary,
+            "outcome": outcome,
+            "detail": detail,
+            "timestamp": now_rfc3339(),
+        });
+
+        if let Some(ref episodic) = self.episodic {
+            let h_mem = HMem::new(&entity, "experience", value, self.webid)
+                .with_perspective(self.webid)
+                .with_visibility(Visibility::Private)
+                .with_confidence(1.0);
+
+            if let Err(e) = episodic.store(h_mem) {
+                tracing::warn!(
+                    target: "hkask.mcp.condenser.memory",
+                    tool = %tool,
+                    error = %e,
+                    "Failed to persist experience to episodic memory",
+                );
+            }
+        } else {
+            tracing::debug!(
+                target: "hkask.mcp.condenser.memory",
+                tool = %tool,
+                input = %input_summary,
+                outcome = %outcome,
+                detail = ?detail,
+                timestamp = %now_rfc3339(),
+                "Experience logged (no episodic store — memory-only mode)",
+            );
+        }
     }
 }
 
@@ -504,7 +533,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
                             // Episodic memory: first-person experience store.
                             let h_mem_store =
-                                hkask_storage::HMemStore::from_driver(Arc::clone(&driver));
+                                hkask_storage::HMemStore::from_driver(Arc::clone(&driver))
+                                    .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                             let episodic = hkask_memory::EpisodicMemory::new(h_mem_store);
 
                             // Semantic memory: shared knowledge graph with embeddings.
@@ -513,7 +543,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             // same database — different store handles. Follows the
                             // pattern established by the curator server.
                             let h_mem_store2 =
-                                hkask_storage::HMemStore::from_driver(Arc::clone(&driver));
+                                hkask_storage::HMemStore::from_driver(Arc::clone(&driver))
+                                    .map_err(|e| {
+                                        anyhow::anyhow!("hmem store init (semantic): {e}")
+                                    })?;
                             let embedding_store = EmbeddingStore::from_driver(driver, 1024);
                             let semantic =
                                 hkask_memory::SemanticMemory::new(h_mem_store2, embedding_store);

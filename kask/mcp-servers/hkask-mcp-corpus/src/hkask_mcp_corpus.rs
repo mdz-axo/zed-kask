@@ -224,7 +224,12 @@ impl CorpusServer {
         passages.len()
     }
 
-    /// Record a tool call as a narrative experience in the agent's memory.
+    /// Log a tool call's outcome as a debug trace.
+    ///
+    /// Debug-only log (target `hkask.mcp.docproc.memory`) — does NOT persist
+    /// to episodic/semantic memory. The former daemon-backed persistence path
+    /// was removed and never replaced. If a future consumer needs experience
+    /// persistence, wire this to `EpisodicMemory`/`SemanticMemory`.
     pub fn record_experience(
         &self,
         tool: &str,

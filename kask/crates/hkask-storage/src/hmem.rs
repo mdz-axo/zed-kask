@@ -139,13 +139,18 @@ pub struct HMemStore {
 
 impl HMemStore {
     /// Create from a DatabaseDriver — provider-agnostic constructor.
-    pub fn from_driver(driver: Arc<dyn crate::database::driver::DatabaseDriver>) -> Self {
+    ///
+    /// Schema init failure is propagated rather than swallowed — proceeding
+    /// with a missing `hmems` table would surface as confusing "no such table"
+    /// errors on every subsequent query.
+    pub fn from_driver(
+        driver: Arc<dyn crate::database::driver::DatabaseDriver>,
+    ) -> Result<Self, InfrastructureError> {
         let store = Self {
             driver,
             encryptor: None,
         };
-        // Best-effort schema init — idempotent CREATE TABLE IF NOT EXISTS
-        let _ = store.driver().execute_batch(
+        store.driver().execute_batch(
             "CREATE TABLE IF NOT EXISTS hmems (
                 id TEXT PRIMARY KEY,
                 entity TEXT NOT NULL,
@@ -163,8 +168,8 @@ impl HMemStore {
             CREATE INDEX IF NOT EXISTS idx_hmems_entity ON hmems(entity);
             CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
             CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);",
-        );
-        store
+        )?;
+        Ok(store)
     }
 
     /// Attach an encryptor for value encryption (passphrase-derived).

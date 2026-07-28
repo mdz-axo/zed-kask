@@ -29,8 +29,7 @@
 
 use std::collections::HashSet;
 
-use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use hkask_types::time::now_rfc3339;
+use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -324,24 +323,20 @@ impl ScenariosServer {
         called.insert(tool.to_string());
     }
 
+    /// Check pipeline sequence for this tool and emit a Regulation warning if
+    /// the expected predecessor was not called.
+    ///
+    /// This is the pipeline-sequence validation hook — it tracks which tools
+    /// have been called on this server instance and warns when a pipeline-stage
+    /// tool is invoked out of order. It does NOT record or persist anything.
     fn record_experience(
         &self,
         tool: &str,
-        input_summary: &str,
-        outcome: &str,
-        detail: serde_json::Value,
+        _input_summary: &str,
+        _outcome: &str,
+        _detail: serde_json::Value,
     ) {
         self.check_sequence(tool);
-        tracing::debug!(
-            target: "hkask.mcp.scenarios.memory",
-            tool = %tool,
-            input = %input_summary,
-            outcome = %outcome,
-            detail = ?detail,
-            timestamp = %now_rfc3339(),
-            ontology_anchor = %Self::ontology_anchor(tool),
-            "Tool outcome recorded (no daemon — in-process only)",
-        );
     }
 }
 
@@ -1810,7 +1805,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 std::sync::Mutex::new(HashSet::new()),
             ))
         },
-        vec![],
+        vec![CredentialRequirement::optional(
+            "HKASK_SCENARIOS_DATA",
+            "Path to the scenarios data directory (in-memory if absent)",
+        )],
     )
     .await
 }

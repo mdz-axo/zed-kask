@@ -17,7 +17,6 @@ impl CompaniesServer {
         execute_tool(self, "company_profile", async {
             validate_symbol(&symbol)?;
             let result = self.fetch("company_profile", &symbol, &[]).await;
-            self.record_fetch_outcome("company_profile", &symbol, &result);
             result
         })
         .await
@@ -31,7 +30,6 @@ impl CompaniesServer {
         execute_tool(self, "stock_quote", async {
             validate_symbol(&symbol)?;
             let result = self.fetch("stock_quote", &symbol, &[]).await;
-            self.record_fetch_outcome("stock_quote", &symbol, &result);
             result
         })
         .await
@@ -48,7 +46,6 @@ impl CompaniesServer {
             let result = self
                 .fetch("income_statement", &symbol, &[("limit", &limit_str)])
                 .await;
-            self.record_fetch_outcome("income_statement", &symbol, &result);
             result
         })
         .await
@@ -65,7 +62,6 @@ impl CompaniesServer {
             let result = self
                 .fetch("balance_sheet", &symbol, &[("limit", &limit_str)])
                 .await;
-            self.record_fetch_outcome("balance_sheet", &symbol, &result);
             result
         })
         .await
@@ -82,7 +78,6 @@ impl CompaniesServer {
             let result = self
                 .fetch("cash_flow_statement", &symbol, &[("limit", &limit_str)])
                 .await;
-            self.record_fetch_outcome("cash_flow_statement", &symbol, &result);
             result
         })
         .await
@@ -99,7 +94,6 @@ impl CompaniesServer {
             let result = self
                 .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
                 .await;
-            self.record_fetch_outcome("key_metrics", &symbol, &result);
             result
         })
         .await
@@ -115,7 +109,6 @@ impl CompaniesServer {
             let result = self
                 .fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
                 .await;
-            self.record_fetch_outcome("historical_price", &symbol, &result);
             result
         })
         .await
@@ -139,12 +132,6 @@ impl CompaniesServer {
 
             match fmp_result {
                 Ok(v) => {
-                    self.record_experience(
-                        "symbol_search",
-                        &format!("query={}, provider=fmp", query),
-                        "success",
-                        v.clone(),
-                    );
                     Ok(v)
                 }
                 Err(_fmp_err) => {
@@ -157,20 +144,8 @@ impl CompaniesServer {
                     .await;
                     match &eodhd_result {
                         Ok(v) => {
-                            self.record_experience(
-                                "symbol_search",
-                                &format!("query={}, provider=eodhd", query),
-                                "success",
-                                v.clone(),
-                            );
                         }
                         Err(e) => {
-                            self.record_experience(
-                                "symbol_search",
-                                &format!("query={}", query),
-                                "error",
-                                serde_json::json!({"error": e.to_json_string()}),
-                            );
                         }
                     }
                     eodhd_result

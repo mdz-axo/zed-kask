@@ -41,12 +41,6 @@ impl CompaniesServer {
                 | (_, Err(e), _, _)
                 | (_, _, Err(e), _)
                 | (_, _, _, Err(e)) => {
-                    self.record_experience(
-                        "ep_valuation",
-                        &format!("symbol={}", req.symbol),
-                        "error",
-                        serde_json::json!({"error": e.to_json_string()}),
-                    );
                     return Err(e);
                 }
             };
@@ -255,12 +249,6 @@ impl CompaniesServer {
                 },
             });
 
-            self.record_experience(
-                "ep_valuation",
-                &format!("symbol={}", req.symbol),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         })
         .await

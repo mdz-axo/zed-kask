@@ -606,7 +606,8 @@ mod tests {
         use std::sync::Arc;
 
         let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
-        let store = RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)));
+        let store = RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)))
+            .expect("regulation archive init");
         let event = RegulationRecord::new(
             WebID::from_persona(b"listener"),
             Span::new(
@@ -692,7 +693,8 @@ mod tests {
             );",
             )
             .unwrap();
-        let store = RegulationArchive::from_driver(Arc::new(driver));
+        let store =
+            RegulationArchive::from_driver(Arc::new(driver)).expect("regulation archive init");
         let config = DecayConfig::default();
 
         let future = chrono::Utc::now() + chrono::Duration::days(1);

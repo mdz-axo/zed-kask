@@ -8,7 +8,6 @@ use super::*;
 use crate::Error;
 use crate::db::queries::extensions::convert_time_to_chrono;
 use crate::db::{KaskSkillId, UserId};
-use crate::db::{KaskSkillId, UserId};
 
 /// A new kask skill version discovered in the blob store by the periodic poll.
 pub struct NewKaskSkillVersion {

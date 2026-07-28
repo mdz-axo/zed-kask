@@ -292,7 +292,7 @@ mod tests {
     fn test_db() -> TokenRegistryStore {
         let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
         let driver = SqliteDriver::new(pool);
-        TokenRegistryStore::from_driver(Arc::new(driver))
+        TokenRegistryStore::from_driver(Arc::new(driver)).expect("token registry init")
     }
 
     #[test]

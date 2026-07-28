@@ -368,7 +368,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         );
                         let hmem_driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
                             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool.clone()));
-                        let h_mem_store = hkask_storage::HMemStore::from_driver(Arc::clone(&hmem_driver));
+                        let h_mem_store = hkask_storage::HMemStore::from_driver(Arc::clone(&hmem_driver))
+                            .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                         let embedding_store = hkask_storage::EmbeddingStore::from_driver(
                             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool)),
                             1024,

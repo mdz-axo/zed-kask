@@ -741,7 +741,7 @@ mod tests {
     fn setup() -> GalleryStore {
         let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
         let driver = SqliteDriver::new(pool);
-        GalleryStore::from_driver(Arc::new(driver))
+        GalleryStore::from_driver(Arc::new(driver)).expect("gallery store init")
     }
 
     #[test]

@@ -211,7 +211,7 @@ mod tests {
     fn make_test_store() -> KataHistoryStore {
         let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
         let driver = SqliteDriver::new(pool);
-        KataHistoryStore::from_driver(Arc::new(driver))
+        KataHistoryStore::from_driver(Arc::new(driver)).expect("kata store init")
     }
 
     #[test]

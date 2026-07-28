@@ -198,7 +198,7 @@ impl ComposeService {
         })?;
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new(pool.clone()));
-        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))?;
         let embedding_store =
             EmbeddingStore::from_driver(Arc::clone(&driver), request.cognition.embedding.dim);
         let semantic = SemanticMemory::new(h_mem_store, embedding_store);

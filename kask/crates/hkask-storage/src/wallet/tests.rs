@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 fn make_store() -> WalletStore {
     let driver = SqliteDriver::in_memory_pool().expect("in-memory pool");
-    let store = WalletStore::from_driver(Arc::new(SqliteDriver::new(driver)));
+    let store =
+        WalletStore::from_driver(Arc::new(SqliteDriver::new(driver))).expect("wallet store init");
     store.enable_wal_mode().ok();
     store
 }

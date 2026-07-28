@@ -507,8 +507,20 @@ fn open_curator_stores(
     };
     let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
         Arc::new(SqliteDriver::new(pool));
-    let h_mem_store = hkask_storage::HMemStore::from_driver(Arc::clone(&driver));
-    let h_mem_store2 = hkask_storage::HMemStore::from_driver(Arc::clone(&driver));
+    let h_mem_store = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore");
+            return (None, None, None, None, None);
+        }
+    };
+    let h_mem_store2 = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore (semantic)");
+            return (None, None, None, None, None);
+        }
+    };
     let embedding_store = hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), 1024);
     let escalation_queue = match hkask_storage::EscalationQueue::from_driver(Arc::clone(&driver)) {
         Ok(q) => Some(Arc::new(q)),
@@ -517,9 +529,14 @@ fn open_curator_stores(
             None
         }
     };
-    let regulation_store = Some(Arc::new(hkask_storage::RegulationArchive::from_driver(
-        Arc::clone(&driver),
-    )));
+    let regulation_store = match hkask_storage::RegulationArchive::from_driver(Arc::clone(&driver))
+    {
+        Ok(store) => Some(Arc::new(store)),
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create RegulationArchive");
+            None
+        }
+    };
     // RegulationArchive schema initialized by from_driver().
     let episodic = hkask_memory::EpisodicMemory::new(h_mem_store);
     let semantic = Arc::new(hkask_memory::SemanticMemory::new(
@@ -529,10 +546,14 @@ fn open_curator_stores(
 
     // Token registry — consent audit trail for DelegationToken lifecycle.
     // Schema is initialized automatically by from_driver().
-    let token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>> = {
-        let store = hkask_storage::TokenRegistryStore::from_driver(Arc::clone(&driver));
-        Some(Arc::new(store) as Arc<dyn hkask_capability::TokenRegistry>)
-    };
+    let token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>> =
+        match hkask_storage::TokenRegistryStore::from_driver(Arc::clone(&driver)) {
+            Ok(store) => Some(Arc::new(store) as Arc<dyn hkask_capability::TokenRegistry>),
+            Err(e) => {
+                tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create TokenRegistryStore");
+                None
+            }
+        };
 
     (
         escalation_queue,

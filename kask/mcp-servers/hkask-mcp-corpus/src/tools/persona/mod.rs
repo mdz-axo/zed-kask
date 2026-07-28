@@ -784,7 +784,8 @@ impl CorpusServer {
                         .sqlite_pool()
                         .map_err(|e| McpToolError::internal(e.to_string()))?;
                     let driver = Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
-                    let h_mem_store = hkask_storage::HMemStore::from_driver(driver);
+                    let h_mem_store = hkask_storage::HMemStore::from_driver(driver)
+                        .map_err(|e| McpToolError::internal(e.to_string()))?;
                     let mut triple_count = 0usize;
                     for entity_ref in refs {
                         if let Ok(h_mems) = h_mem_store.query_by_entity(&entity_ref) {
