@@ -240,12 +240,12 @@ impl KaskExtensionsPage {
         self.fetch_failed = false;
         cx.notify();
 
-        let url = http_client.build_zed_api_url("/api/kask-skills", &[]);
+        let url = crate::publish::kask_marketplace_url(&http_client, "/api/kask-skills", &[]);
         cx.spawn(async move |this, cx| {
             let result = async {
                 let url = url?;
                 let mut response = http_client
-                    .get(url.as_ref(), http_client::AsyncBody::empty(), true)
+                    .get(&url, http_client::AsyncBody::empty(), true)
                     .await?;
                 let mut body = Vec::new();
                 futures::AsyncReadExt::read_to_end(response.body_mut(), &mut body)

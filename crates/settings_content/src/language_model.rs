@@ -594,8 +594,9 @@ pub struct OpenRouterSettingsContent {
     pub custom_headers: Option<HashMap<String, String>>,
     /// Maximum output price (USD per million tokens) at which a model fetched
     /// from OpenRouter's `/models` endpoint is offered in the picker. Models
-    /// whose `pricing.completion` exceeds this value are de-listed.
-    /// `None` disables the filter. Default: `5.0`.
+    /// whose `pricing.completion` exceeds this value are de-listed. `None`
+    /// (the default) disables the filter. The Settings UI defaults to `5.0`
+    /// when the toggle is first enabled.
     pub max_output_price_per_million_tokens: Option<f64>,
 }
 

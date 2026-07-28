@@ -29,6 +29,52 @@ use sha2::{Digest, Sha256};
 /// The S3 key prefix for kask skills. Mirrors `extensions/` for extensions.
 pub const KASK_SKILLS_S3_PREFIX: &str = "kask-skills";
 
+/// zed-kask: Resolve the kask marketplace base URL.
+///
+/// Decoupled from `server_url` (which points at Zed's cloud for login,
+/// telemetry, collab) so the marketplace can target a kask-aware collab
+/// server without breaking Zed account auth.
+///
+/// Resolution order:
+/// 1. `HKASK_MARKETPLACE_URL` env var — operator/dev override.
+/// 2. `http_client.base_url()` — fall back to the configured `server_url`
+///    (the Zed default `https://zed.dev` or whatever the user set).
+///
+/// Returns the base URL with no trailing slash.
+fn kask_marketplace_base_url(http_client: &HttpClientWithUrl) -> String {
+    std::env::var("HKASK_MARKETPLACE_URL")
+        .unwrap_or_else(|_| http_client.base_url())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// zed-kask: Build a full marketplace URL string by joining `path` to the
+/// marketplace base URL. `path` should start with `/` (e.g. `/api/kask-skills`).
+/// `query` is a slice of `(key, value)` pairs; pass `&[]` for none.
+///
+/// Unlike `build_zed_api_url`, this does NOT remap `zed.dev` → `api.zed.dev`
+/// or `localhost:3000` → `localhost:8080`. The marketplace URL is used as-is.
+/// Callers pass the result to `http_client.get(url_str, ...)` or
+/// `Request::post(url_str, ...)`.
+pub fn kask_marketplace_url(
+    http_client: &HttpClientWithUrl,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<String> {
+    let base = kask_marketplace_base_url(http_client);
+    let mut url_str = format!("{}{}", base, path);
+    if !query.is_empty() {
+        let query_string = query
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        url_str.push('?');
+        url_str.push_str(&query_string);
+    }
+    Ok(url_str)
+}
+
 /// Package a skill directory into a tar.gz archive and compute its SHA256.
 ///
 /// Reads `SKILL.md` + `manifest.yaml` + all `*.j2` templates from the skill
@@ -185,11 +231,14 @@ pub async fn publish_skill(
     let auth_header = credentials.authorization_header();
 
     // Upload tarball.
-    let upload_url =
-        http_client.build_zed_api_url("/api/kask-skills/upload", &[("key", &s3_key)])?;
+    let upload_url = crate::publish::kask_marketplace_url(
+        http_client,
+        "/api/kask-skills/upload",
+        &[("key", &s3_key)],
+    )?;
     http_client
         .send(
-            http_client::http::Request::post(upload_url.as_ref())
+            http_client::http::Request::post(&upload_url)
                 .header("Content-Type", "application/octet-stream")
                 .header("Authorization", &auth_header)
                 .body(AsyncBody::from_bytes(Bytes::from(tarball_bytes)))?,
@@ -198,11 +247,14 @@ pub async fn publish_skill(
         .context("uploading kask skill tarball")?;
 
     // Upload manifest.
-    let manifest_upload_url =
-        http_client.build_zed_api_url("/api/kask-skills/upload", &[("key", &manifest_key)])?;
+    let manifest_upload_url = crate::publish::kask_marketplace_url(
+        http_client,
+        "/api/kask-skills/upload",
+        &[("key", &manifest_key)],
+    )?;
     http_client
         .send(
-            http_client::http::Request::post(manifest_upload_url.as_ref())
+            http_client::http::Request::post(&manifest_upload_url)
                 .header("Content-Type", "application/json")
                 .header("Authorization", &auth_header)
                 .body(AsyncBody::from_bytes(Bytes::from(
@@ -244,11 +296,14 @@ pub async fn unpublish_skill(
     // so it's a single path segment. The server decodes it back.
     let skill_id_str = format!("{}/{}", source_user, skill_name);
     let encoded_id = urlencoding::encode(&skill_id_str);
-    let delete_url =
-        http_client.build_zed_api_url(&format!("/api/kask-skills/{}", encoded_id), &[])?;
+    let delete_url = crate::publish::kask_marketplace_url(
+        http_client,
+        &format!("/api/kask-skills/{}", encoded_id),
+        &[],
+    )?;
     http_client
         .send(
-            http_client::http::Request::delete(delete_url.as_ref())
+            http_client::http::Request::delete(&delete_url)
                 .header("Authorization", &auth_header)
                 .body(AsyncBody::empty())?,
         )
@@ -288,10 +343,13 @@ pub async fn install_skill(
 
     // Download the tarball.
     let encoded_id = urlencoding::encode(skill_id);
-    let download_url =
-        http_client.build_zed_api_url(&format!("/api/kask-skills/{}/download", encoded_id), &[])?;
+    let download_url = crate::publish::kask_marketplace_url(
+        http_client,
+        &format!("/api/kask-skills/{}/download", encoded_id),
+        &[],
+    )?;
     let mut response = http_client
-        .get(download_url.as_ref(), AsyncBody::empty(), true)
+        .get(&download_url, AsyncBody::empty(), true)
         .await
         .context("downloading kask skill")?;
 
@@ -359,12 +417,15 @@ pub async fn vote_skill(
 ) -> Result<(i64, i64)> {
     let auth_header = credentials.authorization_header();
     let encoded_id = urlencoding::encode(skill_id);
-    let vote_url =
-        http_client.build_zed_api_url(&format!("/api/kask-skills/{}/vote", encoded_id), &[])?;
+    let vote_url = crate::publish::kask_marketplace_url(
+        http_client,
+        &format!("/api/kask-skills/{}/vote", encoded_id),
+        &[],
+    )?;
     let body = serde_json::to_string(&cloud_api_types::KaskSkillVoteRequest { vote })?;
     let mut response = http_client
         .send(
-            http_client::http::Request::post(vote_url.as_ref())
+            http_client::http::Request::post(&vote_url)
                 .header("Content-Type", "application/json")
                 .header("Authorization", &auth_header)
                 .body(AsyncBody::from_bytes(Bytes::from(body.into_bytes())))?,

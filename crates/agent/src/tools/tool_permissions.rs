@@ -921,10 +921,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill");
+        let input_path = agent_skills::global_skills_dir().join("my-skill");
         let expected_path = agent_skills::global_skills_dir().join("my-skill");
 
         let resolved = resolve_creatable_global_skill_path(&input_path, fs.as_ref())
@@ -950,9 +947,7 @@ mod tests {
         )
         .await;
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("SKILL.md");
         let resolved = resolve_global_skill_path(&input_path, fs.as_ref())

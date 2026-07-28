@@ -1,4 +1,4 @@
-//! Context injector — retrieves salient memories and injects them into prompts (D11).
+//! Context injector — retrieves salient memories and injects into prompts (D11).
 //!
 //! The `BridgeContextInjector` implements the `agent::ContextInjector` trait
 //! by delegating to an `hkask_types::MemoryPort`. It:
@@ -14,47 +14,34 @@
 //! It is only called for `UserPrompt` and `Subagent` intents — the agent crate
 //! gates on intent before calling `inject_context`.
 //!
-//! ## Recall cooldown
+//! ## Prompt-length gate
 //!
-//! `inject_context` is called on every iteration of the turn loop (every
-//! tool-call round), not just the first. For a turn with N tool calls, recall
-//! would fire N times for the same prompt. The injector caches recall results
-//! per `(thread_id, prompt_hash)` for a configurable cooldown (default 30s,
-//! override via `HKASK_MEMORY_RECALL_COOLDOWN_SECS`). Within the cooldown,
-//! repeated calls for the same prompt return cached snippets without hitting
-//! the database. This prevents recall from crowding out inference during
-//! multi-round tool-use turns.
+//! Recall is gated on prompt length: prompts shorter than
+//! `MIN_RECALL_PROMPT_LEN` characters or with fewer than `MIN_RECALL_PROMPT_WORDS`
+//! words skip recall entirely. Short, code-focused prompts ("fix this", "run
+//! the tests") are unlikely to benefit from past conversation history, and
+//! skipping them avoids the embedding HTTP call + SQL queries that recall
+//! would otherwise fire. This is a zero-cost gate — no SQL, no HTTP, no cache.
 
 use agent::ContextInjector;
 use hkask_types::MemoryPort;
 use language_model::{LanguageModelRequestMessage, Role};
 use language_model_core::MessageContent;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
-/// Cache key: (thread_id, prompt_hash).
-/// The prompt_hash is a blake3-free hash of the user prompt — we don't need
-/// cryptographic strength, just collision resistance for cache keys.
-type CacheKey = (String, u64);
+/// Minimum prompt length (characters) for recall to fire.
+/// Prompts shorter than this skip recall entirely.
+const MIN_RECALL_PROMPT_LEN: usize = 20;
 
-/// Cached recall result with its insertion timestamp.
-struct CachedRecall {
-    messages: Vec<LanguageModelRequestMessage>,
-    inserted_at: Instant,
-}
+/// Minimum word count for recall to fire.
+/// Prompts with fewer words skip recall entirely.
+const MIN_RECALL_PROMPT_WORDS: usize = 3;
 
 /// Bridge context injector — retrieves memories and formats them for prompt injection.
 pub struct BridgeContextInjector {
     memory_port: Arc<dyn MemoryPort>,
     recall_limit: u32,
     recall_min_confidence: f64,
-    /// Per-(thread_id, prompt_hash) recall cache with a cooldown. Prevents
-    /// redundant recall calls during multi-round tool-use turns.
-    recall_cache: Mutex<HashMap<CacheKey, CachedRecall>>,
-    /// Cooldown duration for the recall cache. Within this window, repeated
-    /// calls for the same prompt return cached results.
-    recall_cooldown: Duration,
 }
 
 impl BridgeContextInjector {
@@ -63,90 +50,34 @@ impl BridgeContextInjector {
     /// Reads `recall_limit` and `recall_min_confidence` from `KaskMemorySettings`
     /// at the composition root (which has access to `cx: &App`) and passes them
     /// here.
-    ///
-    /// The recall cooldown defaults to 30 seconds. Override via
-    /// `HKASK_MEMORY_RECALL_COOLDOWN_SECS` (set to 0 to disable caching).
     pub fn new(
         memory_port: Arc<dyn MemoryPort>,
         recall_limit: u32,
         recall_min_confidence: f64,
     ) -> Self {
-        let cooldown_secs = std::env::var("HKASK_MEMORY_RECALL_COOLDOWN_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
         Self {
             memory_port,
             recall_limit,
             recall_min_confidence,
-            recall_cache: Mutex::new(HashMap::new()),
-            recall_cooldown: Duration::from_secs(cooldown_secs),
         }
     }
 
-    /// Hash a prompt for cache keying. Uses `std::hash::DefaultHasher` —
-    /// not cryptographic, but sufficient for cache key collision avoidance.
-    fn prompt_hash(prompt: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        prompt.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    /// Look up a cached recall result. Returns `None` if the cache is
-    /// disabled (cooldown == 0), the key is not cached, or the cached
-    /// entry has expired.
-    fn lookup_cache(
-        &self,
-        thread_id: &str,
-        prompt_hash: u64,
-    ) -> Option<Vec<LanguageModelRequestMessage>> {
-        if self.recall_cooldown.is_zero() {
-            return None;
+    /// Check whether a prompt is long enough to warrant recall.
+    /// Short prompts ("fix this", "run tests") are unlikely to benefit from
+    /// memory recall and would waste an embedding HTTP call + SQL queries.
+    fn should_recall(prompt: &str) -> bool {
+        if prompt.len() < MIN_RECALL_PROMPT_LEN {
+            return false;
         }
-        let cache = self.recall_cache.lock().ok()?;
-        let entry = cache.get(&(thread_id.to_string(), prompt_hash))?;
-        if entry.inserted_at.elapsed() < self.recall_cooldown {
-            Some(entry.messages.clone())
-        } else {
-            None
-        }
-    }
-
-    /// Store a recall result in the cache.
-    fn store_cache(
-        &self,
-        thread_id: &str,
-        prompt_hash: u64,
-        messages: Vec<LanguageModelRequestMessage>,
-    ) {
-        if self.recall_cooldown.is_zero() {
-            return;
-        }
-        if let Ok(mut cache) = self.recall_cache.lock() {
-            // Evict expired entries to bound memory growth. Without this, the
-            // cache grows unbounded across a long session with many distinct
-            // prompts. We evict lazily on insert — cheaper than a background
-            // timer and sufficient for the typical session size.
-            if cache.len() > 64 {
-                let now = Instant::now();
-                cache.retain(|_, v| now.duration_since(v.inserted_at) < self.recall_cooldown);
-            }
-            cache.insert(
-                (thread_id.to_string(), prompt_hash),
-                CachedRecall {
-                    messages,
-                    inserted_at: Instant::now(),
-                },
-            );
-        }
+        let word_count = prompt.split_whitespace().count();
+        word_count >= MIN_RECALL_PROMPT_WORDS
     }
 }
 
 impl ContextInjector for BridgeContextInjector {
     fn inject_context(
         &self,
-        thread_id: &str,
+        _thread_id: &str,
         user_prompt: &str,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Vec<LanguageModelRequestMessage>> + Send + '_>,
@@ -155,19 +86,12 @@ impl ContextInjector for BridgeContextInjector {
         let min_confidence = self.recall_min_confidence;
         let prompt = user_prompt.to_string();
         let memory_port = self.memory_port.clone();
-        let prompt_hash = Self::prompt_hash(&prompt);
-        let tid = thread_id.to_string();
 
-        // Check the recall cache before hitting the database. The agent crate
-        // calls inject_context on every tool-call round within a turn; without
-        // this cache, a 5-round turn fires 5 recall calls for the same prompt.
-        if let Some(cached) = self.lookup_cache(&tid, prompt_hash) {
-            tracing::debug!(
-                target: "reg.memory",
-                thread_id = %tid,
-                "Context injection served from recall cache (cooldown hit)"
-            );
-            return Box::pin(async move { cached });
+        // Gate: skip recall for short prompts that won't benefit from it.
+        // This avoids the embedding HTTP call + SQL queries for prompts like
+        // "fix this", "run the tests", "what does this do".
+        if !Self::should_recall(&prompt) {
+            return Box::pin(async move { Vec::new() });
         }
 
         Box::pin(async move {
@@ -190,10 +114,6 @@ impl ContextInjector for BridgeContextInjector {
                 .collect();
 
             if filtered.is_empty() {
-                // Cache the empty result too — avoids re-calling recall for
-                // prompts that have no matching memories within the cooldown.
-                // We store an empty vec so the next lookup returns early.
-                self.store_cache(&tid, prompt_hash, Vec::new());
                 return Vec::new();
             }
 
@@ -212,15 +132,12 @@ impl ContextInjector for BridgeContextInjector {
                 "Injecting memory context into prompt"
             );
 
-            let messages = vec![LanguageModelRequestMessage {
+            vec![LanguageModelRequestMessage {
                 role: Role::System,
                 content: vec![MessageContent::Text(context_text)],
                 cache: false,
                 reasoning_details: None,
-            }];
-
-            self.store_cache(&tid, prompt_hash, messages.clone());
-            messages
+            }]
         })
     }
 
@@ -281,8 +198,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A mock MemoryPort that counts recall calls. Used to verify the
-    /// recall cache prevents redundant database hits within the cooldown.
+    /// A mock MemoryPort that counts recall calls.
     struct CountingMockPort {
         recall_count: AtomicUsize,
     }
@@ -331,91 +247,80 @@ mod tests {
         }
     }
 
-    /// Pin the recall cooldown: calling `inject_context` twice with the same
-    /// prompt within the cooldown should only hit the MemoryPort once.
-    /// Without the cache, a 5-round tool-use turn fires 5 recall calls for
-    /// the same prompt.
+    /// Pin the prompt-length gate: short prompts skip recall entirely,
+    /// avoiding the embedding HTTP call + SQL queries.
     #[tokio::test]
-    async fn recall_cooldown_caches_repeated_prompts() {
+    async fn short_prompts_skip_recall() {
         let port = Arc::new(CountingMockPort::new());
         let port_handle = Arc::clone(&port);
         let injector = BridgeContextInjector::new(port as Arc<dyn MemoryPort>, 5, 0.0);
 
-        // First call — should hit the MemoryPort.
-        let _ = injector.inject_context("t1", "hello world").await;
+        // Short prompt — should NOT hit the MemoryPort.
+        let result = injector.inject_context("t1", "fix this").await;
+        assert!(result.is_empty(), "short prompt should return no messages");
         assert_eq!(
             port_handle.recall_count(),
-            1,
-            "first call should hit the MemoryPort"
+            0,
+            "short prompt should not hit the MemoryPort"
         );
 
-        // Second call with the same prompt — should be served from cache.
-        let _ = injector.inject_context("t1", "hello world").await;
-        assert_eq!(
-            port_handle.recall_count(),
-            1,
-            "second call within cooldown should be served from cache"
+        // Two-word prompt under the word threshold — should NOT hit.
+        let result = injector.inject_context("t1", "run tests now").await;
+        assert!(
+            result.is_empty(),
+            "two-word prompt should return no messages"
         );
-
-        // Different prompt — should hit the MemoryPort again.
-        let _ = injector.inject_context("t1", "different prompt").await;
         assert_eq!(
             port_handle.recall_count(),
-            2,
-            "different prompt should hit the MemoryPort"
-        );
-
-        // Different thread, same prompt — should hit the MemoryPort (cache is per-thread).
-        let _ = injector.inject_context("t2", "hello world").await;
-        assert_eq!(
-            port_handle.recall_count(),
-            3,
-            "same prompt on different thread should hit the MemoryPort (per-thread cache)"
+            0,
+            "two-word prompt should not hit the MemoryPort"
         );
     }
 
-    /// Pin that the recall cache also caches empty results — avoids re-calling
-    /// recall for prompts that have no matching memories within the cooldown.
+    /// Pin that long-enough prompts DO fire recall.
     #[tokio::test]
-    async fn recall_cooldown_caches_empty_results() {
-        // A port that always returns empty snippets.
-        struct EmptyPort;
-        impl MemoryPort for EmptyPort {
-            fn ingest_turn<'a>(
-                &'a self,
-                _record: hkask_types::TurnRecord,
-            ) -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = Result<(), MemoryError>> + Send + 'a>,
-            > {
-                Box::pin(async move { Ok(()) })
-            }
-            fn recall_context<'a>(
-                &'a self,
-                _query: &'a str,
-                _limit: usize,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<Output = Result<Vec<MemorySnippet>, MemoryError>>
-                        + Send
-                        + 'a,
-                >,
-            > {
-                Box::pin(async move { Ok(Vec::new()) })
-            }
-        }
+    async fn long_prompts_fire_recall() {
+        let port = Arc::new(CountingMockPort::new());
+        let port_handle = Arc::clone(&port);
+        let injector = BridgeContextInjector::new(port as Arc<dyn MemoryPort>, 5, 0.0);
 
-        let injector =
-            BridgeContextInjector::new(Arc::new(EmptyPort) as Arc<dyn MemoryPort>, 5, 0.0);
-
-        // First call — returns empty vec.
-        let result1 = injector.inject_context("t1", "no matches").await;
-        assert!(result1.is_empty(), "first call should return empty");
-
-        // Second call — should also return empty, served from cache.
-        let result2 = injector.inject_context("t1", "no matches").await;
+        // Long prompt — should hit the MemoryPort.
+        let result = injector
+            .inject_context("t1", "how do I set up the deployment pipeline?")
+            .await;
         assert!(
-            result2.is_empty(),
-            "second call should return empty from cache"
+            !result.is_empty(),
+            "long prompt should return memory messages"
+        );
+        assert_eq!(
+            port_handle.recall_count(),
+            1,
+            "long prompt should hit the MemoryPort"
+        );
+    }
+
+    /// Pin the exact boundary: MIN_RECALL_PROMPT_LEN chars and MIN_RECALL_PROMPT_WORDS words.
+    #[tokio::test]
+    async fn boundary_prompt_fires_recall() {
+        let port = Arc::new(CountingMockPort::new());
+        let port_handle = Arc::clone(&port);
+        let injector = BridgeContextInjector::new(port as Arc<dyn MemoryPort>, 5, 0.0);
+
+        // Exactly at the boundary: >= 3 words, >= 20 chars.
+        // "three words here exactly" = 24 chars, 4 words — clears both gates.
+        let boundary_prompt = "three words here exactly";
+        assert!(boundary_prompt.len() >= MIN_RECALL_PROMPT_LEN);
+        assert!(boundary_prompt.split_whitespace().count() >= MIN_RECALL_PROMPT_WORDS);
+
+        let result = injector.inject_context("t1", boundary_prompt).await;
+        assert!(
+            !result.is_empty(),
+            "boundary prompt should return memory messages"
+        );
+        assert_eq!(
+            port_handle.recall_count(),
+            1,
+            "boundary prompt should hit the MemoryPort"
         );
     }
 }

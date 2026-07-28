@@ -30,6 +30,34 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["HTTP-Referer", "X-Title"];
 const MAX_OPEN_ROUTER_SESSION_ID_LENGTH: usize = 256;
 
+/// Returns `true` if `model` should be offered in the picker given the configured
+/// `max_output_price_per_million_tokens` threshold (USD per million output tokens).
+///
+/// - `None` threshold disables the filter (everything passes).
+/// - Models with no reported price (`output_price_per_token` is `None`) pass — this
+///   covers models whose `pricing.completion` field is absent, and user-configured
+///   models (which always have `output_price_per_token: None`).
+/// - Negative or non-finite prices pass (treated as sentinel/unknown). OpenRouter
+///   uses `-1` for router models like `openrouter/auto`; it parses to `-1.0` and is
+///   treated as "no price" here rather than dropped.
+/// - Otherwise the model passes iff its per-token output price is `<=` the threshold.
+pub(crate) fn passes_output_price_filter(
+    model: &open_router::Model,
+    max_output_price_per_million_tokens: Option<f64>,
+) -> bool {
+    let Some(max_per_million) = max_output_price_per_million_tokens else {
+        return true;
+    };
+    let Some(price_per_token) = model.output_price_per_token else {
+        return true;
+    };
+    if !price_per_token.is_finite() || price_per_token < 0.0 {
+        return true;
+    }
+    // USD per million tokens -> USD per token.
+    price_per_token <= max_per_million / 1_000_000.0
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
     pub api_url: String,
@@ -224,9 +252,6 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let settings = Self::settings(cx);
         let max_output_price_per_million_tokens = settings.max_output_price_per_million_tokens;
-        // USD per million tokens -> USD per token. `None` disables the filter.
-        let max_output_price_per_token =
-            max_output_price_per_million_tokens.map(|usd_per_m| usd_per_m / 1_000_000.0);
 
         let mut models_from_api = self.state.read(cx).available_models.clone();
         let mut settings_models = Vec::new();
@@ -258,21 +283,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
 
         models_from_api
             .into_iter()
-            .filter(|model| {
-                // De-list models whose reported output price exceeds the configured
-                // threshold. Models with no reported price (e.g. `openrouter/auto`,
-                // which uses `-1` sentinel, and user-configured models) are kept.
-                let Some(max_per_token) = max_output_price_per_token else {
-                    return true;
-                };
-                let Some(price_per_token) = model.output_price_per_token else {
-                    return true;
-                };
-                if !price_per_token.is_finite() || price_per_token < 0.0 {
-                    return true;
-                }
-                price_per_token <= max_per_token
-            })
+            .filter(|model| passes_output_price_filter(model, max_output_price_per_million_tokens))
             .map(|model| self.create_language_model(model))
             .collect()
     }
@@ -1492,5 +1503,73 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn output_price_filter_keeps_models_below_threshold_and_drops_expensive_ones() {
+        // $5 / 1M tokens = 5e-6 USD per token.
+        let threshold = Some(5.0);
+
+        let cheap = open_router::Model::new(
+            "cheap/model",
+            Some("Cheap"),
+            Some(128_000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            Some(0.000003), // $3 / 1M tokens
+        );
+        let at_threshold = open_router::Model::new(
+            "at/model",
+            Some("At"),
+            Some(128_000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            Some(0.000005), // exactly $5 / 1M tokens
+        );
+        let expensive = open_router::Model::new(
+            "pricey/model",
+            Some("Pricey"),
+            Some(128_000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            Some(0.000075), // $75 / 1M tokens
+        );
+        let no_price = open_router::Model::new(
+            "openrouter/auto",
+            Some("Auto Router"),
+            Some(2_000_000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+        );
+        // OpenRouter uses `-1` as a sentinel for router models; it parses to a
+        // negative f64 and must be treated as "no price" rather than dropped.
+        let sentinel = open_router::Model::new(
+            "openrouter/fusion",
+            Some("Fusion"),
+            Some(1_000_000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            Some(-1.0),
+        );
+
+        assert!(passes_output_price_filter(&cheap, threshold));
+        assert!(passes_output_price_filter(&at_threshold, threshold));
+        assert!(!passes_output_price_filter(&expensive, threshold));
+        assert!(passes_output_price_filter(&no_price, threshold));
+        assert!(passes_output_price_filter(&sentinel, threshold));
+
+        // Disabled filter keeps everything, including the expensive model.
+        assert!(passes_output_price_filter(&expensive, None));
     }
 }

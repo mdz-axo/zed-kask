@@ -10,23 +10,23 @@ use std::sync::Arc;
 use url::Url;
 use util::paths::component_matches_ignore_ascii_case;
 
-/// First segment of the skills directory path: `.agents`.
+/// First segment of the project-local skills directory path: `.agents`.
+/// Used only for project-local skills (`.agents/skills/` inside a worktree).
+/// Global skills use `paths::data_dir()/agents/skills/` (zed-kask-isolated).
 pub const AGENTS_DIR_NAME: &str = ".agents";
 
 /// Second segment of the skills directory path: `skills`.
 pub const SKILLS_DIR_NAME: &str = "skills";
 
-/// User-facing display form of the global skills directory path — i.e.
-/// what a human should see in messages and prompts, with the platform's
-/// native path separator and home-directory shorthand.
+/// User-facing display form of the global skills directory path.
 ///
-/// Windows doesn't recognize `~` as the home directory, so the env-var
-/// form is used there instead.
+/// zed-kask: global skills live under the app's data directory (isolated
+/// from upstream Zed), not `~/.agents/skills/`. The display form uses
+/// the app data path since that's what the user sees in messages.
 #[cfg(target_os = "windows")]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str =
-    concatcp!("%USERPROFILE%\\", AGENTS_DIR_NAME, "\\", SKILLS_DIR_NAME);
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "%LOCALAPPDATA%\\Zed-Kask\\agents\\skills";
 #[cfg(not(target_os = "windows"))]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = concatcp!("~/", AGENTS_DIR_NAME, "/", SKILLS_DIR_NAME);
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "~/Library/Application Support/Zed-Kask/agents/skills";
 
 /// Opaque identifier for the project scope a skill was loaded from.
 ///
@@ -951,20 +951,28 @@ fn parse_embedded_global_skill(name: &str, content: &'static str) -> Result<Skil
     })
 }
 
-/// Returns the global skills directory: `~/.agents/skills`.
+/// Returns the global skills directory.
 ///
-/// Other agents (e.g. Claude Code) already write skill files into this
-/// location, so a Zed installation may have skills here even before the
-/// rest of Zed's skills support ships.
+/// zed-kask: isolated from upstream Zed's `~/.agents/skills/` to prevent
+/// bidirectional skill leakage between co-installed Zed and zed-kask.
+/// zed-kask skills are manifest-driven (manifest.yaml + Jinja2 templates
+/// executed via BridgeManifestExecutor), not SKILL.md body-injection. They
+/// are not portable to upstream Zed or any tool without the hKask cascade
+/// engine. Sharing the directory would only cause confusion — a zed-kask
+/// skill appearing in Zed does nothing useful (no manifest to execute),
+/// and a Zed skill appearing in zed-kask can't run (no manifest cascade).
+///
+/// Uses `paths::data_dir()` which is already zed-kask-isolated:
+///   Linux:   `~/.local/share/zed-kask/agents/skills/`
+///   macOS:   `~/Library/Application Support/Zed-Kask/agents/skills/`
+///   Windows: `%LOCALAPPDATA%\Zed-Kask\agents\skills\`
 ///
 /// In test builds, `paths::home_dir()` is hardcoded to a fixed path
 /// (e.g. `/Users/zed`), so all tests using this function operate on the
 /// same simulated home directory. Each test should use its own `FakeFs`
 /// instance to keep skill setups from leaking across tests.
 pub fn global_skills_dir() -> PathBuf {
-    paths::home_dir()
-        .join(AGENTS_DIR_NAME)
-        .join(SKILLS_DIR_NAME)
+    paths::data_dir().join("agents").join(SKILLS_DIR_NAME)
 }
 
 /// Project-local skills live at this path relative to a worktree root,
