@@ -10,13 +10,14 @@ pub(crate) fn render_condenser_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let condenser = raw.and_then(|c| c.condenser).unwrap_or_default();
-    let profile = condenser.profile.as_deref().unwrap_or("normal");
-    let auto_compress = condenser.auto_compress_tool_results.unwrap_or(true);
-    let saliency_window = condenser
-        .saliency_window
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "5".to_string());
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let condenser: kask_bridge::KaskCondenserSettings = raw
+        .and_then(|c| c.condenser)
+        .map(Into::into)
+        .unwrap_or_default();
+    let profile = condenser.profile.as_str();
+    let auto_compress = condenser.auto_compress_tool_results;
+    let saliency_window = condenser.saliency_window.to_string();
 
     let profile_input = SettingsInputField::new("kask-condenser-profile")
         .tab_index(0)

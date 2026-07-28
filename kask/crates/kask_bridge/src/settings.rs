@@ -1053,7 +1053,12 @@ impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
                 .filter(|&d| d > 0)
                 .unwrap_or(default.embedding_dim),
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
-            ocr_concurrency: c.ocr_concurrency.unwrap_or(default.ocr_concurrency),
+            // Treat 0 as "use default" — 0 concurrency would silently disable
+            // OCR (no pages processed in parallel).
+            ocr_concurrency: c
+                .ocr_concurrency
+                .filter(|&d| d > 0)
+                .unwrap_or(default.ocr_concurrency),
             ocr_simple_max: c.ocr_simple_max.unwrap_or(default.ocr_simple_max),
             ocr_moderate_max: c.ocr_moderate_max.unwrap_or(default.ocr_moderate_max),
             ocr_sample_rate: c.ocr_sample_rate.unwrap_or(default.ocr_sample_rate),
@@ -1208,6 +1213,29 @@ mod tests {
             settings.corpus.embedding_dim, 1024,
             "embedding_dim: 0 should fall back to the default (1024), \
              not construct a zero-dimensional store"
+        );
+    }
+
+    #[test]
+    fn corpus_settings_treats_zero_ocr_concurrency_as_default() {
+        let content = KaskSettingsContent {
+            corpus: Some(KaskCorpusSettingsContent {
+                embedding_dim: None,
+                embedding_model: None,
+                ocr_concurrency: Some(0),
+                ocr_simple_max: None,
+                ocr_moderate_max: None,
+                ocr_sample_rate: None,
+                ocr_tuneable: None,
+                template_root: None,
+            }),
+            ..Default::default()
+        };
+        let settings = KaskSettings::from(content);
+        assert_eq!(
+            settings.corpus.ocr_concurrency, 4,
+            "ocr_concurrency: 0 should fall back to the default (4), \
+             not silently disable OCR"
         );
     }
 

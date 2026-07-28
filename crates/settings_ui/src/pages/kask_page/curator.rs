@@ -15,12 +15,13 @@ pub(crate) fn render_curator_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let curator = raw.and_then(|c| c.curator).unwrap_or_default();
-    let always_on = curator.always_on.unwrap_or(true);
-    let algedonic_threshold = curator
-        .algedonic_threshold
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "0.8".to_string());
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let curator: kask_bridge::KaskCuratorSettings = raw
+        .and_then(|c| c.curator)
+        .map(Into::into)
+        .unwrap_or_default();
+    let always_on = curator.always_on;
+    let algedonic_threshold = curator.algedonic_threshold.to_string();
 
     let always_on_toggle = SwitchField::new(
         "kask-curator-always-on",
@@ -133,27 +134,20 @@ pub(crate) fn render_curator_email_page(
 ) -> AnyElement {
     let provider = zed_credentials::global(cx);
     let raw = raw_kask_settings(cx);
-    let email = raw
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let email: kask_bridge::KaskCuratorEmailSettings = raw
         .and_then(|c| c.curator)
         .and_then(|c| c.email)
+        .map(Into::into)
         .unwrap_or_default();
 
-    let mxroute_server = email.mxroute_server.unwrap_or_default();
-    let smtp_username = email.smtp_username.unwrap_or_default();
-    let curator_email = email.curator_email.unwrap_or_default();
-    let alert_email = email.alert_email.unwrap_or_default();
-    let authorized_emails = email
-        .authorized_emails
-        .map(|v| v.join(", "))
-        .unwrap_or_default();
-    let inbox_poll_interval = email
-        .inbox_poll_interval_secs
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "0".to_string());
-    let digest_interval = email
-        .digest_interval_secs
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "0".to_string());
+    let mxroute_server = email.mxroute_server;
+    let smtp_username = email.smtp_username;
+    let curator_email = email.curator_email;
+    let alert_email = email.alert_email;
+    let authorized_emails = email.authorized_emails.join(", ");
+    let inbox_poll_interval = email.inbox_poll_interval_secs.to_string();
+    let digest_interval = email.digest_interval_secs.to_string();
 
     // SMTP password — keychain-backed, mirrors the data-service API key pattern.
     let smtp_password_url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_smtp_password");

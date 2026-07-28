@@ -9360,6 +9360,7 @@ dependencies = [
 name = "hkask-mcp-corpus"
 version = "0.31.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "calamine",

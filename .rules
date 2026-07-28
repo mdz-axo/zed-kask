@@ -404,3 +404,17 @@ the single source of truth; `From` and `mcp_env` read from it. The settings UI
 (`kask_page.rs`) must also resolve via `From<Content>` rather than applying its
 own `unwrap_or(false)` — otherwise the UI shows toggles as off while the
 runtime sees them as on (the inference-providers display bug).
+
+## Kask MCP server credentials and config are scoped per-server
+
+Each `BuiltinMcpServer` in `kask_bridge::mcp_servers` has two allowlists:
+`credentials` (secrets from the keychain) and `config_env` (non-secret config
+from `mcp_env()`). `KaskMcpDescriptor::command()` and the `McpRuntime` launch
+path both call `filter_credentials_for_server` and
+`filter_config_env_for_server` to filter env vars before injecting them into
+the child process. A server that only needs `DEEPINFRA_API_KEY` must not
+receive `HKASK_SMTP_PASSWORD` (credential leak) or `HKASK_SMTP_USERNAME`
+(config leak) — a compromised MCP server process has access to every env var
+in its process. New servers must use `Some(&[])` (no credentials/config) for
+both allowlists and add specific env vars as needed, never `None` (receives
+all). The `all_servers_have_credential_allowlist` test pins this.
