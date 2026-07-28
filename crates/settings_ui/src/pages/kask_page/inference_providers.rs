@@ -25,13 +25,19 @@ pub(crate) fn render_inference_providers_page(
     let provider = zed_credentials::global(cx);
     let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
-    // `KaskInferenceProvidersSettings::default()` reads env vars
+    // When the subsection is absent or a field is `None`, `From` reads env vars
     // (`DEEPINFRA_API_KEY`, etc.), so a user with an API key set sees the
     // toggle as on even without an explicit `kask.inference_providers` entry.
+    // `Default::default()` returns all-false (pure) — we must go through `From`
+    // to get the env-var auto-enable behavior.
     let inference: kask_bridge::KaskInferenceProvidersSettings = raw
         .and_then(|c| c.inference_providers)
         .map(Into::into)
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            kask_bridge::KaskInferenceProvidersSettings::from(
+                settings_content::KaskInferenceProvidersSettingsContent::default(),
+            )
+        });
 
     let mut rows: Vec<AnyElement> = Vec::new();
     for desc in kask_bridge::INFERENCE_PROVIDERS {

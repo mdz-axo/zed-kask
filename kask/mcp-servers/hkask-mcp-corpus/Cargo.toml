@@ -35,11 +35,11 @@ hkask-memory = { path = "../../crates/hkask-memory" }
 hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-guard = { path = "../../crates/hkask-guard" }
 
-# Persona/style services (from replica)
-hkask-services-compose = { path = "../../crates/hkask-services-compose" }
-hkask-services-corpus = { path = "../../crates/hkask-services-corpus" }
-hkask-services-inference = { path = "../../crates/hkask-services-inference" }
+# Persona/style services (folded in from hkask-services-{compose,corpus,inference,runtime})
 hkask-keystore = { path = "../../crates/hkask-keystore" }
+hkask-capability = { path = "../../crates/hkask-capability" }
+hkask-regulation = { path = "../../crates/hkask-regulation" }
+hkask-ledger = { path = "../../crates/hkask-ledger" }
 
 # Protocol + utilities
 
@@ -61,6 +61,11 @@ minijinja.workspace = true
 
 serde_yaml_neo.workspace = true
 
+# Folded-service dependencies
+uuid.workspace = true
+chrono.workspace = true
+pdf-extract = "0.12"
+
 # Service layer (shared settings, models, paths)
 hkask-services-core = { path = "../../crates/hkask-services-core" }
 
@@ -75,6 +80,5 @@ path = "src/main.rs"
 [dev-dependencies]
 rand.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-hkask-services-compose = { path = "../../crates/hkask-services-compose" }
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 tempfile.workspace = true

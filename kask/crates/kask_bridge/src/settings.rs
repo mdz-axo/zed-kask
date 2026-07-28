@@ -160,6 +160,25 @@ pub struct KaskInferenceProvidersSettings {
     pub cline_enabled: bool,
 }
 
+impl KaskInferenceProvidersSettings {
+    /// Construct from the process environment — auto-enables providers whose
+    /// API key env var is set. This is the same logic `From<Content>` uses
+    /// when the user hasn't explicitly set a toggle. Exposed as a public
+    /// method so the settings UI (which doesn't depend on `settings_content`)
+    /// can resolve the same defaults without constructing a `Content` struct.
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self {
+            deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
+            fal_enabled: std::env::var("FALAI_API_KEY").is_ok(),
+            together_enabled: std::env::var("TOGETHERAI_API_KEY").is_ok(),
+            openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
+            kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
+            cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
+        }
+    }
+}
+
 /// Curator configuration.
 ///
 /// `Default` is the single source of truth for defaults — `From<Content>` reads
