@@ -1,4 +1,4 @@
-use hkask_services_compose::cosine_distance;
+use hkask_mcp_corpus::compose::cosine_distance;
 use proptest::prelude::*;
 
 proptest! {

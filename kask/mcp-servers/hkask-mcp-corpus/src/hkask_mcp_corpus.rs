@@ -26,13 +26,13 @@
 
 mod backend;
 pub mod bridge;
-mod compose;
-mod convert;
-mod corpus;
+pub mod compose;
+pub mod convert;
+pub mod corpus;
 mod helpers;
-mod inference_svc;
+pub mod inference_svc;
 mod json_extract;
-mod model_cache;
+pub mod model_cache;
 pub mod ocr;
 pub mod runtime;
 pub mod template;

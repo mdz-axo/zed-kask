@@ -2,7 +2,7 @@
 //! # REQ: P8 — every test verifies a stated behavioral property of a public seam.
 //! expect: "Every test verifies a stated behavioral property of a public seam"
 
-use hkask_services_corpus::EmbedService;
+use hkask_mcp_corpus::corpus::EmbedService;
 
 /// Parse the Gentle Lovelace corpus config and verify all 11 works,
 /// 4 dimension centroids, 4 tag sets, tag_weights, and budget deserialize.

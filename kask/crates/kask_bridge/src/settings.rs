@@ -1116,14 +1116,30 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
 
 impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSettings {
     fn from(c: KaskInferenceProvidersSettingsContent) -> Self {
-        let default = Self::default();
+        // When the user hasn't explicitly set a toggle (field is `None`),
+        // auto-enable the provider if its API key is present in the process
+        // environment. This is the only place env vars are read — `Default`
+        // returns all-false so that `KaskSettings::default()` and tests remain
+        // deterministic and side-effect-free.
         Self {
-            deepinfra_enabled: c.deepinfra_enabled.unwrap_or(default.deepinfra_enabled),
-            fal_enabled: c.fal_enabled.unwrap_or(default.fal_enabled),
-            together_enabled: c.together_enabled.unwrap_or(default.together_enabled),
-            openrouter_enabled: c.openrouter_enabled.unwrap_or(default.openrouter_enabled),
-            kilocode_enabled: c.kilocode_enabled.unwrap_or(default.kilocode_enabled),
-            cline_enabled: c.cline_enabled.unwrap_or(default.cline_enabled),
+            deepinfra_enabled: c
+                .deepinfra_enabled
+                .unwrap_or_else(|| std::env::var("DEEPINFRA_API_KEY").is_ok()),
+            fal_enabled: c
+                .fal_enabled
+                .unwrap_or_else(|| std::env::var("FALAI_API_KEY").is_ok()),
+            together_enabled: c
+                .together_enabled
+                .unwrap_or_else(|| std::env::var("TOGETHERAI_API_KEY").is_ok()),
+            openrouter_enabled: c
+                .openrouter_enabled
+                .unwrap_or_else(|| std::env::var("OPENROUTER_API_KEY").is_ok()),
+            kilocode_enabled: c
+                .kilocode_enabled
+                .unwrap_or_else(|| std::env::var("KILOCODE_API_KEY").is_ok()),
+            cline_enabled: c
+                .cline_enabled
+                .unwrap_or_else(|| std::env::var("CLINE_API_KEY").is_ok()),
         }
     }
 }
@@ -1145,7 +1161,10 @@ impl From<KaskSettingsContent> for KaskSettings {
             training: c.training.map(Into::into).unwrap_or_default(),
             fusion: c.fusion.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
-            inference_providers: c.inference_providers.map(Into::into).unwrap_or_default(),
+            inference_providers: c
+                .inference_providers
+                .map(Into::into)
+                .unwrap_or_else(|| KaskInferenceProvidersSettingsContent::default().into()),
         }
     }
 }

@@ -8,7 +8,7 @@
 //! # REQ: P8 — every test verifies a stated behavioral property of a public seam.
 
 use hkask_memory::salience::BudgetConfig;
-use hkask_services_corpus::EmbedService;
+use hkask_mcp_corpus::corpus::EmbedService;
 
 /// Resolve a workspace-relative corpus config path from the test crate's
 /// manifest dir. Keeps each test free of path-joining boilerplate.
@@ -20,7 +20,7 @@ fn corpus_config(path: &str) -> std::path::PathBuf {
 /// must satisfy regardless of persona-specific values. Centralized so each
 /// per-persona test stays focused on what is distinctive about that persona.
 fn assert_required_contract(
-    config: &hkask_services_corpus::CorpusConfig,
+    config: &hkask_mcp_corpus::corpus::CorpusConfig,
     author: &str,
     centroid_prefix: &str,
 ) {

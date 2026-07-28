@@ -14,7 +14,7 @@ use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
 use hkask_memory::SemanticMemory;
 use hkask_memory::salience::{self, EntityTags};
 use hkask_services_core::{DomainKind, ErrorKind, HkaskSettings, ServiceError};
-use hkask_services_runtime::TripleExtraction;
+use crate::runtime::TripleExtraction;
 use hkask_types::InferencePort;
 use hkask_types::id::WebID;
 use std::collections::{HashMap, HashSet};
@@ -357,11 +357,11 @@ impl EmbedService {
 
         let mut classifier_config = if config.classifier.is_empty() {
             tracing::info!("No classifier configured — all passages default to Statement");
-            hkask_services_runtime::ClassifierConfig::from_def(&Default::default())
+            crate::runtime::ClassifierConfig::from_def(&Default::default())
         } else {
             let def =
-                hkask_services_runtime::load_classifier_config(&config.classifier, registry_dir)?;
-            hkask_services_runtime::ClassifierConfig::from_def(&def)
+                crate::runtime::load_classifier_config(&config.classifier, registry_dir)?;
+            crate::runtime::ClassifierConfig::from_def(&def)
         };
 
         let settings_model = hkask_services_core::HkaskSettings::load().classifier_model();
@@ -379,7 +379,7 @@ impl EmbedService {
         );
 
         let classify_results =
-            hkask_services_runtime::classify_batch(&texts, classifier_config, None).await?;
+            crate::runtime::classify_batch(&texts, classifier_config, None).await?;
 
         for (passage, result) in all_passages.iter_mut().zip(classify_results.iter()) {
             passage.section_type = result.category.clone();
@@ -395,11 +395,11 @@ impl EmbedService {
 
         // ── Extract semantic h_mems ────────────────────────────────
         if !config.triple_classifier.is_empty() {
-            let def = hkask_services_runtime::load_classifier_config(
+            let def = crate::runtime::load_classifier_config(
                 &config.triple_classifier,
                 registry_dir,
             )?;
-            let classifier_config = hkask_services_runtime::ClassifierConfig::from_def(&def);
+            let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
 
             if let Some(ref fusion) = config.fusion {
                 // ── Fusion path: route through the fusion orchestrator ──
@@ -456,7 +456,7 @@ impl EmbedService {
                     match handle.await {
                         Ok((i, Ok(result))) => {
                             extractions[i] =
-                                hkask_services_runtime::parse_triple_extraction(&result.text)
+                                crate::runtime::parse_triple_extraction(&result.text)
                                     .unwrap_or_default();
                         }
                         Ok((i, Err(e))) => {
@@ -484,7 +484,7 @@ impl EmbedService {
                         model_config.model = strip_provider_prefix(&settings_model).to_string();
                     }
                     let fallback =
-                        hkask_services_runtime::extract_triples_batch(&texts, &model_config)
+                        crate::runtime::extract_triples_batch(&texts, &model_config)
                             .await?;
                     extractions = fallback;
                 }
@@ -517,7 +517,7 @@ impl EmbedService {
                 );
 
                 let a_extractions =
-                    hkask_services_runtime::extract_triples_batch(&texts, &model_config).await?;
+                    crate::runtime::extract_triples_batch(&texts, &model_config).await?;
 
                 for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
                     passage.semantic_triples = ext.clone();

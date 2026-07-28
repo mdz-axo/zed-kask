@@ -13,7 +13,7 @@ use serde::Deserialize;
 use tracing::debug;
 
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
-use hkask_services_inference::InferenceContext;
+use crate::inference_svc::InferenceContext;
 
 // ── Cognition configuration ──────────────────────────────────────────────
 
@@ -347,7 +347,7 @@ impl ComposeService {
         // not from CognitionConfig (pipeline/corpus concern). The embedding model
         // is tied to stored vector dimensions; the generation model is deployment-specific.
         let gen_model = request.inference_ctx.default_model.clone();
-        let inference = hkask_services_inference::InferenceService::resolve_port(
+        let inference = crate::inference_svc::InferenceService::resolve_port(
             &request.inference_ctx,
             &gen_model,
         )?;

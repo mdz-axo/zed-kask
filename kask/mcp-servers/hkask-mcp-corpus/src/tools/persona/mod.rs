@@ -11,9 +11,9 @@
 
 use crate::*;
 use hkask_inference::EmbeddingRouter;
-use hkask_services_compose::cosine_distance;
+use crate::compose::cosine_distance;
 use hkask_services_core::HkaskSettings;
-use hkask_services_corpus::EmbedService;
+use crate::corpus::EmbedService;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};
 use schemars::JsonSchema;
@@ -283,7 +283,7 @@ impl CorpusServer {
                 )));
             }
 
-            let progress = Arc::new(|p: &hkask_services_corpus::EmbedProgress| {
+            let progress = Arc::new(|p: &crate::corpus::EmbedProgress| {
                 tracing::info!(
                     target: "hkask.mcp.replica",
                     phase = ?p.phase,
@@ -335,24 +335,24 @@ impl CorpusServer {
             let model = embedding_model();
             let gen_model = generation_model();
             let inf_cfg = inference_config();
-            let config = hkask_services_compose::CognitionConfig {
+            let config = crate::compose::CognitionConfig {
                 author: params.author.clone(),
                 jinja2_template: None,
-                embedding: hkask_services_compose::EmbeddingSection {
+                embedding: crate::compose::EmbeddingSection {
                     model: model.clone(),
                     dim: 1024,
                     centroid_entity_ref: format!("style:{}:centroid", params.author),
                     retrieval: Default::default(),
                 },
-                validation: hkask_services_compose::ValidationSection {
+                validation: crate::compose::ValidationSection {
                     centroid_distance_max: 0.25,
                 },
             };
 
             let inference_ctx =
-                hkask_services_inference::InferenceContext::from_parts(None, &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(None, &gen_model, inf_cfg);
 
-            let request = hkask_services_compose::ComposeRequest {
+            let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
                 db_path: PathBuf::from(&params.db_path),
                 db_passphrase: params.passphrase,
@@ -361,7 +361,7 @@ impl CorpusServer {
                 no_validate: params.no_validate,
             };
 
-            let result = hkask_services_compose::ComposeService::compose(request)
+            let result = crate::compose::ComposeService::compose(request)
                 .await
                 .map_err(|e| McpToolError::internal(e.to_string()))?;
 
@@ -420,24 +420,24 @@ impl CorpusServer {
             let model = embedding_model();
             let gen_model = generation_model();
             let inf_cfg = inference_config();
-            let config = hkask_services_compose::CognitionConfig {
+            let config = crate::compose::CognitionConfig {
                 author: params.author.clone(),
                 jinja2_template: None,
-                embedding: hkask_services_compose::EmbeddingSection {
+                embedding: crate::compose::EmbeddingSection {
                     model: model.clone(),
                     dim: 1024,
                     centroid_entity_ref: centroid_ref,
                     retrieval: Default::default(),
                 },
-                validation: hkask_services_compose::ValidationSection {
+                validation: crate::compose::ValidationSection {
                     centroid_distance_max: 0.40,
                 },
             };
 
             let inference_ctx =
-                hkask_services_inference::InferenceContext::from_parts(None, &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(None, &gen_model, inf_cfg);
 
-            let request = hkask_services_compose::ComposeRequest {
+            let request = crate::compose::ComposeRequest {
                 prompt,
                 db_path: PathBuf::from(&params.db_path),
                 db_passphrase: params.passphrase,
@@ -446,7 +446,7 @@ impl CorpusServer {
                 no_validate: params.no_validate,
             };
 
-            let result = hkask_services_compose::ComposeService::compose(request)
+            let result = crate::compose::ComposeService::compose(request)
                 .await
                 .map_err(|e| McpToolError::internal(e.to_string()))?;
 
@@ -683,24 +683,24 @@ impl CorpusServer {
                 .map_err(|e| McpToolError::internal(e.to_string()))?;
 
             let inf_cfg = inference_config();
-            let config = hkask_services_compose::CognitionConfig {
+            let config = crate::compose::CognitionConfig {
                 author: format!("mashup:{}:{}", params.author_a, params.author_b),
                 jinja2_template: None,
-                embedding: hkask_services_compose::EmbeddingSection {
+                embedding: crate::compose::EmbeddingSection {
                     model: model.clone(),
                     dim: 1024,
                     centroid_entity_ref: blended_ref.clone(),
                     retrieval: Default::default(),
                 },
-                validation: hkask_services_compose::ValidationSection {
+                validation: crate::compose::ValidationSection {
                     centroid_distance_max: 0.25,
                 },
             };
 
             let inference_ctx =
-                hkask_services_inference::InferenceContext::from_parts(None, &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(None, &gen_model, inf_cfg);
 
-            let request = hkask_services_compose::ComposeRequest {
+            let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
                 db_path: PathBuf::from(&params.db_path),
                 db_passphrase: params.passphrase,
@@ -709,7 +709,7 @@ impl CorpusServer {
                 no_validate: false,
             };
 
-            let result = hkask_services_compose::ComposeService::compose(request)
+            let result = crate::compose::ComposeService::compose(request)
                 .await
                 .map_err(|e| McpToolError::internal(e.to_string()))?;
 

@@ -7,7 +7,7 @@
 //! `#[serde(deny_unknown_fields)]` rejects it here.
 //! # REQ: P8 — every test verifies a stated behavioral property of a public seam.
 
-use hkask_services_corpus::EmbedService;
+use hkask_mcp_corpus::corpus::EmbedService;
 use minijinja::{Environment, UndefinedBehavior, value::Value};
 use serde_json::json;
 
@@ -49,7 +49,7 @@ fn render_replica_template(template_name: &str, context: serde_json::Value) -> S
 }
 
 /// Write rendered YAML to a temp file and parse it via EmbedService::parse_config.
-fn parse_rendered(rendered: &str) -> hkask_services_corpus::CorpusConfig {
+fn parse_rendered(rendered: &str) -> hkask_mcp_corpus::corpus::CorpusConfig {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let config_path = temp_dir.path().join("corpus.yaml");
     std::fs::write(&config_path, rendered).expect("write temp yaml");

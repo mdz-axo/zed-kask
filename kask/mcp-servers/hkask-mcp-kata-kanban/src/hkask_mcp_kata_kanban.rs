@@ -27,9 +27,6 @@ pub use kata::{
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic};
-use crate::KanbanError;
-use crate::KanbanService;
-use crate::{TaskFilter, TaskSpec, VerificationCriterion};
 use hkask_storage::HMemStore;
 use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
@@ -62,9 +59,9 @@ impl KanbanServer {
                         .into_iter()
                         .enumerate()
                         .map(|(i, input)| {
-                            match hkask_services_kata_kanban::TaskStatus::parse_str(&input.status) {
+                            match crate::TaskStatus::parse_str(&input.status) {
                                 Some(s) => {
-                                    let mut col = hkask_services_kata_kanban::ColumnDef::new(
+                                    let mut col = crate::ColumnDef::new(
                                         input.name, s, i as u32,
                                     );
                                     if let Some(wip) = input.wip_limit {
@@ -210,7 +207,7 @@ impl KanbanServer {
                     }
                 };
                 let filter = match status {
-                    Some(s) => match hkask_services_kata_kanban::TaskStatus::parse_str(&s) {
+                    Some(s) => match crate::TaskStatus::parse_str(&s) {
                         Some(st) => TaskFilter::by_status(st),
                         None => {
                             return Err(McpToolError::invalid_argument(format!(
@@ -277,7 +274,7 @@ impl KanbanServer {
                     }
                     Err(e) => return Err(map_kanban_error(e)),
                 };
-                let target = match hkask_services_kata_kanban::TaskStatus::parse_str(&target_status)
+                let target = match crate::TaskStatus::parse_str(&target_status)
                 {
                     Some(s) => s,
                     None => {
@@ -770,7 +767,7 @@ impl KanbanServer {
                         .task_add_rjoules(tid, r, self.webid)
                         .map_err(map_kanban_error)?;
                 }
-                let spec = hkask_services_kata_kanban::SpawnSpec::new(tid)
+                let spec = crate::SpawnSpec::new(tid)
                     .with_level(&delegation_level)
                     .with_skills(delegated_skills);
                 let spec = if let Some(ref ms) = memory_scope {
@@ -888,8 +885,8 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
     }
 }
 
-pub fn default_columns() -> Vec<hkask_services_kata_kanban::ColumnDef> {
-    hkask_services_kata_kanban::KanbanService::standard_columns()
+pub fn default_columns() -> Vec<crate::ColumnDef> {
+    crate::KanbanService::standard_columns()
 }
 
 /// Run the kanban MCP server (used by binary target).
