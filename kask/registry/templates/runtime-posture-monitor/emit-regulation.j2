@@ -5,6 +5,36 @@
 {# Emits reg.regulation for downstream regulation action #}
 {# Emits reg.guard.violation for defensive blocking #}
 
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- regulate
+- emit
+- propose
+- escalate
+contract:
+  input:
+    threats: array
+    defense_layers_firing: array
+    defense_layers_silent: array
+    existing_regressions: array
+    userpod_host: string
+  output:
+    threats: array
+    defense_layers_firing: array
+    defense_layers_silent: array
+    proposed_regressions: array
+    regulation_events_emitted: integer
+    guard_violations_emitted: integer
+    verdict: string
+    userpod_host: string
+    source_citations: array
+    reg_span_reference: string
+energy_cap: 2048
+visibility: Public
+---
+
 INPUT: threats = {{ threats }} (structured array from classify-threat phase)
 INPUT: defense_layers_firing = {{ defense_layers_firing }}
 INPUT: defense_layers_silent = {{ defense_layers_silent }}

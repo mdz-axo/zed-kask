@@ -8,6 +8,7 @@
 //! Template types: Prompt (WordAct), Process (FlowDef), Cognition (KnowAct).
 //! Registry adapters: `Registry` (in-memory), `SqliteRegistry` (SQLite).
 
+pub mod budget;
 pub mod bundle;
 pub mod capability_validator;
 pub mod crate_loader;

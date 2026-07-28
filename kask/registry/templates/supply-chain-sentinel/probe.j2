@@ -13,6 +13,32 @@
 {# Relationships: complements `kali-audit` (surface: supply-chain subset);
   does not overlap with `adversarial-red-team` (LLM boundary only) #}
 
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- probe
+- verify
+- audit
+- detect
+- classify
+contract:
+  input:
+    manifest_paths: array
+    surface: string
+    existing_regressions: array
+    userpod_host: string
+  output:
+    manifest_paths: array
+    dependencies_found: array
+    findings: array
+    defense_layers_present: array
+    defense_layers_missing: array
+    userpod_host: string
+    source_citations: array
+energy_cap: 2048
+visibility: Public
+---
+
 INPUT: manifest_paths = {{ manifest_paths }}
 INPUT: surface = {{ surface }}
 INPUT: existing_regressions = {{ existing_regressions | default([]) }}

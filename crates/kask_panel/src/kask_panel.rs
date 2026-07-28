@@ -800,7 +800,7 @@ impl KaskPanel {
             .bg(bg_color)
             .children(message_elements)
             .children(spinner_element)
-            .vertical_scrollbar_for(&self.messages_scroll_handle, cx)
+            .vertical_scrollbar_for(&self.messages_scroll_handle, window, cx)
     }
 
     fn render_input(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -1021,7 +1021,14 @@ impl From<KaskSettingsContent> for KaskSettings {
             corpus: c
                 .corpus
                 .map(|cp| KaskCorpusSettings {
-                    embedding_dim: cp.embedding_dim.unwrap_or(1024),
+                    // Treat 0 as "use default" — a user setting
+                    // `embedding_dim: 0` would otherwise construct a
+                    // zero-dimensional EmbeddingStore that silently rejects
+                    // every vector (DimensionMismatch { expected: 0, ... }),
+                    // disabling embedding-based recall with no startup signal.
+                    // Mirrors the `dim > 0` guard in codegraph's
+                    // `resolve_embedding_dim`.
+                    embedding_dim: cp.embedding_dim.filter(|&d| d > 0).unwrap_or(1024),
                     embedding_model: cp.embedding_model.unwrap_or_else(default_embedding_model),
                     ocr_concurrency: cp.ocr_concurrency.unwrap_or(4),
                     ocr_simple_max: cp.ocr_simple_max.unwrap_or(0.05),

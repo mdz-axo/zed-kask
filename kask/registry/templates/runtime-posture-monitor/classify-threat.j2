@@ -11,6 +11,32 @@
 {# Relationships: complements `supply-chain-sentinel` (static manifest audit);
   does not overlap with `adversarial-red-team` (synthetic LLM I/O attacks) #}
 
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- classify
+- detect
+- monitor
+- assess
+- escalate
+contract:
+  input:
+    signal_sources: array
+    signal: object
+    existing_regressions: array
+    userpod_host: string
+  output:
+    signal_sources: array
+    threats_found: array
+    defense_layers_firing: array
+    defense_layers_silent: array
+    baseline_references: array
+    userpod_host: string
+    source_citations: array
+energy_cap: 2048
+visibility: Public
+---
+
 INPUT: signal_sources = {{ signal_sources }}
 INPUT: signal = {{ signal }}
 INPUT: existing_regressions = {{ existing_regressions | default([]) }}

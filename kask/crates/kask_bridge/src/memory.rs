@@ -134,6 +134,31 @@ impl RealMemoryPort {
         // silently disabling embedding-based recall. The caller resolves
         // this from `kask_settings.corpus.embedding_dim` (default 1024,
         // matching `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
+        //
+        // A dim of 0 is a footgun: `unwrap_or(1024)` only fires for `None`,
+        // not for `Some(0)`, so a user setting `embedding_dim: 0` would
+        // construct a store that rejects every vector. `KaskCorpusSettings`
+        // already filters 0 → 1024, but warn here too in case a future
+        // caller bypasses settings — per the .rules trap "Process-global
+        // hooks set at runtime need a startup-failure signal".
+        if embedding_dim == 0 {
+            tracing::warn!(
+                target: "reg.memory",
+                embedding_dim,
+                "RealMemoryPort constructed with embedding_dim == 0 — \
+                 every store_embedding call will fail with DimensionMismatch. \
+                 Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
+                 to match the embedding model's output (default 1024 for \
+                 DeepInfra/Qwen/Qwen3-Embedding-0.6B)."
+            );
+        } else if embedding_dim != 1024 {
+            tracing::info!(
+                target: "reg.memory",
+                embedding_dim,
+                "RealMemoryPort using non-default embedding dimension \
+                 (ensure this matches the configured embedding model)"
+            );
+        }
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver));
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));

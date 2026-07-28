@@ -43,6 +43,7 @@
 //! `InferencePort` (for select/populate) and `ToolPort` (for execute),
 //! both of which are already dependencies of this crate.
 
+use crate::budget::{BudgetExhaustion, BudgetTracker};
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleManifestStep;
 use crate::load_manifest_from_yaml;

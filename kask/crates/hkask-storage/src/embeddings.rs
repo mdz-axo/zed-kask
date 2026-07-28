@@ -112,10 +112,23 @@ impl EmbeddingStore {
     /// Dispatches to the correct backend based on the driver's provider.
     /// - SqliteDriver → SqliteVec (raw conn for sqlite-vec)
     /// - PostgresDriver → PgVector (driver-based pgvector)
+    ///
+    /// `dim == 0` is rejected because a zero-dimensional store can never
+    /// accept any vector — every `store` call would fail with
+    /// `DimensionMismatch { expected: 0, actual: N }`, silently disabling
+    /// embedding-based recall. This has been observed in production when a
+    /// user's settings file explicitly sets `embedding_dim: 0`; the
+    /// `unwrap_or(1024)` default only fires for `None`, not for `Some(0)`.
     pub fn from_driver(
         driver: Arc<dyn crate::database::driver::DatabaseDriver>,
         dim: usize,
     ) -> Self {
+        assert!(
+            dim > 0,
+            "EmbeddingStore::from_driver called with dim == 0 — \
+             a zero-dimensional store can never accept any vector. \
+             Check kask_settings.corpus.embedding_dim (HKASK_EMBEDDING_DIM)"
+        );
         let backend = match driver.provider() {
             crate::database::types::DbProvider::Sqlite => {
                 let pool = driver

@@ -3,6 +3,33 @@
 {# Proposes RR-NNNN.yaml entries with surface: supply-chain #}
 {# Emits reg.supply_chain.report Regulation span (P9) #}
 
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- synthesize
+- report
+- propose
+- classify
+- escalate
+contract:
+  input:
+    findings: array
+    defense_layers: object
+    existing_regressions: array
+    userpod_host: string
+  output:
+    findings: array
+    defense_layers_present: array
+    defense_layers_missing: array
+    proposed_regressions: array
+    verdict: string
+    userpod_host: string
+    source_citations: array
+    reg_span_reference: string
+energy_cap: 2048
+visibility: Public
+---
+
 INPUT: findings = {{ findings }} (structured array from probe phase)
 INPUT: defense_layers = {{ defense_layers }}
 INPUT: existing_regressions = {{ existing_regressions }}

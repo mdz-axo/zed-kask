@@ -8,18 +8,15 @@ description: >
   memory → task distance → quality/cost → knowledge preservation → harness
   capability); the operator accepts, overrides, or rejects it, and the runtime
   enforces established hard contracts against concrete accepted configuration.
-  Training approach selection (G0-G5) precedes harness selection (G6) — the
-  harness is selected based on its capability to efficiently process the
-  declared dataset and produce the adapter type implied by G0. Audits math,
-  quantization, data/evaluation, forgetting, runtime alert, persistence
-  preflight, and harness-method compatibility gates with phase-aware states
-  and evidence. Runtime metrics (loss, grad_norm, alerts) are sourced from
-  the completion manifest and evaluated by G-R1 during training_status.
-  PDCA iteration loop is mechanically closed by the process manifest:
-  preflight-dataset → select-method → audit-config → report →
-  convergence-check → loop, with prior_iteration routing. Emits reg.lora.*
-  spans (including reg.lora.runtime from training_status), plus outcome and
-  operator_feedback spans that close the self-improvement feedback loop.
+  Training approach selection (G0-G5) precedes harness selection (G6). Audits
+  math, quantization, data/evaluation, forgetting, runtime alert, persistence
+  preflight, and harness-method compatibility gates. Runtime metrics (loss,
+  grad_norm, alerts) are sourced from the completion manifest and evaluated by
+  G-R1 during training_status. PDCA iteration loop is mechanically closed by
+  the process manifest: preflight-dataset → select-method → audit-config →
+  report → convergence-check → loop. Emits reg.lora.* spans (including
+  reg.lora.runtime from training_status), plus outcome and operator_feedback
+  spans that close the self-improvement feedback loop.
 ---
 
 # LoRA Training

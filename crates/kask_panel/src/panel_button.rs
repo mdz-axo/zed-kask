@@ -9,7 +9,7 @@
 //! `IconName::Kask` (the kask logo), matching the panel's tab icon.
 
 use gpui::{App, Context, Window, prelude::*};
-use ui::{IconButton, IconName, IconSize, Tooltip};
+use ui::{ButtonCommon, Clickable, IconButton, IconName, IconSize, Tooltip};
 use workspace::{HideStatusItem, ItemHandle, StatusItemView};
 
 use zed_actions::kask_panel::Toggle;
@@ -38,7 +38,7 @@ impl Default for KaskPanelButton {
 }
 
 impl Render for KaskPanelButton {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.pane_item_focus_handle.clone();
         IconButton::new("kask-panel-button", IconName::Kask)
             .icon_size(IconSize::Small)
