@@ -280,4 +280,58 @@ mod tests {
         }
         assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
     }
+
+    #[test]
+    fn test_deserialize_optional_u64_from_maybe_string() {
+        // Numeric string is coerced to u64.
+        let input = serde_json::json!("300000");
+        let result: Option<u64> = deserialize_optional_u64_from_maybe_string(input).unwrap();
+        assert_eq!(result, Some(300000));
+
+        // Integer passes through unchanged.
+        let input = serde_json::json!(180000);
+        let result: Option<u64> = deserialize_optional_u64_from_maybe_string(input).unwrap();
+        assert_eq!(result, Some(180000));
+
+        // Null / missing field yields None.
+        let input = serde_json::json!(null);
+        let result: Option<u64> = deserialize_optional_u64_from_maybe_string(input).unwrap();
+        assert_eq!(result, None);
+
+        // Non-numeric string is rejected.
+        let input = serde_json::json!("not a number");
+        let result = deserialize_optional_u64_from_maybe_string::<serde_json::Value>(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_terminal_tool_input_accepts_string_timeout_ms() {
+        // Models (especially GLM-class) sometimes emit `timeout_ms` as a string.
+        // The deserialize_with attribute must coerce it so both live run and
+        // replay succeed without wasting a model turn on a retry.
+        let input = serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+            "timeout_ms": "300000"
+        });
+        let parsed: TerminalToolInput = serde_json::from_value(input).unwrap();
+        assert_eq!(parsed.timeout_ms, Some(300000));
+
+        // Integer form still works.
+        let input = serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+            "timeout_ms": 300000
+        });
+        let parsed: TerminalToolInput = serde_json::from_value(input).unwrap();
+        assert_eq!(parsed.timeout_ms, Some(300000));
+
+        // Omitted timeout_ms defaults to None.
+        let input = serde_json::json!({
+            "command": "echo hi",
+            "cd": "."
+        });
+        let parsed: TerminalToolInput = serde_json::from_value(input).unwrap();
+        assert_eq!(parsed.timeout_ms, None);
+    }
 }

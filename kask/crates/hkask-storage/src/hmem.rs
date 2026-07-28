@@ -315,22 +315,41 @@ impl HMemStore {
             &[DbValue::Text(entity.to_string())],
         )
     }
-    /// Query h_mems by entity prefix (LIKE 'prefix%').
+    /// Query h_mems by entity prefix (LIKE 'prefix%'), bounded by `limit`.
     ///
-    /// Used by recall paths that need to load all h_mems for a family of
+    /// Used by recall paths that need to load h_mems for a family of
     /// entities (e.g. all `chat:thread:*` entities for episodic keyword
     /// search). The prefix must not contain SQL LIKE wildcards (`%` or `_`)
     /// — they would be interpreted as wildcards.
     ///
+    /// The `limit` caps the number of rows loaded — without it, a session
+    /// with thousands of past turns would load all of them into memory on
+    /// every recall call. The recall path only needs the most recent `limit`
+    /// h_mems (ordered by `valid_from DESC`), so the SQL LIMIT is the correct
+    /// place to bound this.
+    ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P3\] Motivating: Generative Space — query by entity prefix
     /// pre:  prefix is non-empty and contains no LIKE wildcards
-    /// post: returns Vec of h_mems whose entity starts with `prefix`
+    /// pre:  limit > 0
+    /// post: returns up to `limit` h_mems whose entity starts with `prefix`,
+    ///       ordered by `valid_from DESC` (most recent first)
     #[must_use = "result must be used"]
-    pub fn query_by_entity_prefix(&self, prefix: &str) -> Result<Vec<HMem>, HMemError> {
+    pub fn query_by_entity_prefix(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE entity LIKE ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
-            &[DbValue::Text(format!("{}%", prefix))],
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE entity LIKE ?1 AND valid_to IS NULL \
+                 ORDER BY valid_from DESC LIMIT ?2"
+            ),
+            &[
+                DbValue::Text(format!("{}%", prefix)),
+                DbValue::Integer(limit as i64),
+            ],
         )
     }
     /// Query h_mems by entity and attribute.

@@ -9148,6 +9148,45 @@ mod tests {
         }
     }
 
+    /// A tool whose `Input` requires a `path` field, so that replaying with an
+    /// empty JSON object `{}` fails deserialization. Used to verify that
+    /// `replay_tool_call` still sends `raw_output` to the UI when deserialize
+    /// fails.
+    struct ReplayFailsOnBadInputTool;
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    struct ReplayFailsOnBadInput {
+        pub path: String,
+    }
+
+    impl AgentTool for ReplayFailsOnBadInputTool {
+        type Input = ReplayFailsOnBadInput;
+        type Output = String;
+
+        const NAME: &'static str = "failing_replay_tool";
+
+        fn kind() -> acp::ToolKind {
+            acp::ToolKind::Other
+        }
+
+        fn initial_title(
+            &self,
+            _input: Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> SharedString {
+            "Failing Replay Tool".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            _input: ToolInput<Self::Input>,
+            _event_stream: ToolCallEventStream,
+            _cx: &mut App,
+        ) -> Task<Result<Self::Output, Self::Output>> {
+            Task::ready(Ok(String::new()))
+        }
+    }
+
     #[gpui::test]
     async fn test_authorize_sandbox_allow_always_does_not_cache_thread_grant(
         cx: &mut TestAppContext,
@@ -9540,6 +9579,76 @@ mod tests {
         assert!(
             tool_use_ids_with_image_content
                 .contains(&scoped_tool_call_id(0, &missing_tool_use_id).to_string())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replay_tool_call_sends_raw_output_when_deserialize_fails(
+        cx: &mut TestAppContext,
+    ) {
+        // When a tool's persisted input violates its current schema (e.g. a
+        // model emitted `timeout_ms` as a string, or omitted a required field),
+        // `tool.replay` fails to deserialize. The raw_output must still be
+        // sent to the UI so the user sees the tool's result — only the rich
+        // tool-specific rendering is lost.
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("failing_replay_tool");
+        let raw_output = json!("the saved output");
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(ReplayFailsOnBadInputTool);
+
+                let tool_use = LanguageModelToolUse {
+                    id: tool_use_id.clone(),
+                    name: ReplayFailsOnBadInputTool::NAME.into(),
+                    // Input that violates the schema: `path` is required but missing.
+                    raw_input: "{}".to_string(),
+                    input: language_model::LanguageModelToolUseInput::Json(json!({})),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+
+                let mut tool_results = IndexMap::default();
+                tool_results.insert(
+                    tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        tool_name: ReplayFailsOnBadInputTool::NAME.into(),
+                        is_error: false,
+                        content: vec![LanguageModelToolResultContent::Text("text content".into())],
+                        output: Some(raw_output.clone()),
+                    },
+                );
+
+                thread.messages.push(Arc::new(Message::Agent(AgentMessage {
+                    content: vec![AgentMessageContent::ToolUse(tool_use)],
+                    tool_results,
+                    reasoning_details: None,
+                })));
+
+                thread.replay(cx)
+            })
+        });
+
+        // Collect all ToolCallUpdate events for this tool call.
+        let scoped_id = scoped_tool_call_id(0, &tool_use_id);
+        let mut saw_raw_output = false;
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+                event
+                && update.tool_call_id == scoped_id
+                && let Some(output) = &update.fields.raw_output
+            {
+                saw_raw_output = true;
+                assert_eq!(output, &raw_output);
+            }
+        }
+        assert!(
+            saw_raw_output,
+            "raw_output must be sent to UI even when replay deserialization fails"
         );
     }
 

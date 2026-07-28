@@ -1072,6 +1072,22 @@ fn main() {
                             gpui_tokio::Tokio::handle_async(&*cx),
                         ) {
                             Ok(real) => {
+                                // Start the background consolidation timer before
+                                // moving the port into the Arc<dyn MemoryPort>.
+                                // The timer runs on the tokio runtime and fires
+                                // consolidation on the configured cadence,
+                                // decoupled from the ingestion path.
+                                //
+                                // The returned JoinHandle is dropped — in tokio,
+                                // dropping a JoinHandle detaches the task (it
+                                // continues running). We don't need to await it.
+                                if real.start_consolidation_timer().is_some() {
+                                    log::info!(
+                                        "hKask consolidation timer started \
+                                         (cadence: {}s)",
+                                        kask_settings.memory.consolidation_cadence_secs
+                                    );
+                                }
                                 let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
                                     std::sync::Arc::new(real);
                                 let bridge = std::sync::Arc::new(

@@ -253,26 +253,29 @@ impl EpisodicMemory {
 
     /// Query by entity **prefix** for a perspective, without touching
     /// `recalled_at`. Same as `query_for_deduped_untouched` but uses a
-    /// `LIKE 'prefix%'` match instead of an exact entity match.
+    /// `LIKE 'prefix%'` match instead of an exact entity match, and caps
+    /// the number of rows loaded via SQL LIMIT.
     ///
-    /// Used by `recall_context` to load all `chat:thread:*` episodic h_mems
-    /// in a single query, then filter by keyword overlap in memory. The
-    /// previous implementation queried the exact entity `"chat:thread:"`
-    /// (no thread_id suffix), which never matched the stored entities
-    /// `"chat:thread:<thread_id>"` — so the episodic keyword search was
-    /// dead code. This prefix variant fixes that.
+    /// Used by `recall_context` to load the most recent `limit` `chat:thread:*`
+    /// episodic h_mems in a single query, then filter by keyword overlap in
+    /// memory. The previous implementation queried the exact entity
+    /// `"chat:thread:"` (no thread_id suffix), which never matched the stored
+    /// entities `"chat:thread:<thread_id>"` — so the episodic keyword search
+    /// was dead code. Combined with the N+1 loop (one query per query word),
+    /// this was both broken and a write storm.
     ///
     /// expect: "I can recall deduplicated episodic h_mems with confidence decay"
     /// \[P3\] Motivating: Generative Space — recalls episodic h_mems by entity prefix
-    /// pre:  prefix is non-empty, perspective is valid
-    /// post: returns `Vec<HMem>` filtered by perspective, decayed, deduped, sorted by recency
+    /// pre:  prefix is non-empty, perspective is valid, limit > 0
+    /// post: returns up to `limit` `Vec<HMem>` filtered by perspective, decayed, deduped, sorted by recency
     /// post: `recalled_at` is NOT modified — caller touches used h_mems explicitly
     pub fn query_for_deduped_untouched_by_prefix(
         &self,
         prefix: &str,
         perspective: WebID,
+        limit: usize,
     ) -> Result<Vec<HMem>, EpisodicMemoryError> {
-        let h_mems = self.h_mem_store.query_by_entity_prefix(prefix)?;
+        let h_mems = self.h_mem_store.query_by_entity_prefix(prefix, limit)?;
         let mut filtered: Vec<HMem> = h_mems
             .into_iter()
             .filter(|t| t.access.perspective == Some(perspective))

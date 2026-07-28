@@ -81,6 +81,11 @@ pub struct Model {
     #[serde(default)]
     pub mode: ModelMode,
     pub provider: Option<Provider>,
+    /// Output price in USD per token, as reported by OpenRouter's `/models` endpoint
+    /// (`pricing.completion`). `None` when the endpoint did not report a price.
+    /// Used to de-list expensive models that exceed the configured output-price
+    /// threshold.
+    pub output_price_per_token: Option<f64>,
 }
 
 impl Model {
@@ -93,6 +98,7 @@ impl Model {
             Some(false),
             Some(ModelMode::Default),
             None,
+            None,
         )
     }
 
@@ -104,6 +110,7 @@ impl Model {
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
         provider: Option<Provider>,
+        output_price_per_token: Option<f64>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -113,6 +120,7 @@ impl Model {
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
             provider,
+            output_price_per_token,
         }
     }
 
@@ -473,6 +481,18 @@ pub struct ModelEntry {
     pub supported_parameters: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<ModelArchitecture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelPricing {
+    /// USD per token, as a string (OpenRouter returns prices as decimal strings).
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// USD per output token, as a string.
+    #[serde(default)]
+    pub completion: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -611,42 +631,50 @@ pub async fn list_models(
         let models = response
             .data
             .into_iter()
-            .map(|entry| Model {
-                name: entry.id,
-                // OpenRouter returns display names in the format "provider_name: model_name".
-                // When displayed in the UI, these names can get truncated from the right.
-                // Since users typically already know the provider, we extract just the model name
-                // portion (after the colon) to create a more concise and user-friendly label
-                // for the model dropdown in the agent panel.
-                display_name: Some(
-                    entry
-                        .name
-                        .split(':')
-                        .next_back()
-                        .unwrap_or(&entry.name)
-                        .trim()
-                        .to_string(),
-                ),
-                max_tokens: entry.context_length.unwrap_or(2000000),
-                supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
-                supports_images: Some(
-                    entry
-                        .architecture
-                        .as_ref()
-                        .map(|arch| arch.input_modalities.contains(&"image".to_string()))
-                        .unwrap_or(false),
-                ),
-                mode: if entry
-                    .supported_parameters
-                    .contains(&"reasoning".to_string())
-                {
-                    ModelMode::Thinking {
-                        budget_tokens: Some(4_096),
-                    }
-                } else {
-                    ModelMode::Default
-                },
-                provider: None,
+            .map(|entry| {
+                let output_price_per_token = entry
+                    .pricing
+                    .as_ref()
+                    .and_then(|p| p.completion.as_deref())
+                    .and_then(|s| s.parse::<f64>().ok());
+                Model {
+                    name: entry.id,
+                    // OpenRouter returns display names in the format "provider_name: model_name".
+                    // When displayed in the UI, these names can get truncated from the right.
+                    // Since users typically already know the provider, we extract just the model name
+                    // portion (after the colon) to create a more concise and user-friendly label
+                    // for the model dropdown in the agent panel.
+                    display_name: Some(
+                        entry
+                            .name
+                            .split(':')
+                            .next_back()
+                            .unwrap_or(&entry.name)
+                            .trim()
+                            .to_string(),
+                    ),
+                    max_tokens: entry.context_length.unwrap_or(2000000),
+                    supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
+                    supports_images: Some(
+                        entry
+                            .architecture
+                            .as_ref()
+                            .map(|arch| arch.input_modalities.contains(&"image".to_string()))
+                            .unwrap_or(false),
+                    ),
+                    mode: if entry
+                        .supported_parameters
+                        .contains(&"reasoning".to_string())
+                    {
+                        ModelMode::Thinking {
+                            budget_tokens: Some(4_096),
+                        }
+                    } else {
+                        ModelMode::Default
+                    },
+                    provider: None,
+                    output_price_per_token,
+                }
             })
             .collect();
 

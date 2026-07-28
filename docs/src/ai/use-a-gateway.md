@@ -70,6 +70,22 @@ You can add custom models to the OpenRouter provider in settings:
 
 Custom model entries support fields such as `name`, `display_name`, `max_tokens`, `max_output_tokens`, `max_completion_tokens`, `supports_tools`, `supports_images`, and `mode`.
 
+### De-listing Expensive Models {#openrouter-price-filter}
+
+OpenRouter publishes per-model pricing on its `/models` endpoint. To protect against accidentally selecting a model that charges tens or hundreds of dollars per million output tokens, you can set a maximum output price (USD per million tokens). Models fetched from OpenRouter whose reported output price exceeds the threshold are silently removed from the model picker. Models with no reported price (such as `openrouter/auto`, which uses a sentinel `-1`) and models you explicitly list under `available_models` are always kept.
+
+```json [settings]
+{
+  "language_models": {
+    "open_router": {
+      "max_output_price_per_million_tokens": 5.0
+    }
+  }
+}
+```
+
+Set the value to `null` (or omit the key) to disable the filter and show every model OpenRouter offers.
+
 ### OpenRouter Provider Routing {#openrouter-provider-routing}
 
 You can control how OpenRouter routes a custom model request among upstream providers with the `provider` object on each model entry.

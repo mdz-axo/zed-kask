@@ -35,6 +35,11 @@ pub struct OpenRouterSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
     pub custom_headers: CustomHeaders,
+    /// Maximum output price (USD per million tokens) at which a model fetched
+    /// from OpenRouter's `/models` endpoint is offered in the picker. Models
+    /// whose `pricing.completion` exceeds this value are de-listed. `None`
+    /// disables the filter.
+    pub max_output_price_per_million_tokens: Option<f64>,
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -217,10 +222,16 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let settings = Self::settings(cx);
+        let max_output_price_per_million_tokens = settings.max_output_price_per_million_tokens;
+        // USD per million tokens -> USD per token. `None` disables the filter.
+        let max_output_price_per_token =
+            max_output_price_per_million_tokens.map(|usd_per_m| usd_per_m / 1_000_000.0);
+
         let mut models_from_api = self.state.read(cx).available_models.clone();
         let mut settings_models = Vec::new();
 
-        for model in &Self::settings(cx).available_models {
+        for model in &settings.available_models {
             settings_models.push(open_router::Model {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
@@ -229,6 +240,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 supports_images: model.supports_images,
                 mode: model.mode.unwrap_or_default(),
                 provider: model.provider.clone(),
+                // User-configured models are always shown regardless of price.
+                output_price_per_token: None,
             });
         }
 
@@ -245,6 +258,21 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
 
         models_from_api
             .into_iter()
+            .filter(|model| {
+                // De-list models whose reported output price exceeds the configured
+                // threshold. Models with no reported price (e.g. `openrouter/auto`,
+                // which uses `-1` sentinel, and user-configured models) are kept.
+                let Some(max_per_token) = max_output_price_per_token else {
+                    return true;
+                };
+                let Some(price_per_token) = model.output_price_per_token else {
+                    return true;
+                };
+                if !price_per_token.is_finite() || price_per_token < 0.0 {
+                    return true;
+                }
+                price_per_token <= max_per_token
+            })
             .map(|model| self.create_language_model(model))
             .collect()
     }
@@ -1122,6 +1150,7 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
         );
         let expected_session_id = "a".repeat(MAX_OPEN_ROUTER_SESSION_ID_LENGTH);
         let request = LanguageModelRequest {
@@ -1193,6 +1222,7 @@ mod tests {
             Some(200000),
             Some(true),
             Some(false),
+            None,
             None,
             None,
         );
@@ -1346,6 +1376,7 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
         );
 
         let request = LanguageModelRequest {
@@ -1407,6 +1438,7 @@ mod tests {
             Some(128000),
             Some(true),
             Some(false),
+            None,
             None,
             None,
         );

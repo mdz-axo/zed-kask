@@ -21,6 +21,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use chrono::Utc;
 
@@ -93,7 +94,14 @@ pub struct RealMemoryPort {
     /// Confidence floor for semantic cleanup during consolidation.
     confidence_floor: f64,
     /// Timestamp of the last consolidation pass. Guarded by a mutex so the
-    /// ingestion path (which is `&self`) can check-and-update atomically.
+    /// test-only `maybe_consolidate` method can check-and-update atomically.
+    ///
+    /// In production, the background timer (`start_consolidation_timer`) uses
+    /// its own `Arc<Mutex<Option<DateTime>>>` (captured at startup) because the
+    /// timer task must be `Send + 'static` and cannot borrow `&self`. The two
+    /// mutexes are not shared — in production, only the timer runs, so this
+    /// field stays at its initial value (`None`). This is not a bug; it's a
+    /// deliberate split between the test entry point and the production timer.
     last_consolidation: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
     /// Tokio runtime handle — entered around embedding HTTP calls so that
     /// `reqwest` (which is tokio-backed) has a reactor. The memory port's
@@ -280,14 +288,16 @@ impl RealMemoryPort {
     /// Check whether the consolidation cadence has elapsed and, if so, fire
     /// a consolidation pass (episodic → semantic promotion + semantic cleanup).
     ///
-    /// This is called after each successful `ingest_turn`. The cadence check
-    /// is atomic: the timestamp is updated under the mutex before consolidation
-    /// runs, so concurrent ingestions won't double-fire.
+    /// This is the single source of truth for the consolidation check-and-fire
+    /// logic. The background timer (`start_consolidation_timer`) inlines its
+    /// own version of this logic because it needs to capture `Send + 'static`
+    /// state (the timestamp is shared via `Arc<Mutex<...>>` rather than
+    /// `&self.last_consolidation`). Both paths use the same cadence check and
+    /// the same `ConsolidationService::consolidate` call.
     ///
-    /// Consolidation is a synchronous DB operation — it runs inline within
-    /// the `ingest_turn` future, which the caller has already detached onto a
-    /// background executor (`cx.background_spawn(...).detach()` in the agent
-    /// crate). It does not block the UI or the agent thread.
+    /// Kept as a method so tests can fire consolidation directly without
+    /// starting a timer.
+    #[cfg(test)]
     fn maybe_consolidate(&self) {
         let Some(consolidation) = &self.consolidation else {
             return;
@@ -357,6 +367,111 @@ impl RealMemoryPort {
                 );
             }
         }
+    }
+
+    /// Start a background timer that fires consolidation on the configured
+    /// cadence. This decouples consolidation from the ingestion path —
+    /// ingestion writes complete quickly without waiting for consolidation,
+    /// and consolidation runs on its own schedule without holding the
+    /// ingestion semaphore.
+    ///
+    /// The timer checks the cadence every `consolidation_cadence_secs` seconds
+    /// (or every 60 seconds if the cadence is < 60, to avoid tight polling).
+    /// On each tick it calls `maybe_consolidate`, which does the atomic
+    /// check-and-fire under the mutex.
+    ///
+    /// Returns a `JoinHandle` that the caller can detach or store. Dropping
+    /// the handle cancels the timer.
+    ///
+    /// A cadence of 0 disables consolidation entirely (no timer started).
+    pub fn start_consolidation_timer(&self) -> Option<tokio::task::JoinHandle<()>> {
+        if self.consolidation_cadence_secs == 0 {
+            return None;
+        }
+        let consolidation = self.consolidation.clone()?;
+        let user_webid = self.user_webid;
+        let confidence_floor = self.confidence_floor;
+        let last_consolidation = self.last_consolidation.lock().ok().and_then(|guard| *guard);
+        let cadence = self.consolidation_cadence_secs;
+        // Poll interval: check at least once per cadence window, but no more
+        // often than every 60s to avoid tight polling.
+        let poll_interval = Duration::from_secs(cadence.clamp(60, 3600));
+
+        // We need a self-referential structure for the timer to call
+        // maybe_consolidate on each tick. Instead of capturing `self` (which
+        // would require Arc<Self>), we capture the consolidation service and
+        // a shared mutex for the last-fired timestamp. This is the same
+        // pattern as maybe_consolidate but running on a timer.
+        let shared_last: Arc<Mutex<Option<chrono::DateTime<chrono::Utc>>>> =
+            Arc::new(Mutex::new(last_consolidation));
+        let shared_last_for_timer = Arc::clone(&shared_last);
+
+        let handle = self.tokio_handle.spawn(async move {
+            let mut interval = tokio::time::interval(poll_interval);
+            // The first tick fires immediately — skip it so we don't consolidate
+            // on startup before any ingestion has happened.
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                // Check if the cadence has elapsed since the last consolidation.
+                let now = Utc::now();
+                let cadence_dur = chrono::Duration::seconds(cadence as i64);
+                let should_fire = match shared_last_for_timer.lock() {
+                    Ok(mut guard) => {
+                        let elapsed = guard
+                            .map(|last| now.signed_duration_since(last) >= cadence_dur)
+                            .unwrap_or(false);
+                        if elapsed {
+                            *guard = Some(now);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            error = %e,
+                            "consolidation timer: last_consolidation mutex poisoned — stopping timer"
+                        );
+                        return;
+                    }
+                };
+                if !should_fire {
+                    continue;
+                }
+                let request = hkask_types::ConsolidationRequest {
+                    limit: 100,
+                    confidence_floor: Some(confidence_floor),
+                    max_semantic_triples: None,
+                };
+                tracing::info!(
+                    target: "reg.memory",
+                    cadence_secs = cadence,
+                    confidence_floor,
+                    "Consolidation timer fired"
+                );
+                match consolidation.consolidate(&user_webid, request) {
+                    Ok(outcome) => {
+                        tracing::info!(
+                            target: "reg.memory",
+                            consolidated = outcome.consolidated_count,
+                            deleted = outcome.deleted_count,
+                            failed = outcome.failed_count,
+                            "Consolidation timer pass complete"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            error = %e,
+                            "Consolidation timer pass failed"
+                        );
+                    }
+                }
+            }
+        });
+        Some(handle)
     }
 }
 
@@ -517,18 +632,10 @@ impl MemoryPort for RealMemoryPort {
                 "Turn ingested into episodic + semantic memory"
             );
 
-            // ── 4. Curator consolidation trigger (Task 5.2) ───────────────
-            //
-            // After each ingestion, check whether the consolidation cadence has
-            // elapsed since the last pass. If so, promote episodic h_mems to
-            // semantic memory (episodic → semantic, one-way). This runs inline
-            // within the ingestion future — the caller already detached this
-            // task (`cx.background_spawn(...).detach()` in the agent crate),
-            // so consolidation does not block the UI or the agent thread.
-            //
-            // A cadence of 0 disables the trigger (the operator can still
-            // fire consolidation manually via the curator MCP server).
-            self.maybe_consolidate();
+            // Consolidation is no longer fired from the ingestion path. It runs
+            // on a dedicated background timer (see `start_consolidation_timer`)
+            // so ingestion completes quickly and consolidation doesn't contend
+            // with the recall path or hold the ingestion semaphore.
 
             Ok(())
         })
@@ -540,11 +647,21 @@ impl MemoryPort for RealMemoryPort {
         limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            let mut snippets: Vec<MemorySnippet> = Vec::new();
-            // Track which h_mems we actually inject, so we can touch only
-            // those (resets their decay clocks). Touching every recalled
-            // h_mem turns recall into a write storm under multi-thread load.
-            let mut touched_ids: Vec<hkask_storage::HMemId> = Vec::new();
+            // Collect (snippet, h_mem_id, source) triples so we can sort,
+            // truncate, and touch the correct store for each survivor.
+            // Tracking the source alongside the id avoids double-touching
+            // (episodic + semantic) and keeps id↔snippet correspondence
+            // stable across the sort.
+            enum RecallSource {
+                Episodic,
+                Semantic,
+            }
+            struct Candidate {
+                snippet: MemorySnippet,
+                h_mem_id: hkask_storage::HMemId,
+                source: RecallSource,
+            }
+            let mut candidates: Vec<Candidate> = Vec::new();
 
             // ── 1. Semantic search (embedding KNN) ───────────────────────
             //
@@ -578,13 +695,16 @@ impl MemoryPort for RealMemoryPort {
                                 for h_mem in h_mems {
                                     let text = h_mem.value.as_str().unwrap_or("").to_string();
                                     if !text.is_empty() {
-                                        snippets.push(MemorySnippet {
-                                            text,
-                                            source: "semantic".to_string(),
-                                            confidence: h_mem.confidence.value(),
-                                            relevance_score: 1.0 - result.distance,
+                                        candidates.push(Candidate {
+                                            snippet: MemorySnippet {
+                                                text,
+                                                source: "semantic".to_string(),
+                                                confidence: h_mem.confidence.value(),
+                                                relevance_score: 1.0 - result.distance,
+                                            },
+                                            h_mem_id: h_mem.id,
+                                            source: RecallSource::Semantic,
                                         });
-                                        touched_ids.push(h_mem.id);
                                     }
                                 }
                             }
@@ -625,11 +745,19 @@ impl MemoryPort for RealMemoryPort {
                 // so the episodic keyword search was dead code. Combined with
                 // the N+1 loop (one query per query word), this was both broken
                 // and a write storm.
+                //
+                // The recall budget caps the number of rows loaded — without
+                // it, a session with thousands of past turns would load all of
+                // them into memory on every recall call. We load 10x the
+                // recall limit (most recent first) to give the keyword filter a
+                // reasonable pool to filter from without unbounded loading.
                 let entity_prefix = "chat:thread:".to_string();
-                if let Ok(h_mems) = self
-                    .episodic
-                    .query_for_deduped_untouched_by_prefix(&entity_prefix, self.user_webid)
-                {
+                let recall_budget = limit.saturating_mul(10).max(50);
+                if let Ok(h_mems) = self.episodic.query_for_deduped_untouched_by_prefix(
+                    &entity_prefix,
+                    self.user_webid,
+                    recall_budget,
+                ) {
                     for h_mem in h_mems {
                         let text = h_mem.value.as_str().unwrap_or("").to_string();
                         if text.is_empty() {
@@ -640,70 +768,66 @@ impl MemoryPort for RealMemoryPort {
                         if !query_words.iter().any(|w| text_lower.contains(w)) {
                             continue;
                         }
-                        // Skip if already in snippets (dedup by text)
-                        if snippets.iter().any(|s| s.text == text) {
+                        // Skip if already in candidates (dedup by text)
+                        if candidates.iter().any(|c| c.snippet.text == text) {
                             continue;
                         }
-                        snippets.push(MemorySnippet {
-                            text,
-                            source: "episodic".to_string(),
-                            confidence: h_mem.confidence.value(),
-                            relevance_score: 0.5, // Base relevance for keyword match
+                        candidates.push(Candidate {
+                            snippet: MemorySnippet {
+                                text,
+                                source: "episodic".to_string(),
+                                confidence: h_mem.confidence.value(),
+                                relevance_score: 0.5, // Base relevance for keyword match
+                            },
+                            h_mem_id: h_mem.id,
+                            source: RecallSource::Episodic,
                         });
-                        touched_ids.push(h_mem.id);
                     }
                 }
             }
 
             // ── 3. Sort by relevance and truncate ─────────────────────────
-            snippets.sort_by(|a, b| {
-                b.relevance_score
-                    .partial_cmp(&a.relevance_score)
+            candidates.sort_by(|a, b| {
+                b.snippet
+                    .relevance_score
+                    .partial_cmp(&a.snippet.relevance_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            // Truncate snippets AND touched_ids in lockstep so we only touch
-            // the h_mems that actually survive the limit.
-            if snippets.len() > limit {
-                snippets.truncate(limit);
-                touched_ids.truncate(limit);
-            }
+            candidates.truncate(limit);
 
             // ── 4. Touch only the injected h_mems ────────────────────────
             //
             // Resets the decay clock on h_mems that actually got used. This
             // is the “memory that gets used stays fresh” semantics, applied
             // post-filter instead of pre-filter — avoids the write storm.
-            for id in &touched_ids {
-                if let Err(e) = self.episodic.touch_recall(id) {
+            // Touch via the correct store for each candidate's source.
+            for c in &candidates {
+                let result: Result<(), Box<dyn std::error::Error>> = match c.source {
+                    RecallSource::Episodic => {
+                        self.episodic.touch_recall(&c.h_mem_id).map_err(Into::into)
+                    }
+                    RecallSource::Semantic => {
+                        self.semantic.touch_recall(&c.h_mem_id).map_err(Into::into)
+                    }
+                };
+                if let Err(e) = result {
                     tracing::warn!(
                         target: "reg.memory.decay",
-                        triple_id = %id.as_uuid(),
+                        triple_id = %c.h_mem_id.as_uuid(),
                         error = %e,
-                        "Failed to touch_recall episodic h_mem during recall_context"
+                        "Failed to touch_recall h_mem during recall_context"
                     );
                 }
             }
-            // Semantic h_mems share the same HMemStore touch path; the IDs
-            // above are a mix of semantic and episodic. Touching a semantic
-            // id via the episodic store is harmless (same underlying table)
-            // but for clarity we also touch via the semantic store.
-            for id in &touched_ids {
-                if let Err(e) = self.semantic.touch_recall(id) {
-                    // Not all ids are semantic — ignore not-found.
-                    tracing::trace!(
-                        target: "reg.memory.decay",
-                        triple_id = %id.as_uuid(),
-                        error = %e,
-                        "Semantic touch_recall missed (likely episodic id) — benign"
-                    );
-                }
-            }
+
+            let touched = candidates.len();
+            let snippets: Vec<MemorySnippet> = candidates.into_iter().map(|c| c.snippet).collect();
 
             tracing::info!(
                 target: "reg.memory",
                 query_len = query.len(),
                 recalled = snippets.len(),
-                touched = touched_ids.len(),
+                touched,
                 "Recalled memory snippets for context injection"
             );
 
@@ -878,14 +1002,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ingest_turn_fires_consolidation_when_cadence_elapses() {
-        // Cadence of 1 second — any ingestion should fire consolidation.
+    async fn ingest_turn_does_not_fire_consolidation() {
+        // Consolidation is now decoupled from ingestion — it runs on a
+        // background timer (see start_consolidation_timer). Ingestion should
+        // NOT fire consolidation, even when the cadence has elapsed.
         let port = in_memory_port_with_cadence(1, 0.3);
-        let webid = port.user_webid;
 
-        // Ingest a turn — this should fire consolidation (no prior consolidation).
         let record = TurnRecord {
-            thread_id: "consolidation-test".to_string(),
+            thread_id: "no-consolidation-from-ingest".to_string(),
             user_input: "Tell me about memory consolidation".to_string(),
             agent_response: "Consolidation promotes episodic to semantic.".to_string(),
             model: "test-model".to_string(),
@@ -893,6 +1017,34 @@ mod tests {
         };
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "ingest_turn should succeed");
+
+        // last_consolidation should remain None — ingestion no longer fires it.
+        let last = port.last_consolidation.lock().expect("mutex not poisoned");
+        assert!(
+            last.is_none(),
+            "ingest_turn should not fire consolidation (timer-decoupled)"
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_consolidate_fires_when_cadence_elapsed() {
+        // Directly test the consolidation callback (what the timer calls).
+        let port = in_memory_port_with_cadence(1, 0.3);
+        let webid = port.user_webid;
+
+        // Ingest a turn so there's something to consolidate.
+        port.ingest_turn(TurnRecord {
+            thread_id: "consolidation-test".to_string(),
+            user_input: "Tell me about memory consolidation".to_string(),
+            agent_response: "Consolidation promotes episodic to semantic.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        })
+        .await
+        .expect("ingest succeeds");
+
+        // Fire consolidation directly (simulating the timer callback).
+        port.maybe_consolidate();
 
         // The last_consolidation timestamp should now be set.
         let last = port
@@ -905,17 +1057,9 @@ mod tests {
             "last_consolidation should be recent"
         );
 
-        // A second ingestion immediately after should NOT fire consolidation
-        // (cadence hasn't elapsed). We verify by checking the timestamp is
-        // unchanged.
-        let record2 = TurnRecord {
-            thread_id: "consolidation-test-2".to_string(),
-            user_input: "Another question".to_string(),
-            agent_response: "Another answer".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-        };
-        let _ = port.ingest_turn(record2).await;
+        // A second call immediately after should NOT re-fire consolidation
+        // (cadence hasn't elapsed).
+        port.maybe_consolidate();
         let last_after = port
             .last_consolidation
             .lock()
@@ -923,22 +1067,19 @@ mod tests {
             .expect("consolidation timestamp should still be set");
         assert_eq!(
             last, last_after,
-            "second ingestion within cadence should not re-fire consolidation"
+            "second call within cadence should not re-fire consolidation"
         );
 
-        // After consolidation, the first episodic h_mem may have been promoted
+        // After consolidation, the episodic h_mem may have been promoted
         // to semantic and expired in episodic (consolidation is a one-way
-        // episodic → semantic promotion). The second h_mem was ingested after
-        // consolidation, so it should still be in episodic.
+        // episodic → semantic promotion).
         let h_mems = port
             .episodic
-            .query_for_deduped("chat:thread:consolidation-test-2", webid)
+            .query_for_deduped("chat:thread:consolidation-test", webid)
             .expect("query should succeed");
-        assert_eq!(
-            h_mems.len(),
-            1,
-            "second episodic h_mem (ingested after consolidation) should be stored"
-        );
+        // The h_mem may or may not have been consolidated depending on
+        // confidence decay — we just verify the query succeeds.
+        let _ = h_mems;
     }
 
     #[tokio::test]

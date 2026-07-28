@@ -592,6 +592,11 @@ pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenRouterAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
+    /// Maximum output price (USD per million tokens) at which a model fetched
+    /// from OpenRouter's `/models` endpoint is offered in the picker. Models
+    /// whose `pricing.completion` exceeds this value are de-listed.
+    /// `None` disables the filter. Default: `5.0`.
+    pub max_output_price_per_million_tokens: Option<f64>,
 }
 
 #[with_fallible_options]
