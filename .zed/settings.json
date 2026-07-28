@@ -69,4 +69,8 @@
     "**/.settings",
   ],
   "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
+  // zed-kask: point at the local kask collab server so /api/kask-skills
+  // resolves. `build_zed_api_url` maps localhost:3000 -> localhost:8080.
+  // Override per-session with ZED_SERVER_URL if needed.
+  "server_url": "http://localhost:3000",
 }

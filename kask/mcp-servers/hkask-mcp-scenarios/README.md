@@ -6,7 +6,7 @@ Scenario-planning MCP server. It turns a framed decision into candidate events, 
 
 | Variable | Purpose |
 |---|---|
-| `HKASK_MCP_HOST` | Optional host identity used during MCP bootstrap |
+| `HKASK_WEBID` | Optional WebID identity for Regulation attribution (falls back to anonymous). |
 
 ## Tools
 

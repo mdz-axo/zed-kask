@@ -8,6 +8,14 @@ Welcome to **Zed-Kask** — a fork of [Zed](https://zed.dev), the high-performan
 
 Zed-Kask is one clone, one build, one CI. Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the small set of seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md).
 
+> **Prebuilt binaries are available** for Linux x86_64. Install `zed-kask` plus all `hkask-mcp-*` MCP server binaries with one command:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
+> ```
+>
+> The script downloads the latest release archive, verifies it against the published `SHA256SUMS`, and installs to `~/.local/bin`. See [Installation](#installation) for channel selection, pinning, and source-build fallback.
+
 ---
 
 ## What Kask Is

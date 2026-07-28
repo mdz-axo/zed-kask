@@ -213,6 +213,33 @@ the `Toggle` action (deploys a new item if none exists), NOT `ToggleFocus`
 Dock `Panel`s register `ToggleFocus` as their `toggle_action`, so the menu
 pattern differs between docks and center-pane items.
 
+## Center-pane `Item` deploy-and-focus
+
+When a `Toggle` action handler for a center-pane `Item` deploys a new item via
+`workspace.add_item_to_active_pane(Box::new(page), None, true, window, cx)`,
+the `activate = true` flag activates the item in the pane but does NOT transfer
+keyboard focus to it on the same turn if the item's `Focusable::focus_handle`
+impl delegates to a child entity constructed inside `cx.new` (e.g. an inner
+`Editor`). The child's `FocusHandle` isn't reachable through the workspace
+focus chain until a subsequent turn. Symptom: the user must click the menu
+entry / status bar button twice — the first click adds the item, the second
+click hits the `existing` branch and focuses via `activate_item`.
+
+Fix: after `add_item_to_active_pane`, explicitly call
+`page.focus_handle(cx).focus(window, cx)` on the newly created entity. Clone
+the `Entity` before boxing it so the handle remains available:
+
+```rust
+let page = MyPage::new(workspace, window, cx);
+workspace.add_item_to_active_pane(Box::new(page.clone()), None, true, window, cx);
+page.focus_handle(cx).focus(window, cx);
+```
+
+This is NOT needed when `Focusable::focus_handle` returns a stable field
+created in the constructor (e.g. `self.focus_handle.clone()`), because that
+handle is reachable immediately. The trap is specific to delegated focus
+handles (child `Editor`, child `Input`, etc.).
+
 # zed-kask integration traps
 
 These traps recur when modifying the Kask↔Zed seam. Each was hit multiple

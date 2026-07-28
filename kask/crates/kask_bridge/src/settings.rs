@@ -84,7 +84,14 @@ pub struct KaskSettings {
 }
 
 /// MCP server load configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+///
+/// Manual `Default` impl: the derived `Default` would set `load_default = false`
+/// (the `bool` default), but the intended default — matching the `#[serde(default =
+/// "default_true")]` attribute and the docstring ("10 servers") — is `true`. When the
+/// user has a `kask` section but no `kask.mcp` subsection, `From<KaskSettingsContent>`
+/// falls back to `Default::default()`; a derived `Default` would silently disable all
+/// kask MCP servers and `sync_kask_mcp_servers` would register nothing.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMcpSettings {
     /// Whether to load the default MCP server set (10 servers).
     /// Set to `false` to disable all kask MCP servers.
@@ -94,6 +101,15 @@ pub struct KaskMcpSettings {
     /// Per-server overrides (e.g., `"curator": false` to unload the curator MCP).
     #[serde(default)]
     pub overrides: HashMap<String, bool>,
+}
+
+impl Default for KaskMcpSettings {
+    fn default() -> Self {
+        Self {
+            load_default: default_true(),
+            overrides: HashMap::default(),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -1239,5 +1255,39 @@ mod tests {
     fn kask_settings_default_corpus_embedding_dim_is_not_zero() {
         let settings = KaskSettings::default();
         assert_eq!(settings.corpus.embedding_dim, 1024);
+    }
+
+    // Regression test for the silent MCP-server-registration bug (2026-07-28).
+    // KaskMcpSettings derived Default, but bool::default() == false, not true.
+    // The #[serde(default = "default_true")] attribute only fires during
+    // deserialization, NOT for Default::default(). When the user had a `kask`
+    // section but no `kask.mcp` subsection, From<KaskSettingsContent> fell back
+    // to KaskMcpSettings::default() → load_default: false, and sync_kask_mcp_servers
+    // treated all 10 servers as disabled, registering nothing. The manual Default
+    // impl above returns true, matching the serde default.
+    #[test]
+    fn mcp_settings_default_load_default_is_true() {
+        let default_mcp = KaskMcpSettings::default();
+        assert!(
+            default_mcp.load_default,
+            "KaskMcpSettings::default() must return load_default: true, not false — \
+             a false default silently disables all kask MCP server registration"
+        );
+    }
+
+    // The bug manifests when a user has a `kask` section but no `kask.mcp`
+    // subsection: From<KaskSettingsContent> hits the `.unwrap_or_default()` path.
+    // This test pins that path to load_default: true.
+    #[test]
+    fn kask_settings_from_content_without_mcp_section_loads_defaults() {
+        let content = KaskSettingsContent {
+            mcp: None,
+            ..Default::default()
+        };
+        let settings = KaskSettings::from(content);
+        assert!(
+            settings.mcp.load_default,
+            "a kask section with no mcp subsection must default to load_default: true"
+        );
     }
 }

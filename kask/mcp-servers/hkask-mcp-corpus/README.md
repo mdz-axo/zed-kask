@@ -120,7 +120,7 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 | `HKASK_QA_MODEL` | Default provider-prefixed QA model. A request-level `model` wins; otherwise the router uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`. |
 | `HKASK_DEFAULT_MODEL` | Default generation model for all inference (also used for prose composition). |
 | `HKASK_USE_FAL_DOCRES` | Set to `true` to enable fal.ai docres binarization enhancement (opt-in, ~40s latency). Requires `FALAI_API_KEY`. |
-| `HKASK_MCP_HOST` | UserPod identity for Regulation narrative memory. |
+| `HKASK_WEBID` | WebID identity for Regulation narrative memory. |
 
 ### OCR Thresholds (via env vars or `settings.json`)
 

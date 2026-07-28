@@ -63,12 +63,21 @@ pub fn init(cx: &mut App) {
                     let extensions_page =
                         KaskExtensionsPage::new(workspace, None, None, window, cx);
                     workspace.add_item_to_active_pane(
-                        Box::new(extensions_page),
+                        Box::new(extensions_page.clone()),
                         None,
                         true,
                         window,
                         cx,
-                    )
+                    );
+                    // zed-kask: explicitly focus the new page's query editor.
+                    // Without this, the first Toggle click adds the item but
+                    // leaves focus on the previous element (e.g. the View
+                    // menu), so the user has to click a second time to actually
+                    // interact with the page. `KaskExtensionsPage::focus_handle`
+                    // delegates to the query editor, which is constructed
+                    // inside `cx.new` and isn't reachable through the workspace
+                    // focus chain on the same turn unless we focus it here.
+                    extensions_page.focus_handle(cx).focus(window, cx);
                 }
             })
             .register_action(move |workspace, _: &ToggleFocus, window, cx| {
@@ -947,6 +956,12 @@ impl Item for KaskExtensionsPage {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("Kask Extensions Page Opened")
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        // zed-kask: per the extensions-panel plan §3 step 4, reuse the kask
+        // logo icon for visual consistency with the kask panel tab.
+        Some(Icon::new(IconName::Kask).color(Color::Muted))
     }
 
     fn show_toolbar(&self) -> bool {

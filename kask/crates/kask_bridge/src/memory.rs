@@ -165,7 +165,11 @@ impl RealMemoryPort {
         }
         // Clamp 0 → 1024: the warn above signals the misconfiguration; this
         // keeps the system functional (degraded) instead of panicking.
-        let embedding_dim = if embedding_dim == 0 { 1024 } else { embedding_dim };
+        let embedding_dim = if embedding_dim == 0 {
+            1024
+        } else {
+            embedding_dim
+        };
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));

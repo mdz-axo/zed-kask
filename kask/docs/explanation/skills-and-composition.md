@@ -300,7 +300,7 @@ The `visibility` field controls where the skill appears:
 |-------|------|-------------|
 | `private` | `.agents/skills/` only | Author's working copy; not exported |
 | `public` | Both zones | Available to all; published to `skills/` |
-| `shared` | Both zones | Available to authenticated userpods |
+| `shared` | Both zones | Available to authenticated agents |
 
 ### Deriving SKILL.md from the Registry
 
@@ -346,7 +346,7 @@ To make a private skill available in the public zone, use the skill-maintenance 
 
 1. Copies the skill directory from `.agents/skills/<name>/` to `skills/<namespace>--<name>/`
 2. Sets `visibility: public` in the published copy's SKILL.md
-3. Sets `namespace` to the current userpod name
+3. Sets `namespace` to the current agent name
 4. Emits a `reg.skill` span (`skill_published`)
 
 After publishing, verify by querying the skill status surface for your skill name.
@@ -611,7 +611,7 @@ dotenvy = { workspace = true }
 
 ### Step 1: Define the Server Struct
 
-Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with mandatory fields (`webid`, `userpod`, `daemon`) plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The `daemon` field is dead in zed-kask (always `None`; the daemon was deleted — `DaemonClient` is retained only for compile-stability, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
+Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with a mandatory `webid` field plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The former `userpod`/`daemon` fields were removed when the daemon transport was deleted; semantic-memory recording now goes through `ToolContext::record_tool_outcome` (default: `reg.memory` warning; the macro's `impl_tool_context!` override: in-process `reg.memory` debug log). Thread-level memory via `RealMemoryPort` (D6) is the richer path.
 
 ```rust
 // mcp-servers/<your-mcp-package>/src/lib.rs
@@ -631,7 +631,7 @@ mcp_server! {
 }
 ```
 
-The macro generates a struct with `webid`, `userpod`, `daemon`, and your custom fields, a `new()` constructor, and a `ToolContext` implementation. The `daemon` field is dead in zed-kask (always `None`). The server struct can have zero custom fields using the `;` variant:
+The macro generates a struct with `webid` and your custom fields, a `new()` constructor, and a `ToolContext` implementation. The server struct can have zero custom fields using the `;` variant:
 
 ```rust
 mcp_server! {
@@ -693,29 +693,23 @@ impl ExampleServer {
 
 ### Step 4: Write the `run()` Function
 
-Every hKask MCP server has a `run()` function that accepts the bootstrap result and calls `run_server()` with a factory closure. In the in-process model (D3), this factory is invoked directly by zed-kask's `context_server` transport rather than spawning a stdio subprocess:
+Every hKask MCP server has a `run()` function that calls `run_server()` with a factory closure. In the in-process model (D3), this factory is invoked directly by zed-kask's `context_server` transport rather than spawning a stdio subprocess:
 
 ```rust
-use hkask_mcp_server::{McpError, run_server};
+use hkask_mcp_server::{McpError, run_server, ServerContext};
 
-pub async fn run(
-    userpod: String,
-) -> Result<(), McpError> {
+pub async fn run() -> Result<(), McpError> {
     run_server(
         "example",
         env!("CARGO_PKG_VERSION"),
-        |_ctx| {
-            let webid = hkask_types::WebID::new();
+        |ctx: ServerContext| {
             let server = ExampleServer::new(
-                webid,
-                userpod.clone(),
-                None, // daemon_client — always None (daemon deleted in 2026-07-25 cleanup)
-                None,
-                std::collections::HashMap::new(),
+                ctx.webid,
+                /* your custom fields */
             );
             Ok(server)
         },
-        vec![],
+        vec![],  // CredentialRequirements
     ).await
 }
 ```
@@ -733,33 +727,24 @@ The binary entry point remains for standalone testing. In production, zed-kask l
 
 #[tokio::main]
 async fn main() -> Result<(), hkask_mcp_server::McpError> {
-    let bootstrap = hkask_mcp_server::bootstrap_mcp_server(
-        "example",
-        "hkask.mcp.example",
-        "HKASK_MCP_HOST",
-    ).await;
-
-    hkask_mcp_example::run(
-        bootstrap.userpod,
-    ).await
+    hkask_mcp_example::run().await
 }
 ```
 
-`bootstrap_mcp_server` does:
-1. **Loads `.env`** — calls `dotenvy::dotenv().ok()`
-2. **Reads userpod identity** — from the env var you specify (default: `HKASK_MCP_HOST`). `bootstrap_mcp_server()` resolves userpod identity only (the daemon was deleted).
-3. **Falls back to direct mode** — `daemon_client` is always `None` (daemon deleted in 2026-07-25 cleanup; `verify_startup_gates()` was also deleted)
+The library's `run()` calls `hkask_mcp_server::run_server(name, version, factory, credentials)`, where `factory: FnOnce(ServerContext) -> Result<S, McpError>` receives a `ServerContext` and constructs the server struct. `ServerContext.webid` is resolved from `HKASK_WEBID` (falling back to anonymous if unset); `ServerContext.credentials` carries the resolved credential values for the `CredentialRequirement`s the server declared. No separate bootstrap step exists — `bootstrap_mcp_server()` and the `MCPBootstrap`/`userpod` concept were removed along with the daemon transport.
 
-### Startup Gate Behaviour
+### Startup Failure Modes
 
-| Gate | Failure | Result |
-|------|---------|--------|
-| Gate 1 (auth) | UserPod not authenticated | `McpError::Auth` — server fails to start |
-| Gate 2 (assignment) | UserPod not assigned to role | `McpError::RoleAssignment` — server fails to start |
-| Gate 3 (capability) | Some tools denied | Non-fatal — server starts, denied tools are unavailable |
-| Daemon unavailable | Cannot reach daemon socket | Falls back to direct mode (`daemon_client: None`) |
+Server startup can fail with `McpError` before reaching the MCP handshake:
 
-Gate 3 capability denials are non-fatal — the server starts in degraded mode. This matches the OCAP principle that tools are individually gated, not the whole server.
+| Failure | Result |
+|---------|--------|
+| `HKASK_DB_PASSPHRASE` set but missing its pair | `McpError::DatabasePassphrase` — server fails to start |
+| Required `CredentialRequirement`s unresolved | `McpError::MissingCredentials` — server fails to start (optional credentials are skipped) |
+| Storage driver error | `McpError::Storage` — server fails to start |
+| Transport (rmcp) error | `McpError::Transport` — server fails to start |
+
+`HKASK_WEBID` unset is **not** a startup failure — the server starts with an anonymous WebID and emits a `reg.memory` warning. Capability denials are not a startup concept in the current API; OCAP gating happens per-tool-invocation via `DelegationToken` verification in `McpRuntime::invoke`, not at server boot.
 
 ### Step 6: Register as an In-Process Builtin
 
@@ -784,7 +769,7 @@ Manual test (stdio, for development):
 
 ```bash
 cargo build -p <your-mcp-package>
-HKASK_MCP_HOST=test-userpod cargo run -p <your-mcp-package>
+HKASK_WEBID=<webid-uuid> cargo run -p <your-mcp-package>
 ```
 
 In-process test (production path): launch zed-kask and verify the server appears in the kask panel (D10) or agent panel tool list. The former `kask daemon start` standalone daemon mode has been removed.
@@ -796,7 +781,7 @@ In-process test (production path): launch zed-kask and verify the server appears
 | Missing `#[tool]` attribute | Every public async method that should be an MCP tool must have `#[tool(description = "...")]` |
 | Duplicate `ToolContext` impl | `mcp_server!` already calls `impl_tool_context!` — do not duplicate it |
 | No Regulation spans emitted | Always wrap tool logic in `execute_tool(self, "tool_name", async { ... }).await` |
-| Server starts as `"anonymous"` | Set `HKASK_MCP_HOST` (or your `host_env_var`) before starting |
+| Server starts as `"anonymous"` | Set `HKASK_WEBID` before starting (the server reads it at startup and falls back to anonymous if unset) |
 | Server not loaded by zed-kask | Add a `BuiltinMcpServer { id, binary, description }` entry to `BUILT_IN_MCP_SERVERS` in `crates/kask_bridge/src/mcp_servers.rs` (and keep `_IDS`/`_PAIRS` in sync) |
 | Tool name conflicts | Tool names are global across all MCP servers. Use a prefix convention (e.g., `example_ping`) |
 
@@ -1026,7 +1011,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 ## Cross-Reference
 
 - [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams (skill execution, Curator agent, in-process MCP transport)
-- [`PRINCIPLES.md` § P6 — Space for UserPods & Bots](../architecture/core/PRINCIPLES.md#p6--space-for-userpods--bots)
+- [`PRINCIPLES.md` § P6 — Space for UserPods](../architecture/core/PRINCIPLES.md#p6--space-for-userpods)
 - [`kata/mod.rs`](crates/hkask-services-kata-kanban/src/kata/mod.rs) — `KataEngine::execute()` dispatch (L333-486)
 - [`kata/improvement.rs`](crates/hkask-services-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
 - [`executor.rs`](crates/hkask-templates/src/executor.rs) — `ManifestExecutor::execute_manifest()` convergence loop (L209-686), `check_convergence()` (L746-799)

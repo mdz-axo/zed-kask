@@ -209,16 +209,19 @@ fn emit_tool_span(
 /// handles Regulation span emission, error serialization, and semantic memory
 /// recording automatically.
 ///
-/// Override `record_tool_outcome` to wire daemon-based experience recording.
+/// Override `record_tool_outcome` to wire richer semantic-memory recording.
 /// The default implementation emits a Regulation warning so the Curator knows memory
-/// recording is not configured.
+/// recording is not configured; the `impl_tool_context!` macro overrides it with
+/// an in-process `reg.memory` debug log.
 pub trait ToolContext {
     /// The WebID of the caller serving this tool (for Regulation span attribution).
     fn webid(&self) -> &hkask_types::WebID;
 
-    /// Record a tool outcome to semantic memory via the daemon.
-    /// Override this to wire daemon-based experience recording per Pattern D.
-    /// Default: emits a Regulation warning — memory not configured for this server.
+    /// Record a tool outcome to semantic memory.
+    /// Override this to wire richer per-server recording (e.g. the condenser's
+    /// `record_experience` → `EpisodicMemory::store`). Default: emits a Regulation
+    /// warning — memory not configured for this server; the `impl_tool_context!`
+    /// macro overrides this with an in-process `reg.memory` debug log.
     fn record_tool_outcome(&self, tool: &str, outcome: &str) {
         tracing::warn!(target: "reg.memory", tool = %tool, outcome = %outcome,
             "Tool outcome not persisted — ToolContext::record_tool_outcome not overridden");
