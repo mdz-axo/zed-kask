@@ -11105,6 +11105,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "kask_extensions_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloud_api_types",
+ "collections",
+ "command_palette_hooks",
+ "db",
+ "editor",
+ "extension",
+ "extension_host",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "num-format",
+ "picker",
+ "project",
+ "release_channel",
+ "schemars 1.0.4",
+ "semver",
+ "serde",
+ "settings",
+ "smallvec",
+ "strum 0.27.2",
+ "telemetry",
+ "theme_settings",
+ "ui",
+ "util",
+ "vim_mode_setting",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "kask_panel"
 version = "0.1.0"
 dependencies = [
