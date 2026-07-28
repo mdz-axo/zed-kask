@@ -13,12 +13,12 @@ use std::path::Path;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use crate::guard::ContentGuard;
+use hkask_guard::{ContentGuard, GuardConfig};
 
 /// Mandatory content safety guard — always active, not configurable off.
 /// P3.1 Social Generativity: core controls cannot be disabled.
 static GUARD: LazyLock<ContentGuard> =
-    LazyLock::new(|| ContentGuard::mandatory(&hkask_guard::GuardConfig::from_env()));
+    LazyLock::new(|| ContentGuard::mandatory(&GuardConfig::from_env()));
 
 /// Classification result for a single passage.
 #[derive(Debug, Clone)]
