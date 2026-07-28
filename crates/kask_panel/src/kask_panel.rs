@@ -1528,4 +1528,81 @@ mod tests {
         assert!(welcome.contains("nonexistent"));
         assert!(welcome.contains("MCP server"));
     }
+
+    // ── server_description ─────────────────────────────────────────────
+
+    #[test]
+    fn server_description_returns_known_descriptions() {
+        assert_eq!(
+            server_description("curator"),
+            "regulation cascade and algedonic signals"
+        );
+        assert_eq!(
+            server_description("codegraph"),
+            "code structure query and traversal"
+        );
+        assert_eq!(
+            server_description("training"),
+            "LoRA training configuration and audit"
+        );
+    }
+
+    #[test]
+    fn server_description_falls_back_for_unknown() {
+        assert_eq!(server_description("nonexistent"), "MCP server");
+    }
+
+    // ── build_system_prompt ────────────────────────────────────────────
+
+    #[test]
+    fn build_system_prompt_includes_server_name_and_description() {
+        let prompt = build_system_prompt("curator", &[]);
+        assert!(prompt.contains("curator"));
+        assert!(prompt.contains("regulation cascade and algedonic signals"));
+    }
+
+    #[test]
+    fn build_system_prompt_lists_tools() {
+        let tools = vec![
+            ToolDescriptor {
+                name: "regulation_status".to_string(),
+                description: "Fetch regulation status".to_string(),
+            },
+            ToolDescriptor {
+                name: "raise_issue".to_string(),
+                description: "Raise an algedonic issue".to_string(),
+            },
+        ];
+        let prompt = build_system_prompt("curator", &tools);
+        assert!(prompt.contains("/regulation_status"));
+        assert!(prompt.contains("Fetch regulation status"));
+        assert!(prompt.contains("/raise_issue"));
+        assert!(prompt.contains("Raise an algedonic issue"));
+    }
+
+    #[test]
+    fn build_system_prompt_notes_no_tools_when_empty() {
+        let prompt = build_system_prompt("codegraph", &[]);
+        assert!(prompt.contains("no tools discovered"));
+    }
+
+    #[test]
+    fn build_system_prompt_includes_curator_rememberance_guidance() {
+        let prompt = build_system_prompt("curator", &[]);
+        assert!(prompt.contains("Curator-specific guidance"));
+        assert!(prompt.contains("Remember"));
+    }
+
+    #[test]
+    fn build_system_prompt_omits_curator_guidance_for_other_servers() {
+        let prompt = build_system_prompt("codegraph", &[]);
+        assert!(!prompt.contains("Curator-specific guidance"));
+    }
+
+    // ── DEFAULT_SERVER_INDEX ───────────────────────────────────────────
+
+    #[test]
+    fn default_server_index_points_to_curator() {
+        assert_eq!(BUILT_IN_MCP_SERVERS[DEFAULT_SERVER_INDEX], "curator");
+    }
 }

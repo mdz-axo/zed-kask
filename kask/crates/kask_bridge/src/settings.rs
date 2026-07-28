@@ -9,6 +9,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
+use settings_content::KaskCorpusSettingsContent;
 use settings_content::KaskSettingsContent;
 
 use collections::HashMap;
@@ -1116,5 +1117,78 @@ impl From<KaskSettingsContent> for KaskSettings {
                     cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
                 }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression test for the silent `embedding_dim == 0` bug. A user
+    // setting `embedding_dim: 0` in their settings file would construct a
+    // zero-dimensional EmbeddingStore that rejects every vector with
+    // `DimensionMismatch { expected: 0, actual: N }`, silently disabling
+    // embedding-based recall. The `unwrap_or(1024)` default only fires for
+    // `None`, not for `Some(0)`. This test pins the fix: 0 is treated as
+    // "use default" (mirroring codegraph's `resolve_embedding_dim` guard).
+    #[test]
+    fn corpus_settings_treats_zero_embedding_dim_as_default() {
+        let content = KaskSettingsContent {
+            corpus: Some(KaskCorpusSettingsContent {
+                embedding_dim: Some(0),
+                embedding_model: None,
+                ocr_concurrency: None,
+                ocr_simple_max: None,
+                ocr_moderate_max: None,
+                ocr_sample_rate: None,
+                ocr_tuneable: None,
+                template_root: None,
+            }),
+            ..Default::default()
+        };
+        let settings = KaskSettings::from(content);
+        assert_eq!(
+            settings.corpus.embedding_dim, 1024,
+            "embedding_dim: 0 should fall back to the default (1024), \
+             not construct a zero-dimensional store"
+        );
+    }
+
+    #[test]
+    fn corpus_settings_preserves_explicit_nonzero_embedding_dim() {
+        let content = KaskSettingsContent {
+            corpus: Some(KaskCorpusSettingsContent {
+                embedding_dim: Some(2560),
+                embedding_model: None,
+                ocr_concurrency: None,
+                ocr_simple_max: None,
+                ocr_moderate_max: None,
+                ocr_sample_rate: None,
+                ocr_tuneable: None,
+                template_root: None,
+            }),
+            ..Default::default()
+        };
+        let settings = KaskSettings::from(content);
+        assert_eq!(settings.corpus.embedding_dim, 2560);
+    }
+
+    #[test]
+    fn corpus_settings_defaults_embedding_dim_when_absent() {
+        let content = KaskSettingsContent {
+            corpus: Some(KaskCorpusSettingsContent {
+                embedding_dim: None,
+                embedding_model: None,
+                ocr_concurrency: None,
+                ocr_simple_max: None,
+                ocr_moderate_max: None,
+                ocr_sample_rate: None,
+                ocr_tuneable: None,
+                template_root: None,
+            }),
+            ..Default::default()
+        };
+        let settings = KaskSettings::from(content);
+        assert_eq!(settings.corpus.embedding_dim, 1024);
     }
 }

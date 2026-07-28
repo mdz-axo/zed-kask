@@ -1803,9 +1803,7 @@ pub(crate) fn render_memory_page(
             SwitchField::new(
                 "kask-memory-auto-inject",
                 Some("Auto-Inject Memories"),
-                Some(
-                    "Whether to automatically inject recalled memories into prompts.".into(),
-                ),
+                Some("Whether to automatically inject recalled memories into prompts.".into()),
                 auto_inject,
                 move |state, _window, cx| {
                     let value = *state == ToggleState::Selected;

@@ -11,6 +11,7 @@
 pub mod budget;
 pub mod bundle;
 pub mod capability_validator;
+pub mod convergence;
 pub mod crate_loader;
 pub mod executor;
 pub mod manifest_loader;

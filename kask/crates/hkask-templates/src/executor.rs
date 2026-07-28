@@ -43,9 +43,10 @@
 //! `InferencePort` (for select/populate) and `ToolPort` (for execute),
 //! both of which are already dependencies of this crate.
 
-use crate::budget::{BudgetExhaustion, BudgetTracker};
+use crate::budget::BudgetTracker;
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleManifestStep;
+use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
 use crate::load_manifest_from_yaml;
 use crate::ports::{Result, TemplateError};
 use crate::template_renderer::{TemplateRenderer, render_minijinja};
@@ -414,34 +415,21 @@ impl ManifestExecutor {
         let mut steps = manifest.steps.clone();
         steps.sort_by_key(|s| s.ordinal);
 
-        let max_iterations = if manifest.convergence.max_iterations == 0 {
-            1 // single-pass for one-shot manifests
-        } else {
-            manifest.convergence.max_iterations
-        };
-        let threshold = manifest.convergence.threshold;
-        let field = manifest.convergence.convergence_field.clone();
-        let improvement_enabled = manifest.convergence.improvement_ratio > 0.0;
-        let min_iterations = manifest.convergence.min_iterations;
-        let mut baseline_quality: Option<f64> = None; // captured on first pass
+        // Unified convergence tracking (extracted to `convergence.rs`).
+        // Replaces 5 `let` locals (max_iterations, threshold, field,
+        // improvement_enabled, min_iterations, baseline_quality) with one tracker.
+        let mut convergence = ConvergenceTracker::new(&manifest.convergence);
+        let max_iterations = convergence.max_iterations();
+        let threshold = convergence.threshold();
+        let field = convergence.field().to_string();
+        let improvement_enabled = convergence.improvement_enabled();
         let mut iteration: u32 = 0;
         let mut recursion_depth: u8 = 0;
         let matryoshka_limit: u8 = hkask_capability::SYSTEM_MAX_RECURSION;
-        // Gas tracking — hard parent allocation for compute cycles
-        let gas_cap = manifest.gas.cap as u64;
-        let gas_cost_per_iter = manifest.gas.cost_per_iteration as u64;
-        let gas_alert_threshold = manifest.gas.alert_threshold;
-        let gas_hard_limit = manifest.gas.hard_limit;
-        let mut gas_used: u64 = 0;
-        let mut gas_alerted: bool = false;
-        // rJoule tracking — hard parent allocation for inference energy
-        // Cost per token is set by the inference provider/model config, not the manifest.
-        let rjoule_cap = manifest.rjoule.cap as f64;
-        let rjoule_alert_threshold = manifest.rjoule.alert_threshold;
-        let rjoule_hard_limit = manifest.rjoule.hard_limit;
-        let rjoule_enabled = rjoule_cap > 0.0;
-        let mut rjoule_used: f64 = 0.0;
-        let mut rjoule_alerted: bool = false;
+        // Unified gas + rJoule budget tracking (extracted to `budget.rs`).
+        // Replaces 6 `let mut` locals (gas_used, gas_alerted, rjoule_used,
+        // rjoule_alerted, plus the cap/threshold reads) with one tracker.
+        let mut budget = BudgetTracker::new(&manifest.gas, &manifest.rjoule);
 
         // Manifest-level fusion control: when manifest.fusion is Some(config),
         // all steps use this per-manifest fusion config (custom judge/panel/mode).
@@ -450,24 +438,15 @@ impl ManifestExecutor {
         // None inherits the manifest behavior.
         let manifest_fusion_config = manifest.fusion.clone();
 
-        context.insert(
-            "_convergence".to_string(),
-            serde_json::json!({
-                "threshold": threshold,
-                "max_iterations": max_iterations,
-                "field": field,
-                "status": "running",
-                "iterations_completed": 0,
-                "exit_reason": null,
-                "improvement_target": manifest.convergence.improvement_ratio,
-                "baseline_quality": null,
-                "gas_cap": gas_cap,
-                "gas_used": 0,
-                "gas_remaining": gas_cap,
-                "rjoule_cap": rjoule_cap,
-                "rjoule_used": 0.0,
-                "rjoule_remaining": rjoule_cap,
-            }),
+        // Initial convergence context (status: running, iteration 0).
+        let snap = budget.snapshot();
+        convergence.inject_running(
+            &mut context,
+            0,
+            snap.gas_used,
+            snap.gas_cap,
+            snap.rjoule_used,
+            snap.rjoule_cap,
         );
 
         let mut step_idx: usize = 0;
@@ -475,24 +454,14 @@ impl ManifestExecutor {
         'cascade: loop {
             iteration += 1;
             // Update live convergence context for template awareness
-            context.insert(
-                "_convergence".to_string(),
-                serde_json::json!({
-                    "threshold": threshold,
-                    "max_iterations": max_iterations,
-                    "field": field,
-                    "status": "running",
-                    "iterations_completed": iteration,
-                    "exit_reason": null,
-                    "improvement_target": manifest.convergence.improvement_ratio,
-                    "baseline_quality": baseline_quality,
-                    "gas_cap": gas_cap,
-                    "gas_used": gas_used,
-                    "gas_remaining": gas_cap.saturating_sub(gas_used),
-                    "rjoule_cap": rjoule_cap,
-                    "rjoule_used": rjoule_used,
-                    "rjoule_remaining": (rjoule_cap - rjoule_used).max(0.0),
-                }),
+            let snap = budget.snapshot();
+            convergence.inject_running(
+                &mut context,
+                iteration,
+                snap.gas_used,
+                snap.gas_cap,
+                snap.rjoule_used,
+                snap.rjoule_cap,
             );
 
             while step_idx < steps.len() {
@@ -551,15 +520,16 @@ impl ManifestExecutor {
                             reason = "abort action",
                             "REG"
                         );
-                        self.finalize_convergence_report(
+                        let snap = budget.snapshot();
+                        convergence.finalize_report(
                             &mut context,
-                            "converged",
+                            ConvergenceStatus::Converged,
                             "quality_met",
                             iteration,
-                            threshold,
-                            &field,
-                            baseline_quality,
-                            manifest.convergence.improvement_ratio,
+                            snap.gas_used,
+                            snap.gas_cap,
+                            snap.rjoule_used,
+                            snap.rjoule_cap,
                         );
                         break 'cascade;
                     }
@@ -573,15 +543,16 @@ impl ManifestExecutor {
                             reason = %reason,
                             "REG"
                         );
-                        self.finalize_convergence_report(
+                        let snap = budget.snapshot();
+                        convergence.finalize_report(
                             &mut context,
-                            "escalated",
+                            ConvergenceStatus::Escalated,
                             "obstacle_blocked",
                             iteration,
-                            threshold,
-                            &field,
-                            baseline_quality,
-                            manifest.convergence.improvement_ratio,
+                            snap.gas_used,
+                            snap.gas_cap,
+                            snap.rjoule_used,
+                            snap.rjoule_cap,
                         );
                         return Err(TemplateError::Manifest(format!(
                             "Cascade escalated at step {}: {}",
@@ -620,15 +591,16 @@ impl ManifestExecutor {
                                 limit = matryoshka_limit,
                                 "REG"
                             );
-                            self.finalize_convergence_report(
+                            let snap = budget.snapshot();
+                            convergence.finalize_report(
                                 &mut context,
-                                "maxed_out",
+                                ConvergenceStatus::MaxedOut,
                                 "energy_spent",
                                 iteration,
-                                threshold,
-                                &field,
-                                baseline_quality,
-                                manifest.convergence.improvement_ratio,
+                                snap.gas_used,
+                                snap.gas_cap,
+                                snap.rjoule_used,
+                                snap.rjoule_cap,
                             );
                             return Err(TemplateError::Manifest(format!(
                                 "Matryoshka depth limit ({}) exceeded at iteration {}",
@@ -659,15 +631,16 @@ impl ManifestExecutor {
 
                         // Check convergence before looping
                         if iteration >= max_iterations {
-                            self.finalize_convergence_report(
+                            let snap = budget.snapshot();
+                            convergence.finalize_report(
                                 &mut context,
-                                "maxed_out",
+                                ConvergenceStatus::MaxedOut,
                                 "energy_spent",
                                 iteration,
-                                threshold,
-                                &field,
-                                baseline_quality,
-                                manifest.convergence.improvement_ratio,
+                                snap.gas_used,
+                                snap.gas_cap,
+                                snap.rjoule_used,
+                                snap.rjoule_cap,
                             );
                             // Honor on_not_reached: if "escalate", emit span and
                             // return error instead of silently exiting.
@@ -686,25 +659,17 @@ impl ManifestExecutor {
                         }
 
                         // Check threshold convergence
-                        if self.check_convergence(
-                            &context,
-                            &manifest.convergence.convergence_field,
-                            threshold,
-                            manifest.convergence.improvement_ratio,
-                            &manifest.convergence.improvement_gate,
-                            baseline_quality,
-                            iteration,
-                            min_iterations,
-                        ) {
-                            self.finalize_convergence_report(
+                        if convergence.check_met(&context, iteration) {
+                            let snap = budget.snapshot();
+                            convergence.finalize_report(
                                 &mut context,
-                                "converged",
+                                ConvergenceStatus::Converged,
                                 "quality_met",
                                 iteration,
-                                threshold,
-                                &field,
-                                baseline_quality,
-                                manifest.convergence.improvement_ratio,
+                                snap.gas_used,
+                                snap.gas_cap,
+                                snap.rjoule_used,
+                                snap.rjoule_cap,
                             );
                             break 'cascade;
                         }
@@ -743,85 +708,24 @@ impl ManifestExecutor {
                             .execute_select(
                                 step,
                                 context,
-                                &mut gas_used,
-                                gas_cap,
-                                gas_cost_per_iter,
-                                &mut rjoule_used,
-                                rjoule_cap,
-                                rjoule_enabled,
-                                rjoule_hard_limit,
+                                &mut budget,
                                 manifest_fusion_config.as_ref(),
                             )
                             .await?;
-                        // Check gas exhaustion after select
-                        if gas_hard_limit && gas_used >= gas_cap {
-                            info!(
-                                target: "reg.skill.budget.gas_exhausted",
-                                iteration = iteration,
-                                gas_used = gas_used,
-                                gas_cap = gas_cap,
-                                "REG"
-                            );
-                            self.finalize_convergence_report(
+                        // Check budget exhaustion after select (unified gas + rJoule).
+                        if let Some(_exhausted) = budget.check_exhausted(iteration) {
+                            let snap = budget.snapshot();
+                            convergence.finalize_report(
                                 &mut context,
-                                "maxed_out",
+                                ConvergenceStatus::MaxedOut,
                                 "energy_spent",
                                 iteration,
-                                threshold,
-                                &field,
-                                baseline_quality,
-                                manifest.convergence.improvement_ratio,
+                                snap.gas_used,
+                                snap.gas_cap,
+                                snap.rjoule_used,
+                                snap.rjoule_cap,
                             );
                             break 'cascade;
-                        }
-                        // Gas alert threshold
-                        if !gas_alerted
-                            && gas_cap > 0
-                            && (gas_used as f64 / gas_cap as f64) >= gas_alert_threshold
-                        {
-                            gas_alerted = true;
-                            info!(
-                                target: "reg.skill.budget.gas_alert",
-                                gas_used = gas_used,
-                                gas_cap = gas_cap,
-                                pct = (gas_used as f64 / gas_cap as f64) * 100.0,
-                                "REG"
-                            );
-                        }
-                        // Check rJoule exhaustion after select
-                        if rjoule_enabled && rjoule_hard_limit && rjoule_used >= rjoule_cap {
-                            info!(
-                                target: "reg.skill.budget.rjoule_exhausted",
-                                iteration = iteration,
-                                rjoule_used = rjoule_used,
-                                rjoule_cap = rjoule_cap,
-                                "REG"
-                            );
-                            self.finalize_convergence_report(
-                                &mut context,
-                                "maxed_out",
-                                "energy_spent",
-                                iteration,
-                                threshold,
-                                &field,
-                                baseline_quality,
-                                manifest.convergence.improvement_ratio,
-                            );
-                            break 'cascade;
-                        }
-                        // rJoule alert threshold
-                        if !rjoule_alerted
-                            && rjoule_cap > 0.0
-                            && (rjoule_used / rjoule_cap) >= rjoule_alert_threshold
-                        {
-                            rjoule_alerted = true;
-                            info!(
-                                target: "reg.skill.budget.rjoule_alert",
-                                rjoule_used = rjoule_used,
-                                rjoule_cap = rjoule_cap,
-                                pct = (rjoule_used / rjoule_cap) * 100.0,
-                                "REG"
-                            );
                         }
                     }
                     "populate" => {
@@ -856,13 +760,12 @@ impl ManifestExecutor {
                             .execute_flowdef(
                                 step,
                                 context,
-                                gas_cap.saturating_sub(gas_used),
-                                rjoule_cap - rjoule_used,
+                                budget.remaining_gas(),
+                                budget.remaining_rjoule(),
                             )
                             .await?;
                         context = new_context;
-                        gas_used = gas_used.saturating_add(gas_consumed);
-                        rjoule_used = (rjoule_used + rjoule_consumed).max(0.0);
+                        budget.consume_child(gas_consumed, rjoule_consumed);
                     }
 
                     other => {
@@ -908,40 +811,31 @@ impl ManifestExecutor {
             step_idx = 0;
 
             // Check gas exhaustion at end of pass
-            if gas_hard_limit && gas_used >= gas_cap {
-                info!(
-                    target: "reg.skill.budget.gas_exhausted",
-                    iteration = iteration,
-                    gas_used = gas_used,
-                    gas_cap = gas_cap,
-                    "REG"
-                );
-                self.finalize_convergence_report(
+            if let Some(_exhausted) = budget.check_exhausted(iteration) {
+                let snap = budget.snapshot();
+                convergence.finalize_report(
                     &mut context,
-                    "maxed_out",
+                    ConvergenceStatus::MaxedOut,
                     "energy_spent",
                     iteration,
-                    threshold,
-                    &field,
-                    baseline_quality,
-                    manifest.convergence.improvement_ratio,
+                    snap.gas_used,
+                    snap.gas_cap,
+                    snap.rjoule_used,
+                    snap.rjoule_cap,
                 );
                 break 'cascade;
             }
 
             // Capture baseline quality on first full pass
-            if improvement_enabled && baseline_quality.is_none() {
-                baseline_quality = context
-                    .get(&field)
-                    .and_then(|v| v.as_f64())
-                    .or_else(|| resolve_dot_path(&field, &context).and_then(|v| v.as_f64()));
+            if improvement_enabled {
+                convergence.capture_baseline(&context);
             }
 
             // Compute compound quality from nested skill reports
             if manifest.convergence.aggregation != "none"
                 && !manifest.convergence.aggregation_sources.is_empty()
             {
-                let compound = self.compute_compound_quality(
+                let compound = convergence.compute_compound_quality(
                     &context,
                     &manifest.convergence.aggregation,
                     &manifest.convergence.aggregation_sources,
@@ -951,15 +845,16 @@ impl ManifestExecutor {
 
             // ── End of pass: check convergence if no explicit loop/abort ──
             if iteration >= max_iterations {
-                self.finalize_convergence_report(
+                let snap = budget.snapshot();
+                convergence.finalize_report(
                     &mut context,
-                    "maxed_out",
+                    ConvergenceStatus::MaxedOut,
                     "energy_spent",
                     iteration,
-                    threshold,
-                    &field,
-                    baseline_quality,
-                    manifest.convergence.improvement_ratio,
+                    snap.gas_used,
+                    snap.gas_cap,
+                    snap.rjoule_used,
+                    snap.rjoule_cap,
                 );
                 // Honor on_not_reached: if "escalate", emit span and return error
                 // instead of silently exiting. This makes the convergence contract
@@ -979,25 +874,17 @@ impl ManifestExecutor {
                 break 'cascade;
             }
 
-            if self.check_convergence(
-                &context,
-                &manifest.convergence.convergence_field,
-                threshold,
-                manifest.convergence.improvement_ratio,
-                &manifest.convergence.improvement_gate,
-                baseline_quality,
-                iteration,
-                min_iterations,
-            ) {
-                self.finalize_convergence_report(
+            if convergence.check_met(&context, iteration) {
+                let snap = budget.snapshot();
+                convergence.finalize_report(
                     &mut context,
-                    "converged",
+                    ConvergenceStatus::Converged,
                     "quality_met",
                     iteration,
-                    threshold,
-                    &field,
-                    baseline_quality,
-                    manifest.convergence.improvement_ratio,
+                    snap.gas_used,
+                    snap.gas_cap,
+                    snap.rjoule_used,
+                    snap.rjoule_cap,
                 );
                 break 'cascade;
             }
@@ -1005,15 +892,16 @@ impl ManifestExecutor {
             // Implicit loop: re-enter from step 0
             recursion_depth += 1;
             if recursion_depth > matryoshka_limit {
-                self.finalize_convergence_report(
+                let snap = budget.snapshot();
+                convergence.finalize_report(
                     &mut context,
-                    "maxed_out",
+                    ConvergenceStatus::MaxedOut,
                     "energy_spent",
                     iteration,
-                    threshold,
-                    &field,
-                    baseline_quality,
-                    manifest.convergence.improvement_ratio,
+                    snap.gas_used,
+                    snap.gas_cap,
+                    snap.rjoule_used,
+                    snap.rjoule_cap,
                 );
                 return Err(TemplateError::Manifest(format!(
                     "Matryoshka depth limit ({}) exceeded at iteration {}",
@@ -1027,119 +915,6 @@ impl ManifestExecutor {
             Value::Number(recursion_depth.into()),
         );
         Ok(context)
-    }
-
-    /// Finalize the convergence report at cascade exit.
-    /// Writes a complete report with status, reason, iterations, quality at exit, threshold, field,
-    /// and improvement metadata (baseline_quality, improvement_ratio, improvement_pct).
-    #[allow(clippy::too_many_arguments)]
-    fn finalize_convergence_report(
-        &self,
-        context: &mut HashMap<String, Value>,
-        status: &str,
-        reason: &str,
-        iteration: u32,
-        threshold: f64,
-        field: &str,
-        baseline_quality: Option<f64>,
-        improvement_target: f64,
-    ) {
-        let quality = context
-            .get(field)
-            .and_then(|v| v.as_f64())
-            .or_else(|| resolve_dot_path(field, context).and_then(|v| v.as_f64()));
-
-        let gas_used_val = context
-            .get("_gas")
-            .and_then(|g| g.get("used"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as f64)
-            .unwrap_or(0.0);
-        let gas_cap_val = context
-            .get("_gas")
-            .and_then(|g| g.get("cap"))
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        context.insert(
-            "_convergence".to_string(),
-            serde_json::json!({
-                "status": status,
-                "reason": reason,
-                "iterations_completed": iteration,
-                "quality_at_exit": quality,
-                "threshold": threshold,
-                "field": field,
-                "improvement_achieved": baseline_quality.and_then(|b| quality.map(|q| if b > 0.0 { (b - q) / b } else { 0.0 })),
-                "improvement_pct": baseline_quality.and_then(|b| quality.map(|q| if b > 0.0 { ((b - q) / b) * 100.0 } else { 0.0 })),
-                "improvement_target": improvement_target,
-                "baseline_quality": baseline_quality,
-                "gas_used": gas_used_val,
-                "gas_cap": gas_cap_val,
-                "gas_remaining": (gas_cap_val - gas_used_val).max(0.0),
-                "gas_pct": if gas_cap_val > 0.0 { (gas_used_val / gas_cap_val) * 100.0 } else { 0.0 },
-                "rjoule_used": context.get("_rjoule").and_then(|g| g.get("used")).and_then(|v| v.as_f64()).unwrap_or(0.0),
-                "rjoule_cap": context.get("_rjoule").and_then(|g| g.get("cap")).and_then(|v| v.as_f64()).unwrap_or(0.0),
-            }),
-        );
-    }
-
-    /// Check whether the convergence threshold has been met.
-    /// Looks for the configured `convergence_field` in the context (defaults to "composite").
-    /// Also enforces improvement tracking: min_iterations, improvement_ratio, and improvement_gate.
-    #[allow(clippy::too_many_arguments)]
-    fn check_convergence(
-        &self,
-        context: &HashMap<String, Value>,
-        field: &str,
-        threshold: f64,
-        improvement_ratio: f64,
-        improvement_gate: &str,
-        baseline_quality: Option<f64>,
-        iteration: u32,
-        min_iterations: u32,
-    ) -> bool {
-        // Enforce minimum iterations before exit is allowed
-        if iteration <= min_iterations {
-            return false;
-        }
-
-        // Compute current quality and threshold check
-        let current = context
-            .get(field)
-            .and_then(|v| v.as_f64())
-            .or_else(|| resolve_dot_path(field, context).and_then(|v| v.as_f64()));
-
-        // Fallback: also check the composite score when a specific field is configured
-        let current = if current.is_none() && field != "composite" {
-            context.get("composite").and_then(|v| v.as_f64())
-        } else {
-            current
-        };
-
-        // Check convergence metadata as additional fallback
-        let current = if current.is_none() {
-            context.get("_convergence_score").and_then(|v| v.as_f64())
-        } else {
-            current
-        };
-
-        let threshold_met = current.map(|q| q <= threshold).unwrap_or(false);
-
-        // Compute improvement from baseline as proportional ratio
-        let improvement_met = if improvement_ratio > 0.0 {
-            match (baseline_quality, current) {
-                (Some(b), Some(c)) if b > 0.0 => ((b - c) / b) >= improvement_ratio,
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        match improvement_gate {
-            "both" => threshold_met && improvement_met,
-            "either" => threshold_met || improvement_met,
-            _ => threshold_met, // "threshold_only"
-        }
     }
 
     /// Evaluate a `choice` step's condition against the context.
@@ -1214,18 +989,11 @@ impl ManifestExecutor {
     /// The selector template (from `step.template_ref` or `step.renderer`) is
     /// rendered with the current context. The rendered prompt is sent to the
     /// inference port. The response is parsed as JSON and merged into context.
-    #[allow(clippy::too_many_arguments)]
     async fn execute_select(
         &self,
         step: &BundleManifestStep,
         mut context: HashMap<String, Value>,
-        gas_used: &mut u64,
-        gas_cap: u64,
-        gas_cost_per_iter: u64,
-        rjoule_used: &mut f64,
-        rjoule_cap: f64,
-        rjoule_enabled: bool,
-        _rjoule_hard_limit: bool,
+        budget: &mut BudgetTracker,
         manifest_fusion_config: Option<&hkask_types::fusion::FusionConfig>,
     ) -> Result<HashMap<String, Value>> {
         // Apply input_mapping: resolve {{ }} string values (and $ref objects) from the
@@ -1276,7 +1044,7 @@ impl ManifestExecutor {
             .as_ref()
             .map(|schema| build_structured_output_tool(schema.clone()));
         let tools: Option<&[ChatToolDefinition]> =
-            structured_tool.as_ref().map(|t| std::slice::from_ref(t));
+            structured_tool.as_ref().map(std::slice::from_ref);
 
         let (result_text, tool_calls): (String, Vec<hkask_types::StructuredToolCall>) = {
             let timeout_dur = std::time::Duration::from_secs(step.timeout_seconds as u64);
@@ -1303,13 +1071,10 @@ impl ManifestExecutor {
         // TODO: wire rJoule deduction once InferenceResult reports token counts.
         // For now, gas tracking (below) is the only budget enforcement; rJoule
         // is checked at the cascade-loop level via the cap, not per-call.
-        if rjoule_enabled {
-            // Placeholder: once InferenceResult exposes token usage, deduct here:
-            // *rjoule_used += (result_text.len() as f64 / 4.0) * COST_PER_TOKEN_RJOULE;
-        }
+        // (When wired, call `budget.charge_rjoule(...)` here.)
 
         // Gas tracking — deduct one iteration of compute
-        *gas_used = gas_used.saturating_add(gas_cost_per_iter);
+        budget.charge_iteration();
 
         // Extract the parsed result. If the model called the structured-output
         // tool, use the tool call arguments directly (the API guaranteed JSON
@@ -1336,27 +1101,8 @@ impl ManifestExecutor {
         };
         context.insert(format!("step_{}_result", step.ordinal), parsed);
 
-        // Inject dual-budget context for template awareness
-        let gas_remaining = gas_cap.saturating_sub(*gas_used);
-        let rjoule_remaining = (rjoule_cap - *rjoule_used).max(0.0);
-        context.insert(
-            "_gas".to_string(),
-            serde_json::json!({
-                "used": *gas_used,
-                "cap": gas_cap,
-                "remaining": gas_remaining,
-                "cost_per_iteration": gas_cost_per_iter,
-            }),
-        );
-        context.insert(
-            "_rjoule".to_string(),
-            serde_json::json!({
-                "used": *rjoule_used,
-                "cap": rjoule_cap,
-                "remaining": rjoule_remaining,
-                "enabled": rjoule_enabled,
-            }),
-        );
+        // Inject dual-budget context for template awareness (unified via BudgetTracker).
+        budget.inject_into_context(&mut context);
 
         Ok(context)
     }
@@ -2075,10 +1821,10 @@ fn build_structured_output_tool(schema: Value) -> ChatToolDefinition {
 /// is available (in which case the executor falls back to text parsing).
 fn resolve_output_schema(step: &BundleManifestStep, template_content: &str) -> Option<Value> {
     // Priority 1: manifest-declared output_schema.
-    if let Some(ref schema) = step.output_schema {
-        if schema.is_object() {
-            return Some(schema.clone());
-        }
+    if let Some(ref schema) = step.output_schema
+        && schema.is_object()
+    {
+        return Some(schema.clone());
     }
 
     // Priority 2: contract.output from the template frontmatter.
@@ -2200,61 +1946,6 @@ fn resolve_mapping_value(
                 .collect(),
         ),
         other => other.clone(),
-    }
-}
-
-impl ManifestExecutor {
-    /// Compute compound quality from nested inner skill convergence reports.
-    fn compute_compound_quality(
-        &self,
-        context: &HashMap<String, Value>,
-        method: &str,
-        sources: &[crate::bundle::config::AggregationSource],
-    ) -> f64 {
-        match method {
-            "all_converged" => {
-                let all_ok = sources.iter().all(|src| {
-                    let key = format!("step_{}_result", src.step_ordinal);
-                    context
-                        .get(&key)
-                        .and_then(|v| v.get("_convergence"))
-                        .and_then(|c| c.get("status"))
-                        .and_then(|s| s.as_str())
-                        .map(|s| s == "converged")
-                        .unwrap_or(false)
-                });
-                if all_ok { 0.0 } else { 1.0 }
-            }
-            "min" => sources
-                .iter()
-                .filter_map(|src| {
-                    let key = format!("step_{}_result", src.step_ordinal);
-                    context
-                        .get(&key)
-                        .and_then(|v| v.get("_convergence"))
-                        .and_then(|c| c.get("quality_at_exit"))
-                        .and_then(|v| v.as_f64())
-                })
-                .fold(1.0_f64, f64::min),
-            "weighted_avg" => {
-                let mut sum = 0.0_f64;
-                let mut total = 0.0_f64;
-                for src in sources {
-                    let key = format!("step_{}_result", src.step_ordinal);
-                    if let Some(v) = context
-                        .get(&key)
-                        .and_then(|v| v.get("_convergence"))
-                        .and_then(|c| c.get("quality_at_exit"))
-                        .and_then(|v| v.as_f64())
-                    {
-                        sum += v * src.weight;
-                        total += src.weight;
-                    }
-                }
-                if total > 0.0 { sum / total } else { 1.0 }
-            }
-            _ => 0.0,
-        }
     }
 }
 

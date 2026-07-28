@@ -92,4 +92,20 @@ MINIMALISM CHECK (P5 — 5W1H gate for this skill's existence):
 
 OUTPUT FORMAT:
 JSON object with fields:
-`manifest_paths` (list with line counts), `dependencies_found` (list), `findings` (structured array — only evidence-backed), `defense_layers_present` (list), `def
+`manifest_paths` (list with line counts), `dependencies_found` (list), `findings` (structured array — only evidence-backed), `defense_layers_present` (list), `defense_layers_missing` (list), `userpod_host`, `source_citations`, `reg_span_reference`.
+
+Every finding entry must include `evidence_snippet` (quoted manifest line),
+`manifest_path`, `line`, `dependency`, `version_spec`, `cwe_reference`,
+`taxonomy_mapping`, `remediation_recommendation`, `userpod_host`.
+
+CONSTRAINTS (same as report — P5 minimalism, P8 evidence integrity, P12 host):
+- No synthetic manifest quotes — every snippet verifiable from manifest_path.
+- No synthetic CVE references — only CWE taxonomy mappings.
+- Source citations: concrete URLs or document names actually referenced.
+- Do NOT propose regression for findings without concrete evidence.
+- Registry (`manifest.yaml` + `.j2`) authoritative.
+
+CONVERGENCE INDEPENDENT: Convergence-check is a separate phase; this
+probe phase does not compute metric (that is `convergence-check.j2`
+responsibility). This maintains pipeline decomposition (P5 minimalism —
+each phase answers one 5W1H dimension clearly).

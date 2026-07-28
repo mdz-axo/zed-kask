@@ -13,10 +13,8 @@ description: >
   preflight, and harness-method compatibility gates. Runtime metrics (loss,
   grad_norm, alerts) are sourced from the completion manifest and evaluated by
   G-R1 during training_status. PDCA iteration loop is mechanically closed by
-  the process manifest: preflight-dataset → select-method → audit-config →
-  report → convergence-check → loop. Emits reg.lora.* spans (including
-  reg.lora.runtime from training_status), plus outcome and operator_feedback
-  spans that close the self-improvement feedback loop.
+  the process manifest. Emits reg.lora.* spans plus outcome and
+  operator_feedback spans that close the self-improvement feedback loop.
 ---
 
 # LoRA Training

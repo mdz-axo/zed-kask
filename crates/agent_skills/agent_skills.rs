@@ -2453,4 +2453,61 @@ description: A skill with no body content
         assert!(decode_skill_share_link("zed-kask://skill?other=1").is_err());
         assert!(decode_skill_share_link("zed-kask://skill?data=!!!notbase64").is_err());
     }
+
+    // zed-kask: Embedded global skills (shipped in .agents/skills/) must
+    // parse cleanly via `parse_embedded_global_skill`, which uses the strict
+    // `validate_description` path (hard-rejects >1024-byte descriptions).
+    // This is a deliberate deviation from the disk-loaded path
+    // (`parse_skill_file_content_for_loading`), which accepts long
+    // descriptions with no warning — see `test_parse_description_too_long_loads_with_warning`.
+    // The rationale: shipped skills are authored by us and should meet the
+    // strict bar; user-installed skills at ~/.agents/skills/ get the lenient
+    // path. This test pins that contract so a shipped skill with an
+    // over-long description can't silently regress — it will fail this test
+    // AND fail the build-time check in `build.rs`. Without this test, the
+    // runtime `log::warn!` in `embedded_global_skills` would silently drop
+    // the skill from the catalog with no test signal.
+    #[test]
+    fn embedded_global_skills_all_parse_without_errors() {
+        let skills = embedded_global_skills();
+        // Sanity: we ship more than a handful of skills.
+        assert!(
+            skills.len() > 10,
+            "expected embedded global skills to include the kask catalog, got {}",
+            skills.len()
+        );
+        // Every shipped skill must be present and parse cleanly. If a skill
+        // is missing from this list, `embedded_global_skills` dropped it
+        // with a `log::warn!` — check the test output for the warning.
+        let known_skills = [
+            "bug-hunt",
+            "lora-training",
+            "kali-audit",
+            "metacognition",
+            "pragmatic-semantics",
+            "pragmatic-cybernetics",
+            "self-improvement",
+            "tdd",
+        ];
+        let parsed_names: std::collections::HashSet<&str> =
+            skills.iter().map(|s| s.name.as_str()).collect();
+        for name in known_skills {
+            assert!(
+                parsed_names.contains(name),
+                "embedded global skill '{name}' was dropped during parsing — \
+                 check the `Failed to parse embedded global skill` log warning. \
+                 Most likely cause: description exceeds {MAX_SKILL_DESCRIPTION_LEN} bytes."
+            );
+        }
+        // No embedded skill should carry load warnings — the strict path
+        // rejects rather than warns.
+        for skill in &skills {
+            assert!(
+                skill.load_warnings.is_empty(),
+                "embedded global skill '{}' has load warnings: {:?}",
+                skill.name,
+                skill.load_warnings
+            );
+        }
+    }
 }
