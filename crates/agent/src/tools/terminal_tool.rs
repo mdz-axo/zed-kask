@@ -103,6 +103,10 @@ pub struct SandboxedTerminalToolInput {
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u64_from_maybe_string"
+    )]
     pub timeout_ms: Option<u64>,
     /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]

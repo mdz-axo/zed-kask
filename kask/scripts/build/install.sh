@@ -503,6 +503,12 @@ uninstall_hkask() {
         fi
     done
 
+    # Remove kask-managed context_servers entries from settings.json.
+    # Preserves any user-added (non-kask) context_servers entries.
+    # Only removes entries whose command path points at the (now-removed)
+    # BIN_DIR, so a re-install to a different BIN_DIR doesn't lose user data.
+    remove_mcp_server_settings
+
     # Remove config (optional)
     if [ "${HKASK_REMOVE_CONFIG:-false}" = "true" ]; then
         local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/hkask"
@@ -679,6 +685,7 @@ main() {
             install_binary
             install_desktop_entry
             setup_environment
+            write_mcp_server_settings
 
             verify_installation
 

@@ -49,7 +49,7 @@ The ontology is re-anchored to the **29 surviving hKask crates** compiled in-pro
 
 ### 1.2 Kata-Kanban Domain
 
-**Crate:** `hkask-services-kata-kanban` | **Goal Principle:** P3 (Generative Space) — Toyota Kata scientific thinking applied through headless kanban task boards. PDCA phases map to task statuses: Plan→Backlog, Do→InProgress, Check→Review, Act→Done.
+**Crate:** `hkask-mcp-kata-kanban` (folded from `hkask-services-kata-kanban`) | **Goal Principle:** P3 (Generative Space) — Toyota Kata scientific thinking applied through headless kanban task boards. PDCA phases map to task statuses: Plan→Backlog, Do→InProgress, Check→Review, Act→Done.
 
 | Entity | Description | Key Attributes |
 |--------|-------------|---------------|
@@ -108,14 +108,14 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 
 | Subcrate | Domain | Contract Prefix | Count | Status |
 |----------|--------|----------------|-------|--------|
-| `hkask-services-core` | Foundation: config, error types, settings | — | — | ✅ Decomposed |
-| `hkask-services-compose` | Template composition | — | — | ✅ Decomposed |
-| `hkask-services-context` | Service context and contract monitoring (stripped: identity/communication/matrix/daemon modules deleted; governance + guards kept) | `P{N}-svc-context-*` | 31 | ✅ Realigned |
-| `hkask-services-corpus` | Content corpus: discovery + embed | `P{N}-svc-corpus-*` | 30 | ✅ Realigned |
-| `hkask-services-kata-kanban` | Toyota Kata + Kanban board coordination | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ⚠️ Migration in progress |
-| `hkask-services-runtime` | Runtime services: classify + guard + provider_intel (daemon_impl module deleted) | `P{N}-svc-runtime-*` | 13 | ✅ Realigned |
+| `hkask-services-core` | Foundation: config, error types, settings | — | — | ✅ Kept (genuinely shared by 6 consumers) |
+| ~~`hkask-services-compose`~~ (folded) | Template composition — folded into `hkask-mcp-corpus` (internal `compose` module) | — | — | ✅ Folded |
+| ~~`hkask-services-context`~~ (folded) | Service context and contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; `mcp_server_guard.rs` + `storage_guard.rs` were dead code | `P{N}-svc-context-*` | 31 | ✅ Folded |
+| ~~`hkask-services-corpus`~~ (folded) | Content corpus: discovery + embed — folded into `hkask-mcp-corpus` (internal `corpus` module) | `P{N}-svc-corpus-*` | 30 | ✅ Folded |
+| ~~`hkask-services-kata-kanban`~~ (folded) | Toyota Kata + Kanban board coordination — folded into `hkask-mcp-kata-kanban` | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ✅ Folded |
+| ~~`hkask-services-runtime`~~ (folded) | Runtime services: classify + guard + provider_intel — folded into `hkask-mcp-corpus` (internal `runtime` module) | `P{N}-svc-runtime-*` | 13 | ✅ Folded |
 | ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
-| `hkask-services-inference` | Inference orchestration scaffolding | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
+| ~~`hkask-services-inference`~~ (folded) | Inference orchestration scaffolding — folded into `hkask-mcp-corpus` (internal `inference_svc` + `model_cache` modules) | `P{N}-svc-inference-*` | 7 | ✅ Folded |
 | `hkask-inference` | Inference routing primitives (InferenceRouter, EmbeddingRouter, ProviderId) — reads API keys from zed `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
 
 ---
@@ -591,12 +591,12 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | `hkask-mcp` | Composition | MCP governance |
 | `hkask-services-core` | Domain | Foundation: config, error types, settings (dissolves at T3.0) |
 | ~~`hkask-services-self-heal`~~ (deleted) | Lifecycle | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup |
-| `hkask-services-inference` | Composition | Inference orchestration scaffolding (dissolves at T3.0) |
-| `hkask-services-kata-kanban` | Domain, Curation | `KataEngine`, `KataManifest`, `Board`, `Task`, Kanban coordination |
-| `hkask-services-runtime` | Lifecycle | `ClassifyService`, guard, provider_intel (daemon_impl deleted; dissolves at T3.0) |
-| `hkask-services-corpus` | Domain | `CorpusService`, embedding pipelines (dissolves at T3.0) |
-| `hkask-services-context` | Lifecycle | `ContextService`, contract monitoring (stripped; dissolves at T3.0) |
-| `hkask-services-compose` | Composition | Template composition (dissolves at T3.0) |
+| ~~`hkask-services-inference`~~ (folded) | Composition | Inference orchestration scaffolding — folded into `hkask-mcp-corpus` |
+| ~~`hkask-services-kata-kanban`~~ (folded) | Domain, Curation | `KataEngine`, `KataManifest`, `Board`, `Task`, Kanban coordination — folded into `hkask-mcp-kata-kanban` |
+| ~~`hkask-services-runtime`~~ (folded) | Lifecycle | `ClassifyService`, guard, provider_intel — folded into `hkask-mcp-corpus` |
+| ~~`hkask-services-corpus`~~ (folded) | Domain | `CorpusService`, embedding pipelines — folded into `hkask-mcp-corpus` |
+| ~~`hkask-services-context`~~ (folded) | Lifecycle | `ContextService`, contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; guards were dead code |
+| ~~`hkask-services-compose`~~ (folded) | Composition | Template composition — folded into `hkask-mcp-corpus` |
 | `kask_bridge` | Composition | D8 — in-process bridge exposing `KaskCore` to MCP servers and zed-kask surfaces |
 | 10 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training |
 
@@ -645,7 +645,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
 verified_date: 2026-07-24
-verified_against: kask/docs/architecture/zed-host-architecture-plan.md, kask/crates/hkask-services-context/src/context_impl.rs
+verified_against: kask/docs/architecture/zed-host-architecture-plan.md, kask/mcp-servers/hkask-mcp-curator/src/governance.rs
 status: VERIFIED
 -->
 

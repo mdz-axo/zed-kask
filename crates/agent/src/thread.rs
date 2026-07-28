@@ -1735,7 +1735,14 @@ impl Thread {
                 self.sandbox_grants.clone(),
                 Some(cx.weak_entity()),
             );
-            tool.replay(input, output, tool_event_stream, cx).log_err();
+            if let Err(error) = tool.replay(input, output, tool_event_stream, cx) {
+                // Replay deserialization can fail when the persisted model output
+                // violates the tool's current input schema (e.g. a model emitted
+                // `timeout_ms` as a string, or omitted a required field). The raw
+                // output is still displayed via the update_tool_call_fields call
+                // below, so this only degrades the rich tool-specific rendering.
+                log::warn!("Failed to replay tool {}: {error:#}", tool_use.name);
+            }
         }
 
         stream.update_tool_call_fields(

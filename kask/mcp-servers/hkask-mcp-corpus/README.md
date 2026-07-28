@@ -166,8 +166,8 @@ Corpus server integrates with hkask's shared service layer:
 - **Templates:** `registry/templates/docproc/{generate-qa,extract-hmems,rag-answer}.j2`
 - **Regulation:** Daemon-backed event persistence for Curator consumption
 - **Inference:** `hkask-inference` router with provider-prefixed model names
-- **Compose:** `hkask-services-compose` for prose generation (persona tools)
-- **Corpus:** `hkask-services-corpus` for `EmbedService::embed_corpus` (corpus_build_persona)
+- **Compose:** internal `compose` module for prose generation (persona tools)
+- **Corpus:** internal `corpus` module for `EmbedService::embed_corpus` (corpus_build_persona)
 
 ## QA Model and Output Contract
 

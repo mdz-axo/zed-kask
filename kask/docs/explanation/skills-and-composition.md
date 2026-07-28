@@ -841,11 +841,11 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 ## Description
 
-The Improvement Kata PDCA cycle in `hkask-services-kata-kanban` executes as a 5-step **single-pass** sequential pipeline within the `KataEngine` that maps to four conceptual PDCA phases. Each step runs an LLM inference via the registered template (e.g., `kata-improvement/improvement-step1-direction`), validates output against the step's `output_schema`, records a `StepExperience`, and emits Regulation spans. The `KataEngine::run_improvement_from()` iterates through steps **exactly once** (`for step in &manifest.steps` — no re-entry loop). The cycle is bounded by `gas.cap` (default 15,000). Metric capture flanks the execution: `metric_before` is captured pre-cycle and `metric_after` post-cycle, yielding an `ImprovementSignal` (Positive/Negative/Stalled/NotMeasured). Regulation algedonic alerts fire if variety deficit exceeds threshold.
+The Improvement Kata PDCA cycle in `hkask-mcp-kata-kanban` (folded from `hkask-services-kata-kanban`) executes as a 5-step **singlepass** sequential pipeline within the `KataEngine` that maps to four conceptual PDCA phases. Each step runs an LLM inference via the registered template (e.g., `kata-improvement/improvement-step1-direction`), validates output against the step's `output_schema`, records a `StepExperience`, and emits Regulation spans. The `KataEngine::run_improvement_from()` iterates through steps **exactly once** (`for step in &manifest.steps` — no re-entry loop). The cycle is bounded by `gas.cap` (default 15,000). Metric capture flanks the execution: `metric_before` is captured pre-cycle and `metric_after` post-cycle, yielding an `ImprovementSignal` (Positive/Negative/Stalled/NotMeasured). Regulation algedonic alerts fire if variety deficit exceeds threshold.
 
 **Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The kata engine is a *step executor* called within that loop; it does not drive convergence itself. In zed-kask, `KataEngine` is constructed and `execute()` is invoked in-process via the kata-kanban MCP server (one of the 11 in-process MCP servers); the deleted `kask kata start` CLI is gone. The kanban service's prompt-generation tools (`kanban_task_kata_improvement`) do not invoke the engine — they render prompt text only.
 
-**Key source:** `crates/hkask-services-kata-kanban/src/kata/mod.rs:333-486` (`execute` — single-pass orchestration), `crates/hkask-services-kata-kanban/src/kata/improvement.rs:20-121` (`run_improvement_from` — single-pass `for` loop, no re-entry), `crates/hkask-services-kata-kanban/src/kata/metrics.rs:6-133` (metric capture + signal).
+**Key source:** `mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:333-486` (`execute` — single-pass orchestration), `mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs:20-121` (`run_improvement_from` — single-pass `for` loop, no re-entry), `mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs:6-133` (metric capture + signal).
 
 **Convergence loop source:** `crates/hkask-templates/src/executor.rs:267-679` (`execute_manifest` — `'cascade: loop` with convergence check and re-entry at step 0), `crates/hkask-templates/src/executor.rs:746-799` (`check_convergence` — threshold + improvement ratio gating).
 
@@ -1004,7 +1004,7 @@ reg.prompt.kata.improvement
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-005
 verified_date: 2026-07-24
-verified_against: crates/hkask-services-kata-kanban/src/kata/mod.rs (execute:333-486), crates/hkask-services-kata-kanban/src/kata/improvement.rs (run_improvement_from:20-121 — single-pass for loop, no re-entry), crates/hkask-services-kata-kanban/src/kata/metrics.rs (capture_before/after:6-105, compute_improvement_signal:76-105), crates/hkask-services-kata-kanban/src/kata/manifest.rs (KataStep, KataManifest, convergence config), crates/hkask-services-kata-kanban/src/kanban/types/status.rs (TaskStatus transitions), registry/manifests/kata-improvement.yaml (step definitions, convergence parameters, Regulation spans:150-160), crates/hkask-templates/src/executor.rs (execute_manifest:209-686 — convergence loop, check_convergence:746-799)
+verified_against: mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (execute:333-486), mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs (run_improvement_from:20-121 — single-pass for loop, no re-entry), mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs (capture_before/after:6-105, compute_improvement_signal:76-105), mcp-servers/hkask-mcp-kata-kanban/src/kata/manifest.rs (KataStep, KataManifest, convergence config), mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs (TaskStatus transitions), registry/manifests/kata-improvement.yaml (step definitions, convergence parameters, Regulation spans:150-160), crates/hkask-templates/src/executor.rs (execute_manifest:209-686 — convergence loop, check_convergence:746-799)
 status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; convergence loop is ManifestExecutor concern)
 -->
 
@@ -1012,11 +1012,11 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 - [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams (skill execution, Curator agent, in-process MCP transport)
 - [`PRINCIPLES.md` § P6 — Space for UserPods](../architecture/core/PRINCIPLES.md#p6--space-for-userpods)
-- [`kata/mod.rs`](crates/hkask-services-kata-kanban/src/kata/mod.rs) — `KataEngine::execute()` dispatch (L333-486)
-- [`kata/improvement.rs`](crates/hkask-services-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
+- [`kata.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata.rs) — `KataEngine::execute()` dispatch (L333-486)
+- [`kata/improvement.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
 - [`executor.rs`](crates/hkask-templates/src/executor.rs) — `ManifestExecutor::execute_manifest()` convergence loop (L209-686), `check_convergence()` (L746-799)
-- [`kata/metrics.rs`](crates/hkask-services-kata-kanban/src/kata/metrics.rs) — before/after capture, signal computation (L6-133)
-- [`kanban/types/status.rs`](crates/hkask-services-kata-kanban/src/kanban/types/status.rs) — `TaskStatus` column-ordered transitions
+- [`kata/metrics.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs) — before/after capture, signal computation (L6-133)
+- [`kanban/types/status.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs) — `TaskStatus` column-ordered transitions
 - [`registry/manifests/kata-improvement.yaml`](registry/manifests/kata-improvement.yaml) — canonical step definitions, convergence params, Regulation spans
 
 
@@ -1060,7 +1060,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-006
 verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-kata-kanban/src/lib.rs:656-686 (kanban_task_kata_improvement calls task_improvement_prompt); crates/hkask-services-kata-kanban/src/kanban/service_impl/kata.rs:104-177 (task_improvement_prompt); crates/hkask-services-kata-kanban/src/kata/mod.rs:334-498 (KataEngine::execute)
+verified_against: mcp-servers/hkask-mcp-kata-kanban/src/lib.rs:656-686 (kanban_task_kata_improvement calls task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:104-177 (task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:334-498 (KataEngine::execute)
 status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process via the kata-kanban MCP server)
 -->
 
@@ -1114,7 +1114,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-008
 verified_date: 2026-07-20
-verified_against: crates/hkask-services-kata-kanban/src/kanban/types/status.rs:61-73 (can_transition_to), crates/hkask-services-kata-kanban/src/kanban/service_impl/service.rs:820-843 (task_reopen), crates/hkask-services-kata-kanban/src/kanban/service_impl/dejam.rs:180-207 (task_gas_exhaust), crates/hkask-services-kata-kanban/src/kanban/service_impl/service.rs:613-624 (task_claim status check)
+verified_against: mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs:61-73 (can_transition_to), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:820-843 (task_reopen), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/dejam.rs:180-207 (task_gas_exhaust), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:613-624 (task_claim status check)
 status: VERIFIED
 -->
 

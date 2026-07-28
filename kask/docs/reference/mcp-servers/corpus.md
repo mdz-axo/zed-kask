@@ -91,7 +91,7 @@ gather → process → output
 
 The persona and QA training branches share operations (chunking, embedding,
 triple extraction) but use different implementations. These are declared via
-strategy traits in `hkask-services-corpus::embed::strategies`:
+strategy traits in `hkask_mcp_corpus::corpus::embed::strategies`:
 
 | Trait | Persona impl | QA training impl |
 |-------|-------------|-----------------|

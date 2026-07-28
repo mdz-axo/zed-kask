@@ -395,7 +395,7 @@ The bridge crate (e.g. zed-kask-side `crates/agent_kask`) is the single place th
 ### 10.2 New / amended tasks
 - **T1.4 (R1/R2/D8)** — create the zed-kask-side bridge crate: `gpui_tokio` wiring + `InferencePort`-over-`LanguageModel` adapter (collect stream→`InferenceResult`). M.
 - **T2.0 (R5/R6)** — `ToolPort` adapter over the in-process tool registry; gate FlowDef `execute` on D3; validate Phase 2 with KnowAct-only skills first. M.
-- **T3.0 (R4/R7)** — ~~refactor MCP servers off `DaemonClient` to direct in-process storage/regulation/memory handles~~ ✅ **RESOLVED differently:** daemon transport deleted outright; MCP servers run standalone with identity from `ServerContext.webid` (`HKASK_WEBID`). The `hkask-services-*` scaffolding remains (still depended on by MCP server binaries) but no longer routes through a daemon.
+- **T3.0 (R4/R7)** — ~~refactor MCP servers off `DaemonClient` to direct in-process storage/regulation/memory handles~~ ✅ **RESOLVED differently:** daemon transport deleted outright; MCP servers run standalone with identity from `ServerContext.webid` (`HKASK_WEBID`). The `hkask-services-*` scaffolding was folded into its MCP server consumers (F6 refactor-architecture pass): `hkask-services-kata-kanban` → `hkask-mcp-kata-kanban`; `hkask-services-corpus` + `hkask-services-compose` + `hkask-services-inference` + `hkask-services-runtime` → `hkask-mcp-corpus`; `hkask-services-context` deleted (governance module moved to `hkask-mcp-curator`). `hkask-services-core` was kept (genuinely shared by 6 consumers).
 - **T2.0b (R3)** — decide direct-chat guard strategy (buffer vs incremental vs cascade-only). S.
 
 ### 10.3 Flow corrections (diagnose)
@@ -577,7 +577,7 @@ zed-kask app startup constructs the individual hKask components directly (~~`Kas
 - ✅ **D5 text** now reads "via the `keyring` crate directly" (matches the dependency invariant; `SecretsPort` trait deleted).
 - ✅ **§3 intro** now references D8–D10 (consolidated in §13.4).
 - ✅ **R4 finding (§10)** corrected to past tense ("had reached") and annotated with the current 10-on-disk count and the dead `DaemonClient` status. **Update (2026-07-25):** daemon transport deleted outright; see R4 row.
-- ✅ **2026-07-25 cleanup pass:** daemon removed, pod abstraction deleted, `hkask-wallet`/`hkask-test-harness`/`hkask-services-self-heal`/`hkask-git-cas` deleted, regulation orphaned modules pruned (~12,000 lines removed), `SecretsPort` trait deleted (keystore uses `keyring` crate directly), regulation system wired via `McpRuntime::with_governance()`. Crate count: 24 kask crates (down from 31). Total: 83,571 lines (down from 95,550).
+- ✅ **2026-07-25 cleanup pass:** daemon removed, pod abstraction deleted, `hkask-wallet`/`hkask-test-harness`/`hkask-services-self-heal`/`hkask-git-cas` deleted, regulation orphaned modules pruned (~12,000 lines removed), `SecretsPort` trait deleted (keystore uses `keyring` crate directly), regulation system wired via `McpRuntime::with_governance()`. Crate count: 18 kask crates (down from 25).
 
 ### 13.6 grill-me on the composition
 - **Is the bridge crate the only bidirectional seam?** Yes — by invariant. Audit: grep hKask for any `use` of a zed-kask crate — must be zero. (Open Q 27.)
@@ -612,7 +612,11 @@ zed-kask/
     │                  # hkask-keystore, hkask-ledger,
     │                  # hkask-mcp-server, kask_bridge (D8), kask_panel (D10)
     │                  # (deleted: hkask-pods, hkask-wallet, hkask-test-harness,
-    │                  #  hkask-services-self-heal, hkask-git-cas)
+    │                  #  hkask-services-self-heal, hkask-git-cas,
+    │                  #  hkask-services-context, hkask-services-corpus,
+    │                  #  hkask-services-compose, hkask-services-inference,
+    │                  #  hkask-services-runtime, hkask-services-kata-kanban —
+    │                  #  the last 6 were folded into their MCP server consumers)
     ├── mcp-servers/   # the 10 on-disk servers (curator may be unloaded via override; hkask-mcp-*)
     ├── skills/        # the skills registry (manifest.yaml + *.j2; Pattern A source of truth)
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts

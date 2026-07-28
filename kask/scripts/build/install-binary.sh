@@ -338,6 +338,7 @@ main() {
 
     install_binaries "$staging"
     add_to_path
+    write_mcp_server_settings
     verify_installation
 
     echo ""

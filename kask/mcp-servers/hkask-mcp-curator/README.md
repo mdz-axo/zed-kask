@@ -27,5 +27,5 @@ No environment variables required. Connects to the hKask daemon via `McpRuntime`
 ## Dependencies
 
 - `hkask-mcp` — MCP runtime and dispatch
-- `hkask-services-context` — AgentService context
+- internal `governance` module (folded from `hkask-services-context`) — AgentService context
 - `hkask-regulation` — Cybernetic Nervous System spans

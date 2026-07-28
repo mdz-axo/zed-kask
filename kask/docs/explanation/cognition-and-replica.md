@@ -904,7 +904,7 @@ The fusion panel runs in parallel; `algo_merge()` folds the panelists' JSON
 extractions into a single result (union, dedup, diverging fields annotated
 `[A:... B:...]`) — no LLM judge call.
 
-Related: `crates/hkask-inference/src/fusion_orchestrator.rs` (algo_merge), `crates/hkask-services-corpus/src/embed/service.rs`
+Related: `crates/hkask-inference/src/fusion_orchestrator.rs` (algo_merge), `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 
 ```mermaid
 flowchart TD

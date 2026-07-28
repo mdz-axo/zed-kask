@@ -11,7 +11,7 @@ crate:
     Each class template extends corpus-base.j2 and carries ontology links
     (PKO, ESO, GOLEM, Dublin Core, FIBO) as structured comments. Output is
     validated against CorpusConfig via #[serde(deny_unknown_fields)] and
-    parse tests in hkask-services-corpus.
+    parse tests in hkask-mcp-corpus.
 
 templates:
   - id: replica/corpus-base

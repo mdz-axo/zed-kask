@@ -134,6 +134,184 @@ add_to_path() {
     fi
 }
 
+# write_mcp_server_settings — write context_servers entries into the
+# zed-kask user settings.json so the 10 built-in MCP servers appear in
+# Settings → AI → MCP Servers with absolute command paths.
+#
+# This is the canonical Zed way to register MCP servers: a `context_servers`
+# map in settings.json where each entry has `command` (absolute path), `args`,
+# and optional `env`. Without these entries, the servers are registered via
+# the ContextServerDescriptorRegistry (KaskMcpDescriptor) which passes a bare
+# binary name to std::process::Command — that relies on PATH, which GUI-launched
+# apps don't inherit from shell configs. Writing explicit JSON entries with
+# absolute paths bypasses the PATH problem entirely.
+#
+# The child process inherits the zed-kask process env (which loads
+# ~/.config/zed-kask/.env at startup for API keys), so `env` is left empty —
+# the servers read DEEPINFRA_API_KEY, HKASK_* etc. from their inherited env.
+#
+# Idempotent: re-running updates the command paths without duplicating entries.
+# Preserves any user-added context_servers entries that aren't kask built-ins.
+#
+# Args: expects BIN_DIR and MCP_SERVERS to be set by the caller.
+write_mcp_server_settings() {
+    if [ -z "${BIN_DIR:-}" ]; then
+        log_error "write_mcp_server_settings: BIN_DIR is not set"
+        return 1
+    fi
+    if [ "${#MCP_SERVERS[@]}" -eq 0 ]; then
+        log_error "write_mcp_server_settings: MCP_SERVERS is empty"
+        return 1
+    fi
+
+    # Resolve the zed-kask config directory (matches paths::config_dir).
+    # Linux: $XDG_CONFIG_HOME/zed-kask  (default ~/.config/zed-kask)
+    # macOS: ~/Library/Application Support/Zed-Kask
+    # The .desktop entry and settings.json live here.
+    local config_dir
+    if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+        config_dir="$XDG_CONFIG_HOME/zed-kask"
+    elif [ -n "${HOME:-}" ]; then
+        config_dir="$HOME/.config/zed-kask"
+    else
+        log_error "write_mcp_server_settings: cannot determine config dir (no XDG_CONFIG_HOME or HOME)"
+        return 1
+    fi
+
+    mkdir -p "$config_dir"
+    local settings_file="$config_dir/settings.json"
+
+    # Build the kask context_servers JSON object from MCP_SERVERS.
+    # Each entry: "<id>": {"command": "<abs path>", "args": [], "env": {}}
+    # The binary name is the package name (e.g. hkask-mcp-codegraph); the
+    # server ID is derived by stripping the hkask-mcp- prefix.
+    local kask_servers_json='{}'
+    local server_id
+    for server in "${MCP_SERVERS[@]}"; do
+        # Derive the context_servers key from the binary name.
+        # hkask-mcp-codegraph → codegraph, hkask-mcp-kata-kanban → kata-kanban
+        server_id="${server#hkask-mcp-}"
+        local binary_path="$BIN_DIR/$server"
+        if [ ! -x "$binary_path" ]; then
+            log_warning "MCP server binary not found, skipping settings entry: $binary_path"
+            continue
+        fi
+        # Use python3 or jq to build the JSON entry safely (no string
+        # interpolation into JSON — avoids quoting bugs).
+        if command -v python3 >/dev/null 2>&1; then
+            kask_servers_json=$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+d[sys.argv[2]] = {'command': sys.argv[3], 'args': [], 'env': {}}
+print(json.dumps(d))
+" "$kask_servers_json" "$server_id" "$binary_path")
+        elif command -v jq >/dev/null 2>&1; then
+            kask_servers_json=$(jq --arg id "$server_id" --arg path "$binary_path" \
+                '. + {($id): {"command": $path, "args": [], "env": {}}}' <<< "$kask_servers_json")
+        else
+            log_error "write_mcp_server_settings: requires python3 or jq for JSON merging"
+            return 1
+        fi
+    done
+
+    # Merge kask_servers_json into the existing settings.json's context_servers.
+    # - If settings.json doesn't exist, create it with the context_servers block.
+    # - If it exists but has no context_servers, add the block.
+    # - If it exists with context_servers, merge: overwrite kask server entries
+    #   (by id) but preserve any non-kask entries the user added.
+    if [ ! -f "$settings_file" ]; then
+        # Create a new settings.json with the context_servers block.
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import json, sys
+settings = {'context_servers': json.loads(sys.argv[1])}
+print(json.dumps(settings, indent=2))
+" "$kask_servers_json" > "$settings_file"
+        else
+            jq -n --argjson servers "$kask_servers_json" '{context_servers: $servers}' > "$settings_file"
+        fi
+        log "Created $settings_file with kask MCP server entries"
+    else
+        # Merge into existing settings.json. Preserve everything except
+        # overwrite kask server entries under context_servers.
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    settings = json.load(f)
+kask = json.loads(sys.argv[2])
+cs = settings.setdefault('context_servers', {})
+# Overwrite kask-managed entries, preserve user-added ones.
+for k, v in kask.items():
+    cs[k] = v
+with open(sys.argv[1], 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$settings_file" "$kask_servers_json"
+        else
+            # jq merge: deep-merge kask servers into existing context_servers.
+            local tmp
+            tmp=$(mktemp)
+            jq --argjson kask "$kask_servers_json" \
+                '.context_servers = ((.context_servers // {}) + $kask)' \
+                "$settings_file" > "$tmp" && mv "$tmp" "$settings_file"
+        fi
+        log "Updated $settings_file with kask MCP server entries"
+    fi
+
+    log_success "Wrote ${#MCP_SERVERS[@]} kask MCP server entries to settings.json"
+}
+
+# remove_mcp_server_settings — remove kask-managed context_servers entries
+# from settings.json. Preserves user-added (non-kask) entries.
+#
+# Identifies kask-managed entries by checking if the command path points at
+# a binary named hkask-mcp-* (the kask naming convention). This is safe even
+# if BIN_DIR changed between install and uninstall.
+remove_mcp_server_settings() {
+    local config_dir
+    if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+        config_dir="$XDG_CONFIG_HOME/zed-kask"
+    elif [ -n "${HOME:-}" ]; then
+        config_dir="$HOME/.config/zed-kask"
+    else
+        return 0
+    fi
+    local settings_file="$config_dir/settings.json"
+    if [ ! -f "$settings_file" ]; then
+        return 0
+    fi
+
+    # Remove entries whose command basename matches hkask-mcp-*.
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import json, os, sys
+with open(sys.argv[1]) as f:
+    settings = json.load(f)
+cs = settings.get('context_servers', {})
+removed = 0
+for k in list(cs.keys()):
+    cmd = cs[k].get('command', '') if isinstance(cs[k], dict) else ''
+    if os.path.basename(cmd).startswith('hkask-mcp-'):
+        del cs[k]
+        removed += 1
+if not cs:
+    settings.pop('context_servers', None)
+with open(sys.argv[1], 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+if removed:
+    print(f'Removed {removed} kask MCP server entries from settings.json')
+" "$settings_file" 2>/dev/null && log "Cleaned kask MCP entries from $settings_file"
+    elif command -v jq >/dev/null 2>&1; then
+        local tmp
+        tmp=$(mktemp)
+        jq '.context_servers |= with_entries(select(.value.command | split("/") | last | startswith("hkask-mcp-") | not))' \
+            "$settings_file" > "$tmp" 2>/dev/null && mv "$tmp" "$settings_file" \
+            && log "Cleaned kask MCP entries from $settings_file"
+    fi
+}
+
 # print_banner — standard installer header.
 # Args: $1 = subtitle line.
 print_banner() {
