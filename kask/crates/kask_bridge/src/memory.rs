@@ -136,17 +136,21 @@ impl RealMemoryPort {
         // matching `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
         //
         // A dim of 0 is a footgun: `unwrap_or(1024)` only fires for `None`,
-        // not for `Some(0)`, so a user setting `embedding_dim: 0` would
-        // construct a store that rejects every vector. `KaskCorpusSettings`
-        // already filters 0 → 1024, but warn here too in case a future
-        // caller bypasses settings — per the .rules trap "Process-global
-        // hooks set at runtime need a startup-failure signal".
+        // not for `Some(0)`, and `KaskCorpusSettings` deriving `Default`
+        // returned `u32::default()` == 0, not the serde default 1024. The
+        // `From<KaskSettingsContent>` impl filters Some(0) → 1024, but the
+        // Default path (no kask.corpus section) bypassed that filter and
+        // produced dim == 0 here, panicking in EmbeddingStore::from_driver.
+        // KaskCorpusSettings now has a manual Default returning 1024; we
+        // clamp below too, in case a caller bypasses settings (e.g.
+        // HKASK_EMBEDDING_DIM=0) — per the .rules trap "Process-global hooks
+        // set at runtime need a startup-failure signal".
         if embedding_dim == 0 {
             tracing::warn!(
                 target: "reg.memory",
                 embedding_dim,
                 "RealMemoryPort constructed with embedding_dim == 0 — \
-                 every store_embedding call will fail with DimensionMismatch. \
+                 clamping to 1024 to avoid a zero-dimensional store panic. \
                  Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
                  to match the embedding model's output (default 1024 for \
                  DeepInfra/Qwen/Qwen3-Embedding-0.6B)."
@@ -159,6 +163,9 @@ impl RealMemoryPort {
                  (ensure this matches the configured embedding model)"
             );
         }
+        // Clamp 0 → 1024: the warn above signals the misconfiguration; this
+        // keeps the system functional (degraded) instead of panicking.
+        let embedding_dim = if embedding_dim == 0 { 1024 } else { embedding_dim };
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));

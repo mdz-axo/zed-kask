@@ -26,7 +26,7 @@ affects all 10 servers.
 | `ToolContext` trait | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:215` |
 | `resolve_credential` | `kask/crates/hkask-mcp-server/src/server/credentials.rs:54` |
 | `validate_identifier` | `kask/crates/hkask-mcp-server/src/server/validation.rs:13` |
-| `bootstrap_mcp_server` | `kask/crates/kask_bridge/src/` (composition root) |
+| `bootstrap_mcp_server` | _Removed_ — the `HKASK_MCP_HOST` / userpod identity concept was deleted; servers now derive identity from `ServerContext.webid` (resolved from `HKASK_WEBID`). See `kask/crates/hkask-mcp-server/src/server/context.rs:123` and the test comment at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:184`. |
 
 ## Launch sequence
 
@@ -42,8 +42,8 @@ sequenceDiagram
     participant Framework as hkask-mcp-server
     participant Keystore as hkask-keystore
 
-    Main->>Bridge: bootstrap_mcp_server(userpod)
-    Bridge->>Server: spawn child process (stdio)
+    Main->>Bridge: BridgeToolPort::new(Arc<McpRuntime>)
+    Bridge->>Server: McpRuntime spawns child process (stdio)
     Server->>Framework: ServerContext::new(capability_tier)
     Framework->>Framework: load_dotenv()
     Framework->>Keystore: resolve_credential(env_var)

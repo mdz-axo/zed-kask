@@ -21,7 +21,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Supersedes:** The previous 9-category DDMVSS. All MDS references in the codebase should be updated.
 
-**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 29 surviving hKask crates and 11 MCP servers are listed in the architecture plan §2.2/§2.4.
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 29 surviving hKask crates and 10 MCP servers are listed in the architecture plan §2.2/§2.4.
 
 **Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
@@ -581,7 +581,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` moved to `regulation::WalletManager` which implements `WalletBudgetPort`; wallet types live in `hkask-types` |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `InferenceRouter`, `EmbeddingRouter`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) |
-| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
+| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 10 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-goal` | Domain | Goal analysis, completion verification |
 | `hkask-condenser` | Curation | Context condensation |
@@ -598,7 +598,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | `hkask-services-context` | Lifecycle | `ContextService`, contract monitoring (stripped; dissolves at T3.0) |
 | `hkask-services-compose` | Composition | Template composition (dissolves at T3.0) |
 | `kask_bridge` | Composition | D8 — in-process bridge exposing `KaskCore` to MCP servers and zed-kask surfaces |
-| 11 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, curator, docproc, kata-kanban, media, replica, research, scenarios, training |
+| 10 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training |
 
 > **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (→ in-process wallet primitives), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
 
@@ -610,7 +610,7 @@ graph TD
     subgraph BRIDGE["kask_bridge (D8)"]
         KC[KaskCore]
     end
-    subgraph MCP["11 MCP servers (in-process)"]
+    subgraph MCP["10 MCP servers (in-process)"]
         MSRV[servers]
     end
     subgraph HKASK["hKask domain crates"]

@@ -13,7 +13,7 @@ mds_categories: [domain]
 Neutral, complete, descriptive-only documentation of the hKask system as it is hosted inside
 zed-kask. No procedures, no opinions, no explanations of why — only what.
 
-hKask runs in-process inside zed-kask: 29 hKask crates compiled into the editor and 11 MCP
+hKask runs in-process inside zed-kask: 29 hKask crates compiled into the editor and 10 MCP
 servers hosted on disk via zed's `context_server` infrastructure. The standalone `kask` CLI,
 HTTP API server, Matrix transport, daemon process, and REPL surfaces have been **deleted** and
 are not referenced here as current. See
@@ -34,7 +34,7 @@ for the D1–D10 integration seams and the essentialist split.
 
 ## MCP Servers
 
-- [MCP Server Registry](mcp-servers/README.md) — All 11 on-disk MCP servers with tool tables and capability tiers
+- [MCP Server Registry](mcp-servers/README.md) — All 10 on-disk MCP servers with tool tables and capability tiers
 - [Companies MCP Server](mcp-servers/companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger
 - [Condenser MCP Server](mcp-servers/condenser.md) — 7 tools, 3 compression algorithms, 2-phase condensation
 - [Corpus / DocProc MCP Server](mcp-servers/corpus.md) — Corpus gathering, document processing, QA generation, style replicas

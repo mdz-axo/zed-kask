@@ -41,20 +41,18 @@ MAX_ITERATIONS=1
 DRY_RUN=0
 SERVER=""
 
-# Canonical server list (mirrors BUILTIN_SERVERS in
-# crates/hkask-mcp-server/src/hkask_mcp_server.rs — single source of truth).
-ALL_SERVERS=(
-  hkask-mcp-codegraph
-  hkask-mcp-companies
-  hkask-mcp-condenser
-  hkask-mcp-corpus
-  hkask-mcp-curator
-  hkask-mcp-kata-kanban
-  hkask-mcp-media
-  hkask-mcp-research
-  hkask-mcp-scenarios
-  hkask-mcp-training
-)
+# Canonical server list — loaded from kask/scripts/build/mcp-servers.txt
+# (single source of truth, matching kask_bridge::BUILT_IN_MCP_SERVERS in
+# kask/crates/kask_bridge/src/mcp_servers.rs). Keeping a hardcoded array here
+# reintroduces the exact parallel-list drift that consolidated the registry
+# into BUILT_IN_MCP_SERVERS; sourcing the txt keeps this driver in lockstep
+# with the install/release surface and the runtime registry. Comment/blank
+# lines are stripped the same way as install-common.sh.
+mapfile -t ALL_SERVERS < <(grep -vE '^\s*#|^\s*$' "$KASK_ROOT/scripts/build/mcp-servers.txt" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+if [ "${#ALL_SERVERS[@]}" -eq 0 ]; then
+  echo "No servers in $KASK_ROOT/scripts/build/mcp-servers.txt" >&2
+  exit 1
+fi
 
 usage() {
   cat <<EOF

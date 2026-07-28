@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI gate: assert kask/scripts/build/mcp-servers.txt matches the runtime
-# canonical registry BUILTIN_SERVERS in
-# kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs.
+# canonical registry BUILT_IN_MCP_SERVERS in
+# kask/crates/kask_bridge/src/mcp_servers.rs.
 #
 # Drift between the install/release surface and the runtime registry causes
 # partial installs (missing MCP server binaries) with no compile-time error.
@@ -19,7 +19,7 @@ NC='\033[0m'
 # Resolve paths relative to the kask/ workspace (script lives at kask/scripts/).
 KASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIST_FILE="$KASK_ROOT/scripts/build/mcp-servers.txt"
-REGISTRY_FILE="$KASK_ROOT/crates/hkask-mcp-server/src/hkask_mcp_server.rs"
+REGISTRY_FILE="$KASK_ROOT/crates/kask_bridge/src/mcp_servers.rs"
 
 if [ ! -f "$LIST_FILE" ]; then
     echo -e "${RED}[ERROR]${NC} MCP server list not found: $LIST_FILE"
@@ -33,18 +33,19 @@ fi
 # Extract binary names from mcp-servers.txt (skip comments and blank lines).
 list_names=$(grep -vE '^\s*#|^\s*$' "$LIST_FILE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sort -u)
 
-# Extract binary names from BUILTIN_SERVERS entries in hkask_mcp_server.rs.
-# Each entry looks like: ("short_name", "hkask-mcp-binary-name"),
-# We capture the second field of each tuple.
-registry_names=$(grep -oE '\(\s*"[^"]+"\s*,\s*"(hkask-mcp-[a-z-]+)"\s*\)' "$REGISTRY_FILE" \
-    | sed -E 's/.*,\s*"(hkask-mcp-[a-z-]+)".*/\1/' \
+# Extract binary names from BUILT_IN_MCP_SERVERS entries in mcp_servers.rs.
+# Each entry is a BuiltinMcpServer struct literal with a `binary:` field:
+#     BuiltinMcpServer { id: "codegraph", binary: "hkask-mcp-codegraph", ... }
+# We capture the value of the `binary:` field.
+registry_names=$(grep -oE 'binary:\s*"(hkask-mcp-[a-z0-9_-]+)"' "$REGISTRY_FILE" \
+    | sed -E 's/.*"(hkask-mcp-[a-z0-9_-]+)".*/\1/' \
     | sort -u)
 
 if [ -z "$list_names" ] || [ -z "$registry_names" ]; then
     echo -e "${RED}[ERROR]${NC} One or both lists are empty."
     echo "  mcp-servers.txt:"
     sed 's/^/    /' <<< "$list_names"
-    echo "  BUILTIN_SERVERS:"
+    echo "  BUILT_IN_MCP_SERVERS:"
     sed 's/^/    /' <<< "$registry_names"
     exit 1
 fi
@@ -52,12 +53,27 @@ fi
 # Diff the two. `diff <(a) <(b)` returns 0 if identical.
 if diff_output=$(diff <(echo "$list_names") <(echo "$registry_names")); then
     count=$(echo "$list_names" | wc -l)
-    echo -e "${GREEN}[OK]${NC} mcp-servers.txt matches BUILTIN_SERVERS ($count servers)"
-    exit 0
+    echo -e "${GREEN}[OK]${NC} mcp-servers.txt matches BUILT_IN_MCP_SERVERS ($count servers)"
 else
-    echo -e "${RED}[ERROR]${NC} Drift between mcp-servers.txt and BUILTIN_SERVERS:"
+    echo -e "${RED}[ERROR]${NC} Drift between mcp-servers.txt and BUILT_IN_MCP_SERVERS:"
     sed 's/^/    /' <<< "$diff_output"
     echo ""
-    echo "Fix: edit $LIST_FILE to match BUILTIN_SERVERS in $REGISTRY_FILE"
+    echo "Fix: edit $LIST_FILE to match BUILT_IN_MCP_SERVERS in $REGISTRY_FILE"
     exit 1
 fi
+
+# Guard: BUILTIN_SERVERS must not be re-introduced in its old location.
+# The canonical registry was consolidated into kask_bridge::BUILT_IN_MCP_SERVERS
+# (PR #127, "Remove duplicate MCP server registry"). A parallel list in
+# hkask_mcp_server.rs would reintroduce the silent drift this check exists to
+# prevent — the previous duplicate used id "kanban" while the canonical list
+# uses "kata-kanban". See the "Do NOT re-introduce" note in that file.
+OLD_REGISTRY_FILE="$KASK_ROOT/crates/hkask-mcp-server/src/hkask_mcp_server.rs"
+if grep -nE '^[[:space:]]*(pub[[:space:]]+)?(const|static)[[:space:]]+BUILTIN_SERVERS\b' "$OLD_REGISTRY_FILE" >/dev/null; then
+    echo -e "${RED}[ERROR]${NC} BUILTIN_SERVERS was re-introduced in $OLD_REGISTRY_FILE"
+    echo "  The canonical registry is BUILT_IN_MCP_SERVERS in $REGISTRY_FILE."
+    echo "  Remove the parallel list from $OLD_REGISTRY_FILE."
+    exit 1
+fi
+echo -e "${GREEN}[OK]${NC} BUILTIN_SERVERS not re-introduced in old location"
+exit 0

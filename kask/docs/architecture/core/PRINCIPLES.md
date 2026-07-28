@@ -107,16 +107,15 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **codegraph** | PKO | DC+BIBO | — |
 | **companies** | PKO | DC+BIBO | FIBO (financial concepts) |
 | **condenser** | PKO | DC+BIBO | — (DC is the connective tissue for graph saliency) |
+| **corpus** | PKO | DC+BIBO | GOLEM (narrative structure, for the replica sub-system) |
 | **curator** | PKO | DC+BIBO | — (the curator IS the 5W1H core applied as Socratic inquiry) |
-| **docproc** | PKO | DC+BIBO | — |
 | **kata-kanban** | PKO | DC+BIBO | — |
 | **media** | PKO | DC+BIBO | OMC (media creation) |
-| **replica** | PKO | DC+BIBO | GOLEM (narrative structure) |
 | **research** | PKO | DC+BIBO | — |
 | **scenarios** | PKO | DC+BIBO | — |
 | **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
 
-> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`crates/hkask-skills`); memory is owned by the userpod's SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. The 11 servers above are the surviving set on disk.
+> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`crates/hkask-skills`); memory is owned by the userpod's SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 **Bridge locations:**
 - Process axis vocabulary: `crates/hkask-bridge-dublincore/` (shared crate)
@@ -238,7 +237,7 @@ Every interaction with hKask carries a userpod (or Curator) host identity. After
 | **Agent panel** (zed Assistant) | Human user (via userpod) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active userpod from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/pod.db` (SQLCipher) | OS keychain via `hkask-keystore` |
 | **Kask panel (D10)** | Human user (via userpod) | Same composition-root resolution | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
 | **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via userpod) | `kask admin` subcommand resolves the userpod from settings | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
-| **In-process MCP** (the 11 MCP servers wired into zed-kask) | The active userpod | Capability tokens minted by the userpod at composition-root wiring time | Per-userpod DB | Userpod-attested HKDF keys |
+| **In-process MCP** (the 10 MCP servers wired into zed-kask) | The active userpod | Capability tokens minted by the userpod at composition-root wiring time | Per-userpod DB | Userpod-attested HKDF keys |
 
 **Dual-presence pattern:** The agent panel hosts both the user's userpod AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's userpod is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 

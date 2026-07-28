@@ -586,7 +586,7 @@ The `when_to_use` field is prose extracted from SKILL.md, not a structured manif
 
 ## Building MCP Servers
 
-zed-kask hosts 11 MCP servers in-process (codegraph, companies, condenser, curator, docproc, kata-kanban, media, replica, research, scenarios, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as builtin in-process servers inside the editor (D1–D3): the `context_server` transport hosts them natively, and servers are being refactored to take direct `KaskCore` handles instead of the stdio/daemon bootstrap. The former `kask mcp start <id>` CLI and `BUILTIN_SERVERS` binary-registration model have been superseded by in-process registration.
+zed-kask hosts 10 MCP servers in-process (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as builtin in-process servers inside the editor (D1–D3): the `context_server` transport hosts them natively, and servers are being refactored to take direct `KaskCore` handles instead of the stdio/daemon bootstrap. The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.
 
 ### Prerequisites
 
@@ -763,19 +763,20 @@ Gate 3 capability denials are non-fatal — the server starts in degraded mode. 
 
 ### Step 6: Register as an In-Process Builtin
 
-Add your server to the canonical registry in `crates/hkask-mcp-server/src/lib.rs` so zed-kask's in-process transport can discover and load it:
+Add your server to the canonical registry in `crates/kask_bridge/src/mcp_servers.rs` so zed-kask's in-process transport can discover and load it:
 
 ```rust
-pub const BUILTIN_SERVERS: &[(&str, &str)] = &[
-    ("condenser", "hkask-mcp-condenser"),
-    ("research", "hkask-mcp-research"),
-    ("companies", "hkask-mcp-companies"),
+pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     // ... existing entries ...
-    ("example", "<your-mcp-package>"),   // ← add this line
+    BuiltinMcpServer {
+        id: "example",
+        binary: "<your-mcp-package>",
+        description: "Example — what it does",
+    },   // ← add this entry
 ];
 ```
 
-The tuple is `(server_id, binary_name)`. In zed-kask, the `context_server` transport (D3) uses this registry to load servers in-process. The former `kask mcp start example` CLI has been removed; servers are loaded automatically by the editor at startup. As the in-process refactor (T3.0) progresses, servers will take direct `KaskCore` handles instead of the stdio/daemon bootstrap, and the `BUILTIN_SERVERS` binary-name field will be replaced by a direct factory registration.
+Each entry is a `BuiltinMcpServer { id, binary, description }` struct. In zed-kask, the `context_server` transport (D3) uses this registry to load servers in-process. The former `kask mcp start example` CLI has been removed; servers are loaded automatically by the editor at startup. As the in-process refactor (T3.0) progresses, servers will take direct `KaskCore` handles instead of the stdio/daemon bootstrap, and the `binary` field will be replaced by a direct factory registration. If you also add an `id`/`description`-only view, keep `BUILT_IN_MCP_SERVERS_IDS` and `BUILT_IN_MCP_SERVERS_PAIRS` in sync — the `ids_slice_matches_main_registry` and `pairs_slice_matches_main_registry` tests enforce this.
 
 ### Testing the Server
 
@@ -796,7 +797,7 @@ In-process test (production path): launch zed-kask and verify the server appears
 | Duplicate `ToolContext` impl | `mcp_server!` already calls `impl_tool_context!` — do not duplicate it |
 | No Regulation spans emitted | Always wrap tool logic in `execute_tool(self, "tool_name", async { ... }).await` |
 | Server starts as `"anonymous"` | Set `HKASK_MCP_HOST` (or your `host_env_var`) before starting |
-| Server not loaded by zed-kask | Add your `(server_id, binary_name)` to `BUILTIN_SERVERS` in `crates/hkask-mcp-server/src/lib.rs` |
+| Server not loaded by zed-kask | Add a `BuiltinMcpServer { id, binary, description }` entry to `BUILT_IN_MCP_SERVERS` in `crates/kask_bridge/src/mcp_servers.rs` (and keep `_IDS`/`_PAIRS` in sync) |
 | Tool name conflicts | Tool names are global across all MCP servers. Use a prefix convention (e.g., `example_ping`) |
 
 ---

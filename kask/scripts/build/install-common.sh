@@ -7,8 +7,8 @@
 #   - add_to_path (symlink-then-shell-config strategy)
 #   - print_banner
 #
-# The runtime canonical registry is BUILTIN_SERVERS in
-# kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs; mcp-servers.txt is the
+# The runtime canonical registry is BUILT_IN_MCP_SERVERS in
+# kask/crates/kask_bridge/src/mcp_servers.rs; mcp-servers.txt is the
 # build/CI surface, verified by kask/scripts/check-mcp-servers.sh.
 
 # Avoid double-sourcing.

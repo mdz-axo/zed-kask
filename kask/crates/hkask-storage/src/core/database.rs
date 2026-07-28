@@ -24,6 +24,10 @@ pub(crate) fn embedding_dim() -> usize {
     std::env::var("HKASK_EMBEDDING_DIM")
         .ok()
         .and_then(|s| s.parse().ok())
+        // Filter 0: HKASK_EMBEDDING_DIM=0 would otherwise create a schema
+        // with zero-dimensional vector columns, causing DimensionMismatch on
+        // every store call. Mirrors codegraph's resolve_embedding_dim guard.
+        .filter(|&d| d > 0)
         .unwrap_or(DEFAULT_EMBEDDING_DIM)
 }
 

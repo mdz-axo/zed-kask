@@ -155,4 +155,32 @@ mod tests {
         assert!(find_server("kata-kanban").is_some());
         assert!(find_server("nonexistent").is_none());
     }
+
+    // The derived arrays below are hand-maintained convenience views over
+    // BUILT_IN_MCP_SERVERS. Without these tests they can silently drift the
+    // moment a server is added to BUILT_IN_MCP_SERVERS without updating the
+    // derived slices (the settings UI / kask panel would then drop the new
+    // server while the runtime registry served it).
+    #[test]
+    fn ids_slice_matches_main_registry() {
+        let expected: Vec<&str> = BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect();
+        let actual: Vec<&str> = BUILT_IN_MCP_SERVERS_IDS.to_vec();
+        assert_eq!(
+            actual, expected,
+            "BUILT_IN_MCP_SERVERS_IDS is out of sync with BUILT_IN_MCP_SERVERS"
+        );
+    }
+
+    #[test]
+    fn pairs_slice_matches_main_registry() {
+        let expected: Vec<(&str, &str)> = BUILT_IN_MCP_SERVERS
+            .iter()
+            .map(|s| (s.id, s.description))
+            .collect();
+        let actual: Vec<(&str, &str)> = BUILT_IN_MCP_SERVERS_PAIRS.to_vec();
+        assert_eq!(
+            actual, expected,
+            "BUILT_IN_MCP_SERVERS_PAIRS is out of sync with BUILT_IN_MCP_SERVERS"
+        );
+    }
 }

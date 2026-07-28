@@ -112,13 +112,13 @@ impl DelegationAction {
 /// Derive capability shorthand from MCP server ID.
 ///
 /// Accepts both full binary-style IDs (`hkask-mcp-<domain>`) and short
-/// BUILTIN_SERVERS IDs (`<domain>`). Non-mcp IDs (containing colons or
+/// `BUILT_IN_MCP_SERVERS` IDs (`<domain>`). Non-mcp IDs (containing colons or
 /// empty) return `None`.
 pub fn capability_from_server_id(server_id: &str) -> Option<String> {
     if let Some(domain) = server_id.strip_prefix("hkask-mcp-") {
         return Some(format!("tool:{}:execute", domain));
     }
-    // Short form from BUILTIN_SERVERS (e.g. "docproc", "memory")
+    // Short form from BUILT_IN_MCP_SERVERS (e.g. "codegraph", "curator")
     if !server_id.is_empty() && !server_id.contains(':') {
         return Some(format!("tool:{}:execute", server_id));
     }

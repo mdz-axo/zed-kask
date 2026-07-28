@@ -503,8 +503,8 @@ Do not edit .rules. If you discover a non-obvious pattern, propose it as a
 
 Every claim in Phase 1 traces to a source read:
 
-- Server list: `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs`
-  `BUILTIN_SERVERS` (10 entries) + `kask/mcp-servers/` directory listing.
+- Server list: `kask/crates/kask_bridge/src/mcp_servers.rs`
+  `BUILT_IN_MCP_SERVERS` (10 entries) + `kask/mcp-servers/` directory listing.
 - Tool names: `rg '#\[tool\((?P<desc>.*?)\)\]\s*...pub async fn (\w+)'`
   over every `kask/mcp-servers/*/src/**/*.rs` (199 matches).
 - Credentials: `rg 'CredentialRequirement::(required|optional)\(...'`

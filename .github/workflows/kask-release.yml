@@ -36,7 +36,7 @@ env:
   CARGO_INCREMENTAL: '0'
   # Packages to build — generated from kask/scripts/build/mcp-servers.txt
   # (single source of truth, verified by kask/scripts/check-mcp-servers.sh
-  # against BUILTIN_SERVERS in kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs).
+  # against BUILT_IN_MCP_SERVERS in kask/crates/kask_bridge/src/mcp_servers.rs).
   # The list is materialized into --package args in the build step below.
 
 jobs:

@@ -345,7 +345,7 @@ pub struct KaskCompaniesSettings {
 }
 
 /// Corpus MCP server configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskCorpusSettings {
     /// Embedding dimensionality (must match the embedding model's output).
     #[serde(default = "default_embedding_dim")]
@@ -380,6 +380,27 @@ pub struct KaskCorpusSettings {
     /// Template root directory for Jinja2 templates.
     #[serde(default = "default_template_root")]
     pub template_root: String,
+}
+
+// Manual Default: the derived Default returns u32::default() == 0 for
+// embedding_dim, not the serde default 1024. The #[serde(default = ...)]
+// attribute only fires during deserialization, NOT for Default::default().
+// When the user has no `kask.corpus` section, from_settings falls back to
+// KaskSettings::default() → KaskCorpusSettings::default(), which previously
+// produced embedding_dim: 0 and panicked in EmbeddingStore::from_driver.
+impl Default for KaskCorpusSettings {
+    fn default() -> Self {
+        Self {
+            embedding_dim: default_embedding_dim(),
+            embedding_model: default_embedding_model(),
+            ocr_concurrency: default_ocr_concurrency(),
+            ocr_simple_max: default_ocr_simple_max(),
+            ocr_moderate_max: default_ocr_moderate_max(),
+            ocr_sample_rate: default_ocr_sample_rate(),
+            ocr_tuneable: default_true(),
+            template_root: default_template_root(),
+        }
+    }
 }
 
 fn default_embedding_dim() -> u32 {
@@ -1190,6 +1211,33 @@ mod tests {
             ..Default::default()
         };
         let settings = KaskSettings::from(content);
+        assert_eq!(settings.corpus.embedding_dim, 1024);
+    }
+
+    // Regression test for the Default-path crash (2026-07-28).
+    // KaskCorpusSettings derived Default, but u32::default() == 0, not 1024.
+    // The #[serde(default)] attribute only fires during deserialization, NOT
+    // for Default::default(). When the user had no `kask.corpus` section,
+    // from_settings fell back to KaskSettings::default() →
+    // KaskCorpusSettings::default() → embedding_dim: 0, which panicked in
+    // EmbeddingStore::from_driver (assert dim > 0). The manual Default impl
+    // above returns 1024, matching the serde default.
+    #[test]
+    fn corpus_settings_default_embedding_dim_is_not_zero() {
+        let default_corpus = KaskCorpusSettings::default();
+        assert_eq!(
+            default_corpus.embedding_dim, 1024,
+            "KaskCorpusSettings::default() must return embedding_dim: 1024, not 0 — \
+             a zero-dimensional store panics in EmbeddingStore::from_driver"
+        );
+    }
+
+    // KaskSettings::default() (used when there is no kask section at all) must
+    // also produce a non-zero embedding_dim, since it delegates to
+    // KaskCorpusSettings::default() for the corpus field.
+    #[test]
+    fn kask_settings_default_corpus_embedding_dim_is_not_zero() {
+        let settings = KaskSettings::default();
         assert_eq!(settings.corpus.embedding_dim, 1024);
     }
 }

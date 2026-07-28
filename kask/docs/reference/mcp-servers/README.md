@@ -14,22 +14,26 @@ mds_categories: [composition, domain]
 **Status:** Current (v0.31.0)
 
 Built-in MCP servers shipped with hKask and hosted in-process by zed-kask's `context_server`
-infrastructure. Each server is a thin surface over domain crates, following the standard bootstrap
-path (`hkask_mcp::bootstrap_mcp_server` → `hkask_mcp::run_server`).
+infrastructure. Each server is a thin surface over domain crates. The binary entrypoint
+(`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the library
+root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name, version,
+factory, credentials)`, where `factory` receives a `ServerContext` and constructs the server
+struct.
 
 > **Hosting note (v0.31.0):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are loaded by zed's
-> `context_server` host; the `BUILTIN_SERVERS` constant in
-> `kask/crates/hkask-mcp-server/src/lib.rs` enumerates the 11 on-disk servers. Five servers from
+> `context_server` host; the `BUILT_IN_MCP_SERVERS` constant in
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 10 on-disk servers. Five servers from
 > the original 16 have been deleted: `communication` (Matrix/TTS → zed voip), `filesystem` (zed
 > provides fs tools), `memory` (consolidated into the `hkask-memory` crate), `skill` (skill
-> execution is native via D1), and `regulation` (consolidated into the `hkask-regulation` crate).
-> See [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
+> execution is native via D1), and `regulation` (consolidated into the `hkask-regulation` crate);
+> `docproc` and `replica` were folded into `corpus`. See
+> [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
 > §2.4.
 
 ## Server Catalog
 
-11 on-disk MCP servers:
+10 on-disk MCP servers:
 
 | Server | Crate | Domain | Tools | Math Engine |
 |--------|-------|--------|-------|-------------|
@@ -40,28 +44,27 @@ path (`hkask_mcp::bootstrap_mcp_server` → `hkask_mcp::run_server`).
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | — | — |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 14 | `hkask-services-kata-kanban` |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | — | — |
-| Replica | `mcp-servers/hkask-mcp-corpus` | Style replicas (subset of corpus server) | — | — |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `hkask-mcp-research` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 18 | `hkask-forecast` |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | — | — |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
-> agent, D2). All 11 build clean.
+> agent, D2). All 10 build clean.
 
 ## Common Patterns
 
 All servers follow these patterns:
 
-1. **Bootstrap:** `hkask_mcp::bootstrap_mcp_server(name, target, host_env_var)` → returns `MCPBootstrap { userpod }` (resolves userpod identity only; the daemon was deleted in the 2026-07-25 cleanup, so `daemon_client` is no longer part of the bootstrap result)
-2. **Struct:** `hkask_mcp::mcp_server!` macro generates the struct with `webid`, `userpod`, `daemon` fields plus domain fields. The `daemon` field is dead in zed-kask (always `None`; the daemon was deleted — `DaemonClient` is retained only for compile-stability, `record_via_daemon()` is a no-op). Thread-level memory via `RealMemoryPort` (D6) replaces daemon experience recording.
-3. **Tool dispatch:** `execute_tool_semantic(self, tool_name, ontology, async { ... })` wraps each tool with Regulation span + daemon outcome recording
-4. **Tool router:** `#[tool_handler(router = Self::...router())]` on the `ServerHandler` impl
-5. **Error type:** `McpToolError` for tool-level errors, domain `Error` enums (via `thiserror`) for computation errors
-6. **Governance:** OCAP is enforced at the dispatcher `GovernedTool` membrane (`DelegationToken` per call), not at the server. The server is the transport pipe; `shell_exec`-style tools are reachable only by agents holding the relevant capability token. See [`lib.rs` (`GovernedTool`)](../../../crates/hkask-regulation/src/governed_tool.rs) (replaces deleted `crates/hkask-pods/src/lib.rs`) and the `kask_bridge` `BridgeToolPort` adapter (`kask/crates/kask_bridge/src/tool_port.rs`, D3/D8).
+1. **Bootstrap:** `main.rs` calls `<crate>::run()`, which calls `hkask_mcp_server::run_server(name, version, factory, credentials)`. The `factory: FnOnce(ServerContext) -> Result<S, McpError>` closure receives a `ServerContext` (no ambient authority — all deps injected) and constructs the server struct. There is no separate `bootstrap_mcp_server` / `MCPBootstrap` step; that API was removed along with the `HKASK_MCP_HOST` / userpod identity concept.
+2. **Identity:** `ServerContext.webid: WebID` is the sole agent-identity source, resolved in transport from `HKASK_WEBID` (or an anonymous fallback). The `mcp_server!` macro generates a struct with `pub webid: WebID` plus the caller's custom domain fields — and nothing else (no `userpod`, no `daemon` field; the daemon was deleted in the 2026-07-25 cleanup and `DaemonClient` / `record_via_daemon` / `RealMemoryPort` are no longer part of the server contract).
+3. **Tool dispatch:** wrap each tool body in `execute_tool(self, "tool_name", async { ... })` (or `execute_tool_semantic(self, "tool_name", Some("pko:ChangeOfStatus"), async { ... })` to tag the Regulation span with a domain ontology concept). Both emit the `reg.tool` span, serialize errors, and call `ToolContext::record_tool_outcome` (default: Regulation warning; override to wire semantic-memory recording).
+4. **Tool attribute:** use rmcp's built-in `#[tool(description = "...")]` on each tool method and `#[tool_router(server_handler)]` on the `impl` block that holds them (imported from `rmcp`). There is no custom `#[tool_handler(router = ...)]` attribute; per-call routing and OCAP verification happen at the `McpRuntime` membrane, not on the server struct.
+5. **Error type:** `McpToolError` for tool-level errors, domain `Error` enums (via `thiserror`) for computation errors.
+6. **Governance:** OCAP is enforced at the `McpRuntime` membrane (`DelegationToken` per call), not at the server. The server is the transport pipe; `shell_exec`-style tools are reachable only by agents holding the relevant capability token. The former `GovernedTool` wrapper was collapsed into `McpRuntime::invoke` (one tool, one path — OCAP verify → gas reserve → dispatch → settle → span emit); see `crates/hkask-mcp/src/runtime.rs` and the `kask_bridge` `BridgeToolPort` adapter (`kask/crates/kask_bridge/src/tool_port.rs`, D3/D8), which delegates `ToolPort::invoke(..., token: &DelegationToken)` to the runtime.
 
 ## Testing standard
 
-Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across all 11 servers.
+Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across all 10 servers.
 
 ## Cross-links
 
@@ -90,8 +93,6 @@ classDiagram
 
     class KanbanServer {
         +webid: WebID
-        +userpod: String
-        +daemon: Option~DaemonClient~  // DEAD in zed-kask — always None; daemon deleted in 2026-07-25 cleanup
         +service: KanbanService
         +kanban_board_create() String
         +kanban_board_list() String
@@ -262,6 +263,6 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-IC-017
 verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-kata-kanban/src/lib.rs:29-33 (KanbanServer struct — db field deleted; daemon field retained but always None in zed-kask — dead code, R4/T3.0 refactor pending), crates/hkask-services-kata-kanban/src/kanban/service_impl/service.rs:34-37 (KanbanService struct — kata_bridge field deleted, pod_manager removed post-pivot), crates/hkask-services-kata-kanban/src/kata/mod.rs:76-94 (KataEngine struct), crates/hkask-storage/src/hmem.rs:134-138 (HMemStore struct), crates/hkask-services-kata-kanban/src/kanban/types/task.rs:9-55 (Task struct), crates/hkask-services-kata-kanban/src/kanban/types/status.rs:16-27 (TaskStatus enum), crates/hkask-services-kata-kanban/src/kanban/socratic.rs:265-270 (SocraticRole enum); KataEngine construction now in-process (deleted kask kata start CLI surface)
+verified_against: mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:30-33 (KanbanServer struct — generated by `mcp_server!` macro with only `webid` + `service: KanbanService`; no `userpod`/`daemon` field — daemon deleted in 2026-07-25 cleanup, macro no longer generates those fields), crates/hkask-services-kata-kanban/src/kanban/service_impl/service.rs:34-37 (KanbanService struct — kata_bridge field deleted, pod_manager removed post-pivot), crates/hkask-services-kata-kanban/src/kata/mod.rs:76-94 (KataEngine struct), crates/hkask-storage/src/hmem.rs:134-138 (HMemStore struct), crates/hkask-services-kata-kanban/src/kanban/types/task.rs:9-55 (Task struct), crates/hkask-services-kata-kanban/src/kanban/types/status.rs:16-27 (TaskStatus enum), crates/hkask-services-kata-kanban/src/kanban/socratic.rs:265-270 (SocraticRole enum); KataEngine construction now in-process (deleted kask kata start CLI surface)
 status: VERIFIED (v4 — daemon field annotated as dead in zed-kask; always None; daemon deleted in 2026-07-25 cleanup)
 -->

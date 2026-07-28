@@ -216,7 +216,7 @@ The suite covers provider-error handling, EODHD normalization, valuation request
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — catalog of all 11 on-disk servers
+- [MCP Server Registry](README.md) — catalog of all 10 on-disk servers
 - [Companies User Guide](../../explanation/companies-mcp.md) — task-oriented procedures for valuation, forecasting, and portfolio operations
 - Companies Semantic Graph Audit — internal module dependency graph health
 - Companies MCP Code Review — adversarial code review of the companies server

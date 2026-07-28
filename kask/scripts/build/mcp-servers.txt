@@ -1,9 +1,9 @@
 # Canonical MCP server binary list — one package name per line.
 #
 # This file is the single source of truth for install scripts and release
-# workflows. The runtime canonical registry is BUILTIN_SERVERS in
-# kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs; the CI check
-# kask/scripts/check-mcp-servers.sh asserts this file matches BUILTIN_SERVERS.
+# workflows. The runtime canonical registry is BUILT_IN_MCP_SERVERS in
+# kask/crates/kask_bridge/src/mcp_servers.rs; the CI check
+# kask/scripts/check-mcp-servers.sh asserts this file matches BUILT_IN_MCP_SERVERS.
 #
 # Consumers:
 #   - kask/scripts/build/install.sh        (mapfile -t MCP_SERVERS < this file)
