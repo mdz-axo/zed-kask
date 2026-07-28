@@ -1,0 +1,139 @@
+//! One-off: rasterize `kask/assets/zk-icon.svg` to the PNG sizes zed expects
+//! for the desktop / window / about icons, and emit a Windows `.ico`.
+//!
+//! Outputs (relative to repo root):
+//!   crates/zed/resources/app-icon-dev.png        (512x512)
+//!   crates/zed/resources/app-icon-dev@2x.png     (1024x1024)
+//!   crates/zed/resources/windows/app-icon-dev.ico (multi-size)
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use resvg::tiny_skia::{Pixmap, PixmapMut, Transform};
+use usvg::Tree;
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .canonicalize()
+        .expect("canonicalize repo root")
+}
+
+/// Rasterize the SVG to a square `size`×`size` RGBA pixmap, scaling the
+/// tree's natural size to fit.
+fn rasterize(svg_path: &Path, size: u32) -> Pixmap {
+    let svg_bytes = fs::read(svg_path).unwrap_or_else(|e| panic!("read {svg_path:?}: {e}"));
+    let options = usvg::Options::default();
+    let tree =
+        Tree::from_data(&svg_bytes, &options).unwrap_or_else(|e| panic!("parse {svg_path:?}: {e}"));
+
+    let natural = tree.size();
+    let natural_w = natural.width() as f32;
+    let natural_h = natural.height() as f32;
+    let scale_x = size as f32 / natural_w;
+    let scale_y = size as f32 / natural_h;
+    let scale = scale_x.min(scale_y);
+
+    let mut pixmap =
+        Pixmap::new(size, size).unwrap_or_else(|| panic!("alloc pixmap {size}x{size}"));
+    {
+        let mut pixmap_mut =
+            PixmapMut::from_bytes(pixmap.data_mut(), size, size).expect("borrow pixmap for render");
+        // Center the scaled tree inside the square pixmap.
+        let dx = (size as f32 - natural_w * scale) / 2.0;
+        let dy = (size as f32 - natural_h * scale) / 2.0;
+        let transform = Transform::from_scale(scale, scale).post_translate(dx, dy);
+        resvg::render(&tree, transform, &mut pixmap_mut);
+    }
+    pixmap
+}
+
+fn write_png(pixmap: &Pixmap, out: &Path) {
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).expect("create parent dir");
+    }
+    let png_bytes = pixmap
+        .encode_png()
+        .unwrap_or_else(|e| panic!("encode png: {e}"));
+    fs::write(out, &png_bytes).unwrap_or_else(|e| panic!("write {out:?}: {e}"));
+    println!(
+        "wrote {} ({}x{})",
+        out.display(),
+        pixmap.width(),
+        pixmap.height()
+    );
+}
+
+/// Build a multi-size `.ico` from the source SVG. ICO format: ICONDIR header
+/// followed by ICONDIRENTRY per image, then image data (PNG-encoded —
+/// supported by Windows Vista+ and all modern tooling).
+fn write_ico(svg_path: &Path, sizes: &[u32], out: &Path) {
+    let mut entries: Vec<(u32, Vec<u8>)> = Vec::new();
+    for &size in sizes {
+        let pixmap = rasterize(svg_path, size);
+        let png = pixmap.encode_png().expect("encode png for ico");
+        entries.push((size, png));
+    }
+
+    let mut buf: Vec<u8> = Vec::new();
+    // ICONDIR
+    buf.extend_from_slice(&[0u8, 0]); // reserved
+    buf.extend_from_slice(&1u16.to_le_bytes()); // type = 1 (icon)
+    buf.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+
+    // ICONDIRENTRY (16 bytes each)
+    let mut data_offset = 6 + entries.len() * 16;
+    for &(size, ref png) in &entries {
+        let w = if size >= 256 { 0 } else { size as u8 };
+        let h = w;
+        buf.push(w);
+        buf.push(h);
+        buf.push(0); // palette
+        buf.push(0); // reserved
+        buf.extend_from_slice(&1u16.to_le_bytes()); // color planes
+        buf.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        buf.extend_from_slice(&(png.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&(data_offset as u32).to_le_bytes());
+        data_offset += png.len();
+    }
+    for (_, png) in &entries {
+        buf.extend_from_slice(png);
+    }
+
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).expect("create parent dir");
+    }
+    fs::write(out, &buf).unwrap_or_else(|e| panic!("write {out:?}: {e}"));
+    println!("wrote {} ({} sizes)", out.display(), entries.len());
+}
+
+fn main() {
+    let root = repo_root();
+    let svg = root.join("kask").join("assets").join("zk-icon.svg");
+    assert!(svg.exists(), "source SVG not found: {svg:?}");
+
+    // Desktop / window / about icons (dev channel = Kask product).
+    let dev_png = root
+        .join("crates")
+        .join("zed")
+        .join("resources")
+        .join("app-icon-dev.png");
+    let dev_png_2x = root
+        .join("crates")
+        .join("zed")
+        .join("resources")
+        .join("app-icon-dev@2x.png");
+    let dev_ico = root
+        .join("crates")
+        .join("zed")
+        .join("resources")
+        .join("windows")
+        .join("app-icon-dev.ico");
+
+    write_png(&rasterize(&svg, 512), &dev_png);
+    write_png(&rasterize(&svg, 1024), &dev_png_2x);
+    write_ico(&svg, &[16, 32, 48, 64, 128, 256], &dev_ico);
+
+    println!("done.");
+}

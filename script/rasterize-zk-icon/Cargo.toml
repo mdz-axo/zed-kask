@@ -1,0 +1,20 @@
+[package]
+name = "rasterize-zk-icon"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "rasterize-zk-icon"
+path = "src/main.rs"
+
+[dependencies]
+resvg = { version = "0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+usvg = { version = "0.46.0", default-features = false }
+tiny-skia = "0.11"
+png = "0.17"
+
+[profile.release]
+opt-level = 3

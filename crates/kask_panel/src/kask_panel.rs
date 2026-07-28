@@ -740,6 +740,8 @@ impl KaskPanel {
             .rounded_sm()
             .px_2()
             .py_1()
+            .items_center()
+            .child(Icon::new(IconName::Kask).color(Color::Muted))
             .child(gas_label)
             .child(reg_label)
     }
@@ -962,8 +964,10 @@ impl Render for KaskPanel {
             .gap_3()
             .track_focus(&self.focus_handle)
             .child(
-                v_flex()
-                    .gap_1()
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Icon::new(IconName::Kask).color(Color::Accent))
                     .child(Label::new("Kask Panel").size(LabelSize::Large)),
             )
             .child(self.render_server_selector(cx))
