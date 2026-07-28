@@ -1137,28 +1137,17 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
     fn from(c: KaskInferenceProvidersSettingsContent) -> Self {
         // When the user hasn't explicitly set a toggle (field is `None`),
         // auto-enable the provider if its API key is present in the process
-        // environment. This is the only place env vars are read — `Default`
-        // returns all-false so that `KaskSettings::default()` and tests remain
-        // deterministic and side-effect-free.
+        // environment. `from_env()` is the single source of truth for this
+        // logic — `Default` returns all-false so that `KaskSettings::default()`
+        // and tests remain deterministic and side-effect-free.
+        let from_env = Self::from_env();
         Self {
-            deepinfra_enabled: c
-                .deepinfra_enabled
-                .unwrap_or_else(|| std::env::var("DEEPINFRA_API_KEY").is_ok()),
-            fal_enabled: c
-                .fal_enabled
-                .unwrap_or_else(|| std::env::var("FALAI_API_KEY").is_ok()),
-            together_enabled: c
-                .together_enabled
-                .unwrap_or_else(|| std::env::var("TOGETHERAI_API_KEY").is_ok()),
-            openrouter_enabled: c
-                .openrouter_enabled
-                .unwrap_or_else(|| std::env::var("OPENROUTER_API_KEY").is_ok()),
-            kilocode_enabled: c
-                .kilocode_enabled
-                .unwrap_or_else(|| std::env::var("KILOCODE_API_KEY").is_ok()),
-            cline_enabled: c
-                .cline_enabled
-                .unwrap_or_else(|| std::env::var("CLINE_API_KEY").is_ok()),
+            deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
+            fal_enabled: c.fal_enabled.unwrap_or(from_env.fal_enabled),
+            together_enabled: c.together_enabled.unwrap_or(from_env.together_enabled),
+            openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
+            kilocode_enabled: c.kilocode_enabled.unwrap_or(from_env.kilocode_enabled),
+            cline_enabled: c.cline_enabled.unwrap_or(from_env.cline_enabled),
         }
     }
 }
@@ -1183,7 +1172,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             inference_providers: c
                 .inference_providers
                 .map(Into::into)
-                .unwrap_or_else(|| KaskInferenceProvidersSettingsContent::default().into()),
+                .unwrap_or_else(KaskInferenceProvidersSettings::from_env),
         }
     }
 }
@@ -1471,5 +1460,37 @@ mod tests {
             env.get("HKASK_EMBEDDING_DIM").map(String::as_str),
             Some("2048")
         );
+    }
+
+    // `KaskInferenceProvidersSettings::default()` must be pure (all-false) —
+    // no env-var reads. This keeps `KaskSettings::default()` and tests
+    // deterministic. The env-var auto-enable logic lives in `from_env()` and
+    // `From<Content>`, not `Default`.
+    #[test]
+    fn inference_providers_default_is_all_false() {
+        let default = KaskInferenceProvidersSettings::default();
+        assert!(!default.deepinfra_enabled);
+        assert!(!default.fal_enabled);
+        assert!(!default.together_enabled);
+        assert!(!default.openrouter_enabled);
+        assert!(!default.kilocode_enabled);
+        assert!(!default.cline_enabled);
+    }
+
+    // `KaskSettings::default()` must also have all-false inference providers,
+    // since it delegates to `KaskInferenceProvidersSettings::default()`.
+    #[test]
+    fn kask_settings_default_inference_providers_all_false() {
+        let settings = KaskSettings::default();
+        assert!(!settings.inference_providers.deepinfra_enabled);
+        assert!(!settings.inference_providers.openrouter_enabled);
+    }
+
+    // `from_env()` reads env vars — this test verifies it doesn't panic and
+    // returns a valid struct. We can't assert specific values because the
+    // test environment may or may not have API keys set.
+    #[test]
+    fn inference_providers_from_env_does_not_panic() {
+        let _ = KaskInferenceProvidersSettings::from_env();
     }
 }

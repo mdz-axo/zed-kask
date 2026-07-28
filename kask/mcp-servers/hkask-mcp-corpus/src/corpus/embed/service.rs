@@ -9,7 +9,7 @@ use super::types::{
     ProgressFn,
 };
 use super::utils::strip_provider_prefix;
-use crate::embed::Entity;
+use crate::corpus::embed::Entity;
 use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
 use hkask_memory::SemanticMemory;
 use hkask_memory::salience::{self, EntityTags};
@@ -256,7 +256,7 @@ impl EmbedService {
 
             let cleaned = SemanticMemory::strip_gutenberg_headers(&text);
             let entity_ref_prefix = format!("style:{}:{}", &config.author, work.slug);
-            let chunker = crate::embed::WordCountChunker {
+            let chunker = crate::corpus::embed::WordCountChunker {
                 min_words: config.chunking.min_words,
                 max_words: config.chunking.max_words,
                 sentence_boundary: config.chunking.sentence_boundary.clone(),

@@ -1,6 +1,6 @@
 //! LLM concept extraction and method inference for the discovery pipeline.
 
-use crate::embed::{Entity, EntityConfig};
+use crate::corpus::embed::{Entity, EntityConfig};
 use hkask_inference::{InferenceConfig, InferenceRouter};
 use hkask_memory::salience::{DeclaredMethod, MethodThresholds};
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};

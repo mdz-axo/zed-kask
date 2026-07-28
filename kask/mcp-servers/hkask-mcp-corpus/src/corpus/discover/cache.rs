@@ -88,7 +88,7 @@ pub async fn download_and_cache(url: &str, cache_path: &Path) -> Result<(), Serv
         let word_count = extracted.split_whitespace().count();
         if word_count < 10 {
             tracing::warn!(url = %url, word_count = word_count, "PDF extraction near-empty — attempting OCR fallback");
-            match crate::embed::ocr_pdf_bytes(&bytes, url).await {
+            match crate::corpus::embed::ocr_pdf_bytes(&bytes, url).await {
                 Ok(ocr_text) => {
                     let ocr_words = ocr_text.split_whitespace().count();
                     if ocr_words > word_count {
@@ -113,7 +113,7 @@ pub async fn download_and_cache(url: &str, cache_path: &Path) -> Result<(), Serv
             || raw.starts_with("<!DOCTYPE")
             || raw.starts_with("<html")
         {
-            crate::embed::strip_html_tags(&raw)
+            crate::corpus::embed::strip_html_tags(&raw)
         } else {
             raw
         }

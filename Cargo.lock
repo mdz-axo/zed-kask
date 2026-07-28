@@ -9363,23 +9363,25 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "calamine",
+ "chrono",
  "dirs 6.0.0",
  "docx-rs",
  "dotenvy",
  "hkask-bridge-dublincore",
+ "hkask-capability",
  "hkask-guard",
  "hkask-inference",
  "hkask-keystore",
+ "hkask-ledger",
  "hkask-mcp-server",
  "hkask-memory",
- "hkask-services-compose",
+ "hkask-regulation",
  "hkask-services-core",
- "hkask-services-corpus",
- "hkask-services-inference",
  "hkask-storage",
  "hkask-types",
  "image",
  "minijinja",
+ "pdf-extract",
  "pptx-to-md",
  "proptest 1.10.0",
  "rand 0.9.4",
@@ -9393,6 +9395,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "uuid",
  "zed-reqwest",
 ]
 
@@ -9611,22 +9614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-services-compose"
-version = "0.31.0"
-dependencies = [
- "hkask-inference",
- "hkask-memory",
- "hkask-services-core",
- "hkask-services-inference",
- "hkask-storage",
- "hkask-types",
- "minijinja",
- "proptest 1.10.0",
- "serde",
- "tracing",
-]
-
-[[package]]
 name = "hkask-services-core"
 version = "0.31.0"
 dependencies = [
@@ -9640,66 +9627,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "hkask-services-corpus"
-version = "0.31.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "hkask-capability",
- "hkask-inference",
- "hkask-memory",
- "hkask-services-core",
- "hkask-services-runtime",
- "hkask-storage",
- "hkask-types",
- "minijinja",
- "pdf-extract",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "zed-reqwest",
-]
-
-[[package]]
-name = "hkask-services-inference"
-version = "0.31.0"
-dependencies = [
- "hkask-guard",
- "hkask-inference",
- "hkask-services-core",
- "hkask-types",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "hkask-services-runtime"
-version = "0.31.0"
-dependencies = [
- "async-trait",
- "chrono",
- "hkask-guard",
- "hkask-inference",
- "hkask-ledger",
- "hkask-mcp-server",
- "hkask-regulation",
- "hkask-services-core",
- "hkask-storage",
- "hkask-types",
- "serde",
- "serde_json",
- "serde_yaml_neo",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "zed-reqwest",
 ]
 
 [[package]]

@@ -283,7 +283,6 @@ members = [
     "kask/crates/hkask-condenser",
     "kask/crates/hkask-bridge-dublincore",
     "kask/crates/hkask-services-core",
-    "kask/crates/hkask-services-kata-kanban",
     "kask/crates/hkask-email",
 
     #

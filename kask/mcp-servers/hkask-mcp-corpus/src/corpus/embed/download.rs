@@ -2,7 +2,7 @@
 
 use super::ocr::ocr_pdf_bytes;
 use super::types::USER_AGENT;
-use crate::embed::html::strip_html_tags;
+use crate::corpus::embed::html::strip_html_tags;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 
 pub(crate) async fn download_text(url: &str) -> Result<String, ServiceError> {

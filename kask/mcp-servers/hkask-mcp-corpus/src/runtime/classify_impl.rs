@@ -462,7 +462,7 @@ async fn classify_one(
 pub async fn classify_batch(
     texts: &[String],
     config: ClassifierConfig,
-    provider: Option<&dyn crate::provider_intel::ProviderIntelligence>,
+    provider: Option<&dyn crate::runtime::provider_intel::ProviderIntelligence>,
 ) -> Result<Vec<ClassifyResult>, ServiceError> {
     // P9: Regulation span
     tracing::info!(target: "hkask.classify", operation = "classify_batch", item_count = texts.len(), "REG");

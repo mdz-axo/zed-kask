@@ -1,6 +1,6 @@
 //! Corpus YAML generation and augmentation for the discovery pipeline.
 
-use crate::embed::{CorpusConfig, EntityConfig, Work};
+use crate::corpus::embed::{CorpusConfig, EntityConfig, Work};
 use hkask_memory::salience::DeclaredMethod;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use std::path::{Path, PathBuf};
@@ -102,20 +102,20 @@ pub fn generate_corpus_yaml(
 pub fn default_corpus_config(author_slug: &str) -> CorpusConfig {
     CorpusConfig {
         author: author_slug.to_string(),
-        embedding: crate::embed::EmbeddingConfig {
+        embedding: crate::corpus::embed::EmbeddingConfig {
             model: "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string(),
             dim: 1024,
             batch_size: 64,
         },
         works: vec![],
         foundational_rules: vec![],
-        chunking: crate::embed::ChunkingConfig {
+        chunking: crate::corpus::embed::ChunkingConfig {
             min_words: 50,
             max_words: 200,
             sentence_boundary: ".!? ".to_string(),
         },
         centroid_entity_ref: format!("style:{author_slug}:centroid"),
-        validation: crate::embed::ValidationConfig {
+        validation: crate::corpus::embed::ValidationConfig {
             centroid_distance_max: 0.25,
             exemplar_count_min: 3,
             exemplar_count_max: 7,
@@ -213,7 +213,7 @@ pub(crate) fn augment_corpus_yaml(
             .iter()
             .map(|e| e.name.as_str())
             .collect();
-        let new_concepts: Vec<crate::embed::Entity> = new_entities
+        let new_concepts: Vec<crate::corpus::embed::Entity> = new_entities
             .concepts
             .iter()
             .filter(|e| !existing_concept_names.contains(e.name.as_str()))
@@ -227,7 +227,7 @@ pub(crate) fn augment_corpus_yaml(
             .iter()
             .map(|e| e.name.as_str())
             .collect();
-        let new_places: Vec<crate::embed::Entity> = new_entities
+        let new_places: Vec<crate::corpus::embed::Entity> = new_entities
             .places
             .iter()
             .filter(|e| !existing_place_names.contains(e.name.as_str()))
@@ -241,7 +241,7 @@ pub(crate) fn augment_corpus_yaml(
             .iter()
             .map(|e| e.name.as_str())
             .collect();
-        let new_events: Vec<crate::embed::Entity> = new_entities
+        let new_events: Vec<crate::corpus::embed::Entity> = new_entities
             .events
             .iter()
             .filter(|e| !existing_event_names.contains(e.name.as_str()))

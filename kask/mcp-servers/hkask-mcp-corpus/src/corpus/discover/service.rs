@@ -4,7 +4,7 @@ use super::llm::{extract_concepts, infer_methods};
 use super::search::{mcp_search, search_youtube_transcripts};
 use super::types::DiscoveredWork;
 use super::utils::{extract_search_terms, slugify};
-use crate::embed::EntityConfig;
+use crate::corpus::embed::EntityConfig;
 use hkask_capability::DelegationToken;
 use hkask_capability::ToolPort;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};

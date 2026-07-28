@@ -80,7 +80,7 @@ pub struct DiscoverResult {
     pub youtube_candidates: Vec<DiscoveredWork>,
     /// Extracted concepts, places, and events (populated when include_methods=true)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub entities: Option<crate::embed::EntityConfig>,
+    pub entities: Option<crate::corpus::embed::EntityConfig>,
     /// Inferred methodological patterns (populated when include_methods=true)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub methods: Vec<hkask_memory::salience::DeclaredMethod>,

@@ -29,15 +29,11 @@ pub(crate) fn render_inference_providers_page(
     // (`DEEPINFRA_API_KEY`, etc.), so a user with an API key set sees the
     // toggle as on even without an explicit `kask.inference_providers` entry.
     // `Default::default()` returns all-false (pure) — we must go through `From`
-    // to get the env-var auto-enable behavior.
+    // or `from_env()` to get the env-var auto-enable behavior.
     let inference: kask_bridge::KaskInferenceProvidersSettings = raw
         .and_then(|c| c.inference_providers)
         .map(Into::into)
-        .unwrap_or_else(|| {
-            kask_bridge::KaskInferenceProvidersSettings::from(
-                settings_content::KaskInferenceProvidersSettingsContent::default(),
-            )
-        });
+        .unwrap_or_else(kask_bridge::KaskInferenceProvidersSettings::from_env);
 
     let mut rows: Vec<AnyElement> = Vec::new();
     for desc in kask_bridge::INFERENCE_PROVIDERS {
