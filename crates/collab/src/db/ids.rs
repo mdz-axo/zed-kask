@@ -80,6 +80,7 @@ id_type!(ExtensionId);
 id_type!(FlagId);
 id_type!(FollowerId);
 id_type!(HostedProjectId);
+id_type!(KaskSkillId);
 id_type!(MessageId);
 id_type!(NotificationId);
 id_type!(NotificationKindId);

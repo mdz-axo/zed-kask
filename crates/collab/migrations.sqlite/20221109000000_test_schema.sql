@@ -421,6 +421,39 @@ CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id
 
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
 
+CREATE TABLE kask_skills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_user TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    latest_version TEXT NOT NULL,
+    total_download_count INTEGER DEFAULT 0 NOT NULL,
+    upvote_count INTEGER DEFAULT 0 NOT NULL,
+    downvote_count INTEGER DEFAULT 0 NOT NULL
+);
+
+CREATE UNIQUE INDEX index_kask_skills_source_user_skill_name ON kask_skills (source_user, skill_name);
+
+CREATE INDEX index_kask_skills_total_download_count ON kask_skills (total_download_count);
+
+CREATE TABLE kask_skill_versions (
+    kask_skill_id INTEGER REFERENCES kask_skills (id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    published_at TEXT DEFAULT (datetime('now')) NOT NULL,
+    dependencies TEXT DEFAULT '' NOT NULL,
+    tarball_sha256 TEXT NOT NULL,
+    download_count INTEGER DEFAULT 0 NOT NULL,
+    PRIMARY KEY (kask_skill_id, version)
+);
+
+CREATE TABLE kask_skill_votes (
+    kask_skill_id INTEGER REFERENCES kask_skills (id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,
+    vote INTEGER NOT NULL,
+    voted_at TEXT DEFAULT (datetime('now')) NOT NULL,
+    PRIMARY KEY (kask_skill_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS "breakpoints" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
