@@ -24,12 +24,13 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.25
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 100000
@@ -307,19 +308,20 @@ steps:
 
   # === CONVERGENCE — mode-specific ===
   - ordinal: 13
-    action: select
+    action: compute
     condition: "{{ mode | default('code') == 'code' }}"
-    description: >
-      CODE CONVERGENCE: Compute coverage saturation metric for code mode.
-    renderer: minijinja
-    template_ref: graph-audit/code-convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      primary_result: "{{ step_3_result | default(step_2_result) }}"
-      discovery_result: "{{ step_1_result | default({}) }}"
-      query_result: "{{ step_2_result | default({}) }}"
-      context_result: "{{ step_4_result | default({}) }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 14
     action: select
@@ -340,18 +342,20 @@ steps:
       domain: "{{ domain }}"
 
   - ordinal: 15
-    action: select
+    action: compute
     condition: "{{ mode == 'dual' }}"
-    description: >
-      DUAL CONVERGENCE: Compute combined convergence metric from code coverage
-      (steps 1-4) and graph health (steps 9-12). Both must be sufficient.
-    renderer: minijinja
-    template_ref: graph-audit/dual-convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      code_coverage_result: "{{ step_3_result | default({}) }}"
-      graph_health_result: "{{ step_12_result | default({}) }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 16
     action: loop
@@ -360,6 +364,7 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_13_result.convergence_metric | default(1.0) }}"
 
   - ordinal: 17
     action: loop
@@ -368,6 +373,7 @@ steps:
     input_mapping:
       loop_target: "{{ 5 }}"
       convergence_metric: "{{ step_14_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_14_result.convergence_metric | default(1.0) }}"
 
   - ordinal: 18
     action: loop
@@ -376,6 +382,7 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       convergence_metric: "{{ step_15_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_15_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -404,10 +411,6 @@ ocap:
       gas_budget: 2048
     - resource: template
       action: render
-      template_id: graph-audit/code-convergence-check
-      gas_budget: 2000
-    - resource: template
-      action: render
       template_id: graph-audit/semantic-classify
       gas_budget: 4096
     - resource: template
@@ -422,10 +425,6 @@ ocap:
       action: render
       template_id: graph-audit/semantic-report
       gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: graph-audit/dual-convergence-check
-      gas_budget: 2000
     - resource: mcp
       action: call
       tool: codegraph_query

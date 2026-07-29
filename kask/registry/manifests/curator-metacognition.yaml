@@ -32,12 +32,13 @@ rjoule:
   hard_limit: true
 
 convergence:
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_2_result.kata_directives
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 # Process Steps
 steps:

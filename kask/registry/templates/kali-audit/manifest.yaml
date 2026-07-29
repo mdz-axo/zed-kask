@@ -54,12 +54,4 @@ templates:
       Supply Chain Attack Reference). Folded from the standalone attack-taxonomy-mapper
       skill. Only runs for surface == 'supply-chain'. Emits reg.taxonomy.map spans.
 
-  - id: kali-audit/convergence-check
-    name: "Compute coverage metric for kali-audit PDCA cycle"
-    path: convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for kali-audit PDCA cycles.
-      Measures CWE class coverage, regression library growth, and residual
-      risk. Returns convergence_metric plus rationale and blockers.
+

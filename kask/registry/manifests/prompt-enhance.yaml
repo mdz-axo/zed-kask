@@ -42,20 +42,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # Tier-scaled thresholds are applied in the convergence-check template
-  # based on the effort_tier input. The manifest-level threshold is the
-  # high-tier value (tightest); medium/low are loosened inside the template.
-  # Max iterations also tier-scaled: low=3, medium=6, high=9. The manifest
-  # declares the high-tier max (9); the PDCA loop step enforces the
-  # tier-scaled cap via the convergence-check template's next_action verdict
-  # (returns 'exhausted' when the tier cap is hit, which makes the loop
-  # step's condition false, ending the cascade).
-  threshold: 0.10
-  improvement_gate: threshold_only
-  max_iterations: 9
-  min_iterations: 1
-  convergence_field: step_13_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 150000              # High-tier evolutionary runs are gas-heavy. Calibrate after first run.
@@ -331,65 +324,44 @@ steps:
     condition: "step_1_result.effort_tier == 'high'"
 
   # ─── CONVERGENCE CHECK (step 13) ───
-  # Tier-scaled thresholds: low (0.30), medium (0.20), high (0.10).
-  # Tier-scaled max: low=3, medium=6, high=9.
-  # Incorporates grill verdict: if grill returned rewrite_needed, the metric
-  # is forced above threshold so the PDCA loop re-enters. If grill returned
-  # fail, next_action = escalate_to_user (short-circuits the loop).
+  # Cauchy criterion: iterates stabilized. Deterministic compute step —
+  # no LLM, no timeout. Replaces the former tier-scaled self-grade gate.
   - ordinal: 13
-    action: select
-    description: >
-      Convergence gate — tier-scaled thresholds and max iterations. Start at
-      1.0, subtract for each completed phase. Incorporates grill verdict:
-      rewrite_needed forces re-entry; fail forces escalation. Materiality
-      guard if delta < 0.02 for >= half the tier max iterations.
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-convergence-check.j2
-    gas_cap: 2000
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      effort_tier: "{{ step_1_result.effort_tier }}"
-      phases_completed: "{{ phases_completed | default([]) }}"
-      phase_results:
-        classify: "{{ step_1_result }}"
-        audit: "{{ step_2_result | default({}) }}"
-        rewrite: "{{ step_10_result | default({}) }}"
-        verify: "{{ step_11_result | default({}) }}"
-        evolve: "{{ step_12_result | default({}) }}"
-      grill_verdict: "{{ step_11_result.verdict | default('skipped') }}"
-      prior_metric: "{{ prior_convergence_metric | default(null) }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-    fusion: false
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   # ─── PDCA LOOP (step 14) ───
-  # Single loop. The executor checks convergence_field + threshold +
-  # max_iterations. We ALSO gate via condition: the loop step only fires
-  # when the convergence-check's next_action is 're-enter'. If next_action
-  # is 'exit' or 'exhausted', the condition is false and the cascade
-  # proceeds to the output step.
-  #
-  # Carried state is bound via input_mapping (keys other than loop_target
-  # are written into context by the executor):
+  # The executor checks the Cauchy convergence criterion (via
+  # kata_hypotenuse pushed into context) + max_iterations. Carried state is
+  # bound via input_mapping (keys other than loop_target are written into
+  # context by the executor):
   #   - prior_convergence_metric: feeds the materiality guard next iteration
   #   - pdca_iteration: increments the iteration counter
   #   - phases_completed: accumulates which phases have run
-  #
-  # Tier max: low=3, medium=6, high=9. The manifest declares max_iterations=9
-  # (the high-tier ceiling); the convergence-check template returns
-  # 'exhausted' when the tier cap is hit, making this condition false.
+  #   - kata_hypotenuse: the quality signal the Cauchy criterion tracks
   - ordinal: 14
     action: loop
     description: >
-      Re-enter PDCA cycle from Phase 1 if convergence-check returns 're-enter'.
-      Carries prior_convergence_metric and increments pdca_iteration for the
-      materiality guard. Tier-scaled max enforced by the convergence-check
-      template's 'exhausted' verdict.
+      Re-enter PDCA cycle from Phase 1 if not converged. Carries
+      prior_convergence_metric and increments pdca_iteration. The Cauchy
+      criterion detects when the iterates have stopped moving.
     gas_cap: 1000
     timeout_seconds: 30
-    condition: "step_13_result.next_action == 're-enter'"
     input_mapping:
       loop_target: "{{ 1 }}"
-      prior_convergence_metric: "{{ step_13_result.convergence_metric }}"
+      kata_hypotenuse: "{{ step_12_result.convergence_metric | default(step_10_result.convergence_metric | default(1.0)) }}"
+      prior_convergence_metric: "{{ step_13_result.hypotenuse | default(1.0) }}"
       pdca_iteration: "{{ (pdca_iteration | default(1)) + 1 }}"
 
   # ─── OUTPUT (step 15) ───
@@ -418,7 +390,7 @@ steps:
       grill_ratings: "{{ step_11_result.ratings | default([]) }}"
       mutations_applied: "{{ step_10_result.mutations_applied | default([]) }}"
       mutations_deferred: "{{ step_10_result.mutations_deferred | default([]) }}"
-      convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
+      convergence_metric: "{{ step_13_result.hypotenuse | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -476,11 +448,7 @@ ocap:
     - resource: template
       action: render
       template_id: prompt-enhance/enhance-evolve
-      gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-convergence-check
-      gas_budget: 2000
+      gas_budget: 4096
     - resource: template
       action: render
       template_id: prompt-enhance/enhance-output

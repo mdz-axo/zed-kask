@@ -77,19 +77,3 @@ templates:
       template_refs resolvable, error_handling present).
     generates_spans:
       - reg.create_skill.validate
-
-  - id: create-skill/create-skill-convergence-check
-    name: "Check validation passed; emit next_describe_focus if not converged"
-    path: create-skill-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for create-skill PDCA cycles.
-      Metric is 0.0 if validation passed all critical and high-severity
-      checks; 0.25 if only medium/low failures remain; 0.5+ if critical
-      or high failures remain. When not converged, emits
-      next_describe_focus to direct the next iteration's describe phase
-      (e.g., "fix Z5: add visibility: public to SKILL.md frontmatter").
-      Threshold 0.25 — skill creation should converge quickly.
-    generates_spans:
-      - reg.create_skill.convergence

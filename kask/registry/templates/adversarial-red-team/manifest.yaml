@@ -49,11 +49,4 @@ templates:
       layers were bypassed by each attack. Includes canary token leakage and
       capability token forgery detection.
 
-  - id: adversarial-red-team/adversarial-convergence-check
-    name: "Compute normalized convergence metric for adversarial-red-team PDCA…"
-    path: adversarial-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for adversarial-red-team PDCA cycles.
-      Returns convergence_metric plus rationale and blockers.
+

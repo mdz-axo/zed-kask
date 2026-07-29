@@ -61,13 +61,3 @@ templates:
       Step 5 — Update Pareto frontier. Merge current frontier with newly tested
       variants, keep non-dominated members, prune by crowding distance if
       frontier exceeds size limit.
-
-  - id: gpa-evolution/gpa-convergence-check
-    name: "Step 6 — Compute Pareto-frontier stability convergence metric"
-    path: gpa-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Step 6 — Compute Pareto-frontier stability convergence metric. Converged
-      when hypervolume delta is small AND no new non-dominated members were
-      added. Returns convergence_metric plus rationale and blockers.

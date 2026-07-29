@@ -93,7 +93,6 @@ pub struct KaskMessage {
 pub enum KaskMessageRole {
     User,
     Assistant,
-    Tool,
     System,
 }
 
@@ -117,14 +116,6 @@ impl KaskMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: KaskMessageRole::User,
-            content: content.into(),
-            markdown: None,
-            tool_calls: vec![],
-        }
-    }
-    pub fn tool(content: impl Into<String>) -> Self {
-        Self {
-            role: KaskMessageRole::Tool,
             content: content.into(),
             markdown: None,
             tool_calls: vec![],
@@ -656,9 +647,6 @@ impl KaskPanel {
         let tool_scope = ToolScope::Server(server.clone());
 
         let task = session.send(prompt, &tool_scope, &system_prompt);
-        // Capture the project + workspace for the markdown link resolver.
-        let weak_project = self.project.clone();
-        let weak_workspace = self._workspace.clone();
         cx.spawn(async move |this, cx| {
             let stream_result = task.await;
             this.update(cx, |this, cx| {
@@ -673,7 +661,6 @@ impl KaskPanel {
                         // and the markdown crate re-parses + re-renders
                         // (including mermaid) on each update.
                         let mut assistant_md: Option<gpui::Entity<markdown::Markdown>> = None;
-                        let mut had_error = false;
                         // Track tool-call cards by call_id so we can update
                         // them when the matching ToolResult arrives.
                         let mut tool_cards: std::collections::HashMap<
@@ -767,16 +754,10 @@ impl KaskPanel {
                                     this.current_messages().push(KaskMessage::system(format!(
                                         "Inference error: {error}"
                                     )));
-                                    had_error = true;
                                     break;
                                 }
                             }
                         }
-                        let _ = weak_project;
-                        let _ = weak_workspace;
-                        // If no deltas arrived (e.g. only tool calls),
-                        // don't push an empty assistant message.
-                        let _ = had_error;
                     }
                     Err(error) => {
                         this.current_messages()
@@ -860,7 +841,6 @@ impl KaskPanel {
                 let (color, prefix) = match msg.role {
                     KaskMessageRole::User => (Color::Default, ""),
                     KaskMessageRole::Assistant => (Color::Accent, ""),
-                    KaskMessageRole::Tool => (Color::Muted, "[tool] "),
                     KaskMessageRole::System => (Color::Warning, "[system] "),
                 };
                 // Assistant messages with a live `Entity<Markdown>` render

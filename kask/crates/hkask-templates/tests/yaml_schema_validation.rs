@@ -214,8 +214,9 @@ fn superforecasting_manifest_loads_with_compute_step() {
 }
 
 /// Verify the kali-audit FlowDef manifest loads correctly with the expected
-/// PDCA structure: 4 select steps + 1 loop step, convergence field pointing
-/// at step 4, and template_refs matching the registry crate.
+/// PDCA structure after the Cauchy-only convergence migration: 4 select
+/// steps + 1 compute step (kata.convergence_check) + 1 loop step, with the
+/// Cauchy convergence block.
 #[test]
 fn kali_audit_manifest_loads_with_correct_structure() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -229,11 +230,11 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kali-audit manifest: {e}"));
 
-    // 5 select steps + 1 loop step = 6 total.
+    // 4 select steps + 1 compute step (convergence) + 1 loop step = 6 total.
     assert_eq!(
         manifest.steps.len(),
         6,
-        "expected 6 steps: select-surface → audit → report → taxonomy-map → convergence-check → loop"
+        "expected 6 steps: select-surface → audit → report → taxonomy-map → convergence-check (compute) → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -273,32 +274,35 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         Some("kali-audit/taxonomy-map")
     );
 
-    // Verify step 5 is convergence-check.
-    assert_eq!(manifest.steps[4].action, "select");
+    // Verify step 5 is the Cauchy convergence-check compute step (replaced the
+    // former LLM select step in the Cauchy-only convergence migration).
+    assert_eq!(manifest.steps[4].action, "compute");
     assert_eq!(
-        manifest.steps[4].template_ref.as_deref(),
-        Some("kali-audit/convergence-check")
+        manifest.steps[4].compute_ref.as_deref(),
+        Some("kata.convergence_check")
     );
 
     // Verify step 6 is loop.
     assert_eq!(manifest.steps[5].action, "loop");
 
-    // Verify convergence field points at step 5 (the convergence-check step).
+    // Verify the convergence block uses the Cauchy-only model.
     assert_eq!(
-        manifest.convergence.convergence_field,
-        "step_5_result.convergence_metric"
+        manifest.convergence.convergence_mode, "cauchy",
+        "kali-audit should use the Cauchy-only convergence mode after migration"
+    );
+    assert_eq!(
+        manifest.convergence.cauchy_epsilon, 0.03,
+        "kali-audit cauchy_epsilon should be 0.03"
+    );
+    assert_eq!(
+        manifest.convergence.cauchy_window, 3,
+        "kali-audit cauchy_window should be 3"
     );
 
-    // Verify convergence threshold is 0.10 (stricter than bug-hunt's 0.25).
+    // Verify max_iterations is 10 (Cauchy model default).
     assert_eq!(
-        manifest.convergence.threshold, 0.10,
-        "kali-audit threshold should be 0.10 (security is higher-stakes than bug-hunting)"
-    );
-
-    // Verify max_iterations is 3.
-    assert_eq!(
-        manifest.convergence.max_iterations, 3,
-        "max_iterations should be 3"
+        manifest.convergence.max_iterations, 10,
+        "max_iterations should be 10 after Cauchy migration"
     );
 
     // Verify gas cap is positive.

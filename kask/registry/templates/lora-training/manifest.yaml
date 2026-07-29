@@ -94,18 +94,3 @@ templates:
       config gates. Preserve the normalized Finding schema, identify contract
       gaps, and separate recommendation from phase-aware readiness. Produce
       verdicts from evidence-backed states without reclassifying findings.
-
-  - id: lora-training/convergence-check
-    name: "Compute honest phase-aware convergence with graded critical/high and not_evaluated distinction"
-    path: convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, gate, coverage, training, readiness]
-    description: >
-      Compute normalized convergence metric [0, 1] where 0 = fully
-      converged for the current phase. v0.31.0: not_evaluated maps to risk
-      0.5 (coverage gap) instead of 1.0 (known risk), graded critical/high
-      dimension (0→0.6→0.8→1.0) replaces binary, all-gates-not-applicable
-      edge case handled. Distinguish preflight readiness, pending runtime
-      contracts, and post-training verification. v0.32.0: accepts
-      runtime_metrics for the runtime phase — G-R1 findings feed the runtime
-      dimension when current_phase=runtime. Emit reg.lora.convergence span (P9).

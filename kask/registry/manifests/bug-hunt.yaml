@@ -39,22 +39,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # Rationale: 0.25 is the highest threshold of all hKask skills — intentional.
-  # Bug hunting is exploratory, not exhaustive. A 0.25 threshold means
-  # findings are directionally stable and critical quality threats are
-  # identified, but not every bug class has been exhaustively searched.
-  # For exhaustive elimination, chain with `diagnose` on specific findings.
-  #
-  # v0.31.0 refinement: convergence_field now reads the composite
-  # convergence_metric (process_stabilization + coverage_estimate). When not
-  # converged, the convergence step emits next_charter_focus, which the loop
-  # step routes back into charter as prior_expedition.next_charter_focus.
-  threshold: 0.25
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_6_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 100000
@@ -224,22 +215,19 @@ steps:
       prior_expedition: "{{ prior_expedition | default({}) }}"
 
   - ordinal: 6
-    action: select
-    description: >
-      Compute normalized convergence metric via saturation detection.
-      v0.31.0 refinement: Now emits two sub-metrics — process_stabilization_metric
-      (what the metric always measured: severity-weighted unresolved findings +
-      stability overlap) and coverage_estimate (Beizer taxonomy coverage +
-      charter scope coverage). The composite convergence_metric weights both.
-      When not converged, emits next_charter_focus to direct the next iteration.
-    renderer: minijinja
-    template_ref: bug-hunt/bug-hunt-convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      primary_result: "{{ step_5_result.report | default(step_5_result) }}"
-      charter: "{{ step_1_result }}"
-    fusion: false
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 7
     action: loop
@@ -254,6 +242,7 @@ steps:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"
         next_charter_focus: "{{ step_6_result.next_charter_focus | default('') }}"
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -284,10 +273,6 @@ ocap:
       action: render
       template_id: bug-hunt/bug-hunt-report
       gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: bug-hunt/bug-hunt-convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: bug-hunt

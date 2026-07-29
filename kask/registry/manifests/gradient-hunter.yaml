@@ -51,23 +51,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # Rationale: 0.25 — same as bug-hunt. Gradient analysis is exploratory,
-  # not exhaustive. A 0.25 threshold means detected gradients are
-  # directionally stable and characteristic patterns are identified, but
-  # not every gradient surface has been exhaustively mapped. For deeper
-  # investigation of a specific gradient, chain with `diagnose` or
-  # `falsifiability`.
-  #
-  # convergence_field reads the composite convergence_metric
-  # (process_stabilization + field_coverage). When not converged, the
-  # convergence step emits next_prior_focus, which the loop step routes
-  # back into prior as prior_iteration.next_prior_focus.
-  threshold: 0.25
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_6_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 100000
@@ -232,24 +222,19 @@ steps:
       prior: "{{ step_1_result }}"
 
   - ordinal: 6
-    action: select
-    description: >
-      Compute normalized convergence metric for gradient-hunt PDCA cycles.
-      Composite of process_stabilization_metric (gradient overlap across
-      iterations — are new iterations surfacing genuinely new gradients or
-      re-confirming prior ones?) and field_coverage_estimate (fraction of
-      the expected field that has been mapped). When not converged, emits
-      next_prior_focus to direct the next iteration's prior (feedback loop
-      closure). Threshold 0.25 — analysis skills use looser threshold
-      because false precision is worse than honest uncertainty.
-    renderer: minijinja
-    template_ref: gradient-hunter/gradient-convergence-check
-    gas_cap: 2048
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      primary_result: "{{ step_5_result.gradient_report | default(step_5_result) }}"
-      prior: "{{ step_1_result }}"
-    fusion: false
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 7
     action: loop
@@ -264,6 +249,7 @@ steps:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"
         next_prior_focus: "{{ step_6_result.next_prior_focus | default('') }}"
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -294,10 +280,6 @@ ocap:
       action: render
       template_id: gradient-hunter/gradient-report
       gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: gradient-hunter/gradient-convergence-check
-      gas_budget: 2048
     - resource: manifest
       action: execute
       template_id: gradient-hunter

@@ -49,19 +49,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # 0.15 — same band as diataxis-diagram / task-breakdown / idiomatic-rust.
-  # A converged Sankey has: all flow-relevant nodes present, every adjacency
-  # the user/source described appears as an edge, all weights user-stated or
-  # source-read with provenance, labels ≤ 30 chars, conservation mode honored.
-  # Minor cosmetic issues (label phrasing) can survive convergence.
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  # 0: allow first-pass convergence when the spec is already complete (mirrors
-  # task-breakdown Finding 2 — forced second pass adds no value with threshold_only).
-  min_iterations: 0
-  convergence_field: step_5_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   # Slightly higher than diataxis-diagram (60000) because Path B delegation
@@ -202,19 +196,19 @@ steps:
       gather_notes: "{{ step_2_result.gather_notes | default('') }}"
 
   - ordinal: 5
-    action: select
-    description: >
-      CONVERGE — compute normalized metric from evaluation scores. Weighted sum
-      across four criteria, normalized to [0,1] where 0 = perfect. Threshold
-      0.15. Data integrity = 1.0 forces DIVERGED regardless of other scores —
-      fabrication is not refinable, it requires re-gathering.
-    renderer: minijinja
-    template_ref: sankey-flow/sankey-convergence
-    gas_cap: 2048
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      evaluation_result: "{{ step_4_result }}"
-      iteration: "{{ loop_context.iteration | default(1) }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 6
     action: select
@@ -251,6 +245,7 @@ steps:
       loop — escalate to re-gather (the fabrication cannot be refined away).
     input_mapping:
       loop_target: "{{ 3 }}"
+      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -277,10 +272,6 @@ ocap:
       action: render
       template_id: sankey-flow/sankey-evaluate
       gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: sankey-flow/sankey-convergence
-      gas_budget: 2048
     - resource: template
       action: render
       template_id: sankey-flow/sankey-write

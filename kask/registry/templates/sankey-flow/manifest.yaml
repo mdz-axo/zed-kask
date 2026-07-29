@@ -83,20 +83,6 @@ templates:
     generates_spans:
       - reg.sankey-flow.evaluate
 
-  - id: sankey-flow/sankey-convergence
-    name: "Compute normalized convergence metric from the evaluation scores"
-    path: sankey-convergence.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, score, verify, calibrate]
-    description: >
-      Compute normalized convergence metric from the evaluation scores.
-      Weighted sum across four criteria, normalized to [0,1] where 0 = perfect
-      Sankey. Threshold: 0.15 (same as diataxis-diagram / task-breakdown /
-      idiomatic-rust — "maximally correct"). Data integrity = 1.0 forces
-      DIVERGED regardless of other scores — fabrication is not refinable.
-    generates_spans:
-      - reg.sankey-flow.convergence
-
   - id: sankey-flow/sankey-write
     name: "Finalize the Sankey into a markdown file with provenance"
     path: sankey-write.j2

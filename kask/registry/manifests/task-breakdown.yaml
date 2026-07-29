@@ -52,18 +52,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # 0.15 — same band as diataxis-diagram / idiomatic-rust ("maximally correct").
-  # A converged plan has: correct sizing, vertical slices, specific ACs, ordered
-  # dependencies, checkpoints between phases, and zero red flags.
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  # 0: allow first-pass convergence. With threshold_only gating the forced second
-  # pass provides no improvement-tracking benefit and guarantees a non-converged
-  # write-plan execution. A first-pass-perfect plan (metric <= 0.15) converges now.
-  min_iterations: 0
-  convergence_field: step_5_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 60000
@@ -198,21 +193,19 @@ steps:
     fusion: false
 
   - ordinal: 5
-    action: select
-    description: >
-      CONVERGE — compute normalized metric from the INDEPENDENT gate's scores (not the
-      producer's self-assessment). Below 0.15 means the plan is complete, correctly
-      ordered, properly sized, and free of red flags. Applies the materiality guard
-      using the carried prior_metric to detect a stable-but-unconverged plan.
-    renderer: minijinja
-    template_ref: task-breakdown/task-breakdown-convergence
-    gas_cap: 2048
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      evaluation_result: "{{ step_4_result }}"
-      iteration: "{{ loop_context.iteration | default(1) }}"
-      prior_metric: "{{ prior_metric | default(null) }}"
-    fusion: false
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 6
     action: select
@@ -238,7 +231,7 @@ steps:
   - ordinal: 7
     action: loop
     description: >
-      If convergence not met (metric > 0.15) and refinement directives exist, loop
+      If convergence not met and refinement directives exist, loop
       back to DECOMPOSE (step 2) with directives as focused, task-addressable
       improvement targets. v0.31.0: explicitly routes refinement_directives back
       to decompose (was implicit, depended on manifest executor preserving
@@ -247,7 +240,8 @@ steps:
       unconverged plan. Each iteration narrows the gap.
     input_mapping:
       loop_target: "{{ 2 }}"
-      prior_metric: "{{ step_5_result.convergence_metric }}"
+      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(1.0) }}"
+      prior_metric: "{{ step_5_result.hypotenuse | default(1.0) }}"
       refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
 
 error_handling:
@@ -275,10 +269,6 @@ ocap:
       action: render
       template_id: task-breakdown/task-breakdown-quality-gate
       gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: task-breakdown/task-breakdown-convergence
-      gas_budget: 2048
     - resource: template
       action: render
       template_id: task-breakdown/task-breakdown-write-plan

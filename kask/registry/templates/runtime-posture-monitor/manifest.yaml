@@ -62,14 +62,4 @@ templates:
       verdict (Pass / Conditional / Fail) based on threat severity and
       defense-layer firing coverage.
 
-  - id: runtime-posture-monitor/convergence-check
-    name: "Compute runtime posture coverage metric"
-    path: convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, runtime, coverage, posture, regression]
-    description: >
-      Compute normalized convergence metric: unresolved runtime threats
-      (0.40), defense-layer runtime coverage (0.25), threat-pattern
-      taxonomy coverage (0.15), regression library growth (0.10), residual
-      runtime risk (0.10). Converged when metric ≤ 0.10 with ≥5%
-      improvement.
+

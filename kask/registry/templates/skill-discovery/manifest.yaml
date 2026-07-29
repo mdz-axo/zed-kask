@@ -58,13 +58,3 @@ templates:
       compliance, and Regulation span validity. Produce scored recommendation.
     generates_spans:
       - reg.skill.discovery.evaluated
-
-  - id: skill-discovery/skill-discovery-convergence-check
-    name: "Compute a normalized convergence metric for discovery iterations"
-    path: skill-discovery-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, prioritize, verify]
-    description: >
-      Compute a normalized convergence metric for discovery iterations.
-      Synthesizes gap detection + candidate evaluation into `convergence_metric`
-      in [0,1], where 0 means the capability gap is sufficiently resolved.

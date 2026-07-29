@@ -41,13 +41,3 @@ templates:
       Re-assess a bundle when one or more skills have changed. Re-compose
       the manifest preserving what hasn't changed and updating what has.
       Detect drift from the original composition principles.
-
-  - id: skill-bundler/bundler-convergence-check
-    name: "Compute a normalized convergence metric for bundle composition loops"
-    path: bundler-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, validate, classify, calibrate]
-    description: >
-      Compute a normalized convergence metric for bundle composition loops.
-      Synthesizes compose/validate outputs into `convergence_metric` in [0,1],
-      where 0 means no blocking composition violations remain.

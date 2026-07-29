@@ -69,19 +69,6 @@ templates:
     generates_spans:
       - reg.diataxis-diagram.evaluate
 
-  - id: diataxis-diagram/diataxis-diagram-convergence
-    name: "Compute normalized convergence metric from the evaluation scores"
-    path: diataxis-diagram-convergence.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, score, verify, calibrate]
-    description: >
-      Compute normalized convergence metric from the evaluation scores.
-      Weighted sum across six Diataxis criteria, normalized to [0,1] where
-      0 = diagram perfectly matches source and Diataxis standards.
-      Threshold: 0.15 (same as idiomatic-rust — "maximally correct").
-    generates_spans:
-      - reg.diataxis-diagram.convergence
-
   - id: diataxis-diagram/diataxis-diagram-write
     name: "Finalize the diagram into a markdown file"
     path: diataxis-diagram-write.j2

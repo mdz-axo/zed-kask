@@ -33,15 +33,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # Rationale: 0.10 — stricter than bug-hunt (0.25) because security findings
-  # are higher-stakes. A 0.10 threshold means no critical/high findings remain
-  # and >= 6/8 defense layers are present. Medium findings are tolerated but flagged.
-  threshold: 0.10
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_5_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 100000
@@ -158,34 +156,26 @@ steps:
       selected_surface: "{{ step_1_result.selected_surface | default(target_surface) }}"
 
   - ordinal: 5
-    action: select
-    description: >
-      Compute convergence metric via defense-layer coverage + residual risk +
-      CWE coverage + regression library growth. Converged when metric <= 0.10.
-    renderer: minijinja
-    template_ref: kali-audit/convergence-check
-    gas_cap: 2048
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      findings_count: "{{ step_2_result.findings | default([]) | length }}"
-      critical_count: "{{ step_2_result.coverage.checks_failed | default(0) }}"
-      high_count: 0
-      medium_count: 0
-      low_count: 0
-      defense_layers_present: "{{ step_2_result.coverage.defense_layers_present | default([]) }}"
-      defense_layers_total: 8
-      cwe_classes_checked: "{{ step_2_result.coverage.cwe_classes_covered | default([]) }}"
-      cwe_classes_total: 0
-      regression_library_size: "{{ step_1_result.known_regressions | default([]) | length }}"
-      taxonomy_mappings: "{{ step_4_result.taxonomy_mappings | default([]) }}"
-      previous_metric: 1.0
-    fusion: false
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 6
     action: loop
     description: Re-enter audit cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -211,10 +201,6 @@ ocap:
     - resource: template
       action: render
       template_id: kali-audit/taxonomy-map
-      gas_budget: 2048
-    - resource: template
-      action: render
-      template_id: kali-audit/convergence-check
       gas_budget: 2048
     - resource: manifest
       action: execute

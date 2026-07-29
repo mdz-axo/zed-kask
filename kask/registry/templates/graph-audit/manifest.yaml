@@ -52,15 +52,6 @@ templates:
       downstream LLM use. Formats symbol definitions, doc comments, and
       key relationships within the specified token budget.
 
-  - id: graph-audit/code-convergence-check
-    name: "Compute coverage saturation convergence metric for code mode"
-    path: code-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, assess]
-    description: >
-      Compute normalized convergence metric for code mode cycles.
-      Outputs convergence_metric in [0,1], where 0 means discovery, query,
-      traversal, analysis, and context assembly are complete.
 
   # -- Semantic mode flow templates --
   - id: graph-audit/semantic-classify
@@ -104,15 +95,6 @@ templates:
       detection into a normalized graph-health convergence metric and a
       readable markdown report.
 
-  # -- Dual mode convergence --
-  - id: graph-audit/dual-convergence-check
-    name: "Compute combined convergence metric for dual mode"
-    path: dual-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, synthesize, verify, assess]
-    description: >
-      Compute combined convergence metric for dual mode (code coverage +
-      graph health). Both must be sufficient for convergence.
 
   # -- Utility templates (used by the hkask-mcp-codegraph MCP server) --
   - id: graph-audit/symbol-summarize

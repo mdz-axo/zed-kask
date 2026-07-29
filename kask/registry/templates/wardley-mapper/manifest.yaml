@@ -63,13 +63,3 @@ templates:
       Synthesize actionable strategic recommendations (commoditize, invest,
       divest, ecosystem, alignment) from the movement analysis and map.
       Prioritized by impact, specific, traceable to components.
-
-  - id: wardley-mapper/convergence-check
-    name: "Compute convergence metric for the Wardley mapping PDCA cycle"
-    path: convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, verify, calibrate, complete]
-    description: >
-      Compute convergence metric for the Wardley mapping PDCA cycle. Checks
-      all components classified, map complete, movement identified, and
-      recommendations actionable.

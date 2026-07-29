@@ -82,21 +82,6 @@ templates:
     generates_spans:
       - reg.task-breakdown.quality-gate
 
-  - id: task-breakdown/task-breakdown-convergence
-    name: "Convergence with mechanical materiality guard"
-    path: task-breakdown-convergence.j2
-    type: KnowAct
-    lexicon_terms:
-      [evaluate, converge, score, verify, calibrate]
-    description: >
-      Compute normalized convergence metric from the evaluation scores. v0.31.0:
-      materiality guard now uses mechanical plan-unchanged check (task_id + title +
-      scope comparison) rather than LLM self-report, with fallback to self_reported
-      when prior tasks aren't available. Weighted sum across six criteria, normalized
-      to [0,1] where 0 = plan is complete. Threshold 0.15.
-    generates_spans:
-      - reg.task-breakdown.converge
-
   - id: task-breakdown/task-breakdown-write-plan
     name: "ACT phase — finalize plan with refinement history"
     path: task-breakdown-write-plan.j2

@@ -123,15 +123,4 @@ templates:
       - reg.bughunt.learn
       - reg.bughunt.report
 
-  - id: bug-hunt/bug-hunt-convergence-check
-    name: "Compute composite convergence metric with process_stabilization + coverage_estimate"
-    path: bug-hunt-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for bug-hunt PDCA cycles. v0.31.0:
-      composite of process_stabilization_metric (what the old metric measured —
-      severity-weighted unresolved findings + stability overlap) and
-      coverage_estimate (Beizer taxonomy coverage + charter scope coverage).
-      Emits next_charter_focus when not converged to direct the next iteration's
-      charter (feedback loop closure).
+

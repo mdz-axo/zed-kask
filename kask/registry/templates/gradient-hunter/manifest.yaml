@@ -122,22 +122,6 @@ templates:
     generates_spans:
       - reg.gradient.report
 
-  - id: gradient-hunter/gradient-convergence-check
-    name: "Compute composite convergence metric with field_coverage + next_prior_focus"
-    path: gradient-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for gradient-hunt PDCA cycles.
-      Composite of process_stabilization_metric (gradient overlap across
-      iterations — are new iterations surfacing genuinely new gradients or
-      re-confirming prior ones?) and field_coverage_estimate (fraction of
-      the expected field that has been mapped). Emits next_prior_focus
-      when not converged to direct the next iteration's prior (feedback
-      loop closure). Threshold 0.25 (analysis skills use looser threshold
-      because false precision is worse than honest uncertainty).
-    generates_spans:
-      - reg.gradient.convergence
 
   # ── Reference documents (not executable .j2 templates) ──
   - id: gradient-hunter/gradient-shapes

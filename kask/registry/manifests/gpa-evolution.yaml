@@ -27,20 +27,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # Pareto-frontier stability, expressed as a scalar for the threshold_only gate.
-  # The convergence template computes: hypervolume_delta + penalty for new
-  # non-dominated members. When the frontier stops expanding, this → 0.
-  #
-  # IS: The Rust executor's check_convergence() with improvement_gate:
-  # "threshold_only" only checks quality <= threshold (executor.rs L884-890).
-  # Hypervolume reference point is required for stable convergence measurement.
-  # See input: reference_point (falls back to nadir approximation: worst observed score per objective).
-  threshold: 0.10
-  improvement_gate: threshold_only
-  max_iterations: 5
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
   min_iterations: 2
-  convergence_field: step_6_result.convergence_metric
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 200000              # Initial estimate — evolutionary loops are rollout-heavy. Calibrate after first run.
@@ -156,23 +149,19 @@ steps:
       frontier_size: "{{ frontier_size | default(8) }}"
 
   - ordinal: 6
-    action: select
-    description: >
-      Compute Pareto-frontier stability convergence metric. Frontier is
-      converged when hypervolume delta is small AND no new non-dominated
-      members were added this iteration.
-    renderer: minijinja
-    template_ref: gpa-evolution/gpa-convergence-check.j2
-    gas_cap: 2000
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      # Compare prior frontier (step_5_result from before this iteration's update)
-      # with the new frontier (this iteration's step_5_result.frontier).
-      # On iteration 1, frontier_before is empty (no prior frontier).
-      frontier_before: "{{ step_5_result.frontier | default([]) }}"
-      frontier_after: "{{ step_5_result.frontier }}"
-      objectives: "{{ objectives }}"
-      iteration: "{{ _convergence.iterations_completed | default(0) }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 7
     action: loop
@@ -184,6 +173,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
+      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -214,10 +204,6 @@ ocap:
       action: render
       template_id: gpa-evolution/gpa-frontier-update
       gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: gpa-evolution

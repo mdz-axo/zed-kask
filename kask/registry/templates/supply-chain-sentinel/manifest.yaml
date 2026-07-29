@@ -49,14 +49,4 @@ templates:
       Supply Chain / OSC&R taxonomy mapping. Propose RR-NNNN.yaml
       entries with surface: supply-chain for enforced CI gates.
 
-  - id: supply-chain-sentinel/convergence-check
-    name: "Compute supply-chain coverage metric"
-    path: convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, dependency, coverage, regression]
-    description: >
-      Compute normalized convergence metric: unresolved critical/high
-      dependency findings (0.40), defense-layer coverage (dependency
-      pinning, registry verification, SBOM tracking — 0.25), CWE/OSCR
-      taxonomy coverage (0.15), regression library growth (0.10).
-      Converged when metric ≤ 0.10 with ≥5% improvement.
+
