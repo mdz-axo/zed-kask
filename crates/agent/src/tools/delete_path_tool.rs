@@ -21,7 +21,7 @@ use util::markdown::MarkdownInlineCode;
 
 /// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
 ///
-/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
+/// The only supported paths outside the project are descendants of the global skills directory, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
     /// The path of the file or directory to delete.
@@ -305,9 +305,7 @@ mod tests {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(DeletePathTool::new(project, action_log));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .to_string_lossy()
             .into_owned();
@@ -364,9 +362,7 @@ mod tests {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(DeletePathTool::new(project, action_log));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("references")
             .join("notes.md")
@@ -408,9 +404,7 @@ mod tests {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(DeletePathTool::new(project, action_log));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .to_string_lossy()
             .into_owned();
 

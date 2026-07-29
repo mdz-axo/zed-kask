@@ -45,33 +45,67 @@ impl ConvergenceStatus {
     }
 }
 
-/// Tracks PDCA convergence state: threshold, improvement gate, baseline quality,
-/// iteration count, and trajectory history. Owns the `_convergence` JSON shape
-/// contract.
+/// Tracks PDCA convergence state using the Improvement Kata model.
 ///
-/// # Trajectory memory
+/// The agent has a **target condition** and a **current condition**, each
+/// measured in two orthogonal spaces:
 ///
-/// The tracker records the quality metric after each completed iteration in
-/// `quality_history`. This enables trajectory-based convergence detection
-/// (the "stability" and "threshold_and_stability" gates): convergence is a
-/// property of a *trajectory* (the metric stopped changing), not of a
-/// *snapshot* (the metric is low on one reading). Snapshot convergence is a
-/// category error — it exits on a single optimistic self-grade. Trajectory
-/// convergence requires at least 2 readings and enforces that the metric is
-/// stable, not just low.
+/// - **Object space** (Dublin Core): artifact completeness — are the required
+///   fields populated and grounded?
+/// - **Process space** (PKO): procedure progress — are the required steps
+///   executed?
+///
+/// The total distance to the target is the hypotenuse of the right triangle
+/// formed by the two gaps: `sqrt(object_gap² + process_gap²)`. Convergence
+/// requires both legs to close.
+///
+/// Each PDCA cycle, the agent makes a **prediction** ("the hypotenuse will
+/// decrease by Δ" with confidence `c`). After the experiment, the actual
+/// decrease is measured. The **Brier score** `(c − actual_outcome)²` tracks
+/// whether the agent's predictions are calibrated. Brier decreasing → the
+/// agent is learning to predict its own progress. Brier stable and low →
+/// confidence convergence.
+///
+/// This replaces the old self-grade model where an LLM graded its own plan
+/// quality. The Kata model uses the LLM only for the four Kata steps (grasp,
+/// target, predict, experiment); the executor computes the gap and Brier
+/// score deterministically.
 pub struct ConvergenceTracker {
+    // ── Kata target-condition config ──
+    target_artifacts_field: Option<String>,
+    current_artifacts_field: Option<String>,
+    target_procedure_field: Option<String>,
+    current_procedure_field: Option<String>,
+    prediction_field: Option<String>,
+    result_field: Option<String>,
+    hypotenuse_epsilon: f64,
+    brier_window: u32,
+    brier_threshold: f64,
+    convergence_mode: String,
+
+    // ── Trajectory history ──
+    /// Hypotenuse history, one entry per completed PDCA cycle. Should be
+    /// *decreasing* — the agent is getting closer to the target. Convergence
+    /// is `h_n < hypotenuse_epsilon`. Confidence convergence is `h` stopped
+    /// decreasing AND Brier is calibrated.
+    hypotenuse_history: Vec<f64>,
+    /// Brier score history, one entry per completed PDCA cycle. Should be
+    /// *decreasing* — the agent's predictions are getting calibrated.
+    /// Convergence (confidence mode) is rolling average < brier_threshold.
+    brier_history: Vec<f64>,
+
+    // ── Loop control ──
+    min_iterations: u32,
+    max_iterations: u32,
+
+    // ── Legacy self-grade fields (for manifests not yet migrated) ──
     threshold: f64,
     field: String,
     improvement_ratio: f64,
     improvement_gate: String,
-    stability_epsilon: f64,
-    min_iterations: u32,
-    max_iterations: u32,
     baseline_quality: Option<f64>,
-    /// Quality metric history, one entry per completed iteration. Populated by
-    /// `push_quality` (called from the executor after each iteration's metric
-    /// is computed). Used by the "stability" and "threshold_and_stability"
-    /// gates to detect trajectory convergence.
+    /// Self-grade quality history — used by the legacy stability gates.
+    /// Retained for manifests that haven't migrated to the Kata model.
     quality_history: Vec<f64>,
 }
 
@@ -79,28 +113,40 @@ impl ConvergenceTracker {
     /// Construct from a manifest's convergence config.
     pub fn new(config: &ConvergenceConfig) -> Self {
         Self {
-            threshold: config.threshold,
-            field: config.convergence_field.clone(),
-            improvement_ratio: config.improvement_ratio,
-            improvement_gate: config.improvement_gate.clone(),
-            stability_epsilon: config.stability_epsilon,
+            target_artifacts_field: config.target_artifacts_field.clone(),
+            current_artifacts_field: config.current_artifacts_field.clone(),
+            target_procedure_field: config.target_procedure_field.clone(),
+            current_procedure_field: config.current_procedure_field.clone(),
+            prediction_field: config.prediction_field.clone(),
+            result_field: config.result_field.clone(),
+            hypotenuse_epsilon: config.hypotenuse_epsilon,
+            brier_window: config.brier_window,
+            brier_threshold: config.brier_threshold,
+            convergence_mode: config.convergence_mode.clone(),
+            hypotenuse_history: Vec::new(),
+            brier_history: Vec::new(),
             min_iterations: config.min_iterations,
             max_iterations: if config.max_iterations == 0 {
                 1
             } else {
                 config.max_iterations
             },
+            // Legacy
+            threshold: config.threshold,
+            field: config.convergence_field.clone(),
+            improvement_ratio: config.improvement_ratio,
+            improvement_gate: config.improvement_gate.clone(),
             baseline_quality: None,
             quality_history: Vec::new(),
         }
     }
 
-    /// The configured threshold.
+    /// The configured threshold (legacy self-grade model).
     pub fn threshold(&self) -> f64 {
         self.threshold
     }
 
-    /// The configured convergence field (e.g. "composite").
+    /// The configured convergence field (legacy self-grade model).
     pub fn field(&self) -> &str {
         &self.field
     }
@@ -110,52 +156,44 @@ impl ConvergenceTracker {
         self.max_iterations
     }
 
-    /// Whether improvement tracking is enabled (improvement_ratio > 0).
+    /// Whether improvement tracking is enabled (legacy self-grade model).
     pub fn improvement_enabled(&self) -> bool {
         self.improvement_ratio > 0.0
     }
 
-    /// Whether the convergence gate uses trajectory stability (requires >= 2
-    /// quality readings). Returns true for "stability" and
-    /// "threshold_and_stability" gates.
-    pub fn stability_enabled(&self) -> bool {
-        matches!(
-            self.improvement_gate.as_str(),
-            "stability" | "threshold_and_stability"
-        )
+    /// Whether the Kata convergence model is active (convergence_mode is set
+    /// and at least one target-condition field is configured).
+    pub fn kata_enabled(&self) -> bool {
+        !self.convergence_mode.is_empty()
+            && (self.target_artifacts_field.is_some() || self.target_procedure_field.is_some())
     }
 
-    /// Record the quality metric for the just-completed iteration. Called by
-    /// the executor after each pass's convergence metric is computed (whether
-    /// by an LLM `select` step or a deterministic `compute` step). The history
-    /// is read by the "stability" and "threshold_and_stability" gates in
-    /// `check_met`.
-    ///
-    /// If the metric is missing from the context, pushes `f64::NAN` so the
-    /// history length stays aligned with the iteration count (a missing
-    /// reading is not a stable reading).
-    pub fn push_quality(&mut self, context: &HashMap<String, Value>) {
-        let current = context
-            .get(&self.field)
-            .and_then(|v| v.as_f64())
-            .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
-        let current = if current.is_none() && self.field != "composite" {
-            context.get("composite").and_then(|v| v.as_f64())
-        } else {
-            current
-        };
-        let current = if current.is_none() {
-            context.get("_convergence_score").and_then(|v| v.as_f64())
-        } else {
-            current
-        };
-        self.quality_history.push(current.unwrap_or(f64::NAN));
+    /// Read-only access to the hypotenuse history.
+    pub fn hypotenuse_history(&self) -> &[f64] {
+        &self.hypotenuse_history
     }
 
-    /// Read-only access to the quality history (for `finalize_report` and
-    /// `inject_running` context injection, and for tests).
-    pub fn quality_history(&self) -> &[f64] {
-        &self.quality_history
+    /// Read-only access to the Brier score history.
+    pub fn brier_history(&self) -> &[f64] {
+        &self.brier_history
+    }
+
+    /// Record a PDCA cycle's hypotenuse and Brier score. Called by the executor
+    /// after the gap and prediction-vs-result compute steps have run. The
+    /// hypotenuse should be *decreasing* (the agent is closing the gap); the
+    /// Brier score should be *decreasing* (the agent's predictions are getting
+    /// calibrated).
+    pub fn push_kata_cycle(&mut self, hypotenuse: f64, brier: f64) {
+        self.hypotenuse_history.push(hypotenuse);
+        self.brier_history.push(brier);
+    }
+
+    /// Record a PDCA cycle's hypotenuse only (when Brier is not yet available —
+    /// e.g., the first cycle before any prediction has been made).
+    pub fn push_hypotenuse(&mut self, hypotenuse: f64) {
+        self.hypotenuse_history.push(hypotenuse);
+        // Push NaN for Brier so the histories stay aligned by cycle count.
+        self.brier_history.push(f64::NAN);
     }
 
     /// Capture the baseline quality on the first full pass. Called once,
@@ -169,25 +207,94 @@ impl ConvergenceTracker {
         }
     }
 
-    /// Check whether the convergence threshold has been met.
+    /// Check whether convergence has been met.
     ///
-    /// Enforces `min_iterations` (returns false if iteration <= min_iterations),
-    /// then evaluates the threshold and improvement gate.
+    /// If the Kata model is active (`kata_enabled()`), uses the hypotenuse and
+    /// Brier trajectories:
+    /// - "hypotenuse": `hypotenuse_history.last() < hypotenuse_epsilon`.
+    /// - "confidence": rolling Brier average < `brier_threshold` for
+    ///   `brier_window` cycles AND hypotenuse not decreasing.
+    /// - "hypotenuse_or_confidence": either condition.
     ///
-    /// For the "stability" and "threshold_and_stability" gates, also enforces
-    /// that at least 2 quality readings exist in `quality_history` (trajectory
-    /// convergence is undefined for a single reading) and that the last two
-    /// readings differ by less than `stability_epsilon`.
+    /// Otherwise, falls back to the legacy self-grade model (threshold +
+    /// improvement gate + stability).
     pub fn check_met(&self, context: &HashMap<String, Value>, iteration: u32) -> bool {
-        // Enforce minimum iterations before exit is allowed
         if iteration <= self.min_iterations {
             return false;
         }
 
-        // Compute current quality via the 3-level fallback chain:
-        // 1. The configured field (direct or dot-path)
-        // 2. "composite" (if the configured field isn't "composite")
-        // 3. "_convergence_score" (last-resort metadata fallback)
+        if self.kata_enabled() {
+            return self.check_kata_met();
+        }
+
+        // Legacy self-grade model
+        self.check_legacy_met(context)
+    }
+
+    /// Kata convergence check: hypotenuse and/or Brier trajectory.
+    fn check_kata_met(&self) -> bool {
+        let last_hypotenuse = self.hypotenuse_history.last().copied();
+        let gap_converged = last_hypotenuse
+            .filter(|h| h.is_finite())
+            .map(|h| h < self.hypotenuse_epsilon)
+            .unwrap_or(false);
+
+        let confidence_converged = self.check_confidence_converged();
+
+        match self.convergence_mode.as_str() {
+            "hypotenuse" => gap_converged,
+            "confidence" => confidence_converged,
+            "hypotenuse_or_confidence" => gap_converged || confidence_converged,
+            _ => gap_converged, // default to gap
+        }
+    }
+
+    /// Confidence convergence: rolling Brier average < threshold for brier_window
+    /// cycles AND hypotenuse not decreasing (the agent is calibrated but stuck).
+    fn check_confidence_converged(&self) -> bool {
+        if (self.brier_history.len() as u32) < self.brier_window {
+            return false;
+        }
+
+        // Rolling Brier average over the last brier_window cycles
+        let start = self
+            .brier_history
+            .len()
+            .saturating_sub(self.brier_window as usize);
+        let recent: Vec<f64> = self.brier_history[start..]
+            .iter()
+            .copied()
+            .filter(|f| f.is_finite())
+            .collect();
+        if (recent.len() as u32) < self.brier_window {
+            return false;
+        }
+        let rolling_brier: f64 = recent.iter().sum::<f64>() / recent.len() as f64;
+        if rolling_brier >= self.brier_threshold {
+            return false;
+        }
+
+        // Hypotenuse must not be decreasing (agent is stuck, not still progressing)
+        !self.is_hypotenuse_decreasing()
+    }
+
+    /// Is the hypotenuse still decreasing? True if the last two readings show
+    /// a decrease larger than the epsilon (the agent is still making progress).
+    fn is_hypotenuse_decreasing(&self) -> bool {
+        if self.hypotenuse_history.len() < 2 {
+            return false;
+        }
+        let n = self.hypotenuse_history.len();
+        let prev = self.hypotenuse_history[n - 2];
+        let curr = self.hypotenuse_history[n - 1];
+        prev.is_finite()
+            && curr.is_finite()
+            && prev > curr
+            && (prev - curr) > self.hypotenuse_epsilon
+    }
+
+    /// Legacy self-grade convergence check (threshold + improvement + stability).
+    fn check_legacy_met(&self, context: &HashMap<String, Value>) -> bool {
         let current = context
             .get(&self.field)
             .and_then(|v| v.as_f64())
@@ -205,7 +312,6 @@ impl ConvergenceTracker {
 
         let threshold_met = current.map(|q| q <= self.threshold).unwrap_or(false);
 
-        // Compute improvement from baseline as proportional ratio
         let improvement_met = if self.improvement_ratio > 0.0 {
             match (self.baseline_quality, current) {
                 (Some(b), Some(c)) if b > 0.0 => ((b - c) / b) >= self.improvement_ratio,
@@ -215,22 +321,9 @@ impl ConvergenceTracker {
             false
         };
 
-        // Compute trajectory stability: |q_n - q_{n-1}| < epsilon.
-        // Requires at least 2 readings. A missing reading (NaN) is never stable.
-        let stability_met = if self.quality_history.len() >= 2 {
-            let n = self.quality_history.len();
-            let prev = self.quality_history[n - 2];
-            let curr = self.quality_history[n - 1];
-            prev.is_finite() && curr.is_finite() && (curr - prev).abs() < self.stability_epsilon
-        } else {
-            false
-        };
-
         match self.improvement_gate.as_str() {
             "both" => threshold_met && improvement_met,
             "either" => threshold_met || improvement_met,
-            "stability" => stability_met,
-            "threshold_and_stability" => threshold_met && stability_met,
             _ => threshold_met, // "threshold_only"
         }
     }
@@ -331,6 +424,15 @@ impl ConvergenceTracker {
                 "improvement_pct": improvement_pct,
                 "improvement_target": self.improvement_ratio,
                 "baseline_quality": self.baseline_quality,
+                "quality_history": self.quality_history,
+                // Kata model fields
+                "hypotenuse_history": self.hypotenuse_history,
+                "brier_history": self.brier_history,
+                "hypotenuse_epsilon": self.hypotenuse_epsilon,
+                "brier_threshold": self.brier_threshold,
+                "brier_window": self.brier_window,
+                "convergence_mode": self.convergence_mode,
+                "kata_enabled": self.kata_enabled(),
                 "gas_used": gas_used as f64,
                 "gas_cap": gas_cap as f64,
                 "gas_remaining": (gas_cap as f64 - gas_used as f64).max(0.0),
@@ -364,6 +466,15 @@ impl ConvergenceTracker {
                 "exit_reason": null,
                 "improvement_target": self.improvement_ratio,
                 "baseline_quality": self.baseline_quality,
+                "quality_history": self.quality_history,
+                // Kata model fields
+                "hypotenuse_history": self.hypotenuse_history,
+                "brier_history": self.brier_history,
+                "hypotenuse_epsilon": self.hypotenuse_epsilon,
+                "brier_threshold": self.brier_threshold,
+                "brier_window": self.brier_window,
+                "convergence_mode": self.convergence_mode,
+                "kata_enabled": self.kata_enabled(),
                 "gas_cap": gas_cap,
                 "gas_used": gas_used,
                 "gas_remaining": gas_cap.saturating_sub(gas_used),
@@ -402,13 +513,47 @@ mod tests {
 
     fn config(threshold: f64, field: &str, max_iter: u32, min_iter: u32) -> ConvergenceConfig {
         ConvergenceConfig {
-            threshold,
-            improvement_ratio: 0.0,
-            improvement_gate: "threshold_only".to_string(),
+            target_artifacts_field: None,
+            current_artifacts_field: None,
+            target_procedure_field: None,
+            current_procedure_field: None,
+            prediction_field: None,
+            result_field: None,
+            hypotenuse_epsilon: 0.05,
+            brier_window: 3,
+            brier_threshold: 0.15,
+            convergence_mode: String::new(), // empty = legacy mode
             max_iterations: max_iter,
             min_iterations: min_iter,
-            convergence_field: field.to_string(),
             on_not_reached: "abort".to_string(),
+            threshold,
+            convergence_field: field.to_string(),
+            improvement_ratio: 0.0,
+            improvement_gate: "threshold_only".to_string(),
+            aggregation: "none".to_string(),
+            aggregation_sources: vec![],
+        }
+    }
+
+    fn kata_config(mode: &str) -> ConvergenceConfig {
+        ConvergenceConfig {
+            target_artifacts_field: Some("current_artifacts".to_string()),
+            current_artifacts_field: Some("current_artifacts".to_string()),
+            target_procedure_field: Some("current_procedure".to_string()),
+            current_procedure_field: Some("current_procedure".to_string()),
+            prediction_field: Some("prediction".to_string()),
+            result_field: Some("result".to_string()),
+            hypotenuse_epsilon: 0.05,
+            brier_window: 3,
+            brier_threshold: 0.15,
+            convergence_mode: mode.to_string(),
+            max_iterations: 5,
+            min_iterations: 2,
+            on_not_reached: "abort".to_string(),
+            threshold: 0.1,
+            convergence_field: "composite".to_string(),
+            improvement_ratio: 0.0,
+            improvement_gate: "threshold_only".to_string(),
             aggregation: "none".to_string(),
             aggregation_sources: vec![],
         }
@@ -513,6 +658,101 @@ mod tests {
         ctx.insert("composite".to_string(), json!(0.20));
         tracker.capture_baseline(&ctx); // should not overwrite
         assert_eq!(tracker.baseline_quality, first_baseline);
+    }
+
+    // ── Trajectory stability gates ──
+
+    #[test]
+    fn push_quality_records_history() {
+        let cfg = config(0.15, "composite", 3, 0);
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        ctx.insert("composite".to_string(), json!(0.50));
+        tracker.push_quality(&ctx);
+        ctx.insert("composite".to_string(), json!(0.30));
+        tracker.push_quality(&ctx);
+        assert_eq!(tracker.quality_history(), &[0.50, 0.30]);
+    }
+
+    #[test]
+    fn push_quality_records_nan_when_metric_missing() {
+        let cfg = config(0.15, "composite", 3, 0);
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new(); // no metric
+        tracker.push_quality(&ctx);
+        assert_eq!(tracker.quality_history().len(), 1);
+        assert!(tracker.quality_history()[0].is_nan());
+    }
+
+    #[test]
+    fn stability_gate_returns_false_with_fewer_than_two_readings() {
+        let mut cfg = config(0.15, "composite", 3, 0);
+        cfg.improvement_gate = "stability".to_string();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        ctx.insert("composite".to_string(), json!(0.10));
+        tracker.push_quality(&ctx); // only 1 reading
+        // Cannot be stable with 1 reading — trajectory convergence undefined
+        assert!(!tracker.check_met(&ctx, 2));
+    }
+
+    #[test]
+    fn stability_gate_converges_when_last_two_readings_within_epsilon() {
+        let mut cfg = config(0.15, "composite", 3, 0);
+        cfg.improvement_gate = "stability".to_string();
+        cfg.stability_epsilon = 0.05;
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        ctx.insert("composite".to_string(), json!(0.50));
+        tracker.push_quality(&ctx);
+        ctx.insert("composite".to_string(), json!(0.52)); // delta 0.02 < 0.05
+        tracker.push_quality(&ctx);
+        assert!(tracker.check_met(&ctx, 2));
+    }
+
+    #[test]
+    fn stability_gate_rejects_oscillation() {
+        let mut cfg = config(0.15, "composite", 3, 0);
+        cfg.improvement_gate = "stability".to_string();
+        cfg.stability_epsilon = 0.05;
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        ctx.insert("composite".to_string(), json!(0.10));
+        tracker.push_quality(&ctx);
+        ctx.insert("composite".to_string(), json!(0.50)); // delta 0.40 >> 0.05
+        tracker.push_quality(&ctx);
+        assert!(!tracker.check_met(&ctx, 2));
+    }
+
+    #[test]
+    fn threshold_and_stability_gate_requires_both() {
+        let mut cfg = config(0.15, "composite", 3, 0);
+        cfg.improvement_gate = "threshold_and_stability".to_string();
+        cfg.stability_epsilon = 0.05;
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        // Threshold met but not stable (delta 0.40)
+        ctx.insert("composite".to_string(), json!(0.10));
+        tracker.push_quality(&ctx);
+        ctx.insert("composite".to_string(), json!(0.10));
+        tracker.push_quality(&ctx);
+        // delta 0.00 < 0.05 AND 0.10 <= 0.15 → both met
+        assert!(tracker.check_met(&ctx, 2));
+        // Now make it unstable — threshold met but delta large
+        ctx.insert("composite".to_string(), json!(0.50));
+        tracker.push_quality(&ctx);
+        // 0.50 > 0.15 threshold not met, and delta 0.40 not stable
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn stability_enabled_reports_gate_correctly() {
+        let mut cfg = config(0.15, "composite", 3, 0);
+        assert!(!ConvergenceTracker::new(&cfg).stability_enabled());
+        cfg.improvement_gate = "stability".to_string();
+        assert!(ConvergenceTracker::new(&cfg).stability_enabled());
+        cfg.improvement_gate = "threshold_and_stability".to_string();
+        assert!(ConvergenceTracker::new(&cfg).stability_enabled());
     }
 
     #[test]

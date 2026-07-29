@@ -2,7 +2,7 @@
 title: "Kask Panel Redesign — Multi-Tab Per-Server Curator Threads"
 audience: [zed-kask integrators, hKask architects, GPUI engineers]
 last_updated 2026-07-28
-version: "0.2.0"
+version: "0.3.0"
 status: "Draft"
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -10,97 +10,151 @@ mds_categories: [composition, trust, lifecycle, curation]
 
 # Kask Panel Redesign — Multi-Tab Per-Server Curator Threads
 
-> **One-line frame:** The kask panel is a center-pane `Item` that hosts a row
-> of **tabs at the top** (one per built-in kask MCP server) and a stack of
-> **threads** below it (one `ConversationView` per tab, forked from the agent
-> panel's conversation surface). Each tab is a **context-focused mini-replica
-> of the agent panel**: its own thread, its own conversation history, its own
-> message editor, its own tool scope (the tab's MCP server), and its own
-> per-tab system prompt that frames the curator's role in that server's
-> domain. The **curator is the agent** the user talks to in every tab —
-> exactly as the agent panel binds each thread to "Zed Agent" or "Curator"
-> via the agent selector. The curator observes MCP usage patterns and tool
-> use **across tabs** because the curator MCP server already owns
-> `EpisodicMemory`, `SemanticMemory`, and a `RegulationArchive`, and the
-> `McpRuntime` already records every governed tool invocation's outcome in
-> the `RegulationLedger`. Beyond the tab strip and the curator-as-agent
-> binding, the panel behaves and renders identically to the agent panel:
-> rich markdown, streaming, tool-call cards, message editor with mentions
-> and slash-commands, retry/cancel/copy, scroll, font-size, drag-and-drop.
+> **One-line frame:** The kask panel is a center-pane `Item` with a row of
+> **tabs at the top** (one per built-in kask MCP server) and a single
+> conversation surface below. Each tab is an **independent curator thread**
+> with its own history, its own tool scope (the tab's MCP server), and its
+> own per-tab system prompt. The curator observes MCP usage **across tabs**
+> because the curator MCP server already owns `EpisodicMemory`,
+> `SemanticMemory`, and a `RegulationArchive`, and `McpRuntime` already
+> records every governed tool invocation's outcome in the
+> `RegulationLedger` — no panel-side event forwarding. The panel's job is
+> **input + display**; cross-tab curation is the curator server's job.
 
 ---
 
-## 0. The Abstraction I Missed (v1 → v2 correction)
+## 0. v2 → v3 correction: the fork was gold-plating
 
-The v1 design doc proposed a **single shared curator conversation** across
-all tabs, with the tab switch only changing the "tool scope" passed to one
-conversation. That was wrong. The user's directive — *"each tab is a context
-focused mini-replica of the agent panel"* — maps directly onto the agent
-panel's existing unit of conversation: **the thread**.
+The v2 plan proposed forking ~29,000 lines of `agent_ui` code
+(`ConversationView` 11k + `ThreadView` 12.6k + `MessageEditor` 5.7k) into
+`kask_panel`, deleting ~40% (ACP, auth, elicitation, terminal, subagents,
+model selector, profiles), and keeping the rest for "pixel-parity with the
+agent panel." Three lenses kill that design:
 
-In the agent panel (`crates/agent_ui/src/agent_panel.rs:1165`):
+### Essentialist (Exist → Surface → Contract)
 
-```rust
-draft_thread: Option<Entity<ConversationView>>,
-retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
-```
+- **Exist (deletion test):** Delete the fork. Does complexity reappear
+  elsewhere? No — it reappears *inside the agent panel*, which already has
+  `ConversationView` parameterized by `Agent` with `Agent::Curator` as a
+  first-class option, and `retained_threads: HashMap<ThreadId,
+  Entity<ConversationView>>` for multiple independent threads. The fork
+  duplicates an abstraction that already exists and is parameterized for
+  exactly this use case. The fork does not deserve to exist.
+- **Surface:** The user's directive was *"each tab is a context focused
+  **mini**-replica of the agent panel."* v2 read "mini-replica" as "full
+  replica, minus the parts I deleted." That's maximal-with-cuts, not
+  minimal. A genuine mini-replica asks: what's the smallest surface that
+  satisfies "per-server curator conversation"? Answer: input + display with
+  markdown + streaming + tool cards. The current 1,608-line panel already
+  does input + display (poorly). The gap is hundreds of lines, not tens of
+  thousands.
+- **Contract:** The one genuinely new abstraction — `CuratorSession`
+  (per-tab, stateful, streaming, tool-scoped, replacing the stateless
+  `ScopedInference`) — is ~150 lines of trait + enum. It does not require
+  the fork to be useful. It requires a `Vec<ChatMessage>` history, a
+  streaming call to `generate_stream_with_messages`, and tool dispatch.
 
-Each `ConversationView` is one thread — one independent conversation bound to
-one agent, with its own `ThreadView` (the 12k-line message list + editor +
-tool cards), its own history, its own scroll position, its own retry/cancel
-state. The agent panel's "tabs" (the thread list in the dock) are exactly
-this: a map of `ThreadId → ConversationView`, with one active.
+### Pragmatic-cybernetics
 
-**The kask panel's tabs are the same abstraction.** Each tab is a
-`ConversationView` (forked), bound to the curator agent, scoped to one MCP
-server. The kask panel `Item` holds `HashMap<ServerId, Entity<KaskConversationView>>`
-— the exact structural mirror of `retained_threads`, keyed by server
-instead of by `ThreadId`. There is no shared conversation. Each tab is its
-own thread.
+- **Ashby's Law (requisite variety):** The panel regulates the user's
+  interaction with 10 MCP servers via the curator. Requisite variety: 10
+  servers, per-server history, per-server tool scope, streaming text,
+  tool-call results. The v2 fork added variety for ACP negotiation,
+  agent-server auth, elicitation forms, terminal codegen, subagent
+  navigation, profile/mode/thinking-effort menus, model selector, trial
+  upsell, onboarding, buffer search. **None of that variety maps to the
+  panel's regulatory task.** The plan even deleted it — confirming it was
+  never requisite. Excess variety copied because it was in the source file.
+- **Good Regulator theorem:** A regulator must model the system it
+  regulates. The panel regulates *the curator + 10 MCP servers*. v2 made
+  the panel a model of *the agent panel*. Those are different systems —
+  which is why v2 had to delete 40%: the model didn't fit the system, so it
+  carved off the mismatched parts. A purpose-built model (current panel +
+  markdown + streaming) is a better regulator because it models the actual
+  system.
+- **The feedback-loop point (v2 §1.4 is the strongest argument *against*
+  the fork):** Cross-tab observation lives in the curator server's
+  `EpisodicMemory`/`SemanticMemory` + `RegulationLedger`. The panel
+  forwards nothing between threads. So the panel's conversation surface is
+  **stateless with respect to cross-tab curation** — it's 10 independent
+  input/output channels. That's exactly what the current panel already is,
+  minus rendering quality. The fork buys rendering quality at the cost of a
+  parallel 29k-line regulator the cybernetic loop doesn't use.
 
-The curator "observes across tabs" not because the panel forwards events
-between threads (it doesn't — that would violate thread independence), but
-because **the curator MCP server is a single process with its own persistent
-memory**, and every tool call from every tab flows through the same
-`McpRuntime`, which records outcomes in the same `RegulationLedger`, which
-the curator server reads from. Cross-tab observation is a property of the
-curator server's storage, not of the panel's UI state. This is verified in
-§1.4.
+### Coding-guidelines (Karpathy)
+
+1. **Think before coding** — v2 skipped "do we need a fork at all" and
+   jumped to "how do we fork."
+2. **Simplicity first** — 29k-line fork is not the simplest solution to
+   "per-server curator tabs with nice rendering."
+3. **Surgical changes** — forking 3 whole files and deleting 40% is the
+   opposite of surgical. Adding markdown + streaming to the existing panel
+   is surgical.
+4. **Goal-driven** — the goal is "context-focused mini-replica." v2
+   delivered "full replica with amputations."
+
+### The alternative v2 considered and rejected too quickly
+
+v2 §1.5 asserts "the kask panel stays a center-pane `Item`" and uses that
+to justify the fork (the agent panel is a dock `Panel`, so its
+conversation surface can't be reused). But the center-pane-vs-dock
+decision is **orthogonal** to the conversation-surface decision. Two
+options v2 didn't weigh:
+
+- **(A) Reuse the agent panel directly.** Deploy 10 curator-bound threads
+  in the agent panel, one per MCP server, with per-thread tool scope. The
+  agent panel already supports `Agent::Curator` and `retained_threads`.
+  Cost: a per-thread tool-scope mechanism in agent_ui (small). No fork, no
+  new panel. The kask panel `Item` becomes unnecessary for the
+  conversation use case — it survives only for the kanban/portfolio/
+  scenarios views.
+- **(B) Keep the kask panel `Item`, grow it minimally.** Add markdown
+  rendering, streaming, tool-call cards, and per-tab history to the
+  existing 1,608-line panel. No fork. The panel stays a purpose-built
+  regulator of MCP servers, not a model of the agent panel.
+
+**v3 chooses (B).** Rationale: the kask panel's center-pane `Item` hosting
+is a real product decision (it lives next to the editor/terminal, not in
+the dock), and the per-tab tool-scope + per-tab system-prompt framing is
+specific to the kask MCP-server domain and doesn't belong in agent_ui.
+But the *rendering surface* is grown in place, not forked. The panel
+remains a mini-replica: it borrows the `markdown` crate and the
+`render_agent_markdown` *helper function* (a few dozen lines, lifted or
+re-exported), not the 12k-line `ThreadView` that contains it.
 
 ---
 
 ## 1. Research Findings (verified against the codebase)
 
-### 1.1 The agent panel's thread is the unit to fork
+### 1.1 The current panel and what it lacks
 
-| Layer | File | Role |
-|---|---|---|
-| `AgentPanel` (dock shell) | `crates/agent_ui/src/agent_panel.rs:1153` | Dock `Panel`. Holds `draft_thread` + `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`. **Not forked** — kask panel is a center-pane `Item`, not a dock. |
-| `ConversationView` | `crates/agent_ui/src/conversation_view.rs:591` | One thread. Holds server state, auth, focus, code-span resolver, and a `ThreadView`. **Forked** → `KaskConversationView`. |
-| `ThreadView` | `crates/agent_ui/src/conversation_view/thread_view.rs:565` | The conversation surface: `ListState`-backed message list, `render_entry`, `render_markdown`, `render_tool_call`, `render_thinking_block`, `render_generating`, `render_message_editor`, scroll actions, copy, retry, cancel. **Forked** → `KaskThreadView`. |
-| `MessageEditor` | `crates/agent_ui/src/message_editor.rs:202` | Editor with mentions (`@`), slash commands (`/`), context chips, queue, expand, follow-up. **Forked** → `KaskMessageEditor`. |
-| `render_agent_markdown` | `crates/agent_ui/src/conversation_view.rs:3386` | Shared markdown helper (`MarkdownElement` + code-block renderer + image resolver + url-click + code-span-link). **Reused as-is** (lifted into the kask_panel crate or re-exported). |
-| `Markdown` / `MarkdownElement` / `MarkdownStyle` | `crates/markdown/src/markdown.rs` | The markdown crate. `MarkdownStyle::themed(MarkdownFont::Agent, window, cx)` is the agent-panel font/style. **Reused as-is.** |
+`crates/kask_panel/src/kask_panel.rs` (1,608 lines) is a center-pane `Item`
+with: a server-selector button row, a flat `div().children()` message list
+rendered as `Label`s, a bare `Editor` input with a `KaskToolCompletionProvider`
+for `/tool_name` completion, a status bar (gas gauge + regulation health),
+and in-memory `HashMap<usize, Vec<KaskMessage>>` history per server.
 
-### 1.2 What the agent panel does that the kask panel currently doesn't
+What it does well: per-server history, direct `/tool_name` invocation,
+scoped inference, status bar, slash commands (`/help`, `/clear`, `/tools`).
 
-| Capability | Agent panel | Current kask panel |
-|---|---|---|
-| Message rendering | `MarkdownElement` with syntax highlighting, copy buttons, wrap buttons, mermaid, images, link-click, code-span file links | `Label::new(format!("{prefix}{}", msg.content))` (L759) — plain text |
-| Message list | `ListState`-backed virtualized list with `cx.processor` per entry | `div().children(message_elements)` — flat, not virtualized |
-| Streaming | `AssistantMessageChunk::Message { block, .. }` with live `Entity<Markdown>` updates | Single `String` from `ScopedInference::infer` — no streaming |
-| Tool calls | `render_tool_call` cards: expand/collapse, raw input, output markdown, error, copy, permission prompts | `format!("{tool}\n{formatted}")` in a `Label` (L604) |
-| Thinking blocks | `AssistantMessageChunk::Thought` rendered collapsibly | None |
-| Input editor | `MessageEditor` with mentions, slash commands, context chips, queue, expand, follow-up | Bare `Editor` + `KaskToolCompletionProvider` |
-| Retry / cancel | `cancel_generation`, `retry`, `undo_last_reject` | None (busy flag only) |
-| Copy | `CopyButton` on every message + `CopyThreadToClipboard` | None |
-| Scroll | `ListState::scroll_to_end`, page-up/down, scroll-to-message | `ScrollHandle::scroll_to_bottom` |
-| Persistence | `ThreadStore` + KVP serialization | `HashMap<usize, Vec<KaskMessage>>` in memory, lost on restart |
-| Font size | `WithRemSize` + `agent_ui_font_size` + cmd-+/cmd- | None |
-| Drag-and-drop files | `render_drag_target` + `ExternalPaths` | None |
-| Thread independence | Each `ConversationView` is independent — own history, own scroll, own retry | N/A (single shared `Vec` per server) |
+What it lacks (the actual gap, not 29k lines):
+- **Markdown rendering** — messages are `Label::new(format!("{prefix}{}",
+  msg.content))`. The `markdown` crate (`MarkdownElement` + `MarkdownStyle`)
+  is already a workspace dependency path; agent_ui uses it directly.
+- **Streaming** — `ScopedInference::infer` returns a single `String`. The
+  `InferencePort::generate_stream_with_messages` API (§1.3) already
+  streams `InferenceStreamChunk`s. The bridge adapter (`PanelScopedInference`
+  in `main.rs:2226`) just doesn't call it.
+- **Tool-call cards** — tool results render as `format!("{tool}\n{formatted}")`
+  in a `Label`. A card (tool name, status, collapsible raw input, output,
+  copy) is a few hundred lines, not a 12k-line fork.
+- **Per-tab stateful session** — `ScopedInference::infer` rebuilds
+  `[system, user]` every call with no history. The actual defect. Fixed by
+  `CuratorSession` (§2.1).
+- **Tab strip** — the server selector is a wrapping button row. A proper
+  `ui::Tab` strip is a small component.
 
-### 1.3 Streaming is already supported by `InferencePort`
+### 1.2 Streaming is already supported by `InferencePort`
 
 `hkask_types::InferencePort::generate_stream_with_messages`
 (`kask/crates/hkask-types/src/ports/inference_port.rs:78-89`) returns
@@ -119,186 +173,59 @@ pub struct InferenceStreamChunk {
 ```
 
 Streaming, thinking deltas, and structured tool calls are all supported.
-The `CuratorEvent` enum mirrors `InferenceStreamChunk`'s fields directly.
+The `CuratorEvent` enum (§2.1) mirrors these fields directly. The bridge
+adapter just needs to call `generate_stream_with_messages` instead of
+`generate_with_messages`.
 
-### 1.4 The curator observes across tabs via its own storage (verified)
+### 1.3 The curator observes across tabs via its own storage (verified)
 
 The curator MCP server (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:31-37`)
-holds:
+holds `EpisodicMemory`, `SemanticMemory`, `RegulationArchive`, and a
+`TokenRegistry`. It is a single process; every tab's curator thread talks
+to the same server process and recalls from the same memory regardless of
+which tab asked. `McpRuntime` records every governed tool invocation's
+outcome in the `RegulationLedger` (`hkask-regulation/src/cybernetics_loop.rs:529`).
+**No panel-side `observe_tool_use` forwarding layer is needed.** This is
+the cybernetic proof that the panel's conversation surface can be
+stateless w.r.t. cross-tab curation.
 
-```rust
-pub struct CuratorServer {
-    escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
-    regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
-    episodic: Option<hkask_memory::EpisodicMemory>,        // ← episodic memory
-    semantic: Option<Arc<hkask_memory::SemanticMemory>>,   // ← semantic memory
-    token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>>,
-}
-```
+### 1.4 The center-pane `Item` stays
 
-The curator server is a **single process** with its own `EpisodicMemory` and
-`SemanticMemory`. Every tab's curator thread talks to the same server
-process; the curator recalls from the same memory regardless of which tab
-asked. This is the cross-tab observation mechanism — it lives in the
-curator server, not in the panel.
+`KaskPanel` implements `workspace::item::Item` (center pane, multi-instance,
+`Toggle` deploys). This matches `TerminalView` and is correct. The panel
+is **not** converted to a dock `Panel`. The conversation surface is grown
+in place inside the `Item`, not forked from the agent panel's dock.
 
-Additionally, `McpRuntime` records every governed tool invocation's outcome
-in the `RegulationLedger` (`hkask-regulation/src/cybernetics_loop.rs:529`:
-"Record a tool outcome in the Regulation runtime for outcome quality
-tracking. Called by McpRuntime after every governed tool invocation
-completes."). So when the user (or the curator) calls a tool in any tab,
-the outcome is recorded in the shared ledger, and the curator server can
-read it. **No panel-side `observe_tool_use` forwarding layer is needed.**
+### 1.5 The `markdown` crate is the rendering reuse, not `ThreadView`
 
-### 1.5 The center-pane `Item` vs dock `Panel` distinction (unchanged)
-
-`AgentPanel` implements `workspace::dock::Panel` (dock, singleton,
-`ToggleFocus`). `KaskPanel` implements `workspace::item::Item` (center pane,
-multi-instance, `Toggle` deploys). The kask panel **stays a center-pane
-`Item`** — this matches `TerminalView` and is correct. The fork target is
-the conversation surface (`ConversationView` + `ThreadView`), not the dock
-shell (`AgentPanel`).
-
-### 1.6 The agent selector is the curator binding
-
-The agent panel's toolbar has an agent selector (`render_toolbar`,
-`agent_panel.rs:5845`) listing `Agent::NativeAgent` (Zed Agent), `Agent::Curator`,
-terminal, and custom agents. Each thread is bound to one agent via
-`ConversationView`'s `connection_key: Agent` field (`conversation_view.rs:594`).
-
-In the kask panel, **the curator is the only agent in the selector**. The
-"selector" is implicit — every tab's thread is bound to the curator. The
-tab strip replaces the agent selector: instead of choosing an agent, the
-user chooses a **domain** (which MCP server's tools are in scope for this
-curator thread). The agent is always the curator; the tab selects the tool
-scope and the system-prompt framing.
+`crates/markdown/src/markdown.rs` provides `Markdown`, `MarkdownElement`,
+`MarkdownStyle`. `MarkdownStyle::themed(MarkdownFont::Agent, window, cx)`
+is the agent-panel font/style. The agent panel's `render_agent_markdown`
+(`agent_ui/src/conversation_view.rs:3386`) is a ~30-line helper that wraps
+`MarkdownElement::new(markdown, style)` with a code-span resolver and
+image/url click handlers. **This helper is the reuse unit** — lifted into
+`kask_panel` or re-exported from `agent_ui` — not the 12k-line `ThreadView`
+that contains it. The kask panel does not need `ListState` virtualization
+(conversations are short), `MessageEditor` with mentions/queue/expand
+(the bare `Editor` + completion provider suffices for v1), or
+ACP/auth/elicitation/terminal/subagent code (deleted in v2, still deleted
+in v3 — but v3 never copies it in the first place).
 
 ---
 
 ## 2. Design Decisions (pinned)
 
-### 2.1 Each tab is a thread — `HashMap<ServerId, Entity<KaskConversationView>>`
-
-The `KaskPanel` struct holds one `KaskConversationView` per MCP server, keyed
-by server ID — the structural mirror of the agent panel's
-`retained_threads: HashMap<ThreadId, Entity<ConversationView>>`:
-
-```rust
-pub struct KaskPanel {
-    _workspace: WeakEntity<Workspace>,
-    focus_handle: FocusHandle,
-    /// The active tab (index into BUILT_IN_MCP_SERVERS_IDS).
-    active_tab: usize,
-    /// One thread per MCP server — the structural mirror of the agent
-    /// panel's `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`,
-    /// keyed by server ID instead of ThreadId. Each tab is an independent
-    /// curator conversation scoped to that server's tools and domain.
-    threads: HashMap<usize, Entity<KaskConversationView>>,
-    /// The tab strip state (ui::Tab components).
-    tab_strip_state: TabStripState,
-    /// Latest regulation snapshot (for the activity bar gas gauge).
-    regulation_snapshot: RegulationSnapshot,
-    status_fetching: bool,
-}
-```
-
-Each `KaskConversationView` is independent: own history, own scroll, own
-retry/cancel, own message editor, own tool scope. Switching tabs swaps which
-`KaskConversationView` is rendered below the tab strip — exactly as the
-agent panel swaps which `retained_thread` is rendered in the dock.
-
-### 2.2 The fork is `ConversationView` + `ThreadView` + `MessageEditor`, simplified
-
-The fork deletes ~40% of `ThreadView`:
-
-**Deleted:**
-- All ACP event handling (`AcpThreadEvent`, `ThreadStatus`, `SessionId`).
-- Agent-server auth (`AuthState`, `auth_methods`, `reauthenticate`, `logout`).
-- Elicitation (`render_request_elicitations`, `ElicitationFormState`).
-- Terminal integration (`render_terminal`, `TerminalThreadMetadata`).
-- Subagents (`render_subagent_titlebar`, `parent_session_id` navigation).
-- Profiles / modes / thinking-effort / fast-mode menus.
-- Model selector (`ModelSelectorPopover`) — the curator uses the configured
-  default model; v2 can add a selector.
-- Trial upsell / onboarding / codex-windows warning.
-- Buffer search bar (`ThreadSearchBar`) — v1 skips in-thread search.
-- Multi-root callout, external-source-prompt warning.
-
-**Kept (the rendering surface):**
-- `ListState`-backed message list with `render_entries`.
-- `render_entry` → `render_markdown` (via `render_agent_markdown`).
-- `render_tool_call` cards (expand/collapse, raw input, output markdown,
-  error, copy).
-- `render_thinking_block` (the curator model supports thinking via
-  `reasoning_delta`).
-- `render_generating` spinner.
-- `render_message_editor` (forked to `KaskMessageEditor`).
-- Scroll actions (page-up/down, to-top/bottom, to-message).
-- Copy / retry / cancel actions.
-- `render_thread_error` with `Callout`.
-- `WithRemSize` font-size handling.
-- Drag-and-drop file target (`render_drag_target`).
-
-### 2.3 The tab strip replaces `render_server_selector`
-
-The current `render_server_selector` (L699–733) — a `v_flex` with a label, a
-wrapping row of `Button`s, and a "Selected: {current}" label — becomes a
-proper tab strip at the top of the panel:
-
-- One `ui::Tab` per `BUILT_IN_MCP_SERVERS_IDS` entry (10 tabs).
-- The active tab is highlighted; clicking switches `active_tab` and swaps
-  the rendered `KaskConversationView`.
-- Each tab shows the server icon + name.
-- The tab strip is part of the `KaskPanel` render (above the active
-  `KaskConversationView`), not the workspace tab bar.
-- This is the same `ui::Tab` component used in the agent panel's toolbar
-  and settings pages — visual language parity.
-
-### 2.4 The curator is the agent; the tab is the tool scope + system prompt
-
-- Every `KaskConversationView` is bound to the **curator** agent. There is no
-  agent selector — the curator is the only agent.
-- Each tab's `KaskConversationView` is constructed with a **tool scope** (the
-  tab's MCP server's tools) and a **system prompt** that frames the curator's
-  role in that server's domain.
-- The conversation history is **per-tab** (each tab is its own thread). The
-  curator does not see other tabs' histories in its context window — it
-  recalls across tabs via its own `EpisodicMemory` / `SemanticMemory` (§1.4),
-  not via the panel concatenating threads.
-- Direct `/tool_name args` invocation still works per-tab — it calls the
-  active tab's MCP server directly, bypassing the curator, and the result is
-  inserted into that tab's thread as a tool-call entry. The outcome is still
-  recorded in the `RegulationLedger` by `McpRuntime`, so the curator can
-  recall it.
-
-### 2.5 System-prompt template per tab (Jinja2)
-
-The current `build_system_prompt` (L224–272) is a Rust `format!` string. The
-redesign replaces it with a **Jinja2 template** matching the kask skill
-cascade pattern. The template receives `{{ server }}`,
-`{{ server_description }}`, `{{ tools }}` (list of `{name, description}`),
-`{{ task }}` (the user's current request, per the `.rules` "Skill cascade
-context must carry the user's task" trap), and `{{ curator_guidance }}` (a
-shared include appended to every tab's system prompt).
-
-Templates live in `kask/registry/panel-prompts/`:
-- `panel-tab-system.j2` — the per-tab framing (parameterized by server).
-- `panel-curator-guidance.j2` — the shared curator guidance (remembering
-  issues, observing tool-use patterns, cross-domain recall from episodic /
-  semantic memory).
-
-### 2.6 `ScopedInference` evolves to a per-thread `CuratorSession`
+### 2.1 `CuratorSession` — the one genuinely new abstraction
 
 The current `ScopedInference::infer(server, prompt, system_prompt)` is
-stateless — the bridge builds a fresh `[system, user]` array each call. The
-redesign introduces a `CuratorSession` trait, **one instance per tab** (per
-`KaskConversationView`), holding that tab's conversation history:
+stateless — the bridge builds a fresh `[system, user]` array each call.
+The redesign introduces a `CuratorSession` trait, **one instance per tab**,
+holding that tab's conversation history:
 
 ```rust
 pub trait CuratorSession: Send + Sync {
     /// Send a user message to the curator with this tab's tool scope and
-    /// system prompt. Returns a stream of curator events (text chunks,
-    /// thinking deltas, tool calls, tool results, done).
+    /// system prompt. Returns a stream of curator events.
     fn send(
         &self,
         message: &str,
@@ -329,74 +256,142 @@ pub enum CuratorEvent {
 ```
 
 The bridge (`main.rs`) provides `PanelCuratorSession` (one per tab),
-wrapping:
-- The `InferencePort` (via `generate_stream_with_messages`).
-- The `ToolPort` (for the curator to call MCP tools — OCAP-gated, reusing
-  `PanelToolInvoker`'s `DelegationToken` machinery).
-- A `tokio::sync::Mutex<Vec<ChatMessage>>` for that tab's conversation
-  history (persisted across `send` calls within the session).
+wrapping the `InferencePort` (via `generate_stream_with_messages`), the
+`ToolPort` (OCAP-gated, reusing `PanelToolInvoker`'s `DelegationToken`
+machinery), and a `tokio::sync::Mutex<Vec<ChatMessage>>` for that tab's
+history. A `set_curator_session_factory` OnceLock replaces
+`set_scoped_inference`; the factory is called per-tab to construct a fresh
+`PanelCuratorSession`. Wired in the deferred task in `main.rs` (per the
+`.rules` "Model-dependent kask wiring must run in the deferred task" trap),
+with a `log::warn!` in the failure branch naming the hook (per the
+"process-global hooks need a startup-failure signal" trap).
 
 **No `observe_tool_use` method.** Cross-tab observation is the curator
-server's job (§1.4), not the panel's. The panel does not forward events
-between threads — that would violate thread independence and duplicate the
-curator server's own memory.
+server's job (§1.3).
 
-### 2.7 Streaming is required for parity — and the port supports it
+### 2.2 Per-tab threads — `HashMap<ServerId, TabState>`
 
-The `KaskThreadView` consumes the `CuratorEventStream` incrementally,
-updating the active `Entity<Markdown>` as `TextDelta` chunks arrive,
-rendering `ThinkingDelta` as collapsible thinking blocks, and rendering
-`ToolCall` / `ToolResult` as tool-call cards. This mirrors the agent panel's
-`AssistantMessageChunk::Message { block, .. }` → live `Entity<Markdown>`
-update pattern. `InferencePort::generate_stream_with_messages` (§1.3) makes
-this possible without a new port method.
+The `KaskPanel` struct holds one `TabState` per MCP server, keyed by server
+index — the structural mirror of the agent panel's `retained_threads`,
+but **without forking `ConversationView`**. `TabState` is a small struct
+holding the per-tab `CuratorSession`, history, and live-stream state:
 
-### 2.8 Tool-call cards reuse `render_tool_call`
+```rust
+struct TabState {
+    /// This tab's curator session (own history mutex inside).
+    session: Arc<dyn CuratorSession>,
+    /// In-memory message history for rendering (mirrors the session's
+    /// authoritative history; updated as events arrive).
+    messages: Vec<KaskMessage>,
+    /// The currently-streaming assistant message, if a turn is in flight.
+    streaming: Option<StreamingMessage>,
+    /// Whether a turn is in progress (drives spinner + cancel button).
+    busy: bool,
+}
 
-The curator calls MCP tools to answer the user. These tool calls render as
-**tool-call cards** — the same `render_tool_call` from `ThreadView`. The
-card shows: tool name, status (pending/running/done/error), raw input
-(collapsible), output (markdown or raw), copy button, expand/collapse.
+struct StreamingMessage {
+    /// Accumulated text deltas for the live markdown render.
+    text: String,
+    /// Accumulated thinking deltas (rendered as a collapsible block).
+    thinking: String,
+    /// Tool calls emitted so far this turn (rendered as cards).
+    tool_calls: Vec<ToolCallEntry>,
+}
+```
 
-Direct `/tool_name args` invocations also render as tool-call cards (with
-the user as the "caller" instead of the curator). This unifies the two input
-paths into a single visual language.
+This is ~50 lines of state, not a 12k-line `ThreadView`. The panel renders
+the active tab's `TabState` directly; switching tabs swaps which
+`TabState` is rendered.
 
-### 2.9 The status bar moves to the activity bar
+### 2.3 The tab strip replaces `render_server_selector`
 
-The current `render_status_bar` (gas gauge + regulation health) is a good
-feature. It moves to the **activity bar** at the bottom of each
-`KaskConversationView` (the same place the agent panel puts cancel/retry/
-scroll-to-bottom), not above the input. The gas gauge becomes a small
-indicator in the activity bar, alongside the cancel button and the
-scroll-to-bottom button. Each tab has its own activity bar (it's part of
-the `KaskThreadView`).
+The current `render_server_selector` (L699–733) — a `v_flex` with a label,
+a wrapping row of `Button`s, and a "Selected: {current}" label — becomes a
+proper tab strip at the top of the panel. One tab per
+`BUILT_IN_MCP_SERVERS_IDS` entry (10 tabs). The active tab is highlighted;
+clicking switches `active_tab` and swaps the rendered `TabState`. Each tab
+shows the server name. This is a small `render_tab_strip` method, not a
+separate crate module.
+
+### 2.4 Markdown rendering via the `markdown` crate
+
+`render_messages` replaces `Label::new(format!("{prefix}{}", msg.content))`
+with `MarkdownElement` from the `markdown` crate. Each assistant message
+holds an `Entity<Markdown>`; streaming updates append to the markdown
+source and call `cx.notify()`. The `render_agent_markdown` helper
+(~30 lines) is lifted into `kask_panel` or re-exported from `agent_ui`
+for code-span link + image + url-click handling. System/error messages
+render as a `Callout`. This is the bulk of the rendering upgrade and it's
+~200 lines, not 12k.
+
+### 2.5 Tool-call cards — a small component, not a fork
+
+Tool calls (curator-emitted and direct `/tool_name` invocations) render as
+cards: tool name, status (pending/running/done/error), collapsible raw
+input, output (markdown or raw), copy button. This is a
+`render_tool_call_card` function (~150 lines) in `kask_panel`, not a port
+of `ThreadView::render_tool_call` (which carries ACP permission prompts,
+session-id lookup, and subagent machinery). The kask panel has no
+permission prompts (OCAP tokens are pre-authorized by the bridge) and no
+subagents — the card is simpler than its agent-panel counterpart.
+
+### 2.6 System-prompt template per tab (Jinja2)
+
+The current `build_system_prompt` (L224–272) is a Rust `format!` string.
+The redesign replaces it with a Jinja2 template matching the kask skill
+cascade pattern. The template receives `{{ server }}`,
+`{{ server_description }}`, `{{ tools }}` (list of `{name, description}`),
+`{{ task }}` (the user's current request, per the `.rules` "Skill cascade
+context must carry the user's task" trap), and `{{ curator_guidance }}`
+(shared include appended to every tab's system prompt).
+
+Templates live in `kask/registry/panel-prompts/`:
+- `panel-tab-system.j2` — the per-tab framing (parameterized by server).
+- `panel-curator-guidance.j2` — the shared curator guidance.
+
+### 2.7 What is deliberately NOT done (the v2 cuts that stay cut)
+
+These v2 "kept" items are **not** carried into v3, because they are excess
+variety for the panel's regulatory task (§0, cybernetics lens):
+
+- `ListState`-backed virtualization — kask conversations are short; a
+  flat `div().children()` with a `ScrollHandle` suffices. Add virtualization
+  only if a real conversation is observed to jank.
+- `MessageEditor` fork (mentions, slash-commands menu, context chips,
+  queue, expand-to-fullscreen) — the bare `Editor` + `KaskToolCompletionProvider`
+  already handles `/tool_name` completion. `@`-mentions and a slash-command
+  menu are v2 features, deferred until a user asks for them.
+- `WithRemSize` + `agent_ui_font_size` + cmd-+/cmd- — not a panel
+  requirement; the panel uses the default UI font.
+- Drag-and-drop files — not a panel requirement.
+- `ThreadStore` persistence — v1 keeps conversations in-memory (matches
+  current behavior). v2 can add a `KaskThreadStore`.
+- Retry / cancel / undo-last-reject — cancel is cheap and included (the
+  `CuratorSession::cancel` method exists). Retry/undo are deferred.
 
 ---
 
 ## 3. Architecture
 
-### 3.1 Crate structure
-
-The `kask_panel` crate grows. New files:
+### 3.1 Crate structure — minimal growth
 
 ```
 crates/kask_panel/src/
-├── kask_panel.rs              # The Item shell: tab strip + active KaskConversationView
-├── conversation_view.rs       # Fork of agent_ui::ConversationView (simplified)
-├── thread_view.rs             # Fork of agent_ui::ThreadView (simplified — the big one)
-├── message_editor.rs          # Fork of agent_ui::MessageEditor (simplified)
-├── curator_session.rs         # CuratorSession trait + ToolScope + CuratorEvent
-├── system_prompt.rs           # Loads + renders the per-tab Jinja2 system prompt
-├── tab_strip.rs               # The MCP-server tab strip (ui::Tab components)
-├── panel_button.rs            # (unchanged) status bar toggle button
-├── kanban_view.rs             # (unchanged) separate center-pane Item
-├── portfolio_view.rs          # (unchanged) separate center-pane Item
-└── scenarios_view.rs          # (unchanged) separate center-pane Item
+├── kask_panel.rs          # The Item shell: tab strip + active TabState render
+├── curator_session.rs     # CuratorSession trait + ToolScope + CuratorEvent + factory
+├── tool_call_card.rs      # render_tool_call_card (new, ~150 lines)
+├── panel_button.rs        # (unchanged) status bar toggle button
+├── kanban_view.rs         # (unchanged) separate center-pane Item
+├── portfolio_view.rs      # (unchanged) separate center-pane Item
+└── scenarios_view.rs      # (unchanged) separate center-pane Item
 ```
 
-New `Cargo.toml` dependencies: `markdown`, `theme_settings`, `component`,
-`futures` (already), `smol` (if needed for streams).
+New `Cargo.toml` dependencies: `markdown`, `theme_settings`, `component`
+(for `Callout` / `CopyButton` if not already via `ui`). No new crates.
+
+**No `conversation_view.rs`, no `thread_view.rs`, no `message_editor.rs`
+fork.** The panel grows by ~600 lines (curator_session + tool_call_card +
+markdown rendering + tab strip), not ~29,000.
 
 ### 3.2 The `KaskPanel` shell
 
@@ -404,11 +399,19 @@ New `Cargo.toml` dependencies: `markdown`, `theme_settings`, `component`,
 pub struct KaskPanel {
     _workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+    /// The active tab (index into BUILT_IN_MCP_SERVERS_IDS).
     active_tab: usize,
-    threads: HashMap<usize, Entity<KaskConversationView>>,
-    tab_strip_state: TabStripState,
+    /// One TabState per MCP server — the structural mirror of the agent
+    /// panel's `retained_threads`, keyed by server index. Each tab is an
+    /// independent curator conversation scoped to that server's tools.
+    tabs: HashMap<usize, TabState>,
+    /// Latest regulation snapshot (for the status bar gas gauge).
     regulation_snapshot: RegulationSnapshot,
     status_fetching: bool,
+    /// Scroll handle for the messages container.
+    messages_scroll_handle: gpui::ScrollHandle,
+    /// The message input editor (shared across tabs; cleared on send).
+    input_editor: Entity<Editor>,
 }
 ```
 
@@ -419,39 +422,19 @@ The `Item` impl is preserved (tab content text, serialization, focus). The
 v_flex()
     .size_full()
     .track_focus(&self.focus_handle)
-    .child(self.render_tab_strip(cx))                    // ← new
-    .child(self.active_conversation_view(cx).clone())    // ← replaces render_messages + render_input + render_status_bar
+    .child(self.render_tab_strip(cx))                 // ← new
+    .child(self.render_messages(window, cx))           // ← markdown-upgraded
+    .child(self.render_status_bar(cx))                 // ← unchanged
+    .child(self.render_input(cx))                      // ← unchanged
 ```
 
-`active_conversation_view` lazily constructs the `KaskConversationView` for
-`active_tab` on first access and caches it in `threads` — the same pattern
-as the agent panel's `current_messages` lazy init.
+### 3.3 The `CuratorSession` and the bridge
 
-### 3.3 The `KaskConversationView`
-
-A simplified fork of `agent_ui::ConversationView`. Per-tab state:
-
-- A single `KaskThreadView` (the message list + editor).
-- A `CuratorSession` (one per tab, holding that tab's conversation history).
-- The tab's `ToolScope` (the MCP server's tools).
-- The tab's system prompt (rebuilt when the tab is first constructed).
-
-It does **not** have: server state machine (always "connected" — the
-curator is always available), auth, elicitation, terminal, subagents.
-
-### 3.4 The `CuratorSession` and the bridge
-
-The `CuratorSession` trait (§2.6) is implemented in `main.rs` by a
-`PanelCuratorSession` adapter, **one instance per tab**. It wraps:
-
-- The `InferencePort` (for curator LLM calls, via
-  `generate_stream_with_messages`).
-- The `ToolPort` (for the curator to call MCP tools — OCAP-gated, reusing
-  `PanelToolInvoker`'s `DelegationToken` machinery).
-- A `tokio::sync::Mutex<Vec<ChatMessage>>` for that tab's conversation
-  history.
-
-The `send` method:
+The `CuratorSession` trait (§2.1) is implemented in `main.rs` by a
+`PanelCuratorSession` adapter, **one instance per tab**. It wraps the
+`InferencePort` (via `generate_stream_with_messages`), the `ToolPort`
+(OCAP-gated), and a `tokio::sync::Mutex<Vec<ChatMessage>>` for that tab's
+history. The `send` method:
 1. Appends the user message to this tab's history.
 2. Prepends the per-tab system prompt as the leading `system` message.
 3. Calls `InferencePort::generate_stream_with_messages` with the history +
@@ -459,134 +442,104 @@ The `send` method:
 4. Streams `InferenceStreamChunk`s back as `CuratorEvent::TextDelta` /
    `ThinkingDelta` / `ToolCall` / `Done`.
 5. When the curator emits a `ToolCall`, the session calls `ToolPort::invoke`
-   (OCAP-gated), emits `CuratorEvent::ToolResult`, and appends the tool call
-   + result to the history so the next turn sees it.
+   (OCAP-gated), emits `CuratorEvent::ToolResult`, and appends the tool
+   call + result to the history.
 6. Appends the final assistant response to the history.
 
 A `set_curator_session_factory` OnceLock replaces `set_scoped_inference`.
 The factory is called per-tab to construct a fresh `PanelCuratorSession`
-with its own history mutex. This is wired in the deferred task in `main.rs`
-(per the `.rules` "Model-dependent kask wiring must run in the deferred
-task" trap), with a `log::warn!` in the failure branch naming the hook
-(per the "process-global hooks need a startup-failure signal" trap).
+with its own history mutex. Wired in the deferred task in `main.rs` with a
+`log::warn!` in the failure branch naming the hook.
 
-### 3.5 Persistence (v1: none; v2: ThreadStore-like)
-
-v1 keeps conversations in-memory (lost on restart), matching the current
-behavior. v2 adds a `KaskThreadStore` (fork of `ThreadStore`) with KVP
-serialization, keyed by workspace + server ID. Deferred — the user's ask is
-about interaction quality, not persistence.
-
-### 3.6 System-prompt placement (per turn, v1)
+### 3.4 System-prompt placement (per turn, v1)
 
 Send `[system(tab_prompt), ...history, user]` each turn. Simple,
-model-agnostic. The tool list is ~1-2k tokens; the cost is acceptable. v2
-can optimize to a single system message at session start if the curator
-model supports mid-conversation system updates.
+model-agnostic. v2 can optimize to a single system message at session
+start if the curator model supports mid-conversation system updates.
 
 ---
 
-## 4. Migration Plan (phased)
+## 4. Migration Plan (phased, minimal)
 
-### Phase 1: Fork the conversation surface (no behavior change yet)
+### Phase 1: `CuratorSession` contract + factory (no behavior change)
 
-1. Copy `conversation_view.rs` → `kask_panel/src/conversation_view.rs`,
-   `thread_view.rs` → `kask_panel/src/thread_view.rs`, `message_editor.rs`
-   → `kask_panel/src/message_editor.rs`. Strip ACP/agent-server/terminal/
-   elicitation/subagent/profile/model-selector code. Keep rendering.
-2. Add `markdown`, `theme_settings`, `component` to `kask_panel/Cargo.toml`.
-3. Define `CuratorSession`, `ToolScope`, `CuratorEvent` in
+1. Define `CuratorSession`, `ToolScope`, `CuratorEvent` in
    `kask_panel/src/curator_session.rs`.
-4. Define `set_curator_session_factory` OnceLock (replaces
+2. Define `set_curator_session_factory` OnceLock (replaces
    `set_scoped_inference`).
-5. Wire `KaskPanel` to host one `KaskConversationView` per tab (still using
-   the old `ScopedInference` under the hood, adapted to `CuratorSession`).
-6. **No visual change yet** — the panel still looks the same, but the
-   plumbing is the forked stack.
+3. Implement `PanelCuratorSession` in `main.rs` (wraps `InferencePort` +
+   `ToolPort` + per-tab history mutex). Wire in the deferred task with the
+   failure-branch `log::warn!`.
+4. Keep the old `ScopedInference` path alive temporarily so the panel
+   still works; the new factory is wired but not yet called by the panel.
+5. **No visual change** — the panel still looks the same.
 
-**Validation:** `cargo check -p kask_panel`, existing tests pass, panel opens
-and behaves as before.
+**Validation:** `cargo check -p kask_panel`, `cargo check -p zed`, existing
+tests pass, panel opens and behaves as before.
 
-### Phase 2: Rich markdown rendering
+### Phase 2: Tab strip + per-tab `TabState`
 
-1. Replace `render_messages`'s `Label::new` with `render_agent_markdown`
-   (lifted from `agent_ui::conversation_view::render_agent_markdown`).
-2. Create `Entity<Markdown>` per assistant message; update on streaming
-   chunks.
-3. Add `CopyButton` to each message.
-4. Add `Callout` for system/error messages (replacing the `[system]` prefix
-   label).
-5. Add `WithRemSize` + `agent_ui_font_size` for font-size parity.
+1. Replace `render_server_selector` with `render_tab_strip` (one tab per
+   `BUILT_IN_MCP_SERVERS_IDS`, active tab highlighted, click switches).
+2. Replace `conversations: HashMap<usize, Vec<KaskMessage>>` with
+   `tabs: HashMap<usize, TabState>` (adds `session`, `streaming`, `busy`).
+3. Switch `run_scoped_inference` to call the active tab's `CuratorSession::send`
+   and consume the `CuratorEventStream`, populating `TabState::streaming`.
+4. Direct `/tool_name` invocations still go through `ToolInvoker` (unchanged)
+   and render as tool messages.
 
-**Validation:** Visual parity with agent panel for markdown content. Manual
-test: send a message that returns markdown (headers, code blocks, links,
-lists) — renders identically to the agent panel.
+**Validation:** Clicking a tab switches the active conversation. Each tab
+has its own independent history. Streaming text appears incrementally (as
+a single concatenated string for now — markdown comes in Phase 3).
 
-### Phase 3: Tool-call cards
+### Phase 3: Markdown rendering
 
-1. Port `render_tool_call` from `ThreadView` (expand/collapse, raw input,
-   output markdown, error, copy).
+1. Add `markdown`, `theme_settings`, `component` to `kask_panel/Cargo.toml`.
+2. Lift `render_agent_markdown` (~30 lines) into `kask_panel` or re-export
+   from `agent_ui`.
+3. Replace `Label::new(format!("{prefix}{}", msg.content))` with
+   `MarkdownElement` for assistant messages; system/error messages render
+   as `Callout`.
+4. Each assistant message holds an `Entity<Markdown>`; streaming updates
+   append to the markdown source and call `cx.notify()`.
+
+**Validation:** Send a message that returns markdown (headers, code blocks,
+links, lists) — renders with syntax highlighting. Visual parity with the
+agent panel for markdown content.
+
+### Phase 4: Tool-call cards
+
+1. Add `render_tool_call_card` in `kask_panel/src/tool_call_card.rs`
+   (~150 lines): tool name, status, collapsible raw input, output
+   (markdown or raw), copy button.
 2. Wire `CuratorSession::send` to emit `CuratorEvent::ToolCall` /
-   `ToolResult`; render them as tool-call cards in the list.
-3. Direct `/tool_name args` invocations render as tool-call cards too.
+   `ToolResult`; render them as cards in the message list.
+3. Direct `/tool_name` invocations render as tool-call cards too.
 
 **Validation:** Curator calls a tool → card appears with input/output. User
 runs `/tool_name args` → card appears. Expand/collapse works. Copy works.
 
-### Phase 4: The tab strip + per-tab threads
+### Phase 5: System-prompt templates
 
-1. Replace `render_server_selector` with `tab_strip.rs` (`ui::Tab`
-   components, one per `BUILT_IN_MCP_SERVERS_IDS`).
-2. `KaskPanel` holds `HashMap<usize, Entity<KaskConversationView>>`; tab
-   switch swaps the active view.
-3. Each tab's `KaskConversationView` is constructed with its own
-   `CuratorSession` (own history) and `ToolScope` (the tab's server).
-
-**Validation:** Clicking a tab switches the active thread. Each tab has its
-own independent conversation. Direct `/tool` invocations hit the active
-tab's server.
-
-### Phase 5: Streaming + retry/cancel
-
-1. Replace `ScopedInference::infer` (single `String`) with
-   `CuratorSession::send` (stream of `CuratorEvent`).
-2. Port `cancel_generation`, `retry`, `undo_last_reject` from `ThreadView`.
-3. Port the activity bar (`render_activity_bar`) with cancel +
-   scroll-to-bottom + gas gauge (from `render_status_bar`).
-
-**Validation:** Streaming text appears incrementally. Cancel stops
-generation. Retry re-sends the last message.
-
-### Phase 6: System-prompt templates
-
-1. Move `build_system_prompt` to `system_prompt.rs` with Jinja2 templates in
-   `kask/registry/panel-prompts/`.
+1. Move `build_system_prompt` to a Jinja2 template in
+   `kask/registry/panel-prompts/panel-tab-system.j2`.
 2. Templates receive `{{ server }}`, `{{ tools }}`, `{{ task }}`,
    `{{ curator_guidance }}`.
-3. The curator guidance include (`panel-curator-guidance.j2`) is appended to
-   every tab's system prompt.
+3. The curator guidance include (`panel-curator-guidance.j2`) is appended
+   to every tab's system prompt.
 
 **Validation:** Templates render correctly for all 10 servers. Curator
 guidance is present in every tab.
 
-### Phase 7: Message editor parity
+### Phase 6: Cancel + tests
 
-1. Port `MessageEditor` → `KaskMessageEditor` with mentions (`@` for files/
-   symbols), slash commands (`/tool_name` from the active tab's tools),
-   context chips, expand-to-fullscreen, queue.
-2. Replace `KaskToolCompletionProvider` with the forked completion path.
-
-**Validation:** `@` mentions work. `/` slash-command menu shows the active
-tab's tools. Expand works. Queue works.
-
-### Phase 8: Polish + tests
-
-1. Drag-and-drop files (`render_drag_target`).
-2. Font-size actions (cmd-+/cmd-).
-3. Scroll actions (page-up/down, to-top/bottom).
-4. Tests pinning every deliberate deviation from `ThreadView` (per the
-   `.rules` "tests must pin deliberate zed-kask deviations" trap).
-5. Tests pinning the tab-strip behavior, per-tab thread independence, and
+1. Wire `CuratorSession::cancel` to a cancel button in the status bar
+   (shown when `busy`).
+2. Tests pinning every deliberate deviation from the agent panel (per the
+   `.rules` "tests must pin deliberate zed-kask deviations" trap): no
+   `ListState` virtualization, no `MessageEditor` mentions/queue/expand, no
+   `WithRemSize` font sizing, no drag-and-drop, no retry/undo.
+3. Tests pinning the tab-strip behavior, per-tab thread independence, and
    that the curator's cross-tab recall flows through the curator server's
    memory (not through panel-side event forwarding).
 
@@ -596,60 +549,64 @@ tab's tools. Expand works. Queue works.
 
 | Risk | Mitigation |
 |---|---|
-| Forking 12k lines of `ThreadView` creates a maintenance burden (upstream changes don't flow). | The fork is a *simplifying* fork — we delete ~40% of the code. The remaining rendering code is stable (markdown, list, scroll, copy). Upstream changes to rendering are rare; when they happen, cherry-pick. |
+| Lifting `render_agent_markdown` couples kask_panel to agent_ui internals. | The helper is ~30 lines and depends only on the `markdown` crate + a code-span resolver. If coupling is unwanted, copy the ~30 lines into kask_panel with a `// adapted from agent_ui` comment. |
 | Per-tab `CuratorSession` instances each hold a conversation history — memory growth with 10 tabs. | Histories are bounded by the conversation length per tab; the curator server's episodic memory is the long-term store. v2 can add history truncation / condensation (the condenser MCP server exists for this). |
-| The curator's cross-tab recall depends on the curator server's memory being populated. If the server is misconfigured (no `EpisodicMemory`), recall silently fails. | The curator server's `curator_ping` tool reports store availability (`episodic`, `semantic` flags). The panel can call it on first tab activation and warn if memory is unavailable (per the "process-global hooks need a startup-failure signal" trap). |
-| Per-tab system prompts re-sent every turn is expensive. | Acceptable for v1 (§3.6). v2 optimizes. |
-| The tab strip doesn't persist (conversations lost on restart). | v1 matches current behavior. v2 adds `KaskThreadStore`. |
-| `KaskToolCompletionProvider` is replaced — existing tests break. | Port the tests to the new `KaskMessageEditor` completion path. |
+| The curator's cross-tab recall depends on the curator server's memory being populated. If the server is misconfigured (no `EpisodicMemory`), recall silently fails. | The curator server's `curator_ping` tool reports store availability. The panel can call it on first tab activation and warn if memory is unavailable (per the "process-global hooks need a startup-failure signal" trap). |
+| Per-tab system prompts re-sent every turn is expensive. | Acceptable for v1 (§3.4). v2 optimizes. |
+| Conversations lost on restart. | v1 matches current behavior. v2 adds `KaskThreadStore`. |
+| Not forking means the panel doesn't get agent-panel features for free (mentions, model selector, profiles). | That's the point — those features are excess variety for the panel's regulatory task (§0). They can be added later if a user asks, as deliberate growth, not as inherited weight. |
 
 ---
 
-## 6. What was wrong with v1 (recorded for the audit trail)
+## 6. What was wrong with v2 (recorded for the audit trail)
 
-The v1 design doc proposed:
-1. **A single shared curator conversation across all tabs** — wrong. Each
-   tab is its own thread (`HashMap<ServerId, Entity<KaskConversationView>>`),
-   mirroring the agent panel's `retained_threads`. Thread independence is
-   the agent panel's core abstraction and the user's explicit directive
-   ("each tab is a context focused mini-replica of the agent panel").
-2. **A panel-side `observe_tool_use` forwarding layer** for cross-tab
-   observation — wrong. The curator MCP server already owns `EpisodicMemory`
-   and `SemanticMemory`, and `McpRuntime` already records every governed
-   tool call's outcome in the `RegulationLedger`. Cross-tab observation is a
-   property of the curator server's storage, not the panel's UI state. Adding
-   a forwarding layer would duplicate the curator server's memory and violate
-   thread independence.
-3. **Open questions about curator session scope and mention scope** — these
-   were not open questions; the user's directive ("each tab is a context
-   focused mini-replica of the agent panel") answers them. The curator
-   session is per-tab (one thread per tab); mentions are per-tab (scoped to
-   the active tab's server domain).
+The v2 design doc proposed:
 
-The v1 design asked the user to resolve questions that the codebase and the
-directive already answered. v2 corrects this by mapping the directive onto
-the agent panel's existing thread abstraction and verifying the curator
-server's cross-tab memory mechanism in the code.
+1. **Forking ~29,000 lines of `agent_ui`** (`ConversationView` + `ThreadView`
+   + `MessageEditor`) into `kask_panel` and deleting ~40%. The essentialist
+   deletion test fails: deleting the fork doesn't reintroduce complexity
+   because the agent panel already has the abstraction, parameterized by
+   `Agent` with `Agent::Curator` as a first-class option. The fork
+   duplicates an existing regulator. The cybernetic lens confirms: the
+   fork adds variety (ACP, auth, elicitation, terminal, subagents,
+   profiles, model selector) that the panel's regulatory task doesn't
+   require, then deletes it — confirming it was never requisite. The
+   panel must model the curator + MCP servers, not the agent panel.
+2. **Reading "mini-replica" as "full replica, minus cuts."** The user's
+   directive was *"context focused **mini**-replica."* v2 delivered a
+   maximal-with-cuts surface. A genuine mini-replica is the smallest
+   surface that satisfies "per-server curator conversation" — input +
+   display with markdown + streaming + tool cards, grown in place on the
+   existing 1,608-line panel.
+3. **Keeping `ListState` virtualization, `MessageEditor` with
+   mentions/queue/expand, `WithRemSize` font sizing, drag-and-drop,
+   retry/undo.** None of these map to the panel's regulatory task. They
+   are excess variety copied because it was in the source file. v3
+   defers all of them until a user asks, as deliberate growth.
+
+v3 corrects this by growing the existing panel minimally (curator_session
+contract + tab strip + markdown + tool cards, ~600 lines) instead of
+forking a 29k-line regulator and amputating it. The one genuinely new
+abstraction — `CuratorSession` (per-tab, stateful, streaming) — is kept;
+it is the right contract. The fork is not.
 
 ---
 
 ## 7. Summary
 
-The redesign is a **fork-and-simplify** of the agent panel's conversation
-surface (`ConversationView` + `ThreadView` + `MessageEditor`) into the
-`kask_panel` crate. The `KaskPanel` center-pane `Item` hosts a tab strip at
-the top (one `ui::Tab` per built-in kask MCP server) and a stack of
-per-tab `KaskConversationView`s below it — the structural mirror of the
-agent panel's `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`,
-keyed by server ID. Each tab is an independent curator thread scoped to one
-MCP server's tools and domain via a per-tab system-prompt template. The
-curator observes across tabs because the curator MCP server owns
-`EpisodicMemory` + `SemanticMemory` and `McpRuntime` records every tool
-call's outcome in the `RegulationLedger` — no panel-side event forwarding.
-The biggest new piece is the per-tab `CuratorSession` (stateful, streaming
-via `InferencePort::generate_stream_with_messages`, tool-scoped). The fork
-deletes ~40% of `ThreadView` (ACP, auth, elicitation, terminal, subagents,
-profiles, model selector) and keeps the rendering (markdown, tool cards,
-scroll, copy, retry). The result is pixel-parity with the agent panel's
-conversation experience, plus multi-tab per-server context locking with the
-curator as the single agent.
+The redesign is a **minimal in-place growth** of the existing `kask_panel`
+crate, not a fork. The `KaskPanel` center-pane `Item` keeps its tab strip
+at the top (one tab per built-in kask MCP server) and grows a per-tab
+`TabState` (session + history + streaming state) — the structural mirror
+of the agent panel's `retained_threads`, without copying its 29k-line
+conversation surface. The one genuinely new abstraction is the per-tab
+`CuratorSession` (stateful, streaming via
+`InferencePort::generate_stream_with_messages`, tool-scoped). Rendering
+upgrades (markdown via the `markdown` crate, tool-call cards) are
+purpose-built ~200- and ~150-line components, not ports of `ThreadView`'s
+12k-line surface. The curator observes across tabs because the curator
+MCP server owns `EpisodicMemory` + `SemanticMemory` and `McpRuntime`
+records every tool call's outcome in the `RegulationLedger` — no
+panel-side event forwarding. The result is a context-focused mini-replica
+of the agent panel's *conversation experience* (markdown, streaming, tool
+cards), not a fork of the agent panel's *code*.

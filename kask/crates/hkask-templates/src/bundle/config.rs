@@ -11,57 +11,134 @@ pub const RJOULE_TO_GAS: u64 = 250_000;
 
 /// Convergence configuration for PDCA loop exit conditions.
 ///
-/// Supports two exit rails: absolute quality threshold AND/OR improvement from baseline.
-/// The improvement kata measures progress from the starting condition toward the target.
+/// The Improvement Kata model: the agent has a **target condition** (a
+/// measurable state it's trying to reach) and a **current condition** (its
+/// measured state right now). Convergence is the gap between them closing.
+///
+/// The gap lives in two orthogonal spaces, forming a right triangle:
+///
+/// ```text
+///         target
+///        /|
+///       / |
+///      /  | process_gap (PKO — procedure progress)
+///     /   |
+///    /____|
+///  current  object_gap (Dublin Core — artifact completeness)
+/// ```
+///
+/// The hypotenuse `sqrt(object_gap² + process_gap²)` is the total distance
+/// to the target. Convergence requires both legs to close — you can't reach
+/// the target by producing complete artifacts without testing them, or by
+/// running experiments without synthesizing them into artifacts.
+///
+/// Each PDCA cycle produces a **prediction** ("the hypotenuse will decrease
+/// by Δ") with a **confidence**. After the experiment, the actual decrease is
+/// measured. The **Brier score** `(confidence − actual_outcome)²` tracks
+/// whether the agent's predictions are calibrated — whether it's learning to
+/// predict the effects of its own interventions. Brier decreasing → the
+/// agent's model of itself is improving. Brier stable and low → confidence
+/// convergence (the agent is calibrated, even if the gap hasn't fully closed).
+///
+/// This replaces the old self-grade model where an LLM graded its own plan
+/// quality on a [0,1] scale. That was a category error: it measured plan
+/// quality (a snapshot) instead of gap closure (a trajectory), and it used
+/// the LLM for the deterministic convergence decision (causing the 30s
+/// timeouts). The Kata model uses the LLM only for the four Kata steps
+/// (grasp current, establish target, predict, experiment); the executor
+/// computes the gap and Brier score deterministically.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConvergenceConfig {
-    /// Absolute quality threshold. If quality_at_exit <= threshold, the condition is met.
-    pub threshold: f64,
-    /// Minimum proportional improvement from baseline. E.g., 0.25 means
-    /// (baseline - current) / baseline >= 0.25. Set to 0.0 to disable.
+    // ── Kata target-condition fields ──
+    /// Context field holding the target artifact spec (Dublin Core object
+    /// space). The target condition for artifact completeness — which fields
+    /// should be populated, which should be grounded. Produced by an early
+    /// `select` step or provided as a manifest input.
     #[serde(default)]
-    pub improvement_ratio: f64,
-    /// How the threshold and improvement conditions combine:
-    /// - "threshold_only" (default): only check quality <= threshold.
-    /// - "both": must satisfy quality <= threshold AND improvement >= improvement_ratio.
-    /// - "either": must satisfy quality <= threshold OR improvement >= improvement_ratio.
-    /// - "stability": only check |q_n - q_{n-1}| < stability_epsilon (trajectory stability).
-    /// - "threshold_and_stability": quality <= threshold AND |q_n - q_{n-1}| < stability_epsilon.
-    ///
-    /// The "stability" and "threshold_and_stability" gates detect trajectory
-    /// convergence — the metric has stopped changing across iterations — rather
-    /// than snapshot convergence (the metric is low on one reading). Snapshot
-    /// convergence is a category error: it exits on a single optimistic
-    /// self-grade. Trajectory convergence requires at least 2 readings and
-    /// enforces that the metric is stable, not just low.
-    #[serde(default = "default_improvement_gate")]
-    pub improvement_gate: String,
-    /// Epsilon for trajectory stability detection. Used by the "stability" and
-    /// "threshold_and_stability" gates: convergence requires
-    /// |q_n - q_{n-1}| < stability_epsilon. Default 0.05 (5% of the [0,1] metric
-    /// range). Set lower for precise skills, higher for broad ones.
-    #[serde(default = "default_stability_epsilon")]
-    pub stability_epsilon: f64,
+    pub target_artifacts_field: Option<String>,
+    /// Context field holding the measured current artifact state (Dublin Core
+    /// object space). Re-measured after each PDCA cycle because the experiment
+    /// changed the system.
+    #[serde(default)]
+    pub current_artifacts_field: Option<String>,
+    /// Context field holding the target procedure spec (PKO process space).
+    /// The target condition for procedure progress — which steps must be
+    /// complete.
+    #[serde(default)]
+    pub target_procedure_field: Option<String>,
+    /// Context field holding the measured current procedure state (PKO process
+    /// space). Re-measured after each PDCA cycle.
+    #[serde(default)]
+    pub current_procedure_field: Option<String>,
+    /// Context field holding the prediction: `{ expected_delta, confidence }`.
+    /// The agent predicts the hypotenuse will decrease by `expected_delta`,
+    /// with `confidence` in [0,1].
+    #[serde(default)]
+    pub prediction_field: Option<String>,
+    /// Context field holding the actual result after the experiment:
+    /// `{ actual_delta }` or `{ occurred: bool }`.
+    #[serde(default)]
+    pub result_field: Option<String>,
+
+    // ── Convergence thresholds ──
+    /// Hypotenuse below this → gap converged (the agent reached the target
+    /// condition in the combined object-process space).
+    #[serde(default = "default_hypotenuse_epsilon")]
+    pub hypotenuse_epsilon: f64,
+    /// Number of PDCA cycles to compute the rolling Brier average over.
+    #[serde(default = "default_brier_window")]
+    pub brier_window: u32,
+    /// Rolling Brier average below this → confidence converged (the agent's
+    /// predictions are calibrated — it knows what will happen when it acts).
+    #[serde(default = "default_brier_threshold")]
+    pub brier_threshold: f64,
+    /// Convergence mode:
+    /// - "hypotenuse": gap < hypotenuse_epsilon → converged.
+    /// - "confidence": rolling Brier < brier_threshold for brier_window cycles
+    ///   AND hypotenuse not decreasing → converged (agent is calibrated but
+    ///   can't close the gap further with current methods).
+    /// - "hypotenuse_or_confidence" (default): either condition.
+    #[serde(default = "default_convergence_mode")]
+    pub convergence_mode: String,
+
+    // ── Loop control (retained from the old model) ──
     /// Maximum PDCA iterations before forced exit.
     pub max_iterations: u32,
-    /// Minimum iterations before exit is allowed. Prevents premature convergence
-    /// before the improvement kata has had time to work. Default 0 (no minimum).
-    #[serde(default)]
+    /// Minimum iterations before exit is allowed. Prevents premature
+    /// convergence before the Kata has had time to run at least one full
+    /// experiment cycle. Default 2 (need at least 2 readings for Brier).
+    #[serde(default = "default_min_iterations")]
     pub min_iterations: u32,
-    /// Context field to read for quality measurement (e.g., "composite").
-    pub convergence_field: String,
     /// Action when convergence not reached after max_iterations: "abort" | "escalate".
     pub on_not_reached: String,
+
+    // ── Legacy fields (retained for manifests not yet migrated to the Kata model) ──
+    //
+    // These support the old self-grade convergence model. New skills should use
+    // the Kata fields above instead. The executor supports both; if
+    // `convergence_mode` is set, the Kata model is used. If not, the legacy
+    // model is used (threshold + improvement_gate).
+    /// Legacy: absolute quality threshold for self-grade convergence.
+    pub threshold: f64,
+    /// Legacy: context field to read for self-grade quality measurement.
+    pub convergence_field: String,
+    /// Legacy: minimum proportional improvement from baseline.
+    #[serde(default)]
+    pub improvement_ratio: f64,
+    /// Legacy: how the threshold and improvement conditions combine.
+    #[serde(default = "default_improvement_gate")]
+    pub improvement_gate: String,
+
+    // ── Compound aggregation (retained — used by flowdef composition) ──
     /// Aggregation method for compound skills (nested PDCA loops).
-    /// - "none" (default): single-field check against convergence_field.
+    /// - "none" (default): single-field check.
     /// - "min": the worst (highest) quality score across sources.
     /// - "weighted_avg": weighted average of source quality scores.
     /// - "all_converged": every source step must have _convergence.status == "converged".
     #[serde(default = "default_aggregation")]
     pub aggregation: String,
-    /// Sources for compound aggregation. Each source specifies a step ordinal and
-    /// a dot-path field within that step's result (e.g. "_convergence.quality_at_exit").
+    /// Sources for compound aggregation.
     #[serde(default)]
     pub aggregation_sources: Vec<AggregationSource>,
 }
@@ -69,14 +146,24 @@ pub struct ConvergenceConfig {
 impl Default for ConvergenceConfig {
     fn default() -> Self {
         Self {
+            target_artifacts_field: None,
+            current_artifacts_field: None,
+            target_procedure_field: None,
+            current_procedure_field: None,
+            prediction_field: None,
+            result_field: None,
+            hypotenuse_epsilon: 0.05,
+            brier_window: 3,
+            brier_threshold: 0.15,
+            convergence_mode: "hypotenuse_or_confidence".to_string(),
+            max_iterations: 3,
+            min_iterations: 2,
+            on_not_reached: "abort".to_string(),
+            // Legacy defaults — used when convergence_mode is empty/unset
             threshold: 0.1,
+            convergence_field: "composite".to_string(),
             improvement_ratio: 0.0,
             improvement_gate: "threshold_only".to_string(),
-            stability_epsilon: 0.05,
-            max_iterations: 3,
-            min_iterations: 0,
-            convergence_field: "composite".to_string(),
-            on_not_reached: "abort".to_string(),
             aggregation: "none".to_string(),
             aggregation_sources: vec![],
         }
@@ -91,8 +178,24 @@ fn default_improvement_gate() -> String {
     "threshold_only".to_string()
 }
 
-fn default_stability_epsilon() -> f64 {
+fn default_hypotenuse_epsilon() -> f64 {
     0.05
+}
+
+fn default_brier_window() -> u32 {
+    3
+}
+
+fn default_brier_threshold() -> f64 {
+    0.15
+}
+
+fn default_convergence_mode() -> String {
+    "hypotenuse_or_confidence".to_string()
+}
+
+fn default_min_iterations() -> u32 {
+    2
 }
 
 /// A source for compound quality aggregation — specifies which inner skill's

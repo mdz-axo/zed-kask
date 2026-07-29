@@ -26,7 +26,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 /// Before using this tool, use the `read_file` tool to understand the file's contents and context.
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// The only supported path outside the project is the global skills directory or a descendant, for global agent skills.
 ///
 /// `read_file` prefixes each line of its output with a line number right-aligned in a
 /// 6-character field followed by a single tab, then the line's actual content. When you
@@ -37,7 +37,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under the global skills directory.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -54,7 +54,7 @@ pub struct EditFileToolInput {
     /// </example>
     ///
     /// <example>
-    /// To edit a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// To edit a global agent skill file, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: PathBuf,
 

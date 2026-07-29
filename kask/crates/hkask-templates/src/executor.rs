@@ -658,6 +658,16 @@ impl ManifestExecutor {
                             break 'cascade;
                         }
 
+                        // Record this iteration's quality metric in the trajectory
+                        // history BEFORE the convergence check, so the "stability"
+                        // and "threshold_and_stability" gates can compare the
+                        // current reading (q_n) against the previous reading
+                        // (q_{n-1}). If this is called after check_met, the
+                        // stability gate is always one iteration behind — it
+                        // compares q_{n-2} vs q_{n-1} instead of q_{n-1} vs q_n,
+                        // and the current iteration's metric is never checked.
+                        convergence.push_quality(&context);
+
                         // Check threshold convergence
                         if convergence.check_met(&context, iteration) {
                             let snap = budget.snapshot();
@@ -689,6 +699,29 @@ impl ManifestExecutor {
                                     self.template_renderer.base_path(),
                                 );
                                 context.insert(k.clone(), bound);
+                            }
+                        }
+
+                        // Snapshot the prior iteration's step results under a
+                        // `prev_step_N_result` namespace so refinement loops
+                        // can reference them without manifest-level input_mapping
+                        // gymnastics. This makes the Self-Refine pattern
+                        // ("here is the previous artifact, identify its worst
+                        // defect, refine it") expressible in templates:
+                        // `{{ prev_step_1_result | tojson }}`.
+                        //
+                        // Without this, the loop re-enters step 1, which
+                        // overwrites `step_1_result` — the prior artifact is
+                        // lost, and the loop regenerates from scratch instead
+                        // of refining. That made trajectory convergence
+                        // impossible (each iteration produces a different
+                        // artifact against a different goal, so the metric
+                        // bounces instead of stabilizing).
+                        for step in steps.iter() {
+                            let key = format!("step_{}_result", step.ordinal);
+                            if let Some(val) = context.get(&key) {
+                                let prev_key = format!("prev_{}", key);
+                                context.insert(prev_key, val.clone());
                             }
                         }
 
@@ -826,11 +859,6 @@ impl ManifestExecutor {
                 break 'cascade;
             }
 
-            // Capture baseline quality on first full pass
-            if improvement_enabled {
-                convergence.capture_baseline(&context);
-            }
-
             // Compute compound quality from nested skill reports
             if manifest.convergence.aggregation != "none"
                 && !manifest.convergence.aggregation_sources.is_empty()
@@ -842,6 +870,25 @@ impl ManifestExecutor {
                 );
                 context.insert(field.clone(), serde_json::json!(compound));
             }
+
+            // Capture baseline quality on first full pass. Done AFTER compound
+            // quality computation so the baseline is in the same value space as
+            // subsequent readings (compound if aggregation is enabled, raw
+            // field value otherwise). Capturing before compound computation
+            // would mix pre-compound and compound values in the improvement
+            // ratio, producing nonsense.
+            if improvement_enabled {
+                convergence.capture_baseline(&context);
+            }
+
+            // Record this iteration's quality metric in the trajectory history
+            // AFTER compound quality computation, so the history records the
+            // same value check_met will read (the compound value if aggregation
+            // is enabled, the raw field value otherwise). This enables the
+            // "stability" and "threshold_and_stability" gates to detect
+            // trajectory convergence (|q_n - q_{n-1}| < epsilon), not just
+            // snapshot convergence (q_n <= threshold on one reading).
+            convergence.push_quality(&context);
 
             // ── End of pass: check convergence if no explicit loop/abort ──
             if iteration >= max_iterations {
@@ -1520,10 +1567,154 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             let score = get_f64("score")?;
             Ok(serde_json::json!({ "interpretation": forecast::brier_interpretation(score) }))
         }
+        // ── Deterministic convergence primitives ──
+        // These let manifests express the convergence check as a `compute` step
+        // (deterministic, no inference, no timeout) instead of a `select` step
+        // (LLM, timed). The 30s timeout that broke metacognition and 12 other
+        // skills was caused by using a `select` step for the deterministic
+        // "did the metric change?" decision. These primitives make that
+        // decision a sub-millisecond arithmetic call.
+        //
+        // See the convergence design doc: convergence is a trajectory
+        // property (the metric stopped changing), not a snapshot property
+        // (the metric is low on one reading). These primitives compute the
+        // trajectory property; the LLM convergence-check template computes the
+        // snapshot property. Use the trajectory property for the loop exit
+        // decision; use the snapshot property (once, at the end) for the
+        // quality report.
+        "convergence.stability" => {
+            // |current_metric - prev_metric| < epsilon
+            let current = get_f64("current_metric")?;
+            let prev = get_f64("prev_metric")?;
+            let epsilon = input
+                .get("epsilon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.05);
+            let delta = if current.is_finite() && prev.is_finite() {
+                (current - prev).abs()
+            } else {
+                f64::INFINITY
+            };
+            let converged = delta < epsilon;
+            Ok(serde_json::json!({ "converged": converged, "delta": delta }))
+        }
+        "convergence.trajectory" => {
+            // max pairwise delta in the last N readings of a metric history < epsilon
+            let history = input
+                .get("metric_history")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.iter().map(|v| v.as_f64()).collect::<Option<Vec<f64>>>())
+                .ok_or_else(|| {
+                    TemplateError::Manifest(
+                        "compute 'convergence.trajectory': missing 'metric_history' f64 array"
+                            .into(),
+                    )
+                })?;
+            let epsilon = input
+                .get("epsilon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.05);
+            let window = input.get("window").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+            if history.len() < 2 {
+                return Ok(
+                    serde_json::json!({ "converged": false, "max_delta": f64::INFINITY, "reason": "fewer than 2 readings" }),
+                );
+            }
+            let start = history.len().saturating_sub(window);
+            let window_slice = &history[start..];
+            let finite: Vec<f64> = window_slice
+                .iter()
+                .copied()
+                .filter(|f| f.is_finite())
+                .collect();
+            if finite.len() < 2 {
+                return Ok(
+                    serde_json::json!({ "converged": false, "max_delta": f64::INFINITY, "reason": "fewer than 2 finite readings in window" }),
+                );
+            }
+            let max_delta = finite
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0_f64, f64::max);
+            let converged = max_delta < epsilon;
+            Ok(serde_json::json!({ "converged": converged, "max_delta": max_delta }))
+        }
+        "convergence.artifact_distance.jaccard" => {
+            // Jaccard distance over the set of leaf values in two JSON artifacts.
+            // 0.0 = identical leaf sets, 1.0 = disjoint. Convergence is
+            // distance < epsilon (the artifact stopped changing).
+            let current = input.get("current_artifact").ok_or_else(|| {
+                TemplateError::Manifest(
+                    "compute 'convergence.artifact_distance.jaccard': missing 'current_artifact'"
+                        .into(),
+                )
+            })?;
+            let prev = input.get("prev_artifact").ok_or_else(|| {
+                TemplateError::Manifest(
+                    "compute 'convergence.artifact_distance.jaccard': missing 'prev_artifact'"
+                        .into(),
+                )
+            })?;
+            let epsilon = input
+                .get("epsilon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.05);
+            let current_leaves = collect_json_leaves(current);
+            let prev_leaves = collect_json_leaves(prev);
+            let intersection = current_leaves.intersection(&prev_leaves).count();
+            let union = current_leaves.union(&prev_leaves).count();
+            let distance = if union == 0 {
+                0.0
+            } else {
+                1.0 - (intersection as f64 / union as f64)
+            };
+            let converged = distance < epsilon;
+            Ok(
+                serde_json::json!({ "converged": converged, "distance": distance, "intersection": intersection, "union": union }),
+            )
+        }
         other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation",
+            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, convergence.stability, convergence.trajectory, convergence.artifact_distance.jaccard",
             other
         ))),
+    }
+}
+
+/// Collect the set of leaf string values from a JSON value, for use in
+/// Jaccard artifact-distance convergence detection. Walks objects and arrays
+/// recursively; collects string and number leaves as `String` into a `HashSet`.
+fn collect_json_leaves(value: &serde_json::Value) -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+    let mut leaves = HashSet::new();
+    collect_json_leaves_into(value, &mut leaves);
+    leaves
+}
+
+fn collect_json_leaves_into(
+    value: &serde_json::Value,
+    leaves: &mut std::collections::HashSet<String>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (_, v) in map {
+                collect_json_leaves_into(v, leaves);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                collect_json_leaves_into(v, leaves);
+            }
+        }
+        serde_json::Value::String(s) => {
+            leaves.insert(s.clone());
+        }
+        serde_json::Value::Number(n) => {
+            leaves.insert(n.to_string());
+        }
+        serde_json::Value::Bool(b) => {
+            leaves.insert(b.to_string());
+        }
+        serde_json::Value::Null => {}
     }
 }
 
@@ -2173,6 +2364,71 @@ mod tests {
     fn dispatch_unknown_ref_errors() {
         let input = serde_json::json!({});
         assert!(dispatch_compute("nonexistent_fn", &input).is_err());
+    }
+
+    #[test]
+    fn dispatch_convergence_stability_converged() {
+        let input =
+            serde_json::json!({ "current_metric": 0.10, "prev_metric": 0.12, "epsilon": 0.05 });
+        let result = dispatch_compute("convergence.stability", &input).unwrap();
+        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
+        let delta = result.get("delta").and_then(|v| v.as_f64()).unwrap();
+        assert!((delta - 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dispatch_convergence_stability_not_converged() {
+        let input =
+            serde_json::json!({ "current_metric": 0.10, "prev_metric": 0.50, "epsilon": 0.05 });
+        let result = dispatch_compute("convergence.stability", &input).unwrap();
+        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
+    }
+
+    #[test]
+    fn dispatch_convergence_trajectory_converged() {
+        let input = serde_json::json!({ "metric_history": [0.50, 0.30, 0.15, 0.14], "epsilon": 0.05, "window": 2 });
+        let result = dispatch_compute("convergence.trajectory", &input).unwrap();
+        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
+    }
+
+    #[test]
+    fn dispatch_convergence_trajectory_rejects_oscillation() {
+        let input = serde_json::json!({ "metric_history": [0.10, 0.50, 0.10, 0.50], "epsilon": 0.05, "window": 2 });
+        let result = dispatch_compute("convergence.trajectory", &input).unwrap();
+        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
+    }
+
+    #[test]
+    fn dispatch_convergence_trajectory_fewer_than_two_readings() {
+        let input = serde_json::json!({ "metric_history": [0.10], "epsilon": 0.05 });
+        let result = dispatch_compute("convergence.trajectory", &input).unwrap();
+        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
+    }
+
+    #[test]
+    fn dispatch_convergence_artifact_distance_jaccard_identical() {
+        let input = serde_json::json!({
+            "current_artifact": {"a": "x", "b": ["y", "z"]},
+            "prev_artifact": {"a": "x", "b": ["y", "z"]},
+            "epsilon": 0.05
+        });
+        let result = dispatch_compute("convergence.artifact_distance.jaccard", &input).unwrap();
+        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
+        let distance = result.get("distance").and_then(|v| v.as_f64()).unwrap();
+        assert!((distance - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dispatch_convergence_artifact_distance_jaccard_disjoint() {
+        let input = serde_json::json!({
+            "current_artifact": {"a": "x"},
+            "prev_artifact": {"a": "y"},
+            "epsilon": 0.05
+        });
+        let result = dispatch_compute("convergence.artifact_distance.jaccard", &input).unwrap();
+        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
+        let distance = result.get("distance").and_then(|v| v.as_f64()).unwrap();
+        assert!((distance - 1.0).abs() < 1e-9);
     }
 
     #[test]

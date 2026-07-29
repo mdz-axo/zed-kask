@@ -233,4 +233,81 @@ mod tests {
         let empty: HashSet<String> = HashSet::default();
         assert!(passes_cross_provider_filter(&openai_o1_pro, &empty));
     }
+
+    #[test]
+    fn build_denylist_from_realistic_openrouter_pricing() {
+        // Simulate the OpenRouter /models response with realistic pricing.
+        // Prices are USD per token (OpenRouter returns string decimals).
+        let models = vec![
+            open_router::Model::new(
+                "openai/o1-pro",
+                Some("o1 Pro"),
+                Some(200_000),
+                Some(true),
+                Some(false),
+                None,
+                None,
+                Some(0.0006), // $600/M output tokens
+            ),
+            open_router::Model::new(
+                "anthropic/claude-opus-4.1",
+                Some("Claude Opus 4.1"),
+                Some(200_000),
+                Some(true),
+                Some(false),
+                None,
+                None,
+                Some(0.000075), // $75/M output tokens
+            ),
+            open_router::Model::new(
+                "openai/gpt-4o",
+                Some("GPT-4o"),
+                Some(128_000),
+                Some(true),
+                Some(false),
+                None,
+                None,
+                Some(0.000003), // $3/M output tokens — below $5 threshold
+            ),
+            open_router::Model::new(
+                "openrouter/auto",
+                Some("Auto Router"),
+                Some(2_000_000),
+                Some(true),
+                Some(false),
+                None,
+                None,
+                Some(-1.0), // sentinel — must not be added to deny-list
+            ),
+            open_router::Model::new(
+                "free/model",
+                Some("Free Model"),
+                Some(100_000),
+                Some(false),
+                Some(false),
+                None,
+                None,
+                Some(0.0), // free — must not be added
+            ),
+        ];
+
+        // $5/M threshold → o1-pro ($600/M) and claude-opus-4.1 ($75/M) denied.
+        let denylist = build_denylist(&models, Some(5.0));
+        assert!(denylist.contains("o1-pro"));
+        assert!(denylist.contains("claude-opus-4.1"));
+        assert!(!denylist.contains("gpt-4o"));
+        assert!(!denylist.contains("auto"));
+        assert!(!denylist.contains("model"));
+        assert_eq!(denylist.len(), 2);
+
+        // $10/M threshold → o1-pro ($600/M) and claude-opus-4.1 ($75/M) denied.
+        let denylist = build_denylist(&models, Some(10.0));
+        assert!(denylist.contains("o1-pro"));
+        assert!(denylist.contains("claude-opus-4.1"));
+        assert_eq!(denylist.len(), 2);
+
+        // Disabled filter → empty deny-list.
+        let denylist = build_denylist(&models, None);
+        assert!(denylist.is_empty());
+    }
 }

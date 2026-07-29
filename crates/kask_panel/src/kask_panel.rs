@@ -12,9 +12,9 @@
 //! tab + Data tab) unified into a single zed-idiomatic chat interface with
 //! slash commands — the same pattern zed's agent panel uses.
 //!
-//! The panel uses global hooks (`set_tool_invoker` / `set_scoped_inference`)
-//! so it doesn't depend on `kask_bridge`. The composition root injects the
-//! bridge adapters.
+//! The panel uses global hooks (`set_tool_invoker` /
+//! `set_curator_session_factory`) so it doesn't depend on `kask_bridge`. The
+//! composition root injects the bridge adapters.
 //!
 //! **Center-pane hosting:** `KaskPanel` implements `Item` (not `Panel`), so it
 //! opens via `workspace.add_item_to_active_pane(...)` into the center pane
@@ -48,10 +48,16 @@ use zed_actions::kask_panel::{
     Toggle, ToggleFocus, ToggleKanbanBoard, TogglePortfolioDashboard, ToggleScenarios,
 };
 
+mod curator_session;
 mod kanban_view;
 mod panel_button;
 mod portfolio_view;
 mod scenarios_view;
+
+pub use curator_session::{
+    CuratorEvent, CuratorEventStream, CuratorSession, CuratorSessionFactory, ToolCallRequest,
+    ToolScope, Usage, curator_session_factory, set_curator_session_factory,
+};
 
 pub use kanban_view::KanbanBoardView;
 pub use panel_button::KaskPanelButton;
@@ -97,24 +103,6 @@ pub trait ToolInvoker: Send + Sync {
     fn list_tools(&self, server: &str) -> Task<Result<Vec<ToolDescriptor>, String>>;
 }
 
-/// Trait for scoped inference (mirrors `hkask_types::InferencePort`).
-/// The bridge provides the implementation.
-pub trait ScopedInference: Send + Sync {
-    /// Run scoped inference with only the selected server's tools in scope.
-    ///
-    /// `system_prompt` carries the context-aware system prompt the bridge
-    /// builds from the selected server's identity and tool list. The panel
-    /// constructs it via `build_system_prompt` so the LLM knows which MCP
-    /// server it is acting as, what tools it has, and how to interact with
-    /// the user.
-    fn infer(
-        &self,
-        server: &str,
-        prompt: &str,
-        system_prompt: &str,
-    ) -> Task<Result<String, String>>;
-}
-
 /// A snapshot of regulation/gas status for the status bar.
 ///
 /// Mirrors the deleted hKask TUI's `StatusBar` — gas remaining, regulation
@@ -143,17 +131,11 @@ pub trait RegulationStatus: Send + Sync {
 }
 
 static TOOL_INVOKER: OnceLock<Option<Arc<dyn ToolInvoker>>> = OnceLock::new();
-static SCOPED_INFERENCE: OnceLock<Option<Arc<dyn ScopedInference>>> = OnceLock::new();
 static REGULATION_STATUS: OnceLock<Option<Arc<dyn RegulationStatus>>> = OnceLock::new();
 
 /// Inject the global tool invoker (composition root).
 pub fn set_tool_invoker(invoker: Option<Arc<dyn ToolInvoker>>) {
     let _ = TOOL_INVOKER.set(invoker);
-}
-
-/// Inject the global scoped inference port (composition root).
-pub fn set_scoped_inference(inference: Option<Arc<dyn ScopedInference>>) {
-    let _ = SCOPED_INFERENCE.set(inference);
 }
 
 /// Inject the global regulation status provider (composition root).
@@ -167,10 +149,6 @@ fn tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
 
 pub(crate) fn kanban_tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
     tool_invoker()
-}
-
-fn scoped_inference() -> Option<&'static Arc<dyn ScopedInference>> {
-    SCOPED_INFERENCE.get().and_then(|opt| opt.as_ref())
 }
 
 fn regulation_status() -> Option<&'static Arc<dyn RegulationStatus>> {
@@ -218,8 +196,8 @@ fn server_description(server: &str) -> &'static str {
 /// in future sessions.
 ///
 /// This is the single source of truth for the panel's system prompt — the
-/// bridge's `PanelScopedInference` adapter receives it via the
-/// `ScopedInference::infer` trait method and passes it to the inference port
+/// bridge's `PanelCuratorSession` adapter receives it via the
+/// `CuratorSession::send` trait method and passes it to the inference port
 /// as the leading `system` message.
 fn build_system_prompt(server: &str, tools: &[ToolDescriptor]) -> String {
     let description = server_description(server);
@@ -299,6 +277,13 @@ pub struct KaskPanel {
     spinner_frame: u8,
     /// Cached tool list for the selected server (for `/tools` and completion).
     cached_tools: Option<(usize, Vec<ToolDescriptor>)>,
+    /// The per-tab curator session for the currently selected server.
+    /// Lazily constructed on first `send` via the global
+    /// `curator_session_factory`. Reset to `None` when switching tabs so
+    /// each tab gets its own session with its own history (Phase 2 will
+    /// hold all sessions in a `HashMap<usize, ...>`; for now we keep one
+    /// at a time keyed to the active server).
+    curator_session: Option<Arc<dyn CuratorSession>>,
     /// Latest regulation/gas snapshot for the status bar.
     regulation_snapshot: RegulationSnapshot,
     /// Whether a regulation status fetch is in progress (guards against
@@ -349,6 +334,7 @@ impl KaskPanel {
                 busy: false,
                 spinner_frame: 0,
                 cached_tools: None,
+                curator_session: None,
                 regulation_snapshot: RegulationSnapshot::default(),
                 status_fetching: false,
                 messages_scroll_handle: gpui::ScrollHandle::new(),
@@ -390,6 +376,10 @@ impl KaskPanel {
         self.selected_server = index;
         // Invalidate the tool cache — it's per-server.
         self.cached_tools = None;
+        // Drop the per-tab curator session so the next `send` constructs a
+        // fresh one for the new server (own history). Phase 2 will keep all
+        // sessions alive in a `HashMap<usize, ...>`; for now we hold one.
+        self.curator_session = None;
         // Scroll to the bottom of the (possibly different) conversation so
         // the latest message is visible after the switch.
         self.scroll_messages_to_bottom(cx);
@@ -638,61 +628,108 @@ impl KaskPanel {
         self.scroll_messages_to_bottom(cx);
         cx.notify();
 
-        if let Some(inference) = scoped_inference() {
-            // Build the system prompt from the cached tool list. If the cache
-            // is empty or stale, the system prompt will note that no tools
-            // were discovered — the LLM can still respond, just without tool
-            // awareness. The cache is populated by `/tools` or the lazy fetch
-            // below.
-            let tools: Vec<ToolDescriptor> = self
-                .cached_tools
-                .as_ref()
-                .filter(|(idx, _)| *idx == self.selected_server)
-                .map(|(_, tools)| tools.clone())
-                .unwrap_or_default();
-            let system_prompt = build_system_prompt(&server, &tools);
-
-            let task = inference.infer(&server, prompt, &system_prompt);
-            cx.spawn(async move |this, cx| {
-                let result = task.await;
-                this.update(cx, |this, cx| {
-                    match result {
-                        Ok(output) => this.current_messages().push(KaskMessage {
-                            role: KaskMessageRole::Assistant,
-                            content: output,
-                        }),
-                        Err(error) => this.current_messages().push(KaskMessage {
-                            role: KaskMessageRole::System,
-                            content: format!("Inference error: {error}"),
-                        }),
-                    }
-                    this.busy = false;
-                    this.scroll_messages_to_bottom(cx);
-                    cx.notify();
-                })
-            })
-            .detach();
-
-            // Lazily fetch the tool list in the background if we don't have
-            // it cached yet, so the next inference call has a complete system
-            // prompt. This is fire-and-forget — the result is stored in
-            // `cached_tools` and used on subsequent calls.
-            if self
-                .cached_tools
-                .as_ref()
-                .map_or(true, |(idx, _)| *idx != self.selected_server)
-            {
-                self.fetch_tools_background(cx);
-            }
-        } else {
+        let Some(factory) = curator_session_factory() else {
             self.current_messages().push(KaskMessage {
                 role: KaskMessageRole::System,
-                content: "Scoped inference not wired — set_scoped_inference() not called."
-                    .to_string(),
+                content:
+                    "Curator session factory not wired — set_curator_session_factory() not called."
+                        .to_string(),
             });
             self.busy = false;
             self.scroll_messages_to_bottom(cx);
             cx.notify();
+            return;
+        };
+
+        // Lazily construct (or reuse) the per-tab CuratorSession. The
+        // session owns this tab's conversation history; the panel never
+        // inspects it. See `kask-panel-redesign.md` §2.1.
+        let session = self
+            .curator_session
+            .get_or_insert_with(|| factory.session_for(&server));
+
+        // Build the system prompt from the cached tool list. If the cache
+        // is empty or stale, the system prompt will note that no tools were
+        // discovered — the LLM can still respond, just without tool
+        // awareness. The cache is populated by `/tools` or the lazy fetch
+        // below.
+        let tools: Vec<ToolDescriptor> = self
+            .cached_tools
+            .as_ref()
+            .filter(|(idx, _)| *idx == self.selected_server)
+            .map(|(_, tools)| tools.clone())
+            .unwrap_or_default();
+        let system_prompt = build_system_prompt(&server, &tools);
+        let tool_scope = ToolScope::Server(server.clone());
+
+        let task = session.send(prompt, &tool_scope, &system_prompt);
+        cx.spawn(async move |this, cx| {
+            let stream_result = task.await;
+            this.update(cx, |this, cx| {
+                match stream_result {
+                    Ok(mut stream) => {
+                        // Drain the stream on the foreground executor. The
+                        // bridge pushes events from a background tokio task;
+                        // we poll until the channel closes (Done/Error).
+                        let mut assistant_text = String::new();
+                        let mut had_error = false;
+                        while let Some(event) = stream.try_next() {
+                            match event {
+                                CuratorEvent::TextDelta(delta) => {
+                                    assistant_text.push_str(&delta);
+                                }
+                                CuratorEvent::ThinkingDelta(_) => {
+                                    // v1: thinking deltas are not yet
+                                    // rendered (Phase 3 markdown + Phase 4
+                                    // thinking blocks). Accumulate silently.
+                                }
+                                CuratorEvent::ToolCall(_) | CuratorEvent::ToolResult { .. } => {
+                                    // v1: tool-call cards arrive in Phase 4.
+                                    // For now, tool results are folded into
+                                    // the assistant text by the curator model.
+                                }
+                                CuratorEvent::Done { .. } => break,
+                                CuratorEvent::Error(error) => {
+                                    this.current_messages().push(KaskMessage {
+                                        role: KaskMessageRole::System,
+                                        content: format!("Inference error: {error}"),
+                                    });
+                                    had_error = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !had_error && !assistant_text.is_empty() {
+                            this.current_messages().push(KaskMessage {
+                                role: KaskMessageRole::Assistant,
+                                content: assistant_text,
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        this.current_messages().push(KaskMessage {
+                            role: KaskMessageRole::System,
+                            content: format!("Inference error: {error}"),
+                        });
+                    }
+                }
+                this.busy = false;
+                this.scroll_messages_to_bottom(cx);
+                cx.notify();
+            })
+        })
+        .detach();
+
+        // Lazily fetch the tool list in the background if we don't have
+        // it cached yet, so the next inference call has a complete system
+        // prompt. This is fire-and-forget — the result is stored in
+        // `cached_tools` and used on subsequent calls.
+        if self
+            .cached_tools
+            .as_ref()
+            .map_or(true, |(idx, _)| *idx != self.selected_server)
+        {
+            self.fetch_tools_background(cx);
         }
     }
 

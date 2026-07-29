@@ -60,6 +60,33 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     // economic guardrails. The task is fire-and-forget.
     economic_guardrails::spawn_public_catalog_fetch(client.http_client(), cx).detach();
 
+    // Re-spawn the public catalog fetch when the OpenRouter settings change
+    // (e.g. the user adjusts the threshold in the Economic Guardrails UI).
+    // This ensures users without an OpenRouter API key get live threshold
+    // updates without restarting. Users with an OpenRouter API key get live
+    // updates via the provider's own settings observer → fetch_models →
+    // update_expensive_model_denylist path.
+    //
+    // Guard: only re-fetch when the threshold or api_url actually changed,
+    // to avoid hitting OpenRouter on every unrelated settings edit.
+    let http_client_for_observer = client.http_client();
+    let mut last_threshold =
+        OpenRouterLanguageModelProvider::settings(cx).max_output_price_per_million_tokens;
+    let mut last_api_url = OpenRouterLanguageModelProvider::api_url(cx).to_string();
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let current_threshold =
+            OpenRouterLanguageModelProvider::settings(cx).max_output_price_per_million_tokens;
+        let current_api_url = OpenRouterLanguageModelProvider::api_url(cx).to_string();
+        if current_threshold == last_threshold && current_api_url == last_api_url {
+            return;
+        }
+        last_threshold = current_threshold;
+        last_api_url = current_api_url;
+        economic_guardrails::spawn_public_catalog_fetch(http_client_for_observer.clone(), cx)
+            .detach();
+    })
+    .detach();
+
     // Subscribe to extension store events to track LLM extension installations
     if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
         cx.subscribe(&extension_store, {
