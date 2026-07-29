@@ -44,12 +44,13 @@ manifest:
 # validates and the Curator approves (or agentic mode skips the gate).
 # Effort scales max_iterations: low=1, medium=3, high=5.
 convergence:
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_14_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 # ── Parameters (supplied by caller) ──────────────────────────────────────────
 # parameters: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
@@ -409,10 +410,11 @@ steps:
       convergence_metric: number
 
   # ── Phase 12: Convergence Check ──────────────────────────────────────────
-  # Computes the PDCA convergence metric. If validation failed or the Curator
-  # chose modify, the pipeline loops back to Phase 10 (corpus generation).
-  # If validation passed and the Curator approved (or agentic mode skipped the
-  # gate), the pipeline proceeds to Regulation feedback.
+  # Convergence is determined by the Cauchy criterion on the validation
+  # convergence_metric. If validation failed or the Curator chose modify,
+  # the pipeline loops back to Phase 10 (corpus generation). If validation
+  # passed and the Curator approved (or agentic mode skipped the gate), the
+  # pipeline proceeds to Regulation feedback.
   - ordinal: 14
     action: loop
     description: >
@@ -420,18 +422,11 @@ steps:
       the Curator approved (or agentic mode), proceed to Regulation feedback.
       If validation failed or the Curator chose modify, re-enter at Phase 10
       (corpus generation) with the prior results preserved.
-    renderer: minijinja
-    template_ref: replica/convergence-check
-    gas_cap: 2000
-    timeout_seconds: 10
     input_mapping:
-      validation_result: "{{ step_12_result }}"
-      curator_decision: "{{ step_13_result.decision | default('approve') }}"
-      prior_convergence_metric: "{{ prior_convergence_metric | default(null) }}"
-    output_schema:
-      convergence_metric: number
-      loop_target: integer
-      next_action: string
+      loop_target: "{{ 11 }}"
+      # Push the validation convergence metric into kata_hypotenuse so the
+      # Cauchy criterion can detect when the iterates have stopped moving.
+      kata_hypotenuse: "{{ step_12_result.convergence_metric | default(1.0) }}"
 
   # ── Phase 13: Regulation Feedback ───────────────────────────────────────────────
   - ordinal: 15

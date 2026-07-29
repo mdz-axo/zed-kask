@@ -85,16 +85,6 @@ templates:
       parse success/failure, field coverage, and a convergence metric. This
       is the automated Check phase of the replica discovery PDCA loop.
 
-  - id: replica/convergence-check
-    name: "PDCA convergence check for the replica discovery pipeline"
-    path: convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [converge, loop, decide]
-    description: >
-      Computes the PDCA convergence metric for the replica discovery pipeline.
-      Determines whether the pipeline should proceed to Regulation feedback
-      (converged) or loop back to corpus generation (not converged).
-
   - id: replica/extract-concepts
     name: "Extract key concepts, places, and events from academic paper metadata…"
     path: extract-concepts.j2

@@ -11043,6 +11043,7 @@ dependencies = [
  "language_core",
  "log",
  "markdown",
+ "minijinja",
  "project",
  "serde",
  "serde_json",
