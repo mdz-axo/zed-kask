@@ -1680,11 +1680,29 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // Reads the histories from _convergence context (injected by the
         // tracker) and returns the convergence decision.
         "kata.convergence_check" => {
+            // Full convergence check: combines gap, Cauchy, and calibration.
+            // Reads the histories from _convergence context (injected by the
+            // tracker) and returns the convergence decision.
+            //
+            // Three canonical stop conditions (any active one triggers):
+            // 1. Gap: hypotenuse < hypotenuse_epsilon (limit of a sequence)
+            // 2. Cauchy: max pairwise delta in cauchy_window < cauchy_epsilon
+            //    (iterates stopped moving — learning exhausted)
+            // 3. Calibration: rolling Brier < brier_threshold for brier_window
+            //    (predictions are calibrated)
             let hypotenuse = get_f64("hypotenuse")?;
-            let epsilon = input
+            let hypotenuse_epsilon = input
                 .get("hypotenuse_epsilon")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.05);
+            let cauchy_epsilon = input
+                .get("cauchy_epsilon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.03);
+            let cauchy_window = input
+                .get("cauchy_window")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as usize;
             let brier_history = input
                 .get("brier_history")
                 .and_then(|v| v.as_array())
@@ -1706,12 +1724,39 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             let mode = input
                 .get("mode")
                 .and_then(|v| v.as_str())
-                .unwrap_or("hypotenuse_or_confidence");
+                .unwrap_or("gap_or_cauchy_or_calibration");
 
-            let gap_converged = hypotenuse < epsilon;
+            // 1. Gap convergence
+            let gap_converged = hypotenuse.is_finite() && hypotenuse < hypotenuse_epsilon;
 
-            // Confidence convergence: rolling Brier < threshold AND gap not decreasing
-            let confidence_converged = if brier_history.len() >= brier_window {
+            // 2. Cauchy convergence: max pairwise delta in window < epsilon
+            let cauchy_converged = if hypotenuse_history.len() >= cauchy_window {
+                let start = hypotenuse_history.len().saturating_sub(cauchy_window);
+                let finite: Vec<f64> = hypotenuse_history[start..]
+                    .iter()
+                    .copied()
+                    .filter(|f| f.is_finite())
+                    .collect();
+                if finite.len() >= cauchy_window {
+                    let mut max_delta = 0.0_f64;
+                    for i in 0..finite.len() {
+                        for j in (i + 1)..finite.len() {
+                            let delta = (finite[i] - finite[j]).abs();
+                            if delta > max_delta {
+                                max_delta = delta;
+                            }
+                        }
+                    }
+                    max_delta < cauchy_epsilon
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // 3. Calibration convergence: rolling Brier < threshold
+            let calibration_converged = if brier_history.len() >= brier_window {
                 let start = brier_history.len().saturating_sub(brier_window);
                 let recent: Vec<f64> = brier_history[start..]
                     .iter()
@@ -1720,18 +1765,7 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                     .collect();
                 if recent.len() >= brier_window {
                     let rolling: f64 = recent.iter().sum::<f64>() / recent.len() as f64;
-                    let gap_decreasing = if hypotenuse_history.len() >= 2 {
-                        let n = hypotenuse_history.len();
-                        let prev = hypotenuse_history[n - 2];
-                        let curr = hypotenuse_history[n - 1];
-                        prev.is_finite()
-                            && curr.is_finite()
-                            && prev > curr
-                            && (prev - curr) > epsilon
-                    } else {
-                        false
-                    };
-                    rolling < brier_threshold && !gap_decreasing
+                    rolling < brier_threshold
                 } else {
                     false
                 }
@@ -1740,47 +1774,115 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             };
 
             let (converged, conv_mode, reason) = match mode {
-                "hypotenuse" => (
+                "gap" => (
                     gap_converged,
-                    if gap_converged { "hypotenuse" } else { "none" },
+                    if gap_converged { "gap" } else { "none" },
                     if gap_converged {
-                        format!("gap {hypotenuse:.4} < epsilon {epsilon:.4}")
+                        format!("gap {hypotenuse:.4} < epsilon {hypotenuse_epsilon:.4}")
                     } else {
-                        format!("gap {hypotenuse:.4} >= epsilon {epsilon:.4}")
+                        format!("gap {hypotenuse:.4} >= epsilon {hypotenuse_epsilon:.4}")
                     },
                 ),
-                "confidence" => (
-                    confidence_converged,
-                    if confidence_converged {
-                        "confidence"
+                "cauchy" => (
+                    cauchy_converged,
+                    if cauchy_converged { "cauchy" } else { "none" },
+                    if cauchy_converged {
+                        "iterates stabilized (Cauchy criterion met)".to_string()
+                    } else {
+                        "iterates not yet stabilized".to_string()
+                    },
+                ),
+                "calibration" => (
+                    calibration_converged,
+                    if calibration_converged {
+                        "calibration"
                     } else {
                         "none"
                     },
-                    if confidence_converged {
-                        "Brier calibrated and gap not decreasing".to_string()
+                    if calibration_converged {
+                        "Brier score calibrated".to_string()
                     } else {
-                        "Brier not calibrated or gap still decreasing".to_string()
+                        "Brier score not yet calibrated".to_string()
                     },
                 ),
-                _ => {
-                    // hypotenuse_or_confidence
+                "gap_or_cauchy" => {
                     if gap_converged {
                         (
                             true,
-                            "hypotenuse",
-                            format!("gap {hypotenuse:.4} < epsilon {epsilon:.4}"),
+                            "gap",
+                            format!("gap {hypotenuse:.4} < epsilon {hypotenuse_epsilon:.4}"),
                         )
-                    } else if confidence_converged {
+                    } else if cauchy_converged {
                         (
                             true,
-                            "confidence",
-                            "Brier calibrated and gap not decreasing".to_string(),
+                            "cauchy",
+                            "iterates stabilized (Cauchy criterion met)".to_string(),
                         )
                     } else {
                         (
                             false,
                             "none",
-                            format!("gap {hypotenuse:.4} >= epsilon, Brier not converged"),
+                            format!("gap {hypotenuse:.4} >= epsilon, not Cauchy"),
+                        )
+                    }
+                }
+                "gap_or_calibration" => {
+                    if gap_converged {
+                        (
+                            true,
+                            "gap",
+                            format!("gap {hypotenuse:.4} < epsilon {hypotenuse_epsilon:.4}"),
+                        )
+                    } else if calibration_converged {
+                        (true, "calibration", "Brier score calibrated".to_string())
+                    } else {
+                        (
+                            false,
+                            "none",
+                            format!("gap {hypotenuse:.4} >= epsilon, Brier not calibrated"),
+                        )
+                    }
+                }
+                "cauchy_or_calibration" => {
+                    if cauchy_converged {
+                        (
+                            true,
+                            "cauchy",
+                            "iterates stabilized (Cauchy criterion met)".to_string(),
+                        )
+                    } else if calibration_converged {
+                        (true, "calibration", "Brier score calibrated".to_string())
+                    } else {
+                        (
+                            false,
+                            "none",
+                            "not Cauchy, Brier not calibrated".to_string(),
+                        )
+                    }
+                }
+                _ => {
+                    // gap_or_cauchy_or_calibration (default)
+                    if gap_converged {
+                        (
+                            true,
+                            "gap",
+                            format!("gap {hypotenuse:.4} < epsilon {hypotenuse_epsilon:.4}"),
+                        )
+                    } else if cauchy_converged {
+                        (
+                            true,
+                            "cauchy",
+                            "iterates stabilized (Cauchy criterion met)".to_string(),
+                        )
+                    } else if calibration_converged {
+                        (true, "calibration", "Brier score calibrated".to_string())
+                    } else {
+                        (
+                            false,
+                            "none",
+                            format!(
+                                "gap {hypotenuse:.4} >= epsilon, not Cauchy, Brier not calibrated"
+                            ),
                         )
                     }
                 }
@@ -1792,7 +1894,8 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 "reason": reason,
                 "hypotenuse": hypotenuse,
                 "gap_converged": gap_converged,
-                "confidence_converged": confidence_converged,
+                "cauchy_converged": cauchy_converged,
+                "calibration_converged": calibration_converged,
             }))
         }
         other => Err(TemplateError::Manifest(format!(
@@ -2705,17 +2808,58 @@ mod tests {
         let input = serde_json::json!({
             "hypotenuse": 0.02,
             "hypotenuse_epsilon": 0.05,
+            "cauchy_epsilon": 0.03,
+            "cauchy_window": 3,
             "brier_history": [0.5],
             "hypotenuse_history": [0.5, 0.02],
             "brier_threshold": 0.15,
             "brier_window": 3,
-            "mode": "hypotenuse_or_confidence"
+            "mode": "gap_or_cauchy_or_calibration"
+        });
+        let result = dispatch_compute("kata.convergence_check", &input).unwrap();
+        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
+        assert_eq!(result.get("mode").and_then(|v| v.as_str()).unwrap(), "gap");
+    }
+
+    #[test]
+    fn dispatch_kata_convergence_check_cauchy_converged() {
+        let input = serde_json::json!({
+            "hypotenuse": 0.30,
+            "hypotenuse_epsilon": 0.05,
+            "cauchy_epsilon": 0.03,
+            "cauchy_window": 3,
+            "brier_history": [0.5],
+            "hypotenuse_history": [0.30, 0.31, 0.30],
+            "brier_threshold": 0.15,
+            "brier_window": 3,
+            "mode": "gap_or_cauchy_or_calibration"
         });
         let result = dispatch_compute("kata.convergence_check", &input).unwrap();
         assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
         assert_eq!(
             result.get("mode").and_then(|v| v.as_str()).unwrap(),
-            "hypotenuse"
+            "cauchy"
+        );
+    }
+
+    #[test]
+    fn dispatch_kata_convergence_check_calibration_converged() {
+        let input = serde_json::json!({
+            "hypotenuse": 0.30,
+            "hypotenuse_epsilon": 0.05,
+            "cauchy_epsilon": 0.03,
+            "cauchy_window": 3,
+            "brier_history": [0.05, 0.05, 0.05],
+            "hypotenuse_history": [0.50, 0.30, 0.10],
+            "brier_threshold": 0.15,
+            "brier_window": 3,
+            "mode": "gap_or_cauchy_or_calibration"
+        });
+        let result = dispatch_compute("kata.convergence_check", &input).unwrap();
+        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
+        assert_eq!(
+            result.get("mode").and_then(|v| v.as_str()).unwrap(),
+            "calibration"
         );
     }
 
@@ -2724,11 +2868,13 @@ mod tests {
         let input = serde_json::json!({
             "hypotenuse": 0.3,
             "hypotenuse_epsilon": 0.05,
+            "cauchy_epsilon": 0.03,
+            "cauchy_window": 3,
             "brier_history": [0.5, 0.5],
             "hypotenuse_history": [0.5, 0.3],
             "brier_threshold": 0.15,
             "brier_window": 3,
-            "mode": "hypotenuse_or_confidence"
+            "mode": "gap_or_cauchy_or_calibration"
         });
         let result = dispatch_compute("kata.convergence_check", &input).unwrap();
         assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());

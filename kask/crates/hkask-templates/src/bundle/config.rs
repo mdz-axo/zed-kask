@@ -82,23 +82,55 @@ pub struct ConvergenceConfig {
     pub result_field: Option<String>,
 
     // ── Convergence thresholds ──
-    /// Hypotenuse below this → gap converged (the agent reached the target
-    /// condition in the combined object-process space).
+    /// Hypotenuse below this → **gap convergence** (the agent reached the
+    /// target condition). This is the limit-of-a-sequence criterion:
+    /// `‖xₙ − L‖ < ε` where L is the target and xₙ is the current condition.
     #[serde(default = "default_hypotenuse_epsilon")]
     pub hypotenuse_epsilon: f64,
-    /// Number of PDCA cycles to compute the rolling Brier average over.
+
+    /// Epsilon for the **Cauchy convergence** (stall) criterion: the iterates
+    /// have stopped moving. A sequence is Cauchy if for all m, n > N,
+    /// `‖xₘ − xₙ‖ < ε`. In practice, we check that the maximum pairwise
+    /// distance between hypotenuse readings in the last `cauchy_window`
+    /// cycles is below this epsilon. This means *all* recent readings are
+    /// clustered together — the iterates have genuinely stabilized, not just
+    /// locally plateaued.
+    ///
+    /// This is the canonical mathematical definition of "the process has
+    /// stopped producing new information" (learning exhausted, current methods
+    /// at their ceiling). It catches oscillation (0.3 → 0.5 → 0.3 → 0.5 has
+    /// large pairwise distances → not Cauchy) and plateau (0.3 → 0.31 → 0.3
+    /// has small pairwise distances → Cauchy).
+    #[serde(default = "default_cauchy_epsilon")]
+    pub cauchy_epsilon: f64,
+    /// Window size (number of PDCA cycles) for the Cauchy convergence check.
+    /// The maximum pairwise distance between hypotenuse readings in the last
+    /// `cauchy_window` cycles must be below `cauchy_epsilon`.
+    #[serde(default = "default_cauchy_window")]
+    pub cauchy_window: u32,
+
+    /// Number of PDCA cycles to compute the rolling Brier average over for
+    /// **calibration convergence**: the agent's predictions are calibrated —
+    /// it knows what will happen when it acts.
     #[serde(default = "default_brier_window")]
     pub brier_window: u32,
-    /// Rolling Brier average below this → confidence converged (the agent's
-    /// predictions are calibrated — it knows what will happen when it acts).
+    /// Rolling Brier average below this → calibration converged.
     #[serde(default = "default_brier_threshold")]
     pub brier_threshold: f64,
-    /// Convergence mode:
-    /// - "hypotenuse": gap < hypotenuse_epsilon → converged.
-    /// - "confidence": rolling Brier < brier_threshold for brier_window cycles
-    ///   AND hypotenuse not decreasing → converged (agent is calibrated but
-    ///   can't close the gap further with current methods).
-    /// - "hypotenuse_or_confidence" (default): either condition.
+
+    /// Convergence mode — selects which stop conditions are active. Any active
+    /// condition that fires triggers convergence.
+    ///
+    /// - `"gap"`: gap convergence only (hypotenuse < epsilon).
+    /// - `"cauchy"`: Cauchy convergence only (iterates stabilized).
+    /// - `"calibration"`: calibration convergence only (Brier calibrated).
+    /// - `"gap_or_cauchy"`: gap or Cauchy (no Brier).
+    /// - `"gap_or_cauchy_or_calibration"` (default): any of the three.
+    ///
+    /// The three signals are orthogonal: gap measures distance to target,
+    /// Cauchy measures stability of iterates, Brier measures prediction
+    /// quality. They can be combined with OR. The default is all three because
+    /// the Kata literature recognizes all three as valid stop conditions.
     #[serde(default = "default_convergence_mode")]
     pub convergence_mode: String,
 
@@ -153,10 +185,12 @@ impl Default for ConvergenceConfig {
             prediction_field: None,
             result_field: None,
             hypotenuse_epsilon: 0.05,
+            cauchy_epsilon: 0.03,
+            cauchy_window: 3,
             brier_window: 3,
             brier_threshold: 0.15,
-            convergence_mode: "hypotenuse_or_confidence".to_string(),
-            max_iterations: 3,
+            convergence_mode: "gap_or_cauchy_or_calibration".to_string(),
+            max_iterations: 10,
             min_iterations: 2,
             on_not_reached: "abort".to_string(),
             // Legacy defaults — used when convergence_mode is empty/unset
@@ -182,6 +216,14 @@ fn default_hypotenuse_epsilon() -> f64 {
     0.05
 }
 
+fn default_cauchy_epsilon() -> f64 {
+    0.03
+}
+
+fn default_cauchy_window() -> u32 {
+    3
+}
+
 fn default_brier_window() -> u32 {
     3
 }
@@ -191,7 +233,7 @@ fn default_brier_threshold() -> f64 {
 }
 
 fn default_convergence_mode() -> String {
-    "hypotenuse_or_confidence".to_string()
+    "gap_or_cauchy_or_calibration".to_string()
 }
 
 fn default_min_iterations() -> u32 {

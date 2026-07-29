@@ -24,7 +24,7 @@ use util::markdown::MarkdownInlineCode;
 ///
 /// This tool should be used when it's desirable to create a copy of a file or directory without modifying the original.
 /// It's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.
-/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
+/// The only supported paths outside the project are descendants of the global skills directory, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
     /// The source path of the file or directory to copy.

@@ -85,6 +85,8 @@ pub struct ConvergenceTracker {
     #[allow(dead_code)]
     result_field: Option<String>,
     hypotenuse_epsilon: f64,
+    cauchy_epsilon: f64,
+    cauchy_window: u32,
     brier_window: u32,
     brier_threshold: f64,
     convergence_mode: String,
@@ -126,6 +128,8 @@ impl ConvergenceTracker {
             prediction_field: config.prediction_field.clone(),
             result_field: config.result_field.clone(),
             hypotenuse_epsilon: config.hypotenuse_epsilon,
+            cauchy_epsilon: config.cauchy_epsilon,
+            cauchy_window: config.cauchy_window,
             brier_window: config.brier_window,
             brier_threshold: config.brier_threshold,
             convergence_mode: config.convergence_mode.clone(),
@@ -133,7 +137,7 @@ impl ConvergenceTracker {
             brier_history: Vec::new(),
             min_iterations: config.min_iterations,
             max_iterations: if config.max_iterations == 0 {
-                1
+                10
             } else {
                 config.max_iterations
             },
@@ -276,66 +280,108 @@ impl ConvergenceTracker {
         self.check_legacy_met(context)
     }
 
-    /// Kata convergence check: hypotenuse and/or Brier trajectory.
+    /// Kata convergence check: gap, Cauchy, and/or calibration.
+    ///
+    /// Three canonical stop conditions (any active one triggers convergence):
+    ///
+    /// 1. **Gap convergence** (limit of a sequence): `hypotenuse < hypotenuse_epsilon`.
+    ///    The agent reached the target condition.
+    ///
+    /// 2. **Cauchy convergence** (stall): the maximum pairwise distance between
+    ///    hypotenuse readings in the last `cauchy_window` cycles is below
+    ///    `cauchy_epsilon`. The iterates have stopped moving — learning
+    ///    exhausted, current methods at their ceiling.
+    ///
+    /// 3. **Calibration convergence**: rolling Brier average below
+    ///    `brier_threshold` for `brier_window` cycles. The agent's predictions
+    ///    are calibrated — it knows what will happen when it acts.
+    ///
+    /// The `convergence_mode` field selects which are active. The default
+    /// (`gap_or_cauchy_or_calibration`) enables all three.
     fn check_kata_met(&self) -> bool {
-        let last_hypotenuse = self.hypotenuse_history.last().copied();
-        let gap_converged = last_hypotenuse
-            .filter(|h| h.is_finite())
-            .map(|h| h < self.hypotenuse_epsilon)
-            .unwrap_or(false);
-
-        let confidence_converged = self.check_confidence_converged();
+        let gap_converged = self.check_gap_converged();
+        let cauchy_converged = self.check_cauchy_converged();
+        let calibration_converged = self.check_calibration_converged();
 
         match self.convergence_mode.as_str() {
-            "hypotenuse" => gap_converged,
-            "confidence" => confidence_converged,
-            "hypotenuse_or_confidence" => gap_converged || confidence_converged,
+            "gap" => gap_converged,
+            "cauchy" => cauchy_converged,
+            "calibration" => calibration_converged,
+            "gap_or_cauchy" => gap_converged || cauchy_converged,
+            "gap_or_calibration" => gap_converged || calibration_converged,
+            "cauchy_or_calibration" => cauchy_converged || calibration_converged,
+            "gap_or_cauchy_or_calibration" => {
+                gap_converged || cauchy_converged || calibration_converged
+            }
             _ => gap_converged, // default to gap
         }
     }
 
-    /// Confidence convergence: rolling Brier average < threshold for brier_window
-    /// cycles AND hypotenuse not decreasing (the agent is calibrated but stuck).
-    fn check_confidence_converged(&self) -> bool {
-        if (self.brier_history.len() as u32) < self.brier_window {
+    /// Gap convergence: hypotenuse below epsilon (limit of a sequence).
+    fn check_gap_converged(&self) -> bool {
+        self.hypotenuse_history
+            .last()
+            .copied()
+            .filter(|h| h.is_finite())
+            .map(|h| h < self.hypotenuse_epsilon)
+            .unwrap_or(false)
+    }
+
+    /// Cauchy convergence: the iterates have stopped moving. The maximum
+    /// pairwise distance between hypotenuse readings in the last
+    /// `cauchy_window` cycles is below `cauchy_epsilon`.
+    ///
+    /// This is the canonical Cauchy criterion: for all m, n > N,
+    /// `‖xₘ − xₙ‖ < ε`. It catches both plateau (readings clustered together)
+    /// and oscillation (readings bouncing — large pairwise distances → not
+    /// Cauchy). Unlike checking just the last two readings, it requires *all*
+    /// pairs in the window to be close.
+    fn check_cauchy_converged(&self) -> bool {
+        let window = self.cauchy_window as usize;
+        if self.hypotenuse_history.len() < window {
             return false;
         }
+        let start = self.hypotenuse_history.len().saturating_sub(window);
+        let window_slice = &self.hypotenuse_history[start..];
+        let finite: Vec<f64> = window_slice
+            .iter()
+            .copied()
+            .filter(|f| f.is_finite())
+            .collect();
+        if finite.len() < window {
+            return false;
+        }
+        // Max pairwise distance between all pairs in the window
+        let mut max_delta = 0.0_f64;
+        for i in 0..finite.len() {
+            for j in (i + 1)..finite.len() {
+                let delta = (finite[i] - finite[j]).abs();
+                if delta > max_delta {
+                    max_delta = delta;
+                }
+            }
+        }
+        max_delta < self.cauchy_epsilon
+    }
 
-        // Rolling Brier average over the last brier_window cycles
-        let start = self
-            .brier_history
-            .len()
-            .saturating_sub(self.brier_window as usize);
+    /// Calibration convergence: rolling Brier average below threshold for
+    /// brier_window cycles. The agent's predictions are calibrated.
+    fn check_calibration_converged(&self) -> bool {
+        let window = self.brier_window as usize;
+        if self.brier_history.len() < window {
+            return false;
+        }
+        let start = self.brier_history.len().saturating_sub(window);
         let recent: Vec<f64> = self.brier_history[start..]
             .iter()
             .copied()
             .filter(|f| f.is_finite())
             .collect();
-        if (recent.len() as u32) < self.brier_window {
+        if recent.len() < window {
             return false;
         }
         let rolling_brier: f64 = recent.iter().sum::<f64>() / recent.len() as f64;
-        if rolling_brier >= self.brier_threshold {
-            return false;
-        }
-
-        // Hypotenuse must not be decreasing (agent is stuck, not still progressing)
-        !self.is_hypotenuse_decreasing()
-    }
-
-    /// Is the hypotenuse still decreasing? True if the last two readings show
-    /// a decrease larger than the epsilon (the agent is still making progress).
-    fn is_hypotenuse_decreasing(&self) -> bool {
-        if self.hypotenuse_history.len() < 2 {
-            return false;
-        }
-        let n = self.hypotenuse_history.len();
-        let prev = self.hypotenuse_history[n - 2];
-        let curr = self.hypotenuse_history[n - 1];
-        prev.is_finite()
-            && curr.is_finite()
-            && prev > curr
-            && (prev - curr) > self.hypotenuse_epsilon
+        rolling_brier < self.brier_threshold
     }
 
     /// Legacy self-grade convergence check (threshold + improvement + stability).
@@ -474,6 +520,8 @@ impl ConvergenceTracker {
                 "hypotenuse_history": self.hypotenuse_history,
                 "brier_history": self.brier_history,
                 "hypotenuse_epsilon": self.hypotenuse_epsilon,
+                "cauchy_epsilon": self.cauchy_epsilon,
+                "cauchy_window": self.cauchy_window,
                 "brier_threshold": self.brier_threshold,
                 "brier_window": self.brier_window,
                 "convergence_mode": self.convergence_mode,
@@ -516,6 +564,8 @@ impl ConvergenceTracker {
                 "hypotenuse_history": self.hypotenuse_history,
                 "brier_history": self.brier_history,
                 "hypotenuse_epsilon": self.hypotenuse_epsilon,
+                "cauchy_epsilon": self.cauchy_epsilon,
+                "cauchy_window": self.cauchy_window,
                 "brier_threshold": self.brier_threshold,
                 "brier_window": self.brier_window,
                 "convergence_mode": self.convergence_mode,
@@ -565,6 +615,8 @@ mod tests {
             prediction_field: None,
             result_field: None,
             hypotenuse_epsilon: 0.05,
+            cauchy_epsilon: 0.03,
+            cauchy_window: 3,
             brier_window: 3,
             brier_threshold: 0.15,
             convergence_mode: String::new(), // empty = legacy mode
@@ -589,10 +641,12 @@ mod tests {
             prediction_field: Some("prediction".to_string()),
             result_field: Some("result".to_string()),
             hypotenuse_epsilon: 0.05,
+            cauchy_epsilon: 0.03,
+            cauchy_window: 3,
             brier_window: 3,
             brier_threshold: 0.15,
             convergence_mode: mode.to_string(),
-            max_iterations: 5,
+            max_iterations: 10,
             min_iterations: 2,
             on_not_reached: "abort".to_string(),
             threshold: 0.1,
@@ -705,119 +759,182 @@ mod tests {
         assert_eq!(tracker.baseline_quality, first_baseline);
     }
 
-    // ── Kata hypotenuse + Brier convergence model ──
+    // ── Kata convergence: three canonical stop conditions ──
 
     #[test]
     fn kata_enabled_reports_correctly() {
         let cfg = config(0.15, "composite", 3, 0);
         assert!(!ConvergenceTracker::new(&cfg).kata_enabled());
-        let cfg = kata_config("hypotenuse_or_confidence");
+        let cfg = kata_config("gap_or_cauchy_or_calibration");
         assert!(ConvergenceTracker::new(&cfg).kata_enabled());
     }
 
-    #[test]
-    fn kata_hypotenuse_converges_when_gap_below_epsilon() {
-        let cfg = kata_config("hypotenuse");
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        let ctx = HashMap::new();
-        // Cycle 1: gap = 0.3 (not converged)
-        tracker.push_hypotenuse(0.3);
-        assert!(!tracker.check_met(&ctx, 3));
-        // Cycle 2: gap = 0.02 (below epsilon 0.05)
-        tracker.push_hypotenuse(0.02);
-        assert!(tracker.check_met(&ctx, 3));
-    }
+    // ── Gap convergence (limit of a sequence) ──
 
     #[test]
-    fn kata_hypotenuse_rejects_when_gap_above_epsilon() {
-        let cfg = kata_config("hypotenuse");
+    fn gap_converges_when_hypotenuse_below_epsilon() {
+        let cfg = kata_config("gap");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
         tracker.push_hypotenuse(0.3);
-        tracker.push_hypotenuse(0.2); // still above 0.05
         assert!(!tracker.check_met(&ctx, 3));
-    }
-
-    #[test]
-    fn kata_confidence_converges_when_brier_low_and_gap_stuck() {
-        let cfg = kata_config("confidence");
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        let ctx = HashMap::new();
-        // 3 cycles with low Brier and gap not decreasing (stuck at 0.3)
-        tracker.push_kata_cycle(0.3, 0.05);
-        tracker.push_kata_cycle(0.3, 0.05);
-        tracker.push_kata_cycle(0.3, 0.05);
-        // Brier rolling avg = 0.05 < 0.15, gap not decreasing → confidence converged
+        tracker.push_hypotenuse(0.02); // below epsilon 0.05
         assert!(tracker.check_met(&ctx, 3));
     }
 
     #[test]
-    fn kata_confidence_rejects_when_brier_high() {
-        let cfg = kata_config("confidence");
+    fn gap_rejects_when_hypotenuse_above_epsilon() {
+        let cfg = kata_config("gap");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        tracker.push_kata_cycle(0.3, 0.5); // high Brier
+        tracker.push_hypotenuse(0.3);
+        tracker.push_hypotenuse(0.2); // above 0.05
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    // ── Cauchy convergence (stall — iterates stopped moving) ──
+
+    #[test]
+    fn cauchy_converges_when_readings_clustered() {
+        let cfg = kata_config("cauchy");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // 3 readings within 0.03 of each other
+        tracker.push_hypotenuse(0.30);
+        tracker.push_hypotenuse(0.31);
+        tracker.push_hypotenuse(0.30);
+        // max pairwise delta = 0.01 < cauchy_epsilon 0.03
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn cauchy_rejects_oscillation() {
+        let cfg = kata_config("cauchy");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Oscillating: 0.3 → 0.5 → 0.3, max pairwise delta = 0.2 >> 0.03
+        tracker.push_hypotenuse(0.30);
+        tracker.push_hypotenuse(0.50);
+        tracker.push_hypotenuse(0.30);
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn cauchy_rejects_when_fewer_than_window_readings() {
+        let cfg = kata_config("cauchy");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        tracker.push_hypotenuse(0.30);
+        tracker.push_hypotenuse(0.31); // only 2 readings, window is 3
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn cauchy_rejects_when_still_decreasing() {
+        let cfg = kata_config("cauchy");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Readings are decreasing: 0.5 → 0.3 → 0.1, max pairwise = 0.4 >> 0.03
+        tracker.push_hypotenuse(0.50);
+        tracker.push_hypotenuse(0.30);
+        tracker.push_hypotenuse(0.10);
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    // ── Calibration convergence (Brier score) ──
+
+    #[test]
+    fn calibration_converges_when_brier_low() {
+        let cfg = kata_config("calibration");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // 3 cycles with low Brier
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05);
+        // rolling Brier = 0.05 < 0.15
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn calibration_rejects_when_brier_high() {
+        let cfg = kata_config("calibration");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
         tracker.push_kata_cycle(0.3, 0.5);
         tracker.push_kata_cycle(0.3, 0.5);
+        tracker.push_kata_cycle(0.3, 0.5);
         assert!(!tracker.check_met(&ctx, 3));
     }
 
     #[test]
-    fn kata_confidence_rejects_when_gap_still_decreasing() {
-        let cfg = kata_config("confidence");
+    fn calibration_rejects_when_fewer_than_window() {
+        let cfg = kata_config("calibration");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        // Brier is low but gap is still decreasing → not confidence converged
-        tracker.push_kata_cycle(0.5, 0.05);
-        tracker.push_kata_cycle(0.4, 0.05);
-        tracker.push_kata_cycle(0.3, 0.05); // gap decreased 0.4→0.3
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05); // only 2, window is 3
         assert!(!tracker.check_met(&ctx, 3));
     }
 
+    // ── Combined modes ──
+
     #[test]
-    fn kata_hypotenuse_or_confidence_accepts_either() {
-        let cfg = kata_config("hypotenuse_or_confidence");
+    fn gap_or_cauchy_accepts_gap() {
+        let cfg = kata_config("gap_or_cauchy");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        // Gap converged (0.02 < 0.05) even though Brier is high
-        tracker.push_kata_cycle(0.02, 0.5);
+        tracker.push_hypotenuse(0.02); // gap converged
         assert!(tracker.check_met(&ctx, 3));
     }
 
     #[test]
-    fn kata_hypotenuse_or_confidence_accepts_confidence() {
-        let cfg = kata_config("hypotenuse_or_confidence");
+    fn gap_or_cauchy_accepts_cauchy() {
+        let cfg = kata_config("gap_or_cauchy");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        // Gap not converged (0.3 > 0.05) but Brier is low and gap stuck
-        tracker.push_kata_cycle(0.3, 0.05);
-        tracker.push_kata_cycle(0.3, 0.05);
-        tracker.push_kata_cycle(0.3, 0.05);
+        // Gap not converged (0.3 > 0.05) but Cauchy converged (clustered)
+        tracker.push_hypotenuse(0.30);
+        tracker.push_hypotenuse(0.31);
+        tracker.push_hypotenuse(0.30);
         assert!(tracker.check_met(&ctx, 3));
     }
+
+    #[test]
+    fn gap_or_cauchy_or_calibration_accepts_any() {
+        let cfg = kata_config("gap_or_cauchy_or_calibration");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Gap not converged, Cauchy not converged, but Brier is low
+        tracker.push_kata_cycle(0.5, 0.05); // decreasing → not Cauchy
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.1, 0.05);
+        // rolling Brier = 0.05 < 0.15 → calibration converged
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn gap_or_cauchy_or_calibration_rejects_when_none_met() {
+        let cfg = kata_config("gap_or_cauchy_or_calibration");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Gap high (0.3), Cauchy not met (decreasing), Brier high
+        tracker.push_kata_cycle(0.5, 0.5);
+        tracker.push_kata_cycle(0.3, 0.5);
+        tracker.push_kata_cycle(0.1, 0.5);
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    // ── Min iterations ──
 
     #[test]
     fn kata_min_iterations_prevents_premature_exit() {
-        let cfg = kata_config("hypotenuse");
+        let cfg = kata_config("gap");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
         tracker.push_hypotenuse(0.02); // gap already below epsilon
-        // iteration 2 <= min_iterations 2 → false even though gap is tiny
-        assert!(!tracker.check_met(&ctx, 2));
-        // iteration 3 > 2 → true
-        assert!(tracker.check_met(&ctx, 3));
-    }
-
-    #[test]
-    fn kata_is_hypotenuse_decreasing_detects_progress() {
-        let cfg = kata_config("hypotenuse");
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        assert!(!tracker.is_hypotenuse_decreasing()); // < 2 readings
-        tracker.push_hypotenuse(0.5);
-        tracker.push_hypotenuse(0.3); // decreased by 0.2 > epsilon
-        assert!(tracker.is_hypotenuse_decreasing());
-        tracker.push_hypotenuse(0.29); // decreased by 0.01 < epsilon
-        assert!(!tracker.is_hypotenuse_decreasing());
+        assert!(!tracker.check_met(&ctx, 2)); // iteration 2 <= min 2
+        assert!(tracker.check_met(&ctx, 3)); // iteration 3 > 2
     }
 
     #[test]
