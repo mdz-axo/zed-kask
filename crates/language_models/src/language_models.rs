@@ -8,6 +8,7 @@ use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
+mod economic_guardrails;
 pub mod extension;
 pub mod provider;
 mod settings;
@@ -44,6 +45,12 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             credentials_provider.clone(),
             cx,
         );
+        // Install the cross-provider economic guardrails filter. The filter
+        // reads the deny-list populated by `update_expensive_model_denylist`
+        // (called from the OpenRouter provider after model fetch) and the
+        // threshold from settings, de-listing expensive models from all
+        // providers, not just OpenRouter.
+        economic_guardrails::install_model_filter(registry);
     });
 
     // Subscribe to extension store events to track LLM extension installations

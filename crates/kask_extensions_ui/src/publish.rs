@@ -7,7 +7,7 @@
 //!   server's periodic poll picks it up and inserts it into Postgres.
 //! - **Install:** `GET /api/kask-skills/:id/download` → S3 presigned
 //!   redirect → download tarball → verify SHA256 → extract into
-//!   `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+//!   `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/`.
 //!
 //! Per the `.rules` trap "Cross-thread GPUI communication uses channels,
 //! not `AsyncApp` handles", these pipelines run on a background executor
@@ -323,7 +323,7 @@ pub async fn unpublish_skill(
 ///
 /// Downloads the tarball via `GET /api/kask-skills/:id/download` (which
 /// redirects to an S3 presigned URL), verifies the SHA256, and extracts
-/// into `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+/// into the marketplace dir under the global skills directory.
 pub async fn install_skill(
     fs: &dyn Fs,
     http_client: &HttpClientWithUrl,
@@ -382,7 +382,7 @@ pub async fn install_skill(
     .await?;
 
     // Create the install directory and all parent directories.
-    // First install: ~/.agents/skills/_marketplace/ doesn't exist yet.
+    // First install: the marketplace dir doesn't exist yet.
     let marketplace_parent = marketplace_dir;
     if !fs.is_dir(marketplace_parent).await {
         fs.create_dir(marketplace_parent).await?;

@@ -99,12 +99,12 @@ async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<PathBuf
 }
 
 /// Returns the canonicalized global agent skills directory
-/// (`~/.agents/skills`).
+/// (the global skills directory).
 ///
 /// Recomputed on every call rather than cached: the underlying
 /// `canonicalize_with_ancestors` is a few `stat` syscalls (which the OS
 /// page cache already handles), and a process-wide cache would either go
-/// stale if the user moved `~/.agents/skills`, or pollute across tests
+/// stale if the user moved the global skills dir, or pollute across tests
 /// using different `FakeFs` instances.
 async fn canonical_global_skills_dir(fs: &dyn Fs) -> Option<PathBuf> {
     canonicalize_with_ancestors(&agent_skills::global_skills_dir(), fs).await
@@ -116,7 +116,7 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
         .any(|root| canonical_path.starts_with(root))
 }
 
-/// If `path` names `~/.agents/skills` or one of its descendants, return the
+/// If `path` names the global skills dir or one of its descendants, return the
 /// canonicalized absolute path. Returns `None` for any path that resolves
 /// outside the global skills tree, for relative paths that don't start with
 /// `~`, or if the skills directory itself can't be canonicalized (fail closed
@@ -131,7 +131,7 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     // Canonicalize both sides so symlinks can't sneak the path out of the
     // skills tree (and so different but equivalent path representations
     // match). The lexical check above intentionally runs first, so a
-    // symlinked `~/.agents/skills` root can't broaden the allowlist to every
+    // symlinked global skills dir root can't broaden the allowlist to every
     // path under the symlink target. A linked immediate skill directory is
     // allowed separately, but only for paths that stay under that skill target.
     let canonical_path = fs.canonicalize(&normalized_path).await.ok()?;
@@ -216,7 +216,7 @@ fn resolve_lexical_global_skill_path(path: &Path) -> Option<PathBuf> {
         .then_some(normalized_path)
 }
 
-/// If `path` names `~/.agents/skills` or one of its descendants, return a
+/// If `path` names the global skills dir or one of its descendants, return a
 /// canonical absolute path for it. Unlike [`resolve_global_skill_path`], the
 /// target path may or may not exist on disk yet — the caller decides whether
 /// to read, write, or create it. Returns `None` for any other path, including
@@ -241,7 +241,7 @@ fn is_strict_descendant(path: &Path, ancestor: &Path) -> bool {
 /// Returns whether `path` resolves to the global agent skills directory itself.
 ///
 /// This is used by destructive tools to reject operations targeting the root
-/// `~/.agents/skills` directory while still allowing operations on individual
+/// the global skills dir while still allowing operations on individual
 /// skills or resources beneath it.
 pub async fn resolves_to_global_skills_dir(path: &Path, fs: &dyn Fs) -> bool {
     let Some(normalized_path) = resolve_lexical_global_skill_path(path) else {
@@ -258,7 +258,7 @@ pub async fn resolves_to_global_skills_dir(path: &Path, fs: &dyn Fs) -> bool {
 }
 
 /// Filters a previously-resolved global skills path so that callers which
-/// must never act on `~/.agents/skills` itself (move, delete) only see paths
+/// must never act on the global skills dir itself (move, delete) only see paths
 /// that point strictly below the skills root.
 async fn restrict_to_skill_descendant(
     canonical_path: Option<PathBuf>,
@@ -270,13 +270,13 @@ async fn restrict_to_skill_descendant(
 }
 
 /// Like [`resolve_global_skill_path`], but only succeeds for paths strictly
-/// below `~/.agents/skills`, not the skills directory itself.
+/// below the global skills dir, not the skills directory itself.
 pub async fn resolve_global_skill_descendant_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
     restrict_to_skill_descendant(resolve_global_skill_path(path, fs).await, fs).await
 }
 
 /// Like [`resolve_creatable_global_skill_path`], but only succeeds for paths
-/// strictly below `~/.agents/skills`, not the skills directory itself.
+/// strictly below the global skills dir, not the skills directory itself.
 pub async fn resolve_creatable_global_skill_descendant_path(
     path: &Path,
     fs: &dyn Fs,
@@ -1123,11 +1123,7 @@ mod tests {
             "creatable absolute paths outside the lexical global skills tree should not resolve",
         );
 
-        let traversed_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("..")
-            .join("outside");
+        let traversed_path = agent_skills::global_skills_dir().join("..").join("outside");
         assert!(
             resolve_creatable_global_skill_path(&traversed_path, fs.as_ref())
                 .await
@@ -1146,7 +1142,6 @@ mod tests {
         fs.insert_tree(
             paths::home_dir(),
             json!({
-                ".agents": {},
                 "outside.txt": "outside",
             }),
         )

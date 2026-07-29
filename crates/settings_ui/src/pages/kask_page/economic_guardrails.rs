@@ -38,10 +38,13 @@ pub(crate) fn render_economic_guardrails_page(
         "kask-economic-guardrails-enabled",
         Some("De-list Expensive Models"),
         Some(
-            "When enabled, OpenRouter models whose reported output price exceeds the \
-             threshold are removed from the model picker. Models with no reported \
-             price (e.g. openrouter/auto) and models you explicitly list under \
-             available_models are always kept."
+            "When enabled, models whose reported output price exceeds the \
+             threshold are removed from the model picker across ALL providers \
+             (Zed cloud, OpenRouter, Anthropic, OpenAI, DeepInfra, Together, \
+             etc.). Pricing data is sourced from OpenRouter's /models endpoint \
+             and matched by model name across providers. Models with no \
+             reported price (e.g. openrouter/auto) and models you explicitly \
+             list under available_models are always kept."
                 .into(),
         ),
         if enabled {
@@ -137,11 +140,16 @@ pub(crate) fn render_economic_guardrails_page(
                 .child(SettingsSectionHeader::new("Economic Guardrails"))
                 .child(
                     Label::new(
-                        "Cost-protection settings for inference. The OpenRouter output-price \
-                         filter de-lists models whose reported output price exceeds a threshold, \
-                         preventing accidental selection of expensive models. The filter runs \
-                         every time models are fetched from OpenRouter (at startup and on \
-                         settings change).",
+                        "Cost-protection settings for inference. Pricing data is sourced \
+                         from OpenRouter's /models endpoint and used to build a \
+                         deny-list of expensive models that is applied across ALL \
+                         providers (Zed cloud, OpenRouter, Anthropic, OpenAI, \
+                         DeepInfra, Together, etc.) — not just OpenRouter. This \
+                         prevents accidental selection of expensive models (e.g. \
+                         o1-pro at $600/M, Claude Opus 4.1 at $75/M) regardless \
+                         of which provider surfaces them. The deny-list is rebuilt \
+                         every time models are fetched from OpenRouter (at startup \
+                         and on settings change).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

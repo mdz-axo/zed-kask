@@ -509,9 +509,12 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("language_models.open_router.max_output_price_per_million_tokens"),
             description: Some(
-                "De-list expensive OpenRouter models from the picker by capping output \
-                 price (USD per million tokens). Protects against accidentally selecting \
-                 models that charge tens or hundreds of dollars per million output tokens."
+                "De-list expensive models from the picker by capping output \
+                 price (USD per million tokens). Applies across ALL providers \
+                 (Zed cloud, OpenRouter, Anthropic, OpenAI, DeepInfra, Together, \
+                 etc.) using pricing data sourced from OpenRouter. Protects against \
+                 accidentally selecting models that charge tens or hundreds of \
+                 dollars per million output tokens."
                     .into(),
             ),
             search_aliases: &[

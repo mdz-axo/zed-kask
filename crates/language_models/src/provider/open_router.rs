@@ -145,6 +145,11 @@ impl State {
                 .map_err(LanguageModelCompletionError::from)?;
 
             this.update(cx, |this, cx| {
+                // Update the cross-provider deny-list before storing the models.
+                // `update_expensive_model_denylist` reads the threshold from
+                // settings and the prices from `models`, building a normalized
+                // name set that the registry-level filter applies to all providers.
+                crate::economic_guardrails::update_expensive_model_denylist(&models, cx);
                 this.available_models = models;
                 cx.notify();
             })

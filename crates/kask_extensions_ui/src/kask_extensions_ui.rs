@@ -340,7 +340,7 @@ impl KaskExtensionsPage {
         let skill_id_for_vote_down = skill.id.clone();
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();
-        let marketplace_dir = util::paths::home_dir().join(".agents/skills/_marketplace");
+        let marketplace_dir = agent_skills::global_skills_dir().join("_marketplace");
 
         ExtensionCard::new().child(
             h_flex()

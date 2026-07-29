@@ -399,7 +399,7 @@ pub struct NativeAgent {
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
-    /// don't eagerly watch (or even check for) `~/.agents/skills/` at
+    /// don't eagerly watch (or even check for) the global skills dir at
     /// startup; users who never engage with the agent panel pay zero
     /// filesystem cost. The watch is kicked off lazily by
     /// [`Self::ensure_skills_scan_started`], which is called from the
@@ -424,10 +424,10 @@ enum SkillsState {
     #[default]
     Idle,
     /// A one-shot scan task is in flight. It checks whether
-    /// `~/.agents/skills/` exists; if so, transitions to `Watching`,
+    /// the global skills dir exists; if so, transitions to `Watching`,
     /// otherwise back to `Idle`.
     Scanning,
-    /// A watch task is observing `~/.agents/skills/`. It transitions
+    /// A watch task is observing the global skills dir. It transitions
     /// back to `Idle` if the watched directory itself is removed.
     Watching,
 }
@@ -650,7 +650,7 @@ impl NativeAgent {
     /// repeat.
     ///
     /// The scan itself runs detached on the foreground executor. If
-    /// `~/.agents/skills/` exists it transitions state to
+    /// the global skills dir exists it transitions state to
     /// [`SkillsState::Watching`] and starts a recursive watch;
     /// otherwise it transitions back to [`SkillsState::Idle`] so the
     /// next trigger retries (covering the case where the user creates
@@ -1133,7 +1133,7 @@ impl NativeAgent {
         // Load global skills. Two sources contribute, both tagged
         // `SkillSource::Global`:
         //
-        // 1. Disk-loaded skills from `~/.agents/skills/` — the user's own
+        // 1. Disk-loaded skills from the global skills dir — the user's own
         //    installs. These win on name conflicts with embedded skills
         //    because `apply_skill_overrides` keeps the first entry on ties,
         //    and `combine_skills` chains `global` before embedded globals.
@@ -1156,7 +1156,7 @@ impl NativeAgent {
                 )
                 .await;
                 // zed-kask: Load marketplace-installed skills from
-                // `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+                // `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/`.
                 // These are `SkillSource::Public` — precedence is lower than
                 // `Global` so a local skill of the same name wins (plan §2.3).
                 let marketplace_skills =
