@@ -910,12 +910,6 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
         passphrase: &str,
         batch_size: usize,
     ) -> Result<serde_json::Value, McpToolError> {
-        let Some(ref emb_router) = self.embedding_router else {
-            return Err(McpToolError::failed_precondition(
-                "Embedding router not configured — inference config may be missing",
-            ));
-        };
-
         let content = std::fs::read_to_string(chunks_path).map_err(|e| {
             McpToolError::invalid_argument(format!(
                 "Cannot read chunks_jsonl '{}': {e}",
@@ -1010,12 +1004,12 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
         let batch = batch_size.max(1);
 
         for chunk_batch in chunks.chunks(batch) {
-            let batch_texts: Vec<&str> = chunk_batch.iter().map(|c| c.1.as_str()).collect();
+            let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.1.clone()).collect();
             // Retry with backoff (3 attempts) — same pattern as tag_chunks and extract_triples
             let vectors = {
                 let mut attempts = 0u32;
                 loop {
-                    match emb_router.embed_sentences(&model_name, &batch_texts).await {
+                    match self.inference_router.embed(&model_name, &batch_texts).await {
                         Ok(v) => break v,
                         Err(e) => {
                             attempts += 1;

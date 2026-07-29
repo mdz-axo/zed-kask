@@ -457,15 +457,13 @@ impl CorpusServer {
 
             // Phase 4: Re-embed consolidated chunks
             let mut embedded_count = 0usize;
-            if !reembed_texts.is_empty()
-                && let Some(emb_router) = self.embedding_router.as_ref()
-            {
+            if !reembed_texts.is_empty() {
                 let emb_model = std::env::var("HKASK_EMBEDDING_MODEL")
                     .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string());
 
                 for batch in reembed_texts.chunks(50) {
-                    let texts: Vec<&str> = batch.iter().map(|(_, t)| t.as_str()).collect();
-                    if let Ok(vectors) = emb_router.embed_sentences(&emb_model, &texts).await {
+                    let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
+                    if let Ok(vectors) = self.inference_router.embed(&emb_model, &texts).await {
                         for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
                             if semantic
                                 .store_embedding(entity_ref, vector, &emb_model)

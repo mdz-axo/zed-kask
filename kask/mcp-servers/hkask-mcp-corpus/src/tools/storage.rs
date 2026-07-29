@@ -87,18 +87,12 @@ impl CorpusServer {
 
             let k = top_k.unwrap_or(5).clamp(1, 50);
 
-            // Embed the query
-            let Some(ref emb_router) = self.embedding_router else {
-                return Err(McpToolError::failed_precondition(
-                    "Embedding router not configured — cannot embed query",
-                ));
-            };
-
             let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string());
 
-            let query_embedding = match emb_router
-                .embed_sentences(&model_name, &[query.as_str()])
+            let query_embedding = match self
+                .inference_router
+                .embed(&model_name, &[query.clone()])
                 .await
             {
                 Ok(v) => v.into_iter().next().unwrap_or_default(),

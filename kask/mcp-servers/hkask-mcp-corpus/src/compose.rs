@@ -207,12 +207,23 @@ impl ComposeService {
             request.cognition.embedding.dim,
         );
 
-        // 2. Create EmbeddingRouter and embed prompt
-        let embedder =
-            hkask_inference::EmbeddingRouter::new(request.inference_ctx.inference_config.clone());
-        let prompt_vector = embedder
-            .embed_sentence(&request.cognition.embedding.model, &request.prompt)
-            .await?;
+        // 2. Resolve the inference port and embed prompt. The same port is
+        // reused for prose generation below — both embedding and generation
+        // route through zed's LanguageModelRegistry via the IPC bridge.
+        let gen_model = request.inference_ctx.default_model.clone();
+        let inference = crate::inference_svc::InferenceService::resolve_port(
+            &request.inference_ctx,
+            &gen_model,
+        )?;
+        let prompt_vector = inference
+            .embed(
+                &request.cognition.embedding.model,
+                &[request.prompt.clone()],
+            )
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
 
         // 3. KNN search for exemplar passages
         let results = semantic
@@ -346,11 +357,6 @@ impl ComposeService {
         // 6. Generate prose — model comes from InferenceContext (operational concern),
         // not from CognitionConfig (pipeline/corpus concern). The embedding model
         // is tied to stored vector dimensions; the generation model is deployment-specific.
-        let gen_model = request.inference_ctx.default_model.clone();
-        let inference = crate::inference_svc::InferenceService::resolve_port(
-            &request.inference_ctx,
-            &gen_model,
-        )?;
         let params = LLMParameters {
             temperature: 0.7,
             top_p: 0.9,
@@ -374,9 +380,15 @@ impl ComposeService {
         let validation = if request.no_validate {
             None
         } else {
-            let prose_vector = embedder
-                .embed_sentence(&request.cognition.embedding.model, &generated_prose)
-                .await?;
+            let prose_vector = inference
+                .embed(
+                    &request.cognition.embedding.model,
+                    &[generated_prose.clone()],
+                )
+                .await?
+                .into_iter()
+                .next()
+                .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
             match embedding_store_direct.get(&request.cognition.embedding.centroid_entity_ref) {
                 Ok(centroid_embedding) => {
                     let distance = cosine_distance(&prose_vector, &centroid_embedding.vector);

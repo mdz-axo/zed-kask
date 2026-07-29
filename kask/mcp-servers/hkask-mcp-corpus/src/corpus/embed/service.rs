@@ -11,7 +11,7 @@ use super::types::{
 use super::utils::strip_provider_prefix;
 use crate::corpus::embed::Entity;
 use crate::runtime::TripleExtraction;
-use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
+use hkask_inference::{InferenceConfig, InferenceRouter};
 use hkask_memory::SemanticMemory;
 use hkask_memory::salience::{self, EntityTags};
 use hkask_services_core::{DomainKind, ErrorKind, HkaskSettings, ServiceError};
@@ -37,6 +37,7 @@ impl EmbedService {
         db_passphrase: &str,
         cache_dir: Option<&Path>,
         progress: Option<ProgressFn>,
+        inference_port: &dyn hkask_types::InferencePort,
     ) -> Result<EmbedResult, ServiceError> {
         // P9: Regulation span
         tracing::info!(target: "hkask.embed", operation = "embed_corpus", config = %config_path.display(), "REG");
@@ -602,9 +603,6 @@ impl EmbedService {
             p.completed_passages = 0;
         }
 
-        let inf_cfg = InferenceConfig::from_env();
-        let embedder = EmbeddingRouter::new(inf_cfg);
-
         let batch_size = config.embedding.batch_size;
         let mut embedded_count = 0;
         let all_refs_and_texts: Vec<(&str, &str)> = all_passages
@@ -613,9 +611,9 @@ impl EmbedService {
             .collect();
 
         for chunk in all_refs_and_texts.chunks(batch_size) {
-            let texts: Vec<&str> = chunk.iter().map(|(_, text)| *text).collect();
-            let vectors = embedder
-                .embed_sentences(&config.embedding.model, &texts)
+            let texts: Vec<String> = chunk.iter().map(|(_, text)| (*text).to_string()).collect();
+            let vectors = inference_port
+                .embed(&config.embedding.model, &texts)
                 .await
                 .map_err(|e| {
                     let msg = format!("Failed to embed batch: {e}");

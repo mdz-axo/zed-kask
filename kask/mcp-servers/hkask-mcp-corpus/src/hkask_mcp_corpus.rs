@@ -50,7 +50,6 @@ pub(crate) use json_extract::extract_json_from_response;
 
 use crate::ocr::ThresholdConfig;
 use crate::ocr::decimation;
-use hkask_inference::{EmbeddingRouter, InferenceConfig};
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_memory::SemanticMemory;
 use hkask_services_core::settings::HkaskSettings;
@@ -153,7 +152,6 @@ hkask_mcp_server::mcp_server!(
         pub ocr_model: Option<String>,
         pub inference_router: Arc<dyn InferencePort>,
         pub ocr_thresholds: ThresholdConfig,
-        pub embedding_router: Option<EmbeddingRouter>,
         pub cv_accumulator: Mutex<Vec<crate::ocr::CrossValidation>>,
         pub index: Mutex<Vec<IndexedPassage>>,
         pub llm_ocr: Arc<crate::ocr::llm_ocr::LlmOcrExecutor>,
@@ -179,21 +177,9 @@ impl CorpusServer {
 
     /// Index passages into the in-memory vector store for later query.
     /// Embeds each passage text and stores it with metadata.
-    /// Returns the number of passages indexed (0 if embedding router unavailable).
-    /// Emits a Regulation warning when indexing was requested but embedding is unavailable (GAP-6).
+    /// Returns the number of passages indexed (0 if embedding fails).
     pub async fn index_passages(&self, passages: &[(String, String)], source_label: &str) -> usize {
-        let Some(ref emb_router) = self.embedding_router else {
-            tracing::warn!(
-                target: "hkask.docproc.index",
-                source = %source_label,
-                passage_count = passages.len(),
-                "Cannot index passages — embedding router not configured. \
-                 Set HKASK_EMBEDDING_MODEL to enable semantic search."
-            );
-            return 0;
-        };
-
-        let texts: Vec<&str> = passages.iter().map(|(_, t)| t.as_str()).collect();
+        let texts: Vec<String> = passages.iter().map(|(_, t)| t.clone()).collect();
         if texts.is_empty() {
             return 0;
         }
@@ -201,7 +187,7 @@ impl CorpusServer {
         let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
             .unwrap_or_else(|_| default_embedding_model().to_string());
 
-        let vectors = match emb_router.embed_sentences(&model_name, &texts).await {
+        let vectors = match self.inference_router.embed(&model_name, &texts).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(target: "hkask.mcp.docproc.index", error = %e, "Failed to embed passages for indexing");
@@ -643,8 +629,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .unwrap_or(true),
             };
 
-            let embedding_router = EmbeddingRouter::new(InferenceConfig::from_env());
-
                         let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_port)));
                                     let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
 
@@ -653,7 +637,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             ocr_model,
                             inference_port,
                             ocr_thresholds,
-                            Some(embedding_router),
                             Mutex::new(Vec::new()),
                             Mutex::new(Vec::new()),
                             llm_ocr,

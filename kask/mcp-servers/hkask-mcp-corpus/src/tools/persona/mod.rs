@@ -12,7 +12,6 @@
 use crate::compose::cosine_distance;
 use crate::corpus::EmbedService;
 use crate::*;
-use hkask_inference::EmbeddingRouter;
 use hkask_services_core::HkaskSettings;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};
@@ -305,6 +304,7 @@ impl CorpusServer {
                 &passphrase,
                 None,
                 Some(progress),
+                &self.inference_router,
             )
             .await
             .map_err(|e| McpToolError::internal(e.to_string()))?;
@@ -487,10 +487,9 @@ impl CorpusServer {
                 let started = Instant::now();
 
                 let emb_model = embedding_model();
-                let inf_cfg = inference_config();
-                let embedder = EmbeddingRouter::new(inf_cfg);
-                let vectors = embedder
-                    .embed_sentences(&emb_model, &[doc_text.as_str()])
+                let vectors = self
+                    .inference_router
+                    .embed(&emb_model, &[doc_text.clone()])
                     .await
                     .map_err(|e| {
                         McpToolError::internal(format!("Failed to embed document: {e}"))

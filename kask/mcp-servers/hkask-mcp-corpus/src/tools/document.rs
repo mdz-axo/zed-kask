@@ -106,9 +106,9 @@ impl CorpusServer {
                                 }
                             };
                             let expected = page_images.len();
-                            let emb = self.embedding_router.as_ref().map(|r| {
-                                (r, default_embedding_model())
-                            });
+                            let emb_model = default_embedding_model();
+                            let emb: Option<(&dyn hkask_types::InferencePort, &str)> =
+                                Some((&self.inference_router, emb_model));
                             let outcome = pipeline::run_pipeline(
                                 page_images,
                                 expected,
@@ -225,9 +225,9 @@ impl CorpusServer {
                     {
                         Ok(page_images) if !page_images.is_empty() => {
                             let expected = page_images.len();
-                            let emb = self.embedding_router.as_ref().map(|r| {
-                                (r, default_embedding_model())
-                            });
+                            let emb_model = default_embedding_model();
+                            let emb: Option<(&dyn hkask_types::InferencePort, &str)> =
+                                Some((&self.inference_router, emb_model));
                             let outcome = pipeline::run_pipeline(
                                 page_images, expected,
                                 Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
@@ -300,9 +300,9 @@ impl CorpusServer {
                     match imgs_res {
                         Ok(page_images) => {
                         let expected = page_images.len();
-                        let emb = self.embedding_router.as_ref().map(|r| {
-                            (r, default_embedding_model())
-                        });
+                        let emb_model = default_embedding_model();
+                        let emb: Option<(&dyn hkask_types::InferencePort, &str)> =
+                            Some((&self.inference_router, emb_model));
                         let outcome = pipeline::run_pipeline(
                             page_images, expected,
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,

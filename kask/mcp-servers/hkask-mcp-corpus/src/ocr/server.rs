@@ -73,7 +73,8 @@ impl CorpusServer {
     ) -> (String, usize, crate::ocr::PipelineOutcome) {
         let expected = page_images.len();
         let emb_model = default_embedding_model();
-        let emb = self.embedding_router.as_ref().map(|r| (r, emb_model));
+        let emb: Option<(&dyn hkask_types::InferencePort, &str)> =
+            Some((&self.inference_router, emb_model));
 
         let outcome = pipeline::run_pipeline(
             page_images,

@@ -17,6 +17,7 @@ use crate::ocr::{
     ComplexityTier, CrossValidation, OcrBackend, OcrResult, PipelineError, PipelineOutcome,
     ThresholdConfig,
 };
+use hkask_types::InferencePort;
 use image::DynamicImage;
 
 use crate::ocr::complexity::score_page_complexity;
@@ -101,7 +102,7 @@ pub async fn run_pipeline(
     executor: Arc<dyn OcrExecutor>,
     thresholds: &ThresholdConfig,
     llm_model: Option<&str>,
-    embedding_router: Option<(&hkask_inference::EmbeddingRouter, &str)>,
+    embedding_router: Option<(&dyn InferencePort, &str)>,
     max_concurrency: Option<usize>,
 ) -> PipelineOutcome {
     match max_concurrency {
@@ -138,7 +139,7 @@ async fn run_pipeline_sequential(
     executor: &(dyn OcrExecutor + '_),
     thresholds: &ThresholdConfig,
     llm_model: Option<&str>,
-    embedding_router: Option<(&hkask_inference::EmbeddingRouter, &str)>,
+    embedding_router: Option<(&dyn InferencePort, &str)>,
 ) -> PipelineOutcome {
     let start = Instant::now();
     let mut last_log = Instant::now();
@@ -207,7 +208,7 @@ async fn run_pipeline_parallel(
     executor: Arc<dyn OcrExecutor>,
     thresholds: &ThresholdConfig,
     llm_model: Option<&str>,
-    embedding_router: Option<(&hkask_inference::EmbeddingRouter, &str)>,
+    embedding_router: Option<(&dyn InferencePort, &str)>,
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
@@ -569,7 +570,7 @@ async fn finalize_outcome(
     errors: Vec<PipelineError>,
     expected_pages: usize,
     start: Instant,
-    embedding_router: Option<(&hkask_inference::EmbeddingRouter, &str)>,
+    embedding_router: Option<(&dyn InferencePort, &str)>,
 ) -> PipelineOutcome {
     // Semantic enrichment requires the original text strings, which CrossValidation
     // doesn't store (it stores backend identifiers and confidences). Enrichment is
