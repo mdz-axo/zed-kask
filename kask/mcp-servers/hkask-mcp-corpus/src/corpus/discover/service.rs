@@ -8,6 +8,7 @@ use crate::corpus::embed::EntityConfig;
 use hkask_capability::DelegationToken;
 use hkask_capability::ToolPort;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
+use hkask_types::InferencePort;
 use std::path::PathBuf;
 
 use super::cache::download_and_cache;
@@ -31,6 +32,7 @@ impl DiscoveryService {
         req: &DiscoverRequest,
         mcp: &dyn ToolPort,
         token: &DelegationToken,
+        inference_port: &dyn InferencePort,
     ) -> Result<DiscoverResult, ServiceError> {
         // P9: Regulation span
         tracing::info!(target: "hkask.discover", operation = "discover", author = %req.author_name, max_works = req.max_works, "REG");
@@ -214,7 +216,7 @@ impl DiscoveryService {
         let mut methods: Vec<hkask_memory::salience::DeclaredMethod> = Vec::new();
 
         if req.include_methods && !academic_works.is_empty() {
-            match extract_concepts(&req.author_name, &academic_works).await {
+            match extract_concepts(&req.author_name, &academic_works, inference_port).await {
                 Ok(extracted) => {
                     tracing::info!(target: "hkask.discover", concepts = extracted.concepts.len(), places = extracted.places.len(), events = extracted.events.len(), "Concepts extracted");
                     entities = Some(extracted);
@@ -227,7 +229,7 @@ impl DiscoveryService {
 
         // ── Phase 5b: Method inference (LLM) ────────────────────────────
         if req.include_methods && cached > 0 {
-            match infer_methods(&req.author_name, &works, &cache_dir).await {
+            match infer_methods(&req.author_name, &works, &cache_dir, inference_port).await {
                 Ok(inferred) => {
                     tracing::info!(target: "hkask.discover", methods = inferred.len(), "Methods inferred");
                     methods = inferred;

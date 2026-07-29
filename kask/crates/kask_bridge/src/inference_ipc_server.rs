@@ -32,10 +32,12 @@ use std::sync::Arc;
 
 use hkask_types::inference_ipc::{
     InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
+    ModelListEntry,
 };
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::sync::oneshot;
 
 use crate::inference::LanguageModelEmbeddingPort;
 
@@ -48,6 +50,7 @@ pub struct InferenceIpcServer {
     socket_path: PathBuf,
     /// The background listener task.
     _task: tokio::task::JoinHandle<()>,
+    _list_models_task: gpui::Task<()>,
 }
 
 impl InferenceIpcServer {
@@ -93,14 +96,47 @@ impl InferenceIpcServer {
 
         let port = inference_port.clone();
         let emb_port = embedding_port.clone();
+
+        // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
+        // `Send`, so we can't pass it into tokio::spawn. Instead, this task
+        // holds the `AsyncApp` and responds to channel requests — the same
+        // pattern as `LanguageModelEmbeddingPort`.
+        let (list_models_tx, mut list_models_rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
+        let list_models_task = cx.spawn(async move |cx| {
+            while let Some(reply) = list_models_rx.recv().await {
+                let result = cx.update(|cx| {
+                    let registry = language_model::LanguageModelRegistry::read_global(cx);
+                    registry
+                        .providers()
+                        .into_iter()
+                        .flat_map(|provider| {
+                            let provider_id = provider.id().0.clone();
+                            provider.provided_models(cx).into_iter().map(move |model| {
+                                ModelListEntry {
+                                    name: format!("{}/{}", provider_id, model.name().0),
+                                    provider: provider_id.to_string(),
+                                    supports_vision: model.supports_images(),
+                                }
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+                let _ = reply.0.send(result);
+            }
+        });
+
+        let list_models_tx = Arc::new(list_models_tx);
         let task = tokio_handle.spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
                         let port = port.clone();
                         let emb_port = emb_port.clone();
+                        let list_models_tx = list_models_tx.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, port, emb_port).await;
+                            handle_connection(stream, port, emb_port, list_models_tx).await;
                         });
                     }
                     Err(e) => {
@@ -118,6 +154,7 @@ impl InferenceIpcServer {
         Ok(Self {
             socket_path,
             _task: task,
+            _list_models_task: list_models_task,
         })
     }
 
@@ -153,6 +190,9 @@ async fn handle_connection(
     stream: tokio::net::UnixStream,
     port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
+    list_models_tx: Arc<
+        tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
+    >,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -190,7 +230,7 @@ async fn handle_connection(
         };
 
         let id = request.id;
-        let outcome = dispatch(&port, embedding_port.as_ref(), request).await;
+        let outcome = dispatch(&port, embedding_port.as_ref(), &list_models_tx, request).await;
 
         let response = InferenceResponse { id, outcome };
         let response_json = match serde_json::to_string(&response) {
@@ -236,6 +276,9 @@ async fn handle_connection(
 async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
+    list_models_tx: &Arc<
+        tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
+    >,
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
@@ -265,6 +308,32 @@ async fn dispatch(
                 },
             },
         };
+    }
+
+    // ListModels requests are dispatched via the GPUI context — they read
+    // zed's `LanguageModelRegistry` directly (not through InferencePort).
+    if matches!(request.method, InferenceMethod::ListModels) {
+        let (tx_reply, rx_reply) = oneshot::channel::<Vec<ModelListEntry>>();
+        if list_models_tx.send((tx_reply,)).is_err() {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "GPUI-side list_models task dropped — server shutting down"
+                        .to_string(),
+                },
+            };
+        }
+        match rx_reply.await {
+            Ok(models) => return InferenceOutcome::ModelList { models },
+            Err(e) => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "Connection".to_string(),
+                        message: format!("list_models channel failed: {e}"),
+                    },
+                };
+            }
+        }
     }
 
     let result: Result<InferenceResult, InferenceError> = match request.method {
@@ -307,7 +376,7 @@ async fn dispatch(
             .await
         }
         // Already handled above — unreachable.
-        InferenceMethod::Embed => unreachable!(),
+        InferenceMethod::Embed | InferenceMethod::ListModels => unreachable!(),
     };
 
     match result {

@@ -34,6 +34,7 @@
 //! - `generate_with_messages` — message array → result
 //! - `generate_vision` — prompt + images → result
 //! - `embed` — model + texts → embedding vectors (OpenAI-compatible `/embeddings`)
+//! - `list_models` — list available models from zed's `LanguageModelRegistry`
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -69,6 +70,9 @@ pub enum InferenceMethod {
     /// `embed_texts` from `InferenceParams`. The result is returned as
     /// `InferenceOutcome::Embeddings`.
     Embed,
+    /// List available models from zed's `LanguageModelRegistry`.
+    /// The result is returned as `InferenceOutcome::ModelList`.
+    ListModels,
 }
 
 /// Parameters for an inference request.
@@ -110,11 +114,29 @@ pub enum InferenceOutcome {
         #[serde(rename = "embeddings")]
         embeddings: Vec<Vec<f32>>,
     },
+    /// Model list from `InferenceMethod::ListModels`.
+    ModelList {
+        #[serde(rename = "models")]
+        models: Vec<ModelListEntry>,
+    },
     /// Error from the inference port.
     Error {
         #[serde(rename = "error")]
         error: InferenceErrorPayload,
     },
+}
+
+/// A model entry in a `ListModels` response — a serializable subset of
+/// zed's `LanguageModel` trait surface, carrying the fields the corpus
+/// server's `ModelInfo` needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelListEntry {
+    /// Full model name with provider prefix (e.g. "deepinfra/qwen/qwen3-embedding-0.6b").
+    pub name: String,
+    /// Provider id (e.g. "deepinfra", "openrouter").
+    pub provider: String,
+    /// Whether the model supports vision/multimodal input.
+    pub supports_vision: bool,
 }
 
 /// Serializable form of `InferenceError`.

@@ -96,6 +96,12 @@ struct GalleryAccess {
 hkask_mcp_server::mcp_server!(
     pub struct MediaServer {
         pub inference: Arc<InferenceRouter>,
+        /// Inference port for vision/chat calls routed through zed's
+        /// LanguageModelRegistry via the IPC bridge. Used by `vision.rs`
+        /// for face detection, scene captioning, etc. The `inference`
+        /// field above is used for media-generation calls (image/video/
+        /// speech) which aren't part of the `InferencePort` trait.
+        pub vision_port: Arc<dyn InferencePort>,
         pub gallery_state: Arc<Mutex<Option<GalleryState>>>,
         pub gallery_store: Arc<GalleryStore>,
         pub template_env: minijinja::Environment<'static>,
@@ -384,7 +390,7 @@ impl MediaServer {
         } else {
             let (vision_model, _vision_label) = self.require_vision().await?;
             let v = gallery::vision::validate_face_reference(
-                &self.inference,
+                &self.vision_port,
                 &self.template_env,
                 image_url,
                 Some(vision_model),
@@ -414,7 +420,7 @@ impl MediaServer {
             match self.require_vision().await {
                 Ok((vision_model, _)) => {
                     match gallery::vision::embed_face(
-                        &self.inference,
+                        &self.vision_port,
                         &self.template_env,
                         image_url,
                         Some(vision_model),
@@ -614,7 +620,7 @@ impl MediaServer {
             // Produce a query embedding once per face tag. Used for the fast
             // cosine path; falls back to LLM-only if extraction fails.
             let query_embedding: Option<Vec<f32>> = match gallery::vision::embed_face(
-                &self.inference,
+                &self.vision_port,
                 &self.template_env,
                 &query_url,
                 Some(vision_model),
@@ -687,7 +693,7 @@ impl MediaServer {
                 };
 
                 match gallery::vision::match_faces(
-                    &self.inference,
+                    &self.vision_port,
                     &self.template_env,
                     &ref_url,
                     &query_url,
@@ -931,7 +937,7 @@ impl MediaServer {
     /// Tries: fal.ai → DeepInfra → OpenRouter → Together AI.
     /// Returns (model_name, label) or None if no vision provider is configured.
     async fn resolve_vision_model(&self) -> Option<(&'static str, &'static str)> {
-        let models = self.inference.list_vision_models().await;
+        let models = self.vision_port.list_vision_models().await;
 
         for model in &models {
             // Check the provider prefix in the model name.
@@ -1052,7 +1058,7 @@ impl MediaServer {
 
             if run_faces {
                 match vision::detect_faces(
-                    &self.inference,
+                    &self.vision_port,
                     &self.template_env,
                     &image_url,
                     Some(vision_model),
@@ -1073,7 +1079,7 @@ impl MediaServer {
 
             if run_objects {
                 match vision::detect_objects(
-                    &self.inference,
+                    &self.vision_port,
                     &self.template_env,
                     &image_url,
                     Some(vision_model),
@@ -1094,7 +1100,7 @@ impl MediaServer {
 
             if run_colors {
                 match vision::analyze_colors(
-                    &self.inference,
+                    &self.vision_port,
                     &self.template_env,
                     &image_url,
                     Some(vision_model),
@@ -1122,7 +1128,7 @@ impl MediaServer {
 
             if run_composition {
                 match vision::analyze_composition(
-                    &self.inference,
+                    &self.vision_port,
                     &self.template_env,
                     &image_url,
                     Some(vision_model),
@@ -1153,7 +1159,7 @@ impl MediaServer {
 
             if run_scene {
                 match vision::caption_scene(
-                    &self.inference,
+                    &self.vision_port,
                     &self.template_env,
                     &image_url,
                     Some(vision_model),
@@ -1345,8 +1351,13 @@ impl rmcp::ServerHandler for MediaServer {}
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
-    // Build the inference router for vision LLM tasks.
-    // Backends are constructed lazily — only those with configured API keys are available.
+    // Resolve the inference port for vision/chat — routes through zed's
+    // LanguageModelRegistry via the IPC bridge when available.
+    let vision_port = hkask_inference::resolve_inference_port().await;
+
+    // Build the inference router for media-generation tasks (image, video,
+    // speech, transcription). These APIs (fal.ai, Together) aren't part of
+    // zed's LanguageModel abstraction — they need the standalone router.
     let inference_config = hkask_inference::InferenceConfig::from_env();
     let inference = Arc::new(InferenceRouter::new(inference_config));
 
@@ -1377,6 +1388,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             Ok(MediaServer::new(
                 ctx.webid,
                 inference.clone(),
+                vision_port.clone(),
                 Arc::new(Mutex::new(None)),
                 gallery_store.clone(),
                 templates::create_env(),

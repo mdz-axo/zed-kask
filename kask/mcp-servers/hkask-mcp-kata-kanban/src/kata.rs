@@ -118,20 +118,18 @@ impl KataEngine {
         }
     }
 
-    /// Create a KataEngine with inference configured from environment.
+    /// Create a KataEngine with inference resolved from the environment.
     ///
-    /// `[NORMATIVE]` Encapsulates `InferenceConfig::from_env()` and
-    /// `InferenceRouter::new()` so CLI and API surfaces don't construct
-    /// inference directly (P7 — Evolutionary Architecture).
+    /// Routes through zed's `LanguageModelRegistry` via the IPC bridge when
+    /// available (`HKASK_INFERENCE_SOCKET` set), falling back to
+    /// `InferenceRouter` with env-var keys when running standalone.
     ///
     /// `[P5]` Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  registry must be initialized; inference env vars must be set or defaults used
-    /// post: returns KataEngine with InferenceRouter built from env config
-    #[must_use]
-    pub fn from_env(registry: SqliteRegistry) -> Self {
-        let inf_cfg = hkask_inference::InferenceConfig::from_env();
-        let inference = hkask_inference::InferenceRouter::new(inf_cfg);
-        Self::new(Arc::new(inference), registry)
+    /// pre:  registry must be initialized
+    /// post: returns KataEngine with inference port resolved from env
+    pub async fn from_env(registry: SqliteRegistry) -> Self {
+        let inference = hkask_inference::resolve_inference_port().await;
+        Self::new(inference, registry)
     }
 
     /// Set a consent checker that gates kata execution.

@@ -24,7 +24,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::inference_svc::{InferenceContext, ModelInfo};
-use hkask_inference::InferenceRouter;
 use hkask_services_core::ServiceError;
 
 /// Default cache time-to-live: 4 hours.
@@ -100,9 +99,20 @@ impl ModelCache {
             return Ok(entries);
         }
 
-        // Miss — fetch live. Lock is NOT held across this await.
-        let router = InferenceRouter::new(ctx.inference_config.clone());
-        let models: Vec<ModelInfo> = router
+        // Miss — fetch live via the shared port (routes through zed's
+        // LanguageModelRegistry via the IPC bridge).
+        let port = ctx
+            .shared_port
+            .as_ref()
+            .ok_or_else(|| ServiceError::Domain {
+                domain: hkask_services_core::DomainKind::Wallet,
+                kind: hkask_services_core::ErrorKind::ServiceUnavailable,
+                source: None,
+                message: "No inference port available for model listing — \
+                    the zed IPC bridge is not configured"
+                    .to_string(),
+            })?;
+        let models: Vec<ModelInfo> = port
             .list_models()
             .await
             .into_iter()
@@ -143,15 +153,39 @@ impl ModelCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_types::InferencePort;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// A mock InferencePort whose `list_models` returns empty — for tests
+    /// that need an InferenceContext with a shared port but don't care about
+    /// actual model listing.
+    struct EmptyListPort;
+
+    impl InferencePort for EmptyListPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _params: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Generation(
+                    "not implemented".into(),
+                ))
+            })
+        }
+    }
 
     fn uncached_config() -> hkask_inference::InferenceConfig {
-        // Empty Ollama base URL + no cloud keys -> no backends construct ->
-        // list_models returns empty. Guarantees a deterministic live fetch,
-        // independent of whether a real Ollama daemon is running.
-        hkask_inference::InferenceConfig {
-            ollama_base_url: String::new(),
-            ..hkask_inference::InferenceConfig::default()
-        }
+        hkask_inference::InferenceConfig::default()
     }
 
     /// One self-contained lifecycle test — the cache is process-global, so a
@@ -159,7 +193,11 @@ mod tests {
     #[tokio::test]
     async fn cache_lifecycle_populate_hit_invalidate_refetch() {
         ModelCache::invalidate();
-        let ctx = InferenceContext::from_parts(None, "x", uncached_config());
+        let ctx = InferenceContext::from_parts(
+            Some(std::sync::Arc::new(EmptyListPort)),
+            "x",
+            uncached_config(),
+        );
 
         // 1. Inject a fresh entry; list_models must return it WITHOUT fetching
         //    (a live fetch with the uncached config returns []).

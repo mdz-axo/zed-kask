@@ -1,7 +1,6 @@
 //! LLM concept extraction and method inference for the discovery pipeline.
 
 use crate::corpus::embed::{Entity, EntityConfig};
-use hkask_inference::{InferenceConfig, InferenceRouter};
 use hkask_memory::salience::{DeclaredMethod, MethodThresholds};
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use hkask_types::InferencePort;
@@ -38,6 +37,7 @@ pub(crate) fn parse_template_model(template_src: &str) -> Option<String> {
 pub(crate) async fn extract_concepts(
     author_name: &str,
     works: &[DiscoveredWork],
+    inference_port: &dyn InferencePort,
 ) -> Result<EntityConfig, ServiceError> {
     // Build paper list for template with titles and abstracts
     let papers: Vec<serde_json::Value> = works
@@ -104,16 +104,15 @@ pub(crate) async fn extract_concepts(
             }
         })?;
 
-    // Call inference
-    let inf_cfg = InferenceConfig::from_env();
-    let router = InferenceRouter::new(inf_cfg);
+    // Call inference through the shared port (routes through zed's
+    // LanguageModelRegistry via the IPC bridge).
     let params = hkask_types::template::LLMParameters {
         temperature: 0.3,
         max_tokens: 1024,
         ..Default::default()
     };
 
-    let result = router
+    let result = inference_port
         .generate_with_model(&prompt, &params, model_override.as_deref(), None)
         .await
         .map_err(|e| {
@@ -159,6 +158,7 @@ pub(crate) async fn infer_methods(
     author_name: &str,
     works: &[DiscoveredWork],
     cache_dir: &Path,
+    inference_port: &dyn InferencePort,
 ) -> Result<Vec<DeclaredMethod>, ServiceError> {
     // Sample up to 5 passages from cached content (first ~800 chars of each)
     let mut sample_passages: Vec<serde_json::Value> = Vec::new();
@@ -232,16 +232,14 @@ pub(crate) async fn infer_methods(
             }
         })?;
 
-    // Call inference
-    let inf_cfg = InferenceConfig::from_env();
-    let router = InferenceRouter::new(inf_cfg);
+    // Call inference through the shared port.
     let params = hkask_types::template::LLMParameters {
         temperature: 0.3,
         max_tokens: 1024,
         ..Default::default()
     };
 
-    let result = router
+    let result = inference_port
         .generate_with_model(&prompt, &params, model_override.as_deref(), None)
         .await
         .map_err(|e| {

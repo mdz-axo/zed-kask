@@ -8,10 +8,8 @@ use super::types::{
     CURATOR_PERSONA, CorpusConfig, DimensionCentroidResult, EmbedPhase, EmbedProgress, EmbedResult,
     ProgressFn,
 };
-use super::utils::strip_provider_prefix;
 use crate::corpus::embed::Entity;
 use crate::runtime::TripleExtraction;
-use hkask_inference::{InferenceConfig, InferenceRouter};
 use hkask_memory::SemanticMemory;
 use hkask_memory::salience::{self, EntityTags};
 use hkask_services_core::{DomainKind, ErrorKind, HkaskSettings, ServiceError};
@@ -37,7 +35,7 @@ impl EmbedService {
         db_passphrase: &str,
         cache_dir: Option<&Path>,
         progress: Option<ProgressFn>,
-        inference_port: &dyn hkask_types::InferencePort,
+        inference_port: std::sync::Arc<dyn hkask_types::InferencePort>,
     ) -> Result<EmbedResult, ServiceError> {
         // P9: Regulation span
         tracing::info!(target: "hkask.embed", operation = "embed_corpus", config = %config_path.display(), "REG");
@@ -366,7 +364,7 @@ impl EmbedService {
 
         let settings_model = hkask_services_core::HkaskSettings::load().classifier_model();
         if !settings_model.is_empty() {
-            classifier_config.model = strip_provider_prefix(&settings_model).to_string();
+            classifier_config.model = settings_model;
         }
 
         let texts: Vec<String> = all_passages.iter().map(|p| p.text.clone()).collect();
@@ -379,7 +377,8 @@ impl EmbedService {
         );
 
         let classify_results =
-            crate::runtime::classify_batch(&texts, classifier_config, None).await?;
+            crate::runtime::classify_batch(&texts, classifier_config, Arc::clone(&inference_port))
+                .await?;
 
         for (passage, result) in all_passages.iter_mut().zip(classify_results.iter()) {
             passage.section_type = result.category.clone();
@@ -410,14 +409,16 @@ impl EmbedService {
                     "Starting fusion-routed h_mem extraction"
                 );
 
-                let inference_config = InferenceConfig::from_env();
-                let router = std::sync::Arc::new(InferenceRouter::new(inference_config));
+                // Use the shared inference port (routes through zed's
+                // LanguageModelRegistry via the IPC bridge). The fusion
+                // config in LLMParameters is forwarded to zed, which has
+                // its own FusionLanguageModel provider.
                 let semaphore =
                     std::sync::Arc::new(tokio::sync::Semaphore::new(classifier_config.concurrency));
 
                 let mut handles = Vec::with_capacity(texts.len());
                 for (i, text) in texts.iter().enumerate() {
-                    let router = router.clone();
+                    let inference_port = inference_port.clone();
                     let fusion = fusion.clone();
                     let system_prompt = classifier_config.system_prompt.clone();
                     let permit = semaphore.clone();
@@ -442,7 +443,7 @@ impl EmbedService {
                             system_prompt: Some(system_prompt),
                             ..Default::default()
                         };
-                        let result = router.generate(&prompt, &params, None).await;
+                        let result = inference_port.generate(&prompt, &params, None).await;
                         (i, result)
                     }));
                 }
@@ -478,10 +479,14 @@ impl EmbedService {
                     let settings_model = settings.classifier_model();
                     let mut model_config = classifier_config.clone();
                     if !settings_model.is_empty() {
-                        model_config.model = strip_provider_prefix(&settings_model).to_string();
+                        model_config.model = settings_model;
                     }
-                    let fallback =
-                        crate::runtime::extract_triples_batch(&texts, &model_config).await?;
+                    let fallback = crate::runtime::extract_triples_batch(
+                        &texts,
+                        &model_config,
+                        Arc::clone(&inference_port),
+                    )
+                    .await?;
                     extractions = fallback;
                 }
 
@@ -503,7 +508,7 @@ impl EmbedService {
                 let settings_model = settings.classifier_model();
                 let mut model_config = classifier_config.clone();
                 if !settings_model.is_empty() {
-                    model_config.model = strip_provider_prefix(&settings_model).to_string();
+                    model_config.model = settings_model;
                 }
 
                 tracing::info!(
@@ -512,8 +517,12 @@ impl EmbedService {
                     "Single-model h_mem extraction (no fusion configured)"
                 );
 
-                let a_extractions =
-                    crate::runtime::extract_triples_batch(&texts, &model_config).await?;
+                let a_extractions = crate::runtime::extract_triples_batch(
+                    &texts,
+                    &model_config,
+                    Arc::clone(&inference_port),
+                )
+                .await?;
 
                 for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
                     passage.semantic_triples = ext.clone();

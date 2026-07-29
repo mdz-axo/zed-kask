@@ -12,7 +12,7 @@
 //!
 //! All prompts are backed by Jinja2 templates embedded in templates.rs.
 
-use hkask_inference::InferenceRouter;
+use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ pub struct FaceMatchResult {
 /// Falls back to raw text if JSON parsing fails.
 ///
 pub async fn detect_faces(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,
@@ -117,7 +117,7 @@ pub async fn detect_faces(
 /// Returns structured pass/fail with specific reasons for rejection.
 ///
 pub async fn validate_face_reference(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,
@@ -182,7 +182,7 @@ pub async fn validate_face_reference(
 /// Image 1 is the reference portrait, Image 2 is the query face.
 ///
 pub async fn match_faces(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     reference_url: &str,
     query_url: &str,
@@ -265,7 +265,7 @@ pub struct FaceEmbeddingResult {
 /// Returns the embedding as a `Vec<f32>` for storage as raw bytes.
 ///
 pub async fn embed_face(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,
@@ -338,7 +338,7 @@ pub async fn embed_face(
 /// location, confidence, description). Falls back to raw text.
 ///
 pub async fn detect_objects(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,
@@ -368,7 +368,7 @@ pub async fn detect_objects(
 /// and saturation. Falls back to raw text.
 ///
 pub async fn analyze_colors(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,
@@ -398,7 +398,7 @@ pub async fn analyze_colors(
 /// Falls back to raw text.
 ///
 pub async fn analyze_composition(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,
@@ -425,7 +425,7 @@ pub async fn analyze_composition(
 /// colors, composition, mood).
 ///
 pub async fn caption_scene(
-    inference: &Arc<InferenceRouter>,
+    inference: &Arc<dyn InferencePort>,
     template_env: &Environment<'static>,
     image_url: &str,
     vision_model: Option<&str>,

@@ -143,6 +143,9 @@ impl InferenceIpcClient {
             InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
                 "received Embeddings outcome for a non-embed request".into(),
             )),
+            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
+                "received ModelList outcome for a non-list-models request".into(),
+            )),
         }
     }
 
@@ -220,6 +223,9 @@ impl InferenceIpcClient {
             InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
                 "received Result outcome for an embed request".into(),
             )),
+            InferenceOutcome::ModelList { .. } => Err(EmbeddingGenerationError::Connection(
+                "received ModelList outcome for an embed request".into(),
+            )),
         }
     }
 
@@ -237,6 +243,79 @@ impl InferenceIpcClient {
             return Err(EmbeddingGenerationError::EmptyResponse);
         }
         self.call_embed(model, texts).await
+    }
+
+    /// List available models from zed's `LanguageModelRegistry` via the IPC bridge.
+    async fn call_list_models(
+        &self,
+    ) -> Result<Vec<hkask_types::inference_ipc::ModelListEntry>, InferenceError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: InferenceMethod::ListModels,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+            },
+        };
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut guard = self.stream.lock().await;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
+
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+
+        if line.is_empty() {
+            *guard = None;
+            return Err(InferenceError::Connection(
+                "IPC socket closed by server".into(),
+            ));
+        }
+
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+
+        if response.id != id {
+            return Err(InferenceError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )));
+        }
+
+        match response.outcome {
+            InferenceOutcome::ModelList { models } => Ok(models),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            _ => Err(InferenceError::Connection(
+                "received unexpected outcome for list_models request".into(),
+            )),
+        }
     }
 }
 
@@ -341,5 +420,32 @@ impl InferencePort for InferenceIpcClient {
         let texts = texts.to_vec();
         let this = self;
         async move { this.embed(&model, &texts).await }.boxed()
+    }
+
+    fn list_models<'a>(
+        &'a self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<hkask_types::ModelEntry>> + Send + 'a>,
+    > {
+        let this = self;
+        Box::pin(async move {
+            match this.call_list_models().await {
+                Ok(entries) => entries
+                    .into_iter()
+                    .map(|e| {
+                        let name = e.name.clone();
+                        hkask_types::ModelEntry {
+                            prefixed_name: name.clone(),
+                            model: name.split('/').nth(1).unwrap_or(&name).to_string(),
+                            supports_vision: e.supports_vision,
+                        }
+                    })
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!(target: "hkask.inference", error = %e, "IPC list_models failed — returning empty");
+                    Vec::new()
+                }
+            }
+        })
     }
 }

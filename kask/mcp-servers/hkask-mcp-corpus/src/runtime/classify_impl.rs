@@ -3,13 +3,16 @@
 //! Classifier configs live in registry/classify/{name}.yaml.
 //! corpus.yaml references which one to use via the `classifier` field.
 //!
-//! Supports DeepInfra (OpenAI-compatible) with concurrent batch requests.
-//! Graceful degradation: no API key → all passages default to fallback category.
+//! Routes through zed's `LanguageModelRegistry` via `InferencePort::generate_with_model`,
+//! which forwards the provider-prefixed model string to the IPC bridge.
+//! Graceful degradation: no model resolved → all passages default to fallback category.
 
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
-use reqwest::Client;
+use hkask_types::InferencePort;
+use hkask_types::template::LLMParameters;
 use serde::Deserialize;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -62,48 +65,6 @@ pub struct TripleExtraction {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// OpenAI-compatible chat completion response.
-#[derive(Debug, Deserialize)]
-struct ChatResponse {
-    choices: Vec<Choice>,
-    #[serde(default)]
-    usage: Option<Usage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Choice {
-    message: Message,
-}
-
-#[derive(Debug, Deserialize)]
-struct Message {
-    content: String,
-}
-
-/// Token usage from the API response, including cached token details.
-#[derive(Debug, Deserialize)]
-struct Usage {
-    prompt_tokens: u64,
-    completion_tokens: u64,
-    /// Cached prompt tokens (DeepInfra, OpenRouter, Together).
-    /// Returns the number of input tokens served from cache at a discount.
-    #[serde(default)]
-    prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PromptTokensDetails {
-    #[serde(default)]
-    cached_tokens: u64,
-}
-
-/// Error response body that may still include usage data.
-#[derive(Debug, Deserialize)]
-struct ErrorResponse {
-    #[serde(default)]
-    usage: Option<Usage>,
-}
-
 /// Classifier configuration loaded from registry/classify/{name}.yaml.
 #[derive(Debug, Deserialize)]
 pub struct ClassifierYaml {
@@ -113,11 +74,12 @@ pub struct ClassifierYaml {
 #[derive(Debug, Deserialize)]
 pub struct ClassifierDef {
     pub name: String,
-    /// Provider-native model id sent to the classifier API. When empty,
-    /// `ClassifierConfig::from_def` resolves the canonical classifier model
-    /// via `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL` and strips
-    /// the router prefix. Leave empty in `registry/classify/*.yaml` to defer
-    /// to the single canonical path.
+    /// Provider-prefixed model id (e.g. `DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507`)
+    /// passed as `model_override` to `InferencePort::generate_with_model`, which
+    /// forwards it to zed's `LanguageModelRegistry` via the IPC bridge. When empty,
+    /// `ClassifierConfig::from_def` resolves the canonical classifier model via
+    /// `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. Leave empty in
+    /// `registry/classify/*.yaml` to defer to the single canonical path.
     #[serde(default)]
     pub model: String,
     #[serde(default)]
@@ -251,16 +213,13 @@ impl ClassifierConfig {
                 (def.cost_input_nj_per_token, def.cost_output_nj_per_token)
             };
         // Canonical model resolution: an empty `model:` in the YAML defers to
-        // `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. The router
-        // prefix (e.g. `DeepInfra/`) is stripped so the raw provider-native id is
-        // sent to `base_url`; the YAML's `provider`/`base_url`/`api_key_env`
-        // determine the destination and must align with the canonical model's provider.
+        // `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. The full
+        // provider-prefixed model string is passed as `model_override` to
+        // `InferencePort::generate_with_model`, which forwards it to zed's
+        // `LanguageModelRegistry` via the IPC bridge — the registry resolves
+        // the provider from the prefix, so we no longer strip it here.
         let model = if def.model.is_empty() {
-            let canonical = hkask_inference::model_constants::classifier_model();
-            match hkask_inference::ProviderId::parse_from_model(&canonical) {
-                Some((_, raw)) => raw.to_string(),
-                None => canonical,
-            }
+            hkask_inference::model_constants::classifier_model()
         } else {
             def.model.clone()
         };
@@ -306,7 +265,7 @@ fn provider_pricing(provider: &str) -> (u64, u64) {
 
 /// Classify a single passage.
 async fn classify_one(
-    client: &Client,
+    inference_port: &dyn InferencePort,
     config: &ClassifierConfig,
     text: &str,
 ) -> Result<ClassifyResult, ServiceError> {
@@ -324,80 +283,38 @@ async fn classify_one(
         });
     }
 
-    let body = serde_json::json!({
-        "model": config.model,
-        "messages": [
-            {"role": "system", "content": config.system_prompt},
-            {"role": "user", "content": text}
-        ],
-        "temperature": config.temperature,
-        "max_tokens": config.max_tokens
-    });
+    let parameters = LLMParameters {
+        temperature: config.temperature as f32,
+        max_tokens: config.max_tokens,
+        top_p: 1.0,
+        top_k: 0,
+        system_prompt: Some(config.system_prompt.clone()),
+        ..Default::default()
+    };
 
-    let resp = client
-        .post(&config.base_url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .json(&body)
-        .timeout(config.timeout)
-        .send()
+    let result = match inference_port
+        .generate_with_model(text, &parameters, Some(&config.model), None)
         .await
-        .map_err(|e| {
-            let msg = format!("Classifier HTTP error: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: None,
-                message: msg,
-            }
-        })?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        // Recover token usage from error response — provider may still charge for input tokens
-        let error_tokens = serde_json::from_str::<ErrorResponse>(&body)
-            .ok()
-            .and_then(|e| e.usage)
-            .map(|u| (u.prompt_tokens, u.completion_tokens))
-            .unwrap_or((0, 0));
-
-        let error_cost = (error_tokens.0 * config.cost_input_nj_per_token) / 1_000_000
-            + (error_tokens.1 * config.cost_output_nj_per_token) / 1_000_000;
-
-        tracing::warn!(
-            status = %status.as_u16(),
-            prompt_tokens = error_tokens.0,
-            completion_tokens = error_tokens.1,
-            cost_urj_recovered = error_cost,
-            "Classifier HTTP error — returning fallback with recovered cost data"
-        );
-
-        return Ok(ClassifyResult {
-            category: config.fallback_category.clone(),
-            prompt_tokens: error_tokens.0,
-            completion_tokens: error_tokens.1,
-            cached_tokens: 0,
-            cost_urj: error_cost,
-            failed: true,
-            provider: config.model.clone(),
-        });
-    }
-
-    let chat: ChatResponse = resp.json().await.map_err(|e| {
-        let msg = format!("Classifier JSON parse error: {e}");
-        ServiceError::Domain {
-            domain: DomainKind::Wallet,
-            kind: ErrorKind::ServiceUnavailable,
-            source: None,
-            message: msg,
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Classifier inference error — returning fallback"
+            );
+            return Ok(ClassifyResult {
+                category: config.fallback_category.clone(),
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                cached_tokens: 0,
+                cost_urj: 0,
+                failed: true,
+                provider: config.model.clone(),
+            });
         }
-    })?;
+    };
 
-    let content = chat
-        .choices
-        .first()
-        .map(|c| c.message.content.as_str())
-        .unwrap_or("");
+    let content = result.text.as_str();
 
     // P3.1: mandatory output guard — scan model output before processing
     let output_scan = GUARD.scan_output(content);
@@ -422,29 +339,19 @@ async fn classify_one(
         }
     };
 
-    let tokens = chat
-        .usage
-        .map(|u| {
-            let cached = u
-                .prompt_tokens_details
-                .map(|d| d.cached_tokens)
-                .unwrap_or(0);
-            (u.prompt_tokens, u.completion_tokens, cached)
-        })
-        .unwrap_or((0, 0, 0));
-
-    // Compute API cost: uncached input + cached input (discounted) + output
-    let uncached_input = tokens.0.saturating_sub(tokens.2);
-    let input_cost = (uncached_input * config.cost_input_nj_per_token) / 1_000_000;
-    let cache_cost = (tokens.2 * config.cost_cache_read_nj_per_token) / 1_000_000;
-    let output_cost = (tokens.1 * config.cost_output_nj_per_token) / 1_000_000;
+    let prompt_tokens = u64::from(result.usage.prompt_tokens);
+    let completion_tokens = u64::from(result.usage.completion_tokens);
+    // The IPC bridge does not surface cached-token breakdown; cost is computed
+    // from the totals at the configured input rate.
+    let input_cost = (prompt_tokens * config.cost_input_nj_per_token) / 1_000_000;
+    let output_cost = (completion_tokens * config.cost_output_nj_per_token) / 1_000_000;
 
     Ok(ClassifyResult {
         category,
-        prompt_tokens: tokens.0,
-        completion_tokens: tokens.1,
-        cached_tokens: tokens.2,
-        cost_urj: input_cost + cache_cost + output_cost,
+        prompt_tokens,
+        completion_tokens,
+        cached_tokens: 0,
+        cost_urj: input_cost + output_cost,
         failed: false,
         provider: config.model.clone(),
     })
@@ -457,18 +364,18 @@ async fn classify_one(
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
 /// pre:  texts must be non-empty; config must have valid timeout and concurrency
-/// post: returns `Vec<ClassifyResult>` in input order; failed classifications fall back to config.fallback_category; all fallback if no API key
+/// post: returns `Vec<ClassifyResult>` in input order; failed classifications fall back to config.fallback_category; all fallback if no model resolved
 #[must_use = "result must be used"]
 pub async fn classify_batch(
     texts: &[String],
     config: ClassifierConfig,
-    provider: Option<&dyn crate::runtime::provider_intel::ProviderIntelligence>,
+    inference_port: Arc<dyn InferencePort>,
 ) -> Result<Vec<ClassifyResult>, ServiceError> {
     // P9: Regulation span
     tracing::info!(target: "hkask.classify", operation = "classify_batch", item_count = texts.len(), "REG");
 
-    if config.api_key.is_empty() {
-        // No API key — return all fallback category (skip classification)
+    if config.model.is_empty() {
+        // No model resolved — return all fallback category (skip classification)
         let fallback = &config.fallback_category;
         return Ok(texts
             .iter()
@@ -484,67 +391,19 @@ pub async fn classify_batch(
             .collect());
     }
 
-    // Resolve actual pricing: prefer provider intelligence, fall back to static config
-    let (input_cost_nj, output_cost_nj, cache_read_nj) = if let Some(pi) = provider {
-        match pi.actual_cost(&config.api_key, &config.model).await {
-            Ok(rate) => (
-                rate.input_nj_per_unit,
-                rate.output_nj_per_unit,
-                rate.cache_read_nj_per_unit,
-            ),
-            Err(_) => {
-                tracing::warn!(
-                    target: "hkask.classify",
-                    provider = %pi.provider_id(),
-                    "Failed to fetch actual cost, falling back to static pricing"
-                );
-                (
-                    config.cost_input_nj_per_token,
-                    config.cost_output_nj_per_token,
-                    config.cost_cache_read_nj_per_token,
-                )
-            }
-        }
-    } else {
-        (
-            config.cost_input_nj_per_token,
-            config.cost_output_nj_per_token,
-            config.cost_cache_read_nj_per_token,
-        )
-    };
-
-    // Apply resolved pricing to config before sharing across tasks
-    let mut config = config;
-    config.cost_input_nj_per_token = input_cost_nj;
-    config.cost_output_nj_per_token = output_cost_nj;
-    config.cost_cache_read_nj_per_token = cache_read_nj;
-
-    let client = Client::builder()
-        .timeout(config.timeout)
-        .build()
-        .map_err(|e| {
-            let msg = format!("Classifier client build error: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: None,
-                message: msg,
-            }
-        })?;
-
-    let config = std::sync::Arc::new(config.clone()); // share across spawned tasks
+    let config = std::sync::Arc::new(config); // share across spawned tasks
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
     let mut handles = Vec::with_capacity(texts.len());
 
     for (i, text) in texts.iter().enumerate() {
-        let client = client.clone();
-        let cfg = config.clone();
+        let inference_port = Arc::clone(&inference_port);
+        let cfg = Arc::clone(&config);
         let text = text.clone();
-        let permit = semaphore.clone();
+        let permit = Arc::clone(&semaphore);
 
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire().await;
-            let result = classify_one(&client, &cfg, &text).await;
+            let result = classify_one(inference_port.as_ref(), &cfg, &text).await;
             (i, result)
         }));
     }
@@ -597,50 +456,38 @@ pub async fn classify_batch(
 ///
 /// Returns results in the same order as the input texts.
 /// Failed extractions default to empty TripleExtraction.
-/// Graceful degradation: no API key → all empty extractions.
+/// Graceful degradation: no model resolved → all empty extractions.
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
 /// pre:  texts must be non-empty; config must have valid timeout and concurrency
-/// post: returns `Vec<TripleExtraction>` in input order; failed extractions fall back to empty; all empty if no API key
+/// post: returns `Vec<TripleExtraction>` in input order; failed extractions fall back to empty; all empty if no model resolved
 #[must_use = "result must be used"]
 pub async fn extract_triples_batch(
     texts: &[String],
     config: &ClassifierConfig,
+    inference_port: Arc<dyn InferencePort>,
 ) -> Result<Vec<TripleExtraction>, ServiceError> {
     // P9: Regulation span
     tracing::info!(target: "hkask.classify", operation = "extract_triples_batch", item_count = texts.len(), "REG");
 
-    if config.api_key.is_empty() {
-        tracing::info!("No API key for h_mem extraction — returning empty extractions");
+    if config.model.is_empty() {
+        tracing::info!("No model resolved for h_mem extraction — returning empty extractions");
         return Ok(texts.iter().map(|_| TripleExtraction::default()).collect());
     }
 
-    let client = Client::builder()
-        .timeout(config.timeout)
-        .build()
-        .map_err(|e| {
-            let msg = format!("HMem extractor client build error: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: None,
-                message: msg,
-            }
-        })?;
-
-    let config = std::sync::Arc::new(config.clone());
-    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
+    let config = Arc::new(config.clone());
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(config.concurrency));
     let mut handles = Vec::with_capacity(texts.len());
 
     for (i, text) in texts.iter().enumerate() {
-        let client = client.clone();
-        let cfg = config.clone();
+        let inference_port = Arc::clone(&inference_port);
+        let cfg = Arc::clone(&config);
         let text = text.clone();
-        let permit = semaphore.clone();
+        let permit = Arc::clone(&semaphore);
 
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire().await;
-            let result = extract_triples_one(&client, &cfg, &text).await;
+            let result = extract_triples_one(inference_port.as_ref(), &cfg, &text).await;
             (i, result)
         }));
     }
@@ -666,7 +513,7 @@ pub async fn extract_triples_batch(
 
 /// Extract h_mems from a single passage.
 async fn extract_triples_one(
-    client: &Client,
+    inference_port: &dyn InferencePort,
     config: &ClassifierConfig,
     text: &str,
 ) -> Result<TripleExtraction, ServiceError> {
@@ -676,25 +523,20 @@ async fn extract_triples_one(
         return Ok(TripleExtraction::default());
     }
 
-    let body = serde_json::json!({
-        "model": config.model,
-        "messages": [
-            {"role": "system", "content": config.system_prompt},
-            {"role": "user", "content": text}
-        ],
-        "temperature": config.temperature,
-        "max_tokens": config.max_tokens
-    });
+    let parameters = LLMParameters {
+        temperature: config.temperature as f32,
+        max_tokens: config.max_tokens,
+        top_p: 1.0,
+        top_k: 0,
+        system_prompt: Some(config.system_prompt.clone()),
+        ..Default::default()
+    };
 
-    let resp = client
-        .post(&config.base_url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .json(&body)
-        .timeout(config.timeout)
-        .send()
+    let result = inference_port
+        .generate_with_model(text, &parameters, Some(&config.model), None)
         .await
         .map_err(|e| {
-            let msg = format!("HMem extractor HTTP error: {e}");
+            let msg = format!("HMem extractor inference error: {e}");
             ServiceError::Domain {
                 domain: DomainKind::Wallet,
                 kind: ErrorKind::ServiceUnavailable,
@@ -703,35 +545,7 @@ async fn extract_triples_one(
             }
         })?;
 
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(ServiceError::Domain {
-            domain: DomainKind::Wallet,
-            kind: ErrorKind::ServiceUnavailable,
-            source: None,
-            message: format!(
-                "HMem extractor error {status}: {}",
-                body.chars().take(200).collect::<String>()
-            ),
-        });
-    }
-
-    let chat: ChatResponse = resp.json().await.map_err(|e| {
-        let msg = format!("HMem extractor JSON parse error: {e}");
-        ServiceError::Domain {
-            domain: DomainKind::Wallet,
-            kind: ErrorKind::ServiceUnavailable,
-            source: None,
-            message: msg,
-        }
-    })?;
-
-    let content = chat
-        .choices
-        .first()
-        .map(|c| c.message.content.as_str())
-        .unwrap_or("");
+    let content = result.text.as_str();
 
     // P3.1: mandatory output guard — scan model output before parsing
     let output_scan = GUARD.scan_output(content);

@@ -706,7 +706,7 @@ impl MediaServer {
             let (vision_model, _vision_label) = self.require_vision().await?;
 
             let validation = vision::validate_face_reference(
-                &self.inference,
+                &self.vision_port,
                 &self.template_env,
                 &image_url,
                 Some(vision_model),

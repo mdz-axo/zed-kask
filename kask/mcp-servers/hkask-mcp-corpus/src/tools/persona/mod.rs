@@ -304,7 +304,7 @@ impl CorpusServer {
                 &passphrase,
                 None,
                 Some(progress),
-                &self.inference_router,
+                self.inference_router.clone(),
             )
             .await
             .map_err(|e| McpToolError::internal(e.to_string()))?;
@@ -350,7 +350,7 @@ impl CorpusServer {
             };
 
             let inference_ctx =
-                crate::inference_svc::InferenceContext::from_parts(None, &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model, inf_cfg);
 
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
@@ -435,7 +435,7 @@ impl CorpusServer {
             };
 
             let inference_ctx =
-                crate::inference_svc::InferenceContext::from_parts(None, &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model, inf_cfg);
 
             let request = crate::compose::ComposeRequest {
                 prompt,
@@ -697,7 +697,7 @@ impl CorpusServer {
             };
 
             let inference_ctx =
-                crate::inference_svc::InferenceContext::from_parts(None, &gen_model, inf_cfg);
+                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model, inf_cfg);
 
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,

@@ -20,7 +20,6 @@ mod passage;
 mod service;
 mod strategies;
 mod types;
-mod utils;
 
 pub use html::strip_html_tags;
 pub use ocr::ocr_pdf_bytes;
