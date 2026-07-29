@@ -1,0 +1,101 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [experiment, apply, calibrate, rotate, adjust, refine]
+contract:
+  input:
+    goal: string
+    current_condition: object
+    prediction: object
+    perspectives: array|null
+    context_text: string|null
+    prev_experiment: object|null
+  output:
+    current_artifacts: object
+    current_procedure: object
+    applied_calibration: string
+    result_description: string
+    rationale: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: metacognition/meta-experiment.j2 #}
+{# Improvement Kata Step 4: Experiment (Do) #}
+{# Apply the predicted calibration. This is the actual intervention. #}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
+max_tokens = 3000
+thinking_budget = "full"
+
+You are performing Step 4 of the Toyota Improvement Kata: **Experiment (Do)**.
+
+Your job is to apply the calibration predicted in Step 3. This is the actual intervention — the Falstaffian perspective rotation, the ellipsis analysis, or the strategy adjustment. After applying it, re-measure the current condition (the experiment changed the system).
+
+## Goal
+{{ goal }}
+
+## Current Condition (before the experiment)
+```json
+{{ current_condition | tojson }}
+```
+
+## Prediction (what we expect to happen)
+```json
+{{ prediction | tojson }}
+```
+
+## Perspectives Available
+{{ perspectives | default(['falstaffian', 'ellipsis']) | tojson }}
+
+{% if context_text %}
+## Context Text (for ellipsis analysis)
+{{ context_text | truncate(2000) }}
+{% endif %}
+
+{% if prev_experiment %}
+## Previous Experiment (for refinement)
+```json
+{{ prev_experiment | tojson }}
+```
+This is a refinement cycle. Build on the previous experiment's results — don't redo what was already done.
+{% endif %}
+
+## What to Do
+
+1. **Apply the predicted calibration**: Execute the specific intervention the prediction identified. If it's a Falstaffian shape, apply the semantic rotation to the assessment. If it's an ellipsis analysis, apply Bloom's five-step method to detect gaps. If it's a strategy adjustment, adjust the obstacle prioritization.
+
+2. **Re-measure the current condition**: After applying the calibration, measure the new state. What artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced? What claims are grounded?
+
+3. **Describe the result**: What actually happened? Did the calibration close the gap as predicted? Did it surface new obstacles? Did it invalidate assumptions?
+
+## Instructions
+
+- Apply ONE calibration, not several. The Kata is about single-step experiments whose effects are measurable.
+- The re-measured current condition is what the gap computation will use. Be accurate.
+- If the calibration didn't help, say so honestly. The Brier score will track whether the prediction was calibrated.
+
+Return JSON only:
+```json
+{
+  "current_artifacts": {
+    "decomposition": {"exists": true, "grounded": true},
+    "assessment": {"exists": true, "grounded": true},
+    "obstacle_list": {"exists": true, "grounded": true},
+    "calibration": {"exists": true, "grounded": true},
+    "experiment_plan": {"exists": true, "grounded": false}
+  },
+  "current_procedure": {
+    "steps": [
+      {"name": "grasp_current", "status": "complete"},
+      {"name": "establish_target", "status": "complete"},
+      {"name": "predict", "status": "complete"},
+      {"name": "experiment", "status": "complete"}
+    ]
+  },
+  "applied_calibration": "applied Falstaffian shape 'subject_expansion' to the assessment",
+  "result_description": "the assessment now covers 2 additional obstacles; the obstacle list is more complete",
+  "rationale": "what changed and why"
+}
+```

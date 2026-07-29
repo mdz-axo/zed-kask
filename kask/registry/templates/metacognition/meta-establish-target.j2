@@ -1,0 +1,75 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [target, condition, declare, specify, measure]
+contract:
+  input:
+    goal: string
+    current_condition: object
+  output:
+    target_artifacts: object
+    target_procedure: object
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: metacognition/meta-establish-target.j2 #}
+{# Improvement Kata Step 2: Establish the Target Condition #}
+{# Declare a measurable, specific target — not a vague "understand the problem." #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "detailed"
+max_tokens = 2000
+thinking_budget = "medium"
+
+You are performing Step 2 of the Toyota Improvement Kata: **Establish the Target Condition**.
+
+Your job is to declare the target metacognitive state — what "sufficient meta-knowledge and calibrated confidence" looks like for this goal. This is a measurable, specific state, not a vague aspiration.
+
+## Goal
+{{ goal }}
+
+## Current Condition (measured in Step 1)
+```json
+{{ current_condition | tojson }}
+```
+
+## What to Declare
+
+The target condition has two faces:
+
+1. **Target artifacts** (Dublin Core object space): What complete, grounded artifacts should exist when the agent has sufficient meta-knowledge? For each artifact type, declare whether it should exist and be grounded.
+
+2. **Target procedure** (PKO process space): What procedure steps must be complete when the agent has run a full PDCA cycle? List each step that must reach "complete" status.
+
+The target should be **one step beyond the current knowledge threshold** — challenging but achievable. It should be specific enough that the gap between current and target is measurable.
+
+## Instructions
+
+- The target is a state to reach, not a plan to execute. Don't describe how to get there — describe what "there" looks like.
+- Be specific. "All obstacles identified and typed" is better than "understand the obstacles."
+- The target should be achievable in a few PDCA cycles, not a long-term vision.
+- The gap between current_condition and target should be real but bridgeable.
+
+Return JSON only:
+```json
+{
+  "target_artifacts": {
+    "decomposition": {"required": true, "must_be_grounded": true},
+    "assessment": {"required": true, "must_be_grounded": true},
+    "obstacle_list": {"required": true, "must_be_grounded": true},
+    "calibration": {"required": true, "must_be_grounded": true},
+    "experiment_plan": {"required": true, "must_be_grounded": true}
+  },
+  "target_procedure": {
+    "steps": [
+      {"name": "grasp_current"},
+      {"name": "establish_target"},
+      {"name": "predict"},
+      {"name": "experiment"}
+    ]
+  },
+  "rationale": "why this target is the right next step beyond the current condition"
+}
+```

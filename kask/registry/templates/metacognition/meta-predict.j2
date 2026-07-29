@@ -1,0 +1,76 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [predict, hypothesize, confidence, expect, forecast]
+contract:
+  input:
+    goal: string
+    current_condition: object
+    target_condition: object
+    prev_prediction: object|null
+  output:
+    predicted_calibration: string
+    expected_gap_reduction: number
+    confidence: number
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: metacognition/meta-predict.j2 #}
+{# Improvement Kata Step 3: Make a Prediction #}
+{# "If I do X, I expect Y to happen" — the hypothesis the experiment tests. #}
+
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "detailed"
+max_tokens = 2000
+thinking_budget = "medium"
+
+You are performing Step 3 of the Toyota Improvement Kata: **Make a Prediction**.
+
+Your job is to predict what will happen if you apply a specific calibration. State the hypothesis: "If I apply X, the gap will decrease by Y." Carry a confidence — how sure are you that this prediction is correct?
+
+## Goal
+{{ goal }}
+
+## Current Condition (measured in Step 1)
+```json
+{{ current_condition | tojson }}
+```
+
+## Target Condition (declared in Step 2)
+```json
+{{ target_condition | tojson }}
+```
+
+{% if prev_prediction %}
+## Previous Prediction (for refinement)
+```json
+{{ prev_prediction | tojson }}
+```
+This is a refinement cycle. Did the previous prediction hold? If not, what does that tell you about which calibration to try next?
+{% endif %}
+
+## What to Predict
+
+1. **Which calibration to apply**: Choose one specific intervention — a Falstaffian perspective rotation (which shape?), an ellipsis analysis (which gaps to investigate?), or a strategy adjustment (which obstacle to address?). Be specific.
+
+2. **Expected gap reduction**: How much do you expect the hypotenuse (total gap) to decrease after applying this calibration? State a number in [0, 1] — the proportion of the current gap you expect to close.
+
+3. **Confidence**: How sure are you that this prediction is correct? State a number in [0, 1]. This is NOT optimism — it's your calibrated belief. The Brier score will track whether your confidence matches reality. If you're unsure, say 0.5. If you're confident, say 0.8. The score is `(confidence - actual_outcome)²` — you're penalized for both overconfidence and underconfidence.
+
+## Instructions
+
+- The prediction is a hypothesis, not a guarantee. It's what you expect to learn from the experiment.
+- Choose the calibration that addresses the single most consequential obstacle from the current condition.
+- Be honest about your confidence. The Brier score will tell you if you're systematically overconfident or underconfident across cycles.
+
+Return JSON only:
+```json
+{
+  "predicted_calibration": "apply Falstaffian shape 'subject_expansion' to the assessment, addressing the obstacle that the obstacle list is incomplete",
+  "expected_gap_reduction": 0.2,
+  "confidence": 0.6,
+  "rationale": "why this calibration and this confidence level"
+}
+```

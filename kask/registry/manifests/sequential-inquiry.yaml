@@ -1,39 +1,49 @@
 # Sequential Inquiry Process Manifest
-# ℏKask v0.31.0 — Compound inquiry: think → delegate deep-dive skills → converge
-# Composes sequential-thinking engine with hypothesis-framer, mcda, and diagnose
-# as delegated deep-dive sub-steps triggered by the engine's delegation_requests.
+# ℏKask v0.32.0 — Compound inquiry as Improvement Kata PDCA
+#
+# The inquiry follows the Toyota Improvement Kata: grasp the current
+# understanding, establish the target understanding, predict which
+# deep-dive (hypothesis-framer, mcda, diagnose, falsifiability) will
+# close the gap, run the inquiry engine + delegation, measure the gap,
+# and score the prediction via Brier. Convergence is detected
+# deterministically via the hypotenuse of object-space (thought chain
+# completeness) and process-space (delegation resolution), plus Brier-scored
+# prediction calibration.
 
 manifest:
   id: sequential-inquiry
   category: skill
   name: Sequential Inquiry
   description: >
-    Compound convergent inquiry process. Runs the sequential-thinking engine
-    to decompose and sort ideas. When the engine identifies a thought that
-    needs deeper analysis, dispatches to hypothesis-framer (FINER+PICO),
-    dispatches to hypothesis-framer (FINER+PICO),
-    mcda (weighted comparison), diagnose (root-cause analysis), or
-    falsifiability (eliminative inference / counterfactual analysis) as
-    composed sub-steps triggered by the engine's delegation_requests.
-    Feeds delegation results back into the engine on the
-    next PDCA cycle. Converges when the thought chain is complete AND all
-    delegation requests have been resolved.
+    Compound convergent inquiry process following the Toyota Improvement
+    Kata. Grasps the current understanding, establishes a target
+    understanding, predicts which deep-dive (hypothesis-framer, mcda,
+    diagnose, falsifiability) will close the gap, runs the inquiry engine
+    with delegation, measures the gap (thought chain completeness +
+    delegation resolution), and scores the prediction via Brier.
+    Convergence is detected deterministically: gap closure, Cauchy
+    (iterates stabilized), or calibration (Brier score).
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 
 convergence:
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_6_result.convergence_metric
+  convergence_mode: "gap_or_cauchy_or_calibration"
+  hypotenuse_epsilon: 0.05
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  brier_window: 3
+  brier_threshold: 0.15
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
-  # materiality_guard (enabled: true, min_iterations: 3, min_delta: 0.02,
-  # on_triggered: force_converge, blocker: irreducible_inquiry_gap) is enforced
-  # by the executor's convergence logic, not by a schema field. Recorded here
-  # for documentation.
+  target_artifacts_field: "target_artifacts"
+  current_artifacts_field: "current_artifacts"
+  target_procedure_field: "target_procedure"
+  current_procedure_field: "current_procedure"
+  prediction_field: "prediction"
+  result_field: "experiment_result"
 
 gas:
   cap: 120000
@@ -42,7 +52,7 @@ gas:
   hard_limit: true
 
 rjoule:
-  cap: 2
+  cap: 4
   alert_threshold: 0.8
   hard_limit: true
 
@@ -67,20 +77,78 @@ inputs:
     required: false
     description: >
       Installed skill catalog for skill-router matching. Injected by the
-      executor from the runtime skill registry. If absent, step 7 (skill-router
-      dispatch) is skipped and skill_match_queries go unanswered.
+      executor from the runtime skill registry.
 
 steps:
-  # ── Phase 1: Think ──────────────────────────────────────────────
+  # ── Kata Step 1: Grasp Current Condition ──
+  # Measure the agent's current understanding of the problem. What thoughts
+  # have been generated? What delegations have been resolved? What's the
+  # current confidence?
   - ordinal: 1
     action: select
     description: >
-      Execute the sequential inquiry engine: generate, branch, revise,
-      hypothesize, and verify thoughts. When a thought identifies need
-      for deeper analysis, emit delegation_requests targeting
-      hypothesis-framer, mcda, or diagnose. On re-entry, weave prior
-      delegation results and prior skill-match results into the new
-      thought chain.
+      GRASP CURRENT CONDITION: Measure the agent's current understanding of
+      the problem. What thoughts have been generated? What delegations have
+      been resolved? What's the current confidence? Produces current_artifacts
+      (thought chain completeness) and current_procedure (which inquiry steps
+      have been executed).
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-grasp
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      problem: "{{ problem }}"
+      domain: "{{ domain | default('') }}"
+      constraints: "{{ constraints | default([]) }}"
+      prev_grasp: "{{ prev_step_1_result | default({}) }}"
+
+  # ── Kata Step 2: Establish Target Condition ──
+  # Declare the target understanding — what "sufficient understanding" looks
+  # like for this problem.
+  - ordinal: 2
+    action: select
+    condition: "{{ target_artifacts | default('') | length == 0 }}"
+    description: >
+      ESTABLISH TARGET CONDITION: Declare the target understanding — what
+      "sufficient understanding" looks like for this problem. Produces
+      target_artifacts (what the thought chain should contain) and
+      target_procedure (which inquiry steps must be complete).
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-target
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      problem: "{{ problem }}"
+      current_condition: "{{ step_1_result }}"
+
+  # ── Kata Step 3: Make a Prediction ──
+  # Predict which deep-dive delegation will close the gap. Carry a confidence.
+  - ordinal: 3
+    action: select
+    description: >
+      MAKE PREDICTION: Predict which deep-dive delegation (hypothesis-framer,
+      mcda, diagnose, falsifiability) will close the gap and by how much.
+      Carry a confidence in [0,1]. The Brier score tracks calibration.
+    renderer: minijinja
+    template_ref: sequential-inquiry/sequential-inquiry-predict
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      problem: "{{ problem }}"
+      current_condition: "{{ step_1_result }}"
+      target_condition: "{{ target_artifacts | default(step_2_result) }}"
+      prev_prediction: "{{ prev_step_3_result | default({}) }}"
+
+  # ── Kata Step 4: Experiment (Do) ──
+  # Run the inquiry engine with the predicted delegation. This is the actual
+  # thinking + delegation. Re-measure the current condition after.
+  - ordinal: 4
+    action: select
+    description: >
+      EXPERIMENT (DO): Run the inquiry engine with the predicted delegation.
+      Generate, branch, revise, hypothesize, and verify thoughts. Dispatch
+      to the predicted deep-dive skill (hypothesis-framer, mcda, diagnose, or
+      falsifiability). Re-measure the current condition after the experiment.
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-engine
     gas_cap: 9000
@@ -91,137 +159,97 @@ steps:
       constraints: "{{ constraints | default([]) }}"
       max_thoughts: "{{ max_thoughts | default(12) }}"
       thinking_budget: "{{ thinking_budget | default('full') }}"
-      prior_chain: "{{ step_1_result.thought_chain | default([]) }}"
-      prior_delegation_results: "{{ {'hypothesis_framer': step_2_result | default(None), 'mcda': step_3_result | default(None), 'diagnose': step_4_result | default(None), 'falsifiability': step_5_result | default(None)} }}"
-      prior_skill_match_results: "{{ step_7_result | default(None) }}"
+      prediction: "{{ step_3_result }}"
+      prev_chain: "{{ prev_step_4_result.thought_chain | default([]) }}"
+      prev_delegation_results: "{{ prev_step_4_result.delegation_results | default({}) }}"
 
-  # ── Phase 2: Deep-dive delegation ────────────────────────────────
-  # Each step receives delegation_requests from the engine. If no
-  # matching request exists, the template returns {"invoked": false}.
-  # Results feed back to the engine on the next PDCA cycle via
-  # prior_delegation_results.
-
-  - ordinal: 2
-    action: select
-    description: >
-      Delegate to hypothesis-framer when the engine requests formal
-      hypothesis formulation. Routes the thought's candidate hypothesis
-      through FINER evaluation and PICO structuring.
-    renderer: minijinja
-    template_ref: sequential-inquiry/sequential-inquiry-delegate-hypothesis-framer
-    gas_cap: 4000
-    timeout_seconds: 60
-    input_mapping:
-      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
-
-  - ordinal: 3
-    action: select
-    description: >
-      Delegate to mcda when the engine requests multi-criteria decision
-      analysis for comparing alternatives identified in the thought chain.
-    renderer: minijinja
-    template_ref: sequential-inquiry/sequential-inquiry-delegate-mcda
-    gas_cap: 4000
-    timeout_seconds: 60
-    input_mapping:
-      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
-
-  - ordinal: 4
-    action: select
-    description: >
-      Delegate to diagnose when the engine identifies a bug, symptom,
-      or failure pattern that needs structured root-cause analysis.
-    renderer: minijinja
-    template_ref: sequential-inquiry/sequential-inquiry-delegate-diagnose
-    gas_cap: 4000
-    timeout_seconds: 60
-    input_mapping:
-      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
-
+  # ── Kata Step 5: Skill-Router Dispatch (conditional) ──
+  # If the engine emitted skill_match_queries, dispatch them.
   - ordinal: 5
     action: select
     description: >
-      Delegate to falsifiability when the engine branches on a counterfactual
-      scenario, needs to rule out the untestable, or needs hard elimination of
-      candidate explanations (rather than probabilistic reweighting, which is
-      superforecasting's concern). Applies the Popper/Platt/Chamberlin/Pearl
-      method: admit → hypothesize → counterfactual → discriminate → eliminate.
-    renderer: minijinja
-    template_ref: sequential-inquiry/sequential-inquiry-delegate-falsifiability
-    gas_cap: 4000
-    timeout_seconds: 60
-    input_mapping:
-      delegation_requests: "{{ step_1_result.delegation_requests | default([]) }}"
-
-  # ── Phase 3: Converge ────────────────────────────────────────────
-  - ordinal: 6
-    action: select
-    description: >
-      Compute normalized convergence metric. Scores whether the thought
-      chain is verified AND all delegation requests have been resolved.
-      Per-delegate incorporation checks (8a–8d) increase regulator variety
-      to address the Ashby deficit. Dead-letter detection flags requests
-      that fired no delegate. Skill-match results from step 7 are consumed
-      when available. Single-model inference (deterministic — fusion disabled).
-    renderer: minijinja
-    template_ref: sequential-inquiry/sequential-inquiry-convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      primary_result: "{{ step_1_result }}"
-      delegation_results: "{{ {'hypothesis_framer': step_2_result, 'mcda': step_3_result, 'diagnose': step_4_result, 'falsifiability': step_5_result} }}"
-      skill_match_results: "{{ step_7_result | default({}) }}"
-
-  - ordinal: 7
-    action: select
-    description: >
-      Dispatch skill_match_queries emitted by the engine (step 1) to the
-      skill-router for matching against the broader installed skill catalog.
-      This step produces step_7_result, which is consumed by the engine on
-      the next cycle (via prior_skill_match_results) and by the convergence
-      check (via skill_match_results). If the engine emitted no
-      skill_match_queries, this step is skipped and returns an empty result.
-      The engine's skill_match_queries are arrays of {thought_number, query,
-      reason}; the first query's `query` field is passed as task_description,
-      and the remaining reasons are concatenated into task_context.
+      Dispatch skill_match_queries emitted by the engine to the skill-router.
+      If the engine emitted no queries, this step returns an empty result.
     renderer: minijinja
     template_ref: skill-router/skill-router-match
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      task_description: "{{ step_1_result.skill_match_queries[0].query | default('') }}"
-      task_context: "{{ step_1_result.skill_match_queries | map(attribute='reason') | join('; ') | default('') }}"
+      task_description: "{{ step_4_result.skill_match_queries[0].query | default('') }}"
+      task_context: "{{ step_4_result.skill_match_queries | map(attribute='reason') | join('; ') | default('') }}"
       skill_catalog: "{{ skill_router_catalog | default([]) }}"
       max_recommendations: 3
-      epistemic_state:
-        hypothesis: "{{ step_1_result.hypothesis | default({}) }}"
-        hypothesis_verified: "{{ step_1_result.hypothesis_verified | default(false) }}"
-        solution_confidence: "{{ step_1_result.solution_confidence | default(0.0) }}"
-        total_thoughts_used: "{{ step_1_result.total_thoughts_used | default(0) }}"
-    condition: "step_1_result.skill_match_queries"
+    condition: "step_4_result.skill_match_queries"
 
+  # ── Kata Step 6: Measure Object-Space Gap (Check) ──
+  - ordinal: 6
+    action: compute
+    compute_ref: kata.object_gap
+    description: >
+      MEASURE OBJECT GAP: Dublin Core object-space gap between current thought
+      chain artifacts and the target spec. Deterministic.
+    input_mapping:
+      current_artifacts: "{{ step_4_result.current_artifacts | default(step_4_result) }}"
+      target_artifacts: "{{ target_artifacts | default(step_2_result.target_artifacts | default(step_2_result)) }}"
+
+  # ── Kata Step 7: Measure Process-Space Gap (Check) ──
+  - ordinal: 7
+    action: compute
+    compute_ref: kata.process_gap
+    description: >
+      MEASURE PROCESS GAP: PKO process-space gap between current inquiry
+      procedure state and target. Deterministic.
+    input_mapping:
+      current_procedure: "{{ step_4_result.current_procedure | default(step_4_result) }}"
+      target_procedure: "{{ target_procedure | default(step_2_result.target_procedure | default(step_2_result)) }}"
+
+  # ── Kata Step 8: Compute Hypotenuse (Check) ──
   - ordinal: 8
+    action: compute
+    compute_ref: kata.hypotenuse
+    description: >
+      COMPUTE HYPOTENUSE: Total distance to target in combined space.
+    input_mapping:
+      object_gap: "{{ step_6_result.object_gap }}"
+      process_gap: "{{ step_7_result.process_gap }}"
+
+  # ── Kata Step 9: Score Prediction (Check) ──
+  - ordinal: 9
+    action: compute
+    compute_ref: kata.prediction_vs_result
+    description: >
+      SCORE PREDICTION: Brier score for this cycle's prediction.
+    input_mapping:
+      prediction: "{{ step_3_result }}"
+      result:
+        actual_delta: "{{ step_8_result.hypotenuse }}"
+
+  # ── Kata Step 10: Check Convergence (Act) ──
+  - ordinal: 10
+    action: compute
+    compute_ref: kata.convergence_check
+    description: >
+      CHECK CONVERGENCE: Gap, Cauchy, or calibration convergence.
+      Deterministic — no LLM, no timeout.
+    input_mapping:
+      hypotenuse: "{{ step_8_result.hypotenuse }}"
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "{{ _convergence.convergence_mode | default('gap_or_cauchy_or_calibration') }}"
+
+  # ── Kata Step 11: Loop ──
+  - ordinal: 11
     action: loop
     description: >
-      Re-enter inquiry cycle if convergence is not met. The loop_target is
-      resolved dynamically from step_6_result.re_entry_target. For
-      sequential-inquiry, all corrective actions require re-running the
-      engine (step 1), so re_entry_target is always 1. The executor exits
-      the loop when convergence_metric ≤ threshold (0.15); the materiality
-      guard forces convergence_metric = 0.0 when the gap is irreducible.
-      On re-entry, step 1 receives prior_skill_match_results from
-      step_7_result via the executor's cross-cycle input wiring.
-
-      STATE PERSISTENCE: Step results from the prior iteration persist
-      across loop iterations. When the loop re-enters at step 1 (engine),
-      all prior step_N_result values remain available for input_mapping
-      references. This is required because step 1 consumes prior_chain
-      from step_1_result, prior_delegation_results from steps 2–5, and
-      prior_skill_match_results from step 7. Step 6 (convergence) consumes
-      step_1_result through step_5_result and step_7_result. If the
-      executor does not persist step results, re-entry will fail.
+      Re-enter Kata cycle if not converged. The executor automatically
+      snapshots prev_step_N_result values for refinement.
     input_mapping:
-      loop_target: "{{ step_6_result.re_entry_target | default(1) }}"
+      loop_target: "{{ 1 }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -234,32 +262,27 @@ ocap:
   required_capabilities:
     - resource: template
       action: render
+      template_id: sequential-inquiry/sequential-inquiry-grasp
+      gas_budget: 6000
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-target
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: sequential-inquiry/sequential-inquiry-predict
+      gas_budget: 4096
+    - resource: template
+      action: render
       template_id: sequential-inquiry/sequential-inquiry-engine
       gas_budget: 9000
     - resource: template
       action: render
-      template_id: sequential-inquiry/sequential-inquiry-delegate-hypothesis-framer
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-delegate-mcda
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-delegate-diagnose
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-delegate-falsifiability
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-convergence-check
-      gas_budget: 2000
-    - resource: template
-      action: render
       template_id: skill-router/skill-router-match
       gas_budget: 2000
+    - resource: inference
+      action: call
+      gas_budget: 9000
     - resource: manifest
       action: execute
       template_id: sequential-inquiry

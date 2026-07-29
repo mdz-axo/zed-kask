@@ -38,6 +38,7 @@ use serde_json::Value;
 use text::ToOffset;
 use ui::WithScrollbar;
 use ui::prelude::*;
+use ui::{Tab, TabPosition};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem, TabContentParams},
@@ -782,20 +783,31 @@ impl KaskPanel {
         }
     }
 
-    fn render_server_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current = self.selected_server_name();
-        let buttons: Vec<AnyElement> = BUILT_IN_MCP_SERVERS
+    /// Render the MCP-server tab strip — one `ui::Tab` per built-in kask
+    /// MCP server. Replaces the v0 button-row `render_server_selector`.
+    /// The active tab is highlighted; clicking switches `selected_server`
+    /// and swaps the rendered conversation. This is the visual surface of
+    /// the per-tab thread independence contract (each tab is its own
+    /// curator conversation scoped to one server's tools).
+    fn render_tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let total = BUILT_IN_MCP_SERVERS.len();
+        let selected = self.selected_server;
+        let tabs: Vec<AnyElement> = BUILT_IN_MCP_SERVERS
             .iter()
             .enumerate()
             .map(|(index, name)| {
                 let is_selected = index == self.selected_server;
-                Button::new(("server-btn", index), *name)
-                    .style(if is_selected {
-                        ButtonStyle::Tinted(ui::TintColor::Accent)
-                    } else {
-                        ButtonStyle::Subtle
-                    })
-                    .label_size(LabelSize::XSmall)
+                let position = if index == 0 {
+                    TabPosition::First
+                } else if index == total - 1 {
+                    TabPosition::Last
+                } else {
+                    TabPosition::Middle(index.cmp(&selected))
+                };
+                Tab::new(("kask-tab", index))
+                    .toggle_state(is_selected)
+                    .position(position)
+                    .child(Label::new(*name).size(LabelSize::XSmall))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_server(index, cx);
                     }))
@@ -803,19 +815,11 @@ impl KaskPanel {
             })
             .collect();
 
-        v_flex()
-            .gap_1()
-            .child(
-                Label::new("MCP Server")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(h_flex().gap_1().flex_wrap().children(buttons))
-            .child(
-                Label::new(format!("Selected: {current}"))
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
+        h_flex()
+            .gap_0()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .children(tabs)
     }
 
     fn render_messages(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1243,7 +1247,7 @@ impl Render for KaskPanel {
                     .child(Icon::new(IconName::Kask).color(Color::Accent))
                     .child(Label::new("Kask Panel").size(LabelSize::Large)),
             )
-            .child(self.render_server_selector(cx))
+            .child(self.render_tab_strip(cx))
             .child(self.render_messages(window, cx))
             .child(self.render_status_bar(cx))
             .child(self.render_input(cx))

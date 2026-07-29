@@ -1,0 +1,67 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [predict, hypothesize, confidence, expect, delegate]
+contract:
+  input:
+    problem: string
+    current_condition: object
+    target_condition: object
+    prev_prediction: object|null
+  output:
+    predicted_delegation: string
+    expected_gap_reduction: number
+    confidence: number
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: sequential-inquiry/sequential-inquiry-predict.j2 #}
+{# Improvement Kata Step 3: Make a Prediction #}
+
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "detailed"
+max_tokens = 2000
+thinking_budget = "medium"
+
+You are performing Step 3 of the Toyota Improvement Kata: **Make a Prediction** for an inquiry process.
+
+## Problem
+{{ problem }}
+
+## Current Condition
+```json
+{{ current_condition | tojson }}
+```
+
+## Target Condition
+```json
+{{ target_condition | tojson }}
+```
+
+{% if prev_prediction %}
+## Previous Prediction (for refinement)
+```json
+{{ prev_prediction | tojson }}
+```
+Did the previous prediction hold? What does that tell you about which delegation to try next?
+{% endif %}
+
+## What to Predict
+
+1. **Which delegation to dispatch**: Predict which deep-dive skill (hypothesis-framer, mcda, diagnose, falsifiability) will close the gap most. Be specific about why.
+
+2. **Expected gap reduction**: How much do you expect the hypotenuse to decrease? [0, 1].
+
+3. **Confidence**: How sure are you? [0, 1]. The Brier score tracks calibration.
+
+Return JSON only:
+```json
+{
+  "predicted_delegation": "dispatch to hypothesis-framer to formalize the leading hypothesis via FINER+PICO, because the current condition shows a hypothesis exists but is ungrounded",
+  "expected_gap_reduction": 0.3,
+  "confidence": 0.6,
+  "rationale": "why this delegation and this confidence"
+}
+```

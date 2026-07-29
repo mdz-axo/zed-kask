@@ -1,0 +1,65 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [target, condition, declare, specify]
+contract:
+  input:
+    problem: string
+    current_condition: object
+  output:
+    target_artifacts: object
+    target_procedure: object
+    rationale: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: sequential-inquiry/sequential-inquiry-target.j2 #}
+{# Improvement Kata Step 2: Establish the Target Condition #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "detailed"
+max_tokens = 2000
+thinking_budget = "medium"
+
+You are performing Step 2 of the Toyota Improvement Kata: **Establish the Target Condition** for an inquiry process.
+
+## Problem
+{{ problem }}
+
+## Current Condition
+```json
+{{ current_condition | tojson }}
+```
+
+## What to Declare
+
+Declare the target understanding — what "sufficient understanding" looks like for this problem:
+
+1. **Target artifacts**: What thought-chain artifacts should exist when the inquiry is complete? (hypothesis, evidence, counterfactuals, conclusion — all grounded).
+
+2. **Target procedure**: Which inquiry steps must be complete? (grasp, target, predict, engine, delegation — all complete).
+
+The target should be one step beyond the current understanding — challenging but achievable.
+
+Return JSON only:
+```json
+{
+  "target_artifacts": {
+    "hypothesis": {"required": true, "must_be_grounded": true},
+    "evidence": {"required": true, "must_be_grounded": true},
+    "counterfactuals": {"required": true, "must_be_grounded": true},
+    "conclusion": {"required": true, "must_be_grounded": true}
+  },
+  "target_procedure": {
+    "steps": [
+      {"name": "grasp"},
+      {"name": "target"},
+      {"name": "predict"},
+      {"name": "engine"},
+      {"name": "delegation"}
+    ]
+  },
+  "rationale": "why this target is the right next step"
+}
+```

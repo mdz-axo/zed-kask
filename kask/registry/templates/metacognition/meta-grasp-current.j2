@@ -1,0 +1,115 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [assess, observe, measure, grasp, ground, surface]
+contract:
+  input:
+    goal: string
+    session_history: string|null
+    current_state: object|null
+    prior_outcomes: array|null
+    safety_mode: boolean|null
+    prev_grasp: object|null
+  output:
+    current_artifacts: object
+    current_procedure: object
+    obstacles: array
+    assumptions_surfaced: array
+    claims_grounded: array
+    options_count: integer
+    option_specificity: number
+    rationale: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: metacognition/meta-grasp-current.j2 #}
+{# Improvement Kata Step 1: Grasp the Current Condition #}
+{# "Go and see" — measure, don't assume. #}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "detailed"
+max_tokens = 3000
+thinking_budget = "full"
+
+You are performing Step 1 of the Toyota Improvement Kata: **Grasp the Current Condition**.
+
+Your job is to measure the agent's actual metacognitive state right now — not to plan, not to judge, not to grade. Measure.
+
+## Goal
+{{ goal }}
+
+## Session History
+{{ session_history | default("(no session history provided)") }}
+
+## External Current State (Regulation counters, bot status, etc.)
+```json
+{{ current_state | default({}) | tojson }}
+```
+
+## Prior Outcomes
+```json
+{{ prior_outcomes | default([]) | tojson }}
+```
+
+{% if prev_grasp %}
+## Previous Iteration's Grasp (for refinement)
+```json
+{{ prev_grasp | tojson }}
+```
+This is a refinement cycle. Compare the current state to the previous grasp. What changed? What didn't? Be specific.
+{% endif %}
+
+## What to Measure
+
+Measure these dimensions of the current metacognitive state:
+
+1. **Current artifacts** (Dublin Core object space): What cognitive artifacts has the agent produced so far? For each artifact (decomposition, assessment, obstacle list, calibration, experiment plan), state whether it exists and whether it's grounded (cites evidence from session history or current_state).
+
+2. **Current procedure** (PKO process space): Which Kata steps have been executed? List each step with its status: "complete", "in_progress", or "not_started".
+
+3. **Obstacles**: What specific obstacles prevent progress toward the goal? Type each obstacle (knowledge_gap, dependency_block, tool_missing, uncertainty) and rate its severity (1-5).
+
+4. **Assumptions surfaced**: What assumptions has the agent been treating as facts? List each one explicitly. An assumption that hasn't been surfaced is a hidden risk.
+
+5. **Claims grounded**: Which of the agent's claims are backed by evidence (from session_history, current_state, or prior_outcomes)? Which are asserted without backing?
+
+6. **Options count**: How many distinct next steps can the agent articulate? More options = more meta-knowledge.
+
+7. **Option specificity**: For each option, does it name a specific tool, parameter, and predicted outcome? Score 0.0 (vague) to 1.0 (specific).
+
+## Instructions
+
+- Be honest. If the agent hasn't produced an artifact, say so. If a claim is ungrounded, flag it.
+- Use the session_history and current_state as evidence. Don't invent facts.
+- If prev_grasp is provided, this is a refinement cycle — compare to the prior state and note what changed.
+- Count, don't estimate. The executor will compute the gap from your counts.
+
+Return JSON only:
+```json
+{
+  "current_artifacts": {
+    "decomposition": {"exists": true, "grounded": false},
+    "assessment": {"exists": true, "grounded": true},
+    "obstacle_list": {"exists": true, "grounded": true},
+    "calibration": {"exists": false, "grounded": false},
+    "experiment_plan": {"exists": false, "grounded": false}
+  },
+  "current_procedure": {
+    "steps": [
+      {"name": "grasp_current", "status": "complete"},
+      {"name": "establish_target", "status": "not_started"},
+      {"name": "predict", "status": "not_started"},
+      {"name": "experiment", "status": "not_started"}
+    ]
+  },
+  "obstacles": [
+    {"description": "...", "type": "knowledge_gap", "severity": 3}
+  ],
+  "assumptions_surfaced": ["assumption 1", "assumption 2"],
+  "claims_grounded": ["claim with evidence", "claim without evidence (flagged)"],
+  "options_count": 2,
+  "option_specificity": 0.4,
+  "rationale": "brief explanation of the current state"
+}
+```

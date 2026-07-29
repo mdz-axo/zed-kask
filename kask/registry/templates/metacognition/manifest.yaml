@@ -13,71 +13,48 @@ crate:
     Any userpod can use these templates for self-reflection.
 
 templates:
-  # ── Skill flow templates (PDCA step-level prompts) ──
-  - id: metacognition/meta_decompose
-    name: "Decompose a high-level goal into a tree of sub-goals with…"
-    path: meta_decompose.j2
+  # ── Skill flow templates (Improvement Kata PDCA steps) ──
+  - id: metacognition/meta-grasp-current
+    name: "Improvement Kata Step 1: Grasp the current metacognitive condition"
+    path: meta-grasp-current.j2
     type: KnowAct
-    lexicon_terms: [decompose, plan, calibrate, assess]
+    lexicon_terms: [assess, observe, measure, grasp, ground, surface]
     description: >
-      Decompose a high-level goal into a tree of sub-goals with dependencies,
-      select a decomposition strategy, and estimate effort required based on
-      prior outcomes and available tools.
+      Measure the agent's actual metacognitive state right now. Identify
+      obstacles, surface assumptions, count grounded claims, enumerate
+      options. Produces current_artifacts and current_procedure for gap
+      computation.
 
-  - id: metacognition/meta-assess
-    name: "Self-assess current state vs"
-    path: meta-assess.j2
+  - id: metacognition/meta-establish-target
+    name: "Improvement Kata Step 2: Establish the target condition"
+    path: meta-establish-target.j2
     type: KnowAct
-    lexicon_terms: [assess, evaluate, reflect, diagnose, observe]
+    lexicon_terms: [target, condition, declare, specify, measure]
     description: >
-      Self-assess current state vs. target condition. Identifies typed and
-      severity-rated obstacles, estimates progress, and calibrates confidence
-      based on session history and prior outcomes.
+      Declare the target metacognitive state — what sufficient meta-knowledge
+      looks like for this goal. Produces target_artifacts and target_procedure
+      for gap computation.
 
-  - id: metacognition/ellipsis-analysis
-    name: "Bloom-inspired cognition method for detecting meaning in gaps and…"
-    path: ellipsis-analysis.j2
+  - id: metacognition/meta-predict
+    name: "Improvement Kata Step 3: Make a prediction"
+    path: meta-predict.j2
     type: KnowAct
-    lexicon_terms: [read, detect, classify, calibrate, analyze]
+    lexicon_terms: [predict, hypothesize, confidence, expect, forecast]
     description: >
-      Bloom-inspired cognition method for detecting meaning in gaps and
-      omissions. Differentiates ellipsis (deliberate, meaningful omission)
-      from leak (unintentional information loss). Applies Bloom's five-step
-      method: read deeply, mind the gaps, differentiate ellipsis from leak,
-      see past yourself, find what is not inferno.
+      Predict which calibration will close the gap and by how much. Carry a
+      confidence in [0,1]. The Brier score tracks whether the confidence is
+      calibrated.
 
-  - id: metacognition/meta-calibrate
-    name: "Calibrate strategy, effort estimates, and tool selection based on the…"
-    path: meta-calibrate.j2
+  - id: metacognition/meta-experiment
+    name: "Improvement Kata Step 4: Experiment (Do)"
+    path: meta-experiment.j2
     type: KnowAct
-    lexicon_terms: [calibrate, adjust, adapt, regulate, tune]
+    lexicon_terms: [experiment, apply, calibrate, rotate, adjust, refine]
     description: >
-      Calibrate strategy, effort estimates, and tool selection based on the
-      self-assessment, ellipsis findings, and prior outcomes. Applies
-      Falstaffian perspective rotation via the shapes decision tree. Produces
-      a concrete next experiment (PDCA) with hypothesis, action, measurement,
-      and success criteria.
-
-  - id: metacognition/meta-convergence-check
-    name: "Compute normalized convergence metric for metacognition cycles"
-    path: meta-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, assess]
-    description: >
-      Compute normalized convergence metric for metacognition cycles.
-      Outputs `convergence_metric` in [0,1], where 0 means the decomposition,
-      assessment, obstacles, calibration, and next experiment are stable.
-
-  - id: metacognition/meta-gepa-improve
-    name: "GEPA self-improvement step"
-    path: meta-gepa-improve.j2
-    type: KnowAct
-    lexicon_terms: [evolve, improve, sample, reflect, mutate]
-    description: >
-      GEPA self-improvement step. Delegates to the gpa-evolution skill to
-      evolve the metacognition templates through Genetic-Pareto evolutionary
-      optimization. Samples cycle trajectories, reflects in natural language,
-      proposes and tests mutations, and updates the Pareto frontier.
+      Apply the predicted calibration — Falstaffian perspective rotation,
+      ellipsis analysis, or strategy adjustment. Re-measure the current
+      condition after the experiment. Produces new current_artifacts and
+      current_procedure.
 
   # ── Falstaffian perspective engine (reference documents) ──
   # These YAML files are reference analysis documents, not executable .j2
