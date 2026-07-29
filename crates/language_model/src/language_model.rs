@@ -102,6 +102,16 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// The provider's OpenAI-compatible base URL (e.g. `https://api.deepinfra.com/v1/openai`),
+    /// when this model is backed by an OpenAI-compatible provider. `None` for providers
+    /// that don't expose a single base URL (e.g. zed.dev cloud) or that aren't
+    /// OpenAI-compatible. Used by the kask embedding port to make raw `/embeddings`
+    /// calls through the same credentials zed already holds, without a second
+    /// inference router.
+    fn api_url(&self, _cx: &App) -> Option<String> {
+        None
+    }
+
     /// Information about the cost of using this model, if available.
     fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
         None

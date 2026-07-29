@@ -181,52 +181,11 @@ This separation is critical because the paper identifies a key tension: "self-im
 4. Determine the next step.
 5. Respond with a JSON object containing `decision` (exactly "commit" or "rollback"), `committed_version`, `failure_mode` (if rolled back), and `next_step` (exactly "re-enter", "exit", or "refine").
 
-### si-pdca-convergence (Inner PDCA Convergence)
-
-1. Compute per-iteration PDCA convergence metric: improvement detected (−0.25), no regressions (−0.20), transfer confirmed (−0.20), within budget (−0.15), no safety violations (−0.10), approaching target (−0.10).
-2. If rolled back, set convergence_metric = 1.0 (not converged).
-3. **Materiality guard**: If PDCA iteration ≥ 3, metric delta < 0.02 since last iteration, and no committed cycles this iteration, force convergence to 0.0 (irreducible gap). Record `blockers: ["irreducible_pdca_gap"]`.
-4. Determine next action: "exit" (converged, ≤ 0.25), "re-enter" (not converged, retry), or "exhausted" (max iterations hit).
-5. Return JSON with `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, `materiality_guard_triggered`, and `next_action`.
-
-### si-kata-convergence (Outer Kata Convergence)
-
-1. Measure whether the Improvement Kata has produced a coherent, testable improvement trajectory toward the target condition.
-2. Check each step's quality (direction, current condition, target condition, experiment cycles).
-3. Check cross-step coherence (current↔target gap, PDCA cycle alignment, feedback timing).
-4. Check trajectory stability: is the performance trajectory converging, plateauing, or regressing?
-5. Check transfer: do improvements generalize beyond the improvement signal?
-6. Check regression: are previously solved tasks still solved?
-7. **Materiality guard**: If outer Kata iteration ≥ 3, metric delta < 0.02 since last iteration, no new PDCA cycles committed, and no new pathway/signal combination attempted, force convergence to 0.0 (irreducible gap). Record `blockers: ["irreducible_kata_gap"]`.
-8. Start at 1.0, subtract for each satisfied check, and clamp to [0, 1].
-9. Return JSON with `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, and `materiality_guard_triggered`.
-
 ## Improvement Measure
 
-### Convergence Metric: Trajectory Stability + Transfer + Regression
+Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 
-**Field**: `si_kata_convergence_result.convergence_metric`
-
-The convergence metric measures whether the self-improvement process has produced a stable, generalizable, non-regressing improvement trajectory. Computed by the `si-kata-convergence.j2` template:
-
-| Score | Meaning |
-|-------|---------|
-| 0.00 | Trajectory converging, improvements transfer, no regressions — converged |
-| 0.25 | Trajectory stable but minor transfer gaps or regression risks — converged at threshold |
-| 0.50 | Trajectory plateauing, transfer uncertain, some regressions — not converged |
-| 1.00 | No meaningful improvement trajectory established — not converged |
-
-**Threshold**: 0.25. **Max iterations**: 10 (outer Kata), 5 (inner PDCA per Kata step).
-
-**Scoring breakdown** (start at 1.0, subtract for each satisfied check):
-
-1. Direction: capability articulated with measurable challenge? → +0.15 if missing
-2. Current condition: baseline measured with real data? → +0.15 if vague
-3. Target condition: specific, measurable, time-bounded? → +0.15 if missing
-4. PDCA cycles: at least one complete cycle executed? → +0.15 if none
-5. Trajectory stability: performance converging or plateauing (not regressing)? → +0.15 if regressing
-6. Transfer: improvements generalize to held-out tasks? → +0.15 if no transfer test
-7. Regression: previously solved tasks still solved? → +0.10 if regressions detected
+**Max iterations**: 10 (outer Kata), 5 (inner PDCA per Kata step).
 
 ## Safety Governance
 
@@ -256,8 +215,7 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | `si-exec-scaffold-full.j2` | WordAct | PDCA Do (§6.4) — Scaffolding via Full Scaffolding. Self-referential code rewrite. Delegates to `diagnose` for debugging. |
 | `si-evaluate-improvement.j2` | KnowAct | PDCA Check — Evaluate the updated agent on held-out tasks with fallback. Report trajectory, transfer, regression, cost, and safety. |
 | `si-commit-or-rollback.j2` | KnowAct | PDCA Act — Apply acceptance criteria, commit or rollback the update, determine next step with strict enum constraints. |
-| `si-pdca-convergence.j2` | KnowAct | Inner PDCA Convergence — Per-iteration metric with materiality guard for irreducible gaps. |
-| `si-kata-convergence.j2` | KnowAct | Outer Kata Convergence — Trajectory stability + transfer + regression + materiality guard. |
+
 
 ## Constraints
 
@@ -275,16 +233,14 @@ The skill implements the paper's safety recommendations (Section 9.1):
 - `si-exec-scaffold-full.j2`: Public.
 - `si-evaluate-improvement.j2`: Public.
 - `si-commit-or-rollback.j2`: Public.
-- `si-pdca-convergence.j2`: Public.
-- `si-kata-convergence.j2`: Public.
+
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
 - All updates must pass verifier-gated checks before commitment.
 - Version history must be maintained for rollback.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).
-- Convergence threshold: 0.25 (outer Kata), 0.25 (inner PDCA).
-- Materiality guard: force convergence when metric delta < 0.02 for ≥ 3 iterations (both inner PDCA and outer Kata).
+- Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 - `decision` field must be exactly "commit" or "rollback" (lowercase).
 - `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
 - `signal_type` may be a single value or an array for multi-signal support.

@@ -301,24 +301,9 @@ fn extract_images_from_json(value: &Value, sources: &mut Vec<gpui::ImageSource>)
             }
         }
         Value::Object(map) => {
-            // Check common image field names.
-            for key in [
-                "image_url",
-                "image_path",
-                "image",
-                "url",
-                "path",
-                "thumbnail",
-            ] {
-                if let Some(Value::String(s)) = map.get(key) {
-                    if is_image_url(s) || is_data_uri(s) {
-                        if let Some(src) = string_to_image_source(s) {
-                            sources.push(src);
-                        }
-                    }
-                }
-            }
-            // Recurse into all values.
+            // Recurse into all values — each string value is checked
+            // individually. This handles both known field names
+            // (image_url, url, path) and unknown ones.
             for (_, v) in map {
                 extract_images_from_json(v, sources);
             }

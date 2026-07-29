@@ -326,3 +326,351 @@ impl InferencePort for LanguageModelInferencePort {
         .boxed()
     }
 }
+
+// ── LanguageModelEmbeddingPort ───────────────────────────────────────────────
+//
+// Embedding generation over zed's `LanguageModel` credentials.
+//
+// zed's `LanguageModel` trait has no `embed` method — only chat completion.
+// But OpenAI-compatible providers (DeepInfra, OpenRouter, etc.) expose a
+// `/embeddings` endpoint at the same base URL as `/chat/completions`, using
+// the same API key. This port resolves `(api_url, api_key)` from the zed
+// `LanguageModel` (via the `api_url()` and `api_key()` trait methods added in
+// this fork) and makes a raw OpenAI-compatible `/embeddings` POST.
+//
+// This replaces hKask's standalone `EmbeddingRouter`, which resolved
+// credentials from `InferenceConfig::from_env()` (env vars) and bypassed
+// zed's `LanguageModelRegistry` + keychain. Routing embeddings through zed's
+// credential resolution means a user who configures DeepInfra in
+// Settings → AI → LLM Providers gets working embeddings without also
+// setting `DEEPINFRA_API_KEY` in the environment.
+//
+// The model string (e.g. `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) is stripped
+// of its provider prefix before being sent to the API — DeepInfra expects
+// `Qwen/Qwen3-Embedding-0.6B`, not the prefixed form. Both long-form
+// (`DeepInfra/`) and 2-letter (`DI/`) prefixes are accepted, case-insensitive,
+// so either convention works.
+//
+// Like `LanguageModelInferencePort`, this struct holds only a channel sender
+// (`Send + Sync`); the actual HTTP call happens on the GPUI side via a
+// spawned task that owns the `AsyncApp` (needed to read the model's
+// `api_key()` / `api_url()`). Per the `.rules` trap "Cross-thread GPUI
+// communication uses channels, not `AsyncApp` handles".
+
+use hkask_types::EmbeddingGenerationError;
+use http_client::{AsyncBody, HttpClient, Method, Request};
+use serde::Deserialize;
+use tokio::sync::mpsc;
+
+use futures::AsyncReadExt;
+
+/// Request sent from the tokio side to the GPUI-side embedding executor.
+struct EmbedRequest {
+    /// The provider-prefixed model string (e.g. `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
+    /// The prefix is stripped before the API call.
+    model: String,
+    /// Texts to embed.
+    texts: Vec<String>,
+    /// Reply channel.
+    reply: oneshot::Sender<Result<Vec<Vec<f32>>, EmbeddingGenerationError>>,
+}
+
+/// Embedding generation port over zed's `LanguageModel` credentials.
+///
+/// Construct with a zed `LanguageModel` (any OpenAI-compatible model from
+/// the same provider as the embedding model — only its `api_url()` and
+/// `api_key()` are used) and the app's `HttpClient`. Drop the returned
+/// `Task` to stop the GPUI-side receiver.
+pub struct LanguageModelEmbeddingPort {
+    tx: mpsc::UnboundedSender<EmbedRequest>,
+}
+
+impl LanguageModelEmbeddingPort {
+    /// Construct the port and spawn the GPUI-side receiver task.
+    ///
+    /// `credential_model` is a zed `LanguageModel` whose provider matches the
+    /// embedding model's provider prefix. Only its `api_url()` and `api_key()`
+    /// are read — the model itself is never used for chat. A convenient choice
+    /// is the provider's `default_model(cx)`, but any model from the same
+    /// provider works.
+    pub fn new(
+        credential_model: Arc<dyn LanguageModel>,
+        http_client: Arc<dyn HttpClient>,
+        cx: AsyncApp,
+    ) -> (Self, gpui::Task<()>) {
+        let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
+
+        let task = cx.spawn(async move |cx| {
+            while let Some(req) = rx.recv().await {
+                let model = credential_model.clone();
+                let http_client = http_client.clone();
+                let cx = cx.clone();
+                let result = async move {
+                    // Resolve credentials from the zed LanguageModel. These
+                    // read the provider's State entity on the GPUI side.
+                    // `AsyncApp::update` returns `R` directly (not Result) —
+                    // it panics if the app was dropped, which is fine here
+                    // (the port is owned by the app).
+                    let (api_url, api_key) = cx.update(|cx| {
+                        let api_url = model.api_url(cx);
+                        let api_key = model.api_key(cx);
+                        (api_url, api_key)
+                    });
+
+                    let api_url = api_url.ok_or_else(|| {
+                        EmbeddingGenerationError::Connection(format!(
+                            "Embedding model '{}' — provider '{}' does not expose an api_url \
+                             through zed's LanguageModel trait. Only OpenAI-compatible providers \
+                             (DeepInfra, OpenRouter, etc.) support embeddings. Add the provider \
+                             in Settings → AI → LLM Providers.",
+                            req.model,
+                            model.provider_name().0
+                        ))
+                    })?;
+
+                    let api_key = api_key.ok_or_else(|| {
+                        EmbeddingGenerationError::Connection(format!(
+                            "Embedding model '{}' — no API key configured for provider '{}' \
+                             in zed. Add the API key in Settings → AI → LLM Providers, \
+                             or set the corresponding env var (e.g. DEEPINFRA_API_KEY).",
+                            req.model,
+                            model.provider_name().0
+                        ))
+                    })?;
+
+                    // Strip the provider prefix (case-insensitive, both
+                    // long-form and 2-letter). The API expects the bare model id.
+                    let model_id = strip_provider_prefix(&req.model);
+
+                    // Build and send the OpenAI-compatible /embeddings request.
+                    let body = serde_json::json!({
+                        "model": model_id,
+                        "input": req.texts,
+                    });
+                    let body_bytes = serde_json::to_vec(&body).map_err(|e| {
+                        EmbeddingGenerationError::Json(format!(
+                            "failed to serialize embedding request: {e}"
+                        ))
+                    })?;
+
+                    let uri = format!("{api_url}/embeddings");
+                    let request = Request::builder()
+                        .method(Method::POST)
+                        .uri(&uri)
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", format!("Bearer {}", api_key.trim()))
+                        .body(AsyncBody::from_bytes(body_bytes.into()))
+                        .map_err(|e| {
+                            EmbeddingGenerationError::Connection(format!(
+                                "failed to build embedding request: {e}"
+                            ))
+                        })?;
+
+                    let mut response = http_client.send(request).await.map_err(|e| {
+                        EmbeddingGenerationError::Connection(format!(
+                            "embedding HTTP request failed: {e}"
+                        ))
+                    })?;
+
+                    let status = response.status();
+                    let mut body_text = String::new();
+                    response
+                        .body_mut()
+                        .read_to_string(&mut body_text)
+                        .await
+                        .map_err(|e| {
+                            EmbeddingGenerationError::Connection(format!(
+                                "failed to read embedding response body: {e}"
+                            ))
+                        })?;
+
+                    if !status.is_success() {
+                        return Err(EmbeddingGenerationError::Api(status.as_u16(), body_text));
+                    }
+
+                    let parsed: OpenAiEmbedResponse =
+                        serde_json::from_str(&body_text).map_err(|e| {
+                            EmbeddingGenerationError::Json(format!(
+                                "failed to parse embedding response: {e}"
+                            ))
+                        })?;
+
+                    let embeddings: Vec<Vec<f32>> =
+                        parsed.data.into_iter().map(|d| d.embedding).collect();
+
+                    if embeddings.is_empty() {
+                        return Err(EmbeddingGenerationError::EmptyResponse);
+                    }
+
+                    Ok(embeddings)
+                }
+                .await;
+
+                let _ = req.reply.send(result);
+            }
+        });
+
+        (Self { tx }, task)
+    }
+
+    /// Generate embeddings for a batch of texts.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The prefix is stripped
+    /// before the API call.
+    pub async fn embed(
+        &self,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
+        if texts.is_empty() {
+            return Err(EmbeddingGenerationError::EmptyResponse);
+        }
+        let (tx_reply, rx_reply) = oneshot::channel();
+        self.tx
+            .send(EmbedRequest {
+                model: model.to_string(),
+                texts: texts.to_vec(),
+                reply: tx_reply,
+            })
+            .map_err(|e| {
+                EmbeddingGenerationError::Connection(format!("embedding port channel closed: {e}"))
+            })?;
+        rx_reply.await.map_err(|e| {
+            EmbeddingGenerationError::Connection(format!("embedding port reply dropped: {e}"))
+        })?
+    }
+}
+
+/// Strip the provider prefix from a model string, case-insensitive.
+///
+/// Accepts both long-form (`DeepInfra/`, `OpenRouter/`, `fal.ai/`,
+/// `Together AI/`, `RunPod/`, `KiloCode/`, `ollama/`, `Cline/`) and
+/// 2-letter (`DI/`, `OR/`, etc.) prefixes. Returns the bare model id.
+/// If no prefix is recognized, returns the string unchanged (the API
+/// will reject it, which surfaces a clear error).
+fn strip_provider_prefix(model: &str) -> String {
+    // Long-form prefixes (case-insensitive). Order matters only for
+    // overlapping prefixes; none overlap here.
+    const LONG_FORM: &[&str] = &[
+        "DeepInfra/",
+        "fal.ai/",
+        "Together AI/",
+        "RunPod/",
+        "OpenRouter/",
+        "KiloCode/",
+        "ollama/",
+        "Cline/",
+    ];
+    for prefix in LONG_FORM {
+        if let Some(rest) = model.strip_prefix(prefix) {
+            return rest.to_string();
+        }
+        // Case-insensitive match (e.g. "deepinfra/..." or "DEEPINFRA/...").
+        if model.len() >= prefix.len() && model[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            return model[prefix.len()..].to_string();
+        }
+    }
+
+    // 2-letter shorthand (`DI/`, `FA/`, …). Requires the `XX/` shape.
+    let bytes = model.as_bytes();
+    if model.len() >= 4 && bytes[2] == b'/' {
+        let prefix = &model[..2];
+        let rest = &model[3..];
+        let recognized = matches!(
+            prefix,
+            "DI" | "FA"
+                | "TG"
+                | "RP"
+                | "OR"
+                | "KC"
+                | "OM"
+                | "CL"
+                | "di"
+                | "fa"
+                | "tg"
+                | "rp"
+                | "or"
+                | "kc"
+                | "om"
+                | "cl"
+        );
+        if recognized && !rest.is_empty() {
+            return rest.to_string();
+        }
+    }
+
+    // No recognized prefix — return as-is. The API will reject an unknown
+    // model, which surfaces a clear error to the operator.
+    model.to_string()
+}
+
+/// OpenAI-compatible embedding response (wire format).
+#[derive(Debug, Deserialize)]
+struct OpenAiEmbedResponse {
+    data: Vec<OpenAiEmbeddingData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[cfg(test)]
+mod embedding_tests {
+    use super::*;
+
+    #[test]
+    fn strip_prefix_long_form() {
+        assert_eq!(
+            strip_provider_prefix("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+        assert_eq!(
+            strip_provider_prefix("OpenRouter/qwen/qwen3-embedding-0.6b"),
+            "qwen/qwen3-embedding-0.6b"
+        );
+    }
+
+    #[test]
+    fn strip_prefix_case_insensitive() {
+        assert_eq!(
+            strip_provider_prefix("deepinfra/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+        assert_eq!(
+            strip_provider_prefix("DEEPINFRA/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+    }
+
+    #[test]
+    fn strip_prefix_two_letter() {
+        assert_eq!(
+            strip_provider_prefix("DI/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+        assert_eq!(
+            strip_provider_prefix("di/Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+        assert_eq!(
+            strip_provider_prefix("OR/qwen/qwen3-embedding-0.6b"),
+            "qwen/qwen3-embedding-0.6b"
+        );
+    }
+
+    #[test]
+    fn strip_prefix_no_prefix_returns_unchanged() {
+        assert_eq!(
+            strip_provider_prefix("Qwen/Qwen3-Embedding-0.6B"),
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
+        assert_eq!(strip_provider_prefix("qwen3:8b"), "qwen3:8b");
+    }
+
+    #[test]
+    fn strip_prefix_unknown_prefix_returns_unchanged() {
+        assert_eq!(strip_provider_prefix("XX/some-model"), "XX/some-model");
+    }
+}

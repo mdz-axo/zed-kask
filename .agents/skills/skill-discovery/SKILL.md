@@ -14,7 +14,7 @@ Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skil
 - Detect capability gaps in the registry corpus by comparing task patterns an agent encounters against existing registry crates.
 - Search the skill catalog for candidates that could fill an identified gap, ranked by fit score.
 - Evaluate a candidate registry crate against format, quality, and safety criteria to determine whether it should be installed, revised, or rejected.
-- Compute a normalized convergence metric for discovery iterations to assess whether an identified capability gap is sufficiently resolved.
+
 - Consume gap signals from skill-router (uncovered capabilities) or task-breakdown (task patterns that no skill covers).
 
 ## Instructions
@@ -57,16 +57,6 @@ Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skil
 8. Reject the skill if any safety check scores 0.
 9. Revise the skill if the overall score is less than 16 but there are no safety failures.
 
-### skill-discovery-convergence-check
-
-1. Compute a normalized `convergence_metric` in the range [0,1], where 0 means the gap is sufficiently resolved and 1 means it is unresolved.
-2. Start scoring at 1.0 and adjust downward based on candidate evaluation results.
-3. Set the metric to 0.1 or lower if the recommendation is to install and safety checks pass.
-4. Set the metric between 0.2 and 0.6 if the recommendation is to revise but the candidate is close.
-5. Set the metric to 0.7 or higher if the recommendation is to reject and no fallback exists.
-6. Clamp the final metric to the [0,1] range.
-7. Return a JSON object containing the `convergence_metric`, `convergence_method`, `rationale`, `blockers`, and `remaining_gap`.
-
 ## PDCA Pipeline
 
 ```mermaid
@@ -77,8 +67,7 @@ flowchart TD
     D --> E{search coverage?}
     E -- found/weak --> F[evaluate<br/>DO: score quality/safety]
     E -- empty --> C
-    F --> G[convergence-check<br/>CHECK: metric in 0,1]
-    G --> H{metric <= 0.15?}
+    F --> H{metric <= 0.15?}
     H -- no, iters < max --> A
     H -- yes --> I[ACT: install/revise/reject]
     H -- no, iters = max --> J[escalate: residual gap]
@@ -105,12 +94,12 @@ flowchart LR
 | `skill-discovery-detect-gap.j2` | KnowAct | Detect capability gaps in the registry corpus. Analyze task patterns against existing registry crate descriptions and template_type coverage. Classify gaps (coverage, feature, automation, knowledge, governance, quality) and prioritize by impact. Recommends actions including `route_to_skill_router` for feature gaps where an existing skill was not previously routed. |
 | `skill-discovery-search.j2` | KnowAct | Search the skill catalog for candidates that could fill a capability gap. Score each skill 0.0–1.0 on capability match (0.50), lexicon overlap (0.25), and trigger relevance (0.25). Return ranked candidates with fit scores and gap_fill_type (direct/extension/adaptation). Classifies search coverage as found, weak, or empty. |
 | `skill-discovery-evaluate.j2` | KnowAct | Evaluate a candidate registry crate against format, quality, and safety criteria. Check manifest structure, .j2 frontmatter validity, Magna Carta compliance, and Regulation span validity. Produce scored recommendation (install/revise/reject). |
-| `skill-discovery-convergence-check.j2` | KnowAct | Compute a normalized convergence metric for discovery iterations. Synthesizes gap detection + candidate evaluation into `convergence_metric` in [0,1], where 0 means the capability gap is sufficiently resolved. |
+
 
 ## Constraints
 
 - `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to skill-discovery-search and skill-router-match (standardized naming across the routing/discovery ecosystem). `epistemic` gaps are distinct from `knowledge` gaps: epistemic = missing certainty-finding methods; knowledge = missing facts.
 - `skill-discovery-search.j2`: Public. Scores all catalog entries; returns candidates with fit_score ≥ 0.20.
 - `skill-discovery-evaluate.j2`: Public. 11 checks scored 0–2; max score 22; min installable 16; safety 0 → reject.
-- `skill-discovery-convergence-check.j2`: Public. Metric in [0,1]; threshold 0.15; max 3 iterations.
+
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

@@ -1796,7 +1796,7 @@ impl CompletionProvider for KaskMentionCompletionProvider {
                                 break;
                             }
                             if entry.is_file() {
-                                let rel: &str = entry.path.as_unix_str().as_ref();
+                                let rel = entry.path.as_unix_str();
                                 files.push(rel.to_string());
                             }
                         }

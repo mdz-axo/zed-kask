@@ -10981,6 +10981,7 @@ dependencies = [
  "hkask-storage",
  "hkask-templates",
  "hkask-types",
+ "http_client",
  "language_model",
  "language_model_core",
  "rand 0.9.4",

@@ -559,6 +559,18 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         format!("openai/{}", self.model.name)
     }
 
+    fn api_key(&self, cx: &App) -> Option<String> {
+        self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            state.api_key_state.key(api_url).map(|key| key.to_string())
+        })
+    }
+
+    fn api_url(&self, cx: &App) -> Option<String> {
+        self.state
+            .read_with(cx, |state, _cx| Some(state.settings.api_url.clone()))
+    }
+
     fn max_token_count(&self) -> u64 {
         self.model.max_tokens
     }

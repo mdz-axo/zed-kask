@@ -27,6 +27,7 @@ hkask-condenser = { path = "../hkask-condenser" }
 # zed-kask side — the facilities the bridge adapts over
 language_model = { path = "../../../crates/language_model" }
 language_model_core = { path = "../../../crates/language_model_core" }
+http_client = { path = "../../../crates/http_client" }
 gpui = { path = "../../../crates/gpui" }
 gpui_tokio = { path = "../../../crates/gpui_tokio" }
 agent = { path = "../../../crates/agent" }

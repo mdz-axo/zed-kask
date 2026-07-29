@@ -13,7 +13,6 @@
 //! The port is injected via a global hook (`agent::set_memory_port`) so the
 //! `agent` crate doesn't depend on `kask_bridge`.
 
-use hkask_inference::{EmbeddingRouter, InferenceConfig};
 use hkask_memory::{ConsolidationBridge, ConsolidationService, EpisodicMemory, SemanticMemory};
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID};
@@ -24,6 +23,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::Utc;
+
+use crate::inference::LanguageModelEmbeddingPort;
 
 // ── Logging no-op (fallback when DB not configured) ────────────────────────
 
@@ -82,7 +83,7 @@ impl MemoryPort for LoggingMemoryPort {
 pub struct RealMemoryPort {
     episodic: Arc<EpisodicMemory>,
     semantic: Arc<SemanticMemory>,
-    embedding_router: EmbeddingRouter,
+    embedding_port: LanguageModelEmbeddingPort,
     embedding_model: String,
     user_webid: WebID,
     curator_webid: WebID,
@@ -135,6 +136,7 @@ impl RealMemoryPort {
         user_webid: WebID,
         embedding_model: String,
         embedding_dim: usize,
+        embedding_port: LanguageModelEmbeddingPort,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
         tokio_handle: tokio::runtime::Handle,
@@ -194,9 +196,6 @@ impl RealMemoryPort {
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
-        let inference_config = InferenceConfig::from_env();
-        let embedding_router = EmbeddingRouter::new(inference_config);
-
         let curator_webid = WebID::from_persona(b"Curator");
 
         // Consolidation service — episodic → semantic promotion.
@@ -219,7 +218,7 @@ impl RealMemoryPort {
         Ok(Self {
             episodic,
             semantic,
-            embedding_router,
+            embedding_port,
             embedding_model,
             user_webid,
             curator_webid,
@@ -252,6 +251,7 @@ impl RealMemoryPort {
         user_webid: WebID,
         embedding_model: String,
         embedding_dim: usize,
+        embedding_port: LanguageModelEmbeddingPort,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
         tokio_handle: tokio::runtime::Handle,
@@ -271,6 +271,7 @@ impl RealMemoryPort {
             user_webid,
             embedding_model,
             embedding_dim,
+            embedding_port,
             consolidation_cadence_secs,
             confidence_floor,
             tokio_handle,
@@ -575,16 +576,18 @@ impl MemoryPort for RealMemoryPort {
             // injection — when the user asks a similar question later,
             // this turn can be recalled and injected into the prompt.
             let embedding_entity = format!("embedding:thread:{thread_id}:user_input");
-            // Spawn the embedding HTTP call on the tokio runtime so reqwest
-            // has a reactor. The rest of ingest_turn doesn't need tokio.
+            // Spawn the embedding HTTP call on the tokio runtime so the
+            // GPUI-side channel task (which holds the AsyncApp) can resolve
+            // credentials and make the HTTP call. The rest of ingest_turn
+            // doesn't need tokio.
             let embedding_model = self.embedding_model.clone();
-            let embedding_router = self.embedding_router.clone();
+            let embedding_port = &self.embedding_port;
             let user_input_owned = user_input.clone();
             let vectors = self
                 .tokio_handle
                 .spawn(async move {
-                    embedding_router
-                        .embed_sentences(&embedding_model, &[user_input_owned.as_str()])
+                    embedding_port
+                        .embed(&embedding_model, &[user_input_owned])
                         .await
                 })
                 .await;
@@ -667,18 +670,15 @@ impl MemoryPort for RealMemoryPort {
             //
             // Embed the query and search for similar stored embeddings.
             // This finds turns where the user asked similar questions.
-            // Spawn the embedding HTTP call on the tokio runtime so reqwest
-            // has a reactor.
+            // Spawn the embedding HTTP call on the tokio runtime so the
+            // GPUI-side channel task can resolve credentials and make the
+            // HTTP call.
             let embedding_model = self.embedding_model.clone();
-            let embedding_router = self.embedding_router.clone();
+            let embedding_port = &self.embedding_port;
             let query_owned = query.to_string();
             let vectors = self
                 .tokio_handle
-                .spawn(async move {
-                    embedding_router
-                        .embed_sentences(&embedding_model, &[query_owned.as_str()])
-                        .await
-                })
+                .spawn(async move { embedding_port.embed(&embedding_model, &[query_owned]).await })
                 .await;
 
             if let Ok(Ok(vectors)) = vectors

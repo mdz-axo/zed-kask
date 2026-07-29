@@ -82,13 +82,6 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 4. For partial coverage, identify the missing aspects and the extension needed.
 5. Respond with a JSON object containing covered patterns, uncovered patterns, partial coverage, and recommendations.
 
-### skill-maintenance-convergence-check
-
-1. Compute a normalized convergence metric in [0,1] for the maintenance PDCA cycle, where 0 means critical staleness signals are resolved.
-2. Start at 1.0 and adjust downward based on audit and coverage results: critical signals keep metric >= 0.7, medium/low findings set metric in [0.2, 0.6], no critical/high with bounded gaps sets metric <= 0.1.
-3. Identify unresolved critical signals and blockers preventing convergence.
-4. Return a JSON object containing convergence_metric, rationale, blockers, and unresolved_critical_signals.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -100,13 +93,13 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 | `skill-maintenance-prose.j2` | KnowAct | Prose-only derivation: synthesize the "When to Use" and "Instructions" sections of a SKILL.md from a registry crate, emitted as raw markdown. Used by the skill-maintenance skill or agent panel alongside the mechanically-built skeleton (frontmatter, templates table, constraints) — the LLM only writes the prose that needs synthesis, not the structural parts copied from the registry. |
 | `skill-maintenance-audit.j2` | KnowAct | Run staleness and health audit for target scope. Checks R1-R12 registry rules, Z1-Z8 companion checks, X1-X4 cross-artifact checks. Used by the FlowDef manifest as step 1 of the maintenance PDCA loop. |
 | `skill-maintenance-coverage.j2` | KnowAct | Run corpus coverage analysis for uncovered/partial capabilities. Maps common task patterns against the existing skill corpus, identifies what is covered, uncovered, and partial. Used by the FlowDef manifest as step 2 of the maintenance PDCA loop. |
-| `skill-maintenance-convergence-check.j2` | KnowAct | Compute normalized convergence metric for maintenance PDCA cycles. Measures critical signal count, coverage gaps, and regression library growth. Used by the FlowDef manifest as step 3 of the maintenance PDCA loop. |
+
 | `logic-load-goal.j2` | WordAct | Parse the annotated goal: block from a .j2 or manifest.yaml file. (logic_audit mode, folded from skill-logic-audit) |
 | `logic-critique-template.j2` | KnowAct | Adversarial critique of a template body against its stated goal. For each flaw, provide location, claim, anchor to goal, severity, and suggested fix. (logic_audit mode) |
 | `logic-critique-critique.j2` | KnowAct | Soundness filter — separate valid, goal-anchored concerns from spurious ones. (logic_audit mode) |
 | `logic-compose-proposal.j2` | KnowAct | Compose a concrete revised artifact and unified diff from calibrated concerns. (logic_audit mode) |
 | `logic-user-choice.j2` | KnowAct | Present the proposal to the user and capture accept/reject/counter-proposal. (logic_audit mode) |
-| `logic-convergence-check.j2` | KnowAct | Compute convergence metric for logic audit cycle. Converged when no material flaws remain. (logic_audit mode) |
+
 
 ## Constraints
 
@@ -117,7 +110,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 - `skill-maintenance-prose.j2`: Public. Output raw markdown only — no JSON, code fences, frontmatter, or structural sections.
 - `skill-maintenance-audit.j2`: Public. Every finding must cite a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path. Recommendations based solely on SKILL.md must be marked confidence: Hypothesis (Speculative) at maximum.
 - `skill-maintenance-coverage.j2`: Public. Every task pattern must appear in exactly one of: covered, uncovered, or partial. Do not recommend `ignore` for uncovered patterns with critical or high impact.
-- `skill-maintenance-convergence-check.j2`: Public. Metric in [0,1]; threshold 0.15; max 3 iterations.
+
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 
 ## Canonical Action Set (ManifestExecutor)
@@ -167,17 +160,7 @@ smaller). Sub-manifests should declare their own `gas` and `rjoule` blocks.
 
 ## Convergence Block Requirements
 
-Every `category: skill` manifest must have a `convergence:` block:
-
-```yaml
-convergence:
-  threshold: 0.15           # 0.05-0.30; 0.05-0.15 precise, 0.20-0.30 broad
-  improvement_gate: threshold_only  # threshold_only | both | either
-  max_iterations: 3         # max PDCA iterations before forced exit
-  min_iterations: 1          # min iterations before exit allowed
-  convergence_field: step_N_result.convergence_metric  # context field to read
-  on_not_reached: escalate   # abort | escalate
-```
+Every `category: skill` manifest must have a `convergence:` block. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 
 Non-skill categories (`qa-script`, `runtime-config`, `daemon-process`,
 `pipeline`) may have convergence blocks but are not required to.
