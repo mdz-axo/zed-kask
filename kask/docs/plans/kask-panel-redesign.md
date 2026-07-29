@@ -540,8 +540,10 @@ runs `/tool_name args` → card appears. Expand/collapse works. Copy works.
 3. The curator guidance include (`panel-curator-guidance.j2`) is appended
    to every tab's system prompt.
 
-**Validation:** Templates render correctly for all 10 servers. Curator
-guidance is present in every tab.
+**Status: ✅ Done.** `system_prompt.rs` renders `panel-tab-system.j2` +
+`panel-curator-guidance.j2` via `minijinja` (embedded at build time via
+`include_str!`). The `build_system_prompt` function is now a thin wrapper.
+7 unit tests cover template rendering.
 
 ### Phase 6: Cancel + tests
 
@@ -554,6 +556,13 @@ guidance is present in every tab.
 3. Tests pinning the tab-strip behavior, per-tab thread independence, and
    that the curator's cross-tab recall flows through the curator server's
    memory (not through panel-side event forwarding).
+
+**Status: ✅ Done.** Cancel button (IconButton with Stop icon) added to
+the status bar, shown when `busy`. 13 deviation-pinning + behavior tests
+added covering: no virtualization, no MessageEditor fork, no font sizing,
+no drag-and-drop, no retry/undo, no ACP/auth/elicitation, no subagents,
+no model selector, tab strip count, tab-switch session reset, and no
+`observe_tool_use` method on `CuratorSession`.
 
 ---
 

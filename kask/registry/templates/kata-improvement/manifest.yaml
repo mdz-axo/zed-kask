@@ -50,15 +50,6 @@ templates:
       Observation Drill — practice separating observed facts (IS) from
       interpretations (OUGHT).
 
-  - id: kata-improvement/beginner-convergence-check
-    name: "Compute convergence metric for beginner drill cycle"
-    path: beginner-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, score, verify]
-    description: >
-      Compute normalized convergence metric for beginner_mode PDCA cycles.
-      Returns convergence_metric plus rationale and blockers.
-
   # -- Improvement mode templates --
   - id: kata-improvement/improvement-step1-direction
     name: "Step 1 — understand direction/challenge"
@@ -96,11 +87,3 @@ templates:
       Step 4 of the Improvement Kata — define next experiment with testable
       predictions toward the target.
 
-  - id: kata-improvement/kata-improvement-convergence-check
-    name: "Compute convergence metric for improvement cycle"
-    path: kata-improvement-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, score, verify]
-    description: >
-      Compute normalized convergence metric to evaluate the coherence of a
-      PDCA cycle.
