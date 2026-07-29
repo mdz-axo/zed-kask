@@ -64,15 +64,6 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 4. Assess each force for its impact (high/medium/low) on the focal question.
 5. Assess each force for its predictability (high/medium/low) trajectory.
 
-### scenario-convergence-check
-
-1. Derive the convergence metric starting at 0.0, applying penalties based on the independent quality gate status and scores.
-2. Apply penalties if robust strategies or early indicators are missing or insufficient.
-3. Consume `parametric_variation_flag` directly from the quality gate output — do NOT re-derive divergence via word-overlap.
-4. Apply a +0.20 penalty if the gate's `parametric_variation_flag` is true.
-5. Check for stall: if `prior_convergence_metric` is available and the delta is less than 0.03, emit a blocker signaling vacuous regeneration.
-6. Clamp the final convergence metric to the range [0, 1].
-
 ### scenario-quality-gate
 
 1. Evaluate the scenario set across three independent dimensions: divergence, consistency, and coverage.
@@ -92,7 +83,6 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 | `focal-question.j2` | KnowAct | Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. Produces a current state summary.  |
 | `implications-indicators.j2` | KnowAct | Derive per-scenario implications and identify early-warning indicators. Produces robust strategies (for all scenarios) and contingent strategies (for specific unfoldings).  |
 | `key-forces.j2` | KnowAct | Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups.  |
-| `scenario-convergence-check.j2` | KnowAct | Compute normalized convergence metric for scenario-planning PDCA cycles. Consumes the quality gate's `parametric_variation_flag` directly (no word-overlap re-derivation) and includes a stall detector for vacuous iteration detection. Returns convergence_metric plus rationale, blockers, and parametric_variation status.  |
 | `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes.  |
 
 ## Constraints
@@ -102,6 +92,5 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 - `focal-question.j2`: Public.
 - `implications-indicators.j2`: Public.
 - `key-forces.j2`: Public.
-- `scenario-convergence-check.j2`: Public.
 - `scenario-quality-gate.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

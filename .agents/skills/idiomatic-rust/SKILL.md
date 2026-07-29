@@ -45,14 +45,6 @@ Idiomatic Rust design through Graydon Hoare's lens. Convergent inquiry loop: anc
 4. Find deeper connections to broader Rust patterns, comparing the design to std library types, popular crates, applicable RFCs, and API guidelines.
 5. Produce refinement directives for each gap or edge case, stating the specific change required, the principle addressed, and the expected improvement.
 
-### idiomatic-rust-convergence
-
-1. Evaluate design quality by assessing how idiomatic the current proposal is and whether Phase 1 improvement targets were addressed.
-2. Evaluate critique depth by measuring the thoroughness of the adversarial review, flagging suspiciously low critique scores on weak designs.
-3. Evaluate connection richness by counting the identified connections to the broader Rust ecosystem.
-4. Compute the convergence metric by synthesizing design quality, critique depth, and connection richness into a normalized score.
-5. Determine whether to loop back to the design phase by checking if the convergence metric exceeds the threshold and actionable refinements exist.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -60,7 +52,6 @@ Idiomatic Rust design through Graydon Hoare's lens. Convergent inquiry loop: anc
 | `idiomatic-rust-inquiry.j2` | KnowAct | Assess a Rust design problem against Graydon Hoare's principles. Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets.  |
 | `idiomatic-rust-design.j2` | KnowAct | Propose type-driven Rust solutions with code examples. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs.  |
 | `idiomatic-rust-challenge.j2` | KnowAct | Adversarial review of a Rust design proposal. Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives. Few-shot: if the critique score is below threshold, loop back to design with concrete targets.  |
-| `idiomatic-rust-convergence.j2` | KnowAct | Compute a normalized convergence metric for an idiomatic-rust inquiry cycle. Synthesizes design quality, critique depth, and connection richness into a score in [0,1] where 0 means maximally idiomatic.  |
 
 ## Fusion Mode
 
@@ -70,13 +61,9 @@ LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for determin
 JSON merge without an LLM judge call. This skill uses **critique mode** — Draft →
 challenge → refine matches Rust design review.
 
-The convergence check step has `fusion: false` to ensure deterministic rubric
-evaluation uses single-model inference.
-
 ## Constraints
 
 - `idiomatic-rust-inquiry.j2`: Public.
 - `idiomatic-rust-design.j2`: Public.
 - `idiomatic-rust-challenge.j2`: Public.
-- `idiomatic-rust-convergence.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

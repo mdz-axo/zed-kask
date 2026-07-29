@@ -31,9 +31,6 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 10. **Assess testability** now that objectives are specified: verify measurable outcome with validated method, specified population, defined comparison, suggested statistical test, clinically meaningful effect size, non-inferiority/equivalence margin (δ) if applicable, and sample size feasibility.
 11. **Verify five-link alignment**: question→hypothesis, hypothesis→primary aim, primary aim→objectives, objectives→PICO outcome, and hypothesis→null hypothesis. Flag any misalignments honestly and propose corrections.
 12. **Recheck feasibility** in light of operational aims and objectives: sample size, methods, timeline, and resources. Identify any new concerns that emerged during aims/objectives development.
-13. **Compute the convergence metric** as a weighted dimensional score (0.25 each for FINER compliance, PICO completeness, hypothesis coherence, and aims alignment) on [0,1] where 0 means decision-ready.
-14. **Identify specific blockers** preventing convergence — any missing/blocked PICO element, non-testable hypothesis, significant alignment gaps, any FINER dimension below 4, or blocked feasibility recheck.
-15. **Iterate via PDCA cycles** until the convergence metric falls below the threshold (default 0.05) or max iterations (default 3) is reached, resolving blockers in each cycle.
 
 ## Registry Templates
 
@@ -42,12 +39,11 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 | `finer-evaluate.j2` | KnowAct | Apply FINER criteria to a broad research topic. Evaluate feasibility (subjects, expertise, resources), interest (audience relevance), novelty (knowledge contribution), ethics (compliance), and relevance (clinical impact). Produces per-dimension scores with rationale and refinement suggestions. |
 | `pico-structure.j2` | KnowAct | Apply PICO framework to structure the research question. Identifies Population characteristics, Intervention/exposure, Comparison/control, and Outcome measures. Produces a structured question and completeness assessment. |
 | `hypothesis-operationalize.j2` | KnowAct | Derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps. |
-| `hypothesis-framer-convergence-check.j2` | KnowAct | Compute normalized convergence metric for hypothesis-framer PDCA cycles. Evaluates FINER compliance, PICO completeness, hypothesis coherence, and aims alignment. Returns convergence metric plus rationale and blockers. |
 
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility
-- Energy caps: `finer-evaluate.j2` (6144), `pico-structure.j2` (6144), `hypothesis-operationalize.j2` (8192), `hypothesis-framer-convergence-check.j2` (2048)
+- Energy caps: `finer-evaluate.j2` (6144), `pico-structure.j2` (6144), `hypothesis-operationalize.j2` (8192)
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
 - The null hypothesis must postulate no difference or no relationship
 - Non-inferiority and equivalence hypotheses require a defined δ margin — without it, the hypothesis is not testable

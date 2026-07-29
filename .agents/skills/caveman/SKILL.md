@@ -35,21 +35,11 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 12. Compute `compression_ratio` = `compressed_token_estimate / original_token_estimate` (lower is better).
 13. Report any sections where caveman was temporarily dropped as `clarity_exceptions`.
 
-### Convergence Check (caveman-convergence-check)
-
-1. Given a compression output, compute a normalized convergence metric on [0,1].
-2. Score 0 = fully converged (output is sufficiently compressed while preserving clarity constraints); 1 = not converged.
-3. Score how much work remains toward the convergence threshold (default 0.15).
-4. Use LLM-assessed saturation detection as the convergence method.
-5. Consider iteration count (default max 3) and improvement target (default 0.10) when scoring.
-6. Return only JSON with `convergence_metric`, `convergence_method`, and `rationale`.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
 |----------|------|--------|
 | `caveman-compress.j2` | `WordAct` | Compress a draft response into caveman mode: drop articles, filler, pleasantries, hedging. Preserve all technical substance. Insert clarity exceptions for security and irreversible actions. |
-| `caveman-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for caveman PDCA cycles. |
 
 ## Constraints
 
@@ -59,5 +49,4 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only.
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
-- Convergence check runs with `thinking_budget: off` and `max_tokens: 900` — keep rationale terse.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

@@ -63,12 +63,6 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 8. Rank alternatives by composite score descending (rank 1 = best).
 9. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
 
-### mcda-convergence-check
-
-1. Measure convergence on [0,1] where 0 means ranking confidence is high and sensitivity analysis shows acceptable robustness, and 1 means not converged.
-2. Score how much work remains based on the ranking result and sensitivity result inputs.
-3. Return the convergence metric, a short rationale, and any blockers.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -77,7 +71,6 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 | `rank-alternatives.j2` | KnowAct | Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for cases where strong performance on one criterion masks poor performance.  |
 | `sensitivity-analysis.j2` | KnowAct | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness.  |
 | `weight-and-score.j2` | KnowAct | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative.  |
-| `mcda-convergence-check.j2` | KnowAct | Compute normalized convergence metric for MCDA PDCA cycles. Returns convergence_metric plus rationale and blockers.  |
 
 ## Constraints
 
@@ -85,5 +78,4 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 - `rank-alternatives.j2`: Public.
 - `sensitivity-analysis.j2`: Public.
 - `weight-and-score.j2`: Public.
-- `mcda-convergence-check.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

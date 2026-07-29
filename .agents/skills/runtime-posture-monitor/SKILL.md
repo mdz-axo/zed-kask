@@ -224,32 +224,6 @@ CONSTRAINT — Evidence integrity (P8):
    events emitted, guard violations emitted, verdict, userpod host,
    latency metric.
 
-### runtime-posture-monitor/convergence-check
-
-1. Compute normalized convergence metric [0, 1] where 0 = fully converged.
-2. Score dimensions (weighted):
-   - Critical + high threats resolved (0.40): 0 critical/high = +0.00;
-     1+ critical/high unresolved = +0.40; partial resolution = proportional.
-   - Defense-layer firing coverage (0.25): 6 layers firing = +0.00;
-     5 = +0.04; 4 = +0.08; 3 = +0.13; 2 = +0.19; 1 = +0.25.
-   - Threat-pattern taxonomy coverage (0.15): all 4 threat types
-     (endpoint_abuse, bot_traffic, llm_usage_spike,
-     dependency_behavior_anomaly) covered = +0.00; partial = +0.04 per
-     missing; 0 = +0.15.
-   - Regression library growth (0.10): new `surface: runtime` regression
-     proposed and accepted = +0.00; no new regression despite evidence =
-     +0.10 (stagnation).
-   - Residual runtime risk (0.10): unresolved runtime anomalies remaining
-     = +0.10; all resolved = +0.00.
-3. Start at 0.00, add contributions, clamp to [0, 1].
-4. Converged: metric ≤ 0.10 AND relative improvement ≥ 5% from previous
-   cycle. If not improved by ≥5%, identify blocker.
-5. Return JSON: `{convergence_metric, dimensions, rationale, blockers,
-   defense_layers_firing, defense_layers_silent, existing_regressions,
-   proposed_regressions, reg_span_emitted: true}`.
-6. Emit `reg.runtime.convergence` Regulation span (registered in
-   `CANONICAL_NAMESPACES` — emitted unconditionally).
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -257,7 +231,6 @@ CONSTRAINT — Evidence integrity (P8):
 | `select-signal.j2` | KnowAct | Discover runtime signal sources; read regression library; emit `reg.runtime.select` span. |
 | `classify-threat.j2` | KnowAct | Observe runtime signals; classify threats; apply pragmatic-cybernetics; emit `reg.runtime.classify` spans. |
 | `emit-regulation.j2` | KnowAct | Synthesize threats with CWE/OWASP/ATLAS taxonomy; emit `reg.regulation` and `reg.guard.violation`; propose `RR-NNNN.yaml` entries (`surface: runtime`); emit `reg.runtime.regulate` span. |
-| `convergence-check.j2` | KnowAct | Compute runtime-posture-specific convergence metric (defense-layer firing coverage + regression growth + residual risk). Emit `reg.runtime.convergence` span. |
 
 ## Defense-Layer Catalog (Runtime Specific)
 
@@ -292,9 +265,9 @@ catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
 - **`bug-hunt`:** Provides decomposed pipeline structure (`Charter` →
   `Probe` → `Oracle` → `Taxonomize` → `Report`). This skill replicates
   that structure (`select-signal` ≈ charter; `classify-threat` ≈ probe +
-  oracle; `emit-regulation` ≈ taxonomize + report; `convergence-check` ≈
-  convergence). Uses same pragmatic-cybernetics and pragmatic-semantics
-  reasoning embedded in instructions.
+  oracle; `emit-regulation` ≈ taxonomize + report). Uses same
+  pragmatic-cybernetics and pragmatic-semantics reasoning embedded in
+  instructions.
 - **`runtime-posture-monitor` does NOT replace any of these:** It fills
   the runtime observation gap. No existing skill observes hKask's own Regulation
   telemetry for runtime security posture.
@@ -304,7 +277,6 @@ catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
 - `select-signal.j2`: `visibility: public`.
 - `classify-threat.j2`: `visibility: public`.
 - `emit-regulation.j2`: `visibility: public`.
-- `convergence-check.j2`: `visibility: public`.
 - Every finding includes concrete span target, timestamp, signal value,
   baseline reference, quoted evidence snippet, source citation — not
   summary description.

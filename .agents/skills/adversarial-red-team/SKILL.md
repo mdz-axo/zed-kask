@@ -49,12 +49,11 @@ Adversarial robustness testing. Select targets, generate adversarial inputs acro
 | `generate-adversarial.j2` | `KnowAct` | Generate adversarial inputs targeting a specific output across multiple vulnerability categories and injection vectors. Supports three persistence levels: single (one batch), iterative (multi-turn escalating scripts building on prior findings), and persistent (ongoing adaptive attack scripts with response-driven adaptation rules). |
 | `select-target.j2` | `KnowAct` | Select the best adversarial target and map its vulnerability surface. Evaluates target domain against adversarial categories and calibrates intensity level. |
 | `test-against-target.j2` | `KnowAct` | Test a target output against generated adversarial inputs. Evaluate resistance rate and identify critical failures that bypass defenses. |
-| `adversarial-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for adversarial-red-team PDCA cycles. Returns convergence_metric plus rationale and blockers. |
 
 ## Constraints
 
 - All templates use `Public` visibility
-- Energy caps: `generate-adversarial.j2` = 8192, `select-target.j2` = 2048, `test-against-target.j2` = 8192, `adversarial-convergence-check.j2` = 2048
+- Energy caps: `generate-adversarial.j2` = 8192, `select-target.j2` = 2048, `test-against-target.j2` = 8192
 - Each adversarial input must be specific to the target output — no generic attacks
 - Severity must match the intensity level: light ≤ moderate ≤ severe
 - Multi-turn scripts must be realistic — a human attacker could plausibly type these messages

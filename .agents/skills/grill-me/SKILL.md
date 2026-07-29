@@ -63,9 +63,6 @@ with LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for
 deterministic JSON merge without an LLM judge call. Grill-me uses **deliberation
 mode** (multi-round follow-ups) to match Socratic interrogation.
 
-The convergence check step has `fusion: false` to ensure deterministic rubric
-evaluation uses single-model inference.
-
 ## Constraints
 
 - `grill-me-round.j2`: Public.

@@ -60,15 +60,6 @@ description: "4-step Improvement Kata templates for scientific capability develo
 7. Determine how quickly you can go and see the result.
 8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, and `when_to_check`.
 
-### kata-improvement-convergence-check
-
-1. Measure whether the four-step improvement kata has produced a coherent, testable PDCA plan.
-2. Check each step's quality (direction, current condition, target condition, experiment).
-3. Check cross-step coherence (current↔target gap, experiment alignment, feedback timing).
-4. Check Regulation grounding if Regulation counters are available in context.
-5. Start at 1.0, subtract for each satisfied check, and clamp to [0, 1].
-6. Return JSON only with `convergence_metric`, `convergence_method`, `metric_decomposition`, `rationale`, and `blockers`.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -77,12 +68,10 @@ description: "4-step Improvement Kata templates for scientific capability develo
 | `improvement-step2-current.j2` | WordAct | Step 2 — Grasp the current condition. Collect data, detect patterns, establish baseline metrics. |
 | `improvement-step3-target.j2` | WordAct | Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle. |
 | `improvement-step4-experiment.j2` | WordAct | Step 4 — Experiment toward target. Design PDCA experiment with specific prediction and measurement plan. |
-| `kata-improvement-convergence-check.j2` | KnowAct | Compute normalized convergence metric for kata-improvement PDCA cycles. Returns convergence_metric plus rationale and blockers. |
 | `beginner-selector.j2` | KnowAct | Select appropriate beginner drill based on practice history and automaticity. (beginner_mode, folded from kata-starter) |
 | `beginner-five-questions.j2` | KnowAct | Five Questions Drill — practice asking the 5 coaching questions on a trivial process. (beginner_mode) |
 | `beginner-pdca-cycle.j2` | KnowAct | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial measurable process. (beginner_mode) |
 | `beginner-observation-drill.j2` | KnowAct | Observation Drill — practice separating facts (IS) from interpretations (OUGHT). (beginner_mode) |
-| `beginner-convergence-check.j2` | KnowAct | Compute convergence metric for beginner drill cycle. Measures habit signal quality and automaticity. (beginner_mode) |
 
 ## Constraints
 
@@ -90,5 +79,4 @@ description: "4-step Improvement Kata templates for scientific capability develo
 - `improvement-step2-current.j2`: Public.
 - `improvement-step3-target.j2`: Public.
 - `improvement-step4-experiment.j2`: Public.
-- `kata-improvement-convergence-check.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

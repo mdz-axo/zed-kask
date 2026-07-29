@@ -13,7 +13,7 @@
 
 use gpui::{
     App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
-    StatefulInteractiveElement, Window, prelude::*,
+    StatefulInteractiveElement, Window, img, prelude::*,
 };
 use serde_json::Value;
 use ui::prelude::*;
@@ -173,12 +173,22 @@ impl ToolCallCard {
             ToolCallStatus::Error => Color::Error,
             _ => Color::Muted,
         };
+
+        // Detect image content in the tool result. If the result is a URL
+        // to an image, a base64 data URI, or a JSON object with an image
+        // field, render the image inline instead of (or alongside) the text.
+        let image_sources = extract_image_sources(result);
+
         Some(
-            div()
+            v_flex()
                 .mt_1()
                 .p_1()
+                .gap_1()
                 .rounded_sm()
                 .bg(cx_theme_muted_bg())
+                .children(image_sources.into_iter().map(|src| {
+                    div().child(img(src).max_w_full().object_fit(gpui::ObjectFit::Contain))
+                }))
                 .child(
                     Label::new(format!("Output:\n{result}"))
                         .size(LabelSize::XSmall)
@@ -245,6 +255,125 @@ fn cx_theme_muted_bg() -> gpui::Hsla {
     // `colors().editor_background` with opacity. We use `ghost_element`
     // colors which are theme-appropriate.
     gpui::hsla(0.0, 0.0, 0.5, 0.08)
+}
+
+/// Extract image sources from a tool result string.
+///
+/// Detects:
+/// - HTTP/HTTPS URLs ending in image extensions (`.png`, `.jpg`, `.jpeg`,
+///   `.gif`, `.webp`, `.bmp`).
+/// - Base64 data URIs (`data:image/...;base64,...`).
+/// - JSON objects with `image_url`, `image_path`, `url`, or `path` fields
+///   that point to images.
+///
+/// Returns a list of `ImageSource` values to render inline.
+fn extract_image_sources(result: &str) -> Vec<gpui::ImageSource> {
+    let mut sources = Vec::new();
+
+    // Try parsing as JSON first.
+    if let Ok(value) = serde_json::from_str::<Value>(result) {
+        extract_images_from_json(&value, &mut sources);
+    }
+
+    // Also scan the raw string for image URLs (the result may be
+    // free-form text containing a URL).
+    if sources.is_empty() {
+        for word in result.split_whitespace() {
+            if is_image_url(word) {
+                if let Some(src) = url_to_image_source(word) {
+                    sources.push(src);
+                }
+            }
+        }
+    }
+
+    sources
+}
+
+/// Recursively extract image sources from a JSON value.
+fn extract_images_from_json(value: &Value, sources: &mut Vec<gpui::ImageSource>) {
+    match value {
+        Value::String(s) => {
+            if is_image_url(s) || is_data_uri(s) {
+                if let Some(src) = string_to_image_source(s) {
+                    sources.push(src);
+                }
+            }
+        }
+        Value::Object(map) => {
+            // Check common image field names.
+            for key in [
+                "image_url",
+                "image_path",
+                "image",
+                "url",
+                "path",
+                "thumbnail",
+            ] {
+                if let Some(Value::String(s)) = map.get(key) {
+                    if is_image_url(s) || is_data_uri(s) {
+                        if let Some(src) = string_to_image_source(s) {
+                            sources.push(src);
+                        }
+                    }
+                }
+            }
+            // Recurse into all values.
+            for (_, v) in map {
+                extract_images_from_json(v, sources);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                extract_images_from_json(item, sources);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Check if a string is an HTTP/HTTPS URL pointing to an image.
+fn is_image_url(s: &str) -> bool {
+    if !s.starts_with("http://") && !s.starts_with("https://") {
+        return false;
+    }
+    let lower = s.to_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+/// Check if a string is a base64 data URI for an image.
+fn is_data_uri(s: &str) -> bool {
+    s.starts_with("data:image/") && s.contains(";base64,")
+}
+
+/// Convert an image URL string to an `ImageSource`.
+fn url_to_image_source(s: &str) -> Option<gpui::ImageSource> {
+    string_to_image_source(s)
+}
+
+/// Convert any image string (URL or data URI) to an `ImageSource`.
+fn string_to_image_source(s: &str) -> Option<gpui::ImageSource> {
+    if is_data_uri(s) {
+        // Data URIs are not directly supported by ImageSource::Resource;
+        // they'd need decoding. For now, skip data URIs (the media server
+        // typically returns file paths or URLs, not data URIs).
+        return None;
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return Some(gpui::ImageSource::Resource(gpui::Resource::Uri(
+            s.to_string().into(),
+        )));
+    }
+    // Try as a local file path.
+    let path = std::path::Path::new(s);
+    if path.is_absolute() && path.exists() {
+        return Some(gpui::ImageSource::Resource(gpui::Resource::Path(
+            std::sync::Arc::from(path),
+        )));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -317,5 +446,65 @@ mod tests {
         let result = format_json(&val);
         assert!(result.len() <= 5003);
         assert!(result.ends_with('…'));
+    }
+
+    // ── Image extraction ───────────────────────────────────────────────
+
+    #[test]
+    fn is_image_url_detects_image_extensions() {
+        assert!(is_image_url("https://example.com/image.png"));
+        assert!(is_image_url("http://example.com/photo.JPG"));
+        assert!(is_image_url("https://example.com/diagram.svg"));
+    }
+
+    #[test]
+    fn is_image_url_rejects_non_images() {
+        assert!(!is_image_url("https://example.com/page.html"));
+        assert!(!is_image_url("https://example.com/api/data"));
+        assert!(!is_image_url("not a url"));
+    }
+
+    #[test]
+    fn is_data_uri_detects_base64_images() {
+        assert!(is_data_uri("data:image/png;base64,iVBORw0KGgo="));
+        assert!(!is_data_uri("https://example.com/image.png"));
+    }
+
+    #[test]
+    fn extract_image_sources_from_json_with_image_url() {
+        let result = serde_json::json!({
+            "image_url": "https://example.com/generated.png",
+            "description": "A generated image"
+        })
+        .to_string();
+        let sources = extract_image_sources(&result);
+        assert_eq!(sources.len(), 1);
+    }
+
+    #[test]
+    fn extract_image_sources_from_free_text_url() {
+        let result = "The image is at https://example.com/chart.png and here is the data";
+        let sources = extract_image_sources(result);
+        assert_eq!(sources.len(), 1);
+    }
+
+    #[test]
+    fn extract_image_sources_empty_for_no_images() {
+        let result = "{\"healthy\": true}";
+        let sources = extract_image_sources(result);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn extract_image_sources_from_nested_json() {
+        let result = serde_json::json!({
+            "results": [
+                {"url": "https://example.com/img1.png"},
+                {"url": "https://example.com/img2.jpg"}
+            ]
+        })
+        .to_string();
+        let sources = extract_image_sources(&result);
+        assert_eq!(sources.len(), 2);
     }
 }

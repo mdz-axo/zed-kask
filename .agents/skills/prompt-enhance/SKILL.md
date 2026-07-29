@@ -104,22 +104,6 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 4. Return the frontier's best member as the final enhanced prompt.
 5. Gated by `condition: step_1_result.effort_tier == 'high'`.
 
-### Convergence (enhance-convergence-check, step 13)
-
-1. Tier-scaled thresholds: low (0.30), medium (0.20), high (0.10).
-2. Tier-scaled max iterations: low (3), medium (6), high (9).
-3. Start at 1.0; subtract for each completed phase.
-4. **Grill verdict incorporation**: `rewrite_needed` forces metric above threshold (drives re-entry); `fail` forces `next_action=escalate_to_user`; `pass` uses computed metric.
-5. Materiality guard: force convergence if metric delta < 0.02 for ≥ half the tier max (low=1, medium=3, high=4) iterations.
-6. `next_action`: `exit` | `re-enter` | `exhausted` | `escalate_to_user`.
-
-### PDCA Loop (step 14)
-
-1. Single loop step. Gated by `condition: step_13_result.next_action == 're-enter'`.
-2. If `next_action` is `exit`, `exhausted`, or `escalate_to_user`, the condition is false and the cascade proceeds to output.
-3. Carries state via `input_mapping`: `prior_convergence_metric` (feeds materiality guard), `pdca_iteration` (increments counter).
-4. Tier max enforced by the convergence-check template returning `exhausted` when the tier cap is hit.
-
 ### Output (enhance-output, step 15)
 
 1. Format per `output_format`: `inline` (fenced code block, default), `file` (write to path), or `both`.
@@ -142,7 +126,6 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `enhance-collector.j2` | KnowAct | Collector — Coalesce the active rewrite step's output into a canonical context key |
 | `enhance-verify.j2` | KnowAct | Phase 4 — Decoupled critic via grill-me self-challenge |
 | `enhance-evolve.j2` | KnowAct | Phase 5 — Evolutionary optimization via gpa-evolution delegate (high only) |
-| `enhance-convergence-check.j2` | KnowAct | Convergence gate — tier-scaled thresholds + grill verdict incorporation |
 | `enhance-output.j2` | KnowAct | ACT phase — Format and deliver the enhanced prompt |
 
 ## Constraints
@@ -152,7 +135,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 - Phase 5 (evolve) fires only at `high` tier.
 - Phase 4 critic is decoupled from Phase 3 generator (self-improvement §9.1).
 - Hypothesis-tier findings are never mutated — always deferred for user verification.
-- Single PDCA loop (step 14) handles all re-entry; no separate rewrite loop. Grill verdict is incorporated into the convergence metric (step 13) to drive re-entry.
+- Single PDCA loop (step 14) handles all re-entry; no separate rewrite loop. Grill verdict is incorporated into the convergence metric to drive re-entry. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 - Max PDCA iterations tier-scaled: low=3, medium=6, high=9; materiality guard forces convergence on irreducible gaps at half the tier max.
 - Step conditions use `condition:` (not `skip_condition:`) — the step runs when the condition is true. Supported operators: `==`, `!=`, `<`, `<=`, `>`, `>=`, `AND`, `OR`, `NOT`, dot-paths.
 - Loop steps do not evaluate `loop_condition` — they check `convergence_field` + `threshold` + `max_iterations`. Use `condition:` on the loop step to gate re-entry.

@@ -67,15 +67,6 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 4. The riff must resolve — it cannot hang indefinitely.
 5. Return `{tangent, outcome, synthesis, thread_id, steps_remaining, reg_span}`.
 
-### Convergence Check (`improv-convergence-check`)
-1. Start the metric at 1.0.
-2. Subtract 0.3 if mode is present and in {plussing, yes-and, yes-but, freestyling, riffing}.
-3. Subtract 0.4 if response content is present and mode-appropriate.
-4. Subtract 0.2 if application output includes coherent Regulation signaling (e.g., `reg_spans` or `reg_span`).
-5. If evidence indicates explicit contradiction/negation instead of constructive extension, keep metric ≥ 0.7.
-6. Clamp to [0,1].
-7. Return `{convergence_metric, convergence_method, rationale, blockers, unresolved_signals}`.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -86,12 +77,11 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 | `improv-yes-but.j2` | `WordAct` | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
 | `improv-freestyling.j2` | `WordAct` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
 | `improv-riffing.j2` | `WordAct` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
-| `improv-convergence-check.j2` | `KnowAct` | Compute normalized convergence for improv mode-selection/application PDCA cycles and report unresolved constructiveness signals. |
 
 ## Constraints
 
 - **Visibility:** All templates are `Public`.
-- **Energy caps:** `improv-select` 4096; `improv-plussing` 4096; `improv-yes-and` 4096; `improv-yes-but` 4096; `improv-freestyling` 4096; `improv-riffing` 4096; `improv-convergence-check` 2048.
+- **Energy caps:** `improv-select` 4096; `improv-plussing` 4096; `improv-yes-and` 4096; `improv-yes-but` 4096; `improv-freestyling` 4096; `improv-riffing` 4096.
 - **Never explicitly negate** (Plussing, and governing principle in selector). Criticism is deletion-by-omission.
 - **Yes And extension must be additive, not substitutive** — the accepted base remains intact and visible.
 - **Yes But constraint narrows, does not contradict** — do not use "no," "wrong," "can't," or "impossible."

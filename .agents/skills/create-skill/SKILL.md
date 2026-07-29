@@ -205,13 +205,12 @@ were insufficient or the PDCA shape didn't emerge correctly from them.
 | `create-skill-describe.j2` | `KnowAct` | Capture the skill's purpose, name, PDCA shape (emergent from anchors), delegates, span namespace, ontology annotations. |
 | `create-skill-scaffold.j2` | `KnowAct` | Generate the full registry crate structure with ontology-annotated artifacts. Delegates to skill-maintenance-build. |
 | `create-skill-validate.j2` | `KnowAct` | Validate the scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10. Delegates to skill-maintenance-validate. |
-| `create-skill-convergence-check.j2` | `KnowAct` | Check validation passed; emit next_research_focus if not converged. |
 | `create-skill-ontologies.yaml` | `RenderAct` | Reference: ontology reference set (PKO, Dublin Core, GOLEM, MovieLabs OMC, ESO) with domain mappings and annotation patterns. |
 
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: research (6144), describe (4096), scaffold (8192), validate (4096), convergence-check (2048).
+- Energy caps: research (6144), describe (4096), scaffold (8192), validate (4096).
 - Gas cap: 150,000 per invocation. Maximum 3 iterations.
 - **The skill's PDCA shape must emerge from its ontological anchors, not from a generic template.** The research phase is mandatory — no skill is scaffolded without ontological grounding.
 - **Each skill is idiosyncratic.** Do not generalize the shape across skills. A gradient-hunter is not a bug-hunt is not a self-improvement cycle.

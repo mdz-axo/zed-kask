@@ -38,7 +38,7 @@ use serde_json::Value;
 use text::ToOffset;
 use ui::WithScrollbar;
 use ui::prelude::*;
-use ui::{Tab, TabPosition};
+use ui::{CopyButton, Tab, TabPosition};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem, TabContentParams},
@@ -357,8 +357,9 @@ impl KaskPanel {
             // Load persisted conversations from the KVP store.
             panel.load_tabs(cx);
             panel.input_editor.update(cx, |editor, cx| {
-                editor
-                    .set_completion_provider(Some(Rc::new(KaskToolCompletionProvider::new(weak))));
+                editor.set_completion_provider(Some(Rc::new(KaskCombinedCompletionProvider::new(
+                    weak,
+                ))));
                 cx.notify();
             });
         });
@@ -904,7 +905,8 @@ impl KaskPanel {
 
         let message_elements: Vec<AnyElement> = messages
             .iter()
-            .map(|msg| {
+            .enumerate()
+            .map(|(msg_idx, msg)| {
                 let (color, prefix) = match msg.role {
                     KaskMessageRole::User => (Color::Default, ""),
                     KaskMessageRole::Assistant => (Color::Accent, ""),
@@ -981,6 +983,18 @@ impl KaskPanel {
                         )
                     })
                     .child(body)
+                    .when(
+                        msg.role == KaskMessageRole::Assistant && !msg.content.is_empty(),
+                        |this| {
+                            this.child(
+                                h_flex().justify_end().child(
+                                    CopyButton::new(("copy-msg", msg_idx), msg.content.clone())
+                                        .icon_size(IconSize::XSmall)
+                                        .tooltip_label("Copy"),
+                                ),
+                            )
+                        },
+                    )
                     .children(
                         msg.tool_calls
                             .iter()
@@ -1037,6 +1051,20 @@ impl KaskPanel {
             .children(message_elements)
             .children(spinner_element)
             .vertical_scrollbar_for(&self.messages_scroll_handle, window, cx)
+            .child(
+                // Scroll-to-bottom button — always visible at bottom-right.
+                div().absolute().bottom_2().right_2().child(
+                    IconButton::new("scroll-to-bottom", IconName::ArrowDown)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(move |window, cx| {
+                            ui::Tooltip::text("Scroll to bottom")(window, cx)
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.scroll_messages_to_bottom(cx);
+                            cx.notify();
+                        })),
+                ),
+            )
     }
 
     fn render_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1493,7 +1521,72 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-// ── Tool completion provider ─────────────────────────────────────────────
+// ── Combined completion provider ─────────────────────────────────────
+//
+// The `Editor` supports only one `completion_provider`. This struct
+// delegates to both `KaskToolCompletionProvider` (for `/tool_name`) and
+// `KaskMentionCompletionProvider` (for `@file`), merging their results.
+
+/// Completion provider that delegates to both tool and mention providers.
+pub(crate) struct KaskCombinedCompletionProvider {
+    tools: KaskToolCompletionProvider,
+    mentions: KaskMentionCompletionProvider,
+}
+
+impl KaskCombinedCompletionProvider {
+    pub(crate) fn new(panel: WeakEntity<KaskPanel>) -> Self {
+        Self {
+            tools: KaskToolCompletionProvider::new(panel.clone()),
+            mentions: KaskMentionCompletionProvider::new(panel),
+        }
+    }
+}
+
+impl CompletionProvider for KaskCombinedCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: text::Anchor,
+        trigger: editor::CompletionContext,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let tool_task =
+            self.tools
+                .completions(buffer, buffer_position, trigger.clone(), window, cx);
+        let mention_task = self
+            .mentions
+            .completions(buffer, buffer_position, trigger, window, cx);
+        cx.spawn(async move |_, _cx| {
+            let tool_results = tool_task.await.unwrap_or_default();
+            let mention_results = mention_task.await.unwrap_or_default();
+            // Merge: if either provider returned results, use those.
+            // Tool completions take priority when `/` is the trigger;
+            // mention completions when `@` is the trigger.
+            if !tool_results.is_empty() {
+                return Ok(tool_results);
+            }
+            Ok(mention_results)
+        })
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: text::Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        self.tools
+            .is_completion_trigger(buffer, position, text, trigger_in_words, cx)
+            || self
+                .mentions
+                .is_completion_trigger(buffer, position, text, trigger_in_words, cx)
+    }
+}
+
+// ── Tool completion provider ─────────────────────────────────────────
 //
 // When the user types `/` in the input editor, this provider suggests the
 // selected server's tools (from the cached tool list). The user can run
@@ -1627,6 +1720,149 @@ impl CompletionProvider for KaskToolCompletionProvider {
                 && (slash_offset == 0 || before.as_bytes()[slash_offset - 1].is_ascii_whitespace())
             {
                 return text.chars().all(|c| c.is_alphanumeric() || c == '_');
+            }
+        }
+        false
+    }
+}
+
+// ── @-mention completion provider ─────────────────────────────────────
+//
+// When the user types `@` in the input editor, this provider suggests files
+// from the project's worktrees. This is the minimal mention surface — it
+// does NOT fork `MessageEditor` with context chips, queue, or expand.
+// It plugs into the existing `Editor` as a second completion provider.
+
+/// Completion provider for `@file` mentions.
+///
+/// Lists files from the project's visible worktrees. Stateless beyond the
+/// weak panel handle (for reading the project).
+pub(crate) struct KaskMentionCompletionProvider {
+    panel: WeakEntity<KaskPanel>,
+}
+
+impl KaskMentionCompletionProvider {
+    pub(crate) fn new(panel: WeakEntity<KaskPanel>) -> Self {
+        Self { panel }
+    }
+}
+
+impl CompletionProvider for KaskMentionCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: text::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let panel = self.panel.clone();
+        let buffer = buffer.clone();
+        cx.spawn(async move |_, cx| {
+            // Find the `@` prefix range.
+            let replace_range = buffer.read_with(cx, |buffer, _| {
+                let snapshot = buffer.text_snapshot();
+                let cursor_offset = buffer_position.to_offset(&snapshot);
+                let text = snapshot.text();
+                let before = &text[..cursor_offset.min(text.len())];
+                let at_offset = before.rfind('@')?;
+                let between = &before[at_offset + 1..];
+                if between.chars().any(char::is_whitespace) {
+                    return None;
+                }
+                if at_offset > 0 {
+                    let prev_char = before.as_bytes()[at_offset - 1];
+                    if !prev_char.is_ascii_whitespace() {
+                        return None;
+                    }
+                }
+                Some(buffer.anchor_before(at_offset)..buffer_position)
+            });
+            let Some(replace_range) = replace_range else {
+                return Ok(Vec::new());
+            };
+
+            // List files from the project's worktrees.
+            let files = panel
+                .read_with(cx, |panel, cx| {
+                    let project = panel.project.upgrade()?;
+                    let project = project.read(cx);
+                    let mut files: Vec<String> = Vec::new();
+                    for worktree in project.visible_worktrees(cx) {
+                        let worktree = worktree.read(cx);
+                        // Use the flat entries traversal (max 100 files).
+                        for entry in worktree.entries(false, 0) {
+                            if files.len() >= 100 {
+                                break;
+                            }
+                            if entry.is_file() {
+                                let rel: &str = entry.path.as_unix_str().as_ref();
+                                files.push(rel.to_string());
+                            }
+                        }
+                    }
+                    Some(files)
+                })
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            // Build completions for each file (limit to 50).
+            let completions: Vec<Completion> = files
+                .into_iter()
+                .take(50)
+                .map(|path| {
+                    let new_text = format!("@{path} ");
+                    let label = CodeLabel::plain(path.clone(), Some(&path));
+                    Completion {
+                        replace_range: replace_range.clone(),
+                        new_text,
+                        label,
+                        documentation: None,
+                        source: CompletionSource::Custom,
+                        icon_path: None,
+                        icon_color: None,
+                        match_start: None,
+                        snippet_deduplication_key: None,
+                        insert_text_mode: None,
+                        confirm: None,
+                        group: None,
+                    }
+                })
+                .collect();
+
+            Ok(vec![CompletionResponse {
+                completions,
+                display_options: Default::default(),
+                is_incomplete: true,
+            }])
+        })
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: text::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        if text == "@" {
+            return true;
+        }
+        let buffer = buffer.read(cx);
+        let snapshot = buffer.text_snapshot();
+        let cursor_offset = position.to_offset(&snapshot);
+        let buf_text = snapshot.text();
+        let before = &buf_text[..cursor_offset.min(buf_text.len())];
+        if let Some(at_offset) = before.rfind('@') {
+            let between = &before[at_offset + 1..];
+            if !between.chars().any(char::is_whitespace)
+                && (at_offset == 0 || before.as_bytes()[at_offset - 1].is_ascii_whitespace())
+            {
+                return text
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '.');
             }
         }
         false

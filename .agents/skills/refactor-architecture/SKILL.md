@@ -110,8 +110,6 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 This skill supports **fusion mode** via the `fusion:` block in its flow manifest. When enabled, all analysis steps route through a multi-model panel. This skill uses **pi mode** (Plan-Implement) — Phase 1 synthesizes strategy (explore, candidates, deepen), Phase 2 synthesizes execution plan (audit, strangle, verify).
 
-The convergence check step has `fusion: false` to ensure deterministic rubric evaluation uses single-model inference.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.

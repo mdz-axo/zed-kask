@@ -60,13 +60,6 @@ Goal specification and verification. Extracts structured goals from user intent,
 2. Set confidence to 0.5.
 3. Instruct the agent to continue toward the goal.
 
-### Goal Convergence Check (goal-convergence-check.j2)
-
-1. Measure convergence on a [0, 1] scale where 0 means the verdict is confidently resolved for the current cycle.
-2. Score how much work remains — 1 means not converged.
-3. Use LLM-assessed saturation detection as the convergence method.
-4. Return the convergence metric, method, and rationale.
-
 ### Goal Resolution (goal-resolve.j2)
 
 1. Resolve the goal based on the judge's verdict.
@@ -85,16 +78,15 @@ Goal specification and verification. Extracts structured goals from user intent,
 | `judge.j2` | `KnowAct` | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
 | `judge_command.j2` | `KnowAct` | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
 | `judge_simple.j2` | `KnowAct` | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
-| `goal-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for goal-analysis PDCA cycles. |
 
 > **Note:** Two additional template files exist in the crate but are not listed in the manifest's `templates` array: `goal-activate.j2` (KnowAct — emit Regulation span for goal activation) and `goal-resolve.j2` (KnowAct — route goal verdict to resolution action). Their instructions are included above but they lack manifest-level registration. See warnings.
 
 ## Constraints
 
 - All templates declare `visibility: Public` at the template level; goal-level visibility defaults to `private` to preserve user sovereignty.
-- Energy caps: `create.j2`, `judge.j2`, and `judge_command.j2` at 4096; `goal-activate.j2`, `goal-convergence-check.j2`, `goal-resolve.j2`, and `judge_simple.j2` at 2048.
+- Energy caps: `create.j2`, `judge.j2`, and `judge_command.j2` at 4096; `goal-activate.j2`, `goal-resolve.j2`, and `judge_simple.j2` at 2048.
 - Criteria are designed for LLM-judged semantic verification, not deterministic checks — this avoids Goodhart's law.
 - Low confidence (< 0.7) escalates to human regardless of verdict.
-- Convergence threshold defaults to 0.25; max iterations default to 3; improvement target defaults to 0.05.
+- Convergence threshold defaults to 0.25; max iterations default to 3; improvement target defaults to 0.05. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 - Goals coordinate across human, userpod, and bot agents.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

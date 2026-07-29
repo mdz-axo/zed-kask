@@ -41,12 +41,11 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 | `gpa-propose-mutations.j2` | `KnowAct` | Step 3 — Generate artifact variants from reflected lessons via mutation (targeted edit) and crossover (recombine complementary lessons from non-dominated frontier members). Each variant tests one hypothesis. |
 | `gpa-test-variants.j2` | `KnowAct` | Step 4 — Execute each mutated artifact against the eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, gas, latency). |
 | `gpa-frontier-update.j2` | `KnowAct` | Step 5 — Update Pareto frontier. Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
-| `gpa-convergence-check.j2` | `KnowAct` | Step 6 — Compute Pareto-frontier stability convergence metric. Converged when hypervolume delta is small AND no new non-dominated members were added. Returns convergence_metric plus rationale and blockers. |
 
 ## Constraints
 
 - All templates have `visibility: Public`
-- Energy caps: sample-trajectories (4096), reflect (5120), propose-mutations (5120), test-variants (8192), frontier-update (3072), convergence-check (2048)
+- Energy caps: sample-trajectories (4096), reflect (5120), propose-mutations (5120), test-variants (8192), frontier-update (3072)
 - Only `artifact_type: "prompt"` is implemented in v1 — `"manifest"` and `"template"` paths return empty results with explanatory notes
 - Minimum 2 iterations before convergence is allowed (iteration 1 always returns metric = 1.0)
 - Convergence threshold defaults to 0.10 (configurable via `_convergence.threshold`)

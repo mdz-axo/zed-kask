@@ -44,7 +44,6 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 | `falsifiability-counterfactual.j2` | KnowAct | Pearl/Halpern counterfactual generation. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, derive the testable consequence, name a natural experiment if direct intervention is infeasible, flag irreducible causes. |
 | `falsifiability-discriminate.j2` | KnowAct | Platt discriminating-test design. Design tests that rule out at least one hypothesis (not one-test-per-hypothesis), build the coverage matrix, flag irreducible pairs, rank by elimination power, present for user review. |
 | `falsifiability-eliminate.j2` | KnowAct | Apply observations, eliminate hypotheses whose predictions fail (hard, not probabilistic), corroborate survivors (never confirm), record the auditable falsification log, compute the verdict. |
-| `falsifiability-convergence-check.j2` | KnowAct | Compute normalized convergence metric for falsifiability PDCA cycles. Verdict (0.50) + alternatives-eliminated proportion (0.30) + irreducible remainder (0.20), with a materiality guard that forces convergence when elimination plateaus. |
 
 ## Fusion Mode
 
@@ -55,9 +54,6 @@ JSON merge without an LLM judge call. The falsifiability skill uses **critique m
 (draft hypotheses → panel attacks testability and counterfactual soundness → revise)
 to match the eliminative loop — each stage's output is the target of the next
 stage's attack.
-
-The convergence check step has `fusion: false` to ensure deterministic rubric
-evaluation uses single-model inference.
 
 ## Composition
 
@@ -93,7 +89,6 @@ time, system functional at every step.
 - `falsifiability-counterfactual.j2`: Public.
 - `falsifiability-discriminate.j2`: Public.
 - `falsifiability-eliminate.j2`: Public.
-- `falsifiability-convergence-check.j2`: Public.
 - Corroborated is not confirmed. Never output "proven", "verified true", or "established." Use "survived", "withstood", "corroborated."
 - Elimination is hard, not probabilistic. A contradicted prediction rules the hypothesis out; do not down-weight and carry it (that is superforecasting's job).
 - A hypothesis with no possible falsifying observation is inadmissible at generation, not "weak" — it leaves the pool, recorded.

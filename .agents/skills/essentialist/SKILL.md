@@ -59,9 +59,6 @@ LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for determin
 JSON merge without an LLM judge call. The essentialist uses **critique mode** (draft →
 panel critiques → revise) to match the 3-gate challenge loop.
 
-The convergence check step has `fusion: false` to ensure deterministic rubric
-evaluation uses single-model inference.
-
 ## Constraints
 
 - Visibility: Public — this skill's templates are shared across agents.

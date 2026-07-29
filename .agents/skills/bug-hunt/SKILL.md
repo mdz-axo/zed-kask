@@ -85,15 +85,6 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 4. Phases: Charter (Hendrickson + Bach HTSM) → Probe (file:read, code:search, terminal) → Oracle (Weinberg + pragmatic-semantics + grill-me) → Taxonomize (Beizer + severity + pattern signature) → Report (JSON schema).
 5. Do not fabricate bugs; read real code and run real commands.
 
-### bug-hunt-convergence-check
-
-1. Compute two honest sub-metrics and a composite — do not present process stabilization as "work remaining" (that would be OUGHT-as-IS).
-2. Sub-metric 1 — `process_stabilization_metric` (what the old metric measured): start at 1.0; subtract for resolved/stabilized items using severity weights (Critical/high-confidence unresolved +0.20, High +0.15, Medium +0.05); apply stability bonus (−0.10 if >80% overlap with prior iteration); clamp to [0, 1].
-3. Sub-metric 2 — `coverage_estimate` (proxy for bug surface explored): start at 1.0; add +0.05 per missing Beizer category; add +0.15 if charter `target_area` files were not read; add +0.10 if `probe_instructions` commands were not run; clamp to [0, 1].
-4. Compose: `convergence_metric = 0.5 * process_stabilization_metric + 0.5 * coverage_estimate`. A hunt that stabilizes but hasn't explored the bug surface does NOT converge.
-5. If `convergence_metric > threshold` (0.25), emit a concrete `next_charter_focus` directive for the next iteration's charter (e.g., "Beizer timing category unexplored; next charter should target async lock patterns with dynamic probe_depth"). If converged, set `next_charter_focus` to empty string.
-6. Return JSON only: `convergence_metric`, `process_stabilization_metric`, `coverage_estimate`, `convergence_method`, `metric_decomposition`, `rationale`, `blockers`, and `next_charter_focus`.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -104,7 +95,6 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 | `bug-hunt-taxonomize.j2` | KnowAct | Classify evaluated findings into Beizer taxonomy (8 categories) and assign severity ratings (CRITICAL/HIGH/MEDIUM/LOW). Produces pattern signatures concrete enough for the next expedition's probe to consume. Preserves the `reproducibility` field from the oracle. |
 | `bug-hunt-report.j2` | KnowAct | Compile charter, oracle, and taxonomy results into a structured JSON bug report. v0.31.0: emits `lessons_learned` and `pattern_signatures` fields that the next expedition's charter consumes to close the feedback loop. |
 | `bug-hunt-expedition.j2` | KnowAct | Legacy monolithic expedition template (v0.30.0). Retained for backward compatibility. Prefer the decomposed pipeline. v0.31.0: divergence from the decomposed pipeline is documented in-place (missing crate_model, prior_expedition consumption, dynamic pattern expansion, missing-tests detection, algedonic escalation, reproducibility axis, citation enforcement, lessons_learned/pattern_signatures outputs, composite convergence metric). |
-| `bug-hunt-convergence-check.j2` | KnowAct | Compute normalized convergence metric for bug-hunt PDCA cycles. v0.31.0: composite of `process_stabilization_metric` (severity-weighted unresolved findings + stability overlap) and `coverage_estimate` (Beizer taxonomy coverage + charter scope coverage). Emits `next_charter_focus` when not converged to direct the next iteration's charter. |
 
 ## Fusion Mode
 
@@ -120,9 +110,6 @@ best diagnosis from multiple models.
 - **Fused skill:** `pragmatic-cybernetics`
 - **Max rounds:** 3
 
-The convergence-check step (ordinal 6) has `fusion: false` to ensure deterministic
-rubric evaluation uses single-model inference.
-
 ## Constraints
 
 - `bug-hunt-charter.j2`: Public. Beizer category selection must be justified against the `crate_model`, not generic prevalence. When `prior_expedition` is present, the charter MUST consume it — silent ignoring is a feedback-loop violation.
@@ -131,7 +118,6 @@ rubric evaluation uses single-model inference.
 - `bug-hunt-taxonomize.j2`: Public. Every finding has exactly one Beizer category. Severity must be justified by evidence. Pattern signatures must be concrete (grep-able or structural), not vague. The `reproducibility` field must be preserved from the oracle.
 - `bug-hunt-report.j2`: Public. Each finding must include all required fields. Summary counts must be accurate, including `rejected_findings`. `lessons_learned` must be concrete and actionable; `pattern_signatures` must be derived from actual findings, not fabricated.
 - `bug-hunt-expedition.j2`: Public. Legacy v0.30.0 — divergence from the decomposed pipeline is documented in-place. Use only when a single-call monolithic expedition is explicitly required.
-- `bug-hunt-convergence-check.j2`: Public. The composite metric weights `process_stabilization_metric` and `coverage_estimate` at 0.5/0.5. A hunt that stabilizes but hasn't explored the bug surface does NOT converge. When not converged, `next_charter_focus` must be a concrete directive, not a platitude.
-- **Convergence:** threshold 0.25 (intentionally the highest in hKask — bug hunting is exploratory, not exhaustive; for exhaustive elimination, chain with `diagnose`). `max_iterations: 3`, `min_iterations: 1`, `on_not_reached: escalate`.
+- **Convergence:** threshold 0.25 (intentionally the highest in hKask — bug hunting is exploratory, not exhaustive; for exhaustive elimination, chain with `diagnose`). `max_iterations: 3`, `min_iterations: 1`, `on_not_reached: escalate`. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 - **OCAP:** requires `Tool:test:Execute` and `Tool:regulation:Read`; delegation chain required; template-scoped; capability expiry 3600s; signature algorithm ed25519.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

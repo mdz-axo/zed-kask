@@ -43,7 +43,6 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 | `diagnose-loop.j2` | `KnowAct` | Build a feedback loop for the bug. Evaluate repro strategies, select the fastest deterministic signal, and confirm the bug reproduces before hypothesising. |
 | `diagnose-instrument.j2` | `KnowAct` | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
 | `diagnose-fix.j2` | `KnowAct` | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
-| `diagnose-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for diagnosis cycles. Outputs `convergence_metric` in [0,1], where 0 means root cause and fix confidence are sufficient for exit. |
 
 ## Fusion Mode
 
@@ -53,13 +52,10 @@ LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for determin
 JSON merge without an LLM judge call. This skill uses **critique mode** — Draft →
 panel critiques → revise matches the diagnosis loop.
 
-The convergence check step has `fusion: false` to ensure deterministic rubric
-evaluation uses single-model inference.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility
-- Energy caps: spec-anchor (3072), loop (6144), instrument (4096), fix (6144), convergence-check (2048); step 3 (hypothesize) is delegated to `falsifiability/falsifiability-hypothesize` (energy_cap 4096)
+- Energy caps: spec-anchor (3072), loop (6144), instrument (4096), fix (6144); step 3 (hypothesize) is delegated to `falsifiability/falsifiability-hypothesize` (energy_cap 4096)
 - Safety mode (when enabled): no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
 - Preserve original prompt structure and formatting; handle missing variables gracefully

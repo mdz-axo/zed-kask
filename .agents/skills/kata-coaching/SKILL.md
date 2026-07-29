@@ -51,12 +51,6 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 2. Prompt the learner to specify exactly when they will check the result, what metric they will measure, and what would prove the theory wrong.
 3. If the learner is vague about timing, require them to pick a specific time to compare prediction to result.
 
-### kata-coaching-convergence-check
-
-1. Evaluate the coaching cycle inputs for clear target/current gap framing, prioritized obstacle, concrete next experiment, and feedback timing.
-2. Measure convergence on a scale of 0 to 1, where 0 indicates fully converged and 1 indicates not converged.
-3. Score how much work remains to reach convergence.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -66,7 +60,6 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 | `coaching-q3-obstacles.j2` | WordAct | Q3 — What obstacles? Which ONE now? Force prioritization. |
 | `coaching-q4-experiment.j2` | WordAct | Q4 — What is your Next Step? What do you expect? Drive action with prediction. |
 | `coaching-q5-learn.j2` | WordAct | Q5 — How quickly can we go and see? Close the feedback loop. |
-| `kata-coaching-convergence-check.j2` | KnowAct | Compute normalized convergence metric for kata-coaching PDCA cycles. Returns convergence_metric plus rationale and blockers.  |
 
 ## Constraints
 
@@ -75,5 +68,4 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 - `coaching-q3-obstacles.j2`: Public.
 - `coaching-q4-experiment.j2`: Public.
 - `coaching-q5-learn.j2`: Public.
-- `kata-coaching-convergence-check.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

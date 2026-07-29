@@ -103,13 +103,12 @@ Key non-obvious rules the taxonomy encodes:
 | `gradient-detect.j2` | `KnowAct` | Detect gradients and classify shape, scale, domain, fractal recurrence. References gradient-shapes.yaml. |
 | `gradient-hypothesize.j2` | `KnowAct` | Generate reason hypotheses via Rubin + spin glass + allostery taxonomy. Delegates to falsifiability and metacognition. |
 | `gradient-report.j2` | `KnowAct` | Compile structured gradient report with priority ranking, lessons_learned, pattern_signatures. |
-| `gradient-convergence-check.j2` | `KnowAct` | Compute composite convergence metric (stabilization + coverage) with next_prior_focus for loop closure. |
 | `gradient-shapes.yaml` | `RenderAct` | Reference: eight gradient shape ontology with fractal recurrence, reason classes, and priority ordering. |
 
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: prior (4096), map (4096), detect (6144), hypothesize (6144), report (4096), convergence-check (2048).
+- Energy caps: prior (4096), map (4096), detect (6144), hypothesize (6144), report (4096).
 - Gas cap: 100,000 per invocation. Maximum 3 iterations.
 - The prior must be explicit before gradient detection.
 - The fractal recurrence check is mandatory.

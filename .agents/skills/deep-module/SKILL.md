@@ -66,7 +66,6 @@ The convergence check consumes `primary_result` (assess), `delete_result`, and `
 | `deep-module-assess.j2` | `KnowAct` | Assess module depth: enumerate public interface items, evaluate behavior complexity, compute depth score, classify as Deep/Adequate/Shallow/Very Shallow. Identify interface cost drivers and behavior gaps. |
 | `deep-module-delete.j2` | `KnowAct` | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
 | `deep-module-design.j2` | `KnowAct` | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
-| `deep-module-convergence-check.j2` | `KnowAct` | Compute normalized convergence metric for module-depth cycles. Outputs `convergence_metric` in [0,1] and `re_entry_target` (numeric step ordinal for targeted re-entry). Consumes assess, delete, and design results. Includes materiality guard for irreducible gaps. |
 
 ## Fusion Mode
 
@@ -76,13 +75,10 @@ LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for determin
 JSON merge without an LLM judge call. This skill uses **synthesis mode** — Compose
 module assessments.
 
-The convergence check step has `fusion: false` to ensure deterministic rubric
-evaluation uses single-model inference.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.
-- Energy caps: assess, delete, and design templates have `energy_cap: 6144`; convergence-check has `energy_cap: 2048`.
+- Energy caps: assess, delete, and design templates have `energy_cap: 6144`.
 - Count public items mechanically — do not guess. Estimate behavior conservatively, erring toward undercounting.
 - Apply both directions of the deletion test — never skip either.
 - No more than 7 public functions per module. If the design exceeds 7, split the module.
@@ -92,8 +88,7 @@ evaluation uses single-model inference.
 - Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
-- Convergence check emits `re_entry_target` for targeted re-entry (1=assess, 2=delete, 3=design).
-- Materiality guard forces convergence when iteration ≥ 3, delta < 0.02, no committed changes.
+- Materiality guard forces convergence when iteration ≥ 3, delta < 0.02, no committed changes. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 - Jinja2 sandboxed execution: no arbitrary Python code, no file system access, no network calls, no environment variable access when safety mode is enabled.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
