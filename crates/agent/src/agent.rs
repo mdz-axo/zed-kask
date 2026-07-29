@@ -4179,12 +4179,13 @@ mod internal_tests {
     use util::{path, rel_path::rel_path};
 
     fn make_global_skill(name: &str, description: &str) -> Skill {
+        let dir = global_skills_dir().join(name);
         Skill {
             name: name.to_string(),
             description: description.to_string(),
             source: SkillSource::Global,
-            directory_path: PathBuf::from(format!("/home/user/.agents/skills/{name}")),
-            skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
+            directory_path: dir.clone(),
+            skill_file_path: dir.join("SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,

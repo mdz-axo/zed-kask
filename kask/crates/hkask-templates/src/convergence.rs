@@ -46,15 +46,33 @@ impl ConvergenceStatus {
 }
 
 /// Tracks PDCA convergence state: threshold, improvement gate, baseline quality,
-/// and iteration count. Owns the `_convergence` JSON shape contract.
+/// iteration count, and trajectory history. Owns the `_convergence` JSON shape
+/// contract.
+///
+/// # Trajectory memory
+///
+/// The tracker records the quality metric after each completed iteration in
+/// `quality_history`. This enables trajectory-based convergence detection
+/// (the "stability" and "threshold_and_stability" gates): convergence is a
+/// property of a *trajectory* (the metric stopped changing), not of a
+/// *snapshot* (the metric is low on one reading). Snapshot convergence is a
+/// category error — it exits on a single optimistic self-grade. Trajectory
+/// convergence requires at least 2 readings and enforces that the metric is
+/// stable, not just low.
 pub struct ConvergenceTracker {
     threshold: f64,
     field: String,
     improvement_ratio: f64,
     improvement_gate: String,
+    stability_epsilon: f64,
     min_iterations: u32,
     max_iterations: u32,
     baseline_quality: Option<f64>,
+    /// Quality metric history, one entry per completed iteration. Populated by
+    /// `push_quality` (called from the executor after each iteration's metric
+    /// is computed). Used by the "stability" and "threshold_and_stability"
+    /// gates to detect trajectory convergence.
+    quality_history: Vec<f64>,
 }
 
 impl ConvergenceTracker {
@@ -65,6 +83,7 @@ impl ConvergenceTracker {
             field: config.convergence_field.clone(),
             improvement_ratio: config.improvement_ratio,
             improvement_gate: config.improvement_gate.clone(),
+            stability_epsilon: config.stability_epsilon,
             min_iterations: config.min_iterations,
             max_iterations: if config.max_iterations == 0 {
                 1
@@ -72,6 +91,7 @@ impl ConvergenceTracker {
                 config.max_iterations
             },
             baseline_quality: None,
+            quality_history: Vec::new(),
         }
     }
 
@@ -95,6 +115,49 @@ impl ConvergenceTracker {
         self.improvement_ratio > 0.0
     }
 
+    /// Whether the convergence gate uses trajectory stability (requires >= 2
+    /// quality readings). Returns true for "stability" and
+    /// "threshold_and_stability" gates.
+    pub fn stability_enabled(&self) -> bool {
+        matches!(
+            self.improvement_gate.as_str(),
+            "stability" | "threshold_and_stability"
+        )
+    }
+
+    /// Record the quality metric for the just-completed iteration. Called by
+    /// the executor after each pass's convergence metric is computed (whether
+    /// by an LLM `select` step or a deterministic `compute` step). The history
+    /// is read by the "stability" and "threshold_and_stability" gates in
+    /// `check_met`.
+    ///
+    /// If the metric is missing from the context, pushes `f64::NAN` so the
+    /// history length stays aligned with the iteration count (a missing
+    /// reading is not a stable reading).
+    pub fn push_quality(&mut self, context: &HashMap<String, Value>) {
+        let current = context
+            .get(&self.field)
+            .and_then(|v| v.as_f64())
+            .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
+        let current = if current.is_none() && self.field != "composite" {
+            context.get("composite").and_then(|v| v.as_f64())
+        } else {
+            current
+        };
+        let current = if current.is_none() {
+            context.get("_convergence_score").and_then(|v| v.as_f64())
+        } else {
+            current
+        };
+        self.quality_history.push(current.unwrap_or(f64::NAN));
+    }
+
+    /// Read-only access to the quality history (for `finalize_report` and
+    /// `inject_running` context injection, and for tests).
+    pub fn quality_history(&self) -> &[f64] {
+        &self.quality_history
+    }
+
     /// Capture the baseline quality on the first full pass. Called once,
     /// after the first pass completes; subsequent calls are no-ops.
     pub fn capture_baseline(&mut self, context: &HashMap<String, Value>) {
@@ -110,6 +173,11 @@ impl ConvergenceTracker {
     ///
     /// Enforces `min_iterations` (returns false if iteration <= min_iterations),
     /// then evaluates the threshold and improvement gate.
+    ///
+    /// For the "stability" and "threshold_and_stability" gates, also enforces
+    /// that at least 2 quality readings exist in `quality_history` (trajectory
+    /// convergence is undefined for a single reading) and that the last two
+    /// readings differ by less than `stability_epsilon`.
     pub fn check_met(&self, context: &HashMap<String, Value>, iteration: u32) -> bool {
         // Enforce minimum iterations before exit is allowed
         if iteration <= self.min_iterations {
@@ -147,9 +215,22 @@ impl ConvergenceTracker {
             false
         };
 
+        // Compute trajectory stability: |q_n - q_{n-1}| < epsilon.
+        // Requires at least 2 readings. A missing reading (NaN) is never stable.
+        let stability_met = if self.quality_history.len() >= 2 {
+            let n = self.quality_history.len();
+            let prev = self.quality_history[n - 2];
+            let curr = self.quality_history[n - 1];
+            prev.is_finite() && curr.is_finite() && (curr - prev).abs() < self.stability_epsilon
+        } else {
+            false
+        };
+
         match self.improvement_gate.as_str() {
             "both" => threshold_met && improvement_met,
             "either" => threshold_met || improvement_met,
+            "stability" => stability_met,
+            "threshold_and_stability" => threshold_met && stability_met,
             _ => threshold_met, // "threshold_only"
         }
     }

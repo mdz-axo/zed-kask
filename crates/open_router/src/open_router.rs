@@ -612,11 +612,47 @@ pub async fn list_models(
         .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
-    let mut response = client
+    let response = client
         .send(request)
         .await
         .map_err(OpenRouterError::HttpSend)?;
+    parse_models_response(response).await
+}
 
+/// Fetch the public model catalog from OpenRouter's `/models` endpoint.
+///
+/// Unlike `list_models`, this does **not** require an API key — the public
+/// endpoint returns the full catalog with pricing data for every model.
+/// Used by the economic-guardrails deny-list builder so that users without an
+/// OpenRouter API key still get cross-provider price filtering.
+pub async fn list_models_public(
+    client: &dyn HttpClient,
+    api_url: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<Vec<Model>, OpenRouterError> {
+    let uri = format!("{api_url}/models");
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Accept", "application/json")
+        .header("HTTP-Referer", "https://zed.dev")
+        .header("X-Title", "Zed Editor")
+        .extra_headers(extra_headers)
+        .body(AsyncBody::default())
+        .map_err(OpenRouterError::BuildRequestBody)?;
+    let response = client
+        .send(request)
+        .await
+        .map_err(OpenRouterError::HttpSend)?;
+    parse_models_response(response).await
+}
+
+/// Parse the response from either `/models` or `/models/user` into a list of
+/// `Model`s, extracting pricing data (`output_price_per_token`) from the
+/// `pricing.completion` field.
+async fn parse_models_response(
+    mut response: http_client::Response<AsyncBody>,
+) -> Result<Vec<Model>, OpenRouterError> {
     let mut body = String::new();
     response
         .body_mut()

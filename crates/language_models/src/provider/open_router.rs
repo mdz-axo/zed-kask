@@ -201,11 +201,11 @@ impl OpenRouterLanguageModelProvider {
         Self { http_client, state }
     }
 
-    fn settings(cx: &App) -> &OpenRouterSettings {
+    pub(crate) fn settings(cx: &App) -> &OpenRouterSettings {
         &crate::AllLanguageModelSettings::get_global(cx).open_router
     }
 
-    fn api_url(cx: &App) -> SharedString {
+    pub(crate) fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             OPEN_ROUTER_API_URL.into()

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Use this whenever you need to create new directories. Paths inside the project are created directly.
 ///
-/// This tool can also create a directory **outside** the project. When agent terminal commands are sandboxed, doing so grants those commands write access to exactly that new directory — so, rather than requesting write access to a broad existing parent (e.g. your home directory) just to create something inside it, create the specific directory here first and then write into it. The only other supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// This tool can also create a directory **outside** the project. When agent terminal commands are sandboxed, doing so grants those commands write access to exactly that new directory — so, rather than requesting write access to a broad existing parent (e.g. your home directory) just to create something inside it, create the specific directory here first and then write into it. The only other supported path outside the project is the global skills directory or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
     /// The path of the new directory.
@@ -38,7 +38,7 @@ pub struct CreateDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// To create a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
+    /// To create a global agent skill directory, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: String,
 

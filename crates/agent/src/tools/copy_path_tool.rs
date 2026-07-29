@@ -303,9 +303,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(CopyPathTool::new(project));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .to_string_lossy()
             .into_owned();
@@ -369,9 +367,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(CopyPathTool::new(project));
-        let destination_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let destination_path = agent_skills::global_skills_dir()
             .join("exported-skill")
             .to_string_lossy()
             .into_owned();

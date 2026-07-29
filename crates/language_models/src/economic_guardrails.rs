@@ -34,10 +34,12 @@
 use std::sync::{Arc, Mutex};
 
 use collections::HashSet;
-use gpui::App;
+use gpui::{App, AppContext, Task};
+use http_client::HttpClient;
 use language_model::{LanguageModel, LanguageModelRegistry};
 use settings::Settings;
 
+use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::settings::AllLanguageModelSettings;
 
 /// Process-global deny-list of normalized model names that exceed the price
@@ -61,42 +63,18 @@ fn normalize_model_name(id_or_name: &str) -> String {
 
 /// Update the process-global deny-list of expensive model names.
 ///
-/// Called by the OpenRouter provider after it fetches models. `models` is the
-/// full list of OpenRouter models with their `output_price_per_token`; this
-/// function extracts the names of models whose price exceeds the threshold
-/// configured in `language_models.open_router.max_output_price_per_million_tokens`.
+/// Called by the OpenRouter provider after it fetches models (authenticated
+/// path). `models` is the full list of OpenRouter models with their
+/// `output_price_per_token`; this function extracts the names of models whose
+/// price exceeds the threshold configured in
+/// `language_models.open_router.max_output_price_per_million_tokens`.
 ///
 /// Models with no price (`None`) or sentinel prices (`< 0`, non-finite) are
 /// never added to the deny-list. When the threshold is `None` (filter
 /// disabled), the deny-list is cleared.
 pub fn update_expensive_model_denylist(models: &[open_router::Model], cx: &App) {
     let settings = &AllLanguageModelSettings::get_global(cx).open_router;
-    let new_denylist = match settings.max_output_price_per_million_tokens {
-        None => Arc::new(HashSet::default()),
-        Some(max_per_million) => {
-            let max_per_token = max_per_million / 1_000_000.0;
-            let mut denylist = HashSet::default();
-            for model in models {
-                let Some(price_per_token) = model.output_price_per_token else {
-                    continue;
-                };
-                if !price_per_token.is_finite() || price_per_token < 0.0 {
-                    continue;
-                }
-                if price_per_token > max_per_token {
-                    denylist.insert(normalize_model_name(model.id()));
-                }
-            }
-            if !denylist.is_empty() {
-                log::info!(
-                    "economic-guardrails: de-listing {} expensive model(s) across all providers",
-                    denylist.len()
-                );
-            }
-            Arc::new(denylist)
-        }
-    };
-
+    let new_denylist = build_denylist(models, settings.max_output_price_per_million_tokens);
     if let Ok(mut slot) = EXPENSIVE_MODEL_DENYLIST.lock() {
         *slot = Some(new_denylist);
     }
@@ -125,6 +103,75 @@ pub fn install_model_filter(registry: &mut LanguageModelRegistry) {
         let name = normalize_model_name(&model.name().0);
         !denylist.contains(&id) && !denylist.contains(&name)
     }));
+}
+
+/// Spawn a background task that fetches OpenRouter's public model catalog
+/// (no API key required) and builds the cross-provider deny-list.
+///
+/// This runs at startup regardless of whether the user has an OpenRouter
+/// API key configured, so that users who only use the Zed cloud provider,
+/// DeepInfra, Together, etc. still get economic guardrails. The task is
+/// fire-and-forget — it updates `EXPENSIVE_MODEL_DENYLIST` on success and
+/// logs on failure. The OpenRouter provider's authenticated `fetch_models`
+/// path also calls `update_expensive_model_denylist`, so the deny-list is
+/// refreshed when the user later configures an OpenRouter API key.
+pub fn spawn_public_catalog_fetch(
+    http_client: Arc<dyn HttpClient>,
+    cx: &mut gpui::App,
+) -> Task<()> {
+    let api_url = OpenRouterLanguageModelProvider::api_url(cx);
+    let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
+        .custom_headers
+        .clone();
+    // Read the threshold on the foreground thread (has `&App` access to the
+    // settings store) and pass it into the background task. This avoids the
+    // limitation where background tasks can't read GPUI settings.
+    let threshold =
+        OpenRouterLanguageModelProvider::settings(cx).max_output_price_per_million_tokens;
+    cx.background_spawn(async move {
+        match open_router::list_models_public(http_client.as_ref(), &api_url, &extra_headers).await
+        {
+            Ok(models) => {
+                let new_denylist = build_denylist(&models, threshold);
+                if let Ok(mut slot) = EXPENSIVE_MODEL_DENYLIST.lock() {
+                    *slot = Some(new_denylist);
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "economic-guardrails: failed to fetch public OpenRouter \
+                     catalog for price filtering: {e:?}"
+                );
+            }
+        }
+    })
+}
+
+/// Build the deny-list from a list of models and a threshold.
+fn build_denylist(models: &[open_router::Model], threshold: Option<f64>) -> Arc<HashSet<String>> {
+    let Some(max_per_million) = threshold else {
+        return Arc::new(HashSet::default());
+    };
+    let max_per_token = max_per_million / 1_000_000.0;
+    let mut denylist = HashSet::default();
+    for model in models {
+        let Some(price_per_token) = model.output_price_per_token else {
+            continue;
+        };
+        if !price_per_token.is_finite() || price_per_token < 0.0 {
+            continue;
+        }
+        if price_per_token > max_per_token {
+            denylist.insert(normalize_model_name(model.id()));
+        }
+    }
+    if !denylist.is_empty() {
+        log::info!(
+            "economic-guardrails: de-listing {} expensive model(s) across all providers",
+            denylist.len()
+        );
+    }
+    Arc::new(denylist)
 }
 
 /// Returns `true` if `model` would pass the cross-provider deny-list filter.

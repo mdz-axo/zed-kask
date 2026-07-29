@@ -26,8 +26,23 @@ pub struct ConvergenceConfig {
     /// - "threshold_only" (default): only check quality <= threshold.
     /// - "both": must satisfy quality <= threshold AND improvement >= improvement_ratio.
     /// - "either": must satisfy quality <= threshold OR improvement >= improvement_ratio.
+    /// - "stability": only check |q_n - q_{n-1}| < stability_epsilon (trajectory stability).
+    /// - "threshold_and_stability": quality <= threshold AND |q_n - q_{n-1}| < stability_epsilon.
+    ///
+    /// The "stability" and "threshold_and_stability" gates detect trajectory
+    /// convergence — the metric has stopped changing across iterations — rather
+    /// than snapshot convergence (the metric is low on one reading). Snapshot
+    /// convergence is a category error: it exits on a single optimistic
+    /// self-grade. Trajectory convergence requires at least 2 readings and
+    /// enforces that the metric is stable, not just low.
     #[serde(default = "default_improvement_gate")]
     pub improvement_gate: String,
+    /// Epsilon for trajectory stability detection. Used by the "stability" and
+    /// "threshold_and_stability" gates: convergence requires
+    /// |q_n - q_{n-1}| < stability_epsilon. Default 0.05 (5% of the [0,1] metric
+    /// range). Set lower for precise skills, higher for broad ones.
+    #[serde(default = "default_stability_epsilon")]
+    pub stability_epsilon: f64,
     /// Maximum PDCA iterations before forced exit.
     pub max_iterations: u32,
     /// Minimum iterations before exit is allowed. Prevents premature convergence
@@ -57,6 +72,7 @@ impl Default for ConvergenceConfig {
             threshold: 0.1,
             improvement_ratio: 0.0,
             improvement_gate: "threshold_only".to_string(),
+            stability_epsilon: 0.05,
             max_iterations: 3,
             min_iterations: 0,
             convergence_field: "composite".to_string(),
@@ -73,6 +89,10 @@ fn default_aggregation() -> String {
 
 fn default_improvement_gate() -> String {
     "threshold_only".to_string()
+}
+
+fn default_stability_epsilon() -> f64 {
+    0.05
 }
 
 /// A source for compound quality aggregation — specifies which inner skill's

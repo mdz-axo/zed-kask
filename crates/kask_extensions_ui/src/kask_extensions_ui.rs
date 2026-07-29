@@ -585,8 +585,8 @@ impl KaskExtensionsPage {
             }
         };
 
-        let install_dir = util::paths::home_dir()
-            .join(".agents/skills/_marketplace")
+        let install_dir = agent_skills::global_skills_dir()
+            .join("_marketplace")
             .join(source_user)
             .join(skill_name);
 

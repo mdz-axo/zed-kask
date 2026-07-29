@@ -53,6 +53,13 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         economic_guardrails::install_model_filter(registry);
     });
 
+    // Fetch OpenRouter's public model catalog (no API key required) and build
+    // the cross-provider deny-list of expensive models. This runs at startup
+    // regardless of whether the user has an OpenRouter API key, so users who
+    // only use the Zed cloud provider, DeepInfra, Together, etc. still get
+    // economic guardrails. The task is fire-and-forget.
+    economic_guardrails::spawn_public_catalog_fetch(client.http_client(), cx).detach();
+
     // Subscribe to extension store events to track LLM extension installations
     if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
         cx.subscribe(&extension_store, {
