@@ -1,3 +1,4 @@
+use super::EmbeddingGenerationError;
 use super::inference_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceUsage,
     StructuredToolCall,
@@ -153,6 +154,27 @@ pub trait InferencePort: Send + Sync {
         })
     }
 
+    /// Generate embeddings for a batch of texts.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The implementation strips the
+    /// prefix and resolves credentials from the appropriate provider.
+    ///
+    /// Default: returns an error. `InferenceIpcClient` overrides this to
+    /// route through zed's `LanguageModelEmbeddingPort` via the IPC bridge.
+    fn embed<'a>(
+        &'a self,
+        _model: &str,
+        _texts: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>
+    {
+        Box::pin(async {
+            Err(EmbeddingGenerationError::Connection(
+                "embed not supported by this InferencePort".into(),
+            ))
+        })
+    }
+
     /// List available models across all configured providers.
     ///
     /// Default: returns an empty vec. `InferenceRouter` overrides this to
@@ -280,6 +302,14 @@ impl InferencePort for Arc<dyn InferencePort> {
         m: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
         self.as_ref().generate_vision(p, imgs, pa, m)
+    }
+    fn embed<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>
+    {
+        self.as_ref().embed(model, texts)
     }
     fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
         self.as_ref().list_models()

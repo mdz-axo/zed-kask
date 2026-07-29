@@ -1536,6 +1536,7 @@ fn main() {
                         // constructing their own InferenceRouter with separate keys.
                         match kask_bridge::InferenceIpcServer::start(
                             guarded_inference.clone(),
+                            embedding_port_for_ipc.clone(),
                             cx,
                         ) {
                             Ok(ipc_server) => {

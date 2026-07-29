@@ -6,7 +6,7 @@ description: "Composable interaction grammar for hKask agents. Five improv modes
 
 # Improv
 
-Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector KnowAct evaluates conversation context and routes to the appropriate WordAct; a convergence checker closes the PDCA cycle.
+Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector KnowAct evaluates conversation context and routes to the appropriate WordAct; convergence is detected deterministically via the Cauchy criterion.
 
 ## When to Use
 
@@ -18,7 +18,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 - Dual-presence chat, ensemble sessions, and kata coaching loops where constructive-by-default posture is required
 - When an agent is in a low-confidence regime (confidence < 0.5) and needs non-obvious paths to higher certainty — **Riffing** for divergent exploration of tangents that may surface higher-confidence findings, **Plussing** for constructive extraction of agreeable components from uncertain output
 - When standard evidence-gathering has plateaued and a perspective-shift (not more data) is the path forward — improv modes reframe rather than accumulate
-- After mode selection and application, run convergence-check to verify alignment and constructiveness
+- After mode selection and application, convergence is detected deterministically via the Cauchy criterion
 
 ## Instructions
 
@@ -87,5 +87,5 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 - **Yes But constraint narrows, does not contradict** — do not use "no," "wrong," "can't," or "impossible."
 - **Freestyling is time-bounded** with round-robin turns and no single owner.
 - **Riffing must resolve** — return to group, spawn a thread, or complete within a declared step limit.
-- **Convergence threshold** defaults to 0.15; max iterations default to 3; improvement target default 0.10.
+- **Convergence** is detected deterministically via the Cauchy criterion. `max_iterations: 10`, `min_iterations: 2`.
 - **Registry is authoritative** — when this SKILL.md disagrees with registry templates, the registry wins (P5.1).

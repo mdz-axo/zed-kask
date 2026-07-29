@@ -6,7 +6,7 @@ description: "Goal specification and verification. Extracts structured goals fro
 
 # Goal Analysis
 
-Goal specification and verification. Extracts structured goals from user intent, judges completion via semantic evaluation or command execution, and produces calibrated verdicts with confidence scoring. This skill provides the full PDCA (Plan-Do-Check-Act) lifecycle for goal management — from intention extraction through convergence-checked verification and resolution routing.
+Goal specification and verification. Extracts structured goals from user intent, judges completion via semantic evaluation or command execution, and produces calibrated verdicts with confidence scoring. This skill provides the full PDCA lifecycle for goal management — from intention extraction through deterministic convergence and resolution routing.
 
 ## When to Use
 
@@ -87,6 +87,6 @@ Goal specification and verification. Extracts structured goals from user intent,
 - Energy caps: `create.j2`, `judge.j2`, and `judge_command.j2` at 4096; `goal-activate.j2`, `goal-resolve.j2`, and `judge_simple.j2` at 2048.
 - Criteria are designed for LLM-judged semantic verification, not deterministic checks — this avoids Goodhart's law.
 - Low confidence (< 0.7) escalates to human regardless of verdict.
-- Convergence threshold defaults to 0.25; max iterations default to 3; improvement target defaults to 0.05. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
+- Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. `max_iterations: 10`, `min_iterations: 2`. No LLM convergence-check template is used.
 - Goals coordinate across human, userpod, and bot agents.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

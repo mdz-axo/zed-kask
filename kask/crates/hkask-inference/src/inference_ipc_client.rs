@@ -214,10 +214,9 @@ impl InferenceIpcClient {
 
         match response.outcome {
             InferenceOutcome::Embeddings { embeddings } => Ok(embeddings),
-            InferenceOutcome::Error { error } => Err(EmbeddingGenerationError::Connection(format!(
-                "{}: {}",
-                error.code, error.message
-            ))),
+            InferenceOutcome::Error { error } => Err(EmbeddingGenerationError::Connection(
+                format!("{}: {}", error.code, error.message),
+            )),
             InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
                 "received Result outcome for an embed request".into(),
             )),
@@ -239,6 +238,7 @@ impl InferenceIpcClient {
         }
         self.call_embed(model, texts).await
     }
+}
 
 impl InferencePort for InferenceIpcClient {
     fn generate(
@@ -256,6 +256,8 @@ impl InferencePort for InferenceIpcClient {
             parameters: parameters.clone(),
             model_override: None,
             tools: tools.map(|t| t.to_vec()),
+            embed_model: None,
+            embed_texts: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::Generate, params).await }.boxed()
@@ -277,6 +279,8 @@ impl InferencePort for InferenceIpcClient {
             parameters: parameters.clone(),
             model_override: model_override.map(|s| s.to_string()),
             tools: tools.map(|t| t.to_vec()),
+            embed_model: None,
+            embed_texts: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateWithModel, params).await }.boxed()
@@ -298,6 +302,8 @@ impl InferencePort for InferenceIpcClient {
             parameters: parameters.clone(),
             model_override: model_override.map(|s| s.to_string()),
             tools: tools.map(|t| t.to_vec()),
+            embed_model: None,
+            embed_texts: None,
         };
         let this = self;
         async move {
@@ -323,8 +329,28 @@ impl InferencePort for InferenceIpcClient {
             parameters: parameters.clone(),
             model_override: model_override.map(|s| s.to_string()),
             tools: None,
+            embed_model: None,
+            embed_texts: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()
+    }
+
+    fn embed<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Vec<Vec<f32>>, hkask_types::EmbeddingGenerationError>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        let this = self;
+        async move { this.embed(&model, &texts).await }.boxed()
     }
 }

@@ -57,7 +57,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 7. Emit `re_entry_target` as a numeric step ordinal routing the loop to the failing step (1=assess, 2=delete, 3=design). When converged, the executor exits via the threshold check before reading `re_entry_target`.
 8. **Materiality guard**: if iteration ≥ 3 AND metric delta < 0.02 AND no committed changes, force `convergence_metric = 0.0` with blocker `irreducible_depth_gap`. The executor exits because 0.0 ≤ threshold.
 
-The convergence check consumes `primary_result` (assess), `delete_result`, and `design_result` for full-fidelity evaluation. When design is skipped (DELETE/MERGE recommendation), `design_result` is undefined and the convergence check focuses on deletion test and assessment results only.
+The convergence check consumes `primary_result` (assess), `delete_result`, and `design_result` for full-fidelity evaluation. When design is skipped (DELETE/MERGE recommendation), `design_result` is undefined and the convergence check focuses on deletion test and assessment results only. Convergence is detected deterministically via the Cauchy criterion.
 
 ## Registry Templates
 
@@ -88,7 +88,7 @@ module assessments.
 - Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
-- Materiality guard forces convergence when iteration ≥ 3, delta < 0.02, no committed changes. Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
+- Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
 - Jinja2 sandboxed execution: no arbitrary Python code, no file system access, no network calls, no environment variable access when safety mode is enabled.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

@@ -33,7 +33,7 @@ use std::sync::Arc;
 use hkask_types::inference_ipc::{
     InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
 };
-use hkask_types::{EmbeddingGenerationError, InferenceError, InferencePort, InferenceResult};
+use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
@@ -239,6 +239,34 @@ async fn dispatch(
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
+
+    // Embedding requests are dispatched separately — they return
+    // `InferenceOutcome::Embeddings`, not `InferenceOutcome::Result`.
+    if matches!(request.method, InferenceMethod::Embed) {
+        let Some(emb_port) = embedding_port else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "embedding port not configured on the zed side \
+                        — the IPC server was started without an embedding port. \
+                        This indicates a startup wiring bug."
+                        .to_string(),
+                },
+            };
+        };
+        let model = params.embed_model.as_deref().unwrap_or("");
+        let texts = params.embed_texts.as_deref().unwrap_or(&[]);
+        return match emb_port.embed(model, texts).await {
+            Ok(embeddings) => InferenceOutcome::Embeddings { embeddings },
+            Err(e) => InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: e.to_string(),
+                },
+            },
+        };
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -278,34 +306,8 @@ async fn dispatch(
             )
             .await
         }
-        InferenceMethod::Embed => {
-            // Dispatch to the embedding port. The model and texts come from
-            // `embed_model` and `embed_texts` in `InferenceParams`.
-            let Some(emb_port) = embedding_port else {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "Connection".to_string(),
-                        message: "embedding port not configured on the zed side \
-                            — the IPC server was started without an embedding port. \
-                            This indicates a startup wiring bug."
-                            .to_string(),
-                    },
-                };
-            };
-            let model = params.embed_model.as_deref().unwrap_or("");
-            let texts = params.embed_texts.as_deref().unwrap_or(&[]);
-            match emb_port.embed(model, texts).await {
-                Ok(embeddings) => return InferenceOutcome::Embeddings { embeddings },
-                Err(e) => {
-                    return InferenceOutcome::Error {
-                        error: InferenceErrorPayload {
-                            code: "Connection".to_string(),
-                            message: e.to_string(),
-                        },
-                    };
-                }
-            }
-        }
+        // Already handled above — unreachable.
+        InferenceMethod::Embed => unreachable!(),
     };
 
     match result {

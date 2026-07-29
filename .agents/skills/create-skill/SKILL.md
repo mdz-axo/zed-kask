@@ -216,7 +216,7 @@ were insufficient or the PDCA shape didn't emerge correctly from them.
 - **Each skill is idiosyncratic.** Do not generalize the shape across skills. A gradient-hunter is not a bug-hunt is not a self-improvement cycle.
 - The skill name must be lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, no reserved prefixes.
 - The process manifest must use only canonical actions.
-- The convergence block is mandatory for `category: skill` manifests. Threshold must be in [0.05, 0.30].
+- The convergence block is mandatory for `category: skill` manifests. Use `convergence_mode: "cauchy"` with `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
 - The gas and rjoule blocks are mandatory. rjoule.cap must be > 0 if any step uses `action: select`.
 - The SKILL.md description must be ≤1024 bytes.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

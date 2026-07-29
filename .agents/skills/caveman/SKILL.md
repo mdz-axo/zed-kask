@@ -14,7 +14,7 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 - A draft response needs to be compressed into caveman mode to reduce token usage while preserving all technical substance
 - You want to evaluate whether a caveman-compressed output has converged (sufficiently compressed while preserving clarity constraints)
 - Caveman mode has been triggered and is active for the current response cycle
-- A PDCA (Plan-Do-Check-Act) convergence check is needed after compression to decide if further compression passes are required
+- After compression, convergence is detected deterministically via the Cauchy criterion to decide if further compression passes are required
 - Auto-clarity exceptions apply: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, or the user asks to clarify / repeats a question
 
 ## Instructions

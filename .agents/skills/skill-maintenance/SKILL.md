@@ -34,7 +34,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 1. Generate a complete registry crate (manifest.yaml and .j2 templates) from the user's natural language description.
 2. Ensure the skill name is lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, and lacks reserved prefixes.
 3. Create at least one .j2 template with valid [inference] frontmatter and a Jinja2 body containing a system prompt and JSON output schema.
-4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (threshold 0.05-0.30, max_iterations, min_iterations, convergence_field, on_not_reached), `gas:` block (cap proportional to step count), `rjoule:` block (cap > 0 if inference is used), and `steps:` array using only canonical actions.
+4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (convergence_mode, cauchy_epsilon, cauchy_window, max_iterations, min_iterations, on_not_reached), `gas:` block (cap proportional to step count), `rjoule:` block (cap > 0 if inference is used), and `steps:` array using only canonical actions.
 5. Derive a SKILL.md companion from the completed registry crate.
 6. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, gas_block_present, rjoule_block_present, convergence_block_present).
 
@@ -44,7 +44,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 2. Produce one .j2 file per classified step, mapping cognitive steps to KnowAct, workflow steps to WordAct or FlowDef, reference content to RenderAct, and guardrails to visibility, energy_cap, and constraints.
 3. Map source actions to canonical hKask actions using the action mapping table (e.g., `call` → `execute`, `classify` → `select`, `run_command` → `execute`, `check` → `validate`).
 4. Generate gas/rjoule budgets based on the translated step count and inference usage (simple: gas 5K-10K/rjoule 1-2; multi-step: gas 50K-150K/rjoule 3-5; media: gas 100K+/rjoule 5+).
-5. Generate a convergence block with threshold appropriate to the skill type (0.05-0.15 for precise, 0.20-0.30 for broad).
+5. Generate a convergence block with `convergence_mode: "cauchy"`, `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
 6. Map source state to .j2 contract input/output, user-confirmation gates to visibility, and domain references using the domain substitution table.
 7. Mark any references with no hKask equivalent as `[unresolved: no hKask equivalent for <source_ref>]`.
 8. Respond with a JSON object containing the manifest, process manifest, templates, derived SKILL.md, and a translation summary detailing preserved, adapted, dropped, unresolved elements, and action mappings.
