@@ -37,13 +37,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{App, ImageSource, Resource, SharedString, Window, cx};
+use gpui::{App, ImageSource, Resource, SharedString, Window};
 use markdown::{
-    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
-    MarkdownOptions, MarkdownStyle, WrapButtonVisibility,
+    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
+    MarkdownStyle, WrapButtonVisibility,
 };
 use project::Project;
-use workspace::path_link::PathWithPosition;
+use util::paths::PathWithPosition;
 use workspace::{Workspace, path_link::sanitize_path_text};
 
 /// Render a markdown `Entity` with the agent-panel style + mermaid enabled.
@@ -119,9 +119,9 @@ fn worktree_roots(project: &gpui::WeakEntity<Project>, cx: &App) -> Vec<PathBuf>
 /// - Relative paths resolved against worktree roots → local resource.
 fn resolve_image(dest_url: &str, worktree_roots: &[PathBuf]) -> Option<ImageSource> {
     if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
-        return Some(ImageSource::Resource(Resource::Uri(SharedString::from(
-            dest_url.to_string(),
-        ))));
+        return Some(ImageSource::Resource(Resource::Uri(
+            dest_url.to_string().into(),
+        )));
     }
     let path = Path::new(dest_url);
     if path.is_absolute() && path.exists() {
@@ -184,7 +184,7 @@ fn open_link(
     });
     if let Some(abs_path) = abs_path {
         let point = fragment
-            .strip_prefix('L')
+            .and_then(|f| f.strip_prefix('L'))
             .and_then(|s| s.parse::<u32>().ok())
             .map(|row| gpui::Point::new(row, 0));
         workspace.update(cx, |workspace, cx| {

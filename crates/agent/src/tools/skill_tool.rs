@@ -1146,12 +1146,9 @@ mod tests {
                 source_user: "alice".into(),
                 original_skill_id: "alice/bug-hunt".into(),
             },
-            directory_path: std::path::PathBuf::from(
-                "/home/user/.agents/skills/_marketplace/alice/bug-hunt",
-            ),
-            skill_file_path: std::path::PathBuf::from(
-                "/home/user/.agents/skills/_marketplace/alice/bug-hunt/SKILL.md",
-            ),
+            directory_path: agent_skills::global_skills_dir().join("_marketplace/alice/bug-hunt"),
+            skill_file_path: agent_skills::global_skills_dir()
+                .join("_marketplace/alice/bug-hunt/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
             visibility: agent_skills::SkillVisibility::Private,

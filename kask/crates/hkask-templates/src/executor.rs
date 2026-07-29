@@ -658,15 +658,17 @@ impl ManifestExecutor {
                             break 'cascade;
                         }
 
-                        // Record this iteration's quality metric in the trajectory
-                        // history BEFORE the convergence check, so the "stability"
-                        // and "threshold_and_stability" gates can compare the
-                        // current reading (q_n) against the previous reading
-                        // (q_{n-1}). If this is called after check_met, the
-                        // stability gate is always one iteration behind — it
-                        // compares q_{n-2} vs q_{n-1} instead of q_{n-1} vs q_n,
-                        // and the current iteration's metric is never checked.
-                        convergence.push_quality(&context);
+                        // Record this iteration's convergence data in the
+                        // trajectory history BEFORE the convergence check.
+                        // For the Kata model, the hypotenuse and Brier score
+                        // are read from the context (produced by `compute`
+                        // steps with compute_ref: kata.hypotenuse and
+                        // kata.prediction_vs_result). For the legacy model,
+                        // the self-grade metric is read from the convergence
+                        // field. If the Kata fields aren't present, falls back
+                        // to pushing NaN (a missing reading is not a converged
+                        // reading).
+                        convergence.push_cycle_from_context(&context);
 
                         // Check threshold convergence
                         if convergence.check_met(&context, iteration) {
@@ -881,14 +883,13 @@ impl ManifestExecutor {
                 convergence.capture_baseline(&context);
             }
 
-            // Record this iteration's quality metric in the trajectory history
+            // Record this iteration's convergence data in the trajectory history
             // AFTER compound quality computation, so the history records the
-            // same value check_met will read (the compound value if aggregation
-            // is enabled, the raw field value otherwise). This enables the
-            // "stability" and "threshold_and_stability" gates to detect
-            // trajectory convergence (|q_n - q_{n-1}| < epsilon), not just
-            // snapshot convergence (q_n <= threshold on one reading).
-            convergence.push_quality(&context);
+            // same value check_met will read. For the Kata model, reads the
+            // hypotenuse and Brier score from the context (produced by
+            // `compute` steps). For the legacy model, reads the self-grade
+            // metric from the convergence field.
+            convergence.push_cycle_from_context(&context);
 
             // ── End of pass: check convergence if no explicit loop/abort ──
             if iteration >= max_iterations {
@@ -1567,154 +1568,371 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             let score = get_f64("score")?;
             Ok(serde_json::json!({ "interpretation": forecast::brier_interpretation(score) }))
         }
-        // ── Deterministic convergence primitives ──
-        // These let manifests express the convergence check as a `compute` step
-        // (deterministic, no inference, no timeout) instead of a `select` step
-        // (LLM, timed). The 30s timeout that broke metacognition and 12 other
-        // skills was caused by using a `select` step for the deterministic
-        // "did the metric change?" decision. These primitives make that
-        // decision a sub-millisecond arithmetic call.
+        // ── Kata convergence primitives ──
         //
-        // See the convergence design doc: convergence is a trajectory
-        // property (the metric stopped changing), not a snapshot property
-        // (the metric is low on one reading). These primitives compute the
-        // trajectory property; the LLM convergence-check template computes the
-        // snapshot property. Use the trajectory property for the loop exit
-        // decision; use the snapshot property (once, at the end) for the
-        // quality report.
-        "convergence.stability" => {
-            // |current_metric - prev_metric| < epsilon
-            let current = get_f64("current_metric")?;
-            let prev = get_f64("prev_metric")?;
-            let epsilon = input
-                .get("epsilon")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.05);
-            let delta = if current.is_finite() && prev.is_finite() {
-                (current - prev).abs()
-            } else {
-                f64::INFINITY
-            };
-            let converged = delta < epsilon;
-            Ok(serde_json::json!({ "converged": converged, "delta": delta }))
+        // These implement the Improvement Kata convergence model: the agent has
+        // a target condition and a current condition, measured in two orthogonal
+        // spaces (Dublin Core object space + PKO process space). The total
+        // distance is the hypotenuse of the right triangle formed by the two
+        // gaps. Each PDCA cycle produces a prediction (with confidence) and a
+        // result; the Brier score tracks prediction calibration.
+        //
+        // These are deterministic `compute` steps — no inference, no timeout.
+        // They replace the old LLM self-grade convergence-check templates that
+        // caused the 30s timeouts across 12+ skills.
+        //
+        // Distance functions start with edge-counting (simplest well-defined
+        // measure) and iterate based on Brier feedback. If the Brier score
+        // converges, the distance function is good enough; if not, escalate to
+        // information-content-weighted measures (Resnik/Lin).
+
+        // Object-space gap (Dublin Core): artifact completeness.
+        // Counts missing fields and ungrounded fields in the current artifacts
+        // vs the target spec. Normalized to [0, 1].
+        "kata.object_gap" => {
+            let current = input.get("current_artifacts").ok_or_else(|| {
+                TemplateError::Manifest(
+                    "compute 'kata.object_gap': missing 'current_artifacts'".into(),
+                )
+            })?;
+            let target = input.get("target_artifacts").ok_or_else(|| {
+                TemplateError::Manifest(
+                    "compute 'kata.object_gap': missing 'target_artifacts'".into(),
+                )
+            })?;
+            let (gap, missing, ungrounded) = compute_object_gap(current, target);
+            Ok(serde_json::json!({
+                "object_gap": gap,
+                "missing_fields": missing,
+                "ungrounded_fields": ungrounded,
+            }))
         }
-        "convergence.trajectory" => {
-            // max pairwise delta in the last N readings of a metric history < epsilon
-            let history = input
-                .get("metric_history")
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.iter().map(|v| v.as_f64()).collect::<Option<Vec<f64>>>())
+        // Process-space gap (PKO): procedure progress.
+        // Counts incomplete steps in the current procedure vs the target spec.
+        // Steps in-progress are half-weighted. Normalized to [0, 1].
+        "kata.process_gap" => {
+            let current = input.get("current_procedure").ok_or_else(|| {
+                TemplateError::Manifest(
+                    "compute 'kata.process_gap': missing 'current_procedure'".into(),
+                )
+            })?;
+            let target = input.get("target_procedure").ok_or_else(|| {
+                TemplateError::Manifest(
+                    "compute 'kata.process_gap': missing 'target_procedure'".into(),
+                )
+            })?;
+            let (gap, incomplete) = compute_process_gap(current, target);
+            Ok(serde_json::json!({
+                "process_gap": gap,
+                "incomplete_steps": incomplete,
+            }))
+        }
+        // Hypotenuse: sqrt(object_gap² + process_gap²).
+        // The total distance to the target in the combined object-process space.
+        "kata.hypotenuse" => {
+            let object_gap = get_f64("object_gap")?;
+            let process_gap = get_f64("process_gap")?;
+            let hypotenuse = (object_gap * object_gap + process_gap * process_gap).sqrt();
+            Ok(serde_json::json!({
+                "hypotenuse": hypotenuse,
+                "object_gap": object_gap,
+                "process_gap": process_gap,
+            }))
+        }
+        // Prediction vs result: Brier score for one PDCA cycle.
+        // The prediction carries a confidence in [0,1]; the result is whether
+        // the predicted outcome occurred (bool) or the actual delta (f64).
+        "kata.prediction_vs_result" => {
+            let confidence = input
+                .get("prediction")
+                .and_then(|p| p.get("confidence"))
+                .and_then(|v| v.as_f64())
                 .ok_or_else(|| {
                     TemplateError::Manifest(
-                        "compute 'convergence.trajectory': missing 'metric_history' f64 array"
-                            .into(),
+                        "compute 'kata.prediction_vs_result': missing prediction.confidence".into(),
                     )
                 })?;
-            let epsilon = input
-                .get("epsilon")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.05);
-            let window = input.get("window").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
-            if history.len() < 2 {
-                return Ok(
-                    serde_json::json!({ "converged": false, "max_delta": f64::INFINITY, "reason": "fewer than 2 readings" }),
-                );
-            }
-            let start = history.len().saturating_sub(window);
-            let window_slice = &history[start..];
-            let finite: Vec<f64> = window_slice
-                .iter()
-                .copied()
-                .filter(|f| f.is_finite())
-                .collect();
-            if finite.len() < 2 {
-                return Ok(
-                    serde_json::json!({ "converged": false, "max_delta": f64::INFINITY, "reason": "fewer than 2 finite readings in window" }),
-                );
-            }
-            let max_delta = finite
-                .windows(2)
-                .map(|w| (w[1] - w[0]).abs())
-                .fold(0.0_f64, f64::max);
-            let converged = max_delta < epsilon;
-            Ok(serde_json::json!({ "converged": converged, "max_delta": max_delta }))
+            // The outcome: either a bool (occurred) or a f64 (actual delta
+            // normalized to [0,1]).
+            let outcome = input
+                .get("result")
+                .and_then(|r| {
+                    r.get("occurred")
+                        .and_then(|v| v.as_bool())
+                        .map(|b| if b { 1.0 } else { 0.0 })
+                        .or_else(|| r.get("actual_delta").and_then(|v| v.as_f64()))
+                })
+                .ok_or_else(|| {
+                    TemplateError::Manifest(
+                        "compute 'kata.prediction_vs_result': missing result.occurred or result.actual_delta".into(),
+                    )
+                })?;
+            let brier = (confidence - outcome).powi(2);
+            let prediction_error = (confidence - outcome).abs();
+            Ok(serde_json::json!({
+                "brier": brier,
+                "prediction_error": prediction_error,
+                "confidence": confidence,
+                "outcome": outcome,
+            }))
         }
-        "convergence.artifact_distance.jaccard" => {
-            // Jaccard distance over the set of leaf values in two JSON artifacts.
-            // 0.0 = identical leaf sets, 1.0 = disjoint. Convergence is
-            // distance < epsilon (the artifact stopped changing).
-            let current = input.get("current_artifact").ok_or_else(|| {
-                TemplateError::Manifest(
-                    "compute 'convergence.artifact_distance.jaccard': missing 'current_artifact'"
-                        .into(),
-                )
-            })?;
-            let prev = input.get("prev_artifact").ok_or_else(|| {
-                TemplateError::Manifest(
-                    "compute 'convergence.artifact_distance.jaccard': missing 'prev_artifact'"
-                        .into(),
-                )
-            })?;
+        // Full convergence check: combines hypotenuse and Brier trajectory.
+        // Reads the histories from _convergence context (injected by the
+        // tracker) and returns the convergence decision.
+        "kata.convergence_check" => {
+            let hypotenuse = get_f64("hypotenuse")?;
             let epsilon = input
-                .get("epsilon")
+                .get("hypotenuse_epsilon")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.05);
-            let current_leaves = collect_json_leaves(current);
-            let prev_leaves = collect_json_leaves(prev);
-            let intersection = current_leaves.intersection(&prev_leaves).count();
-            let union = current_leaves.union(&prev_leaves).count();
-            let distance = if union == 0 {
-                0.0
+            let brier_history = input
+                .get("brier_history")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.iter().map(|v| v.as_f64()).collect::<Option<Vec<f64>>>())
+                .unwrap_or_default();
+            let hypotenuse_history = input
+                .get("hypotenuse_history")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.iter().map(|v| v.as_f64()).collect::<Option<Vec<f64>>>())
+                .unwrap_or_default();
+            let brier_threshold = input
+                .get("brier_threshold")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.15);
+            let brier_window = input
+                .get("brier_window")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as usize;
+            let mode = input
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("hypotenuse_or_confidence");
+
+            let gap_converged = hypotenuse < epsilon;
+
+            // Confidence convergence: rolling Brier < threshold AND gap not decreasing
+            let confidence_converged = if brier_history.len() >= brier_window {
+                let start = brier_history.len().saturating_sub(brier_window);
+                let recent: Vec<f64> = brier_history[start..]
+                    .iter()
+                    .copied()
+                    .filter(|f| f.is_finite())
+                    .collect();
+                if recent.len() >= brier_window {
+                    let rolling: f64 = recent.iter().sum::<f64>() / recent.len() as f64;
+                    let gap_decreasing = if hypotenuse_history.len() >= 2 {
+                        let n = hypotenuse_history.len();
+                        let prev = hypotenuse_history[n - 2];
+                        let curr = hypotenuse_history[n - 1];
+                        prev.is_finite()
+                            && curr.is_finite()
+                            && prev > curr
+                            && (prev - curr) > epsilon
+                    } else {
+                        false
+                    };
+                    rolling < brier_threshold && !gap_decreasing
+                } else {
+                    false
+                }
             } else {
-                1.0 - (intersection as f64 / union as f64)
+                false
             };
-            let converged = distance < epsilon;
-            Ok(
-                serde_json::json!({ "converged": converged, "distance": distance, "intersection": intersection, "union": union }),
-            )
+
+            let (converged, conv_mode, reason) = match mode {
+                "hypotenuse" => (
+                    gap_converged,
+                    if gap_converged { "hypotenuse" } else { "none" },
+                    if gap_converged {
+                        format!("gap {hypotenuse:.4} < epsilon {epsilon:.4}")
+                    } else {
+                        format!("gap {hypotenuse:.4} >= epsilon {epsilon:.4}")
+                    },
+                ),
+                "confidence" => (
+                    confidence_converged,
+                    if confidence_converged {
+                        "confidence"
+                    } else {
+                        "none"
+                    },
+                    if confidence_converged {
+                        "Brier calibrated and gap not decreasing".to_string()
+                    } else {
+                        "Brier not calibrated or gap still decreasing".to_string()
+                    },
+                ),
+                _ => {
+                    // hypotenuse_or_confidence
+                    if gap_converged {
+                        (
+                            true,
+                            "hypotenuse",
+                            format!("gap {hypotenuse:.4} < epsilon {epsilon:.4}"),
+                        )
+                    } else if confidence_converged {
+                        (
+                            true,
+                            "confidence",
+                            "Brier calibrated and gap not decreasing".to_string(),
+                        )
+                    } else {
+                        (
+                            false,
+                            "none",
+                            format!("gap {hypotenuse:.4} >= epsilon, Brier not converged"),
+                        )
+                    }
+                }
+            };
+
+            Ok(serde_json::json!({
+                "converged": converged,
+                "mode": conv_mode,
+                "reason": reason,
+                "hypotenuse": hypotenuse,
+                "gap_converged": gap_converged,
+                "confidence_converged": confidence_converged,
+            }))
         }
         other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, convergence.stability, convergence.trajectory, convergence.artifact_distance.jaccard",
+            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, kata.convergence_check",
             other
         ))),
     }
 }
 
-/// Collect the set of leaf string values from a JSON value, for use in
-/// Jaccard artifact-distance convergence detection. Walks objects and arrays
-/// recursively; collects string and number leaves as `String` into a `HashSet`.
-fn collect_json_leaves(value: &serde_json::Value) -> std::collections::HashSet<String> {
-    use std::collections::HashSet;
-    let mut leaves = HashSet::new();
-    collect_json_leaves_into(value, &mut leaves);
-    leaves
+/// Compute the object-space gap (Dublin Core artifact completeness).
+///
+/// Edge-counting distance: counts fields present in the target spec but
+/// missing from the current artifacts (weight 1.0 each), plus fields that are
+/// present but ungrounded (weight 0.5 each — an ungrounded field is halfway
+/// between missing and complete). Normalized to [0, 1] by dividing by the
+/// total field count in the target spec.
+///
+/// This is the simplest well-defined distance measure for object space.
+/// If Brier scores don't converge with this measure, escalate to
+/// information-content-weighted measures (Resnik/Lin).
+fn compute_object_gap(
+    current: &serde_json::Value,
+    target: &serde_json::Value,
+) -> (f64, Vec<String>, Vec<String>) {
+    let target_fields = collect_field_keys(target);
+    let mut missing: Vec<String> = Vec::new();
+    let mut ungrounded: Vec<String> = Vec::new();
+    let total = target_fields.len().max(1) as f64;
+
+    for field in &target_fields {
+        match current.get(field) {
+            None | Some(serde_json::Value::Null) => {
+                missing.push(field.clone());
+            }
+            Some(val) if is_ungrounded(val) => {
+                ungrounded.push(field.clone());
+            }
+            Some(_) => { /* complete */ }
+        }
+    }
+
+    let gap = (missing.len() as f64 + 0.5 * ungrounded.len() as f64) / total;
+    (gap.min(1.0), missing, ungrounded)
 }
 
-fn collect_json_leaves_into(
-    value: &serde_json::Value,
-    leaves: &mut std::collections::HashSet<String>,
-) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (_, v) in map {
-                collect_json_leaves_into(v, leaves);
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for v in arr {
-                collect_json_leaves_into(v, leaves);
-            }
-        }
+/// A field value is "ungrounded" if it's an empty string, empty array, empty
+/// object, or a string that looks like a placeholder ("TODO", "TBD", "?").
+fn is_ungrounded(val: &serde_json::Value) -> bool {
+    match val {
         serde_json::Value::String(s) => {
-            leaves.insert(s.clone());
+            let trimmed = s.trim();
+            trimmed.is_empty()
+                || matches!(
+                    trimmed.to_lowercase().as_str(),
+                    "todo" | "tbd" | "?" | "n/a" | "placeholder"
+                )
         }
-        serde_json::Value::Number(n) => {
-            leaves.insert(n.to_string());
+        serde_json::Value::Array(arr) => arr.is_empty(),
+        serde_json::Value::Object(obj) => obj.is_empty(),
+        _ => false,
+    }
+}
+
+/// Compute the process-space gap (PKO procedure progress).
+///
+/// Edge-counting distance: counts steps in the target procedure that are not
+/// yet complete in the current procedure. Steps that are "in_progress" are
+/// half-weighted (halfway between not-started and complete). Normalized to
+/// [0, 1] by dividing by the total step count.
+///
+/// The procedure is represented as an array of step objects, each with a
+/// `status` field: "complete", "in_progress", "not_started" (or missing).
+fn compute_process_gap(
+    current: &serde_json::Value,
+    target: &serde_json::Value,
+) -> (f64, Vec<String>) {
+    let target_steps = target
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .or_else(|| target.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let current_steps = current
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .or_else(|| current.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let total = target_steps.len().max(1) as f64;
+    let mut incomplete: Vec<String> = Vec::new();
+    let mut weighted_incomplete = 0.0_f64;
+
+    for (i, target_step) in target_steps.iter().enumerate() {
+        let step_name = target_step
+            .get("name")
+            .or_else(|| target_step.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed")
+            .to_string();
+        let current_status = current_steps
+            .get(i)
+            .and_then(|s| s.get("status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("not_started");
+        match current_status {
+            "complete" => { /* done */ }
+            "in_progress" => {
+                weighted_incomplete += 0.5;
+                incomplete.push(format!("{step_name} (in_progress)"));
+            }
+            _ => {
+                weighted_incomplete += 1.0;
+                incomplete.push(format!("{step_name} (not_started)"));
+            }
         }
-        serde_json::Value::Bool(b) => {
-            leaves.insert(b.to_string());
-        }
-        serde_json::Value::Null => {}
+    }
+
+    let gap = weighted_incomplete / total;
+    (gap.min(1.0), incomplete)
+}
+
+/// Collect the top-level keys from a JSON object (for object-gap field
+/// comparison). If the value is an array, collects the `name` or `id` field
+/// from each element.
+fn collect_field_keys(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Object(map) => map.keys().cloned().collect(),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                item.get("name")
+                    .or_else(|| item.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(format!("item_{i}"))
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -2367,68 +2585,153 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_convergence_stability_converged() {
-        let input =
-            serde_json::json!({ "current_metric": 0.10, "prev_metric": 0.12, "epsilon": 0.05 });
-        let result = dispatch_compute("convergence.stability", &input).unwrap();
-        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
-        let delta = result.get("delta").and_then(|v| v.as_f64()).unwrap();
-        assert!((delta - 0.02).abs() < 1e-9);
-    }
-
-    #[test]
-    fn dispatch_convergence_stability_not_converged() {
-        let input =
-            serde_json::json!({ "current_metric": 0.10, "prev_metric": 0.50, "epsilon": 0.05 });
-        let result = dispatch_compute("convergence.stability", &input).unwrap();
-        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
-    }
-
-    #[test]
-    fn dispatch_convergence_trajectory_converged() {
-        let input = serde_json::json!({ "metric_history": [0.50, 0.30, 0.15, 0.14], "epsilon": 0.05, "window": 2 });
-        let result = dispatch_compute("convergence.trajectory", &input).unwrap();
-        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
-    }
-
-    #[test]
-    fn dispatch_convergence_trajectory_rejects_oscillation() {
-        let input = serde_json::json!({ "metric_history": [0.10, 0.50, 0.10, 0.50], "epsilon": 0.05, "window": 2 });
-        let result = dispatch_compute("convergence.trajectory", &input).unwrap();
-        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
-    }
-
-    #[test]
-    fn dispatch_convergence_trajectory_fewer_than_two_readings() {
-        let input = serde_json::json!({ "metric_history": [0.10], "epsilon": 0.05 });
-        let result = dispatch_compute("convergence.trajectory", &input).unwrap();
-        assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
-    }
-
-    #[test]
-    fn dispatch_convergence_artifact_distance_jaccard_identical() {
+    fn dispatch_kata_object_gap_complete() {
         let input = serde_json::json!({
-            "current_artifact": {"a": "x", "b": ["y", "z"]},
-            "prev_artifact": {"a": "x", "b": ["y", "z"]},
-            "epsilon": 0.05
+            "current_artifacts": {"title": "My Plan", "obstacles": ["a", "b"], "assessment": "grounded"},
+            "target_artifacts": {"title": "", "obstacles": [], "assessment": ""}
         });
-        let result = dispatch_compute("convergence.artifact_distance.jaccard", &input).unwrap();
-        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
-        let distance = result.get("distance").and_then(|v| v.as_f64()).unwrap();
-        assert!((distance - 0.0).abs() < 1e-9);
+        let result = dispatch_compute("kata.object_gap", &input).unwrap();
+        let gap = result.get("object_gap").and_then(|v| v.as_f64()).unwrap();
+        assert!((gap - 0.0).abs() < 1e-9, "all fields present = gap 0");
     }
 
     #[test]
-    fn dispatch_convergence_artifact_distance_jaccard_disjoint() {
+    fn dispatch_kata_object_gap_missing_fields() {
         let input = serde_json::json!({
-            "current_artifact": {"a": "x"},
-            "prev_artifact": {"a": "y"},
-            "epsilon": 0.05
+            "current_artifacts": {"title": "My Plan"},
+            "target_artifacts": {"title": "", "obstacles": [], "assessment": "", "prediction": ""}
         });
-        let result = dispatch_compute("convergence.artifact_distance.jaccard", &input).unwrap();
+        let result = dispatch_compute("kata.object_gap", &input).unwrap();
+        let gap = result.get("object_gap").and_then(|v| v.as_f64()).unwrap();
+        // 3 missing out of 4 = 0.75
+        assert!(
+            (gap - 0.75).abs() < 1e-9,
+            "3/4 missing = gap 0.75, got {gap}"
+        );
+    }
+
+    #[test]
+    fn dispatch_kata_object_gap_ungrounded_half_weighted() {
+        let input = serde_json::json!({
+            "current_artifacts": {"title": "My Plan", "obstacles": [], "assessment": "TODO"},
+            "target_artifacts": {"title": "", "obstacles": [], "assessment": ""}
+        });
+        let result = dispatch_compute("kata.object_gap", &input).unwrap();
+        let gap = result.get("object_gap").and_then(|v| v.as_f64()).unwrap();
+        // 1 ungrounded (obstacles empty) at 0.5 + 1 ungrounded (assessment=TODO) at 0.5 = 1.0 / 3
+        assert!(
+            (gap - (1.0 / 3.0)).abs() < 1e-9,
+            "2 ungrounded at 0.5 each = 1.0/3, got {gap}"
+        );
+    }
+
+    #[test]
+    fn dispatch_kata_process_gap_all_complete() {
+        let input = serde_json::json!({
+            "current_procedure": {"steps": [
+                {"name": "grasp", "status": "complete"},
+                {"name": "target", "status": "complete"},
+                {"name": "experiment", "status": "complete"}
+            ]},
+            "target_procedure": {"steps": [
+                {"name": "grasp"},
+                {"name": "target"},
+                {"name": "experiment"}
+            ]}
+        });
+        let result = dispatch_compute("kata.process_gap", &input).unwrap();
+        let gap = result.get("process_gap").and_then(|v| v.as_f64()).unwrap();
+        assert!((gap - 0.0).abs() < 1e-9, "all complete = gap 0");
+    }
+
+    #[test]
+    fn dispatch_kata_process_gap_mixed() {
+        let input = serde_json::json!({
+            "current_procedure": {"steps": [
+                {"name": "grasp", "status": "complete"},
+                {"name": "target", "status": "in_progress"},
+                {"name": "experiment", "status": "not_started"}
+            ]},
+            "target_procedure": {"steps": [
+                {"name": "grasp"},
+                {"name": "target"},
+                {"name": "experiment"}
+            ]}
+        });
+        let result = dispatch_compute("kata.process_gap", &input).unwrap();
+        let gap = result.get("process_gap").and_then(|v| v.as_f64()).unwrap();
+        // 1 complete (0) + 1 in_progress (0.5) + 1 not_started (1.0) = 1.5 / 3 = 0.5
+        assert!((gap - 0.5).abs() < 1e-9, "mixed = gap 0.5, got {gap}");
+    }
+
+    #[test]
+    fn dispatch_kata_hypotenuse() {
+        let input = serde_json::json!({ "object_gap": 0.3, "process_gap": 0.4 });
+        let result = dispatch_compute("kata.hypotenuse", &input).unwrap();
+        let h = result.get("hypotenuse").and_then(|v| v.as_f64()).unwrap();
+        assert!((h - 0.5).abs() < 1e-9, "sqrt(0.09 + 0.16) = 0.5, got {h}");
+    }
+
+    #[test]
+    fn dispatch_kata_prediction_vs_result_correct() {
+        let input = serde_json::json!({
+            "prediction": {"confidence": 0.9},
+            "result": {"occurred": true}
+        });
+        let result = dispatch_compute("kata.prediction_vs_result", &input).unwrap();
+        let brier = result.get("brier").and_then(|v| v.as_f64()).unwrap();
+        assert!(
+            (brier - 0.01).abs() < 1e-9,
+            "(0.9-1.0)^2 = 0.01, got {brier}"
+        );
+    }
+
+    #[test]
+    fn dispatch_kata_prediction_vs_result_wrong() {
+        let input = serde_json::json!({
+            "prediction": {"confidence": 0.9},
+            "result": {"occurred": false}
+        });
+        let result = dispatch_compute("kata.prediction_vs_result", &input).unwrap();
+        let brier = result.get("brier").and_then(|v| v.as_f64()).unwrap();
+        assert!(
+            (brier - 0.81).abs() < 1e-9,
+            "(0.9-0.0)^2 = 0.81, got {brier}"
+        );
+    }
+
+    #[test]
+    fn dispatch_kata_convergence_check_gap_converged() {
+        let input = serde_json::json!({
+            "hypotenuse": 0.02,
+            "hypotenuse_epsilon": 0.05,
+            "brier_history": [0.5],
+            "hypotenuse_history": [0.5, 0.02],
+            "brier_threshold": 0.15,
+            "brier_window": 3,
+            "mode": "hypotenuse_or_confidence"
+        });
+        let result = dispatch_compute("kata.convergence_check", &input).unwrap();
+        assert!(result.get("converged").and_then(|v| v.as_bool()).unwrap());
+        assert_eq!(
+            result.get("mode").and_then(|v| v.as_str()).unwrap(),
+            "hypotenuse"
+        );
+    }
+
+    #[test]
+    fn dispatch_kata_convergence_check_not_converged() {
+        let input = serde_json::json!({
+            "hypotenuse": 0.3,
+            "hypotenuse_epsilon": 0.05,
+            "brier_history": [0.5, 0.5],
+            "hypotenuse_history": [0.5, 0.3],
+            "brier_threshold": 0.15,
+            "brier_window": 3,
+            "mode": "hypotenuse_or_confidence"
+        });
+        let result = dispatch_compute("kata.convergence_check", &input).unwrap();
         assert!(!result.get("converged").and_then(|v| v.as_bool()).unwrap());
-        let distance = result.get("distance").and_then(|v| v.as_f64()).unwrap();
-        assert!((distance - 1.0).abs() < 1e-9);
     }
 
     #[test]

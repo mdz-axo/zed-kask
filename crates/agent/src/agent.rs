@@ -667,6 +667,37 @@ impl NativeAgent {
 
     async fn run_skills_scan(this: WeakEntity<Self>, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
         let skills_dir = global_skills_dir();
+
+        // zed-kask: One-time migration from the old shared `~/.agents/skills/`
+        // to the isolated `data_dir()/agents/skills/`. If the new dir doesn't
+        // exist but the old one does and contains skills, move them. Gated
+        // by a marker file so it only runs once.
+        let migration_marker = skills_dir.join(".migrated");
+        if !fs.is_file(&migration_marker).await {
+            let old_skills_dir = paths::home_dir().join(".agents").join("skills");
+            if fs.is_dir(&old_skills_dir).await && !fs.is_dir(&skills_dir).await {
+                log::info!(
+                    "zed-kask: migrating skills from {} to {}",
+                    old_skills_dir.display(),
+                    skills_dir.display()
+                );
+                if let Some(parent) = skills_dir.parent() {
+                    let _ = fs.create_dir(parent).await;
+                }
+                let _ = fs.create_dir(&skills_dir).await;
+                // Move each entry from old to new location.
+                if let Ok(mut entries) = fs.read_dir(&old_skills_dir).await {
+                    while let Some(entry) = entries.next().await.transpose().ok().flatten() {
+                        let src = old_skills_dir.join(&entry);
+                        let dst = skills_dir.join(&entry);
+                        let _ = std::fs::rename(&src, &dst);
+                    }
+                }
+            }
+            let _ = fs.create_dir(&skills_dir).await;
+            let _ = fs.create_file(&migration_marker, Default::default()).await;
+        }
+
         if !fs.is_dir(&skills_dir).await {
             // Skills directory doesn't exist; revert state so the next
             // user trigger retries.

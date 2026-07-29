@@ -72,11 +72,17 @@ impl ConvergenceStatus {
 /// score deterministically.
 pub struct ConvergenceTracker {
     // ── Kata target-condition config ──
+    #[allow(dead_code)]
     target_artifacts_field: Option<String>,
+    #[allow(dead_code)]
     current_artifacts_field: Option<String>,
+    #[allow(dead_code)]
     target_procedure_field: Option<String>,
+    #[allow(dead_code)]
     current_procedure_field: Option<String>,
+    #[allow(dead_code)]
     prediction_field: Option<String>,
+    #[allow(dead_code)]
     result_field: Option<String>,
     hypotenuse_epsilon: f64,
     brier_window: u32,
@@ -194,6 +200,45 @@ impl ConvergenceTracker {
         self.hypotenuse_history.push(hypotenuse);
         // Push NaN for Brier so the histories stay aligned by cycle count.
         self.brier_history.push(f64::NAN);
+    }
+
+    /// Record a PDCA cycle from the executor context. For the Kata model,
+    /// reads the hypotenuse and Brier score from the context (produced by
+    /// `compute` steps with `compute_ref: kata.hypotenuse` and
+    /// `kata.prediction_vs_result`). For the legacy model, reads the self-grade
+    /// metric from the convergence field. Called by the executor after each
+    /// iteration's compute steps have run, BEFORE `check_met`.
+    pub fn push_cycle_from_context(&mut self, context: &HashMap<String, Value>) {
+        if self.kata_enabled() {
+            // Kata model: read hypotenuse and Brier from context
+            let hypotenuse = context
+                .get("kata_hypotenuse")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(f64::NAN);
+            let brier = context
+                .get("kata_brier")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(f64::NAN);
+            self.hypotenuse_history.push(hypotenuse);
+            self.brier_history.push(brier);
+        } else {
+            // Legacy model: read self-grade metric from convergence field
+            let current = context
+                .get(&self.field)
+                .and_then(|v| v.as_f64())
+                .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
+            let current = if current.is_none() && self.field != "composite" {
+                context.get("composite").and_then(|v| v.as_f64())
+            } else {
+                current
+            };
+            let current = if current.is_none() {
+                context.get("_convergence_score").and_then(|v| v.as_f64())
+            } else {
+                current
+            };
+            self.quality_history.push(current.unwrap_or(f64::NAN));
+        }
     }
 
     /// Capture the baseline quality on the first full pass. Called once,
@@ -660,99 +705,119 @@ mod tests {
         assert_eq!(tracker.baseline_quality, first_baseline);
     }
 
-    // ── Trajectory stability gates ──
+    // ── Kata hypotenuse + Brier convergence model ──
 
     #[test]
-    fn push_quality_records_history() {
+    fn kata_enabled_reports_correctly() {
         let cfg = config(0.15, "composite", 3, 0);
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        let mut ctx = HashMap::new();
-        ctx.insert("composite".to_string(), json!(0.50));
-        tracker.push_quality(&ctx);
-        ctx.insert("composite".to_string(), json!(0.30));
-        tracker.push_quality(&ctx);
-        assert_eq!(tracker.quality_history(), &[0.50, 0.30]);
+        assert!(!ConvergenceTracker::new(&cfg).kata_enabled());
+        let cfg = kata_config("hypotenuse_or_confidence");
+        assert!(ConvergenceTracker::new(&cfg).kata_enabled());
     }
 
     #[test]
-    fn push_quality_records_nan_when_metric_missing() {
-        let cfg = config(0.15, "composite", 3, 0);
+    fn kata_hypotenuse_converges_when_gap_below_epsilon() {
+        let cfg = kata_config("hypotenuse");
         let mut tracker = ConvergenceTracker::new(&cfg);
-        let ctx = HashMap::new(); // no metric
-        tracker.push_quality(&ctx);
-        assert_eq!(tracker.quality_history().len(), 1);
-        assert!(tracker.quality_history()[0].is_nan());
+        let ctx = HashMap::new();
+        // Cycle 1: gap = 0.3 (not converged)
+        tracker.push_hypotenuse(0.3);
+        assert!(!tracker.check_met(&ctx, 3));
+        // Cycle 2: gap = 0.02 (below epsilon 0.05)
+        tracker.push_hypotenuse(0.02);
+        assert!(tracker.check_met(&ctx, 3));
     }
 
     #[test]
-    fn stability_gate_returns_false_with_fewer_than_two_readings() {
-        let mut cfg = config(0.15, "composite", 3, 0);
-        cfg.improvement_gate = "stability".to_string();
+    fn kata_hypotenuse_rejects_when_gap_above_epsilon() {
+        let cfg = kata_config("hypotenuse");
         let mut tracker = ConvergenceTracker::new(&cfg);
-        let mut ctx = HashMap::new();
-        ctx.insert("composite".to_string(), json!(0.10));
-        tracker.push_quality(&ctx); // only 1 reading
-        // Cannot be stable with 1 reading — trajectory convergence undefined
-        assert!(!tracker.check_met(&ctx, 2));
-    }
-
-    #[test]
-    fn stability_gate_converges_when_last_two_readings_within_epsilon() {
-        let mut cfg = config(0.15, "composite", 3, 0);
-        cfg.improvement_gate = "stability".to_string();
-        cfg.stability_epsilon = 0.05;
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        let mut ctx = HashMap::new();
-        ctx.insert("composite".to_string(), json!(0.50));
-        tracker.push_quality(&ctx);
-        ctx.insert("composite".to_string(), json!(0.52)); // delta 0.02 < 0.05
-        tracker.push_quality(&ctx);
-        assert!(tracker.check_met(&ctx, 2));
-    }
-
-    #[test]
-    fn stability_gate_rejects_oscillation() {
-        let mut cfg = config(0.15, "composite", 3, 0);
-        cfg.improvement_gate = "stability".to_string();
-        cfg.stability_epsilon = 0.05;
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        let mut ctx = HashMap::new();
-        ctx.insert("composite".to_string(), json!(0.10));
-        tracker.push_quality(&ctx);
-        ctx.insert("composite".to_string(), json!(0.50)); // delta 0.40 >> 0.05
-        tracker.push_quality(&ctx);
-        assert!(!tracker.check_met(&ctx, 2));
-    }
-
-    #[test]
-    fn threshold_and_stability_gate_requires_both() {
-        let mut cfg = config(0.15, "composite", 3, 0);
-        cfg.improvement_gate = "threshold_and_stability".to_string();
-        cfg.stability_epsilon = 0.05;
-        let mut tracker = ConvergenceTracker::new(&cfg);
-        let mut ctx = HashMap::new();
-        // Threshold met but not stable (delta 0.40)
-        ctx.insert("composite".to_string(), json!(0.10));
-        tracker.push_quality(&ctx);
-        ctx.insert("composite".to_string(), json!(0.10));
-        tracker.push_quality(&ctx);
-        // delta 0.00 < 0.05 AND 0.10 <= 0.15 → both met
-        assert!(tracker.check_met(&ctx, 2));
-        // Now make it unstable — threshold met but delta large
-        ctx.insert("composite".to_string(), json!(0.50));
-        tracker.push_quality(&ctx);
-        // 0.50 > 0.15 threshold not met, and delta 0.40 not stable
+        let ctx = HashMap::new();
+        tracker.push_hypotenuse(0.3);
+        tracker.push_hypotenuse(0.2); // still above 0.05
         assert!(!tracker.check_met(&ctx, 3));
     }
 
     #[test]
-    fn stability_enabled_reports_gate_correctly() {
-        let mut cfg = config(0.15, "composite", 3, 0);
-        assert!(!ConvergenceTracker::new(&cfg).stability_enabled());
-        cfg.improvement_gate = "stability".to_string();
-        assert!(ConvergenceTracker::new(&cfg).stability_enabled());
-        cfg.improvement_gate = "threshold_and_stability".to_string();
-        assert!(ConvergenceTracker::new(&cfg).stability_enabled());
+    fn kata_confidence_converges_when_brier_low_and_gap_stuck() {
+        let cfg = kata_config("confidence");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // 3 cycles with low Brier and gap not decreasing (stuck at 0.3)
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05);
+        // Brier rolling avg = 0.05 < 0.15, gap not decreasing → confidence converged
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn kata_confidence_rejects_when_brier_high() {
+        let cfg = kata_config("confidence");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        tracker.push_kata_cycle(0.3, 0.5); // high Brier
+        tracker.push_kata_cycle(0.3, 0.5);
+        tracker.push_kata_cycle(0.3, 0.5);
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn kata_confidence_rejects_when_gap_still_decreasing() {
+        let cfg = kata_config("confidence");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Brier is low but gap is still decreasing → not confidence converged
+        tracker.push_kata_cycle(0.5, 0.05);
+        tracker.push_kata_cycle(0.4, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05); // gap decreased 0.4→0.3
+        assert!(!tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn kata_hypotenuse_or_confidence_accepts_either() {
+        let cfg = kata_config("hypotenuse_or_confidence");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Gap converged (0.02 < 0.05) even though Brier is high
+        tracker.push_kata_cycle(0.02, 0.5);
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn kata_hypotenuse_or_confidence_accepts_confidence() {
+        let cfg = kata_config("hypotenuse_or_confidence");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        // Gap not converged (0.3 > 0.05) but Brier is low and gap stuck
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05);
+        tracker.push_kata_cycle(0.3, 0.05);
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn kata_min_iterations_prevents_premature_exit() {
+        let cfg = kata_config("hypotenuse");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        tracker.push_hypotenuse(0.02); // gap already below epsilon
+        // iteration 2 <= min_iterations 2 → false even though gap is tiny
+        assert!(!tracker.check_met(&ctx, 2));
+        // iteration 3 > 2 → true
+        assert!(tracker.check_met(&ctx, 3));
+    }
+
+    #[test]
+    fn kata_is_hypotenuse_decreasing_detects_progress() {
+        let cfg = kata_config("hypotenuse");
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        assert!(!tracker.is_hypotenuse_decreasing()); // < 2 readings
+        tracker.push_hypotenuse(0.5);
+        tracker.push_hypotenuse(0.3); // decreased by 0.2 > epsilon
+        assert!(tracker.is_hypotenuse_decreasing());
+        tracker.push_hypotenuse(0.29); // decreased by 0.01 < epsilon
+        assert!(!tracker.is_hypotenuse_decreasing());
     }
 
     #[test]

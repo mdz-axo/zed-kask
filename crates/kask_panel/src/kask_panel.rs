@@ -33,7 +33,7 @@ use gpui::{
 use language::Buffer;
 use language_core::CodeLabel;
 use project::lsp_store::CompletionDocumentation;
-use project::{Completion, CompletionResponse, CompletionSource};
+use project::{Completion, CompletionResponse, CompletionSource, Project};
 use serde_json::Value;
 use text::ToOffset;
 use ui::WithScrollbar;
@@ -50,6 +50,7 @@ use zed_actions::kask_panel::{
 
 mod curator_session;
 mod kanban_view;
+mod markdown_render;
 mod panel_button;
 mod portfolio_view;
 mod scenarios_view;
@@ -74,6 +75,11 @@ const BUILT_IN_MCP_SERVERS: &[&str] = kask_bridge::BUILT_IN_MCP_SERVERS_IDS;
 pub struct KaskMessage {
     pub role: KaskMessageRole,
     pub content: String,
+    /// For assistant messages: a live `Entity<Markdown>` rendered with
+    /// rich markdown + mermaid. `None` for non-assistant messages (which
+    /// render as plain `Label`s / `Callout`s). During streaming, `TextDelta`s
+    /// are appended to this entity and it re-parses + re-renders.
+    pub markdown: Option<gpui::Entity<markdown::Markdown>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +95,31 @@ pub enum KaskMessageRole {
 pub struct ToolDescriptor {
     pub name: String,
     pub description: String,
+}
+
+impl KaskMessage {
+    /// Construct a non-assistant message (no markdown entity).
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: KaskMessageRole::System,
+            content: content.into(),
+            markdown: None,
+        }
+    }
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: KaskMessageRole::User,
+            content: content.into(),
+            markdown: None,
+        }
+    }
+    pub fn tool(content: impl Into<String>) -> Self {
+        Self {
+            role: KaskMessageRole::Tool,
+            content: content.into(),
+            markdown: None,
+        }
+    }
 }
 
 /// Trait for direct tool invocation (mirrors `hkask_capability::ToolPort`).
@@ -259,6 +290,8 @@ const DEFAULT_SERVER_INDEX: usize = 4; // "curator"
 /// The kask panel — a center-pane `Item` for per-MCP-server chat + tool invocation.
 pub struct KaskPanel {
     _workspace: WeakEntity<Workspace>,
+    /// The project, for the markdown link/code-span resolver.
+    project: WeakEntity<Project>,
     focus_handle: FocusHandle,
     /// Currently selected server (index into `BUILT_IN_MCP_SERVERS`).
     ///
@@ -327,6 +360,7 @@ impl KaskPanel {
 
             Self {
                 _workspace: workspace.weak_handle(),
+                project: workspace.project().downgrade(),
                 focus_handle: cx.focus_handle(),
                 selected_server: DEFAULT_SERVER_INDEX,
                 conversations: std::collections::HashMap::new(),
@@ -364,10 +398,9 @@ impl KaskPanel {
     fn current_messages(&mut self) -> &mut Vec<KaskMessage> {
         let index = self.selected_server;
         self.conversations.entry(index).or_insert_with(|| {
-            vec![KaskMessage {
-                role: KaskMessageRole::System,
-                content: server_welcome(BUILT_IN_MCP_SERVERS.get(index).copied().unwrap_or("none")),
-            }]
+            vec![KaskMessage::system(server_welcome(
+                BUILT_IN_MCP_SERVERS.get(index).copied().unwrap_or("none"),
+            ))]
         })
     }
 
@@ -454,10 +487,7 @@ impl KaskPanel {
     fn handle_slash_command(&mut self, command: &str, cx: &mut Context<Self>) {
         match command {
             "help" => {
-                self.current_messages().push(KaskMessage {
-                    role: KaskMessageRole::System,
-                    content: "Commands:\n  /help              — show this help\n  /clear             — clear the conversation\n  /tools             — list this server's tools\n  /tool_name args    — direct tool invocation (bypasses LLM)\n  <natural language> — scoped inference (LLM calls the server's tools)".to_string(),
-                });
+                self.current_messages().push(KaskMessage::system("Commands:\n  /help              — show this help\n  /clear             — clear the conversation\n  /tools             — list this server's tools\n  /tool_name args    — direct tool invocation (bypasses LLM)\n  <natural language> — scoped inference (LLM calls the server's tools)"));
                 self.scroll_messages_to_bottom(cx);
                 cx.notify();
             }
@@ -465,10 +495,9 @@ impl KaskPanel {
                 let server = self.selected_server_name().to_string();
                 self.conversations.insert(
                     self.selected_server,
-                    vec![KaskMessage {
-                        role: KaskMessageRole::System,
-                        content: format!("Cleared. {server} conversation reset."),
-                    }],
+                    vec![KaskMessage::system(format!(
+                        "Cleared. {server} conversation reset."
+                    ))],
                 );
                 self.scroll_messages_to_bottom(cx);
                 cx.notify();
@@ -498,20 +527,16 @@ impl KaskPanel {
                 }
                 lines
             };
-            self.current_messages().push(KaskMessage {
-                role: KaskMessageRole::System,
-                content,
-            });
+            self.current_messages().push(KaskMessage::system(content));
             self.scroll_messages_to_bottom(cx);
             cx.notify();
             return;
         }
 
         if let Some(invoker) = tool_invoker() {
-            self.current_messages().push(KaskMessage {
-                role: KaskMessageRole::System,
-                content: format!("Fetching tools from {server}…"),
-            });
+            self.current_messages().push(KaskMessage::system(format!(
+                "Fetching tools from {server}…"
+            )));
             self.scroll_messages_to_bottom(cx);
             cx.notify();
 
@@ -535,17 +560,12 @@ impl KaskPanel {
                                 }
                                 lines
                             };
-                            this.current_messages().push(KaskMessage {
-                                role: KaskMessageRole::System,
-                                content,
-                            });
+                            this.current_messages().push(KaskMessage::system(content));
                             this.cached_tools = Some((index, tools));
                         }
                         Err(error) => {
-                            this.current_messages().push(KaskMessage {
-                                role: KaskMessageRole::System,
-                                content: format!("Error listing tools: {error}"),
-                            });
+                            this.current_messages()
+                                .push(KaskMessage::system(format!("Error listing tools: {error}")));
                         }
                     }
                     this.scroll_messages_to_bottom(cx);
@@ -554,10 +574,9 @@ impl KaskPanel {
             })
             .detach();
         } else {
-            self.current_messages().push(KaskMessage {
-                role: KaskMessageRole::System,
-                content: "Tool invoker not wired — set_tool_invoker() not called.".to_string(),
-            });
+            self.current_messages().push(KaskMessage::system(
+                "Tool invoker not wired — set_tool_invoker() not called.",
+            ));
             self.scroll_messages_to_bottom(cx);
             cx.notify();
         }
@@ -569,6 +588,7 @@ impl KaskPanel {
         self.current_messages().push(KaskMessage {
             role: KaskMessageRole::User,
             content: format!("/{tool} {args}"),
+            markdown: None,
         });
         self.busy = true;
         self.spinner_frame = 0;
@@ -589,15 +609,12 @@ impl KaskPanel {
                             let formatted = serde_json::from_str::<Value>(&output)
                                 .map(|v| format_json_result(&v))
                                 .unwrap_or(output);
-                            this.current_messages().push(KaskMessage {
-                                role: KaskMessageRole::Tool,
-                                content: format!("{tool}\n{formatted}"),
-                            });
+                            this.current_messages()
+                                .push(KaskMessage::tool(format!("{tool}\n{formatted}")));
                         }
-                        Err(error) => this.current_messages().push(KaskMessage {
-                            role: KaskMessageRole::System,
-                            content: format!("Error: {error}"),
-                        }),
+                        Err(error) => this
+                            .current_messages()
+                            .push(KaskMessage::system(format!("Error: {error}"))),
                     }
                     this.busy = false;
                     this.scroll_messages_to_bottom(cx);
@@ -606,10 +623,9 @@ impl KaskPanel {
             })
             .detach();
         } else {
-            self.current_messages().push(KaskMessage {
-                role: KaskMessageRole::System,
-                content: "Tool invoker not wired — set_tool_invoker() not called.".to_string(),
-            });
+            self.current_messages().push(KaskMessage::system(
+                "Tool invoker not wired — set_tool_invoker() not called.",
+            ));
             self.busy = false;
             self.scroll_messages_to_bottom(cx);
             cx.notify();
@@ -622,6 +638,7 @@ impl KaskPanel {
         self.current_messages().push(KaskMessage {
             role: KaskMessageRole::User,
             content: prompt.to_string(),
+            markdown: None,
         });
         self.busy = true;
         self.spinner_frame = 0;
@@ -629,12 +646,9 @@ impl KaskPanel {
         cx.notify();
 
         let Some(factory) = curator_session_factory() else {
-            self.current_messages().push(KaskMessage {
-                role: KaskMessageRole::System,
-                content:
-                    "Curator session factory not wired — set_curator_session_factory() not called."
-                        .to_string(),
-            });
+            self.current_messages().push(KaskMessage::system(
+                "Curator session factory not wired — set_curator_session_factory() not called.",
+            ));
             self.busy = false;
             self.scroll_messages_to_bottom(cx);
             cx.notify();
@@ -663,6 +677,9 @@ impl KaskPanel {
         let tool_scope = ToolScope::Server(server.clone());
 
         let task = session.send(prompt, &tool_scope, &system_prompt);
+        // Capture the project + workspace for the markdown link resolver.
+        let weak_project = self.project.clone();
+        let weak_workspace = self._workspace.clone();
         cx.spawn(async move |this, cx| {
             let stream_result = task.await;
             this.update(cx, |this, cx| {
@@ -671,17 +688,53 @@ impl KaskPanel {
                         // Drain the stream on the foreground executor. The
                         // bridge pushes events from a background tokio task;
                         // we poll until the channel closes (Done/Error).
-                        let mut assistant_text = String::new();
+                        //
+                        // The assistant message holds a live
+                        // `Entity<Markdown>`; each `TextDelta` appends to it
+                        // and the markdown crate re-parses + re-renders
+                        // (including mermaid) on each update.
+                        let mut assistant_md: Option<gpui::Entity<markdown::Markdown>> = None;
                         let mut had_error = false;
                         while let Some(event) = stream.try_next() {
                             match event {
                                 CuratorEvent::TextDelta(delta) => {
-                                    assistant_text.push_str(&delta);
+                                    if assistant_md.is_none() {
+                                        // First delta — create the markdown
+                                        // entity and push the assistant
+                                        // message so it renders immediately.
+                                        let md = cx.new(|cx| {
+                                            markdown_render::new_markdown(
+                                                gpui::SharedString::from(delta.clone()),
+                                                None,
+                                                cx,
+                                            )
+                                        });
+                                        assistant_md = Some(md.clone());
+                                        this.current_messages().push(KaskMessage {
+                                            role: KaskMessageRole::Assistant,
+                                            content: delta,
+                                            markdown: Some(md),
+                                        });
+                                    } else if let Some(md) = assistant_md.as_ref() {
+                                        // Subsequent deltas — append to the
+                                        // existing markdown entity.
+                                        let md = md.clone();
+                                        md.update(cx, |m, cx| m.append(&delta, cx));
+                                        // Keep `content` in sync (used for
+                                        // copy / fallback).
+                                        if let Some(last) = this.current_messages().last_mut() {
+                                            if last.role == KaskMessageRole::Assistant {
+                                                last.content.push_str(&delta);
+                                            }
+                                        }
+                                    }
+                                    this.scroll_messages_to_bottom(cx);
+                                    cx.notify();
                                 }
                                 CuratorEvent::ThinkingDelta(_) => {
                                     // v1: thinking deltas are not yet
-                                    // rendered (Phase 3 markdown + Phase 4
-                                    // thinking blocks). Accumulate silently.
+                                    // rendered as collapsible blocks (Phase 4).
+                                    // Accumulate silently.
                                 }
                                 CuratorEvent::ToolCall(_) | CuratorEvent::ToolResult { .. } => {
                                     // v1: tool-call cards arrive in Phase 4.
@@ -690,27 +743,23 @@ impl KaskPanel {
                                 }
                                 CuratorEvent::Done { .. } => break,
                                 CuratorEvent::Error(error) => {
-                                    this.current_messages().push(KaskMessage {
-                                        role: KaskMessageRole::System,
-                                        content: format!("Inference error: {error}"),
-                                    });
+                                    this.current_messages().push(KaskMessage::system(format!(
+                                        "Inference error: {error}"
+                                    )));
                                     had_error = true;
                                     break;
                                 }
                             }
                         }
-                        if !had_error && !assistant_text.is_empty() {
-                            this.current_messages().push(KaskMessage {
-                                role: KaskMessageRole::Assistant,
-                                content: assistant_text,
-                            });
-                        }
+                        let _ = weak_project;
+                        let _ = weak_workspace;
+                        // If no deltas arrived (e.g. only tool calls),
+                        // don't push an empty assistant message.
+                        let _ = had_error;
                     }
                     Err(error) => {
-                        this.current_messages().push(KaskMessage {
-                            role: KaskMessageRole::System,
-                            content: format!("Inference error: {error}"),
-                        });
+                        this.current_messages()
+                            .push(KaskMessage::system(format!("Inference error: {error}")));
                     }
                 }
                 this.busy = false;
@@ -790,14 +839,25 @@ impl KaskPanel {
                     KaskMessageRole::Tool => (Color::Muted, "[tool] "),
                     KaskMessageRole::System => (Color::Warning, "[system] "),
                 };
-                v_flex()
-                    .gap_0p5()
-                    .child(
-                        Label::new(format!("{prefix}{}", msg.content))
-                            .size(LabelSize::Small)
-                            .color(color),
+                // Assistant messages with a live `Entity<Markdown>` render
+                // via `MarkdownElement` (rich markdown + mermaid + code-span
+                // links). Other messages render as plain `Label`s.
+                let body: AnyElement = if let Some(md) = msg.markdown.as_ref() {
+                    markdown_render::render_kask_markdown(
+                        md.clone(),
+                        markdown::MarkdownStyle::themed(markdown::MarkdownFont::Agent, window, cx),
+                        &self._workspace,
+                        &self.project,
+                        cx,
                     )
                     .into_any_element()
+                } else {
+                    Label::new(format!("{prefix}{}", msg.content))
+                        .size(LabelSize::Small)
+                        .color(color)
+                        .into_any_element()
+                };
+                v_flex().gap_0p5().child(body).into_any_element()
             })
             .collect();
 

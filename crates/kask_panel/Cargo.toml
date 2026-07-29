@@ -30,3 +30,7 @@ dirs.workspace = true
 futures.workspace = true
 kask_bridge.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+markdown.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
+util.workspace = true

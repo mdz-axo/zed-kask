@@ -131,7 +131,8 @@ pub enum SkillSource {
     /// the lowest override priority (global and project-local skills can
     /// shadow them).
     BuiltIn,
-    /// From ~/.agents/skills/
+    /// From the global skills directory (zed-kask-isolated under
+    /// `paths::data_dir()/agents/skills/`).
     Global,
     /// From {project}/.agents/skills/
     ProjectLocal {
@@ -139,7 +140,7 @@ pub enum SkillSource {
         worktree_root_name: Arc<str>,
     },
     /// Installed from the kask marketplace. Lives under
-    /// `~/.agents/skills/_marketplace/{source_user}/{skill_name}/` so it
+    /// `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/` so it
     /// never overwrites a locally-authored skill of the same name. The
     /// `original_skill_id` is the canonical id (`{source_user}/{skill_name}`)
     /// the marketplace catalog indexes it under.
@@ -649,7 +650,7 @@ pub async fn load_skills_from_directory(
 }
 
 /// zed-kask: Load marketplace-installed skills from
-/// `~/.agents/skills/_marketplace/{source_user}/{skill_name}/`.
+/// `{global_skills_dir}/_marketplace/{source_user}/{skill_name}/`.
 ///
 /// The marketplace directory has a two-level namespace: `_marketplace/`
 /// contains `{source_user}/` directories, each of which contains

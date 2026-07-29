@@ -1100,7 +1100,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(paths::data_dir(), json!({})).await;
+        fs.create_dir(&agent_skills::global_skills_dir())
+            .await
+            .expect("global skills directory should be created");
         fs.insert_tree(path!("/tmp"), json!({ "outside.txt": "outside" }))
             .await;
 
@@ -1139,6 +1141,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
+        fs.create_dir(&agent_skills::global_skills_dir())
+            .await
+            .expect("global skills directory should be created");
         fs.insert_tree(
             paths::home_dir(),
             json!({

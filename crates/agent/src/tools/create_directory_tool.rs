@@ -341,13 +341,8 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(CreateDirectoryTool::new(project));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .to_string_lossy()
-            .into_owned();
         let created_path = agent_skills::global_skills_dir().join("my-skill");
+        let input_path = created_path.to_string_lossy().into_owned();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {

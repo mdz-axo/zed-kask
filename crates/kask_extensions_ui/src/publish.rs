@@ -37,13 +37,15 @@ pub const KASK_SKILLS_S3_PREFIX: &str = "kask-skills";
 ///
 /// Resolution order:
 /// 1. `HKASK_MARKETPLACE_URL` env var — operator/dev override.
-/// 2. `http_client.base_url()` — fall back to the configured `server_url`
-///    (the Zed default `https://zed.dev` or whatever the user set).
+/// 2. `http://localhost:3000` — dev default (local kask collab server).
+///    This matches the pre-isolation `.zed/settings.json` override.
 ///
 /// Returns the base URL with no trailing slash.
-fn kask_marketplace_base_url(http_client: &HttpClientWithUrl) -> String {
+fn kask_marketplace_base_url(_http_client: &HttpClientWithUrl) -> String {
     std::env::var("HKASK_MARKETPLACE_URL")
-        .unwrap_or_else(|_| http_client.base_url())
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "http://localhost:3000".to_string())
         .trim_end_matches('/')
         .to_string()
 }
