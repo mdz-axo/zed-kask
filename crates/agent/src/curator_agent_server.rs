@@ -34,7 +34,7 @@ use crate::{
 /// `Thread::static_context` and rendered after the project context section.
 /// The Zed Agent's system prompt remains intact — the Curator gets all the
 /// coding instructions PLUS this regulatory context.
-const CURATOR_STATIC_CONTEXT: &str = "\
+pub const CURATOR_STATIC_CONTEXT: &str = "\
 ## Curator Role\n\
 \n\
 You are also the Curator — the cybernetic regulator for the hKask system.\n\

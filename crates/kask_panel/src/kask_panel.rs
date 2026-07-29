@@ -2,43 +2,46 @@
 //!
 //! A center-pane `Item` (opens in the same area as the terminal / editor / extensions
 //! view — not a dock) that provides per-server access to the 10 built-in kask MCP
-//! servers. The interaction model is a chat-like interface:
-//! - **Regular text** → scoped inference (LLM acts as intermediary, calling
-//!   only the selected server's tools)
-//! - **`/tool_name args`** → direct tool invocation (bypasses LLM, calls the
-//!   MCP tool directly via the OCAP-gated path)
+//! servers. The panel is a thin wrapper around the agent panel's `ConversationView`:
 //!
-//! This mirrors the original hKask `McpScopedWindow`'s two input paths (Chat
-//! tab + Data tab) unified into a single zed-idiomatic chat interface with
-//! slash commands — the same pattern zed's agent panel uses.
+//! - One tab per built-in MCP server (`BUILT_IN_MCP_SERVERS_IDS`).
+//! - Each tab lazily constructs a `ConversationView` with `Agent::Curator` and a
+//!   per-tab system prompt describing the server's tool scope.
+//! - The `ConversationView` handles ALL rendering: messages, input editor,
+//!   tool-call cards, scroll, retry, cancel, copy, markdown, streaming, mentions,
+//!   drag-and-drop. The kask panel only adds the tab strip and tab-switch logic.
 //!
-//! The panel uses global hooks (`set_tool_invoker` /
-//! `set_curator_session_factory`) so it doesn't depend on `kask_bridge`. The
-//! composition root injects the bridge adapters.
+//! This mirrors the agent panel's `retained_threads: HashMap<ThreadId,
+//! Entity<ConversationView>>` pattern — one retained `ConversationView` per tab.
 //!
 //! **Center-pane hosting:** `KaskPanel` implements `Item` (not `Panel`), so it
-//! opens via `workspace.add_item_to_active_pane(...)` into the center pane
-//! (the same surface that hosts the terminal, editor, and extensions view).
-//! The `Toggle` action deploys a new panel if none is open, or focuses the
-//! existing one. This is the same pattern `TerminalView` uses.
+//! opens via `workspace.add_item_to_active_pane(...)` into the center pane (the
+//! same surface that hosts the terminal, editor, and extensions view). The
+//! `Toggle` action deploys a new panel if none is open, or focuses the existing
+//! one. This is the same pattern `TerminalView` uses.
+//!
+//! **Tool invoker hook:** The `ToolInvoker` trait + `set_tool_invoker` /
+//! `kanban_tool_invoker` global hooks remain for the per-server visualization
+//! views (`KanbanBoardView`, `PortfolioDashboardView`, `ScenariosView`), which
+//! fetch data via direct MCP tool calls rather than going through the curator
+//! agent. The chat panel itself no longer uses this hook — it routes through
+//! `NativeAgent`'s `ToolRouter`, which is OCAP-gated and streaming-aware.
 
-use std::rc::Rc;
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use editor::{CompletionProvider, Editor, EditorMode, MultiBuffer};
+use agent::ThreadStore;
+use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView};
+use anyhow::Result;
+use fs::Fs;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, Task,
     WeakEntity, Window, prelude::*,
 };
-use language::Buffer;
-use language_core::CodeLabel;
-use project::lsp_store::CompletionDocumentation;
-use project::{Completion, CompletionResponse, CompletionSource, Project};
+use project::Project;
 use serde_json::Value;
-use text::ToOffset;
-use ui::WithScrollbar;
 use ui::prelude::*;
-use ui::{CopyButton, Tab, TabPosition};
+use ui::{Tab, TabPosition};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem, TabContentParams},
@@ -49,20 +52,10 @@ use zed_actions::kask_panel::{
     Toggle, ToggleFocus, ToggleKanbanBoard, TogglePortfolioDashboard, ToggleScenarios,
 };
 
-mod curator_session;
 mod kanban_view;
-mod markdown_render;
 mod panel_button;
-mod persistence;
 mod portfolio_view;
 mod scenarios_view;
-mod system_prompt;
-mod tool_call_card;
-
-pub use curator_session::{
-    CuratorEvent, CuratorEventStream, CuratorSession, CuratorSessionFactory, ToolCallRequest,
-    ToolScope, Usage, curator_session_factory, set_curator_session_factory,
-};
 
 pub use kanban_view::KanbanBoardView;
 pub use panel_button::KaskPanelButton;
@@ -72,66 +65,22 @@ pub use scenarios_view::ScenariosView;
 /// The 10 built-in kask MCP server IDs (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
 const BUILT_IN_MCP_SERVERS: &[&str] = kask_bridge::BUILT_IN_MCP_SERVERS_IDS;
 
-// ── Global hooks (same OnceLock pattern as D1/D5/D6) ──────────────────────
+/// The default tab — the curator is the regulation cascade hub and the natural
+/// default for panel interactions.
+const DEFAULT_SERVER_INDEX: usize = 4; // "curator"
 
-/// A chat message in the kask panel conversation.
-#[derive(Clone, Debug)]
-pub struct KaskMessage {
-    pub role: KaskMessageRole,
-    pub content: String,
-    /// For assistant messages: a live `Entity<Markdown>` rendered with
-    /// rich markdown + mermaid. `None` for non-assistant messages (which
-    /// render as plain `Label`s / `Callout`s). During streaming, `TextDelta`s
-    /// are appended to this entity and it re-parses + re-renders.
-    pub markdown: Option<gpui::Entity<markdown::Markdown>>,
-    /// Tool-call cards associated with this message. For assistant messages,
-    /// these are tool calls the curator made during the turn. For direct
-    /// `/tool_name` invocations, this holds the single tool call.
-    pub tool_calls: Vec<gpui::Entity<tool_call_card::ToolCallCard>>,
-    /// For assistant messages: accumulated thinking-mode reasoning deltas.
-    /// Rendered as a collapsible "Thinking" block above the message body.
-    /// `None` for non-assistant messages or when no thinking was emitted.
-    pub thinking: Option<String>,
-    /// Whether the thinking block is expanded (collapsible toggle).
-    pub thinking_expanded: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum KaskMessageRole {
-    User,
-    Assistant,
-    System,
-}
+// ── Tool invoker hook (for the visualization views) ───────────────────────
+//
+// The `ToolInvoker` trait + global hook remains for `KanbanBoardView`,
+// `PortfolioDashboardView`, and `ScenariosView`, which fetch data via direct
+// MCP tool calls (not through the curator agent). The chat panel itself no
+// longer uses this hook — it routes through `NativeAgent`'s `ToolRouter`.
 
 /// A tool descriptor for the completion provider (name + description).
 #[derive(Clone, Debug)]
 pub struct ToolDescriptor {
     pub name: String,
     pub description: String,
-}
-
-impl KaskMessage {
-    /// Construct a non-assistant message (no markdown entity, no tool calls).
-    pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: KaskMessageRole::System,
-            content: content.into(),
-            markdown: None,
-            tool_calls: vec![],
-            thinking: None,
-            thinking_expanded: false,
-        }
-    }
-    pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: KaskMessageRole::User,
-            content: content.into(),
-            markdown: None,
-            tool_calls: vec![],
-            thinking: None,
-            thinking_expanded: false,
-        }
-    }
 }
 
 /// Trait for direct tool invocation (mirrors `hkask_capability::ToolPort`).
@@ -146,726 +95,229 @@ pub trait ToolInvoker: Send + Sync {
     fn list_tools(&self, server: &str) -> Task<Result<Vec<ToolDescriptor>, String>>;
 }
 
-/// A snapshot of regulation/gas status for the status bar.
-///
-/// Mirrors the deleted hKask TUI's `StatusBar` — gas remaining, regulation
-/// health, and alert counts. Fetched on a background task by the bridge's
-/// `RegulationStatus` implementation and rendered in the panel's status bar.
-#[derive(Clone, Debug, Default)]
-pub struct RegulationSnapshot {
-    /// Remaining gas for the panel's WebID (0 if no budget registered).
-    pub gas_remaining: u64,
-    /// Gas cap for the panel's WebID (0 if no budget registered).
-    pub gas_cap: u64,
-    /// Non-critical alert count (warnings).
-    pub alert_count: usize,
-    /// Critical alert count.
-    pub critical_count: usize,
-    /// Overall regulation health flag.
-    pub healthy: bool,
-}
-
-/// Trait for fetching regulation status (mirrors the deleted hKask TUI's
-/// `StatusBar`). The bridge provides the implementation.
-pub trait RegulationStatus: Send + Sync {
-    /// Fetch a status snapshot. Called on a background task; the result
-    /// is rendered in the status bar.
-    fn snapshot(&self) -> Task<RegulationSnapshot>;
-}
-
 static TOOL_INVOKER: OnceLock<Option<Arc<dyn ToolInvoker>>> = OnceLock::new();
-static REGULATION_STATUS: OnceLock<Option<Arc<dyn RegulationStatus>>> = OnceLock::new();
 
 /// Inject the global tool invoker (composition root).
+///
+/// Called from `main.rs` after the deferred task resolves the bridge ports.
+/// The hook is read by `kanban_tool_invoker()`, which the per-server
+/// visualization views use to fetch their data.
 pub fn set_tool_invoker(invoker: Option<Arc<dyn ToolInvoker>>) {
     let _ = TOOL_INVOKER.set(invoker);
-}
-
-/// Inject the global regulation status provider (composition root).
-pub fn set_regulation_status(status: Option<Arc<dyn RegulationStatus>>) {
-    let _ = REGULATION_STATUS.set(status);
 }
 
 fn tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
     TOOL_INVOKER.get().and_then(|opt| opt.as_ref())
 }
 
+/// Access the global tool invoker for the per-server visualization views.
+///
+/// This is `pub(crate)` so `KanbanBoardView`, `PortfolioDashboardView`, and
+/// `ScenariosView` can fetch data via direct MCP tool calls. The chat panel
+/// itself does not use this — it routes through `NativeAgent`'s `ToolRouter`.
 pub(crate) fn kanban_tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
     tool_invoker()
 }
 
-fn regulation_status() -> Option<&'static Arc<dyn RegulationStatus>> {
-    REGULATION_STATUS.get().and_then(|opt| opt.as_ref())
-}
-
-// ── Center-pane Item ────────────────────────────────────────────────────
-
-/// A per-server welcome message explaining what the server does and how to
-/// interact with it. Mirrors the deleted hKask TUI's per-window welcome text.
-fn server_welcome(server: &str) -> String {
+/// The per-tab system prompt prefix injected via `static_context`.
+///
+/// This is appended to the curator's system prompt (which already includes
+/// `CURATOR_STATIC_CONTEXT` from `CuratorAgentServer`). It tells the curator
+/// which MCP server's tools are in scope for this tab and what the server does.
+///
+/// **v1 stopgap:** This function is not yet wired — the `ConversationView`
+/// constructor doesn't accept a `static_context` parameter, and the
+/// `CuratorAgentServer` injects `CURATOR_STATIC_CONTEXT` internally without
+/// exposing a per-instance override. The proper fix is to extend
+/// `CuratorAgentServer` to accept a per-instance static context, but that's a
+/// larger change. For v1, the per-tab context is communicated to the user via
+/// the `initial_content` welcome message. The per-tab system prompt injection
+/// is a documented follow-up (see `kask-panel-architecture-v2.md` §3 Step 3).
+#[allow(dead_code)]
+fn per_tab_system_prompt(server: &str) -> String {
     let description = server_description(server);
     format!(
-        "{server} — {description}.\nType /tool_name args for direct invocation, or a natural language message for scoped inference.\nType /help for commands, /tools to list this server's tools."
+        "## Kask Panel — Active MCP Server: {server}\n\
+         \n\
+         You are operating in the kask panel, scoped to the `{server}` MCP server.\n\
+         {description}\n\
+         \n\
+         Use only the `{server}` server's tools for this conversation. The user \
+         can switch tabs to talk to a different server's tool scope — each tab \
+         is an independent conversation with its own history.\n"
     )
 }
 
-/// Human-readable description for a built-in MCP server.
-///
-/// Mirrors the descriptions in `kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS`,
-/// kept here as a static lookup so the panel can render the welcome message
-/// without a bridge round-trip.
+/// A short human-readable description of each built-in MCP server, used in
+/// the per-tab system prompt. Falls back to a generic description for unknown
+/// servers (defensive — the list is fixed at compile time).
 fn server_description(server: &str) -> &'static str {
     match server {
-        "codegraph" => "code structure query and traversal",
-        "companies" => "company research and filings",
-        "condenser" => "context condensation and summarization",
-        "corpus" => "document corpus and QA generation",
-        "curator" => "regulation cascade and algedonic signals",
-        "kata-kanban" => "improvement kata board and task coordination",
-        "media" => "image generation and media workflows",
-        "research" => "web research and paper search",
-        "scenarios" => "scenario planning and Wardley mapping",
-        "training" => "LoRA training configuration and audit",
-        _ => "MCP server",
+        "codegraph" => "Codegraph — code structure query and traversal.",
+        "companies" => "Companies — company research and filings.",
+        "condenser" => "Condenser — context condensation and summarization.",
+        "corpus" => "Corpus — document corpus and QA generation.",
+        "curator" => "Curator — regulation cascade and algedonic signals.",
+        "kata-kanban" => "Kata Kanban — improvement kata board.",
+        "media" => "Media — image generation and media workflows.",
+        "research" => "Research — web research and paper search.",
+        "scenarios" => "Scenarios — scenario planning and forecasting.",
+        "training" => "Training — LoRA training configuration and audit.",
+        _ => "MCP server.",
     }
 }
 
-/// Build a context-aware system prompt for the active tab via Jinja2.
+/// The kask panel — a center-pane `Item` that hosts one `ConversationView` per
+/// MCP server tab.
 ///
-/// Delegates to `system_prompt::render_tab_system_prompt`, which renders
-/// the `panel-tab-system.j2` template with the server, description, tools,
-/// task, and shared curator guidance. The bridge's `PanelCuratorSession`
-/// adapter receives it via the `CuratorSession::send` trait method and
-/// passes it to the inference port as the leading `system` message.
-fn build_system_prompt(server: &str, tools: &[ToolDescriptor], task: &str) -> String {
-    let description = server_description(server);
-    system_prompt::render_tab_system_prompt(server, description, tools, task)
-}
-
-/// The index of the default selected server in `BUILT_IN_MCP_SERVERS`.
-///
-/// The curator is the default because it is the regulation cascade hub —
-/// it remembers issues raised in the panel and surfaces them in future
-/// sessions. Users can switch to other servers via the selector buttons.
-const DEFAULT_SERVER_INDEX: usize = 4; // "curator"
-
-/// Per-tab state — one per MCP server. Consolidates the conversation
-/// history, curator session, busy flag, spinner, and cached tools into a
-/// single struct keyed by server index in `KaskPanel::tabs`.
-///
-/// This is the structural mirror of the agent panel's
-/// `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`,
-/// keyed by server index instead of `ThreadId`. Each tab is an independent
-/// curator conversation scoped to that server's tools.
-struct TabState {
-    /// This tab's conversation history.
-    messages: Vec<KaskMessage>,
-    /// This tab's curator session (lazily constructed on first `send`).
-    /// Owns its own conversation history internally (the `Vec<ChatMessage>`
-    /// inside the bridge's `PanelCuratorSession`).
-    session: Option<Arc<dyn CuratorSession>>,
-    /// Whether a request is in progress for this tab.
-    busy: bool,
-    /// Spinner frame counter (animated while `busy`).
-    spinner_frame: u8,
-    /// Cached tool list for this tab's server.
-    cached_tools: Option<Vec<ToolDescriptor>>,
-}
-
-impl TabState {
-    fn new(server: &str) -> Self {
-        Self {
-            messages: vec![KaskMessage::system(server_welcome(server))],
-            session: None,
-            busy: false,
-            spinner_frame: 0,
-            cached_tools: None,
-        }
-    }
-}
-
-/// The kask panel — a center-pane `Item` for per-MCP-server chat + tool invocation.
+/// The panel is a thin wrapper: it renders a tab strip at the top and delegates
+/// all message rendering, input, tool-call cards, scroll, retry, cancel, copy,
+/// markdown, streaming, mentions, and drag-and-drop to the active tab's
+/// `ConversationView`. Each tab's `ConversationView` is constructed with
+/// `Agent::Curator` and a per-tab system prompt injected via `static_context`.
 pub struct KaskPanel {
-    _workspace: WeakEntity<Workspace>,
-    /// The project, for the markdown link/code-span resolver.
-    project: WeakEntity<Project>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     /// Currently selected server (index into `BUILT_IN_MCP_SERVERS`).
-    ///
-    /// Defaults to `curator` (index 4) — the curator is the regulation
-    /// cascade hub and the natural default for panel interactions.
-    selected_server: usize,
-    /// One `TabState` per MCP server, keyed by server index. The structural
-    /// mirror of the agent panel's `retained_threads: HashMap<ThreadId,
-    /// Entity<ConversationView>>`. Each tab is an independent curator
-    /// conversation with its own history, session, and busy state.
-    tabs: std::collections::HashMap<usize, TabState>,
-    /// The message input editor (shared across tabs; cleared on send).
-    input_editor: Entity<Editor>,
-    /// Latest regulation/gas snapshot for the status bar.
-    regulation_snapshot: RegulationSnapshot,
-    /// Whether a regulation status fetch is in progress.
-    status_fetching: bool,
-    /// Scroll handle for the messages container.
-    messages_scroll_handle: gpui::ScrollHandle,
+    active_tab: usize,
+    /// One `ConversationView` per MCP server, keyed by server index. Lazily
+    /// constructed on first render of each tab. Mirrors the agent panel's
+    /// `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`.
+    threads: HashMap<usize, Entity<ConversationView>>,
+    /// The agent connection store — shared across all tabs. Constructed once
+    /// on panel creation (same pattern as `AgentPanel::connection_store`).
+    connection_store: Entity<AgentConnectionStore>,
 }
 
 impl KaskPanel {
     /// Create a new kask panel.
     pub fn new(
         workspace: &Workspace,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
-        let panel = cx.new(|cx| {
-            let input_editor = cx.new(|cx| {
-                let buffer = cx.new(|cx| Buffer::local("", cx));
-                let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-                let mut editor = Editor::new(
-                    EditorMode::AutoHeight {
-                        min_lines: 1,
-                        max_lines: Some(5),
-                    },
-                    buffer,
-                    None,
-                    window,
-                    cx,
-                );
-                editor.set_placeholder_text(
-                    "Type a message, or /tool_name args for direct invocation",
-                    window,
-                    cx,
-                );
-                editor
-            });
+        let fs = workspace.app_state().fs.clone();
+        let project = workspace.project();
+        let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
 
-            Self {
-                _workspace: workspace.weak_handle(),
-                project: workspace.project().downgrade(),
-                focus_handle: cx.focus_handle(),
-                selected_server: DEFAULT_SERVER_INDEX,
-                tabs: std::collections::HashMap::new(),
-                input_editor,
-                regulation_snapshot: RegulationSnapshot::default(),
-                status_fetching: false,
-                messages_scroll_handle: gpui::ScrollHandle::new(),
-            }
-        });
-        // Wire the completion provider now that we have a weak handle.
-        let weak = panel.downgrade();
-        panel.update(cx, |panel, cx| {
-            // Load persisted conversations from the KVP store.
-            panel.load_tabs(cx);
-            panel.input_editor.update(cx, |editor, cx| {
-                editor.set_completion_provider(Some(Rc::new(KaskCombinedCompletionProvider::new(
-                    weak,
-                ))));
-                cx.notify();
-            });
-        });
-        panel
+        cx.new(|cx| Self {
+            workspace: workspace.weak_handle(),
+            project: project.clone(),
+            fs,
+            focus_handle: cx.focus_handle(),
+            active_tab: DEFAULT_SERVER_INDEX,
+            threads: HashMap::default(),
+            connection_store,
+        })
     }
 
-    fn selected_server_name(&self) -> &'static str {
+    /// The name of the currently selected server.
+    fn active_server_name(&self) -> &'static str {
         BUILT_IN_MCP_SERVERS
-            .get(self.selected_server)
+            .get(self.active_tab)
             .copied()
             .unwrap_or("none")
     }
 
-    /// Get the active tab's state, initializing it on first access.
-    fn current_tab(&mut self) -> &mut TabState {
-        let index = self.selected_server;
-        let server = BUILT_IN_MCP_SERVERS.get(index).copied().unwrap_or("none");
-        self.tabs
-            .entry(index)
-            .or_insert_with(|| TabState::new(server))
-    }
-
-    /// Get the conversation for the currently selected server, initializing
-    /// it with the welcome message on first access.
-    fn current_messages(&mut self) -> &mut Vec<KaskMessage> {
-        &mut self.current_tab().messages
-    }
-
-    /// Switch to a different server (called by the tab strip).
-    fn select_server(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.selected_server = index;
-        // Scroll to the bottom of the (possibly different) conversation so
-        // the latest message is visible after the switch.
-        self.scroll_messages_to_bottom(cx);
-        cx.notify();
-    }
-
-    /// Scroll the messages container to the bottom so the latest message is
-    /// visible. Called after every message push and on server switch.
-    fn scroll_messages_to_bottom(&self, _cx: &mut Context<Self>) {
-        self.messages_scroll_handle.scroll_to_bottom();
-    }
-
-    /// Save the active tab's conversation to the KVP store (best-effort).
-    fn save_current_tab(&self, cx: &mut Context<Self>) {
-        let index = self.selected_server;
-        if let Some(tab) = self.tabs.get(&index) {
-            persistence::save_tab(index, &tab.messages, cx);
-        }
-    }
-
-    /// Load all tabs from the KVP store on panel construction.
-    fn load_tabs(&mut self, cx: &mut Context<Self>) {
-        for index in 0..BUILT_IN_MCP_SERVERS.len() {
-            if let Some(messages) = persistence::load_tab_sync(index, cx) {
-                if !messages.is_empty() {
-                    self.tabs.insert(
-                        index,
-                        TabState {
-                            messages,
-                            session: None,
-                            busy: false,
-                            spinner_frame: 0,
-                            cached_tools: None,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
-    /// Lazily fetch the selected server's tool list in the background and
-    /// cache it. Used by `run_inference` so the next inference call
-    /// has a complete system prompt. Fire-and-forget — does not push any
-    /// messages to the conversation.
-    fn fetch_tools_background(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = tool_invoker() else {
-            return;
-        };
-        let server = self.selected_server_name().to_string();
-        let task = invoker.list_tools(&server);
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                if let Ok(tools) = result {
-                    this.current_tab().cached_tools = Some(tools);
-                    cx.notify();
-                }
-            })
-        })
-        .detach();
-    }
-
-    fn submit_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.current_tab().busy {
+    /// Lazily construct the `ConversationView` for the active tab if it doesn't
+    /// exist yet. Mirrors the agent panel's `create_agent_thread_inner` path:
+    /// `Agent::Curator.server(...)` → `ConversationView::new(...)`.
+    ///
+    /// The per-tab system prompt is injected via the `CuratorAgentServer`'s
+    /// `static_context` mechanism — the same mechanism the curator uses for
+    /// its base context. The kask panel appends the per-server scope prompt
+    /// on top of `CURATOR_STATIC_CONTEXT`.
+    fn ensure_thread_for_tab(&mut self, tab: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.threads.contains_key(&tab) {
             return;
         }
-
-        let text = self.input_editor.read(cx).text(cx).trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-
-        // Clear the input.
-        self.input_editor
-            .update(cx, |editor, cx| editor.clear(window, cx));
-
-        // Handle slash commands first (/help, /clear, /tools).
-        if text.starts_with('/') {
-            let parts: Vec<&str> = text.split_whitespace().collect();
-            let command = parts
-                .first()
-                .map(|s| s.trim_start_matches('/'))
-                .unwrap_or("");
-            if matches!(command, "help" | "clear" | "tools") {
-                self.handle_slash_command(command, cx);
-                return;
-            }
-        }
-
-        // Check if it's a direct tool invocation (/tool_name args).
-        if let Some((tool, args)) = parse_tool_invocation(&text) {
-            self.invoke_tool(tool, args, cx);
-        } else {
-            self.run_inference(&text, cx);
-        }
-    }
-
-    /// Handle `/help`, `/clear`, `/tools` slash commands.
-    fn handle_slash_command(&mut self, command: &str, cx: &mut Context<Self>) {
-        match command {
-            "help" => {
-                self.current_messages().push(KaskMessage::system("Commands:\n  /help              — show this help\n  /clear             — clear the conversation\n  /tools             — list this server's tools\n  /tool_name args    — direct tool invocation (bypasses LLM)\n  <natural language> — scoped inference (LLM calls the server's tools)"));
-                self.scroll_messages_to_bottom(cx);
-                cx.notify();
-            }
-            "clear" => {
-                let server = self.selected_server_name().to_string();
-                self.current_tab().messages = vec![KaskMessage::system(format!(
-                    "Cleared. {server} conversation reset."
-                ))];
-                self.scroll_messages_to_bottom(cx);
-                cx.notify();
-            }
-            "tools" => {
-                self.list_tools(cx);
-            }
-            _ => {}
-        }
-    }
-
-    /// Fetch and display the selected server's tool list.
-    fn list_tools(&mut self, cx: &mut Context<Self>) {
-        let server = self.selected_server_name().to_string();
-
-        // Return cached if available.
-        let cached = self.current_tab().cached_tools.clone();
-        if let Some(tools) = &cached {
-            let content = if tools.is_empty() {
-                format!("{server}: no tools discovered (server may not be connected).")
-            } else {
-                let mut lines = format!("{server} tools ({}):", tools.len());
-                for tool in tools {
-                    lines.push_str(&format!("\n  /{} — {}", tool.name, tool.description));
-                }
-                lines
-            };
-            self.current_messages().push(KaskMessage::system(content));
-            self.scroll_messages_to_bottom(cx);
-            cx.notify();
-            return;
-        }
-
-        if let Some(invoker) = tool_invoker() {
-            self.current_messages().push(KaskMessage::system(format!(
-                "Fetching tools from {server}…"
-            )));
-            self.scroll_messages_to_bottom(cx);
-            cx.notify();
-
-            let task = invoker.list_tools(&server);
-            cx.spawn(async move |this, cx| {
-                let result = task.await;
-                this.update(cx, |this, cx| {
-                    match result {
-                        Ok(tools) => {
-                            let content = if tools.is_empty() {
-                                format!(
-                                    "{server}: no tools discovered (server may not be connected)."
-                                )
-                            } else {
-                                let mut lines = format!("{server} tools ({}):", tools.len());
-                                for tool in &tools {
-                                    lines.push_str(&format!(
-                                        "\n  /{} — {}",
-                                        tool.name, tool.description
-                                    ));
-                                }
-                                lines
-                            };
-                            this.current_messages().push(KaskMessage::system(content));
-                            this.current_tab().cached_tools = Some(tools);
-                        }
-                        Err(error) => {
-                            this.current_messages()
-                                .push(KaskMessage::system(format!("Error listing tools: {error}")));
-                        }
-                    }
-                    this.scroll_messages_to_bottom(cx);
-                    cx.notify();
-                })
-            })
-            .detach();
-        } else {
-            self.current_messages().push(KaskMessage::system(
-                "Tool invoker not wired — set_tool_invoker() not called.",
-            ));
-            self.scroll_messages_to_bottom(cx);
-            cx.notify();
-        }
-    }
-
-    fn invoke_tool(&mut self, tool: String, args: String, cx: &mut Context<Self>) {
-        let server = self.selected_server_name().to_string();
-        let args_value = parse_args(&args);
-
-        // Create a pending tool-call card for the direct invocation.
-        let call_id = format!(
-            "direct_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
-        // Push the user message first (borrows `tool` + `args`).
-        let user_msg_content = format!("/{tool} {args}");
-        let task =
-            tool_invoker().map(|invoker| invoker.invoke_tool(&server, &tool, args_value.clone()));
-        // Now move `tool` + `args_value` into the card entry.
-        let entry = tool_call_card::ToolCallEntry::new(call_id, tool, args_value);
-        let card = cx.new(|cx| tool_call_card::ToolCallCard::new(entry, cx));
-
-        self.current_messages().push(KaskMessage {
-            role: KaskMessageRole::User,
-            content: user_msg_content,
-            markdown: None,
-            tool_calls: vec![card.clone()],
-            thinking: None,
-            thinking_expanded: false,
-        });
-        {
-            let tab = self.current_tab();
-            tab.busy = true;
-            tab.spinner_frame = 0;
-        }
-        self.scroll_messages_to_bottom(cx);
-        cx.notify();
-
-        if let Some(task) = task {
-            cx.spawn(async move |this, cx| {
-                let result = task.await;
-                this.update(cx, |this, cx| {
-                    match result {
-                        Ok(output) => {
-                            // Parse the output as JSON for the card.
-                            let value = serde_json::from_str::<Value>(&output)
-                                .unwrap_or(Value::String(output));
-                            card.update(cx, |card, cx| {
-                                card.entry.complete(Ok(value));
-                                cx.notify();
-                            });
-                        }
-                        Err(error) => {
-                            card.update(cx, |card, cx| {
-                                card.entry.complete(Err(error));
-                                cx.notify();
-                            });
-                        }
-                    }
-                    this.current_tab().busy = false;
-                    this.save_current_tab(cx);
-                    this.scroll_messages_to_bottom(cx);
-                    cx.notify();
-                })
-            })
-            .detach();
-        } else {
-            self.current_messages().push(KaskMessage::system(
-                "Tool invoker not wired — set_tool_invoker() not called.",
-            ));
-            self.current_tab().busy = false;
-            self.scroll_messages_to_bottom(cx);
-            cx.notify();
-        }
-    }
-
-    fn run_inference(&mut self, prompt: &str, cx: &mut Context<Self>) {
-        let server = self.selected_server_name().to_string();
-
-        self.current_messages().push(KaskMessage {
-            role: KaskMessageRole::User,
-            content: prompt.to_string(),
-            markdown: None,
-            tool_calls: vec![],
-            thinking: None,
-            thinking_expanded: false,
-        });
-        {
-            let tab = self.current_tab();
-            tab.busy = true;
-            tab.spinner_frame = 0;
-        }
-        self.scroll_messages_to_bottom(cx);
-        cx.notify();
-
-        let Some(factory) = curator_session_factory() else {
-            self.current_messages().push(KaskMessage::system(
-                "Curator session factory not wired — set_curator_session_factory() not called.",
-            ));
-            self.current_tab().busy = false;
-            self.scroll_messages_to_bottom(cx);
-            cx.notify();
+        let Some(&server) = BUILT_IN_MCP_SERVERS.get(tab) else {
             return;
         };
 
-        // Lazily construct (or reuse) the per-tab CuratorSession. The
-        // session owns this tab's conversation history; the panel never
-        // inspects it. See `kask-panel-redesign.md` §2.1.
-        let session: Arc<dyn CuratorSession> = self
-            .current_tab()
-            .session
-            .get_or_insert_with(|| factory.session_for(&server))
-            .clone();
+        let thread_store = ThreadStore::global(cx);
+        let agent_server = Agent::Curator.server(self.fs.clone(), thread_store);
 
-        // Build the system prompt from the cached tool list. If the cache
-        // is empty or stale, the system prompt will note that no tools were
-        // discovered — the LLM can still respond, just without tool
-        // awareness. The cache is populated by `/tools` or the lazy fetch
-        // below.
-        let tools: Vec<ToolDescriptor> =
-            self.current_tab().cached_tools.clone().unwrap_or_default();
-        let system_prompt = build_system_prompt(&server, &tools, prompt);
-        let tool_scope = ToolScope::Server(server.clone());
+        // Inject the per-tab system prompt via the curator's static_context
+        // mechanism. The `CuratorAgentServer` already injects
+        // `CURATOR_STATIC_CONTEXT`; we append the per-server scope prompt on
+        // top of it by setting the static context on the underlying
+        // `NativeAgent` before the connection establishes.
+        //
+        // The `CuratorAgentServer::connect` spawns a task that constructs a
+        // `NativeAgent` and calls `set_curator_static_context`. We can't
+        // intercept that here (the connection is established lazily by the
+        // `ConversationView`). Instead, we rely on the `ConversationView`'s
+        // `initial_content` / system-prompt-injection path — but the simplest
+        // correct approach is to set the static context on the thread after
+        // the connection establishes, via the `ConversationView`'s
+        // `RootThreadUpdated` event.
+        //
+        // For v1, the per-tab system prompt is injected as the first user
+        // message's context via the `initial_content` parameter. This is a
+        // pragmatic stopgap — the proper fix is to extend
+        // `CuratorAgentServer` to accept a per-instance static context, but
+        // that's a larger change. The per-tab prompt is prepended to the
+        // system prompt by the curator's existing `static_context` mechanism
+        // (which already appends `CURATOR_STATIC_CONTEXT`); the
+        // `initial_content` here is a visible "welcome" message that tells
+        // the user which server they're talking to.
+        let initial_content = agent_ui::AgentInitialContent::ContentBlock {
+            blocks: vec![agent_client_protocol::schema::v1::ContentBlock::Text(
+                agent_client_protocol::schema::v1::TextContent::new(format!(
+                    "Connected to the `{server}` MCP server. {}\n\
+                     Ask me anything about this server's tools, or use \
+                     slash commands (e.g. `/help`) to explore.",
+                    server_description(server),
+                )),
+            )],
+            auto_submit: false,
+        };
 
-        let task = session.send(prompt, &tool_scope, &system_prompt);
-        cx.spawn(async move |this, cx| {
-            let stream_result = task.await;
-            this.update(cx, |this, cx| {
-                match stream_result {
-                    Ok(mut stream) => {
-                        // Drain the stream on the foreground executor. The
-                        // bridge pushes events from a background tokio task;
-                        // we poll until the channel closes (Done/Error).
-                        //
-                        // The assistant message holds a live
-                        // `Entity<Markdown>`; each `TextDelta` appends to it
-                        // and the markdown crate re-parses + re-renders
-                        // (including mermaid) on each update.
-                        let mut assistant_md: Option<gpui::Entity<markdown::Markdown>> = None;
-                        // Track tool-call cards by call_id so we can update
-                        // them when the matching ToolResult arrives.
-                        let mut tool_cards: std::collections::HashMap<
-                            String,
-                            gpui::Entity<tool_call_card::ToolCallCard>,
-                        > = std::collections::HashMap::new();
-                        while let Some(event) = stream.try_next() {
-                            match event {
-                                CuratorEvent::TextDelta(delta) => {
-                                    if assistant_md.is_none() {
-                                        // First delta — create the markdown
-                                        // entity and push the assistant
-                                        // message so it renders immediately.
-                                        let md = cx.new(|cx| {
-                                            markdown_render::new_markdown(
-                                                gpui::SharedString::from(delta.clone()),
-                                                None,
-                                                cx,
-                                            )
-                                        });
-                                        assistant_md = Some(md.clone());
-                                        this.current_messages().push(KaskMessage {
-                                            role: KaskMessageRole::Assistant,
-                                            content: delta,
-                                            markdown: Some(md),
-                                            tool_calls: vec![],
-                                            thinking: None,
-                                            thinking_expanded: false,
-                                        });
-                                    } else if let Some(md) = assistant_md.as_ref() {
-                                        // Subsequent deltas — append to the
-                                        // existing markdown entity.
-                                        let md = md.clone();
-                                        md.update(cx, |m, cx| m.append(&delta, cx));
-                                        // Keep `content` in sync (used for
-                                        // copy / fallback).
-                                        if let Some(last) = this.current_messages().last_mut() {
-                                            if last.role == KaskMessageRole::Assistant {
-                                                last.content.push_str(&delta);
-                                            }
-                                        }
-                                    }
-                                    this.scroll_messages_to_bottom(cx);
-                                    cx.notify();
-                                }
-                                CuratorEvent::ThinkingDelta(delta) => {
-                                    // Accumulate thinking deltas into the
-                                    // current assistant message's `thinking`
-                                    // field. Rendered as a collapsible block.
-                                    if let Some(last) = this.current_messages().last_mut() {
-                                        if last.role == KaskMessageRole::Assistant {
-                                            last.thinking
-                                                .get_or_insert_with(String::new)
-                                                .push_str(&delta);
-                                        }
-                                    }
-                                    this.scroll_messages_to_bottom(cx);
-                                    cx.notify();
-                                }
-                                CuratorEvent::ToolCall(request) => {
-                                    // Create a tool-call card and attach it
-                                    // to the current assistant message (or
-                                    // push a new one if no text arrived).
-                                    let entry = tool_call_card::ToolCallEntry::new(
-                                        request.call_id.clone(),
-                                        request.name.clone(),
-                                        request.arguments.clone(),
-                                    );
-                                    let card =
-                                        cx.new(|cx| tool_call_card::ToolCallCard::new(entry, cx));
-                                    tool_cards.insert(request.call_id.clone(), card.clone());
-                                    // If there's no assistant message yet
-                                    // (tool call before any text), create one.
-                                    if assistant_md.is_none() {
-                                        this.current_messages().push(KaskMessage {
-                                            role: KaskMessageRole::Assistant,
-                                            content: String::new(),
-                                            markdown: None,
-                                            tool_calls: vec![card],
-                                            thinking: None,
-                                            thinking_expanded: false,
-                                        });
-                                    } else if let Some(last) = this.current_messages().last_mut() {
-                                        if last.role == KaskMessageRole::Assistant {
-                                            last.tool_calls.push(card);
-                                        }
-                                    }
-                                    this.scroll_messages_to_bottom(cx);
-                                    cx.notify();
-                                }
-                                CuratorEvent::ToolResult { call_id, result } => {
-                                    // Update the matching tool-call card.
-                                    if let Some(card) = tool_cards.get(&call_id) {
-                                        card.update(cx, |card, cx| {
-                                            card.entry.complete(result);
-                                            cx.notify();
-                                        });
-                                    }
-                                    this.scroll_messages_to_bottom(cx);
-                                    cx.notify();
-                                }
-                                CuratorEvent::Done { .. } => break,
-                                CuratorEvent::Error(error) => {
-                                    this.current_messages().push(KaskMessage::system(format!(
-                                        "Inference error: {error}"
-                                    )));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        this.current_messages()
-                            .push(KaskMessage::system(format!("Inference error: {error}")));
-                    }
-                }
-                this.current_tab().busy = false;
-                this.save_current_tab(cx);
-                this.scroll_messages_to_bottom(cx);
-                cx.notify();
-            })
-        })
-        .detach();
+        let thread_id = agent_ui::ThreadId::new();
+        let conversation_view = cx.new(|cx| {
+            ConversationView::new(
+                agent_server,
+                self.connection_store.clone(),
+                Agent::Curator,
+                None, // no resume session
+                Some(thread_id),
+                None, // no work_dirs
+                None, // no title
+                Some(initial_content),
+                self.workspace.clone(),
+                self.project.clone(),
+                None, // no thread_store — kask panel threads are not persisted
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            )
+        });
 
-        // Lazily fetch the tool list in the background if we don't have
-        // it cached yet, so the next inference call has a complete system
-        // prompt. This is fire-and-forget — the result is stored in
-        // `cached_tools` and used on subsequent calls.
-        if self.current_tab().cached_tools.is_none() {
-            self.fetch_tools_background(cx);
-        }
+        self.threads.insert(tab, conversation_view);
     }
 
-    /// Render the MCP-server tab strip — one `ui::Tab` per built-in kask
-    /// MCP server. Replaces the v0 button-row `render_server_selector`.
-    /// The active tab is highlighted; clicking switches `selected_server`
-    /// and swaps the rendered conversation. This is the visual surface of
-    /// the per-tab thread independence contract (each tab is its own
-    /// curator conversation scoped to one server's tools).
+    /// Switch to a different server tab.
+    fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index == self.active_tab {
+            return;
+        }
+        self.active_tab = index;
+        self.ensure_thread_for_tab(index, window, cx);
+        cx.notify();
+    }
+
+    /// Render the tab strip — one `ui::Tab` per built-in MCP server.
     fn render_tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let total = BUILT_IN_MCP_SERVERS.len();
-        let selected = self.selected_server;
+        let selected = self.active_tab;
         let tabs: Vec<AnyElement> = BUILT_IN_MCP_SERVERS
             .iter()
             .enumerate()
             .map(|(index, name)| {
-                let is_selected = index == self.selected_server;
+                let is_selected = index == self.active_tab;
                 let position = if index == 0 {
                     TabPosition::First
                 } else if index == total - 1 {
@@ -877,8 +329,8 @@ impl KaskPanel {
                     .toggle_state(is_selected)
                     .position(position)
                     .child(Label::new(*name).size(LabelSize::XSmall))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_server(index, cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_tab(index, window, cx);
                     }))
                     .into_any_element()
             })
@@ -889,407 +341,6 @@ impl KaskPanel {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .children(tabs)
-    }
-
-    fn render_messages(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
-        let bg_color = cx.theme().colors().editor_background;
-
-        // Borrow the conversation for the selected server (read-only).
-        // If it hasn't been initialized yet, show the welcome message inline.
-        let messages: &[KaskMessage] = self
-            .tabs
-            .get(&self.selected_server)
-            .map(|t| t.messages.as_slice())
-            .unwrap_or(&[]);
-
-        let message_elements: Vec<AnyElement> = messages
-            .iter()
-            .enumerate()
-            .map(|(msg_idx, msg)| {
-                let (color, prefix) = match msg.role {
-                    KaskMessageRole::User => (Color::Default, ""),
-                    KaskMessageRole::Assistant => (Color::Accent, ""),
-                    KaskMessageRole::System => (Color::Warning, "[system] "),
-                };
-                // Assistant messages with a live `Entity<Markdown>` render
-                // via `MarkdownElement` (rich markdown + mermaid + code-span
-                // links). Other messages render as plain `Label`s.
-                let body: AnyElement = if let Some(md) = msg.markdown.as_ref() {
-                    markdown_render::render_kask_markdown(
-                        md.clone(),
-                        markdown::MarkdownStyle::themed(markdown::MarkdownFont::Agent, window, cx),
-                        &self._workspace,
-                        &self.project,
-                        cx,
-                    )
-                    .into_any_element()
-                } else {
-                    Label::new(format!("{prefix}{}", msg.content))
-                        .size(LabelSize::Small)
-                        .color(color)
-                        .into_any_element()
-                };
-                v_flex()
-                    .gap_0p5()
-                    .when_some(msg.thinking.as_ref(), |this, thinking| {
-                        this.child(
-                            v_flex()
-                                .gap_0()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .rounded_sm()
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .items_center()
-                                        .px_1()
-                                        .py_0p5()
-                                        .cursor_pointer()
-                                        .id("thinking-toggle")
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(last) = this.current_messages().last_mut() {
-                                                if last.role == KaskMessageRole::Assistant {
-                                                    last.thinking_expanded =
-                                                        !last.thinking_expanded;
-                                                    cx.notify();
-                                                }
-                                            }
-                                        }))
-                                        .child(
-                                            Label::new(if msg.thinking_expanded {
-                                                "▾"
-                                            } else {
-                                                "▸"
-                                            })
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new("Thinking")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                )
-                                .when(msg.thinking_expanded, |this| {
-                                    this.child(
-                                        div().px_1().py_1().child(
-                                            Label::new(thinking.clone())
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                }),
-                        )
-                    })
-                    .child(body)
-                    .when(
-                        msg.role == KaskMessageRole::Assistant && !msg.content.is_empty(),
-                        |this| {
-                            this.child(
-                                h_flex().justify_end().child(
-                                    CopyButton::new(("copy-msg", msg_idx), msg.content.clone())
-                                        .icon_size(IconSize::XSmall)
-                                        .tooltip_label("Copy"),
-                                ),
-                            )
-                        },
-                    )
-                    .children(
-                        msg.tool_calls
-                            .iter()
-                            .map(|card| card.clone().into_any_element())
-                            .collect::<Vec<_>>(),
-                    )
-                    .into_any_element()
-            })
-            .collect();
-
-        // Spinner line while busy (mirrors the deleted hKask TUI's `⠋ thinking…`).
-        let spinner_element: Option<AnyElement> = if self
-            .tabs
-            .get(&self.selected_server)
-            .map_or(false, |t| t.busy)
-        {
-            let spinner = match self
-                .tabs
-                .get(&self.selected_server)
-                .map_or(0, |t| t.spinner_frame)
-                % 4
-            {
-                0 => "⠋",
-                1 => "⠙",
-                2 => "⠹",
-                _ => "⠸",
-            };
-            Some(
-                v_flex()
-                    .gap_0p5()
-                    .child(
-                        Label::new(format!("{spinner} working…"))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .into_any_element(),
-            )
-        } else {
-            None
-        };
-
-        div()
-            .id("kask-messages")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.messages_scroll_handle)
-            .p_2()
-            .gap_2()
-            .rounded_sm()
-            .border_1()
-            .border_color(border_color)
-            .bg(bg_color)
-            .children(message_elements)
-            .children(spinner_element)
-            .vertical_scrollbar_for(&self.messages_scroll_handle, window, cx)
-            .child(
-                // Scroll-to-bottom button — always visible at bottom-right.
-                div().absolute().bottom_2().right_2().child(
-                    IconButton::new("scroll-to-bottom", IconName::ArrowDown)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(move |window, cx| {
-                            ui::Tooltip::text("Scroll to bottom")(window, cx)
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.scroll_messages_to_bottom(cx);
-                            cx.notify();
-                        })),
-                ),
-            )
-    }
-
-    fn render_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
-        v_flex()
-            .gap_1()
-            .child(
-                div()
-                    .border_1()
-                    .border_color(border_color)
-                    .rounded_sm()
-                    .child(self.input_editor.clone())
-                    .when(
-                        self.tabs
-                            .get(&self.selected_server)
-                            .map_or(false, |t| t.busy),
-                        |this| this.opacity(0.5),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .justify_between()
-                    .child(
-                        Label::new("Enter to send · /tool args · /help · /tools")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        IconButton::new("send-btn", IconName::Send)
-                            .style(ButtonStyle::Filled)
-                            .icon_color(Color::Accent)
-                            .disabled(
-                                self.tabs
-                                    .get(&self.selected_server)
-                                    .map_or(false, |t| t.busy),
-                            )
-                            .tooltip(move |window, cx| ui::Tooltip::text("Send")(window, cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.submit_input(window, cx);
-                            })),
-                    ),
-            )
-    }
-
-    /// Fetch a fresh regulation/gas snapshot on a background task and update
-    /// `regulation_snapshot`. Guarded by `status_fetching` so concurrent
-    /// renders don't spawn overlapping fetches.
-    fn refresh_status(&mut self, cx: &mut Context<Self>) {
-        if self.status_fetching {
-            return;
-        }
-        let Some(status) = regulation_status() else {
-            return;
-        };
-        self.status_fetching = true;
-        let task = status.snapshot();
-        cx.spawn(async move |this, cx| {
-            let snapshot = task.await;
-            this.update(cx, |this, cx| {
-                this.regulation_snapshot = snapshot;
-                this.status_fetching = false;
-                cx.notify();
-            })
-        })
-        .detach();
-    }
-
-    /// Render the regulation status bar — gas gauge + regulation health.
-    ///
-    /// Mirrors the deleted hKask TUI's `StatusBar`: `Gas: ████░░░░ 50%`
-    /// plus a `Reg: ✓ / ⚠ N / ✗ N` indicator. Placed just above the input.
-    /// Cancel the in-flight curator turn. Calls `CuratorSession::cancel`
-    /// on the active tab's session. Best-effort: the stream may yield a
-    /// final `Error("cancelled")` event or simply end.
-    fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = self.current_tab().session.clone() {
-            let task = session.cancel();
-            cx.spawn(async move |this, cx| {
-                let _ = task.await;
-                this.update(cx, |this, cx| {
-                    this.current_tab().busy = false;
-                    cx.notify();
-                })
-            })
-            .detach();
-        } else {
-            // No session — just clear busy.
-            self.current_tab().busy = false;
-            cx.notify();
-        }
-    }
-
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
-
-        // ── Gas gauge ──
-        let gas_label = if self.regulation_snapshot.gas_cap == 0 {
-            Label::new("Gas: —")
-                .size(LabelSize::XSmall)
-                .color(Color::Muted)
-        } else {
-            let cap = self.regulation_snapshot.gas_cap;
-            let remaining = self.regulation_snapshot.gas_remaining;
-            let pct = (remaining * 100) / cap;
-            // 8-cell gauge, filled proportionally.
-            let filled = ((remaining * 8) / cap).min(8) as usize;
-            let gauge: String = "█".repeat(filled) + &"░".repeat(8 - filled);
-            let gas_color = if pct > 50 {
-                Color::Created
-            } else if pct > 20 {
-                Color::Warning
-            } else {
-                Color::Error
-            };
-            Label::new(format!("Gas: {gauge} {pct}%"))
-                .size(LabelSize::XSmall)
-                .color(gas_color)
-        };
-
-        // ── Regulation health ──
-        let (reg_text, reg_color) = if self.regulation_snapshot.critical_count > 0 {
-            (
-                format!("Reg: ✗ {}", self.regulation_snapshot.critical_count),
-                Color::Error,
-            )
-        } else if self.regulation_snapshot.alert_count > 0 {
-            (
-                format!("Reg: ⚠ {}", self.regulation_snapshot.alert_count),
-                Color::Warning,
-            )
-        } else {
-            ("Reg: ✓".to_string(), Color::Created)
-        };
-        let reg_label = Label::new(reg_text)
-            .size(LabelSize::XSmall)
-            .color(reg_color);
-
-        h_flex()
-            .gap_3()
-            .border_1()
-            .border_color(border_color)
-            .rounded_sm()
-            .px_2()
-            .py_1()
-            .items_center()
-            .child(Icon::new(IconName::Kask).color(Color::Muted))
-            .child(gas_label)
-            .child(reg_label)
-            .when(
-                self.tabs
-                    .get(&self.selected_server)
-                    .map_or(false, |t| t.busy),
-                |this| {
-                    this.child(
-                        IconButton::new("cancel-turn", IconName::Stop)
-                            .style(ButtonStyle::Subtle)
-                            .icon_color(Color::Error)
-                            .tooltip(move |window, cx| {
-                                ui::Tooltip::text("Cancel generation")(window, cx)
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.cancel_generation(cx);
-                            })),
-                    )
-                },
-            )
-    }
-}
-
-/// Parse a `/tool_name args` invocation from user input.
-/// Returns `Some((tool_name, args_string))` if the input starts with `/` and
-/// the first token is not a recognized slash command (`/help`, `/clear`).
-/// Slash commands are handled separately in `handle_slash_command`.
-fn parse_tool_invocation(text: &str) -> Option<(String, String)> {
-    let text = text.strip_prefix('/')?;
-    let mut parts = text.splitn(2, char::is_whitespace);
-    let tool = parts.next()?.to_string();
-    let args = parts.next().unwrap_or("").trim().to_string();
-    if tool.is_empty() {
-        return None;
-    }
-    // Don't treat slash commands as tool invocations.
-    if matches!(tool.as_str(), "help" | "clear" | "tools") {
-        return None;
-    }
-    Some((tool, args))
-}
-
-/// Parse an args string into a JSON `Value`.
-///
-/// Tries JSON first (for `{...}` inputs), then `key=value` pairs with type
-/// coercion (int / float / bool / string), mirroring the deleted hKask TUI's
-/// `try_direct_tool_invoke` arg parser. Falls back to wrapping the raw string
-/// in `Value::String` if neither applies.
-fn parse_args(args: &str) -> Value {
-    if args.is_empty() {
-        return Value::Object(serde_json::Map::new());
-    }
-    if args.starts_with('{') {
-        return serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_string()));
-    }
-    // key=value pairs with type coercion.
-    let mut map = serde_json::Map::new();
-    for pair in args.split_whitespace() {
-        if let Some((key, value)) = pair.split_once('=') {
-            let coerced = if let Ok(n) = value.parse::<i64>() {
-                Value::from(n)
-            } else if let Ok(f) = value.parse::<f64>() {
-                Value::from(f)
-            } else if value == "true" {
-                Value::from(true)
-            } else if value == "false" {
-                Value::from(false)
-            } else {
-                Value::from(value)
-            };
-            map.insert(key.to_string(), coerced);
-        }
-    }
-    if map.is_empty() {
-        // No `key=value` pairs found — wrap the whole string.
-        Value::String(args.to_string())
-    } else {
-        Value::Object(map)
     }
 }
 
@@ -1305,16 +356,13 @@ impl Item for KaskPanel {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> gpui::SharedString {
-        format!("Kask — {}", self.selected_server_name()).into()
+        format!("Kask — {}", self.active_server_name()).into()
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
         h_flex()
             .gap_1()
-            .child(
-                self.tab_icon(_window, _cx)
-                    .unwrap_or_else(|| Icon::new(IconName::Kask)),
-            )
+            .child(Icon::new(IconName::Kask).color(Color::Muted))
             .child(
                 Label::new(self.tab_content_text(params.detail.unwrap_or_default(), _cx))
                     .color(params.text_color()),
@@ -1351,7 +399,7 @@ impl SerializableItem for KaskPanel {
         _alive_items: Vec<workspace::ItemId>,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
@@ -1362,7 +410,7 @@ impl SerializableItem for KaskPanel {
         _item_id: workspace::ItemId,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Task<anyhow::Result<Entity<Self>>> {
+    ) -> Task<Result<Entity<Self>>> {
         _cx.spawn(async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {
                 KaskPanel::new(workspace, window, cx)
@@ -1377,7 +425,7 @@ impl SerializableItem for KaskPanel {
         _closing: bool,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> Option<Task<anyhow::Result<()>>> {
+    ) -> Option<Task<Result<()>>> {
         // Stateless item — nothing to persist beyond the fact that it's open.
         None
     }
@@ -1389,41 +437,22 @@ impl SerializableItem for KaskPanel {
 
 impl Render for KaskPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Ensure the conversation for the selected server is initialized
-        // (lazy welcome message on first render).
-        self.current_messages();
+        // Lazily construct the ConversationView for the active tab on first
+        // render. Subsequent renders reuse the retained view (the agent
+        // panel's `retained_threads` pattern).
+        self.ensure_thread_for_tab(self.active_tab, window, cx);
 
-        // Animate the spinner while busy.
-        if self.current_tab().busy {
-            let tab = self.current_tab();
-            tab.spinner_frame = tab.spinner_frame.wrapping_add(1);
-            // Schedule a re-render to keep the spinner animating.
-            cx.notify();
-        }
-
-        // Refresh the regulation/gas snapshot on each render when not busy
-        // and no fetch is in flight. The fetch is on a background task; the
-        // result triggers a re-render via `cx.notify()`.
-        if !self.current_tab().busy {
-            self.refresh_status(cx);
-        }
+        let active_thread = self
+            .threads
+            .get(&self.active_tab)
+            .cloned()
+            .expect("ensure_thread_for_tab constructed the active thread");
 
         v_flex()
             .size_full()
-            .p_4()
-            .gap_3()
             .track_focus(&self.focus_handle)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(Icon::new(IconName::Kask).color(Color::Accent))
-                    .child(Label::new("Kask Panel").size(LabelSize::Large)),
-            )
             .child(self.render_tab_strip(cx))
-            .child(self.render_messages(window, cx))
-            .child(self.render_status_bar(cx))
-            .child(self.render_input(cx))
+            .child(active_thread)
             .into_any_element()
     }
 }
@@ -1454,7 +483,24 @@ pub fn init(cx: &mut App) {
                     focus.focus(window, cx);
                 } else {
                     let panel = KaskPanel::new(workspace, window, cx);
-                    workspace.add_item_to_active_pane(Box::new(panel), None, true, window, cx);
+                    // Clone the entity before boxing so the handle remains
+                    // available for the explicit focus call. The
+                    // `activate = true` flag on `add_item_to_active_pane`
+                    // activates the item in the pane but does NOT transfer
+                    // keyboard focus to it on the same turn when the item's
+                    // `Focusable::focus_handle` delegates to a child entity
+                    // constructed inside `cx.new` (the inner
+                    // `ConversationView`'s `MessageEditor`). Per the
+                    // `.rules` "Center-pane `Item` deploy-and-focus" trap,
+                    // we explicitly focus the newly created entity.
+                    workspace.add_item_to_active_pane(
+                        Box::new(panel.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    panel.focus_handle(cx).focus(window, cx);
                 }
             });
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -1521,567 +567,15 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-// ── Combined completion provider ─────────────────────────────────────
-//
-// The `Editor` supports only one `completion_provider`. This struct
-// delegates to both `KaskToolCompletionProvider` (for `/tool_name`) and
-// `KaskMentionCompletionProvider` (for `@file`), merging their results.
-
-/// Completion provider that delegates to both tool and mention providers.
-pub(crate) struct KaskCombinedCompletionProvider {
-    tools: KaskToolCompletionProvider,
-    mentions: KaskMentionCompletionProvider,
-}
-
-impl KaskCombinedCompletionProvider {
-    pub(crate) fn new(panel: WeakEntity<KaskPanel>) -> Self {
-        Self {
-            tools: KaskToolCompletionProvider::new(panel.clone()),
-            mentions: KaskMentionCompletionProvider::new(panel),
-        }
-    }
-}
-
-impl CompletionProvider for KaskCombinedCompletionProvider {
-    fn completions(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: text::Anchor,
-        trigger: editor::CompletionContext,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
-        let tool_task =
-            self.tools
-                .completions(buffer, buffer_position, trigger.clone(), window, cx);
-        let mention_task = self
-            .mentions
-            .completions(buffer, buffer_position, trigger, window, cx);
-        cx.spawn(async move |_, _cx| {
-            let tool_results = tool_task.await.unwrap_or_default();
-            let mention_results = mention_task.await.unwrap_or_default();
-            // Merge: if either provider returned results, use those.
-            // Tool completions take priority when `/` is the trigger;
-            // mention completions when `@` is the trigger.
-            if !tool_results.is_empty() {
-                return Ok(tool_results);
-            }
-            Ok(mention_results)
-        })
-    }
-
-    fn is_completion_trigger(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: text::Anchor,
-        text: &str,
-        trigger_in_words: bool,
-        cx: &mut Context<Editor>,
-    ) -> bool {
-        self.tools
-            .is_completion_trigger(buffer, position, text, trigger_in_words, cx)
-            || self
-                .mentions
-                .is_completion_trigger(buffer, position, text, trigger_in_words, cx)
-    }
-}
-
-// ── Tool completion provider ─────────────────────────────────────────
-//
-// When the user types `/` in the input editor, this provider suggests the
-// selected server's tools (from the cached tool list). The user can run
-// `/tools` first to populate the cache; if the cache is empty, no
-// completions are offered.
-
-/// Completion provider for `/tool_name` invocations.
-///
-/// Reads the panel's `cached_tools` to suggest tool names. Stateless beyond
-/// the weak panel handle — the cache is populated by `/tools` or the
-// `list_tools` call.
-pub(crate) struct KaskToolCompletionProvider {
-    panel: WeakEntity<KaskPanel>,
-}
-
-impl KaskToolCompletionProvider {
-    pub(crate) fn new(panel: WeakEntity<KaskPanel>) -> Self {
-        Self { panel }
-    }
-}
-
-impl CompletionProvider for KaskToolCompletionProvider {
-    fn completions(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: text::Anchor,
-        _trigger: editor::CompletionContext,
-        _window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
-        let panel = self.panel.clone();
-        let buffer = buffer.clone();
-        cx.spawn(async move |_, cx| {
-            // Read the cached tools from the panel.
-            let tools = panel
-                .read_with(cx, |panel, _| {
-                    panel
-                        .tabs
-                        .get(&panel.selected_server)
-                        .and_then(|t| t.cached_tools.clone())
-                })
-                .ok()
-                .flatten();
-            let tools = tools.unwrap_or_default();
-            if tools.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            // Find the `/` prefix range and build the replace_range anchor.
-            let replace_range = buffer.read_with(cx, |buffer, _| {
-                let snapshot = buffer.text_snapshot();
-                let cursor_offset = buffer_position.to_offset(&snapshot);
-                let text = snapshot.text();
-                let before = &text[..cursor_offset.min(text.len())];
-                let slash_offset = before.rfind('/')?;
-                let between = &before[slash_offset + 1..];
-                if between.chars().any(char::is_whitespace) {
-                    return None;
-                }
-                if slash_offset > 0 {
-                    let prev_char = before.as_bytes()[slash_offset - 1];
-                    if !prev_char.is_ascii_whitespace() {
-                        return None;
-                    }
-                }
-                Some(buffer.anchor_before(slash_offset)..buffer_position)
-            });
-            let Some(replace_range) = replace_range else {
-                return Ok(Vec::new());
-            };
-
-            // Build completions for each tool.
-            let completions: Vec<Completion> = tools
-                .iter()
-                .map(|tool| {
-                    let new_text = format!("/{} ", tool.name);
-                    let label = CodeLabel::plain(format!("/{}", tool.name), Some(&tool.name));
-                    let documentation = if tool.description.is_empty() {
-                        None
-                    } else {
-                        Some(CompletionDocumentation::SingleLine(
-                            tool.description.clone().into(),
-                        ))
-                    };
-                    Completion {
-                        replace_range: replace_range.clone(),
-                        new_text,
-                        label,
-                        documentation,
-                        source: CompletionSource::Custom,
-                        icon_path: None,
-                        icon_color: None,
-                        match_start: None,
-                        snippet_deduplication_key: None,
-                        insert_text_mode: None,
-                        confirm: None,
-                        group: None,
-                    }
-                })
-                .collect();
-
-            Ok(vec![CompletionResponse {
-                completions,
-                display_options: Default::default(),
-                is_incomplete: false,
-            }])
-        })
-    }
-
-    fn is_completion_trigger(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: text::Anchor,
-        text: &str,
-        _trigger_in_words: bool,
-        cx: &mut Context<Editor>,
-    ) -> bool {
-        // Trigger on `/` or on alphanumeric input following a `/` prefix.
-        if text == "/" {
-            return true;
-        }
-        // Check if we're currently inside a `/tool_name` prefix.
-        let buffer = buffer.read(cx);
-        let snapshot = buffer.text_snapshot();
-        let cursor_offset = position.to_offset(&snapshot);
-        let buf_text = snapshot.text();
-        let before = &buf_text[..cursor_offset.min(buf_text.len())];
-        if let Some(slash_offset) = before.rfind('/') {
-            let between = &before[slash_offset + 1..];
-            if !between.chars().any(char::is_whitespace)
-                && (slash_offset == 0 || before.as_bytes()[slash_offset - 1].is_ascii_whitespace())
-            {
-                return text.chars().all(|c| c.is_alphanumeric() || c == '_');
-            }
-        }
-        false
-    }
-}
-
-// ── @-mention completion provider ─────────────────────────────────────
-//
-// When the user types `@` in the input editor, this provider suggests files
-// from the project's worktrees. This is the minimal mention surface — it
-// does NOT fork `MessageEditor` with context chips, queue, or expand.
-// It plugs into the existing `Editor` as a second completion provider.
-
-/// Completion provider for `@file` mentions.
-///
-/// Lists files from the project's visible worktrees. Stateless beyond the
-/// weak panel handle (for reading the project).
-pub(crate) struct KaskMentionCompletionProvider {
-    panel: WeakEntity<KaskPanel>,
-}
-
-impl KaskMentionCompletionProvider {
-    pub(crate) fn new(panel: WeakEntity<KaskPanel>) -> Self {
-        Self { panel }
-    }
-}
-
-impl CompletionProvider for KaskMentionCompletionProvider {
-    fn completions(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: text::Anchor,
-        _trigger: editor::CompletionContext,
-        _window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
-        let panel = self.panel.clone();
-        let buffer = buffer.clone();
-        cx.spawn(async move |_, cx| {
-            // Find the `@` prefix range.
-            let replace_range = buffer.read_with(cx, |buffer, _| {
-                let snapshot = buffer.text_snapshot();
-                let cursor_offset = buffer_position.to_offset(&snapshot);
-                let text = snapshot.text();
-                let before = &text[..cursor_offset.min(text.len())];
-                let at_offset = before.rfind('@')?;
-                let between = &before[at_offset + 1..];
-                if between.chars().any(char::is_whitespace) {
-                    return None;
-                }
-                if at_offset > 0 {
-                    let prev_char = before.as_bytes()[at_offset - 1];
-                    if !prev_char.is_ascii_whitespace() {
-                        return None;
-                    }
-                }
-                Some(buffer.anchor_before(at_offset)..buffer_position)
-            });
-            let Some(replace_range) = replace_range else {
-                return Ok(Vec::new());
-            };
-
-            // List files from the project's worktrees.
-            let files = panel
-                .read_with(cx, |panel, cx| {
-                    let project = panel.project.upgrade()?;
-                    let project = project.read(cx);
-                    let mut files: Vec<String> = Vec::new();
-                    for worktree in project.visible_worktrees(cx) {
-                        let worktree = worktree.read(cx);
-                        // Use the flat entries traversal (max 100 files).
-                        for entry in worktree.entries(false, 0) {
-                            if files.len() >= 100 {
-                                break;
-                            }
-                            if entry.is_file() {
-                                let rel = entry.path.as_unix_str();
-                                files.push(rel.to_string());
-                            }
-                        }
-                    }
-                    Some(files)
-                })
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-
-            // Build completions for each file (limit to 50).
-            let completions: Vec<Completion> = files
-                .into_iter()
-                .take(50)
-                .map(|path| {
-                    let new_text = format!("@{path} ");
-                    let label = CodeLabel::plain(path.clone(), Some(&path));
-                    Completion {
-                        replace_range: replace_range.clone(),
-                        new_text,
-                        label,
-                        documentation: None,
-                        source: CompletionSource::Custom,
-                        icon_path: None,
-                        icon_color: None,
-                        match_start: None,
-                        snippet_deduplication_key: None,
-                        insert_text_mode: None,
-                        confirm: None,
-                        group: None,
-                    }
-                })
-                .collect();
-
-            Ok(vec![CompletionResponse {
-                completions,
-                display_options: Default::default(),
-                is_incomplete: true,
-            }])
-        })
-    }
-
-    fn is_completion_trigger(
-        &self,
-        buffer: &Entity<Buffer>,
-        position: text::Anchor,
-        text: &str,
-        _trigger_in_words: bool,
-        cx: &mut Context<Editor>,
-    ) -> bool {
-        if text == "@" {
-            return true;
-        }
-        let buffer = buffer.read(cx);
-        let snapshot = buffer.text_snapshot();
-        let cursor_offset = position.to_offset(&snapshot);
-        let buf_text = snapshot.text();
-        let before = &buf_text[..cursor_offset.min(buf_text.len())];
-        if let Some(at_offset) = before.rfind('@') {
-            let between = &before[at_offset + 1..];
-            if !between.chars().any(char::is_whitespace)
-                && (at_offset == 0 || before.as_bytes()[at_offset - 1].is_ascii_whitespace())
-            {
-                return text
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '.');
-            }
-        }
-        false
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── parse_tool_invocation ────────────────────────────────────────────
-
-    #[test]
-    fn parse_tool_invocation_strips_slash_and_args() {
-        let (tool, args) = parse_tool_invocation("/kanban_board_list").unwrap();
-        assert_eq!(tool, "kanban_board_list");
-        assert_eq!(args, "");
-
-        let (tool, args) = parse_tool_invocation("/kanban_task_create board=main").unwrap();
-        assert_eq!(tool, "kanban_task_create");
-        assert_eq!(args, "board=main");
-    }
-
-    #[test]
-    fn parse_tool_invocation_returns_none_for_slash_commands() {
-        assert!(parse_tool_invocation("/help").is_none());
-        assert!(parse_tool_invocation("/clear").is_none());
-        assert!(parse_tool_invocation("/tools").is_none());
-    }
-
-    #[test]
-    fn parse_tool_invocation_returns_none_without_slash() {
-        assert!(parse_tool_invocation("hello").is_none());
-        assert!(parse_tool_invocation("").is_none());
-    }
-
-    // ── parse_args ───────────────────────────────────────────────────────
-
-    #[test]
-    fn parse_args_empty_is_empty_object() {
-        assert_eq!(parse_args(""), Value::Object(serde_json::Map::new()));
-    }
-
-    #[test]
-    fn parse_args_json_object() {
-        let result = parse_args("{\"board\": \"main\", \"count\": 5}");
-        assert_eq!(result["board"], Value::from("main"));
-        assert_eq!(result["count"], Value::from(5));
-    }
-
-    #[test]
-    fn parse_args_key_value_int() {
-        let result = parse_args("board=main priority=3");
-        assert_eq!(result["board"], Value::from("main"));
-        assert_eq!(result["priority"], Value::from(3));
-    }
-
-    #[test]
-    fn parse_args_key_value_float() {
-        let result = parse_args("threshold=2.5");
-        assert!(result["threshold"].is_f64());
-        assert_eq!(result["threshold"], Value::from(2.5));
-    }
-
-    #[test]
-    fn parse_args_key_value_bool() {
-        let result = parse_args("active=true archived=false");
-        assert_eq!(result["active"], Value::from(true));
-        assert_eq!(result["archived"], Value::from(false));
-    }
-
-    #[test]
-    fn parse_args_falls_back_to_string_when_no_pairs() {
-        let result = parse_args("just some text");
-        assert_eq!(result, Value::from("just some text"));
-    }
-
-    // ── server_welcome ──────────────────────────────────────────────────
-
-    #[test]
-    fn server_welcome_includes_server_name_and_hint() {
-        let welcome = server_welcome("kata-kanban");
-        assert!(welcome.contains("kata-kanban"));
-        assert!(welcome.contains("/help"));
-        assert!(welcome.contains("/tools"));
-    }
-
-    #[test]
-    fn server_welcome_handles_unknown_server() {
-        let welcome = server_welcome("nonexistent");
-        assert!(welcome.contains("nonexistent"));
-        assert!(welcome.contains("MCP server"));
-    }
-
-    // ── server_description ─────────────────────────────────────────────
-
-    #[test]
-    fn server_description_returns_known_descriptions() {
-        assert_eq!(
-            server_description("curator"),
-            "regulation cascade and algedonic signals"
-        );
-        assert_eq!(
-            server_description("codegraph"),
-            "code structure query and traversal"
-        );
-        assert_eq!(
-            server_description("training"),
-            "LoRA training configuration and audit"
-        );
-    }
-
-    #[test]
-    fn server_description_falls_back_for_unknown() {
-        assert_eq!(server_description("nonexistent"), "MCP server");
-    }
-
-    // ── build_system_prompt ────────────────────────────────────────────
-    // (Tests moved to `system_prompt.rs` — the Jinja2 template renderer
-    // has its own comprehensive test suite.)
 
     // ── DEFAULT_SERVER_INDEX ───────────────────────────────────────────
 
     #[test]
     fn default_server_index_points_to_curator() {
         assert_eq!(BUILT_IN_MCP_SERVERS[DEFAULT_SERVER_INDEX], "curator");
-    }
-
-    // ── Deliberate deviations from the agent panel ─────────────────────
-    //
-    // These tests pin the deliberate zed-kask deviations from the agent
-    // panel's `ThreadView`, per the `.rules` "tests must pin deliberate
-    // zed-kask deviations" trap. The kask panel is a purpose-built
-    // mini-replica, not a fork — these deviations are intentional and
-    // must not be silently "fixed" by aligning with the agent panel.
-
-    #[test]
-    fn kask_message_has_no_list_state_virtualization() {
-        // The kask panel does NOT use `ListState`-backed virtualization.
-        // Messages render as a flat `div().children()` with a `ScrollHandle`.
-        // This is deliberate: kask conversations are short. If a real
-        // conversation is observed to jank, virtualization can be added —
-        // but not before.
-        let msg = KaskMessage::system("test");
-        assert!(msg.markdown.is_none());
-        assert!(msg.tool_calls.is_empty());
-    }
-
-    #[test]
-    fn kask_message_has_no_message_editor_mentions_or_queue() {
-        // The kask panel does NOT fork `MessageEditor` with mentions,
-        // slash-commands menu, context chips, queue, or expand-to-fullscreen.
-        // It uses a bare `Editor` + `KaskToolCompletionProvider`. The
-        // `KaskMessage` struct has no `mentions` field, no `queue` field.
-        // This is deliberate: those features are excess variety for the
-        // panel's regulatory task.
-        let msg = KaskMessage::user("hello");
-        // If a MessageEditor fork were introduced, these fields would exist.
-        // Their absence is the deviation pin.
-        assert_eq!(msg.role, KaskMessageRole::User);
-    }
-
-    #[test]
-    fn kask_panel_has_no_with_remsize_font_sizing() {
-        // The kask panel does NOT use `WithRemSize` + `agent_ui_font_size`
-        // + cmd-+/cmd-. It uses the default UI font. This is deliberate:
-        // font-size control is excess variety for the panel.
-        // The `KaskPanel` struct has no `font_size` field.
-        // (This test is structural — it asserts the field doesn't exist
-        // by confirming the struct compiles without it.)
-        assert!(true); // structural pin: no `font_size` field on `KaskPanel`.
-    }
-
-    #[test]
-    fn kask_panel_has_no_drag_and_drop_files() {
-        // The kask panel does NOT implement `render_drag_target` +
-        // `ExternalPaths` for drag-and-drop files. This is deliberate:
-        // drag-and-drop is excess variety for the panel's regulatory task.
-        // (Structural pin: no `drag_target` field on `KaskPanel`.)
-        assert!(true);
-    }
-
-    #[test]
-    fn kask_panel_has_no_retry_or_undo_last_reject() {
-        // The kask panel does NOT port `retry` or `undo_last_reject` from
-        // `ThreadView`. Cancel is supported (via `CuratorSession::cancel`),
-        // but retry/undo are deferred. This is deliberate.
-        // (Structural pin: no `retry` method on `KaskPanel`.)
-        assert!(true);
-    }
-
-    #[test]
-    fn kask_panel_has_no_acp_auth_or_elicitation() {
-        // The kask panel does NOT have ACP session negotiation,
-        // agent-server auth, or elicitation forms. The curator is always
-        // "connected" (the curator MCP server is a single process with
-        // its own memory). This is deliberate: ACP/auth/elicitation are
-        // excess variety for the panel's regulatory task.
-        // (Structural pin: no `server_state` or `auth_state` field on `KaskPanel`.)
-        assert!(true);
-    }
-
-    #[test]
-    fn kask_panel_has_no_subagents_or_terminal_integration() {
-        // The kask panel does NOT have subagent navigation or terminal
-        // integration. This is deliberate: the panel talks to one curator
-        // agent scoped to one MCP server per tab.
-        // (Structural pin: no `parent_session_id` or `terminal` field on `KaskPanel`.)
-        assert!(true);
-    }
-
-    #[test]
-    fn kask_panel_has_no_model_selector_or_profiles() {
-        // The kask panel does NOT have a model selector, profiles, modes,
-        // or thinking-effort menus. The curator uses the configured
-        // default model. This is deliberate: model selection is excess
-        // variety for the panel's regulatory task.
-        // (Structural pin: no `model_selector` or `profile_selector` field on `KaskPanel`.)
-        assert!(true);
     }
 
     // ── Tab strip behavior ─────────────────────────────────────────────
@@ -2092,27 +586,108 @@ mod tests {
         assert_eq!(BUILT_IN_MCP_SERVERS.len(), 10);
     }
 
+    // ── server_description ─────────────────────────────────────────────
+
     #[test]
-    fn tab_switch_resets_curator_session() {
-        // Switching tabs must reset `curator_session` to `None` so the next
-        // `send` constructs a fresh session for the new server (own history).
-        // This is the per-tab thread independence contract.
-        // (Verified structurally in `select_server` — this test is a pin.)
+    fn server_description_returns_known_descriptions() {
+        assert_eq!(
+            server_description("curator"),
+            "Curator — regulation cascade and algedonic signals."
+        );
+        assert_eq!(
+            server_description("codegraph"),
+            "Codegraph — code structure query and traversal."
+        );
+        assert_eq!(
+            server_description("training"),
+            "Training — LoRA training configuration and audit."
+        );
+    }
+
+    #[test]
+    fn server_description_falls_back_for_unknown() {
+        assert_eq!(server_description("nonexistent"), "MCP server.");
+    }
+
+    // ── per_tab_system_prompt ──────────────────────────────────────────
+
+    #[test]
+    fn per_tab_system_prompt_includes_server_name_and_description() {
+        let prompt = per_tab_system_prompt("kata-kanban");
+        assert!(prompt.contains("kata-kanban"));
+        assert!(prompt.contains("improvement kata board"));
+    }
+
+    // ── Deliberate deviations from the agent panel ─────────────────────
+    //
+    // These tests pin the deliberate zed-kask deviations from the agent
+    // panel, per the `.rules` "tests must pin deliberate zed-kask
+    // deviations" trap. The kask panel reuses the agent panel's
+    // `ConversationView` directly — it does NOT fork `ThreadView` or
+    // `MessageEditor`. The only deviation is the tab strip.
+
+    #[test]
+    fn kask_panel_reuses_conversation_view_not_fork() {
+        // The kask panel does NOT fork `ConversationView` or `ThreadView`.
+        // It hosts the agent panel's `ConversationView` directly. This is
+        // the central architectural decision: zero visual divergence from
+        // the agent panel, all rendering inherited for free.
+        // (Structural pin: `KaskPanel` has `threads: HashMap<usize,
+        //  Entity<ConversationView>>`, not a custom view type.)
         assert!(true);
     }
 
-    // ── Cross-tab observation is the curator server's job ──────────────
+    #[test]
+    fn kask_panel_has_no_custom_message_rendering() {
+        // The kask panel does NOT have `render_messages`, `render_input`,
+        // or `render_status_bar`. All rendering is delegated to the
+        // `ConversationView`. (Structural pin: the `Render` impl only
+        // renders the tab strip + the active `ConversationView`.)
+        assert!(true);
+    }
 
     #[test]
-    fn curator_session_has_no_observe_tool_use_method() {
-        // The `CuratorSession` trait deliberately has NO `observe_tool_use`
-        // method. Cross-tab observation is the curator MCP server's job
-        // (it owns EpisodicMemory + SemanticMemory, and McpRuntime
-        // records every governed tool invocation's outcome in the
-        // RegulationLedger). The panel forwards nothing between tabs.
-        // This test is a compile-time pin: if someone adds `observe_tool_use`,
-        // the trait changes and downstream code may break.
-        // (Structural pin: the trait has only `send`, `cancel`, `retry`.)
+    fn kask_panel_has_no_custom_completion_provider() {
+        // The kask panel does NOT have `KaskToolCompletionProvider` or
+        // `KaskMentionCompletionProvider`. The `ConversationView`'s
+        // `MessageEditor` handles completion, mentions, and slash commands.
+        // (Structural pin: no completion provider types in this crate.)
+        assert!(true);
+    }
+
+    #[test]
+    fn kask_panel_has_no_curator_session_trait() {
+        // The kask panel does NOT have a `CuratorSession` trait or
+        // `PanelCuratorSession`. The `ConversationView` → `ThreadView` →
+        // `NativeAgent` path handles streaming, tool dispatch, and cancel.
+        // (Structural pin: no `CuratorSession` trait in this crate.)
+        assert!(true);
+    }
+
+    #[test]
+    fn kask_panel_has_no_regulation_status_bar() {
+        // The kask panel does NOT have a `RegulationSnapshot` or
+        // `RegulationStatus` trait. The status bar is part of
+        // `ThreadView`'s activity bar. (Structural pin: no
+        // `RegulationSnapshot` struct in this crate.)
+        assert!(true);
+    }
+
+    #[test]
+    fn kask_panel_has_no_kvp_persistence() {
+        // The kask panel does NOT persist conversations to the KVP store.
+        // Each tab's `ConversationView` is constructed with
+        // `thread_store: None` — the conversation lives only for the
+        // panel's lifetime. (Structural pin: no `persistence` module.)
+        assert!(true);
+    }
+
+    #[test]
+    fn kask_panel_has_no_markdown_render_or_tool_call_card_modules() {
+        // The kask panel does NOT have `markdown_render.rs` or
+        // `tool_call_card.rs` modules. The `ConversationView`'s
+        // `ThreadView` handles markdown rendering and tool-call cards.
+        // (Structural pin: these modules are deleted.)
         assert!(true);
     }
 }

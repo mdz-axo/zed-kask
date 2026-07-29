@@ -1014,7 +1014,7 @@ fn main() {
             let tool_port_for_deferred = tool_port;
             let a2a_secret_for_deferred = a2a_secret;
             let cybernetics_loop_for_panel_deferred = cybernetics_loop_for_panel;
-            let panel_regulation_ledger_deferred = panel_regulation_ledger;
+            let _panel_regulation_ledger_deferred = panel_regulation_ledger;
             let app_state_for_deferred = app_state.clone();
             cx.spawn(async move |cx| {
                 let mut current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
@@ -1145,6 +1145,58 @@ fn main() {
                                     "hKask memory port upgraded to RealMemoryPort \
                                      (agent: {agent_name}, db: {db_path})"
                                 );
+
+                                // Set env vars for the curator MCP server so it
+                                // reads from the same `agents/curator/pod.db` the
+                                // agent writes curator copies to. These are read
+                                // by `open_curator_stores` in the curator MCP
+                                // server and by `open_curator_semantic` in
+                                // `RealMemoryPort::new`.
+                                //
+                                // `HKASK_CURATOR_DB` — the curator's sovereign DB
+                                // path. `HKASK_WEBID` — the curator's WebID, set
+                                // to `from_persona(b"curator")` to match the
+                                // persona used by `RealMemoryPort` when writing
+                                // curator copies. `HKASK_DATA_DIR` — so the
+                                // curator server resolves paths under the same
+                                // root as the agent.
+                                let curator_db = hkask_types::agent_paths::resolve_under_data_dir(
+                                    &hkask_types::agent_paths::agent_pod_db("curator"),
+                                );
+                                // SAFETY: These env vars are set during the deferred task
+                                // (post-login, before any MCP server reads them). The curator
+                                // MCP server reads them at process start. Setting them here
+                                // before `sync_kask_mcp_servers` ensures the curator server
+                                // picks them up. The race window is acceptable — the vars are
+                                // only read by the curator server, which is restarted by the
+                                // sync below.
+                                let curator_webid = hkask_types::WebID::from_persona(b"curator");
+                                // SAFETY: These env vars are set during the deferred task
+                                // (post-login, before any MCP server reads them). The curator
+                                // MCP server reads them at process start. Setting them here
+                                // before `sync_kask_mcp_servers` ensures the curator server
+                                // picks them up. The race window is acceptable — the vars are
+                                // only read by the curator server, which is restarted by the
+                                // sync below.
+                                unsafe {
+                                    std::env::set_var(
+                                        "HKASK_CURATOR_DB",
+                                        curator_db.to_string_lossy().as_ref(),
+                                    );
+                                    std::env::set_var(
+                                        "HKASK_WEBID",
+                                        curator_webid.to_string().as_str(),
+                                    );
+                                }
+                                log::info!(
+                                    "Curator env injected — DB: {}, WebID: {}",
+                                    curator_db.display(),
+                                    curator_webid.redacted_display(),
+                                );
+                                // Re-sync MCP servers so the curator server picks
+                                // up the new env vars. The ContextServerStore
+                                // re-evaluates descriptors on notify.
+                                cx.update(|cx| sync_kask_mcp_servers(cx));
 
                                 // D11: Wire the context injector now that the real memory port exists.
                                 // The injector shares the same memory port as the ingestion path.
@@ -1417,6 +1469,54 @@ fn main() {
                 // Sync model-dependent wiring (inside cx.update).
                 cx.update(|cx| {
                     let model_registry = language_model::LanguageModelRegistry::read_global(cx);
+                    // ── Panel + curator wiring: unconditional ─────────────────
+                    //
+                    // The curator is always_on by default (KaskCuratorSettings::
+                    // default().always_on == true). The panel tool invoker and
+                    // regulation status don't need an inference model at all —
+                    // they only need the tool_port and the cybernetics loop /
+                    // ledger. The curator session factory uses the same
+                    // LazyInferencePort as the manifest executor: when no model
+                    // is resolved, curator turns return a clear error with
+                    // remediation guidance; when the model resolves, the lazy
+                    // port is swapped in and curator turns route through it.
+                    let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
+                        tool_port: tool_port_for_deferred.clone(),
+                        a2a_secret: a2a_secret_for_deferred.clone(),
+                        executor: cx.background_executor().clone(),
+                    });
+                    kask_panel::set_tool_invoker(Some(panel_tool_invoker));
+                    log::info!(
+                        "Kask panel tool invoker wired \
+                         (curator turns now route through NativeAgent — \
+                         the ConversationView handles streaming + tool dispatch)"
+                    );
+
+                    // ── Condenser wiring: unconditional ───────────────────────
+                    //
+                    // The condenser doesn't need a model at construction time —
+                    // it uses the inference router lazily when compressing.
+                    let condenser_settings = &kask_settings.condenser;
+                    if condenser_settings.auto_compress_tool_results {
+                        let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
+                            &condenser_settings.profile,
+                            condenser_settings.auto_compress_tool_results,
+                        ));
+                        agent::set_thread_condenser(Some(condenser));
+                        log::info!(
+                            "hKask thread condenser wired — tool results will be compressed (profile: {})",
+                            condenser_settings.profile
+                        );
+                    } else {
+                        log::info!("hKask tool result compression disabled (kask.condenser.auto_compress_tool_results = false)");
+                    }
+
+                    if kask_settings.memory.auto_inject {
+                        log::info!("hKask context injection enabled — injector will be wired after agent resolves");
+                    } else {
+                        log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
+                    }
+
                     if let Some(configured) = model_registry.default_model() {
                         let async_cx = cx.to_async();
                         // Manifest registry paths. These are *fallbacks* — the
@@ -1527,9 +1627,6 @@ fn main() {
                             )
                         );
 
-                        let panel_inference_port = guarded_inference.clone();
-                        let panel_tool_port = tool_port_for_deferred.clone();
-
                         // Start the inference IPC server so MCP server child processes
                         // can route inference through zed's LanguageModelRegistry (with
                         // fusion, guard, and zed's configured API keys) instead of
@@ -1617,29 +1714,12 @@ fn main() {
                         }
 
                         let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
-                            tool_port: panel_tool_port.clone(),
+                            tool_port: tool_port_for_deferred.clone(),
                             a2a_secret: a2a_secret_for_deferred.clone(),
                             executor: cx.background_executor().clone(),
                         });
                         kask_panel::set_tool_invoker(Some(panel_tool_invoker));
-
-                        let panel_curator_factory = std::sync::Arc::new(PanelCuratorSessionFactory {
-                            inference: panel_inference_port,
-                            tool_port: panel_tool_port,
-                            a2a_secret: a2a_secret_for_deferred.clone(),
-                            executor: cx.background_executor().clone(),
-                            tokio_handle: gpui_tokio::Tokio::handle(cx),
-                        });
-                        kask_panel::set_curator_session_factory(Some(panel_curator_factory));
-
-                        let panel_status = std::sync::Arc::new(PanelRegulationStatus {
-                            cybernetics_loop: cybernetics_loop_for_panel_deferred.clone(),
-                            ledger: panel_regulation_ledger_deferred.clone(),
-                            webid: hkask_types::WebID::from_persona(b"kask-panel"),
-                            executor: cx.background_executor().clone(),
-                        });
-                        kask_panel::set_regulation_status(Some(panel_status));
-                        log::info!("Kask panel tool invoker + curator session factory + regulation status wired");
+                        log::info!("Kask panel tool invoker wired");
                     } else {
                         // Body injection is disabled in zed-kask: with no manifest
                         // executor wired, the `skill` tool returns the no-op envelope
@@ -2309,11 +2389,15 @@ fn resolve_embedding_port(
 
 // ── D10: Kask panel adapters ───────────────────────────────────────────────
 //
-// These adapters implement kask_panel's ToolInvoker and CuratorSessionFactory
-// traits by delegating to the bridge's BridgeToolPort and GuardedInferencePort.
-// They're defined here (in the zed binary crate) because kask_bridge can't
-// depend on kask_panel (circular dependency), and the composition root is the
-// natural place for adapter construction.
+// This adapter implements kask_panel's ToolInvoker trait by delegating to the
+// bridge's BridgeToolPort. It's defined here (in the zed binary crate) because
+// kask_bridge can't depend on kask_panel (circular dependency), and the
+// composition root is the natural place for adapter construction.
+//
+// The chat panel itself no longer uses ToolInvoker — it routes through
+// NativeAgent's ToolRouter via the ConversationView. This adapter remains for
+// the per-server visualization views (KanbanBoardView, PortfolioDashboardView,
+// ScenariosView), which fetch data via direct MCP tool calls.
 
 /// Adapter implementing `kask_panel::ToolInvoker` via `BridgeToolPort`.
 struct PanelToolInvoker {
@@ -2383,404 +2467,6 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
                     description: tool.description,
                 })
                 .collect())
-        })
-    }
-}
-
-/// Factory constructing one `PanelCuratorSession` per kask panel tab.
-///
-/// Captures the inference port, tool port, a2a secret, GPUI background
-/// executor, and tokio handle resolved in the deferred task. Each call to
-/// `session_for(server)` returns a fresh session with its own
-/// `tokio::sync::Mutex<Vec<ChatMessage>>` history — the per-tab thread
-/// independence contract from `kask-panel-redesign.md` §2.2.
-struct PanelCuratorSessionFactory {
-    inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-    tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
-    a2a_secret: Vec<u8>,
-    executor: gpui::BackgroundExecutor,
-    tokio_handle: tokio::runtime::Handle,
-}
-
-impl kask_panel::CuratorSessionFactory for PanelCuratorSessionFactory {
-    fn session_for(&self, server: &str) -> std::sync::Arc<dyn kask_panel::CuratorSession> {
-        std::sync::Arc::new(PanelCuratorSession {
-            server: server.to_string(),
-            inference: self.inference.clone(),
-            tool_port: self.tool_port.clone(),
-            a2a_secret: self.a2a_secret.clone(),
-            executor: self.executor.clone(),
-            tokio_handle: self.tokio_handle.clone(),
-            history: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
-            last_user_message: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-            in_flight_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        })
-    }
-}
-
-/// One per-tab stateful streaming curator conversation.
-///
-/// Holds that tab's `Vec<ChatMessage>` history under a tokio mutex (the
-/// history is the session's private state — the panel never inspects it).
-/// `send` prepends the per-tab system prompt, calls
-/// `InferencePort::generate_stream_with_messages`, and forwards each
-/// `InferenceStreamChunk` as a `CuratorEvent` over an mpsc channel. When
-/// the curator emits a `ToolCall`, the session dispatches it via the
-/// OCAP-gated `ToolPort` and emits a matching `ToolResult`.
-struct PanelCuratorSession {
-    server: String,
-    inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-    tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
-    a2a_secret: Vec<u8>,
-    executor: gpui::BackgroundExecutor,
-    tokio_handle: tokio::runtime::Handle,
-    /// This tab's conversation history (system + user + assistant + tool).
-    /// Stored as `Arc<Mutex<...>>` so async tasks can own a clone.
-    history: std::sync::Arc<tokio::sync::Mutex<Vec<hkask_types::ChatMessage>>>,
-    /// The last user message + system prompt, for `retry`.
-    last_user_message: std::sync::Arc<tokio::sync::Mutex<Option<(String, String)>>>,
-    /// Cancellation flag for the in-flight turn.
-    in_flight_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl kask_panel::CuratorSession for PanelCuratorSession {
-    fn send(
-        &self,
-        message: &str,
-        tool_scope: &kask_panel::ToolScope,
-        system_prompt: &str,
-    ) -> gpui::Task<std::result::Result<kask_panel::CuratorEventStream, String>> {
-        let server = self.server.clone();
-        let scope_server = match tool_scope {
-            kask_panel::ToolScope::Server(s) => s.clone(),
-        };
-        let inference = self.inference.clone();
-        let tool_port = self.tool_port.clone();
-        let a2a_secret = self.a2a_secret.clone();
-        let tokio_handle = self.tokio_handle.clone();
-        let message = message.to_string();
-        let system_prompt = system_prompt.to_string();
-
-        // The mutexes are `Arc<tokio::sync::Mutex<...>>`, so we clone the
-        // Arcs and move them into the async task. The async work runs on
-        // the tokio handle and owns the cloned Arcs.
-        let history_arc = self.history.clone();
-        let last_user_arc = self.last_user_message.clone();
-        let cancel_flag = self.in_flight_cancel.clone();
-
-        self.executor.spawn(async move {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-
-            // Append the user message to history.
-            {
-                let mut history_guard = history_arc.lock().await;
-                history_guard.push(hkask_types::ChatMessage::user(message.clone()));
-            }
-            *last_user_arc.lock().await = Some((message.clone(), system_prompt.clone()));
-
-            // Spawn the streaming turn on the tokio handle so it can run
-            // independently of the GPUI foreground. The channel forwards
-            // events back to the panel.
-            let history_for_turn = history_arc.clone();
-            let cancel_for_turn = cancel_flag.clone();
-            let tokio_handle_clone = tokio_handle.clone();
-            tokio_handle_clone.spawn(async move {
-                run_curator_turn(
-                    tx,
-                    history_for_turn,
-                    inference,
-                    tool_port,
-                    a2a_secret,
-                    server,
-                    scope_server,
-                    system_prompt,
-                    cancel_for_turn,
-                )
-                .await;
-            });
-
-            Ok(kask_panel::CuratorEventStream::new(rx))
-        })
-    }
-
-    fn cancel(&self) -> gpui::Task<std::result::Result<(), String>> {
-        let cancel_flag = self.in_flight_cancel.clone();
-        self.executor.spawn(async move {
-            cancel_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        })
-    }
-
-    fn retry(&self) -> gpui::Task<std::result::Result<kask_panel::CuratorEventStream, String>> {
-        let last_user = self.last_user_message.clone();
-        let history = self.history.clone();
-        let cancel_flag = self.in_flight_cancel.clone();
-        let inference = self.inference.clone();
-        let tool_port = self.tool_port.clone();
-        let a2a_secret = self.a2a_secret.clone();
-        let tokio_handle = self.tokio_handle.clone();
-        let server = self.server.clone();
-
-        self.executor.spawn(async move {
-            // Drop the last assistant turn from history (best-effort: pop
-            // trailing assistant messages until we hit the last user message).
-            {
-                let mut history_guard = history.lock().await;
-                while let Some(last) = history_guard.last() {
-                    if last.role == "assistant" || last.role == "tool" {
-                        history_guard.pop();
-                    } else {
-                        break;
-                    }
-                }
-            }
-            let (_message, system_prompt) = last_user
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| "no prior user message to retry".to_string())?;
-
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-
-            let scope_server = server.clone();
-            let history_for_turn = history.clone();
-            let cancel_for_turn = cancel_flag.clone();
-            let tokio_handle_clone = tokio_handle.clone();
-            tokio_handle_clone.spawn(async move {
-                run_curator_turn(
-                    tx,
-                    history_for_turn,
-                    inference,
-                    tool_port,
-                    a2a_secret,
-                    server,
-                    scope_server,
-                    system_prompt,
-                    cancel_for_turn,
-                )
-                .await;
-            });
-            Ok(kask_panel::CuratorEventStream::new(rx))
-        })
-    }
-}
-
-impl PanelCuratorSession {}
-
-/// Drive one curator turn: stream inference chunks, dispatch tool calls,
-/// append results to history, forward events over `tx`.
-async fn run_curator_turn(
-    tx: tokio::sync::mpsc::UnboundedSender<kask_panel::CuratorEvent>,
-    history: std::sync::Arc<tokio::sync::Mutex<Vec<hkask_types::ChatMessage>>>,
-    inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-    tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
-    a2a_secret: Vec<u8>,
-    _server: String,
-    scope_server: String,
-    system_prompt: String,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
-    use futures::StreamExt;
-
-    // Build the message array: system prompt + history (which already
-    // includes the just-appended user message).
-    let mut messages = vec![hkask_types::ChatMessage::system(system_prompt)];
-    {
-        let history_guard = history.lock().await;
-        messages.extend(history_guard.iter().cloned());
-    }
-
-    // Build tool definitions for the tab's server.
-    let tools = build_tool_definitions(&tool_port, &scope_server).await;
-
-    let params = hkask_types::template::LLMParameters::default();
-    let mut stream =
-        inference.generate_stream_with_messages(&messages, &params, None, tools.as_deref());
-
-    let mut assistant_text = String::new();
-    let mut assistant_thinking = String::new();
-    let mut finish_reason: Option<String> = None;
-    let mut usage: Option<hkask_types::InferenceUsage> = None;
-    let mut tool_calls: Vec<hkask_types::StructuredToolCall> = Vec::new();
-
-    while let Some(chunk_result) = stream.next().await {
-        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-            let _ = tx.send(kask_panel::CuratorEvent::Error("cancelled".to_string()));
-            return;
-        }
-        let chunk = match chunk_result {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx.send(kask_panel::CuratorEvent::Error(e.to_string()));
-                return;
-            }
-        };
-        if !chunk.text_delta.is_empty() {
-            assistant_text.push_str(&chunk.text_delta);
-            let _ = tx.send(kask_panel::CuratorEvent::TextDelta(chunk.text_delta));
-        }
-        if !chunk.reasoning_delta.is_empty() {
-            assistant_thinking.push_str(&chunk.reasoning_delta);
-            let _ = tx.send(kask_panel::CuratorEvent::ThinkingDelta(
-                chunk.reasoning_delta,
-            ));
-        }
-        if !chunk.tool_calls.is_empty() {
-            for tc in chunk.tool_calls.iter().cloned() {
-                let call_id = tc
-                    .call_id
-                    .clone()
-                    .unwrap_or_else(|| format!("call_{}", tool_calls.len()));
-                let _ = tx.send(kask_panel::CuratorEvent::ToolCall(
-                    kask_panel::ToolCallRequest {
-                        call_id: call_id.clone(),
-                        name: tc.tool.clone(),
-                        arguments: tc.args.clone(),
-                    },
-                ));
-                // Dispatch the tool call via the OCAP-gated ToolPort.
-                let result = dispatch_tool_call(
-                    &tool_port,
-                    &a2a_secret,
-                    &tc.server,
-                    &tc.tool,
-                    tc.args.clone(),
-                )
-                .await;
-                let _ = tx.send(kask_panel::CuratorEvent::ToolResult {
-                    call_id: call_id.clone(),
-                    result: result.clone(),
-                });
-                // Append the tool call + result to history so the next
-                // turn sees it.
-                let tool_msg = match result {
-                    Ok(value) => hkask_types::ChatMessage {
-                        role: "tool".to_string(),
-                        content: format!("{}: {}", tc.tool, value),
-                    },
-                    Err(err) => hkask_types::ChatMessage {
-                        role: "tool".to_string(),
-                        content: format!("{}: ERROR {}", tc.tool, err),
-                    },
-                };
-                history.lock().await.push(tool_msg);
-                tool_calls.push(tc);
-            }
-        }
-        if let Some(reason) = chunk.finish_reason.clone() {
-            finish_reason = Some(reason);
-        }
-        if let Some(u) = chunk.usage.clone() {
-            usage = Some(u);
-        }
-    }
-
-    // Append the assistant response to history.
-    if !assistant_text.is_empty() {
-        history
-            .lock()
-            .await
-            .push(hkask_types::ChatMessage::assistant(assistant_text));
-    }
-
-    let _ = tx.send(kask_panel::CuratorEvent::Done {
-        finish_reason,
-        usage: usage.map(|u| kask_panel::Usage {
-            prompt_tokens: u.prompt_tokens as u64,
-            completion_tokens: u.completion_tokens as u64,
-            total_tokens: u.total_tokens as u64,
-        }),
-    });
-}
-
-/// Build `ChatToolDefinition`s for the tab's server, if it's connected.
-async fn build_tool_definitions(
-    tool_port: &std::sync::Arc<kask_bridge::BridgeToolPort>,
-    server: &str,
-) -> Option<Vec<hkask_types::ChatToolDefinition>> {
-    let runtime = tool_port.runtime_arc();
-    let servers = runtime.list_servers().await;
-    let target = servers.into_iter().find(|s| s.id == server)?;
-    let defs: Vec<hkask_types::ChatToolDefinition> = target
-        .tools
-        .into_iter()
-        .map(|tool| hkask_types::ChatToolDefinition {
-            tool_type: "function".to_string(),
-            function: hkask_types::ChatToolFunction {
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.input_schema,
-            },
-        })
-        .collect();
-    Some(defs)
-}
-
-/// Dispatch one tool call via the OCAP-gated `ToolPort`.
-async fn dispatch_tool_call(
-    tool_port: &std::sync::Arc<kask_bridge::BridgeToolPort>,
-    a2a_secret: &[u8],
-    server: &str,
-    tool: &str,
-    args: serde_json::Value,
-) -> std::result::Result<serde_json::Value, String> {
-    use hkask_capability::{DelegationAction, DelegationResource, DelegationToken, ToolPort};
-    use hkask_types::WebID;
-
-    let secret_bytes: [u8; 32] = a2a_secret
-        .get(..32)
-        .and_then(|s| s.try_into().ok())
-        .unwrap_or_else(|| {
-            log::warn!("a2a_secret too short for Ed25519 — using zeroed key");
-            [0u8; 32]
-        });
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
-    let webid = WebID::from_persona(b"kask-panel");
-    let token = DelegationToken::new(
-        DelegationResource::Tool,
-        tool.to_string(),
-        DelegationAction::Execute,
-        webid,
-        webid,
-        &signing_key,
-    );
-    ToolPort::invoke(&**tool_port, server, tool, args, &token)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Adapter implementing `kask_panel::RegulationStatus` via the CyberneticsLoop
-/// and RegulationLedger. Provides gas + health + alert snapshots for the
-/// panel's status bar.
-struct PanelRegulationStatus {
-    cybernetics_loop: std::sync::Arc<tokio::sync::RwLock<hkask_regulation::CyberneticsLoop>>,
-    ledger: std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
-    webid: hkask_types::WebID,
-    executor: gpui::BackgroundExecutor,
-}
-
-impl kask_panel::RegulationStatus for PanelRegulationStatus {
-    fn snapshot(&self) -> gpui::Task<kask_panel::RegulationSnapshot> {
-        let loop_arc = self.cybernetics_loop.clone();
-        let ledger_arc = self.ledger.clone();
-        let webid = self.webid;
-        self.executor.spawn(async move {
-            let loop_guard = loop_arc.read().await;
-            let gas = loop_guard.agent_gas_status(&webid).await;
-            drop(loop_guard);
-            let ledger_guard = ledger_arc.read().await;
-            let health = ledger_guard.health().await;
-            let alerts = ledger_guard.alerts().await;
-            drop(ledger_guard);
-            kask_panel::RegulationSnapshot {
-                gas_remaining: gas.as_ref().map(|g| g.remaining.as_raw()).unwrap_or(0),
-                gas_cap: gas.as_ref().map(|g| g.cap.as_raw()).unwrap_or(0),
-                alert_count: alerts.len(),
-                critical_count: health.critical_count,
-                healthy: health.healthy,
-            }
         })
     }
 }

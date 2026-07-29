@@ -132,11 +132,24 @@ pub type SkillsResolver = Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>;
 
 pub struct SkillTool {
     skills: SkillsResolver,
-    /// hKask ManifestExecutor for cascade-based skill execution.
-    /// In zed-kask, this is always set (wired in main.rs). When None
-    /// (tests only), skill invocation returns the no-op envelope — body
-    /// injection is disabled in zed-kask.
-    manifest_executor: Option<Arc<dyn SkillManifestExecutor>>,
+    /// hKask ManifestExecutor for cascade-based skill execution, resolved
+    /// at invocation time (not at session-creation time).
+    ///
+    /// This is a resolver rather than a cached `Option<Arc<...>>` to fix the
+    /// session-creation race: if a session is created before the deferred
+    /// post-login task wires the global executor, a cached field would stay
+    /// `None` for the session's entire lifetime. By reading the global at
+    /// invocation time, sessions created before wiring pick up the executor
+    /// once `set_manifest_executor` runs. The slash-command path
+    /// (`send_skill_invocation`) already reads the global at invocation time;
+    /// this aligns the model-invocation path with it.
+    ///
+    /// In zed-kask, the resolver returns `Some` once the composition root has
+    /// wired the executor. When it returns `None` (tests only, or before
+    /// wiring), skill invocation returns the no-op envelope — body injection
+    /// is disabled in zed-kask.
+    manifest_executor_resolver:
+        Arc<dyn Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync>,
 }
 
 /// Trait for executing hKask skill manifests (D1 seam).
@@ -184,7 +197,9 @@ impl SkillTool {
     {
         Self {
             skills: Arc::new(skills),
-            manifest_executor: None,
+            // Tests only: no manifest executor, so `run` returns the no-op
+            // envelope (body injection is disabled in zed-kask).
+            manifest_executor_resolver: Arc::new(|| None),
         }
     }
 
@@ -201,9 +216,31 @@ impl SkillTool {
     where
         F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
     {
+        // Wrap the executor in a resolver closure that always returns it.
+        // This preserves the test-time contract (executor is pinned for the
+        // tool's lifetime) while sharing the invocation-time resolution path
+        // with the production `register_session` constructor.
+        let executor = manifest_executor;
         Self {
             skills: Arc::new(skills),
-            manifest_executor: Some(manifest_executor),
+            manifest_executor_resolver: Arc::new(move || Some(executor.clone())),
+        }
+    }
+
+    /// Construct a `SkillTool` whose manifest executor is resolved at
+    /// invocation time by calling `resolver`. This is the production path
+    /// used by `register_session`: the resolver reads the process-global
+    /// `manifest_executor()` so that sessions created before the deferred
+    /// post-login task wires the executor pick it up on later invocations
+    /// (the session-creation race fix).
+    pub fn with_manifest_executor_resolver<F, R>(skills: F, resolver: R) -> Self
+    where
+        F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
+        R: Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync + 'static,
+    {
+        Self {
+            skills: Arc::new(skills),
+            manifest_executor_resolver: Arc::new(resolver),
         }
     }
 }
@@ -327,7 +364,15 @@ impl AgentTool for SkillTool {
                 })?;
             }
 
-            let rendered = if let Some(executor) = &self.manifest_executor {
+            // Resolve the manifest executor at invocation time (not at
+            // session-creation time). This closes the session-creation race:
+            // a session created before the deferred post-login task wires the
+            // global executor would otherwise have a cached `None` for its
+            // entire lifetime. Reading the global here lets it pick up the
+            // executor once `set_manifest_executor` runs. The slash-command
+            // path (`send_skill_invocation`) already reads the global at
+            // invocation time; this aligns the model-invocation path with it.
+            let rendered = if let Some(executor) = (self.manifest_executor_resolver)() {
                 // D1: run the hKask manifest cascade (KnowAct/FlowDef/RenderAct + PDCA).
                 // Check if this skill has an hKask manifest in the registry.
                 // If it does, run the cascade; if not, return the no-manifest
@@ -1130,6 +1175,83 @@ mod tests {
         assert!(
             !rendered.contains("# Body"),
             "SKILL.md body must not be injected even when no manifest is registered: {rendered}"
+        );
+    }
+
+    /// Pin the session-creation race fix: a `SkillTool` constructed with a
+    /// resolver that returns `None` initially (session created before the
+    /// deferred post-login task wires the executor) must pick up the executor
+    /// once the resolver starts returning `Some`. Caching the executor at
+    /// construction time would pin `None` for the session's entire lifetime.
+    ///
+    /// The resolver is a closure over a `Mutex<Option<Arc<...>>>`, mirroring
+    /// the production `manifest_executor_cloned` resolver which reads the
+    /// process-global `OnceLock`. The test flips the `Mutex` from `None` to
+    /// `Some` between two invocations of the same `SkillTool` instance and
+    /// asserts the second invocation runs the cascade.
+    #[gpui::test]
+    async fn test_skill_tool_manifest_executor_resolver_picks_up_late_wiring(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (skill, _body) = create_test_skill("late-wiring-skill", "A skill", "# Body");
+        let skills = Arc::new(vec![skill]);
+
+        // The resolver reads this cell each time the tool runs. Initially
+        // `None` (session created before wiring), then `Some(executor)` after
+        // the simulated deferred task runs.
+        let executor_slot: Arc<std::sync::Mutex<Option<Arc<dyn SkillManifestExecutor>>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let slot_for_resolver = executor_slot.clone();
+        let tool = Arc::new(SkillTool::with_manifest_executor_resolver(
+            move |_cx| skills.clone(),
+            move || slot_for_resolver.lock().expect("slot poisoned").clone(),
+        ));
+
+        // First invocation: executor not yet wired. Must return the
+        // "not configured" envelope, NOT inject the body, and NOT error.
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "late-wiring-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+        let output = task.await.unwrap();
+        let SkillToolOutput::Found { rendered } = output else {
+            panic!("expected Found before wiring, got: {output:?}");
+        };
+        assert!(
+            rendered.contains("Skill manifest executor not configured"),
+            "pre-wiring invocation must return the not-configured envelope: {rendered}"
+        );
+        assert!(
+            !rendered.contains("# Body"),
+            "SKILL.md body must not be injected when executor is unwired: {rendered}"
+        );
+
+        // Simulate the deferred post-login task wiring the global executor.
+        let executor: Arc<dyn SkillManifestExecutor> = Arc::new(StubManifestExecutor::new(
+            ["late-wiring-skill"],
+            "cascade ran",
+        ));
+        *executor_slot.lock().expect("slot poisoned") = Some(executor);
+
+        // Second invocation on the SAME tool instance: must now run the
+        // cascade. This is the race fix — a cached field would still be `None`.
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "late-wiring-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+        let SkillToolOutput::Found { rendered } = output else {
+            panic!("expected Found after wiring, got: {output:?}");
+        };
+        assert!(
+            rendered.contains("cascade ran"),
+            "post-wiring invocation must run the cascade via the resolver: {rendered}"
+        );
+        assert!(
+            !rendered.contains("# Body"),
+            "SKILL.md body must not be injected even after wiring: {rendered}"
         );
     }
 

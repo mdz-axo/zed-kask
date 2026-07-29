@@ -15,7 +15,7 @@ pub mod tool_router;
 mod tools;
 
 use context_server::ContextServerId;
-pub use curator_agent_server::CuratorAgentServer;
+pub use curator_agent_server::{CURATOR_STATIC_CONTEXT, CuratorAgentServer};
 pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
@@ -928,22 +928,20 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            // D1: If the global manifest executor is set (by the zed-kask
-            // composition root), use it to run the hKask cascade instead of
-            // body injection. The SKILL.md frontmatter stays the discovery-only
-            // catalog entry; the manifest YAML in kask/registry/manifests/ drives
-            // the cascade.
-            if let Some(executor) = crate::manifest_executor() {
-                thread.add_tool(SkillTool::with_manifest_executor(
-                    skills_resolver_for_project(weak.clone(), project_id),
-                    executor.clone(),
-                ));
-            } else {
-                thread.add_tool(SkillTool::new(skills_resolver_for_project(
-                    weak.clone(),
-                    project_id,
-                )));
-            }
+            // D1: The manifest executor is resolved at invocation time by
+            // reading the process-global `manifest_executor()`. This closes
+            // the session-creation race: if a session is created before the
+            // deferred post-login task wires the executor, the resolver
+            // returns `None` on early invocations and `Some(...)` once
+            // `set_manifest_executor` runs. Caching the executor at
+            // session-creation time would pin `None` for the session's
+            // entire lifetime. The slash-command path (`send_skill_invocation`)
+            // already reads the global at invocation time; this aligns the
+            // model-invocation path with it.
+            thread.add_tool(SkillTool::with_manifest_executor_resolver(
+                skills_resolver_for_project(weak.clone(), project_id),
+                crate::manifest_executor_cloned,
+            ));
         });
 
         let subscriptions = vec![
@@ -2782,6 +2780,18 @@ pub fn set_manifest_executor(executor: Option<Arc<dyn SkillManifestExecutor>>) {
 /// Get the global manifest executor, if set.
 pub(crate) fn manifest_executor() -> Option<&'static Arc<dyn SkillManifestExecutor>> {
     MANIFEST_EXECUTOR.get().and_then(|opt| opt.as_ref())
+}
+
+/// Get a cloned handle to the global manifest executor, if set.
+///
+/// This is the invocation-time resolver used by `SkillTool` (via
+/// `with_manifest_executor_resolver`) to close the session-creation race:
+/// the closure reads the global each time the tool runs, so sessions
+/// created before the deferred post-login task wires the executor pick
+/// it up on later invocations. `Arc::clone` is cheap (atomic refcount),
+/// so calling this per skill invocation is not a measurable cost.
+pub(crate) fn manifest_executor_cloned() -> Option<Arc<dyn SkillManifestExecutor>> {
+    crate::manifest_executor().cloned()
 }
 
 // ── D6: Thread → memory ingestion hook ─────────────────────────────────────

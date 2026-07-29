@@ -72,17 +72,24 @@ impl MemoryPort for LoggingMemoryPort {
 ///
 /// Stores each completed turn as:
 /// 1. An episodic h_mem (Private, perspective = user WebID) — the user's
-///    first-person experience record.
-/// 2. A semantic h_mem (Shared) — a curator-accessible copy for metacognitive
-///    reflection.
+///    first-person experience record, in the user's own `memory.db`.
+/// 2. A semantic h_mem (Shared) — a curator-accessible copy written to the
+///    **curator's** sovereign `pod.db`, not the user's memory DB. The curator
+///    MCP server reads from the same `pod.db`, so `curator_memory_recall` and
+///    `curator_semantic_search` see turns the agent has observed.
 /// 3. An embedding of the user prompt — for future semantic retrieval and
-///    context injection.
+///    context injection, stored in the user's `memory.db`.
 ///
 /// Construction requires a SQLCipher database path and passphrase. When
 /// these are not available, use `LoggingMemoryPort` instead.
 pub struct RealMemoryPort {
     episodic: Arc<EpisodicMemory>,
     semantic: Arc<SemanticMemory>,
+    /// Curator's sovereign semantic store — written to `agents/curator/pod.db`,
+    /// the same DB the curator MCP server reads from. `None` when the curator
+    /// DB cannot be opened (graceful degradation — the curator copy is skipped
+    /// but the user's episodic + semantic records still persist).
+    curator_semantic: Option<Arc<SemanticMemory>>,
     embedding_port: LanguageModelEmbeddingPort,
     embedding_model: String,
     user_webid: WebID,
@@ -196,7 +203,22 @@ impl RealMemoryPort {
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
-        let curator_webid = WebID::from_persona(b"Curator");
+        let curator_webid = WebID::from_persona(b"curator");
+
+        // Open the curator's sovereign DB (`agents/curator/pod.db`) and
+        // construct a separate SemanticMemory pointed at it. The curator MCP
+        // server reads from the same DB, so h_mems written here are visible to
+        // `curator_memory_recall` and `curator_semantic_search`.
+        //
+        // The curator DB uses the same passphrase as the user's DB — both are
+        // SQLCipher databases under the same hKask data directory, and the
+        // passphrase is provisioned by `provision_agent` / the keychain.
+        //
+        // When the curator DB cannot be opened (missing dir, wrong
+        // passphrase, disk error), `curator_semantic` is `None` — the curator
+        // copy is silently skipped but the user's episodic + semantic records
+        // still persist. This is graceful degradation, not a hard failure.
+        let curator_semantic = open_curator_semantic(passphrase, embedding_dim);
 
         // Consolidation service — episodic → semantic promotion.
         // Only constructed when the cadence is non-zero; a zero cadence disables
@@ -218,6 +240,7 @@ impl RealMemoryPort {
         Ok(Self {
             episodic,
             semantic,
+            curator_semantic,
             embedding_port,
             embedding_model,
             user_webid,
@@ -476,6 +499,72 @@ impl RealMemoryPort {
     }
 }
 
+/// Open the curator's sovereign `pod.db` and construct a `SemanticMemory`
+/// pointed at it. Returns `None` on any failure — the caller treats this as
+/// graceful degradation (curator copy is skipped, user memory still persists).
+///
+/// The DB path defaults to `agents/curator/pod.db` under the hKask data
+/// directory, matching the path the curator MCP server reads from in
+/// `open_curator_stores`. The passphrase is the same as the user's DB —
+/// both are provisioned by `provision_agent` / the keychain.
+fn open_curator_semantic(passphrase: &str, embedding_dim: usize) -> Option<Arc<SemanticMemory>> {
+    let curator_db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
+        let p = hkask_types::agent_paths::agent_pod_db("curator");
+        let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+        if let Some(parent) = resolved.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        resolved.to_string_lossy().to_string()
+    });
+
+    let db = match Database::open(&curator_db_path, passphrase) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                db_path = %curator_db_path,
+                "Failed to open curator DB — curator copy will be skipped. \
+                 Set HKASK_CURATOR_DB to override the path, or ensure the \
+                 curator agent directory exists under the hKask data dir."
+            );
+            return None;
+        }
+    };
+    let pool = match db.sqlite_pool() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                "Failed to get SQLite pool for curator DB"
+            );
+            return None;
+        }
+    };
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> =
+        Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
+    let h_mem_store = match HMemStore::from_driver(Arc::clone(&driver)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                "Failed to create HMemStore for curator DB"
+            );
+            return None;
+        }
+    };
+    let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
+    let semantic = Arc::new(SemanticMemory::new(h_mem_store, embedding_store));
+    tracing::info!(
+        target: "reg.memory",
+        db_path = %curator_db_path,
+        "Curator semantic store opened — turns will be mirrored to curator memory"
+    );
+    Some(semantic)
+}
+
 impl MemoryPort for RealMemoryPort {
     fn ingest_turn<'a>(
         &'a self,
@@ -549,8 +638,15 @@ impl MemoryPort for RealMemoryPort {
             // ── 2. Store semantic h_mem (Shared, curator-accessible) ──────
             //
             // The semantic record is a curator copy — Shared visibility, no
-            // perspective. The curator can recall this for metacognitive
-            // reflection on the user's conversation patterns.
+            // perspective. It is written to the **curator's** sovereign DB
+            // (`agents/curator/pod.db`), not the user's `memory.db`. The
+            // curator MCP server reads from the same `pod.db`, so
+            // `curator_memory_recall` and `curator_semantic_search` can see
+            // turns the agent has observed.
+            //
+            // When `curator_semantic` is `None` (curator DB couldn't be
+            // opened), the curator copy is silently skipped — the user's
+            // episodic record is the primary store and is unaffected.
             let curator_entity = format!("curator:thread:{thread_id}");
             let curator_h_mem = HMem::new(
                 &curator_entity,
@@ -560,14 +656,23 @@ impl MemoryPort for RealMemoryPort {
             )
             .with_visibility(Visibility::Shared);
 
-            if let Err(e) = self.semantic.store(curator_h_mem) {
-                tracing::warn!(
+            if let Some(ref curator_semantic) = self.curator_semantic {
+                if let Err(e) = curator_semantic.store(curator_h_mem) {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        thread_id = %thread_id,
+                        error = %e,
+                        "Failed to store curator semantic h_mem — \
+                         curator memory will not include this turn"
+                    );
+                    // Non-fatal — the episodic record is the primary store.
+                }
+            } else {
+                tracing::debug!(
                     target: "reg.memory",
                     thread_id = %thread_id,
-                    error = %e,
-                    "Failed to store semantic (curator) h_mem"
+                    "Curator semantic store not available — skipping curator copy"
                 );
-                // Non-fatal — the episodic record is the primary store.
             }
 
             // ── 3. Embed the user prompt for future retrieval ─────────────
@@ -899,6 +1004,19 @@ mod tests {
         let embedding_store = EmbeddingStore::from_driver(driver, 1024);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
+        // Curator store — a separate in-memory driver so the curator copy
+        // lands in a different DB, mirroring production where the curator
+        // has its own `pod.db`.
+        let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
+            SqliteDriver::in_memory_driver();
+        let curator_h_mem_store =
+            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
+        let curator_embedding_store = EmbeddingStore::from_driver(curator_driver, 1024);
+        let curator_semantic = Arc::new(SemanticMemory::new(
+            curator_h_mem_store,
+            curator_embedding_store,
+        ));
+
         // Tests don't call embed — use a stub port with no backing task.
         let embedding_port = LanguageModelEmbeddingPort::for_tests();
 
@@ -918,10 +1036,11 @@ mod tests {
         RealMemoryPort {
             episodic,
             semantic,
+            curator_semantic: Some(curator_semantic),
             embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
-            curator_webid: WebID::from_persona(b"Curator"),
+            curator_webid: WebID::from_persona(b"curator"),
             consolidation,
             consolidation_cadence_secs,
             confidence_floor,
@@ -969,13 +1088,59 @@ mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok());
 
-        // Verify semantic (curator) h_mem was stored
-        let h_mems = port
+        // Verify semantic (curator) h_mem was stored in the curator's store,
+        // not the user's semantic store.
+        let curator_semantic = port.curator_semantic.as_ref().expect("curator store");
+        let h_mems = curator_semantic
+            .query_deduped("curator:thread:test-thread-2")
+            .expect("query should succeed");
+        assert_eq!(
+            h_mems.len(),
+            1,
+            "one curator semantic h_mem should be stored"
+        );
+        assert_eq!(h_mems[0].attribute, "turn");
+
+        // The user's semantic store should NOT contain the curator copy.
+        let user_h_mems = port
             .semantic
             .query_deduped("curator:thread:test-thread-2")
             .expect("query should succeed");
-        assert_eq!(h_mems.len(), 1, "one semantic h_mem should be stored");
-        assert_eq!(h_mems[0].attribute, "turn");
+        assert_eq!(
+            user_h_mems.len(),
+            0,
+            "curator copy must not leak into the user's semantic store"
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_turn_skips_curator_copy_when_store_absent() {
+        // Simulate the curator DB being unavailable — `curator_semantic` is
+        // `None`. Ingestion should still succeed (episodic record persists),
+        // and no curator copy should be written.
+        let mut port = in_memory_port();
+        port.curator_semantic = None;
+        let webid = port.user_webid;
+        let record = TurnRecord {
+            thread_id: "test-no-curator".to_string(),
+            user_input: "What is memory?".to_string(),
+            agent_response: "Memory is persistence across time.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+        };
+
+        let result = port.ingest_turn(record).await;
+        assert!(
+            result.is_ok(),
+            "ingest should succeed without curator store"
+        );
+
+        // Episodic record should still be present.
+        let h_mems = port
+            .episodic
+            .query_for_deduped("chat:thread:test-no-curator", webid)
+            .expect("query should succeed");
+        assert_eq!(h_mems.len(), 1, "episodic h_mem should be stored");
     }
 
     #[tokio::test]

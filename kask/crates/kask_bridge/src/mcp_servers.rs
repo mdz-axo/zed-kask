@@ -119,6 +119,17 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DEFAULT_MODEL",
             "HKASK_EMBEDDING_MODEL",
             "HKASK_CLASSIFIER_MODEL",
+            // Curator DB path — injected by the deferred task after
+            // provisioning, so the curator MCP server reads from the same
+            // `agents/curator/pod.db` the agent writes curator copies to.
+            "HKASK_CURATOR_DB",
+            // Curator WebID — set to `from_persona(b"curator")` so the
+            // curator MCP server's identity matches the persona used by
+            // `RealMemoryPort` when writing curator copies.
+            "HKASK_WEBID",
+            // Data dir — needed so `resolve_under_data_dir` in
+            // `open_curator_stores` finds the same root as the agent.
+            "HKASK_DATA_DIR",
         ]),
     },
     BuiltinMcpServer {

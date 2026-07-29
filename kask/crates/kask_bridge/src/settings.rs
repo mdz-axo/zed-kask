@@ -673,6 +673,13 @@ impl KaskSettings {
     pub fn mcp_env(&self) -> std::collections::HashMap<String, String> {
         let mut env = std::collections::HashMap::new();
 
+        // Pass the hKask data directory to all MCP servers so they resolve
+        // agent paths under the same root as the parent process. This is
+        // read by `resolve_under_data_dir` in `agent_paths.rs`.
+        if let Ok(data_dir) = std::env::var("HKASK_DATA_DIR") {
+            env.insert("HKASK_DATA_DIR".to_string(), data_dir);
+        }
+
         // Defaults are read from each subsection's `Default` impl so there's a
         // single source of truth — changing `Default` automatically updates
         // the comparison here. Do not inline magic numbers; they drift from
