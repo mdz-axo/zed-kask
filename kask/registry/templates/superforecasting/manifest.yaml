@@ -115,14 +115,6 @@ templates:
       outputs and produces calibrated 0–1 scores plus a gate_pass determination
       with actionable fix notes.
 
-  - id: superforecasting/superforecasting-convergence-check
-    name: "Compute normalized convergence metric for superforecasting PDCA cycles"
-    path: superforecasting-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for superforecasting PDCA cycles.
-      Returns convergence_metric plus rationale and blockers.
 
 # FlowDef orchestrator — chains all 8 stages with convergence criteria.
 # Regulation spans (hkask.template.{select,render,outcome}) are emitted automatically

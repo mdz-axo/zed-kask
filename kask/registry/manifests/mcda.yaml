@@ -15,12 +15,13 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.05
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_5_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 100000
@@ -100,15 +101,19 @@ steps:
       normalized_scores: "{{ step_2_result.normalized_scores | default([]) }}"
 
   - ordinal: 5
-    action: select
-    description: Compute normalized convergence metric for MCDA cycle.
-    renderer: minijinja
-    template_ref: mcda/mcda-convergence-check.j2
-    gas_cap: 2000
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      ranking_result: "{{ step_3_result }}"
-      sensitivity_result: "{{ step_4_result }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 6
     action: loop
@@ -117,6 +122,9 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
+      # Push the sensitivity quality signal into kata_hypotenuse so the Cauchy
+      # criterion can detect when the iterates have stopped moving.
+      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -143,10 +151,6 @@ ocap:
       action: render
       template_id: mcda/sensitivity-analysis
       gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: mcda/mcda-convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: mcda

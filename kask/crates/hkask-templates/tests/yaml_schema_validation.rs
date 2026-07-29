@@ -148,20 +148,24 @@ fn superforecasting_manifest_loads_with_compute_step() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load superforecasting manifest: {e}"));
 
-    // 12 select steps + 4 compute steps + 1 loop step = 17 total.
+    // 11 select steps + 5 compute steps + 1 loop step = 17 total.
+    // The 5th compute step (ordinal 15) is the Cauchy convergence check
+    // (kata.convergence_check), which replaced the former LLM convergence-check
+    // select step in the Cauchy-only convergence migration.
     assert_eq!(
         manifest.steps.len(),
         17,
-        "expected 17 steps after Fermi + outside-view + Bayesian + calibration compute insertions"
+        "expected 17 steps after Fermi + outside-view + Bayesian + calibration + convergence compute insertions"
     );
 
-    // Four compute steps: Fermi (3), outside-view (5), Bayesian (10), calibration (16).
+    // Five compute steps: Fermi (3), outside-view (5), Bayesian (10),
+    // convergence-check (15), calibration (16).
     let compute_steps: Vec<_> = manifest
         .steps
         .iter()
         .filter(|s| s.action == "compute")
         .collect();
-    assert_eq!(compute_steps.len(), 4, "manifest must have 4 compute steps");
+    assert_eq!(compute_steps.len(), 5, "manifest must have 5 compute steps");
     assert_eq!(compute_steps[0].ordinal, 3, "Fermi compute at ordinal 3");
     assert_eq!(
         compute_steps[0].compute_ref.as_deref(),
@@ -184,11 +188,19 @@ fn superforecasting_manifest_loads_with_compute_step() {
         Some("bayesian_update")
     );
     assert_eq!(
-        compute_steps[3].ordinal, 16,
-        "calibration feedback compute at ordinal 16"
+        compute_steps[3].ordinal, 15,
+        "Cauchy convergence-check compute at ordinal 15"
     );
     assert_eq!(
         compute_steps[3].compute_ref.as_deref(),
+        Some("kata.convergence_check")
+    );
+    assert_eq!(
+        compute_steps[4].ordinal, 16,
+        "calibration feedback compute at ordinal 16"
+    );
+    assert_eq!(
+        compute_steps[4].compute_ref.as_deref(),
         Some("apply_calibration_adjustment")
     );
 

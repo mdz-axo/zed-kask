@@ -19,16 +19,13 @@ manifest:
   visibility: Public
 
 convergence:
-  # 0.05 — "decision-ready" band: research framing must be near-zero-defect (FINER
-  # compliant, PICO-complete, testable, aims aligned) before committing to a study.
-  # Tighter than the 0.15 "maximally correct" band used by generative skills, because
-  # a flawed framing invalidates everything downstream of it.
-  threshold: 0.05
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_4_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 100000
@@ -112,22 +109,19 @@ steps:
       finer_result: "{{ step_1_result | default({}) }}"
 
   - ordinal: 4
-    action: select
-    description: >
-      Compute normalized convergence metric for hypothesis-framer cycle.
-      Evaluates FINER compliance, PICO completeness, hypothesis coherence,
-      and aims alignment. Hypothesis coherence and aims alignment are
-      both evaluated from the merged operationalize step result. Returns
-      convergence_metric plus blockers.
-    renderer: minijinja
-    template_ref: hypothesis-framer/hypothesis-framer-convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      finer_result: "{{ step_1_result }}"
-      pico_result: "{{ step_2_result }}"
-      operationalize_result: "{{ step_3_result }}"
-      prior_metric: "{{ prior_metric | default(null) }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   - ordinal: 5
     action: loop
@@ -137,12 +131,12 @@ steps:
       the first pass; re-running it every iteration is wasteful (mirrors superforecasting's
       triage-skip). PICO (step 2) and operationalize (step 3) are where blockers live, and
       finer_result persists in context for operationalize to read. If FINER itself is the
-      blocker (a dimension < 4), the loop cannot fix it -> escalate to human. The prior
-      iteration's convergence_metric is carried forward so the convergence check's
-      materiality guard can detect a stable-but-unconverged framing.
+      blocker (a dimension < 4), the loop cannot fix it -> escalate to human.
     input_mapping:
       loop_target: "{{ 2 }}"
-      prior_metric: "{{ step_4_result.convergence_metric }}"
+      # Push the operationalize quality signal into kata_hypotenuse so the Cauchy
+      # criterion can detect when the iterates have stopped moving.
+      kata_hypotenuse: "{{ step_3_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -165,10 +159,6 @@ ocap:
       action: render
       template_id: hypothesis-framer/hypothesis-operationalize
       gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: hypothesis-framer/hypothesis-framer-convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: hypothesis-framer
