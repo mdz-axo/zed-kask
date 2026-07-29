@@ -235,10 +235,17 @@ print(json.dumps(settings, indent=2))
         # Merge into existing settings.json. Preserve everything except
         # overwrite kask server entries under context_servers.
         if command -v python3 >/dev/null 2>&1; then
+            # Back up the user's settings.json before rewriting. The merge
+            # writes plain JSON, so any // or /* */ comments in the original
+            # are lost — the backup preserves them.
+            cp -p "$settings_file" "$settings_file.bak"
+            log "Backed up $settings_file to $settings_file.bak (comments will be stripped on merge)"
             python3 -c "
 import json, sys
+sys.path.insert(0, sys.argv[3])
+from jsonc_load import load_jsonc
 with open(sys.argv[1]) as f:
-    settings = json.load(f)
+    settings = load_jsonc(f)
 kask = json.loads(sys.argv[2])
 cs = settings.setdefault('context_servers', {})
 # Overwrite kask-managed entries, preserve user-added ones.
@@ -247,7 +254,7 @@ for k, v in kask.items():
 with open(sys.argv[1], 'w') as f:
     json.dump(settings, f, indent=2)
     f.write('\n')
-" "$settings_file" "$kask_servers_json"
+" "$settings_file" "$kask_servers_json" "$_HKASK_COMMON_DIR"
         else
             # jq merge: deep-merge kask servers into existing context_servers.
             local tmp
@@ -286,8 +293,10 @@ remove_mcp_server_settings() {
     if command -v python3 >/dev/null 2>&1; then
         python3 -c "
 import json, os, sys
+sys.path.insert(0, sys.argv[2])
+from jsonc_load import load_jsonc
 with open(sys.argv[1]) as f:
-    settings = json.load(f)
+    settings = load_jsonc(f)
 cs = settings.get('context_servers', {})
 removed = 0
 for k in list(cs.keys()):
@@ -302,7 +311,7 @@ with open(sys.argv[1], 'w') as f:
     f.write('\n')
 if removed:
     print(f'Removed {removed} kask MCP server entries from settings.json')
-" "$settings_file" 2>/dev/null && log "Cleaned kask MCP entries from $settings_file"
+" "$settings_file" "$_HKASK_COMMON_DIR" 2>/dev/null && log "Cleaned kask MCP entries from $settings_file"
     elif command -v jq >/dev/null 2>&1; then
         local tmp
         tmp=$(mktemp)

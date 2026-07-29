@@ -970,16 +970,16 @@ impl MediaServer {
                     // Qwen2.5-VL 72B — Apache 2.0 open-weight, served by fal.ai
                     return Some(("fal.ai/Qwen/Qwen2.5-VL-72B-Instruct", "qwen2.5-vl-72b"));
                 }
-                "deepinfra" | "di" => {
+                "deepinfra" => {
                     return Some((
                         "DeepInfra/meta-llama/Llama-3.2-11B-Vision-Instruct",
                         "llama-3.2-vision",
                     ));
                 }
-                "openrouter" | "or" => {
+                "openrouter" => {
                     return Some(("OpenRouter/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
                 }
-                "together ai" | "together" | "tg" => {
+                "together ai" | "together" => {
                     return Some(("Together AI/Qwen/Qwen2.5-VL-72B-Instruct", "qwen-vl"));
                 }
                 _ => continue,

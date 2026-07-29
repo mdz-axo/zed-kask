@@ -32,13 +32,12 @@ pub type MediaFuture<'a> =
 /// that the IPC bridge forwards to fal.ai/DeepInfra. Grouped into a struct
 /// so the trait method signature doesn't grow 12+ optional parameters.
 ///
-/// `op` selects the backend method (e.g. "generate_image", "transcribe").
-/// The remaining fields are op-specific; the server-side dispatch reads
-/// only the fields relevant to each op.
+/// The `op` string (e.g. "generate_image", "transcribe") is passed as the
+/// first argument to `media_generate`, not as a field here — it selects the
+/// backend method. The remaining fields are op-specific; the server-side
+/// dispatch reads only the fields relevant to each op.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MediaGenerateParams {
-    /// The media operation to perform (e.g. "generate_image", "transcribe").
-    pub op: String,
     /// Text prompt for image/video generation.
     pub prompt: Option<String>,
     /// Image URL for image-to-image, image-to-video, upscale, etc.

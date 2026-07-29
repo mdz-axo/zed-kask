@@ -2,15 +2,15 @@
 //!
 //! # Environment Variables
 //!
-//! - `DI_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
-//! - `FA_BASE_URL` / `FALAI_API_KEY` — fal.ai (cloud, required)
-//! - `TG_BASE_URL` / `TOGETHERAI_API_KEY` — Together AI (cloud, required)
-//! - `OR_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
-//! - `KC_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
-//! - `OM_BASE_URL` / `OM_API_KEY` — Ollama (local; key optional, header ignored)
+//! - `DEEPINFRA_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
+//! - `FALAI_BASE_URL` / `FALAI_API_KEY` — fal.ai (cloud, required)
+//! - `TOGETHERAI_BASE_URL` / `TOGETHERAI_API_KEY` — Together AI (cloud, required)
+//! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
+//! - `KILOCODE_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
+//! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `CLINE_BASE_URL` / `CLINE_API_KEY` — Cline cloud gateway (required)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
-//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DI, FA, TG, OR, KC, OM, CL, RP; default: DI)
+//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, Together AI, RunPod, OpenRouter, KiloCode, ollama, Cline; default: DeepInfra)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //! - `HKASK_FUSION_JUDGE_MODEL` / `HKASK_FUSION_PANEL_MODELS` / `HKASK_FUSION_MODE` / `HKASK_FUSION_SKILLS` — fusion config
 //! - `HKASK_FUSION_DISABLED=1` — disable fusion
@@ -23,7 +23,7 @@
 //!
 //! # Model Naming Convention
 //!
-//! Models use a 2-letter provider prefix:
+//! Models use a full-name provider prefix:
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
 //! - `fal.ai/paddleocr` → fal.ai (cloud)
 //! - `Together AI/Qwen/Qwen2.5-7B-Instruct-Turbo` → Together AI (cloud)
@@ -38,7 +38,8 @@ use serde::{Deserialize, Serialize};
 
 use hkask_types::secret::SecretRef;
 
-/// Two-letter provider identifier for inference routing.
+/// Provider identifier for inference routing. Used as the model-string
+/// prefix (e.g. `DeepInfra/model`, `fal.ai/model`) and in log messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderId {
     /// DeepInfra (cloud) — prefix `DeepInfra/`
@@ -71,7 +72,7 @@ pub enum ProviderId {
 }
 
 impl ProviderId {
-    /// Parse a 2-letter provider prefix from a model name.
+    /// Parse a full-name provider prefix from a model name.
     ///
     /// Returns `None` if the model name has no recognized prefix.
     /// Returns `Some((provider, stripped_model))` if a prefix is found.
@@ -231,7 +232,7 @@ pub struct InferenceConfig {
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
-            default_provider: ProviderId::OpenRouter,
+            default_provider: ProviderId::DeepInfra,
             deepinfra_base_url: "https://api.deepinfra.com".to_string(),
             deepinfra_api_key: String::new(),
             fal_base_url: "https://api.fal.ai".to_string(),
@@ -401,8 +402,8 @@ fn resolve_api_key(env_name: &str) -> String {
 /// Resolve the default provider from env var or keychain.
 ///
 /// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var first, then
-/// OS keychain). Accepted values: DI, FA, TG, RP, OR, KC, OM, CL. Defaults to
-/// DeepInfra.
+/// OS keychain). Accepted values: DeepInfra, fal.ai, Together AI, RunPod,
+/// OpenRouter, KiloCode, ollama, Cline. Defaults to DeepInfra.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");
     parse_provider_code(&raw)
@@ -410,8 +411,9 @@ fn resolve_default_provider() -> ProviderId {
 
 /// Parse a provider code string to a ProviderId.
 ///
-/// Accepted values: zed provider IDs (DeepInfra, fal.ai, Together AI, RunPod,
-/// OpenRouter, KiloCode, ollama, Cline). Anything else (including empty) → OpenRouter.
+/// Accepted values: full provider names (DeepInfra, fal.ai, Together AI,
+/// RunPod, OpenRouter, KiloCode, ollama, Cline). Anything else (including
+/// empty) → DeepInfra.
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
         "DeepInfra" => ProviderId::DeepInfra,
@@ -507,7 +509,7 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// Resolve base URL and API key from environment using a 2-letter provider prefix.
+    /// Resolve base URL and API key from environment using a full provider name.
     ///
     /// Reads `{prefix}_BASE_URL` (falls back to `default_base_url` if unset)
     /// and `{prefix}_API_KEY` (keychain-first, then env).
@@ -689,11 +691,15 @@ mod tests {
         assert!(ProviderId::looks_like_prefix("fal.ai/bar"));
         assert!(ProviderId::looks_like_prefix("SomeUnknown/model"));
         // No slash, too short, or empty prefix segment = not prefix-shaped.
+        // No slash, too short, or empty prefix segment = not prefix-shaped.
         assert!(!ProviderId::looks_like_prefix("qwen3:8b"));
         assert!(!ProviderId::looks_like_prefix("deepseek-v4-pro"));
         assert!(!ProviderId::looks_like_prefix("DI"));
-        assert!(!ProviderId::looks_like_prefix("ab/c"));
         assert!(!ProviderId::looks_like_prefix("DeepInfra/"));
         assert!(!ProviderId::looks_like_prefix("/model"));
+        // `ab/c` has the prefix shape (non-empty segment before `/`) —
+        // `looks_like_prefix` only checks shape, not whether the prefix is
+        // recognized. `parse_from_model` handles recognition.
+        assert!(ProviderId::looks_like_prefix("ab/c"));
     }
 }

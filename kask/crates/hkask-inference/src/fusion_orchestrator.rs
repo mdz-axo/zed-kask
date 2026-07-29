@@ -2057,9 +2057,15 @@ mod tests {
 
     // ── Codette-inspired: pressure tracking tests ─────────────────────────
 
+    /// Mutex to serialize the pressure tests — they share a process-global
+    /// `ROLLING_LATENCY_MS` static, so concurrent execution causes flakes
+    /// (one test's `store()` can overwrite another's value between its
+    /// `store()` and `compute_pressure()`).
+    static PRESSURE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn compute_pressure_zero_when_no_latency_recorded() {
-        // Reset the static to 0 by storing 0.
+        let _guard = PRESSURE_TEST_MUTEX.lock().unwrap();
         super::ROLLING_LATENCY_MS.store(0, std::sync::atomic::Ordering::Relaxed);
         let p = super::compute_pressure();
         assert_eq!(p, 0.0, "no latency recorded → zero pressure");
@@ -2067,8 +2073,7 @@ mod tests {
 
     #[test]
     fn compute_pressure_scales_with_latency() {
-        // Reset first — other pressure tests may have left a value in the
-        // shared static. Without this, parallel test execution causes flakes.
+        let _guard = PRESSURE_TEST_MUTEX.lock().unwrap();
         super::ROLLING_LATENCY_MS.store(5000, std::sync::atomic::Ordering::Relaxed);
         let p = super::compute_pressure();
         // 5000ms → (5000 - 2000) / 6000 = 0.5
@@ -2077,6 +2082,7 @@ mod tests {
 
     #[test]
     fn compute_pressure_clamps_at_one_for_extreme_latency() {
+        let _guard = PRESSURE_TEST_MUTEX.lock().unwrap();
         super::ROLLING_LATENCY_MS.store(20000, std::sync::atomic::Ordering::Relaxed);
         let p = super::compute_pressure();
         assert_eq!(p, 1.0, "20000ms → pressure clamped to 1.0");

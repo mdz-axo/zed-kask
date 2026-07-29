@@ -247,6 +247,23 @@ times across audit cycles 3–6.
 
 ## Tests must pin deliberate zed-kask deviations from upstream
 
+`DIVERGENCE.md` defines the divergence surface: everything under `kask/` is
+ours; everything else tracks upstream Zed and is only touched via the named
+D-seams. When you find a problem in an upstream file (anything outside
+`kask/` and outside the D1–D10 seams), do not "fix" it speculatively —
+renaming, reformatting, or "correcting" upstream files creates merge noise
+and risks silent breakage on the next upstream merge. Push the fix into a
+`kask/` crate behind a D-seam instead. If an upstream edit is genuinely
+unavoidable, add a new D-seam entry to `DIVERGENCE.md` in the same PR and
+pin the deviation with a test (below). File an upstream issue for real bugs;
+don't fork-fix.
+
+Example: `crates/vim/test_data/*.json` files are JSONL despite the `.json`
+extension. This is upstream's format, loaded by `read_test_data` in
+`crates/vim/src/test/neovim_connection.rs`. Renaming them to `.jsonl` would
+touch 307 upstream files for zero kask benefit and conflict with every
+upstream vim-test change. Leave them alone.
+
 Every `// zed-kask:` comment that disables upstream behavior needs a
 corresponding test asserting the disabled behavior stays disabled. The
 upstream tests still assert the old behavior and will fail silently (CI

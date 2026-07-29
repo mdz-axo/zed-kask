@@ -2213,9 +2213,8 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 
 /// Parse the zed provider id from an embedding model string.
 ///
-/// `DeepInfra/Qwen/...` → `"deepinfra"`, `DI/Qwen/...` → `"deepinfra"`,
-/// `OpenRouter/...` → `"openrouter"`, etc. Case-insensitive. Returns `None`
-/// if no recognized prefix is found.
+/// `DeepInfra/Qwen/...` → `"deepinfra"`, `OpenRouter/...` → `"openrouter"`,
+/// etc. Case-insensitive. Returns `None` if no recognized prefix is found.
 fn embedding_provider_id(embedding_model: &str) -> Option<&str> {
     // Long-form prefixes (case-insensitive) → zed provider id.
     const LONG_FORM: &[(&str, &str)] = &[
@@ -2234,23 +2233,6 @@ fn embedding_provider_id(embedding_model: &str) -> Option<&str> {
         {
             return Some(id);
         }
-    }
-    // 2-letter shorthand.
-    let bytes = embedding_model.as_bytes();
-    if embedding_model.len() >= 4 && bytes[2] == b'/' {
-        let prefix = &embedding_model[..2];
-        let id = match prefix {
-            "DI" | "di" => "deepinfra",
-            "FA" | "fa" => "fal",
-            "TG" | "tg" => "together",
-            "RP" | "rp" => "runpod",
-            "OR" | "or" => "openrouter",
-            "KC" | "kc" => "kilocode",
-            "OM" | "om" => "ollama",
-            "CL" | "cl" => "cline",
-            _ => return None,
-        };
-        return Some(id);
     }
     None
 }
@@ -2275,7 +2257,7 @@ fn resolve_embedding_port(
         // This handles users who set a bare model id like `Qwen/Qwen3-Embedding-0.6B`.
         log::warn!(
             "Embedding model '{}' has no recognized provider prefix \
-             (expected e.g. 'DeepInfra/...' or 'DI/...'). \
+             (expected e.g. 'DeepInfra/...'). \
              Cannot resolve provider from zed's LanguageModelRegistry. \
              Set kask.corpus.embedding_model to a provider-prefixed name, \
              or set HKASK_EMBEDDING_MODEL.",
