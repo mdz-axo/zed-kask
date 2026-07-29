@@ -17,11 +17,12 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.25
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_4_result.convergence_metric
+  convergence_mode: "cauchy"
+  target_artifacts_field: step_1_result
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
 
 gas:
@@ -82,25 +83,13 @@ steps:
       classification_result: "{{ step_1_result }}"
 
   - ordinal: 4
-    action: select
-    description: Compute normalized convergence metric for semantics cycle.
-    renderer: minijinja
-    template_ref: shared/convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      primary_result:
-        classification: "{{ step_1_result }}"
-        provenance: "{{ step_2_result }}"
-        conflict_resolution: "{{ step_3_result | default({}) }}"
-      convergence_description: "classification is stable, provenance is verified, and conflicts are resolved"
-      include_blockers: true
-
-  - ordinal: 5
     action: loop
     description: Re-enter semantics cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+      # Push the provenance-chain length into kata_hypotenuse so the Cauchy
+      # criterion can detect when the classification has stopped moving.
+      kata_hypotenuse: "{{ step_2_result.provenance_chain | default([]) | length }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -123,10 +112,6 @@ ocap:
       action: render
       template_id: pragmatic-semantics/semantics-conflict-resolve
       gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: shared/convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: pragmatic-semantics

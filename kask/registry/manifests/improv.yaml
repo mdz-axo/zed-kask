@@ -18,11 +18,12 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.12
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_8_result.convergence_metric
+  convergence_mode: "cauchy"
+  target_artifacts_field: step_1_result.mode
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
 
 gas:
@@ -155,21 +156,13 @@ steps:
       contribution: "{{ contribution | default('') }}"
 
   - ordinal: 8
-    action: select
-    description: Compute normalized convergence metric for improv PDCA cycle.
-    renderer: minijinja
-    template_ref: improv/improv-convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      mode_selection_result: "{{ step_1_result }}"
-      mode_application_result: "{{ step_2_result | default(step_3_result | default(step_4_result | default(step_5_result | default(step_6_result | default(step_7_result | default({}))))) }}"
-
-  - ordinal: 9
     action: loop
     description: Re-enter improv cycle if convergence threshold is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+      # Push the active mode's response length into kata_hypotenuse so the
+      # Cauchy criterion can detect when the iterates have stopped moving.
+      kata_hypotenuse: "{{ (step_2_result.response | default(step_3_result.response | default(step_4_result.response | default(step_5_result.response | default(step_6_result.response | default(step_7_result.response | default(''))))))) | length }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -204,10 +197,6 @@ ocap:
       action: render
       template_id: improv/improv-riffing
       gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: improv/improv-convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: improv

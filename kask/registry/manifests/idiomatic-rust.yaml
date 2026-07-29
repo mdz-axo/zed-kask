@@ -17,11 +17,12 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_4_result.convergence_metric
+  convergence_mode: "cauchy"
+  target_artifacts_field: step_2_result
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
 
 gas:
@@ -114,27 +115,15 @@ steps:
       design_constraints: "{{ design_constraints | default({}) }}"
 
   - ordinal: 4
-    action: select
-    description: >
-      Compute convergence metric: synthesize design quality, critique depth,
-      and connection richness. Score in [0,1] where 0 = maximally idiomatic.
-    renderer: minijinja
-    template_ref: idiomatic-rust/idiomatic-rust-convergence
-    gas_cap: 4096
-    timeout_seconds: 30
-    input_mapping:
-      assessment: "{{ step_1_result }}"
-      design_proposal: "{{ step_2_result }}"
-      critique: "{{ step_3_result }}"
-    fusion: false
-
-  - ordinal: 5
     action: loop
     description: >
       If convergence is not met and the critique identified concrete
       refinement targets, loop back to design (step 2) with those targets.
     input_mapping:
       loop_target: "{{ 2 }}"
+      # Push the critique score into kata_hypotenuse so the Cauchy
+      # criterion can detect when the design has stopped moving.
+      kata_hypotenuse: "{{ step_3_result.critique_score | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -157,10 +146,6 @@ ocap:
       action: render
       template_id: idiomatic-rust/idiomatic-rust-challenge
       gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: idiomatic-rust/idiomatic-rust-convergence
-      gas_budget: 4096
     - resource: manifest
       action: execute
       template_id: idiomatic-rust

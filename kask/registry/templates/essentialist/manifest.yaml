@@ -39,12 +39,4 @@ templates:
       Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3)
       templates.
 
-  - id: essentialist/essentialist-convergence-check
-    name: "Compute essentialist 3-gate convergence metric"
-    path: essentialist-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Compute normalized convergence metric for the essentialist 3-gate audit.
-      Metric = (gates_failed / 3) * 0.60 + (items_not_removed / total_items) * 0.40.
-      Converged when metric ≤ 0.10 with ≥5% improvement. Emits reg.skill span.
+

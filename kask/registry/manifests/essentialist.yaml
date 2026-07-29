@@ -15,11 +15,12 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.25
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_2_result.convergence_metric
+  convergence_mode: "cauchy"
+  target_artifacts_field: step_1_result.surviving_artifact
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
 
 gas:
@@ -77,22 +78,13 @@ steps:
       scope: auto
 
   - ordinal: 2
-    action: select
-    description: Compute normalized convergence metric for essentialist cycle.
-    renderer: minijinja
-    template_ref: shared/convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      primary_result: "{{ step_1_result }}"
-      convergence_description: "eliminations are stable and no material reductions remain"
-      include_blockers: false
-    fusion: false
-  - ordinal: 3
     action: loop
     description: Re-enter elimination cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+      # Push the items-removed count into kata_hypotenuse so the Cauchy
+      # criterion can detect when eliminations have stopped.
+      kata_hypotenuse: "{{ step_1_result.elimination_report.essentialism_score.items_removed | default(0) }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -107,10 +99,6 @@ ocap:
       action: render
       template_id: essentialist/essentialist-flow
       gas_budget: 9000
-    - resource: template
-      action: render
-      template_id: shared/convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: essentialist

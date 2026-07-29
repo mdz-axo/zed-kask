@@ -15,11 +15,12 @@ manifest:
   visibility: Public
 
 convergence:
-  threshold: 0.15
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_4_result.convergence_metric
+  convergence_mode: "cauchy"
+  target_artifacts_field: step_3_result.compliance_score
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
 
 gas:
@@ -86,22 +87,13 @@ steps:
       diff_preview: "{{ diff_preview | default('') }}"
 
   - ordinal: 4
-    action: select
-    description: Compute normalized convergence metric for coding-guidelines cycle.
-    renderer: minijinja
-    template_ref: shared/convergence-check
-    gas_cap: 2000
-    timeout_seconds: 30
-    input_mapping:
-      primary_result: "{{ step_3_result }}"
-      convergence_description: "code quality is verified and violations are resolved"
-      include_blockers: true
-
-  - ordinal: 5
     action: loop
     description: Re-enter coding-guidelines cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+      # Push the violation count into kata_hypotenuse so the Cauchy
+      # criterion can detect when the iterates have stopped moving.
+      kata_hypotenuse: "{{ step_3_result.violations | default([]) | length }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -124,10 +116,6 @@ ocap:
       action: render
       template_id: coding-guidelines/guidelines-verify
       gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: shared/convergence-check
-      gas_budget: 2000
     - resource: manifest
       action: execute
       template_id: coding-guidelines

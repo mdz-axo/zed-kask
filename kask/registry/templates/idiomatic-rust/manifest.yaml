@@ -42,12 +42,4 @@ templates:
       critique with specific refinement directives. Few-shot: if the critique
       score is below threshold, loop back to design with concrete targets.
 
-  - id: idiomatic-rust/idiomatic-rust-convergence
-    name: "Compute a normalized convergence metric for an idiomatic-rust inquiry…"
-    path: idiomatic-rust-convergence.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, score, verify]
-    description: >
-      Compute a normalized convergence metric for an idiomatic-rust inquiry
-      cycle. Synthesizes design quality, critique depth, and connection
-      richness into a score in [0,1] where 0 means maximally idiomatic.
+
