@@ -35,3 +35,4 @@ theme.workspace = true
 theme_settings.workspace = true
 util.workspace = true
 minijinja.workspace = true
+db.workspace = true

@@ -545,6 +545,21 @@ runs `/tool_name args` → card appears. Expand/collapse works. Copy works.
 `include_str!`). The `build_system_prompt` function is now a thin wrapper.
 7 unit tests cover template rendering.
 
+### Next steps (post-v1)
+
+**Status: ✅ Done.**
+
+1. **Thinking-block rendering** — `CuratorEvent::ThinkingDelta` is now
+   accumulated into the assistant message's `thinking` field and rendered as
+   a collapsible "Thinking" block above the message body.
+2. **`TabState` consolidation** — `conversations` + `curator_session` +
+   `busy` + `spinner_frame` + `cached_tools` are folded into
+   `HashMap<usize, TabState>`. Each tab is fully independent.
+3. **Persistence** — a `persistence.rs` module serializes per-tab
+   conversations to `KeyValueStore` (KVP), keyed by `kask-panel-tab-{index}`.
+   Conversations are loaded on panel construction and saved after each turn.
+   4 unit tests cover the round-trip.
+
 ### Phase 6: Cancel + tests
 
 1. Wire `CuratorSession::cancel` to a cancel button in the status bar

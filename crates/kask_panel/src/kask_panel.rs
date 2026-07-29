@@ -53,6 +53,7 @@ mod curator_session;
 mod kanban_view;
 mod markdown_render;
 mod panel_button;
+mod persistence;
 mod portfolio_view;
 mod scenarios_view;
 mod system_prompt;
@@ -87,6 +88,12 @@ pub struct KaskMessage {
     /// these are tool calls the curator made during the turn. For direct
     /// `/tool_name` invocations, this holds the single tool call.
     pub tool_calls: Vec<gpui::Entity<tool_call_card::ToolCallCard>>,
+    /// For assistant messages: accumulated thinking-mode reasoning deltas.
+    /// Rendered as a collapsible "Thinking" block above the message body.
+    /// `None` for non-assistant messages or when no thinking was emitted.
+    pub thinking: Option<String>,
+    /// Whether the thinking block is expanded (collapsible toggle).
+    pub thinking_expanded: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -111,6 +118,8 @@ impl KaskMessage {
             content: content.into(),
             markdown: None,
             tool_calls: vec![],
+            thinking: None,
+            thinking_expanded: false,
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
@@ -119,6 +128,8 @@ impl KaskMessage {
             content: content.into(),
             markdown: None,
             tool_calls: vec![],
+            thinking: None,
+            thinking_expanded: false,
         }
     }
 }
@@ -238,6 +249,41 @@ fn build_system_prompt(server: &str, tools: &[ToolDescriptor], task: &str) -> St
 /// sessions. Users can switch to other servers via the selector buttons.
 const DEFAULT_SERVER_INDEX: usize = 4; // "curator"
 
+/// Per-tab state — one per MCP server. Consolidates the conversation
+/// history, curator session, busy flag, spinner, and cached tools into a
+/// single struct keyed by server index in `KaskPanel::tabs`.
+///
+/// This is the structural mirror of the agent panel's
+/// `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`,
+/// keyed by server index instead of `ThreadId`. Each tab is an independent
+/// curator conversation scoped to that server's tools.
+struct TabState {
+    /// This tab's conversation history.
+    messages: Vec<KaskMessage>,
+    /// This tab's curator session (lazily constructed on first `send`).
+    /// Owns its own conversation history internally (the `Vec<ChatMessage>`
+    /// inside the bridge's `PanelCuratorSession`).
+    session: Option<Arc<dyn CuratorSession>>,
+    /// Whether a request is in progress for this tab.
+    busy: bool,
+    /// Spinner frame counter (animated while `busy`).
+    spinner_frame: u8,
+    /// Cached tool list for this tab's server.
+    cached_tools: Option<Vec<ToolDescriptor>>,
+}
+
+impl TabState {
+    fn new(server: &str) -> Self {
+        Self {
+            messages: vec![KaskMessage::system(server_welcome(server))],
+            session: None,
+            busy: false,
+            spinner_frame: 0,
+            cached_tools: None,
+        }
+    }
+}
+
 /// The kask panel — a center-pane `Item` for per-MCP-server chat + tool invocation.
 pub struct KaskPanel {
     _workspace: WeakEntity<Workspace>,
@@ -247,36 +293,20 @@ pub struct KaskPanel {
     /// Currently selected server (index into `BUILT_IN_MCP_SERVERS`).
     ///
     /// Defaults to `curator` (index 4) — the curator is the regulation
-    /// cascade hub and the natural default for panel interactions. It
-    /// remembers issues raised in the panel and surfaces them in future
-    /// sessions.
+    /// cascade hub and the natural default for panel interactions.
     selected_server: usize,
-    /// Per-server conversation history (preserved when switching servers).
-    conversations: std::collections::HashMap<usize, Vec<KaskMessage>>,
-    /// The message input editor.
+    /// One `TabState` per MCP server, keyed by server index. The structural
+    /// mirror of the agent panel's `retained_threads: HashMap<ThreadId,
+    /// Entity<ConversationView>>`. Each tab is an independent curator
+    /// conversation with its own history, session, and busy state.
+    tabs: std::collections::HashMap<usize, TabState>,
+    /// The message input editor (shared across tabs; cleared on send).
     input_editor: Entity<Editor>,
-    /// Whether a request is in progress.
-    busy: bool,
-    /// Spinner frame counter (animated while `busy`).
-    spinner_frame: u8,
-    /// Cached tool list for the selected server (for `/tools` and completion).
-    cached_tools: Option<(usize, Vec<ToolDescriptor>)>,
-    /// The per-tab curator session for the currently selected server.
-    /// Lazily constructed on first `send` via the global
-    /// `curator_session_factory`. Reset to `None` when switching tabs so
-    /// each tab gets its own session with its own history (Phase 2 will
-    /// hold all sessions in a `HashMap<usize, ...>`; for now we keep one
-    /// at a time keyed to the active server).
-    curator_session: Option<Arc<dyn CuratorSession>>,
     /// Latest regulation/gas snapshot for the status bar.
     regulation_snapshot: RegulationSnapshot,
-    /// Whether a regulation status fetch is in progress (guards against
-    /// overlapping fetches on every render).
+    /// Whether a regulation status fetch is in progress.
     status_fetching: bool,
-    /// Scroll handle for the messages container. Used to auto-scroll to the
-    /// bottom when new messages arrive so the latest message is always
-    /// visible (without this, the chat overflows past the bottom of the
-    /// viewport and the user cannot see or scroll to it).
+    /// Scroll handle for the messages container.
     messages_scroll_handle: gpui::ScrollHandle,
 }
 
@@ -314,12 +344,8 @@ impl KaskPanel {
                 project: workspace.project().downgrade(),
                 focus_handle: cx.focus_handle(),
                 selected_server: DEFAULT_SERVER_INDEX,
-                conversations: std::collections::HashMap::new(),
+                tabs: std::collections::HashMap::new(),
                 input_editor,
-                busy: false,
-                spinner_frame: 0,
-                cached_tools: None,
-                curator_session: None,
                 regulation_snapshot: RegulationSnapshot::default(),
                 status_fetching: false,
                 messages_scroll_handle: gpui::ScrollHandle::new(),
@@ -328,6 +354,8 @@ impl KaskPanel {
         // Wire the completion provider now that we have a weak handle.
         let weak = panel.downgrade();
         panel.update(cx, |panel, cx| {
+            // Load persisted conversations from the KVP store.
+            panel.load_tabs(cx);
             panel.input_editor.update(cx, |editor, cx| {
                 editor
                     .set_completion_provider(Some(Rc::new(KaskToolCompletionProvider::new(weak))));
@@ -344,26 +372,24 @@ impl KaskPanel {
             .unwrap_or("none")
     }
 
+    /// Get the active tab's state, initializing it on first access.
+    fn current_tab(&mut self) -> &mut TabState {
+        let index = self.selected_server;
+        let server = BUILT_IN_MCP_SERVERS.get(index).copied().unwrap_or("none");
+        self.tabs
+            .entry(index)
+            .or_insert_with(|| TabState::new(server))
+    }
+
     /// Get the conversation for the currently selected server, initializing
     /// it with the welcome message on first access.
     fn current_messages(&mut self) -> &mut Vec<KaskMessage> {
-        let index = self.selected_server;
-        self.conversations.entry(index).or_insert_with(|| {
-            vec![KaskMessage::system(server_welcome(
-                BUILT_IN_MCP_SERVERS.get(index).copied().unwrap_or("none"),
-            ))]
-        })
+        &mut self.current_tab().messages
     }
 
-    /// Switch to a different server (called by the selector buttons).
+    /// Switch to a different server (called by the tab strip).
     fn select_server(&mut self, index: usize, cx: &mut Context<Self>) {
         self.selected_server = index;
-        // Invalidate the tool cache — it's per-server.
-        self.cached_tools = None;
-        // Drop the per-tab curator session so the next `send` constructs a
-        // fresh one for the new server (own history). Phase 2 will keep all
-        // sessions alive in a `HashMap<usize, ...>`; for now we hold one.
-        self.curator_session = None;
         // Scroll to the bottom of the (possibly different) conversation so
         // the latest message is visible after the switch.
         self.scroll_messages_to_bottom(cx);
@@ -376,6 +402,34 @@ impl KaskPanel {
         self.messages_scroll_handle.scroll_to_bottom();
     }
 
+    /// Save the active tab's conversation to the KVP store (best-effort).
+    fn save_current_tab(&self, cx: &mut Context<Self>) {
+        let index = self.selected_server;
+        if let Some(tab) = self.tabs.get(&index) {
+            persistence::save_tab(index, &tab.messages, cx);
+        }
+    }
+
+    /// Load all tabs from the KVP store on panel construction.
+    fn load_tabs(&mut self, cx: &mut Context<Self>) {
+        for index in 0..BUILT_IN_MCP_SERVERS.len() {
+            if let Some(messages) = persistence::load_tab_sync(index, cx) {
+                if !messages.is_empty() {
+                    self.tabs.insert(
+                        index,
+                        TabState {
+                            messages,
+                            session: None,
+                            busy: false,
+                            spinner_frame: 0,
+                            cached_tools: None,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     /// Lazily fetch the selected server's tool list in the background and
     /// cache it. Used by `run_scoped_inference` so the next inference call
     /// has a complete system prompt. Fire-and-forget — does not push any
@@ -385,13 +439,12 @@ impl KaskPanel {
             return;
         };
         let server = self.selected_server_name().to_string();
-        let index = self.selected_server;
         let task = invoker.list_tools(&server);
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 if let Ok(tools) = result {
-                    this.cached_tools = Some((index, tools));
+                    this.current_tab().cached_tools = Some(tools);
                     cx.notify();
                 }
             })
@@ -400,7 +453,7 @@ impl KaskPanel {
     }
 
     fn submit_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.current_tab().busy {
             return;
         }
 
@@ -444,12 +497,9 @@ impl KaskPanel {
             }
             "clear" => {
                 let server = self.selected_server_name().to_string();
-                self.conversations.insert(
-                    self.selected_server,
-                    vec![KaskMessage::system(format!(
-                        "Cleared. {server} conversation reset."
-                    ))],
-                );
+                self.current_tab().messages = vec![KaskMessage::system(format!(
+                    "Cleared. {server} conversation reset."
+                ))];
                 self.scroll_messages_to_bottom(cx);
                 cx.notify();
             }
@@ -463,12 +513,10 @@ impl KaskPanel {
     /// Fetch and display the selected server's tool list.
     fn list_tools(&mut self, cx: &mut Context<Self>) {
         let server = self.selected_server_name().to_string();
-        let index = self.selected_server;
 
         // Return cached if available.
-        if let Some((cached_index, tools)) = &self.cached_tools
-            && *cached_index == index
-        {
+        let cached = self.current_tab().cached_tools.clone();
+        if let Some(tools) = &cached {
             let content = if tools.is_empty() {
                 format!("{server}: no tools discovered (server may not be connected).")
             } else {
@@ -512,7 +560,7 @@ impl KaskPanel {
                                 lines
                             };
                             this.current_messages().push(KaskMessage::system(content));
-                            this.cached_tools = Some((index, tools));
+                            this.current_tab().cached_tools = Some(tools);
                         }
                         Err(error) => {
                             this.current_messages()
@@ -558,9 +606,14 @@ impl KaskPanel {
             content: user_msg_content,
             markdown: None,
             tool_calls: vec![card.clone()],
+            thinking: None,
+            thinking_expanded: false,
         });
-        self.busy = true;
-        self.spinner_frame = 0;
+        {
+            let tab = self.current_tab();
+            tab.busy = true;
+            tab.spinner_frame = 0;
+        }
         self.scroll_messages_to_bottom(cx);
         cx.notify();
 
@@ -585,7 +638,8 @@ impl KaskPanel {
                             });
                         }
                     }
-                    this.busy = false;
+                    this.current_tab().busy = false;
+                    this.save_current_tab(cx);
                     this.scroll_messages_to_bottom(cx);
                     cx.notify();
                 })
@@ -595,7 +649,7 @@ impl KaskPanel {
             self.current_messages().push(KaskMessage::system(
                 "Tool invoker not wired — set_tool_invoker() not called.",
             ));
-            self.busy = false;
+            self.current_tab().busy = false;
             self.scroll_messages_to_bottom(cx);
             cx.notify();
         }
@@ -609,9 +663,14 @@ impl KaskPanel {
             content: prompt.to_string(),
             markdown: None,
             tool_calls: vec![],
+            thinking: None,
+            thinking_expanded: false,
         });
-        self.busy = true;
-        self.spinner_frame = 0;
+        {
+            let tab = self.current_tab();
+            tab.busy = true;
+            tab.spinner_frame = 0;
+        }
         self.scroll_messages_to_bottom(cx);
         cx.notify();
 
@@ -619,7 +678,7 @@ impl KaskPanel {
             self.current_messages().push(KaskMessage::system(
                 "Curator session factory not wired — set_curator_session_factory() not called.",
             ));
-            self.busy = false;
+            self.current_tab().busy = false;
             self.scroll_messages_to_bottom(cx);
             cx.notify();
             return;
@@ -628,21 +687,19 @@ impl KaskPanel {
         // Lazily construct (or reuse) the per-tab CuratorSession. The
         // session owns this tab's conversation history; the panel never
         // inspects it. See `kask-panel-redesign.md` §2.1.
-        let session = self
-            .curator_session
-            .get_or_insert_with(|| factory.session_for(&server));
+        let session: Arc<dyn CuratorSession> = self
+            .current_tab()
+            .session
+            .get_or_insert_with(|| factory.session_for(&server))
+            .clone();
 
         // Build the system prompt from the cached tool list. If the cache
         // is empty or stale, the system prompt will note that no tools were
         // discovered — the LLM can still respond, just without tool
         // awareness. The cache is populated by `/tools` or the lazy fetch
         // below.
-        let tools: Vec<ToolDescriptor> = self
-            .cached_tools
-            .as_ref()
-            .filter(|(idx, _)| *idx == self.selected_server)
-            .map(|(_, tools)| tools.clone())
-            .unwrap_or_default();
+        let tools: Vec<ToolDescriptor> =
+            self.current_tab().cached_tools.clone().unwrap_or_default();
         let system_prompt = build_system_prompt(&server, &tools, prompt);
         let tool_scope = ToolScope::Server(server.clone());
 
@@ -687,6 +744,8 @@ impl KaskPanel {
                                             content: delta,
                                             markdown: Some(md),
                                             tool_calls: vec![],
+                                            thinking: None,
+                                            thinking_expanded: false,
                                         });
                                     } else if let Some(md) = assistant_md.as_ref() {
                                         // Subsequent deltas — append to the
@@ -704,10 +763,19 @@ impl KaskPanel {
                                     this.scroll_messages_to_bottom(cx);
                                     cx.notify();
                                 }
-                                CuratorEvent::ThinkingDelta(_) => {
-                                    // v1: thinking deltas are not yet
-                                    // rendered as collapsible blocks.
-                                    // Accumulate silently.
+                                CuratorEvent::ThinkingDelta(delta) => {
+                                    // Accumulate thinking deltas into the
+                                    // current assistant message's `thinking`
+                                    // field. Rendered as a collapsible block.
+                                    if let Some(last) = this.current_messages().last_mut() {
+                                        if last.role == KaskMessageRole::Assistant {
+                                            last.thinking
+                                                .get_or_insert_with(String::new)
+                                                .push_str(&delta);
+                                        }
+                                    }
+                                    this.scroll_messages_to_bottom(cx);
+                                    cx.notify();
                                 }
                                 CuratorEvent::ToolCall(request) => {
                                     // Create a tool-call card and attach it
@@ -729,6 +797,8 @@ impl KaskPanel {
                                             content: String::new(),
                                             markdown: None,
                                             tool_calls: vec![card],
+                                            thinking: None,
+                                            thinking_expanded: false,
                                         });
                                     } else if let Some(last) = this.current_messages().last_mut() {
                                         if last.role == KaskMessageRole::Assistant {
@@ -764,7 +834,8 @@ impl KaskPanel {
                             .push(KaskMessage::system(format!("Inference error: {error}")));
                     }
                 }
-                this.busy = false;
+                this.current_tab().busy = false;
+                this.save_current_tab(cx);
                 this.scroll_messages_to_bottom(cx);
                 cx.notify();
             })
@@ -775,11 +846,7 @@ impl KaskPanel {
         // it cached yet, so the next inference call has a complete system
         // prompt. This is fire-and-forget — the result is stored in
         // `cached_tools` and used on subsequent calls.
-        if self
-            .cached_tools
-            .as_ref()
-            .map_or(true, |(idx, _)| *idx != self.selected_server)
-        {
+        if self.current_tab().cached_tools.is_none() {
             self.fetch_tools_background(cx);
         }
     }
@@ -830,9 +897,9 @@ impl KaskPanel {
         // Borrow the conversation for the selected server (read-only).
         // If it hasn't been initialized yet, show the welcome message inline.
         let messages: &[KaskMessage] = self
-            .conversations
+            .tabs
             .get(&self.selected_server)
-            .map(|v| v.as_slice())
+            .map(|t| t.messages.as_slice())
             .unwrap_or(&[]);
 
         let message_elements: Vec<AnyElement> = messages
@@ -863,6 +930,56 @@ impl KaskPanel {
                 };
                 v_flex()
                     .gap_0p5()
+                    .when_some(msg.thinking.as_ref(), |this, thinking| {
+                        this.child(
+                            v_flex()
+                                .gap_0()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_sm()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .px_1()
+                                        .py_0p5()
+                                        .cursor_pointer()
+                                        .id("thinking-toggle")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if let Some(last) = this.current_messages().last_mut() {
+                                                if last.role == KaskMessageRole::Assistant {
+                                                    last.thinking_expanded =
+                                                        !last.thinking_expanded;
+                                                    cx.notify();
+                                                }
+                                            }
+                                        }))
+                                        .child(
+                                            Label::new(if msg.thinking_expanded {
+                                                "▾"
+                                            } else {
+                                                "▸"
+                                            })
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("Thinking")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                                .when(msg.thinking_expanded, |this| {
+                                    this.child(
+                                        div().px_1().py_1().child(
+                                            Label::new(thinking.clone())
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        ),
+                                    )
+                                }),
+                        )
+                    })
                     .child(body)
                     .children(
                         msg.tool_calls
@@ -875,8 +992,17 @@ impl KaskPanel {
             .collect();
 
         // Spinner line while busy (mirrors the deleted hKask TUI's `⠋ thinking…`).
-        let spinner_element: Option<AnyElement> = if self.busy {
-            let spinner = match self.spinner_frame % 4 {
+        let spinner_element: Option<AnyElement> = if self
+            .tabs
+            .get(&self.selected_server)
+            .map_or(false, |t| t.busy)
+        {
+            let spinner = match self
+                .tabs
+                .get(&self.selected_server)
+                .map_or(0, |t| t.spinner_frame)
+                % 4
+            {
                 0 => "⠋",
                 1 => "⠙",
                 2 => "⠹",
@@ -923,7 +1049,12 @@ impl KaskPanel {
                     .border_color(border_color)
                     .rounded_sm()
                     .child(self.input_editor.clone())
-                    .when(self.busy, |this| this.opacity(0.5)),
+                    .when(
+                        self.tabs
+                            .get(&self.selected_server)
+                            .map_or(false, |t| t.busy),
+                        |this| this.opacity(0.5),
+                    ),
             )
             .child(
                 h_flex()
@@ -938,7 +1069,11 @@ impl KaskPanel {
                         IconButton::new("send-btn", IconName::Send)
                             .style(ButtonStyle::Filled)
                             .icon_color(Color::Accent)
-                            .disabled(self.busy)
+                            .disabled(
+                                self.tabs
+                                    .get(&self.selected_server)
+                                    .map_or(false, |t| t.busy),
+                            )
                             .tooltip(move |window, cx| ui::Tooltip::text("Send")(window, cx))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.submit_input(window, cx);
@@ -978,19 +1113,19 @@ impl KaskPanel {
     /// on the active tab's session. Best-effort: the stream may yield a
     /// final `Error("cancelled")` event or simply end.
     fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = self.curator_session.clone() {
+        if let Some(session) = self.current_tab().session.clone() {
             let task = session.cancel();
             cx.spawn(async move |this, cx| {
                 let _ = task.await;
                 this.update(cx, |this, cx| {
-                    this.busy = false;
+                    this.current_tab().busy = false;
                     cx.notify();
                 })
             })
             .detach();
         } else {
             // No session — just clear busy.
-            self.busy = false;
+            self.current_tab().busy = false;
             cx.notify();
         }
     }
@@ -1051,19 +1186,24 @@ impl KaskPanel {
             .child(Icon::new(IconName::Kask).color(Color::Muted))
             .child(gas_label)
             .child(reg_label)
-            .when(self.busy, |this| {
-                this.child(
-                    IconButton::new("cancel-turn", IconName::Stop)
-                        .style(ButtonStyle::Subtle)
-                        .icon_color(Color::Error)
-                        .tooltip(move |window, cx| {
-                            ui::Tooltip::text("Cancel generation")(window, cx)
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.cancel_generation(cx);
-                        })),
-                )
-            })
+            .when(
+                self.tabs
+                    .get(&self.selected_server)
+                    .map_or(false, |t| t.busy),
+                |this| {
+                    this.child(
+                        IconButton::new("cancel-turn", IconName::Stop)
+                            .style(ButtonStyle::Subtle)
+                            .icon_color(Color::Error)
+                            .tooltip(move |window, cx| {
+                                ui::Tooltip::text("Cancel generation")(window, cx)
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.cancel_generation(cx);
+                            })),
+                    )
+                },
+            )
     }
 }
 
@@ -1226,8 +1366,9 @@ impl Render for KaskPanel {
         self.current_messages();
 
         // Animate the spinner while busy.
-        if self.busy {
-            self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        if self.current_tab().busy {
+            let tab = self.current_tab();
+            tab.spinner_frame = tab.spinner_frame.wrapping_add(1);
             // Schedule a re-render to keep the spinner animating.
             cx.notify();
         }
@@ -1235,7 +1376,7 @@ impl Render for KaskPanel {
         // Refresh the regulation/gas snapshot on each render when not busy
         // and no fetch is in flight. The fetch is on a background task; the
         // result triggers a re-render via `cx.notify()`.
-        if !self.busy {
+        if !self.current_tab().busy {
             self.refresh_status(cx);
         }
 
@@ -1389,13 +1530,10 @@ impl CompletionProvider for KaskToolCompletionProvider {
             // Read the cached tools from the panel.
             let tools = panel
                 .read_with(cx, |panel, _| {
-                    let (server_index, tools) = panel.cached_tools.as_ref()?;
-                    // Only offer completions if the cache is for the currently
-                    // selected server.
-                    if *server_index != panel.selected_server {
-                        return None;
-                    }
-                    Some(tools.clone())
+                    panel
+                        .tabs
+                        .get(&panel.selected_server)
+                        .and_then(|t| t.cached_tools.clone())
                 })
                 .ok()
                 .flatten();

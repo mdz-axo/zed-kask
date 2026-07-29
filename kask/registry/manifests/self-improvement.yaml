@@ -159,49 +159,49 @@ steps:
       proposed_artifact: "{{ step_5_result }}"
 
   # ─── INNER PDCA CONVERGENCE CHECK ───
-  # Computes per-iteration convergence with materiality guard for irreducible gaps.
+  # Deterministic Cauchy convergence — no LLM, no timeout.
   - ordinal: 8
-    action: select
-    description: "Inner PDCA Convergence — per-iteration metric with materiality guard."
-    renderer: minijinja
-    template_ref: self-improvement/si-pdca-convergence.j2
-    gas_cap: 2000
-    timeout_seconds: 30
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "Inner PDCA Convergence — Cauchy criterion. Deterministic."
     input_mapping:
-      evaluation_result: "{{ step_6_result }}"
-      commit_decision: "{{ step_7_result }}"
-      improvement_plan: "{{ step_4_result }}"
-      pdca_iteration: "{{ pdca_iteration | default(1) }}"
-      max_pdca_iterations: 5
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   # ─── INNER PDCA LOOP: Re-enter Plan if not converged ───
-  # Loop condition uses the inner PDCA convergence metric (step_8_result), not just the LLM's self-assessed next_step.
-  # The LLM's commit/rollback decision (step_7_result) is still checked, but the convergence metric is the primary signal.
   - ordinal: 9
     action: loop
     description: "Re-enter PDCA Plan if not converged (max 5 inner iterations)."
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 4  # Re-enter at PDCA Plan (step 4) for next improvement iteration
-      loop_condition: "step_8_result.next_action == 're-enter'"
+      loop_target: 4
+      kata_hypotenuse: "{{ step_7_result.convergence_metric | default(1.0) }}"
       max_iterations: 5
 
   # ─── OUTER KATA CONVERGENCE ───
+  # Deterministic Cauchy convergence — no LLM, no timeout.
   - ordinal: 10
-    action: select
-    description: "Outer Kata Convergence — Trajectory stability + transfer + regression + materiality guard."
-    renderer: minijinja
-    template_ref: self-improvement/si-kata-convergence.j2
-    gas_cap: 2500
-    timeout_seconds: 45
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "Outer Kata Convergence — Cauchy criterion. Deterministic."
     input_mapping:
-      direction: "{{ step_1_result }}"
-      current_condition: "{{ step_2_result }}"
-      target_condition: "{{ step_3_result }}"
-      pdca_convergence: "{{ step_8_result }}"
-      pdca_check: "{{ step_6_result }}"
-      pdca_act: "{{ step_7_result }}"
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
 
   # ─── OUTER KATA LOOP: Re-enter Current Condition if not converged ───
   - ordinal: 11
@@ -210,8 +210,8 @@ steps:
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: 2  # Re-enter at Kata Step 2 (current condition) — direction (step 1) only revisited if challenge fundamentally changes
-      loop_condition: "step_10_result.convergence_metric > 0.25 and not step_10_result.materiality_guard_triggered"
+      loop_target: 2  # Re-enter at Kata Step 2 (current condition)
+      kata_hypotenuse: "{{ step_7_result.convergence_metric | default(1.0) }}"
       max_iterations: 10
 
 error_handling:
@@ -279,14 +279,6 @@ ocap:
       action: render
       template_id: self-improvement/si-commit-or-rollback
       gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: self-improvement/si-pdca-convergence
-      gas_budget: 2000
-    - resource: template
-      action: render
-      template_id: self-improvement/si-kata-convergence
-      gas_budget: 2500
     - resource: manifest
       action: execute
       template_id: self-improvement
