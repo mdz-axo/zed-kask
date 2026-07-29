@@ -55,6 +55,7 @@ mod markdown_render;
 mod panel_button;
 mod portfolio_view;
 mod scenarios_view;
+mod tool_call_card;
 
 pub use curator_session::{
     CuratorEvent, CuratorEventStream, CuratorSession, CuratorSessionFactory, ToolCallRequest,
@@ -81,6 +82,10 @@ pub struct KaskMessage {
     /// render as plain `Label`s / `Callout`s). During streaming, `TextDelta`s
     /// are appended to this entity and it re-parses + re-renders.
     pub markdown: Option<gpui::Entity<markdown::Markdown>>,
+    /// Tool-call cards associated with this message. For assistant messages,
+    /// these are tool calls the curator made during the turn. For direct
+    /// `/tool_name` invocations, this holds the single tool call.
+    pub tool_calls: Vec<gpui::Entity<tool_call_card::ToolCallCard>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,12 +104,13 @@ pub struct ToolDescriptor {
 }
 
 impl KaskMessage {
-    /// Construct a non-assistant message (no markdown entity).
+    /// Construct a non-assistant message (no markdown entity, no tool calls).
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: KaskMessageRole::System,
             content: content.into(),
             markdown: None,
+            tool_calls: vec![],
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
@@ -112,6 +118,7 @@ impl KaskMessage {
             role: KaskMessageRole::User,
             content: content.into(),
             markdown: None,
+            tool_calls: vec![],
         }
     }
     pub fn tool(content: impl Into<String>) -> Self {
@@ -119,6 +126,7 @@ impl KaskMessage {
             role: KaskMessageRole::Tool,
             content: content.into(),
             markdown: None,
+            tool_calls: vec![],
         }
     }
 }
@@ -585,37 +593,55 @@ impl KaskPanel {
 
     fn invoke_tool(&mut self, tool: String, args: String, cx: &mut Context<Self>) {
         let server = self.selected_server_name().to_string();
+        let args_value = parse_args(&args);
+
+        // Create a pending tool-call card for the direct invocation.
+        let call_id = format!(
+            "direct_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        // Push the user message first (borrows `tool` + `args`).
+        let user_msg_content = format!("/{tool} {args}");
+        let task =
+            tool_invoker().map(|invoker| invoker.invoke_tool(&server, &tool, args_value.clone()));
+        // Now move `tool` + `args_value` into the card entry.
+        let entry = tool_call_card::ToolCallEntry::new(call_id, tool, args_value);
+        let card = cx.new(|cx| tool_call_card::ToolCallCard::new(entry, cx));
 
         self.current_messages().push(KaskMessage {
             role: KaskMessageRole::User,
-            content: format!("/{tool} {args}"),
+            content: user_msg_content,
             markdown: None,
+            tool_calls: vec![card.clone()],
         });
         self.busy = true;
         self.spinner_frame = 0;
         self.scroll_messages_to_bottom(cx);
         cx.notify();
 
-        let args_value = parse_args(&args);
-
-        if let Some(invoker) = tool_invoker() {
-            let task = invoker.invoke_tool(&server, &tool, args_value);
+        if let Some(task) = task {
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 this.update(cx, |this, cx| {
                     match result {
                         Ok(output) => {
-                            // Try to pretty-print if the output is JSON;
-                            // otherwise show the raw string.
-                            let formatted = serde_json::from_str::<Value>(&output)
-                                .map(|v| format_json_result(&v))
-                                .unwrap_or(output);
-                            this.current_messages()
-                                .push(KaskMessage::tool(format!("{tool}\n{formatted}")));
+                            // Parse the output as JSON for the card.
+                            let value = serde_json::from_str::<Value>(&output)
+                                .unwrap_or(Value::String(output));
+                            card.update(cx, |card, cx| {
+                                card.entry.complete(Ok(value));
+                                cx.notify();
+                            });
                         }
-                        Err(error) => this
-                            .current_messages()
-                            .push(KaskMessage::system(format!("Error: {error}"))),
+                        Err(error) => {
+                            card.update(cx, |card, cx| {
+                                card.entry.complete(Err(error));
+                                cx.notify();
+                            });
+                        }
                     }
                     this.busy = false;
                     this.scroll_messages_to_bottom(cx);
@@ -640,6 +666,7 @@ impl KaskPanel {
             role: KaskMessageRole::User,
             content: prompt.to_string(),
             markdown: None,
+            tool_calls: vec![],
         });
         self.busy = true;
         self.spinner_frame = 0;
@@ -696,6 +723,12 @@ impl KaskPanel {
                         // (including mermaid) on each update.
                         let mut assistant_md: Option<gpui::Entity<markdown::Markdown>> = None;
                         let mut had_error = false;
+                        // Track tool-call cards by call_id so we can update
+                        // them when the matching ToolResult arrives.
+                        let mut tool_cards: std::collections::HashMap<
+                            String,
+                            gpui::Entity<tool_call_card::ToolCallCard>,
+                        > = std::collections::HashMap::new();
                         while let Some(event) = stream.try_next() {
                             match event {
                                 CuratorEvent::TextDelta(delta) => {
@@ -715,6 +748,7 @@ impl KaskPanel {
                                             role: KaskMessageRole::Assistant,
                                             content: delta,
                                             markdown: Some(md),
+                                            tool_calls: vec![],
                                         });
                                     } else if let Some(md) = assistant_md.as_ref() {
                                         // Subsequent deltas — append to the
@@ -734,13 +768,48 @@ impl KaskPanel {
                                 }
                                 CuratorEvent::ThinkingDelta(_) => {
                                     // v1: thinking deltas are not yet
-                                    // rendered as collapsible blocks (Phase 4).
+                                    // rendered as collapsible blocks.
                                     // Accumulate silently.
                                 }
-                                CuratorEvent::ToolCall(_) | CuratorEvent::ToolResult { .. } => {
-                                    // v1: tool-call cards arrive in Phase 4.
-                                    // For now, tool results are folded into
-                                    // the assistant text by the curator model.
+                                CuratorEvent::ToolCall(request) => {
+                                    // Create a tool-call card and attach it
+                                    // to the current assistant message (or
+                                    // push a new one if no text arrived).
+                                    let entry = tool_call_card::ToolCallEntry::new(
+                                        request.call_id.clone(),
+                                        request.name.clone(),
+                                        request.arguments.clone(),
+                                    );
+                                    let card =
+                                        cx.new(|cx| tool_call_card::ToolCallCard::new(entry, cx));
+                                    tool_cards.insert(request.call_id.clone(), card.clone());
+                                    // If there's no assistant message yet
+                                    // (tool call before any text), create one.
+                                    if assistant_md.is_none() {
+                                        this.current_messages().push(KaskMessage {
+                                            role: KaskMessageRole::Assistant,
+                                            content: String::new(),
+                                            markdown: None,
+                                            tool_calls: vec![card],
+                                        });
+                                    } else if let Some(last) = this.current_messages().last_mut() {
+                                        if last.role == KaskMessageRole::Assistant {
+                                            last.tool_calls.push(card);
+                                        }
+                                    }
+                                    this.scroll_messages_to_bottom(cx);
+                                    cx.notify();
+                                }
+                                CuratorEvent::ToolResult { call_id, result } => {
+                                    // Update the matching tool-call card.
+                                    if let Some(card) = tool_cards.get(&call_id) {
+                                        card.update(cx, |card, cx| {
+                                            card.entry.complete(result);
+                                            cx.notify();
+                                        });
+                                    }
+                                    this.scroll_messages_to_bottom(cx);
+                                    cx.notify();
                                 }
                                 CuratorEvent::Done { .. } => break,
                                 CuratorEvent::Error(error) => {
@@ -861,7 +930,16 @@ impl KaskPanel {
                         .color(color)
                         .into_any_element()
                 };
-                v_flex().gap_0p5().child(body).into_any_element()
+                v_flex()
+                    .gap_0p5()
+                    .child(body)
+                    .children(
+                        msg.tool_calls
+                            .iter()
+                            .map(|card| card.clone().into_any_element())
+                            .collect::<Vec<_>>(),
+                    )
+                    .into_any_element()
             })
             .collect();
 
@@ -1079,45 +1157,6 @@ fn parse_args(args: &str) -> Value {
         Value::String(args.to_string())
     } else {
         Value::Object(map)
-    }
-}
-
-/// Format a JSON tool result for display. Pretty-prints objects/arrays,
-/// parses stringified-JSON strings, caps recursion at depth 5, and truncates
-/// output at 5000 chars on a UTF-8-safe boundary.
-///
-/// Ported from the deleted hKask TUI `mcp_scoped.rs::format_json_result`.
-fn format_json_result(value: &Value) -> String {
-    format_json_result_depth(value, 0)
-}
-
-fn format_json_result_depth(value: &Value, depth: u8) -> String {
-    if depth > 5 {
-        return "[...]".to_string();
-    }
-    let result = match value {
-        Value::String(s) => {
-            if depth < 5 {
-                if let Ok(inner) = serde_json::from_str::<Value>(s) {
-                    return format_json_result_depth(&inner, depth + 1);
-                }
-            }
-            s.clone()
-        }
-        Value::Object(_) | Value::Array(_) => {
-            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-        }
-        _ => value.to_string(),
-    };
-    const MAX_LEN: usize = 5000;
-    if result.len() > MAX_LEN {
-        let mut end = MAX_LEN;
-        while !result.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}…", &result[..end])
-    } else {
-        result
     }
 }
 
@@ -1560,57 +1599,6 @@ mod tests {
     fn parse_args_falls_back_to_string_when_no_pairs() {
         let result = parse_args("just some text");
         assert_eq!(result, Value::from("just some text"));
-    }
-
-    // ── format_json_result ──────────────────────────────────────────────
-
-    #[test]
-    fn format_json_simple_string() {
-        assert_eq!(format_json_result(&Value::from("hello")), "hello");
-    }
-
-    #[test]
-    fn format_json_object_pretty_printed() {
-        let result = format_json_result(&serde_json::json!({"key": "value"}));
-        assert!(result.contains("\"key\""));
-        assert!(result.contains("\"value\""));
-        assert!(result.contains('\n')); // pretty-printed
-    }
-
-    #[test]
-    fn format_json_nested_string_parses() {
-        let inner = serde_json::json!({"nested": true});
-        let wrapped = Value::String(inner.to_string());
-        let result = format_json_result(&wrapped);
-        assert!(result.contains("nested"));
-        assert!(result.contains("true"));
-    }
-
-    #[test]
-    fn format_json_recursion_capped_at_depth_5() {
-        let mut val = serde_json::json!({"a": 1});
-        for _ in 0..10 {
-            val = Value::String(val.to_string());
-        }
-        let result = format_json_result(&val);
-        assert!(result.contains("[...]") || result.len() < 100);
-    }
-
-    #[test]
-    fn format_json_truncates_long_output() {
-        let mut map = serde_json::Map::new();
-        for i in 0..1000 {
-            map.insert(format!("key_{i}"), serde_json::json!(format!("value_{i}")));
-        }
-        let val = Value::Object(map);
-        let result = format_json_result(&val);
-        // ≤5000 safe UTF-8 boundary + "…" (3 bytes)
-        assert!(
-            result.len() <= 5003,
-            "output should be truncated (got {})",
-            result.len()
-        );
-        assert!(result.ends_with('…'));
     }
 
     // ── server_welcome ──────────────────────────────────────────────────

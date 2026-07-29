@@ -4584,7 +4584,7 @@ mod internal_tests {
             .collect()
     }
 
-    /// Filter to only disk-loaded global skills (from `~/.agents/skills/`),
+    /// Filter to only disk-loaded global skills (from the global skills dir),
     /// excluding the embedded kask globals that are always present. Tests
     /// that create skills on disk and assert counts use this to ignore the
     /// 42 embedded globals baked into the binary.

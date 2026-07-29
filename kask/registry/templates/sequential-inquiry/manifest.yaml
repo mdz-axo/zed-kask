@@ -1,31 +1,56 @@
 # Template crate manifest for sequential-inquiry skill
-# hKask v0.31.0
+# hKask v0.32.0
 
 crate:
   name: sequential-inquiry
-  version: "0.31.0"
+  version: "0.32.0"
   description: >
-    Dynamic chain-of-thought reasoning engine with branching, revision,
-    hypothesis testing, and automatic deep-dive delegation to specialized
-    skills (hypothesis-framer, mcda, diagnose, falsifiability). Subsumes the
-    deprecated sequential-thinking skill. The engine decides at runtime
-    whether delegation is needed — no pre-selection. Templates: reasoning
-    engine, four delegation targets (hypothesis-framer, mcda, diagnose,
-    falsifiability), and a convergence check.
+    Dynamic chain-of-thought reasoning engine following the Toyota Improvement
+    Kata. Grasps the current understanding, establishes a target, predicts
+    which deep-dive delegation will close the gap, runs the engine with
+    delegation, and measures convergence deterministically (gap + Brier).
+    Delegates to hypothesis-framer, mcda, diagnose, and falsifiability.
 
 templates:
+  - id: sequential-inquiry/sequential-inquiry-grasp
+    name: "Improvement Kata Step 1: Grasp the current understanding"
+    path: sequential-inquiry-grasp.j2
+    type: KnowAct
+    lexicon_terms: [assess, observe, measure, grasp, ground]
+    description: >
+      Measure the agent's current understanding of the problem. Produces
+      current_artifacts and current_procedure for gap computation.
+
+  - id: sequential-inquiry/sequential-inquiry-target
+    name: "Improvement Kata Step 2: Establish the target understanding"
+    path: sequential-inquiry-target.j2
+    type: KnowAct
+    lexicon_terms: [target, condition, declare, specify]
+    description: >
+      Declare the target understanding — what sufficient understanding looks
+      like for this problem. Produces target_artifacts and target_procedure.
+
+  - id: sequential-inquiry/sequential-inquiry-predict
+    name: "Improvement Kata Step 3: Predict which delegation will close the gap"
+    path: sequential-inquiry-predict.j2
+    type: KnowAct
+    lexicon_terms: [predict, hypothesize, confidence, expect, delegate]
+    description: >
+      Predict which deep-dive delegation will close the gap and by how much.
+      Carry a confidence for Brier scoring.
+
   - id: sequential-inquiry/sequential-inquiry-engine
-    name: "Core reasoning engine — advances one chain-of-thought step, deciding…"
+    name: "Improvement Kata Step 4: Run the inquiry engine with delegation"
     path: sequential-inquiry-engine.j2
     type: KnowAct
     lexicon_terms: [reason, analyze, hypothesize, verify, revise, branch, delegate, converge, synthesize, decompose, calibrate]
     description: >
-      Core reasoning engine — advances one chain-of-thought step, deciding
-      whether to continue, branch, revise, delegate, or converge based on
-      the current reasoning state.
+      Core reasoning engine — advances the chain-of-thought with the predicted
+      delegation. Generates, branches, revises, hypothesizes, and verifies.
+      Re-measures the current condition after the experiment.
 
   - id: sequential-inquiry/sequential-inquiry-delegate-hypothesis-framer
-    name: "Delegation target — frames a research question / testable hypothesis…"
+    name: "Delegation target — frames a research question / testable hypothesis"
     path: sequential-inquiry-delegate-hypothesis-framer.j2
     type: KnowAct
     lexicon_terms: [delegate, frame, evaluate, structure, hypothesize]
@@ -34,7 +59,7 @@ templates:
       via FINER + PICO when the engine detects a question-framing subproblem.
 
   - id: sequential-inquiry/sequential-inquiry-delegate-mcda
-    name: "Delegation target — multi-criteria decision analysis when the engine…"
+    name: "Delegation target — multi-criteria decision analysis"
     path: sequential-inquiry-delegate-mcda.j2
     type: KnowAct
     lexicon_terms: [delegate, compare, weight, rank, decide]
@@ -43,7 +68,7 @@ templates:
       detects a choice among alternatives requiring structured tradeoff.
 
   - id: sequential-inquiry/sequential-inquiry-delegate-diagnose
-    name: "Delegation target — disciplined diagnosis loop when the engine…"
+    name: "Delegation target — disciplined diagnosis loop"
     path: sequential-inquiry-delegate-diagnose.j2
     type: KnowAct
     lexicon_terms: [delegate, detect, reproduce, hypothesise, instrument]
@@ -52,21 +77,10 @@ templates:
       a bug or regression requiring reproduce → anchor → hypothesize → fix.
 
   - id: sequential-inquiry/sequential-inquiry-delegate-falsifiability
-    name: "Delegation target — eliminative inference engine when the engine…"
+    name: "Delegation target — eliminative inference engine"
     path: sequential-inquiry-delegate-falsifiability.j2
     type: KnowAct
     lexicon_terms: [delegate, falsify, eliminate, counterfactual, corroborate]
     description: >
       Delegation target — eliminative inference engine when the engine branches
-      on a counterfactual scenario or needs to rule out the untestable. Applies
-      the Popper/Platt/Chamberlin/Pearl method: admit → hypothesize →
-      counterfactual → discriminate → eliminate.
-
-  - id: sequential-inquiry/sequential-inquiry-convergence-check
-    name: "Convergence gate — evaluates whether the reasoning chain has reached…"
-    path: sequential-inquiry-convergence-check.j2
-    type: KnowAct
-    lexicon_terms: [evaluate, converge, classify, verify, calibrate]
-    description: >
-      Convergence gate — evaluates whether the reasoning chain has reached a
-      defensible answer or requires another iteration.
+      on a counterfactual scenario or needs to rule out the untestable.

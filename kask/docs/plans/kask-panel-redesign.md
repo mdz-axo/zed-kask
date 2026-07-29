@@ -488,6 +488,13 @@ tests pass, panel opens and behaves as before.
 4. Direct `/tool_name` invocations still go through `ToolInvoker` (unchanged)
    and render as tool messages.
 
+**Status: ✅ Tab strip done (Phase 2.1).** The `ui::Tab`-based strip replaces
+the button row. Per-tab `TabState` consolidation is deferred — the existing
+`HashMap<usize, Vec<KaskMessage>>` + `Option<Arc<dyn CuratorSession>>`
+(reset on tab switch) already provides per-tab thread independence. The
+`TabState` struct will be introduced when streaming state needs to persist
+across tab switches (currently streaming is foreground-bound).
+
 **Validation:** Clicking a tab switches the active conversation. Each tab
 has its own independent history. Streaming text appears incrementally (as
 a single concatenated string for now — markdown comes in Phase 3).
@@ -515,6 +522,11 @@ agent panel for markdown content.
 2. Wire `CuratorSession::send` to emit `CuratorEvent::ToolCall` /
    `ToolResult`; render them as cards in the message list.
 3. Direct `/tool_name` invocations render as tool-call cards too.
+
+**Status: ✅ Done.** `tool_call_card.rs` implements `ToolCallCard` (a
+`Render` entity) with status icon, collapsible input, output, copy button.
+Curator-emitted tool calls and direct `/tool_name` invocations both render
+as cards.
 
 **Validation:** Curator calls a tool → card appears with input/output. User
 runs `/tool_name args` → card appears. Expand/collapse works. Copy works.

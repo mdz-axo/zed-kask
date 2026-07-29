@@ -148,6 +148,19 @@ pub fn data_dir() -> &'static PathBuf {
     CURRENT_DATA_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.clone()
+        } else if cfg!(any(test, feature = "test-support")) {
+            // In test builds, derive from the pinned home_dir() so tests
+            // get a deterministic path. Without this, dirs::data_local_dir()
+            // reads the real XDG_DATA_HOME, making test paths non-deterministic.
+            if cfg!(target_os = "macos") {
+                home_dir()
+                    .join("Library/Application Support")
+                    .join(APP_NAME)
+            } else if cfg!(target_os = "windows") {
+                home_dir().join("AppData/Local").join(APP_NAME)
+            } else {
+                home_dir().join(".local/share").join(APP_NAME_LOWERCASE)
+            }
         } else if cfg!(target_os = "macos") {
             home_dir()
                 .join("Library/Application Support")

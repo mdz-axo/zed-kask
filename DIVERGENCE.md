@@ -44,7 +44,8 @@ primary divergence seams:
 - `crates/agent/src/templates.rs` — Agent Skills system-prompt section diverges (manifest-driven, not body-injection).
 - `crates/agent_ui/src/conversation_view/thread_view.rs` — `render_skill_loading_issues` only shows `LoadFailed` (description-length + catalog-budget issues disabled).
 - `crates/collab/src/api/kask_skills.rs` + `crates/collab/src/db/queries/kask_skills.rs` — kask skill marketplace API (upload/download/vote/unpublish).
-- `crates/kask_extensions_ui/` — kask skill marketplace UI (browse/install/uninstall/vote/publish).
+- `crates/kask_extensions_ui/` — kask skill marketplace UI (browse/install/uninstall/vote/publish). Marketplace URL decoupled from `server_url` via `HKASK_MARKETPLACE_URL` env var (default: `http://localhost:3000`); see `kask_marketplace_url()` in `publish.rs`.
+- `crates/agent_skills/agent_skills.rs` — `global_skills_dir()` isolated to `paths::data_dir()/agents/skills/` (not shared `~/.agents/skills/`). One-time migration in `agent.rs::run_skills_scan` moves old skills to new location. `GLOBAL_SKILLS_DIR_DISPLAY` updated. `SkillSource::Global` and `load_marketplace_skills` docs updated.
 - `crates/settings_ui/src/pages/skills_visibility.rs` + `crates/settings_ui/src/pages/skills_setup.rs` — skill visibility + marketplace toggle UI.
 - `crates/zed/src/zed/open_listener.rs` — `zed-kask://` URL scheme parsing + tests.
 

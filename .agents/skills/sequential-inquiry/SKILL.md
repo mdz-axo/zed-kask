@@ -1,123 +1,70 @@
 ---
 name: sequential-inquiry
-visibility: public
-description: "Dynamic chain-of-thought reasoning engine with branching, revision, hypothesis testing, and automatic deep-dive delegation to specialized skills (hypothesis-framer, mcda, diagnose, falsifiability). Subsumes the deprecated sequential-thinking skill. The engine decides at runtime whether delegation is needed — no pre-selection. Templates: reasoning engine, four delegation targets (hypothesis-framer, mcda, diagnose, falsifiability), and a convergence check.
-"
+description: "Dynamic chain-of-thought reasoning engine following the Toyota Improvement Kata. Grasps the current understanding, establishes a target, predicts which deep-dive delegation will close the gap, runs the engine with delegation, and measures convergence deterministically (gap + Brier). Delegates to hypothesis-framer, mcda, diagnose, and falsifiability. Subsumes the deprecated sequential-thinking skill."
 ---
 
 # Sequential Inquiry
 
-Dynamic chain-of-thought reasoning engine with branching, revision, hypothesis testing, and automatic deep-dive delegation to specialized skills (hypothesis-framer, mcda, diagnose, falsifiability). Subsumes the deprecated sequential-thinking skill. The engine decides at runtime whether delegation is needed — no pre-selection. Templates: reasoning engine, four delegation targets (hypothesis-framer, mcda, diagnose, falsifiability), and a convergence check.
-
+Dynamic chain-of-thought reasoning engine following the Toyota Improvement Kata.
+The skill runs actual PDCA: grasp the current understanding, establish a target
+understanding, predict which deep-dive delegation will close the gap, run the
+inquiry engine with delegation, measure the gap, and score the prediction via
+Brier. Convergence is detected deterministically.
 
 ## When to Use
 
-- Dynamic chain-of-thought reasoning is required with branching, revision, and hypothesis testing.
-- A problem requires automatic deep-dive delegation to specialized skills (`hypothesis-framer`, `mcda`, `diagnose`, `falsifiability`) when the engine detects specific subproblems.
-- A candidate hypothesis needs formal validation via FINER + PICO structuring.
-- Multiple alternatives need weighted comparison and structured tradeoff (MCDA).
-- A bug symptom or failure pattern requires disciplined root cause diagnosis (reproduce → anchor → hypothesize → fix).
-- Evaluating whether a reasoning chain has reached a defensible answer or requires another iteration (convergence check).
+- When an agent needs to reason through a complex problem with branching, revision, and hypothesis testing.
+- When an agent needs to delegate to specialized skills (hypothesis-framer, mcda, diagnose, falsifiability) based on the problem's needs.
+- When the convergence decision should be deterministic (gap + Brier) rather than an LLM self-grade.
 
 ## Instructions
 
-### sequential-inquiry-engine
+### sequential-inquiry-grasp (Kata Step 1: Grasp Current Condition)
 
-1. Work through problems using dynamic, reflective chain-of-thought reasoning while identifying when a thought needs deeper analysis from specialized sub-skills.
-2. Manage thought numbering, branching, revision, hypothesis generation/verification, and delegation requests.
-3. Build upon the prior thinking chain without repeating it.
-4. Weave prior delegation results into the thought chain by referencing the producing skill, summarizing the key insight, and explaining how it changes or confirms your thinking.
-5. Execute the core loop: revise if new insight contradicts earlier, branch if an alternative path is worth exploring, delegate if a thought needs deeper analysis, hypothesize if enough evidence, verify if a hypothesis exists, and terminate if verified with no uncertainty.
-6. Branch when two plausible approaches need comparison, a counterfactual scenario must be explored, an edge case deserves its own thread, or an assumption needs stress-testing.
-7. Revise when a later thought reveals a flaw, new decomposition invalidates a prior assumption, or evidence contradicts an earlier claim.
-8. Generate a hypothesis when evidence accumulates and verify it against all evidence and edge cases.
-9. Emit a delegation request for a thought that needs analysis beyond reasoning alone, strictly limited to `hypothesis-framer`, `mcda`, `diagnose`, or `falsifiability`. Delegate to `falsifiability` when a counterfactual scenario must be explored or a claim's testability must be ruled on (admit), when multiple explanations need hard elimination rather than probabilistic reweighting (use `falsifiability`), or when a causal claim needs do(not X) counterfactual stress-testing.
-10. Limit delegation to one request per distinct analysis need, max 3 requests per cycle.
-11. Incorporate delegation results from the previous cycle and do not re-delegate the same thing.
-12. **Dead-letter handling**: if ALL delegation results are `invoked: false` (no delegate fired), do NOT re-emit the same delegation requests. For each unfilled request, emit a `skill_match_queries` entry instead so the skill-router can find an alternative skill outside the four fixed delegates. Add a thought explaining why the fixed delegates did not match.
-13. Incorporate `prior_skill_match_results` from skill-router dispatches (step 7) the same way as delegation results — reference the matched skill, summarize the insight, and explain how it changes or confirms your thinking.
+1. Measure the current understanding — what thoughts exist, what delegations are resolved, what's the confidence.
+2. Produce current_artifacts and current_procedure for gap computation.
 
-### sequential-inquiry-delegate-hypothesis-framer
+### sequential-inquiry-target (Kata Step 2: Establish Target Condition)
 
-1. Examine the delegation requests array and find all requests where `skill` equals `"hypothesis-framer"`.
-2. Return `invoked: false` if no matching requests are found.
-3. For each matching request, apply FINER + PICO to the candidate hypothesis in `params.hypothesis`.
-4. Evaluate the hypothesis for Feasibility, Interestingness, Novelty, Ethicality, and Relevance (FINER).
-5. Structure the hypothesis by defining Population/Problem, Intervention, Comparison, and Outcome (PICO).
-6. Return the FINER evaluation, PICO structure, refined hypothesis, null hypothesis, and testability assessment.
+1. Declare the target understanding — what "sufficient understanding" looks like.
+2. Produce target_artifacts and target_procedure.
 
-### sequential-inquiry-delegate-mcda
+### sequential-inquiry-predict (Kata Step 3: Make a Prediction)
 
-1. Examine the delegation requests array and find all requests where `skill` equals `"mcda"`.
-2. Return `invoked: false` if no matching requests are found.
-3. For each matching request, apply MCDA to `params.alternatives`.
-4. Identify criteria from the problem domain and weight them (total = 1.0).
-5. Score each alternative per criterion (1-10) and calculate the weighted sum.
-6. Detect compensation masking where high scores in one area hide low scores in another.
-7. Perform sensitivity analysis to determine the weight shift required to change the ranking.
-8. Return criteria, scored alternatives, compensation warnings, sensitivity analysis, and a recommendation.
+1. Predict which deep-dive delegation will close the gap most.
+2. Carry a confidence for Brier scoring.
 
-### sequential-inquiry-delegate-diagnose
+### sequential-inquiry-engine (Kata Step 4: Experiment / Do)
 
-1. Examine the delegation requests array and find all requests where `skill` equals `"diagnose"`.
-2. Return `invoked: false` if no matching requests are found.
-3. For each matching request, apply structured diagnosis to `params.symptom`.
-4. Reproduce the issue using the fastest deterministic feedback loop.
-5. Anchor the symptom to a code path or invariant violation.
-6. Hypothesise 3-5 ranked, falsifiable root-cause hypotheses.
-7. Recommend instrumentation probes to discriminate between hypotheses.
-8. Recommend the most likely cause and a high-level fix strategy.
+1. Run the inquiry engine with the predicted delegation.
+2. Generate, branch, revise, hypothesize, and verify thoughts.
+3. Re-measure the current condition after the experiment.
 
-### sequential-inquiry-delegate-falsifiability
+### Convergence (Steps 6-10: Check + Act — deterministic compute, no LLM)
 
-1. Examine the delegation requests array and find all requests where `skill` equals `"falsifiability"`.
-2. Return `invoked: false` if no matching requests are found.
-3. For each matching request, apply the eliminative inference engine to `params.target` in fixed stage order: admit (Popper gate) → hypothesize (Chamberlin) → counterfactual (Pearl do-operator) → discriminate (Platt) → eliminate (hard falsification, corroborate-never-confirm).
-4. Rule out the untestable at the question level before generating hypotheses; discard hypotheses with no falsifier at generation; flag irreducible counterfactuals.
-5. If `params.observations` are provided, eliminate hypotheses whose predictions are contradicted and return a verdict; otherwise return the discriminating-test design with `verdict: tests_pending`.
-6. Return the admissibility assessment, hypotheses, counterfactuals, discriminating tests, verdict, eliminated/corroborated/survived-by-default lists, and falsification log.
-
-### sequential-inquiry-convergence-check
-
-1. Score convergence starting at 1.0 and subtract for each satisfied criterion.
-2. Check if a hypothesis exists and if it is verified.
-3. Check if the chain is complete (`needsMoreThoughts: false` on final thought).
-4. Check for unresolved branches and pending revisions.
-5. Check if confidence is calibrated (`solution_confidence` ≥ 0.7).
-6. Check if the answer is synthesized (clear, specific, actionable).
-7. Check per-delegate incorporation (8a–8e): hypothesis-framer, mcda, diagnose, falsifiability, and skill_match results each incorporated if requested. Each criterion carries a `constraint_force` label.
-8. Check if delegation results are incorporated (Guardrail — SKIP on cycle 1; evaluate on cycle 2+).
-9. Check if the chain is stable between iterations (ONLY cycle 2+).
-10. **Dead-letter detection**: if the engine emitted N > 0 delegation requests and 0 delegates returned `invoked: true`, do NOT subtract for 8a–8e; add `delegation_dead_letter` to blockers.
-11. **Materiality guard**: if iteration ≥ 3 AND metric delta < 0.02 AND no new delegation requests, force `convergence_metric = 0.0` with blocker `irreducible_inquiry_gap`.
-12. Emit `re_entry_target` (always 1 for this skill — all corrective actions require re-running the engine).
-13. Clamp the convergence metric to [0, 1] and return the decomposition, rationale, blockers, and re_entry_target.
-
-Cycle detection uses `_convergence.iterations_completed` (supplied by the executor). Criteria 8 and 9 are skipped when `iterations_completed < 1` (cycle 1).
+1. Compute object-space gap (thought chain completeness).
+2. Compute process-space gap (delegation resolution).
+3. Compute hypotenuse.
+4. Score the prediction via Brier.
+5. Check convergence: gap, Cauchy, or calibration.
 
 ## Registry Templates
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `sequential-inquiry-engine.j2` | KnowAct | Core reasoning engine — advances one chain-of-thought step, deciding whether to continue, branch, revise, delegate, or converge based on the current reasoning state.  |
-| `sequential-inquiry-delegate-hypothesis-framer.j2` | KnowAct | Delegation target — frames a research question / testable hypothesis via FINER + PICO when the engine detects a question-framing subproblem.  |
-| `sequential-inquiry-delegate-mcda.j2` | KnowAct | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff.  |
-| `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
-| `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. Applies the Popper/Platt/Chamberlin/Pearl method: admit → hypothesize → counterfactual → discriminate → eliminate. |
-| `sequential-inquiry-convergence-check.j2` | KnowAct | Convergence gate — evaluates whether the reasoning chain has reached a defensible answer or requires another iteration. Per-delegate incorporation checks (8a–8e), dead-letter detection, materiality guard, and `re_entry_target` output for targeted re-entry. Consumes `skill_match_results` from skill-router dispatch. |
+| `sequential-inquiry-grasp.j2` | KnowAct | Kata Step 1: measure the current understanding. |
+| `sequential-inquiry-target.j2` | KnowAct | Kata Step 2: declare the target understanding. |
+| `sequential-inquiry-predict.j2` | KnowAct | Kata Step 3: predict which delegation will close the gap. |
+| `sequential-inquiry-engine.j2` | KnowAct | Kata Step 4: run the inquiry engine with delegation. |
+| `sequential-inquiry-delegate-hypothesis-framer.j2` | KnowAct | Delegation: FINER+PICO hypothesis framing. |
+| `sequential-inquiry-delegate-mcda.j2` | KnowAct | Delegation: multi-criteria decision analysis. |
+| `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation: disciplined diagnosis loop. |
+| `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation: eliminative inference (Popper/Platt/Chamberlin/Pearl). |
 
 ## Constraints
 
-- `sequential-inquiry-engine.j2`: Public.
-- `sequential-inquiry-delegate-hypothesis-framer.j2`: Public.
-- `sequential-inquiry-delegate-mcda.j2`: Public.
-- `sequential-inquiry-delegate-diagnose.j2`: Public.
-- `sequential-inquiry-delegate-falsifiability.j2`: Public.
-- `sequential-inquiry-convergence-check.j2`: Public.
-- Per-delegate incorporation criteria (8a–8e) are weighted at −0.024 each (total −0.12, preserving the original single-criterion weight).
-- Dead-letter detection: if all delegates return `invoked: false`, do not subtract 8a–8e; add `delegation_dead_letter` blocker.
-- Materiality guard: force `convergence_metric = 0.0` when iteration ≥ 3, delta < 0.02, no new delegation requests.
-- Cycle-conditional criteria (8, 9) use `_convergence.iterations_completed` to skip on cycle 1.
-- Engine handles dead-letter by shifting to `skill_match_queries` instead of re-emitting failed delegation requests.
-- Skill-router dispatch (step 7) is gated on `step_1_result.skill_match_queries` being non-empty.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- All flow templates are KnowAct type with Public visibility.
+- Energy caps: grasp (6144), target (4096), predict (4096), engine (9000).
+- Gas cap: 120,000 per invocation. Maximum 10 iterations (safety valve).
+- The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
+- Registry is authoritative.

@@ -12,8 +12,8 @@
 //! card is simpler than its agent-panel counterpart.
 
 use gpui::{
-    App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, StatefulInteractiveElement, Window, prelude::*,
+    App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
+    StatefulInteractiveElement, Window, prelude::*,
 };
 use serde_json::Value;
 use ui::prelude::*;
@@ -99,7 +99,9 @@ impl ToolCallCard {
 
     fn render_status_icon(&self) -> impl IntoElement {
         let (icon, color) = match self.entry.status {
-            ToolCallStatus::Pending | ToolCallStatus::Running => (IconName::Loader, Color::Muted),
+            ToolCallStatus::Pending | ToolCallStatus::Running => {
+                (IconName::LoadCircle, Color::Muted)
+            }
             ToolCallStatus::Done => (IconName::Check, Color::Created),
             ToolCallStatus::Error => (IconName::XCircle, Color::Error),
         };
@@ -117,18 +119,21 @@ impl ToolCallCard {
                     .color(Color::Accent),
             )
             .child(
-                Button::new("toggle-input")
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::XSmall)
-                    .label(if self.entry.expanded { "▾" } else { "▸" })
+                div()
+                    .id("toggle-input")
+                    .cursor_pointer()
+                    .child(
+                        Label::new(if self.entry.expanded { "▾" } else { "▸" })
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.toggle_expand(cx);
                     })),
             )
             .child(
-                Button::new("copy-result")
+                IconButton::new("copy-result", IconName::Copy)
                     .style(ButtonStyle::Subtle)
-                    .icon(IconName::Copy)
                     .icon_size(IconSize::XSmall)
                     .disabled(self.entry.result.is_none())
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -234,7 +239,7 @@ fn format_json(value: &Value) -> String {
 }
 
 /// Get a muted background color from the current theme.
-fn cx_theme_muted_bg() -> Hsla {
+fn cx_theme_muted_bg() -> gpui::Hsla {
     // Use a slightly transparent version of the editor background for the
     // input/output panels. This is a simple heuristic; the agent panel uses
     // `colors().editor_background` with opacity. We use `ghost_element`

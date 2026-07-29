@@ -4546,7 +4546,7 @@ impl Thread {
                                 created.\n\nThis tool creates a directory and all necessary \
                                 parent directories. It should be used whenever you need to \
                                 create new directories within the project.\nThe only supported \
-                                path outside the project is `~/.agents/skills` or a descendant, \
+                                path outside the project is the global skills directory or a descendant, \
                                 for global agent skills."
                                 .to_string();
                             if let Some(properties) = schema

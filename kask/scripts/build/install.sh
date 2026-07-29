@@ -553,7 +553,12 @@ Environment Variables:
     HKASK_SOURCE_DIR      Use existing source directory instead of cloning
     HKASK_REPO_URL        Git repository URL
     HKASK_ALLOW_FALLBACK  Allow silent fallback to main if tag missing (default: false)
-    INSTALL_DIR           Installation directory (default: \$HOME/.local)
+    HKASK_MARKETPLACE_URL URL of the kask skill marketplace API
+                          (default: http://localhost:3000 for local dev).
+                          Set to your kask-aware collab server in production.
+                          Decoupled from server_url (which points at Zed's
+                          cloud for login/collab/telemetry).
+    INSTALL_DIR           Installation directory (default: $HOME/.local)
     HKASK_SYSTEM_INSTALL  Force system-wide install (default: false)
     HKASK_REMOVE_CONFIG   Remove config and data on uninstall (default: false)
 
