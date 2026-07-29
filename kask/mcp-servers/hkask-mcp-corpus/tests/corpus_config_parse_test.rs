@@ -7,8 +7,8 @@
 //! so schema drift fails loudly in CI, not silently at runtime.
 //! # REQ: P8 — every test verifies a stated behavioral property of a public seam.
 
-use hkask_memory::salience::BudgetConfig;
 use hkask_mcp_corpus::corpus::EmbedService;
+use hkask_memory::salience::BudgetConfig;
 
 /// Resolve a workspace-relative corpus config path from the test crate's
 /// manifest dir. Keeps each test free of path-joining boilerplate.

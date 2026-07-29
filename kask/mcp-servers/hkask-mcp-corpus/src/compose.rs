@@ -12,8 +12,8 @@ use serde::Deserialize;
 
 use tracing::debug;
 
-use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use crate::inference_svc::InferenceContext;
+use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 
 // ── Cognition configuration ──────────────────────────────────────────────
 

@@ -58,20 +58,18 @@ impl KanbanServer {
                     Some(inputs) => inputs
                         .into_iter()
                         .enumerate()
-                        .map(|(i, input)| {
-                            match crate::TaskStatus::parse_str(&input.status) {
+                        .map(
+                            |(i, input)| match crate::TaskStatus::parse_str(&input.status) {
                                 Some(s) => {
-                                    let mut col = crate::ColumnDef::new(
-                                        input.name, s, i as u32,
-                                    );
+                                    let mut col = crate::ColumnDef::new(input.name, s, i as u32);
                                     if let Some(wip) = input.wip_limit {
                                         col = col.with_wip_limit(wip);
                                     }
                                     Ok(col)
                                 }
                                 None => Err(format!("invalid status: {}", input.status)),
-                            }
-                        })
+                            },
+                        )
                         .collect::<Result<Vec<_>, _>>(),
                     None => Ok(default_columns()),
                 };
@@ -274,8 +272,7 @@ impl KanbanServer {
                     }
                     Err(e) => return Err(map_kanban_error(e)),
                 };
-                let target = match crate::TaskStatus::parse_str(&target_status)
-                {
+                let target = match crate::TaskStatus::parse_str(&target_status) {
                     Some(s) => s,
                     None => {
                         return Err(McpToolError::invalid_argument(format!(

@@ -981,9 +981,7 @@ mod tests {
         .await
         .expect("skill directory should be symlinked");
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("references")
             .join("guide.md");
@@ -1030,9 +1028,7 @@ mod tests {
         .await
         .expect("skill directory should be symlinked");
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("secret")
             .join("secret.txt");
@@ -1052,12 +1048,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let sibling_path = PathBuf::from("~").join(".agents").join("not-skills");
-        let escaped_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("..")
-            .join("not-skills");
+        let skills_dir = agent_skills::global_skills_dir();
+        let sibling_path = skills_dir.parent().unwrap().join("not-skills");
+        let escaped_path = skills_dir.join("..").join("not-skills");
 
         assert!(
             resolve_creatable_global_skill_path(&sibling_path, fs.as_ref())
@@ -1089,9 +1082,7 @@ mod tests {
             .await
             .expect("symlink should be created");
 
-        let escaped_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let escaped_path = agent_skills::global_skills_dir()
             .join("link")
             .join("new-dir");
 
@@ -1109,8 +1100,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(paths::home_dir(), json!({ ".agents": {} }))
-            .await;
+        fs.insert_tree(paths::data_dir(), json!({})).await;
         fs.insert_tree(path!("/tmp"), json!({ "outside.txt": "outside" }))
             .await;
 

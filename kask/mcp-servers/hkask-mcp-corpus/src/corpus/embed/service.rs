@@ -10,11 +10,11 @@ use super::types::{
 };
 use super::utils::strip_provider_prefix;
 use crate::corpus::embed::Entity;
+use crate::runtime::TripleExtraction;
 use hkask_inference::{EmbeddingRouter, InferenceConfig, InferenceRouter};
 use hkask_memory::SemanticMemory;
 use hkask_memory::salience::{self, EntityTags};
 use hkask_services_core::{DomainKind, ErrorKind, HkaskSettings, ServiceError};
-use crate::runtime::TripleExtraction;
 use hkask_types::InferencePort;
 use hkask_types::id::WebID;
 use std::collections::{HashMap, HashSet};
@@ -359,8 +359,7 @@ impl EmbedService {
             tracing::info!("No classifier configured — all passages default to Statement");
             crate::runtime::ClassifierConfig::from_def(&Default::default())
         } else {
-            let def =
-                crate::runtime::load_classifier_config(&config.classifier, registry_dir)?;
+            let def = crate::runtime::load_classifier_config(&config.classifier, registry_dir)?;
             crate::runtime::ClassifierConfig::from_def(&def)
         };
 
@@ -395,10 +394,8 @@ impl EmbedService {
 
         // ── Extract semantic h_mems ────────────────────────────────
         if !config.triple_classifier.is_empty() {
-            let def = crate::runtime::load_classifier_config(
-                &config.triple_classifier,
-                registry_dir,
-            )?;
+            let def =
+                crate::runtime::load_classifier_config(&config.triple_classifier, registry_dir)?;
             let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
 
             if let Some(ref fusion) = config.fusion {
@@ -455,9 +452,8 @@ impl EmbedService {
                 for handle in handles {
                     match handle.await {
                         Ok((i, Ok(result))) => {
-                            extractions[i] =
-                                crate::runtime::parse_triple_extraction(&result.text)
-                                    .unwrap_or_default();
+                            extractions[i] = crate::runtime::parse_triple_extraction(&result.text)
+                                .unwrap_or_default();
                         }
                         Ok((i, Err(e))) => {
                             tracing::warn!(index = i, error = %e, "Fusion extraction failed");
@@ -484,8 +480,7 @@ impl EmbedService {
                         model_config.model = strip_provider_prefix(&settings_model).to_string();
                     }
                     let fallback =
-                        crate::runtime::extract_triples_batch(&texts, &model_config)
-                            .await?;
+                        crate::runtime::extract_triples_batch(&texts, &model_config).await?;
                     extractions = fallback;
                 }
 

@@ -245,8 +245,10 @@ mod tests {
         async fn discover(
             &self,
             _api_key: &str,
-        ) -> Result<crate::runtime::provider_intel::ProviderState, crate::runtime::provider_intel::ProviderError>
-        {
+        ) -> Result<
+            crate::runtime::provider_intel::ProviderState,
+            crate::runtime::provider_intel::ProviderError,
+        > {
             Ok(crate::runtime::provider_intel::ProviderState {
                 tier: "mock".into(),
                 monthly_limit: None,
@@ -271,7 +273,10 @@ mod tests {
             &self,
             _api_key: &str,
             _model_name: &str,
-        ) -> Result<crate::runtime::provider_intel::CostRate, crate::runtime::provider_intel::ProviderError> {
+        ) -> Result<
+            crate::runtime::provider_intel::CostRate,
+            crate::runtime::provider_intel::ProviderError,
+        > {
             Ok(self.cost_rate.clone())
         }
     }

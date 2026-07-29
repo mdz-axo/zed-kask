@@ -1,7 +1,7 @@
 //! TaggedPassage — fully tagged passage with entity tags, method signals, and salience.
 
-use hkask_memory::salience::{EntityTags, MethodSignals};
 use crate::runtime::TripleExtraction;
+use hkask_memory::salience::{EntityTags, MethodSignals};
 
 /// A fully tagged passage: text + entity tags + method signals + salience.
 ///
