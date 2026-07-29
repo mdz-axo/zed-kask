@@ -85,7 +85,7 @@ impl FalBackend {
             tools,
             "/v1/chat/completions",
             "Key",
-            "FA",
+            "fal.ai",
         )
         .await
     }
@@ -117,7 +117,7 @@ impl FalBackend {
             tools,
             "/v1/chat/completions",
             "Key",
-            "FA",
+            "fal.ai",
         )
         .await
     }

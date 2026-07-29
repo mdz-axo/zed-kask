@@ -83,52 +83,52 @@ impl ProviderId {
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {
-        if model.len() < 4 {
-            return None;
+        // Full-name prefixes. Each entry is (prefix, provider, prefix_len).
+        // `strip_prefix` handles the matching; the match assigns the variant.
+        const PREFIXES: &[(&str, ProviderId)] = &[
+            ("DeepInfra/", ProviderId::DeepInfra),
+            ("fal.ai/", ProviderId::Fal),
+            ("Together AI/", ProviderId::Together),
+            ("RunPod/", ProviderId::Runpod),
+            ("OpenRouter/", ProviderId::OpenRouter),
+            ("KiloCode/", ProviderId::KiloCode),
+            ("ollama/", ProviderId::Ollama),
+            ("Cline/", ProviderId::Cline),
+        ];
+        for (prefix, provider) in PREFIXES {
+            if let Some(rest) = model.strip_prefix(prefix) {
+                if rest.is_empty() {
+                    return None;
+                }
+                return Some((*provider, rest));
+            }
         }
-        let bytes = model.as_bytes();
-        if bytes.get(2) != Some(&b'/') {
-            return None;
-        }
-        let prefix = &model[..2];
-        let rest = &model[3..];
-        if rest.is_empty() {
-            return None;
-        }
-        match prefix {
-            "DI" => Some((ProviderId::DeepInfra, rest)),
-            "FA" => Some((ProviderId::Fal, rest)),
-            "TG" => Some((ProviderId::Together, rest)),
-            "RP" => Some((ProviderId::Runpod, rest)),
-            "OR" => Some((ProviderId::OpenRouter, rest)),
-            "KC" => Some((ProviderId::KiloCode, rest)),
-            "OM" => Some((ProviderId::Ollama, rest)),
-            "CL" => Some((ProviderId::Cline, rest)),
-            _ => None,
-        }
+        None
     }
 
-    /// Returns true if `model` has the `XX/...` prefix shape with two
-    /// uppercase ASCII letters before the slash — i.e. it *looks* like a
-    /// provider-prefixed name even when the prefix is not recognized.
+    /// Returns true if `model` has a provider-prefix shape — i.e. it
+    /// *looks* like a provider-prefixed name even when the prefix is not
+    /// recognized.
     ///
     /// `InferenceRouter::parse_provider` uses this to reject unknown prefixes
     /// with a clear error rather than silently routing them to the default
     /// provider as a garbage model name.
     ///
+    /// A model name has the prefix shape if it contains a `/` and the segment
+    /// before the first `/` is non-empty. This catches both full-name prefixes
+    /// ("DeepInfra/...", "fal.ai/...") and any future prefix format.
+    ///
     /// expect: "The system rejects unrecognized provider prefixes explicitly"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — fail fast on unknown prefix
     /// pre:  model may be any string
-    /// post: returns true iff model is `XX/...` with two uppercase letters
+    /// post: returns true iff model contains a non-empty segment before the first `/`
     /// post: recognized prefixes return false here (handled by `parse_from_model`)
     #[must_use]
     pub fn looks_like_prefix(model: &str) -> bool {
-        let bytes = model.as_bytes();
-        bytes.len() >= 4
-            && bytes[2] == b'/'
-            && !model[3..].is_empty()
-            && bytes[0].is_ascii_uppercase()
-            && bytes[1].is_ascii_uppercase()
+        match model.find('/') {
+            Some(slash_idx) if slash_idx > 0 => !model[slash_idx + 1..].is_empty(),
+            _ => false,
+        }
     }
 
     /// Format a model name with this provider's prefix.
@@ -142,22 +142,22 @@ impl ProviderId {
         format!("{}/{}", self.as_str(), model)
     }
 
-    /// Two-letter code for this provider.
+    /// Full provider name used as the model-string prefix.
     ///
     /// expect: "The system normalizes provider responses for monitoring"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider code for routing
-    /// post: returns "DI", "FA", "TG", "RP", "OR", "KC", "OM", or "CL"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider name for routing
+    /// post: returns "DeepInfra", "fal.ai", "Together AI", "RunPod", "OpenRouter", "KiloCode", "ollama", or "Cline"
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
-            ProviderId::DeepInfra => "DI",
-            ProviderId::Fal => "FA",
-            ProviderId::Together => "TG",
-            ProviderId::Runpod => "RP",
-            ProviderId::OpenRouter => "OR",
-            ProviderId::KiloCode => "KC",
-            ProviderId::Ollama => "OM",
-            ProviderId::Cline => "CL",
+            ProviderId::DeepInfra => "DeepInfra",
+            ProviderId::Fal => "fal.ai",
+            ProviderId::Together => "Together AI",
+            ProviderId::Runpod => "RunPod",
+            ProviderId::OpenRouter => "OpenRouter",
+            ProviderId::KiloCode => "KiloCode",
+            ProviderId::Ollama => "ollama",
+            ProviderId::Cline => "Cline",
         }
     }
 }
@@ -422,7 +422,7 @@ fn parse_provider_code(raw: &str) -> ProviderId {
         "KiloCode" => ProviderId::KiloCode,
         "ollama" => ProviderId::Ollama,
         "Cline" => ProviderId::Cline,
-        _ => ProviderId::OpenRouter,
+        _ => ProviderId::DeepInfra,
     }
 }
 
@@ -572,6 +572,7 @@ mod tests {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — validates malformed model rejection
     #[test]
     fn parse_too_short_returns_none() {
+        // No prefix — too short to contain a recognized provider prefix.
         assert_eq!(ProviderId::parse_from_model("DI"), None);
         assert_eq!(ProviderId::parse_from_model("FA"), None);
         assert_eq!(ProviderId::parse_from_model("X"), None);
@@ -583,6 +584,7 @@ mod tests {
     fn parse_unknown_prefix_returns_none() {
         assert_eq!(ProviderId::parse_from_model("XX/model"), None);
         assert_eq!(ProviderId::parse_from_model("AB/test"), None);
+        assert_eq!(ProviderId::parse_from_model("UnknownProvider/model"), None);
     }
 
     /// expect: "Inference model name formatting works correctly under test conditions"
@@ -627,10 +629,14 @@ mod tests {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — validates provider code parser
     #[test]
     fn parse_provider_code_all_codes() {
-        assert_eq!(parse_provider_code("DI"), ProviderId::DeepInfra);
-        assert_eq!(parse_provider_code("FA"), ProviderId::Fal);
-        assert_eq!(parse_provider_code("TG"), ProviderId::Together);
-        assert_eq!(parse_provider_code("RP"), ProviderId::Runpod);
+        assert_eq!(parse_provider_code("DeepInfra"), ProviderId::DeepInfra);
+        assert_eq!(parse_provider_code("fal.ai"), ProviderId::Fal);
+        assert_eq!(parse_provider_code("Together AI"), ProviderId::Together);
+        assert_eq!(parse_provider_code("RunPod"), ProviderId::Runpod);
+        assert_eq!(parse_provider_code("OpenRouter"), ProviderId::OpenRouter);
+        assert_eq!(parse_provider_code("KiloCode"), ProviderId::KiloCode);
+        assert_eq!(parse_provider_code("ollama"), ProviderId::Ollama);
+        assert_eq!(parse_provider_code("Cline"), ProviderId::Cline);
     }
 
     /// expect: "Inference provider code default works correctly under test conditions"
@@ -640,7 +646,8 @@ mod tests {
         assert_eq!(parse_provider_code("XX"), ProviderId::DeepInfra);
         assert_eq!(parse_provider_code(""), ProviderId::DeepInfra);
         assert_eq!(parse_provider_code("unknown"), ProviderId::DeepInfra);
-        assert_eq!(parse_provider_code("om"), ProviderId::DeepInfra);
+        // Wrong case ("Ollama" vs canonical "ollama") is not recognized.
+        assert_eq!(parse_provider_code("Ollama"), ProviderId::DeepInfra);
     }
 
     // ── resolve_api_key ──────────────────────────────────────────────────
@@ -675,15 +682,18 @@ mod tests {
     /// expect: "Prefix-shape detection distinguishes unrecognized XX/ prefixes from unprefixed names" [P9]
     #[test]
     fn looks_like_prefix_detects_shape() {
-        // Two uppercase letters + slash + rest = prefix-shaped.
+        // Any non-empty segment before a `/` = prefix-shaped.
         assert!(ProviderId::looks_like_prefix("BT/foo"));
         assert!(ProviderId::looks_like_prefix("XX/model"));
         assert!(ProviderId::looks_like_prefix("DeepInfra/foo"));
-        // No slash at index 2, too short, or lowercase = not prefix-shaped.
+        assert!(ProviderId::looks_like_prefix("fal.ai/bar"));
+        assert!(ProviderId::looks_like_prefix("SomeUnknown/model"));
+        // No slash, too short, or empty prefix segment = not prefix-shaped.
         assert!(!ProviderId::looks_like_prefix("qwen3:8b"));
         assert!(!ProviderId::looks_like_prefix("deepseek-v4-pro"));
         assert!(!ProviderId::looks_like_prefix("DI"));
         assert!(!ProviderId::looks_like_prefix("ab/c"));
         assert!(!ProviderId::looks_like_prefix("DeepInfra/"));
+        assert!(!ProviderId::looks_like_prefix("/model"));
     }
 }

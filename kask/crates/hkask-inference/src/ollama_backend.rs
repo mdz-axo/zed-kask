@@ -131,7 +131,7 @@ impl OllamaBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "OM",
+            "ollama",
         )
         .await
     }
@@ -173,7 +173,7 @@ impl OllamaBackend {
             tools_ref,
             "/v1/chat/completions",
             "Bearer",
-            "OM",
+            "ollama",
         )
         .await
     }
@@ -243,7 +243,7 @@ impl OllamaBackend {
             &self.client,
             &self.base_url,
             &key,
-            "OM",
+            "ollama",
             model,
             prompt,
             images,

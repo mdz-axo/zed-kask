@@ -2067,6 +2067,8 @@ mod tests {
 
     #[test]
     fn compute_pressure_scales_with_latency() {
+        // Reset first — other pressure tests may have left a value in the
+        // shared static. Without this, parallel test execution causes flakes.
         super::ROLLING_LATENCY_MS.store(5000, std::sync::atomic::Ordering::Relaxed);
         let p = super::compute_pressure();
         // 5000ms → (5000 - 2000) / 6000 = 0.5

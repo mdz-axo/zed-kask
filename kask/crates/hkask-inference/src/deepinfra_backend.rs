@@ -76,7 +76,7 @@ impl DeepInfraBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "DI",
+            "DeepInfra",
         )
         .await
     }
@@ -109,7 +109,7 @@ impl DeepInfraBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "DI",
+            "DeepInfra",
         )
         .await
     }
@@ -136,7 +136,7 @@ impl DeepInfraBackend {
             &self.client,
             &self.base_url,
             &self.api_key,
-            "DI",
+            "DeepInfra",
             model,
             prompt,
             images,

@@ -170,7 +170,7 @@ impl OpenRouterBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "OR",
+            "OpenRouter",
         )
         .await
     }
@@ -202,7 +202,7 @@ impl OpenRouterBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "OR",
+            "OpenRouter",
         )
         .await
     }
@@ -259,7 +259,7 @@ impl OpenRouterBackend {
             &self.client,
             &self.base_url,
             &self.api_key,
-            "OR",
+            "OpenRouter",
             model,
             prompt,
             images,

@@ -116,7 +116,7 @@ impl KiloCodeBackend {
             tools,
             "/chat/completions",
             "Bearer",
-            "KC",
+            "KiloCode",
         )
         .await
     }
@@ -148,7 +148,7 @@ impl KiloCodeBackend {
             tools,
             "/chat/completions",
             "Bearer",
-            "KC",
+            "KiloCode",
         )
         .await
     }

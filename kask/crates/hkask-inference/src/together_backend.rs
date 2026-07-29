@@ -88,7 +88,7 @@ impl TogetherBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "TG",
+            "Together AI",
         )
         .await
     }
@@ -120,7 +120,7 @@ impl TogetherBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "TG",
+            "Together AI",
         )
         .await
     }
@@ -178,7 +178,7 @@ impl TogetherBackend {
             &self.client,
             &self.base_url,
             &self.api_key,
-            "TG",
+            "Together AI",
             model,
             prompt,
             images,

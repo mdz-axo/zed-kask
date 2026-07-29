@@ -87,7 +87,7 @@ impl RunpodBackend {
             InferenceError::Json(format!("RunPod JSON: {} | body: {}", e, preview))
         })?;
         let result = chat_response_to_result(chat_response)?;
-        info!(target: "reg.inference", provider = "RP", model = %result.model, tokens = result.usage.total_tokens, "RunPod vision inference completed");
+        info!(target: "reg.inference", provider = "RunPod", model = %result.model, tokens = result.usage.total_tokens, "RunPod vision inference completed");
         Ok(result)
     }
 

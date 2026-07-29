@@ -93,7 +93,7 @@ impl ClineBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "CL",
+            "Cline",
         )
         .await
     }
@@ -125,7 +125,7 @@ impl ClineBackend {
             tools,
             "/v1/chat/completions",
             "Bearer",
-            "CL",
+            "Cline",
         )
         .await
     }
@@ -185,7 +185,7 @@ impl ClineBackend {
             &self.client,
             &self.base_url,
             &self.api_key,
-            "CL",
+            "Cline",
             model,
             prompt,
             images,

@@ -961,23 +961,25 @@ impl MediaServer {
         let models = self.vision_port.list_vision_models().await;
 
         for model in &models {
-            // Check the provider prefix in the model name.
+            // Check the provider prefix in the model name (case-insensitive —
+            // the IPC bridge returns zed provider ids like "deepinfra", while
+            // the standalone InferenceRouter returns full names like "DeepInfra").
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
-            match prefix {
-                "FA" => {
+            match prefix.to_ascii_lowercase().as_str() {
+                "fal.ai" | "fal" => {
                     // Qwen2.5-VL 72B — Apache 2.0 open-weight, served by fal.ai
                     return Some(("fal.ai/Qwen/Qwen2.5-VL-72B-Instruct", "qwen2.5-vl-72b"));
                 }
-                "DI" => {
+                "deepinfra" | "di" => {
                     return Some((
                         "DeepInfra/meta-llama/Llama-3.2-11B-Vision-Instruct",
                         "llama-3.2-vision",
                     ));
                 }
-                "OR" => {
+                "openrouter" | "or" => {
                     return Some(("OpenRouter/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
                 }
-                "TG" => {
+                "together ai" | "together" | "tg" => {
                     return Some(("Together AI/Qwen/Qwen2.5-VL-72B-Instruct", "qwen-vl"));
                 }
                 _ => continue,

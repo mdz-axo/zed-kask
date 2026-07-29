@@ -794,7 +794,7 @@ mod tests {
             ProviderId::Ollama.prefix_model("qwen3:8b"),
             "ollama/qwen3:8b"
         );
-        assert_eq!(ProviderId::Ollama.as_str(), "OM");
+        assert_eq!(ProviderId::Ollama.as_str(), "ollama");
     }
 
     /// REQ: P9-inf-ollama-resolve
@@ -853,7 +853,7 @@ mod tests {
             ProviderId::Cline.prefix_model("openai/gpt-4o"),
             "Cline/openai/gpt-4o"
         );
-        assert_eq!(ProviderId::Cline.as_str(), "CL");
+        assert_eq!(ProviderId::Cline.as_str(), "Cline");
     }
 
     /// REQ: P9-inf-cline-resolve
