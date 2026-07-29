@@ -10,6 +10,15 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// Future returned by [`InferencePort::embed`].
+///
+/// Extracted as a named alias so the trait signature stays under clippy's
+/// `type_complexity` threshold; the boxed-async-future shape is inherent to
+/// the object-safe `InferencePort` trait (we avoid `async_trait` deliberately —
+/// see the trait-level comment).
+pub type EmbedFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>;
+
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
 /// Impls: `InferenceRouter` (hkask-inference), `Arc<dyn InferencePort>` (blanket).
 /// A model available from an inference provider.
@@ -162,12 +171,7 @@ pub trait InferencePort: Send + Sync {
     ///
     /// Default: returns an error. `InferenceIpcClient` overrides this to
     /// route through zed's `LanguageModelEmbeddingPort` via the IPC bridge.
-    fn embed<'a>(
-        &'a self,
-        _model: &str,
-        _texts: &[String],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>
-    {
+    fn embed<'a>(&'a self, _model: &str, _texts: &[String]) -> EmbedFuture<'a> {
         Box::pin(async {
             Err(EmbeddingGenerationError::Connection(
                 "embed not supported by this InferencePort".into(),

@@ -218,7 +218,7 @@ impl ComposeService {
         let prompt_vector = inference
             .embed(
                 &request.cognition.embedding.model,
-                &[request.prompt.clone()],
+                std::slice::from_ref(&request.prompt),
             )
             .await?
             .into_iter()
@@ -383,7 +383,7 @@ impl ComposeService {
             let prose_vector = inference
                 .embed(
                     &request.cognition.embedding.model,
-                    &[generated_prose.clone()],
+                    std::slice::from_ref(&generated_prose),
                 )
                 .await?
                 .into_iter()

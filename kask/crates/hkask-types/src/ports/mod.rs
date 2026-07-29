@@ -16,7 +16,7 @@ pub mod regulation;
 pub mod wallet_budget_port;
 
 pub use embedding::EmbeddingGenerationError;
-pub use inference_port::{InferencePort, InferenceStreamChunk, ModelEntry};
+pub use inference_port::{EmbedFuture, InferencePort, InferenceStreamChunk, ModelEntry};
 pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,
     InferenceUsage, StructuredToolCall, TokenProb, TokenProbability, compute_confidence,

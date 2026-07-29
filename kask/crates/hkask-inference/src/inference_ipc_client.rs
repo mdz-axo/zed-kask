@@ -336,18 +336,7 @@ impl InferencePort for InferenceIpcClient {
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()
     }
 
-    fn embed<'a>(
-        &'a self,
-        model: &str,
-        texts: &[String],
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Vec<Vec<f32>>, hkask_types::EmbeddingGenerationError>,
-                > + Send
-                + 'a,
-        >,
-    > {
+    fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();
         let this = self;

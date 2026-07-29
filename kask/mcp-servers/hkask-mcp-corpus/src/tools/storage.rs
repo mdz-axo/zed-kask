@@ -92,7 +92,7 @@ impl CorpusServer {
 
             let query_embedding = match self
                 .inference_router
-                .embed(&model_name, &[query.clone()])
+                .embed(&model_name, std::slice::from_ref(&query))
                 .await
             {
                 Ok(v) => v.into_iter().next().unwrap_or_default(),

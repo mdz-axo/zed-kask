@@ -8,6 +8,7 @@ description = "Code understanding MCP server — semantic code graph with tree-s
 [dependencies]
 hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
 hkask-types = { path = "../../crates/hkask-types" }
+hkask-inference = { path = "../../crates/hkask-inference" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -16,7 +17,6 @@ schemars = { workspace = true }
 tracing = { workspace = true }
 
 rusqlite = { workspace = true, features = ["bundled"] }
-reqwest = { workspace = true }
 
 
 

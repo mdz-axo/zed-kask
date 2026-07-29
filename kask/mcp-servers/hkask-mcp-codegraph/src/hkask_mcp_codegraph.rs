@@ -11,6 +11,7 @@ use crate::codegraph::types::Direction;
 use crate::codegraph::{ContextBudget, graph};
 use hkask_mcp_server::run_server;
 use hkask_mcp_server::server::{CapabilityTier, CredentialRequirement, McpToolError, execute_tool};
+use hkask_types::InferencePort;
 use hkask_types::WebID;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
@@ -29,6 +30,10 @@ hkask_mcp_server::mcp_server!(
         /// every read tool call. `codegraph_reindex` resets it to force a
         /// fresh index on the next read.
         indexed_once: Arc<std::sync::atomic::AtomicBool>,
+        /// Inference port for embedding generation. Routes embeddings through
+        /// zed's `LanguageModelEmbeddingPort` via the IPC bridge, replacing
+        /// the old raw-reqwest calls that bypassed zed's credential resolution.
+        pub inference_port: Arc<dyn InferencePort>,
     }
 );
 
@@ -408,14 +413,15 @@ impl CodeGraphServer {
     /// Generate embeddings for all indexed symbols via the configured embedding API.
     ///
     /// Reads all symbols from the database, batches them, calls the embedding
-    /// API (DeepInfra or OpenRouter), and stores the resulting vectors in the
-    /// `symbols_vec` sqlite-vec table for semantic similarity search.
+    /// API through zed's `LanguageModelEmbeddingPort` (via the IPC bridge),
+    /// and stores the resulting vectors in the `symbols_vec` sqlite-vec table
+    /// for semantic similarity search.
     ///
-    /// Requires `DEEPINFRA_API_KEY` or `OPENROUTER_API_KEY` to be set. Uses
-    /// `HKASK_EMBEDDING_MODEL` (default: `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and
-    /// `HKASK_EMBEDDING_DIM` (default: 1024).
+    /// Uses `HKASK_EMBEDDING_MODEL` (default: `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and
+    /// `HKASK_EMBEDDING_DIM` (default: 1024). Credentials are resolved from
+    /// zed's `LanguageModelRegistry` — no env-var API keys needed.
     #[tool(
-        description = "Generate embeddings for all indexed symbols via the embedding API. Requires DEEPINFRA_API_KEY or OPENROUTER_API_KEY."
+        description = "Generate embeddings for all indexed symbols via the embedding API. Routes through zed's inference bridge."
     )]
     pub async fn codegraph_index_embeddings(
         &self,
@@ -454,103 +460,33 @@ impl CodeGraphServer {
                 }));
             }
 
-            // Resolve API key and base URL from the model prefix.
-            let (api_key, base_url, model_id) =
-                if let Some(stripped) = model.strip_prefix("DeepInfra/") {
-                    (
-                        std::env::var("DEEPINFRA_API_KEY").unwrap_or_default(),
-                        "https://api.deepinfra.com/v1/openai".to_string(),
-                        stripped.to_string(),
-                    )
-                } else if let Some(stripped) = model.strip_prefix("OpenRouter/") {
-                    (
-                        std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
-                        "https://openrouter.ai/api/v1".to_string(),
-                        stripped.to_string(),
-                    )
-                } else {
-                    return Ok(serde_json::json!({
-                        "symbols_embedded": 0,
-                        "model": model,
-                        "dim": dim,
-                        "errors": ["unsupported model prefix — use DeepInfra/ or OpenRouter/"],
-                    }));
-                };
-
-            if api_key.is_empty() {
-                let env_var = if model.starts_with("DeepInfra/") {
-                    "DEEPINFRA_API_KEY"
-                } else {
-                    "OPENROUTER_API_KEY"
-                };
-                return Ok(serde_json::json!({
-                    "symbols_embedded": 0,
-                    "model": model,
-                    "dim": dim,
-                    "errors": [format!("{} not set — cannot generate embeddings", env_var)],
-                }));
-            }
-
             let batch_size = req.batch_size.max(1) as usize;
             let mut embeddings_to_insert: Vec<(i64, Vec<f32>)> = Vec::new();
             let mut errors: Vec<String> = Vec::new();
 
-            let client = reqwest::Client::new();
             for chunk in symbols.chunks(batch_size) {
-                let texts: Vec<&str> = chunk.iter().map(|(_, _, t)| t.as_str()).collect();
+                let texts: Vec<String> = chunk.iter().map(|(_, _, t)| t.clone()).collect();
 
-                let request_body = serde_json::json!({
-                    "model": model_id,
-                    "input": texts,
-                });
-
-                let response = client
-                    .post(format!("{}/embeddings", base_url))
-                    .header("Authorization", format!("Bearer {}", api_key))
-                    .header("Content-Type", "application/json")
-                    .json(&request_body)
-                    .send()
-                    .await;
-
-                match response {
-                    Ok(resp) => {
-                        if !resp.status().is_success() {
-                            let status = resp.status();
-                            let body = resp.text().await.unwrap_or_default();
-                            errors.push(format!("API error {}: {}", status, body));
-                            continue;
-                        }
-                        match resp.json::<serde_json::Value>().await {
-                            Ok(json) => {
-                                if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
-                                    for (i, entry) in data.iter().enumerate() {
-                                        if i >= chunk.len() {
-                                            break;
-                                        }
-                                        if let Some(emb) =
-                                            entry.get("embedding").and_then(|e| e.as_array())
-                                        {
-                                            let embedding: Vec<f32> = emb
-                                                .iter()
-                                                .filter_map(|v| v.as_f64().map(|f| f as f32))
-                                                .collect();
-                                            if embedding.len() == dim {
-                                                embeddings_to_insert.push((chunk[i].0, embedding));
-                                            } else {
-                                                errors.push(format!(
-                                                    "dimension mismatch: expected {}, got {}",
-                                                    dim,
-                                                    embedding.len()
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
+                match self.inference_port.embed(&model, &texts).await {
+                    Ok(vectors) => {
+                        for (i, embedding) in vectors.iter().enumerate() {
+                            if i >= chunk.len() {
+                                break;
                             }
-                            Err(e) => errors.push(format!("JSON parse error: {}", e)),
+                            if embedding.len() == dim {
+                                embeddings_to_insert.push((chunk[i].0, embedding.clone()));
+                            } else {
+                                errors.push(format!(
+                                    "dimension mismatch: expected {}, got {}",
+                                    dim,
+                                    embedding.len()
+                                ));
+                            }
                         }
                     }
-                    Err(e) => errors.push(format!("request failed: {}", e)),
+                    Err(e) => {
+                        errors.push(format!("embedding API error: {}", e));
+                    }
                 }
             }
 
@@ -592,6 +528,9 @@ impl CodeGraphServer {
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     let db_path = std::env::var("HKASK_CODEGRAPH_DB").ok();
+    // Resolve the inference port once — routes embeddings through zed's
+    // LanguageModelEmbeddingPort via the IPC bridge.
+    let inference_port = hkask_inference::resolve_inference_port().await;
     run_server(
         "hkask-mcp-codegraph",
         SERVER_VERSION,
@@ -620,6 +559,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 CapabilityTier::detect(&std::collections::HashMap::new()),
                 Arc::new(Mutex::new(pipeline)),
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                inference_port.clone(),
             ))
         },
         vec![CredentialRequirement::optional(

@@ -30,8 +30,41 @@ use hkask_mcp_codegraph::{
     StructureRequest, TraverseRequest,
 };
 use hkask_mcp_server::server::CapabilityTier;
+use hkask_types::InferencePort;
 use hkask_types::WebID;
 use std::sync::{Arc, Mutex};
+
+/// Stub `InferencePort` for tests. Only `generate` is required; the default
+/// `embed` impl returns a `Connection` error, which the embedding tool path
+/// turns into a structured "0 symbols embedded" result — exactly what the
+/// error-propagation tests assert.
+struct StubInferencePort;
+
+impl InferencePort for StubInferencePort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Generation(
+                "stub inference port — generate not available in tests".into(),
+            ))
+        })
+    }
+}
+
+fn stub_inference_port() -> Arc<dyn InferencePort> {
+    Arc::new(StubInferencePort)
+}
 
 // ── Test harness ────────────────────────────────────────────────────────────
 
@@ -68,6 +101,7 @@ fn make_server_with_symbol() -> hkask_mcp_codegraph::CodeGraphServer {
         tier,
         Arc::new(Mutex::new(pipeline)),
         indexed_once,
+        stub_inference_port(),
     )
 }
 
@@ -87,6 +121,7 @@ fn make_server_empty() -> hkask_mcp_codegraph::CodeGraphServer {
         tier,
         Arc::new(Mutex::new(pipeline)),
         indexed_once,
+        stub_inference_port(),
     )
 }
 

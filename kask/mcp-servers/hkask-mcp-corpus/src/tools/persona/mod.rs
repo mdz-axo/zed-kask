@@ -489,7 +489,7 @@ impl CorpusServer {
                 let emb_model = embedding_model();
                 let vectors = self
                     .inference_router
-                    .embed(&emb_model, &[doc_text.clone()])
+                    .embed(&emb_model, std::slice::from_ref(doc_text))
                     .await
                     .map_err(|e| {
                         McpToolError::internal(format!("Failed to embed document: {e}"))
