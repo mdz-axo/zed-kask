@@ -19,7 +19,6 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 - When you need to synthesize multiple causal models and dissenting views into a single calibrated probability.
 - When you need to record a forecast with resolution criteria for later tracking, Brier scoring, and post-mortem analysis.
 - When evaluating generated forecasts through an independent quality gate to assess calibration realism, confidence justification, evidence trail, and record completeness without self-assessment bias.
-- When evaluating the convergence of a superforecasting PDCA cycle to determine if further iteration is material.
 
 ## Instructions
 
@@ -96,14 +95,6 @@ The former single inside-view step is split into three FlowDef steps. Generation
 4. If gate_pass is false, each failing dimension must have a specific, actionable fix note.
 5. You are evaluating, not generating — do not rewrite or improve the forecast.
 
-### superforecasting-convergence-check
-
-1. Compute a normalized convergence metric for superforecasting PDCA cycles.
-2. Check for vacuous iterations by computing the absolute delta between the final and prior probability.
-3. Trigger the materiality guard if the delta is less than 0.02 and no new evidence is introduced, forcing convergence.
-4. If not vacuous, apply the structured weighted-penalty rubric: independent gate pass/fail, confidence level, precision justification quality, defensible range presence, record completeness, synthesis–calibration agreement, and evidence–conclusion alignment.
-5. Return the convergence metric, rationale, and any blockers to further convergence.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -117,7 +108,6 @@ The former single inside-view step is split into three FlowDef steps. Generation
 | `stage_6_calibration.j2` | WordAct | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail.  |
 | `stage_7_record.j2` | WordAct | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis.  |
 | `forecast-quality-gate.j2` | KnowAct | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes.  |
-| `superforecasting-convergence-check.j2` | KnowAct | Compute normalized convergence metric for superforecasting PDCA cycles. Uses a deterministic materiality guard (probability delta + evidence check) plus a structured weighted-penalty rubric covering independent gate status, confidence, precision, record completeness, synthesis–calibration agreement, and evidence–conclusion alignment. Returns convergence_metric plus rationale and blockers.  |
 
 ## Constraints
 
@@ -129,5 +119,4 @@ The former single inside-view step is split into three FlowDef steps. Generation
 - `stage_5_synthesis.j2`: Public.
 - `stage_6_calibration.j2`: Public.
 - `stage_7_record.j2`: Public.
-- `superforecasting-convergence-check.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

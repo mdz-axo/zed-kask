@@ -581,7 +581,7 @@ impl MemoryPort for RealMemoryPort {
             // credentials and make the HTTP call. The rest of ingest_turn
             // doesn't need tokio.
             let embedding_model = self.embedding_model.clone();
-            let embedding_port = &self.embedding_port;
+            let embedding_port = self.embedding_port.clone();
             let user_input_owned = user_input.clone();
             let vectors = self
                 .tokio_handle
@@ -674,7 +674,7 @@ impl MemoryPort for RealMemoryPort {
             // GPUI-side channel task can resolve credentials and make the
             // HTTP call.
             let embedding_model = self.embedding_model.clone();
-            let embedding_port = &self.embedding_port;
+            let embedding_port = self.embedding_port.clone();
             let query_owned = query.to_string();
             let vectors = self
                 .tokio_handle
@@ -899,9 +899,8 @@ mod tests {
         let embedding_store = EmbeddingStore::from_driver(driver, 1024);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
-        // EmbeddingRouter needs InferenceConfig, but we won't call embed in tests
-        let inference_config = InferenceConfig::from_env();
-        let embedding_router = EmbeddingRouter::new(inference_config);
+        // Tests don't call embed — use a stub port with no backing task.
+        let embedding_port = LanguageModelEmbeddingPort::for_tests();
 
         let consolidation = if consolidation_cadence_secs > 0 {
             let bridge = Arc::new(ConsolidationBridge::new(
@@ -919,7 +918,7 @@ mod tests {
         RealMemoryPort {
             episodic,
             semantic,
-            embedding_router,
+            embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
             curator_webid: WebID::from_persona(b"Curator"),

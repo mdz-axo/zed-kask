@@ -381,6 +381,7 @@ struct EmbedRequest {
 /// the same provider as the embedding model — only its `api_url()` and
 /// `api_key()` are used) and the app's `HttpClient`. Drop the returned
 /// `Task` to stop the GPUI-side receiver.
+#[derive(Clone)]
 pub struct LanguageModelEmbeddingPort {
     tx: mpsc::UnboundedSender<EmbedRequest>,
 }
@@ -511,6 +512,17 @@ impl LanguageModelEmbeddingPort {
         });
 
         (Self { tx }, task)
+    }
+
+    /// Construct a port with no backing GPUI task. Any `embed` call will
+    /// return a `Connection` error (the channel is closed). For tests that
+    /// construct a `RealMemoryPort` but never call embed.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        let (tx, _rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        // Drop `_rx` immediately so `embed` returns a channel-closed error.
+        drop(_rx);
+        Self { tx }
     }
 
     /// Generate embeddings for a batch of texts.

@@ -38,7 +38,8 @@ use hkask_types::inference_ipc::{
 };
 use hkask_types::template::LLMParameters;
 use hkask_types::{
-    ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,
+    ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
+    InferenceResult,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -139,9 +140,105 @@ impl InferenceIpcClient {
         match response.outcome {
             InferenceOutcome::Result { result } => Ok(result),
             InferenceOutcome::Error { error } => Err(error.into()),
+            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
+                "received Embeddings outcome for a non-embed request".into(),
+            )),
         }
     }
-}
+
+    /// Send an embedding request and receive the response.
+    async fn call_embed(
+        &self,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: InferenceMethod::Embed,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: Some(model.to_string()),
+                embed_texts: Some(texts.to_vec()),
+            },
+        };
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| EmbeddingGenerationError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut guard = self.stream.lock().await;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| EmbeddingGenerationError::Connection("IPC socket closed".into()))?;
+
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC read failed: {e}")))?;
+
+        if line.is_empty() {
+            *guard = None;
+            return Err(EmbeddingGenerationError::Connection(
+                "IPC socket closed by server".into(),
+            ));
+        }
+
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| EmbeddingGenerationError::Json(format!("IPC deserialize failed: {e}")))?;
+
+        if response.id != id {
+            return Err(EmbeddingGenerationError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )));
+        }
+
+        match response.outcome {
+            InferenceOutcome::Embeddings { embeddings } => Ok(embeddings),
+            InferenceOutcome::Error { error } => Err(EmbeddingGenerationError::Connection(format!(
+                "{}: {}",
+                error.code, error.message
+            ))),
+            InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
+                "received Result outcome for an embed request".into(),
+            )),
+        }
+    }
+
+    /// Generate embeddings for a batch of texts via the IPC bridge.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The zed process strips the
+    /// prefix and resolves credentials from its `LanguageModelRegistry`.
+    pub async fn embed(
+        &self,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbeddingGenerationError> {
+        if texts.is_empty() {
+            return Err(EmbeddingGenerationError::EmptyResponse);
+        }
+        self.call_embed(model, texts).await
+    }
 
 impl InferencePort for InferenceIpcClient {
     fn generate(

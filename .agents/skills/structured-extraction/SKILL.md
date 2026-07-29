@@ -15,7 +15,6 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 - When you need to identify entities in unstructured text and map them to a target schema using extraction hints.
 - When you need to extract semantic relations between identified entities as subject-predicate-object triples.
 - When you need to map extracted entities and relations to a target JSON schema, resolving field mappings and inferring missing fields.
-- When you need to compute a normalized convergence metric for structured-extraction PDCA cycles to evaluate schema coverage and unresolved fields.
 
 ## Instructions
 
@@ -48,12 +47,6 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 5. Infer missing but required fields from surrounding context if possible.
 6. Report fields that cannot be populated from available information as unresolved fields.
 
-### structured-extraction-convergence-check
-
-1. Measure convergence on a scale of [0,1] where 0 means schema coverage is acceptable and unresolved fields are low-risk/non-critical.
-2. Score how much work remains based on the provided mapping result.
-3. Return the convergence metric, method, rationale, and any blockers.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -61,12 +54,10 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 | `extract-relations.j2` | KnowAct | Extract semantic relations between identified entities. Links entities via subject-predicate-object triples within context.  |
 | `identify-entities.j2` | KnowAct | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count.  |
 | `map-to-schema.j2` | KnowAct | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields.  |
-| `structured-extraction-convergence-check.j2` | KnowAct | Compute normalized convergence metric for structured-extraction PDCA cycles. Returns convergence_metric plus rationale and blockers.  |
 
 ## Constraints
 
 - `extract-relations.j2`: Public.
 - `identify-entities.j2`: Public.
 - `map-to-schema.j2`: Public.
-- `structured-extraction-convergence-check.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

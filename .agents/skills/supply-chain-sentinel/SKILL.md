@@ -173,10 +173,11 @@ CONSTRAINT — Evidence integrity (P8):
   registry verification, SBOM visibility). It complements
   `adversarial-red-team` (LLM boundary — zero overlap). State relationship
   explicitly in reports.
-- Minimal (P5): 4 templates (`select-surface`, `probe`, `report`,
-  `convergence-check`), no bundle, no sub-agent delegation, no abstract
-  dependency resolver. Each template answers specific 5W1H: select (Where),
-  probe (What + How), report (Why + What), convergence (When + Why).
+- Minimal (P5): 3 templates (`select-surface`, `probe`, `report`),
+  no bundle, no sub-agent delegation, no abstract dependency resolver.
+  Convergence is computed deterministically by the executor (Cauchy
+  criterion) — no LLM convergence-check template. Each template answers
+  specific 5W1H: select (Where), probe (What + How), report (Why + What).
 
 ### supply-chain-sentinel/report
 
@@ -211,32 +212,6 @@ CONSTRAINT — Evidence integrity (P8):
    severity, defense layers present/missing, proposed regression count,
    userpod host, verdict, latency metric.
 
-### supply-chain-sentinel/convergence-check
-
-1. Compute normalized convergence metric [0, 1] where 0 = fully converged.
-2. Score dimensions (weighted):
-   - Critical + high findings resolved (0.40): 0 critical/high = +0.00;
-     1+ critical/high unresolved = +0.40; partial resolution = proportional.
-   - Defense-layer coverage (0.25): 4 layers present = +0.00; 3 = +0.06;
-     2 = +0.12; 1 = +0.19; 0 = +0.25.
-   - CWE / taxonomy coverage (0.15): CWE-1104, CWE-829, CWE-1357
-     covered by at least one finding/proposed regression = +0.00; 1-2
-     covered = +0.08; 0 covered = +0.15.
-   - Regression library growth (0.10): new `surface: supply-chain`
-     regression proposed and accepted in current cycle = +0.00; no new
-     regression proposed despite evidence = +0.10 (stagnation).
-   - Residual dependency risk (0.10): unpinned/unverified/untracked
-     dependencies remaining = +0.10; all verified and pinned = +0.00.
-3. Start at 0.00, add contributions, clamp to [0, 1].
-4. Converged: metric ≤ 0.10 AND relative improvement ≥ 5% from previous
-   cycle. If metric has not improved by ≥5%, identify blocker (missing
-   defense layer, unfixed finding, no regression growth, evidence gap).
-5. Return JSON: `{convergence_metric, dimensions, rationale, blockers,
-   defense_layers_present, defense_layers_missing, existing_regressions,
-   proposed_regressions}`.
-6. Emit `reg.supply_chain.convergence` Regulation span (registered in
-   `CANONICAL_NAMESPACES` — `crates/hkask-types/src/event.rs`).
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -244,7 +219,6 @@ CONSTRAINT — Evidence integrity (P8):
 | `select-surface.j2` | KnowAct | Discover manifest surfaces; read regression library; emit `reg.supply_chain.select` span. |
 | `probe.j2` | KnowAct | Read manifest evidence; verify dependency specs; apply pragmatic-cybernetics; emit `reg.supply_chain.probe` spans. |
 | `report.j2` | KnowAct | Synthesize findings with CWE/OWASP/OSC&R taxonomy; propose `RR-NNNN.yaml` entries (`surface: supply-chain`); emit `reg.supply_chain.report` span. |
-| `convergence-check.j2` | KnowAct | Compute supply-chain-specific convergence metric (defense-layer coverage + regression growth + residual risk). Emit `reg.supply_chain.convergence` span. |
 
 ## Defense-Layer Catalog (Supply Chain Specific)
 
@@ -279,7 +253,9 @@ not speculatively.
 - **`bug-hunt`:** Provides decomposed pipeline structure (`Charter` →
   `Probe` → `Oracle` → `Taxonomize` → `Report`). This skill replicates
   that structure (`select-surface` ≈ charter; `probe` ≈ probe + oracle;
-  `report` ≈ taxonomize + report; `convergence-check` ≈ convergence).
+  `report` ≈ taxonomize + report). Convergence is computed deterministically
+  by the executor (Cauchy criterion) rather than by a convergence-check
+  template.
   Uses same pragmatic-cybernetics and pragmatic-semantics reasoning
   embedded in instructions (`IS/OUGHT`, `epistemic mode`, `provenance`,
   `grill-me` self-challenge). This skill applies those patterns to
@@ -301,7 +277,6 @@ not speculatively.
 - `select-surface.j2`: `visibility: public`.
 - `probe.j2`: `visibility: public`.
 - `report.j2`: `visibility: public`.
-- `convergence-check.j2`: `visibility: public`.
 - Every finding includes concrete file path, manifest line, dependency
   name+version, quoted evidence snippet, source citation — not summary
   description.

@@ -15,7 +15,6 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 - Refactoring while all tests are GREEN — extracting duplication, deepening modules, strengthening contracts, and applying SOLID principles while preserving contract metadata and verifying tests pass after each step.
 - Verifying TDD cycle completion — checking all tests pass, clippy is clean, no `todo!()`/`unimplemented!()` stubs remain, contract structure is complete, and spec traceability is intact.
 - Performing functional gap analysis — comparing specification requirements against tested behaviors, scoring expectation quality (0–3), cross-referencing goal-principle alignment against MDS category defaults, and producing deferral recommendations for `OPEN_QUESTIONS.md`.
-- Computing a normalized convergence metric for TDD PDCA cycles — measuring completeness fraction across RED→GREEN→REFACTOR phases with blocker tracking, incorporating both verification and gap analysis results.
 
 ## Instructions
 
@@ -90,16 +89,6 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 12. Ensure every requirement appears in exactly one of: `covered_requirements`, `gaps`, or `deferrals`.
 13. P0 gaps MUST recommend `tracer-bullet`; P1 gaps SHOULD recommend `tracer-bullet` (deferrals require explicit rationale); P2+ gaps MAY defer to `OPEN_QUESTIONS.md`.
 
-### tdd-convergence-check
-
-1. Check each TDD phase: RED (failing test written) → +0.33 if missing; GREEN (test passing) → +0.33 if incomplete; REFACTOR (cleanup done) → +0.20 if incomplete.
-2. Check test quality: missing behavioral contract (`pre:`/`post:`) → +0.10; coverage below threshold → +0.10; test doesn't reproduce reported bug (if fixing) → +0.10.
-3. Check process adherence: tests written after implementation (not TDD) → +0.15; no regression check on existing tests → +0.05.
-4. Start at 1.0, subtract for each completed/passing item; clamp to [0, 1].
-5. Incorporate both verification results (step 4: tests pass, clippy clean, contracts complete) and gap analysis results (step 5: uncovered requirements, coverage gaps, deferral recommendations) — convergence requires both verification passing AND gaps addressed or deferred.
-6. Compare the resulting metric against the convergence threshold (default 0.05) — converged when metric ≤ threshold.
-7. Track specific blockers (incomplete phases, failing checks, or unresolved gaps) in the output.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -109,7 +98,6 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 | `tdd-refactor.j2` | KnowAct | Refactor while GREEN: extract duplication, deepen modules, apply SOLID principles. Preserve full v0.28.0 contract structure (expect:, [P{N}] Constraining:, pre:/post:) during refactoring. Contract metadata must travel with the function (Rule 6bis). Post-refactor grep verification for expect: and [P{N}] annotations (Rule 8bis). Flag contract evolution requiring P2 consent. Verify tests still pass after each refactor step. |
 | `tdd-verify.j2` | KnowAct | Verify TDD cycle completion: all tests pass, clippy clean, no todo!/unimplemented! stubs. Contract completeness audit including expect: user expectation, [P{N}] goal-principle anchoring, and [P{N}] Constraining: annotations per v0.28.0 extended syntax. Emits reg.contract.violated spans for missing/malformed contracts. Tests describe behavior not implementation, spec traceability via // REQ: tags, functional coverage gaps identified. |
 | `tdd-gap-check.j2` | KnowAct | Functional gap analysis: compare specification requirements against tested behaviors including goal-principle alignment cross-reference against MDS category defaults, constraining principle completeness (Magna Carta P1-P4), and expectation quality scoring (0-3 scale). Identify uncovered requirements (gaps) and produce deferral recommendations for OPEN_QUESTIONS.md. P0 gaps MUST have tracer bullets. |
-| `tdd-convergence-check.j2` | KnowAct | Compute normalized convergence metric for TDD PDCA cycles. Incorporates both verification results (step 4) and gap analysis results (step 5) — convergence requires tests passing AND coverage gaps addressed or deferred. Returns convergence_metric, metric_decomposition, rationale, and blockers. |
 
 ## Constraints
 
@@ -118,6 +106,4 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 - `tdd-refactor.j2`: Public. Never refactor while RED. Never change behavior. Preserve all contract layers during refactoring. Post-refactor grep verification for contract metadata.
 - `tdd-verify.j2`: Public. Emit `reg.contract.violated` spans for missing/malformed contracts. Reject vacuous `expect:` fields.
 - `tdd-gap-check.j2`: Public. Every requirement in exactly one of: covered, gaps, deferrals. P0 gaps MUST recommend tracer-bullet.
-- `tdd-convergence-check.j2`: Public. Metric in [0,1]; threshold 0.05 (tight — TDD is checklist-complete). Incorporates verification (step 4) and gap analysis (step 5) — convergence requires both passing.
-- Convergence check uses a composite of verification and gap analysis results, not just verification alone. A TDD cycle cannot converge while requirement gaps remain unresolved.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

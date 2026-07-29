@@ -33,6 +33,7 @@ pub use hkask_inference::openrouter_backend::FavoriteModel;
 pub use identity::{
     ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
 };
+pub use inference::LanguageModelEmbeddingPort;
 pub use inference::LanguageModelInferencePort;
 pub use inference_ipc_server::InferenceIpcServer;
 pub use inference_providers::{

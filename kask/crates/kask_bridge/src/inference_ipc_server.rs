@@ -33,9 +33,11 @@ use std::sync::Arc;
 use hkask_types::inference_ipc::{
     InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
 };
-use hkask_types::{InferenceError, InferencePort, InferenceResult};
+use hkask_types::{EmbeddingGenerationError, InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+
+use crate::inference::LanguageModelEmbeddingPort;
 
 /// The zed-side inference IPC server.
 ///
@@ -54,10 +56,14 @@ impl InferenceIpcServer {
     /// The socket path is randomly generated in the system temp directory.
     /// The socket is removed when the server is dropped.
     ///
-    /// `inference_port` is the port to dispatch requests to (typically the
-    /// `GuardedInferencePort` wrapping `LanguageModelInferencePort`).
+    /// `inference_port` is the port to dispatch chat requests to (typically
+    /// the `GuardedInferencePort` wrapping `LanguageModelInferencePort`).
+    /// `embedding_port` is the port to dispatch embedding requests to (the
+    /// `LanguageModelEmbeddingPort`). When `None`, `embed` requests return an
+    /// error.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
+        embedding_port: Option<LanguageModelEmbeddingPort>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path.
@@ -86,13 +92,15 @@ impl InferenceIpcServer {
             })?;
 
         let port = inference_port.clone();
+        let emb_port = embedding_port.clone();
         let task = tokio_handle.spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
                         let port = port.clone();
+                        let emb_port = emb_port.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, port).await;
+                            handle_connection(stream, port, emb_port).await;
                         });
                     }
                     Err(e) => {
@@ -141,7 +149,11 @@ fn generate_socket_path() -> PathBuf {
 ///
 /// Reads newline-delimited JSON requests, dispatches them to the inference
 /// port, and writes newline-delimited JSON responses.
-async fn handle_connection(stream: tokio::net::UnixStream, port: Arc<dyn InferencePort>) {
+async fn handle_connection(
+    stream: tokio::net::UnixStream,
+    port: Arc<dyn InferencePort>,
+    embedding_port: Option<LanguageModelEmbeddingPort>,
+) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -178,7 +190,7 @@ async fn handle_connection(stream: tokio::net::UnixStream, port: Arc<dyn Inferen
         };
 
         let id = request.id;
-        let outcome = dispatch(&port, request).await;
+        let outcome = dispatch(&port, embedding_port.as_ref(), request).await;
 
         let response = InferenceResponse { id, outcome };
         let response_json = match serde_json::to_string(&response) {
@@ -221,7 +233,11 @@ async fn handle_connection(stream: tokio::net::UnixStream, port: Arc<dyn Inferen
 }
 
 /// Dispatch a single request to the inference port.
-async fn dispatch(port: &Arc<dyn InferencePort>, request: InferenceRequest) -> InferenceOutcome {
+async fn dispatch(
+    port: &Arc<dyn InferencePort>,
+    embedding_port: Option<&LanguageModelEmbeddingPort>,
+    request: InferenceRequest,
+) -> InferenceOutcome {
     let params = request.params;
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
@@ -261,6 +277,34 @@ async fn dispatch(port: &Arc<dyn InferencePort>, request: InferenceRequest) -> I
                 params.model_override.as_deref(),
             )
             .await
+        }
+        InferenceMethod::Embed => {
+            // Dispatch to the embedding port. The model and texts come from
+            // `embed_model` and `embed_texts` in `InferenceParams`.
+            let Some(emb_port) = embedding_port else {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "Connection".to_string(),
+                        message: "embedding port not configured on the zed side \
+                            — the IPC server was started without an embedding port. \
+                            This indicates a startup wiring bug."
+                            .to_string(),
+                    },
+                };
+            };
+            let model = params.embed_model.as_deref().unwrap_or("");
+            let texts = params.embed_texts.as_deref().unwrap_or(&[]);
+            match emb_port.embed(model, texts).await {
+                Ok(embeddings) => return InferenceOutcome::Embeddings { embeddings },
+                Err(e) => {
+                    return InferenceOutcome::Error {
+                        error: InferenceErrorPayload {
+                            code: "Connection".to_string(),
+                            message: e.to_string(),
+                        },
+                    };
+                }
+            }
         }
     };
 

@@ -317,7 +317,7 @@ updated env.
 
 ## Model-dependent kask wiring must run in the deferred task
 
-The `set_manifest_executor`, `set_tool_invoker`, `set_scoped_inference`,
+The `set_manifest_executor`, `set_tool_invoker`, `set_curator_session_factory`,
 `set_regulation_status`, and `set_thread_condenser` hooks are `OnceLock`-based
 and depend on `LanguageModelRegistry::default_model()` being populated. At
 startup (before user auth), `default_model()` returns `None`. Wiring these

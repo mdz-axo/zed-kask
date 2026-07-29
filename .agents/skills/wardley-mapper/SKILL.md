@@ -17,7 +17,6 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 - When mapping classified components onto a value chain (visibility vs. evolution) and generating a visual Mermaid quadrant chart.
 - When identifying strategic movement, including what to commoditize, what to keep as a differentiator, what is missing, or how the system has drifted from a previous state.
 - When synthesizing actionable, prioritized strategic recommendations (invest, divest, commoditize, ecosystem) from a Wardley map.
-- When evaluating the completeness and convergence of a Wardley mapping PDCA cycle to ensure all components are classified and recommendations are actionable.
 
 ## Instructions
 
@@ -63,14 +62,6 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 5. Be specific in the recommended actions.
 6. Flag uncertainty and lower confidence for recommendations based on sparse data.
 
-### convergence-check
-
-1. Compute the convergence metric for the Wardley mapping PDCA cycle.
-2. Verify that all components are classified on the evolution axis.
-3. Verify that value chain positions and coordinates are assigned.
-4. Verify that movement analysis is complete and recommendations are specific and traceable.
-5. Check for critical gaps in the inventory.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -80,7 +71,6 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 | `map-value-chain.j2` | KnowAct | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart.  |
 | `identify-movement.j2` | KnowAct | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map.  |
 | `synthesize-recommendations.j2` | KnowAct | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components.  |
-| `convergence-check.j2` | KnowAct | Compute convergence metric for the Wardley mapping PDCA cycle. Checks all components classified, map complete, movement identified, and recommendations actionable. |
 
 ## Constraints
 
@@ -89,5 +79,4 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 - `map-value-chain.j2`: Public.
 - `identify-movement.j2`: Public.
 - `synthesize-recommendations.j2`: Public.
-- `convergence-check.j2`: Public.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

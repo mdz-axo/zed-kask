@@ -1058,15 +1058,62 @@ fn main() {
                     kask_bridge::provision_agent(&username_for_provision)
                 }).await;
 
+                // Hoisted to the outer scope so the IPC server (started later
+                // in the `cx.update` block) can access it. Set inside the
+                // `match provision_result` below.
+                let mut embedding_port_for_ipc: Option<kask_bridge::LanguageModelEmbeddingPort> = None;
+
                 match provision_result {
                     Ok(provisioned) => {
                         let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: user_webid } = provisioned;
+
+                        // Construct the embedding port. This resolves a zed
+                        // LanguageModel from the embedding model's provider
+                        // (e.g. `DeepInfra/...` → the `deepinfra` provider)
+                        // and uses its `api_url()` + `api_key()` to make raw
+                        // `/embeddings` calls through zed's HTTP client —
+                        // replacing hKask's standalone `EmbeddingRouter` which
+                        // resolved credentials from env vars and bypassed
+                        // zed's `LanguageModelRegistry` + keychain.
+                        //
+                        // The port is cloned: one copy goes to
+                        // `RealMemoryPort` (in-process embedding recall),
+                        // the other goes to `InferenceIpcServer` (so MCP
+                        // server child processes can route embeddings through
+                        // zed too, via the IPC bridge).
+                        //
+                        // Per the .rules trap "Process-global hooks set at
+                        // runtime need a startup-failure signal": if the
+                        // provider isn't registered or has no model, we warn
+                        // loudly and skip the real memory port (logging mode
+                        // stays active) rather than silently degrading.
+                        let embedding_port_result = cx.update(|cx| {
+                            resolve_embedding_port(
+                                &embedding_model,
+                                &app_state_for_deferred,
+                                cx,
+                            )
+                        });
+
+                        let Some((embedding_port, embedding_task)) = embedding_port_result else {
+                            // `resolve_embedding_port` already logged a warn
+                            // with remediation guidance. Skip the real memory
+                            // port — logging mode stays active.
+                            return;
+                        };
+                        embedding_task.detach();
+
+                        // Clone for the IPC server (the other copy goes to
+                        // RealMemoryPort below).
+                        embedding_port_for_ipc = Some(embedding_port.clone());
+
                         match kask_bridge::RealMemoryPort::new(
                             &db_path,
                             &passphrase,
                             user_webid,
                             embedding_model,
                             embedding_dim,
+                            embedding_port,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
                             gpui_tokio::Tokio::handle_async(&*cx),
@@ -2140,10 +2187,132 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     });
 }
 
+// ── Embedding port resolution ─────────────────────────────────────────────
+//
+// Resolves a zed `LanguageModel` from the embedding model's provider prefix
+// (e.g. `DeepInfra/Qwen/...` → the `deepinfra` provider) and constructs a
+// `LanguageModelEmbeddingPort` that uses the provider's `api_url()` + `api_key()`
+// to make raw `/embeddings` calls through zed's HTTP client. This replaces
+// hKask's standalone `EmbeddingRouter` which resolved credentials from env vars.
+
+/// Parse the zed provider id from an embedding model string.
+///
+/// `DeepInfra/Qwen/...` → `"deepinfra"`, `DI/Qwen/...` → `"deepinfra"`,
+/// `OpenRouter/...` → `"openrouter"`, etc. Case-insensitive. Returns `None`
+/// if no recognized prefix is found.
+fn embedding_provider_id(embedding_model: &str) -> Option<&str> {
+    // Long-form prefixes (case-insensitive) → zed provider id.
+    const LONG_FORM: &[(&str, &str)] = &[
+        ("DeepInfra/", "deepinfra"),
+        ("fal.ai/", "fal"),
+        ("Together AI/", "together"),
+        ("RunPod/", "runpod"),
+        ("OpenRouter/", "openrouter"),
+        ("KiloCode/", "kilocode"),
+        ("ollama/", "ollama"),
+        ("Cline/", "cline"),
+    ];
+    for (prefix, id) in LONG_FORM {
+        if embedding_model.len() >= prefix.len()
+            && embedding_model[..prefix.len()].eq_ignore_ascii_case(prefix)
+        {
+            return Some(id);
+        }
+    }
+    // 2-letter shorthand.
+    let bytes = embedding_model.as_bytes();
+    if embedding_model.len() >= 4 && bytes[2] == b'/' {
+        let prefix = &embedding_model[..2];
+        let id = match prefix {
+            "DI" | "di" => "deepinfra",
+            "FA" | "fa" => "fal",
+            "TG" | "tg" => "together",
+            "RP" | "rp" => "runpod",
+            "OR" | "or" => "openrouter",
+            "KC" | "kc" => "kilocode",
+            "OM" | "om" => "ollama",
+            "CL" | "cl" => "cline",
+            _ => return None,
+        };
+        return Some(id);
+    }
+    None
+}
+
+/// Resolve a zed `LanguageModel` from the embedding model's provider and
+/// construct a `LanguageModelEmbeddingPort`.
+///
+/// Returns `None` (after logging a warn with remediation guidance) if:
+/// - The embedding model has no recognized provider prefix.
+/// - The provider isn't registered in zed's `LanguageModelRegistry`.
+/// - The provider has no models (not authenticated / no models discovered).
+///
+/// Per the `.rules` trap "Process-global hooks set at runtime need a
+/// startup-failure signal": failure is surfaced, not silently degraded.
+fn resolve_embedding_port(
+    embedding_model: &str,
+    app_state: &Arc<workspace::AppState>,
+    cx: &mut gpui::App,
+) -> Option<(kask_bridge::LanguageModelEmbeddingPort, gpui::Task<()>)> {
+    let provider_id = embedding_provider_id(embedding_model).or_else(|| {
+        // No prefix — try the default model's provider as a fallback.
+        // This handles users who set a bare model id like `Qwen/Qwen3-Embedding-0.6B`.
+        log::warn!(
+            "Embedding model '{}' has no recognized provider prefix \
+             (expected e.g. 'DeepInfra/...' or 'DI/...'). \
+             Cannot resolve provider from zed's LanguageModelRegistry. \
+             Set kask.corpus.embedding_model to a provider-prefixed name, \
+             or set HKASK_EMBEDDING_MODEL.",
+            embedding_model
+        );
+        None
+    })?;
+
+    let registry = language_model::LanguageModelRegistry::read_global(cx);
+    let provider = registry
+        .providers()
+        .into_iter()
+        .find(|p| p.id().0 == provider_id);
+
+    let Some(provider) = provider else {
+        log::warn!(
+            "Embedding provider '{}' is not registered in zed's \
+             LanguageModelRegistry. Add it in Settings → AI → LLM Providers, \
+             or set the corresponding env var (e.g. DEEPINFRA_API_KEY). \
+             Embedding-based recall will not work until the provider is configured.",
+            provider_id
+        );
+        return None;
+    };
+
+    let Some(credential_model) = provider.default_model(cx) else {
+        log::warn!(
+            "Embedding provider '{}' has no default model — it may not be \
+             authenticated or has not discovered models yet. Add the API key \
+             in Settings → AI → LLM Providers. Embedding-based recall will \
+             not work until the provider is authenticated.",
+            provider_id
+        );
+        return None;
+    };
+
+    let http_client = app_state.client.http_client();
+    let async_cx = cx.to_async();
+    let (port, task) =
+        kask_bridge::LanguageModelEmbeddingPort::new(credential_model, http_client, async_cx);
+    log::info!(
+        "hKask embedding port constructed — routing embeddings through \
+         zed provider '{}' (model: {})",
+        provider_id,
+        embedding_model
+    );
+    Some((port, task))
+}
+
 // ── D10: Kask panel adapters ───────────────────────────────────────────────
 //
-// These adapters implement kask_panel's ToolInvoker and ScopedInference traits
-// by delegating to the bridge's BridgeToolPort and GuardedInferencePort.
+// These adapters implement kask_panel's ToolInvoker and CuratorSessionFactory
+// traits by delegating to the bridge's BridgeToolPort and GuardedInferencePort.
 // They're defined here (in the zed binary crate) because kask_bridge can't
 // depend on kask_panel (circular dependency), and the composition root is the
 // natural place for adapter construction.

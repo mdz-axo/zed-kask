@@ -33,6 +33,7 @@
 //! - `generate_with_model` — prompt + model override → result
 //! - `generate_with_messages` — message array → result
 //! - `generate_vision` — prompt + images → result
+//! - `embed` — model + texts → embedding vectors (OpenAI-compatible `/embeddings`)
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -64,6 +65,10 @@ pub enum InferenceMethod {
     GenerateWithModel,
     GenerateWithMessages,
     GenerateVision,
+    /// Generate embeddings for a batch of texts. Uses `embed_model` and
+    /// `embed_texts` from `InferenceParams`. The result is returned as
+    /// `InferenceOutcome::Embeddings`.
+    Embed,
 }
 
 /// Parameters for an inference request.
@@ -75,6 +80,10 @@ pub struct InferenceParams {
     pub parameters: LLMParameters,
     pub model_override: Option<String>,
     pub tools: Option<Vec<ChatToolDefinition>>,
+    /// Embedding model string (provider-prefixed) for `InferenceMethod::Embed`.
+    pub embed_model: Option<String>,
+    /// Texts to embed for `InferenceMethod::Embed`.
+    pub embed_texts: Option<Vec<String>>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -95,6 +104,11 @@ pub enum InferenceOutcome {
     Result {
         #[serde(rename = "result")]
         result: InferenceResult,
+    },
+    /// Embedding vectors from `InferenceMethod::Embed`.
+    Embeddings {
+        #[serde(rename = "embeddings")]
+        embeddings: Vec<Vec<f32>>,
     },
     /// Error from the inference port.
     Error {

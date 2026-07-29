@@ -560,6 +560,32 @@ runs `/tool_name args` → card appears. Expand/collapse works. Copy works.
    Conversations are loaded on panel construction and saved after each turn.
    4 unit tests cover the round-trip.
 
+### Essentialist-reviewed improvements (post-v1)
+
+**Status: ✅ Done (survivors).** Applied the essentialist 3-gate
+interrogation to each candidate. Killed: font-size control (excess
+variety), drag-and-drop (excess variety), retry/undo (cancel is
+sufficient). Survived and implemented:
+
+1. **Rich media in tool-call cards** — `extract_image_sources` detects
+   image URLs and JSON image fields in tool results and renders them
+   inline via `gpui::img()`. The curator's `media` server (image
+   generation) results now render visually, not as JSON blobs. 7 tests.
+2. **`@`-mentions** — `KaskMentionCompletionProvider` triggers on `@` and
+   lists worktree files. Combined with `KaskToolCompletionProvider` via
+   `KaskCombinedCompletionProvider` (the Editor supports only one provider).
+3. **Copy button on assistant messages** — `CopyButton` on each assistant
+   message.
+4. **Scroll-to-bottom button** — `IconButton` overlay at bottom-right of
+   the messages container.
+
+Killed by essentialist review (not implemented):
+- Font-size control (cmd-+/cmd-) — excess variety for the panel's task.
+- Drag-and-drop files — excess variety; `@`-mentions cover file references.
+- Retry/undo — cancel is sufficient.
+- History truncation — deferred to the condenser MCP server.
+- Integration test — deferred (requires GPUI test infrastructure setup).
+
 ### Phase 6: Cancel + tests
 
 1. Wire `CuratorSession::cancel` to a cancel button in the status bar

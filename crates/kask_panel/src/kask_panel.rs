@@ -432,7 +432,7 @@ impl KaskPanel {
     }
 
     /// Lazily fetch the selected server's tool list in the background and
-    /// cache it. Used by `run_scoped_inference` so the next inference call
+    /// cache it. Used by `run_inference` so the next inference call
     /// has a complete system prompt. Fire-and-forget — does not push any
     /// messages to the conversation.
     fn fetch_tools_background(&mut self, cx: &mut Context<Self>) {
@@ -484,7 +484,7 @@ impl KaskPanel {
         if let Some((tool, args)) = parse_tool_invocation(&text) {
             self.invoke_tool(tool, args, cx);
         } else {
-            self.run_scoped_inference(&text, cx);
+            self.run_inference(&text, cx);
         }
     }
 
@@ -656,7 +656,7 @@ impl KaskPanel {
         }
     }
 
-    fn run_scoped_inference(&mut self, prompt: &str, cx: &mut Context<Self>) {
+    fn run_inference(&mut self, prompt: &str, cx: &mut Context<Self>) {
         let server = self.selected_server_name().to_string();
 
         self.current_messages().push(KaskMessage {
