@@ -19,8 +19,14 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
             let size = image_size.clone();
-            self.inference
-                .generate_image(&prompt, size.as_deref(), num_images)
+            let media_params = hkask_types::MediaGenerateParams {
+                prompt: Some(prompt.clone()),
+                size: size.clone(),
+                count: num_images,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("generate_image", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image generation failed: {}", e)))
         })
@@ -47,8 +53,14 @@ impl MediaServer {
                     ));
                 }
             }
-            self.inference
-                .image_to_image(&image_url, &prompt, strength)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(image_url.clone()),
+                prompt: Some(prompt.clone()),
+                strength,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image transform failed: {}", e)))
         })
@@ -62,8 +74,13 @@ impl MediaServer {
     ) -> String {
         execute_tool(self, "upscale_image", async {
             validate_tool_url(&image_url)?;
-            self.inference
-                .upscale(&image_url, scale)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(image_url.clone()),
+                scale,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("upscale", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))
         })
@@ -81,8 +98,13 @@ impl MediaServer {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
-            self.inference
-                .generate_video(&prompt, duration)
+            let media_params = hkask_types::MediaGenerateParams {
+                prompt: Some(prompt.clone()),
+                duration,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("generate_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Video generation failed: {}", e)))
         })
@@ -103,14 +125,21 @@ impl MediaServer {
                 serde_json::from_str(&workflow).map_err(|e| {
                     McpToolError::invalid_argument(format!("Invalid workflow JSON: {e}"))
                 })?;
-            self.inference
-                .execute_workflow(&workflow_json)
+            let media_params = hkask_types::MediaGenerateParams {
+                workflow: Some(workflow_json.clone()),
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("execute_workflow", &media_params)
                 .await
                 .map(|wr| {
+                    // The IPC bridge serializes `WorkflowResult` to JSON for
+                    // transport; extract the same fields the old direct call
+                    // returned.
                     serde_json::json!({
-                        "output_urls": wr.output_urls,
-                        "output_fields": wr.output_fields,
-                        "elapsed_seconds": wr.elapsed_seconds,
+                        "output_urls": wr.get("output_urls").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+                        "output_fields": wr.get("output_fields").cloned().unwrap_or(serde_json::Value::Null),
+                        "elapsed_seconds": wr.get("elapsed_seconds").cloned().unwrap_or(serde_json::Value::from(0.0)),
                     })
                 })
                 .map_err(|e| McpToolError::unavailable(format!("Workflow execution failed: {e}")))

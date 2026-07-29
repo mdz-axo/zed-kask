@@ -20,8 +20,12 @@ impl MediaServer {
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
 
-            self.inference
-                .remove_background(&image_url)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(image_url.clone()),
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("remove_background", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Background removal failed: {}", e)))
         })
@@ -49,8 +53,14 @@ impl MediaServer {
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
 
-            self.inference
-                .image_to_image(&image_url, &style_prompt, strength)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(image_url.clone()),
+                prompt: Some(style_prompt.clone()),
+                strength,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Style transfer failed: {}", e)))
         })
@@ -369,8 +379,14 @@ impl MediaServer {
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
 
-            self.inference
-                .image_to_video(&image_url, prompt.as_deref(), duration)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(image_url.clone()),
+                prompt: prompt.clone(),
+                duration,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("image_to_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
         })
@@ -618,7 +634,7 @@ impl MediaServer {
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
             let result = self
-                .inference
+                .vision_port
                 .generate_vision(&prompt, &image_urls, &params, Some(vision_model))
                 .await;
 
@@ -709,8 +725,14 @@ impl MediaServer {
             } else {
                 motion.clone()
             };
-            self.inference
-                .image_to_video(&data_uri, Some(&motion_prompt), duration)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(data_uri.clone()),
+                prompt: Some(motion_prompt.clone()),
+                duration,
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("image_to_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
         })

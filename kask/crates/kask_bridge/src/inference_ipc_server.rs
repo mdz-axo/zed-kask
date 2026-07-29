@@ -64,9 +64,13 @@ impl InferenceIpcServer {
     /// `embedding_port` is the port to dispatch embedding requests to (the
     /// `LanguageModelEmbeddingPort`). When `None`, `embed` requests return an
     /// error.
+    /// `media_router` is the hKask `InferenceRouter` used for media generation
+    /// (image, video, speech, transcription via fal.ai/DeepInfra). When `None`,.
+    /// `media_generate` requests return an error.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
+        media_router: Option<Arc<hkask_inference::InferenceRouter>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path.
@@ -96,6 +100,7 @@ impl InferenceIpcServer {
 
         let port = inference_port.clone();
         let emb_port = embedding_port.clone();
+        let media = media_router.clone();
 
         // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
         // `Send`, so we can't pass it into tokio::spawn. Instead, this task
@@ -134,9 +139,10 @@ impl InferenceIpcServer {
                     Ok((stream, _)) => {
                         let port = port.clone();
                         let emb_port = emb_port.clone();
+                        let media = media.clone();
                         let list_models_tx = list_models_tx.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, port, emb_port, list_models_tx).await;
+                            handle_connection(stream, port, emb_port, media, list_models_tx).await;
                         });
                     }
                     Err(e) => {
@@ -190,6 +196,7 @@ async fn handle_connection(
     stream: tokio::net::UnixStream,
     port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
+    media_router: Option<Arc<hkask_inference::InferenceRouter>>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -230,7 +237,14 @@ async fn handle_connection(
         };
 
         let id = request.id;
-        let outcome = dispatch(&port, embedding_port.as_ref(), &list_models_tx, request).await;
+        let outcome = dispatch(
+            &port,
+            embedding_port.as_ref(),
+            media_router.as_ref(),
+            &list_models_tx,
+            request,
+        )
+        .await;
 
         let response = InferenceResponse { id, outcome };
         let response_json = match serde_json::to_string(&response) {
@@ -276,6 +290,7 @@ async fn handle_connection(
 async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
+    media_router: Option<&Arc<hkask_inference::InferenceRouter>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -336,6 +351,32 @@ async fn dispatch(
         }
     }
 
+    // Media generation requests are dispatched to the hKask `InferenceRouter`,
+    // which holds the fal.ai/DeepInfra backends. Unlike `ListModels`, the
+    // `InferenceRouter` is `Send + Sync` and needs no GPUI access, so it can
+    // be called directly from the tokio task.
+    if matches!(request.method, InferenceMethod::MediaGenerate) {
+        let Some(media) = media_router else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "media router not configured on the zed side \
+                        — the IPC server was started without a media router. \
+                        This indicates a startup wiring bug."
+                        .to_string(),
+                },
+            };
+        };
+        let op = params.media_op.as_deref().unwrap_or("");
+        let result = dispatch_media(media, op, &params).await;
+        return match result {
+            Ok(value) => InferenceOutcome::Media { media: value },
+            Err(error) => InferenceOutcome::Error {
+                error: InferenceErrorPayload::from(error),
+            },
+        };
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -376,7 +417,9 @@ async fn dispatch(
             .await
         }
         // Already handled above — unreachable.
-        InferenceMethod::Embed | InferenceMethod::ListModels => unreachable!(),
+        InferenceMethod::Embed | InferenceMethod::ListModels | InferenceMethod::MediaGenerate => {
+            unreachable!()
+        }
     };
 
     match result {
@@ -384,5 +427,85 @@ async fn dispatch(
         Err(error) => InferenceOutcome::Error {
             error: InferenceErrorPayload::from(error),
         },
+    }
+}
+
+/// Dispatch a media-generation request to the hKask `InferenceRouter`.
+///
+/// `op` selects the backend method. The `InferenceParams` media_* fields
+/// carry the op-specific arguments; only the fields relevant to each op
+/// are read.
+async fn dispatch_media(
+    media: &Arc<hkask_inference::InferenceRouter>,
+    op: &str,
+    params: &hkask_types::inference_ipc::InferenceParams,
+) -> Result<serde_json::Value, InferenceError> {
+    match op {
+        "generate_image" => {
+            let prompt = params.media_prompt.as_deref().unwrap_or("");
+            media
+                .generate_image(prompt, params.media_size.as_deref(), params.media_count)
+                .await
+        }
+        "image_to_image" => {
+            let image_url = params.media_image_url.as_deref().unwrap_or("");
+            let prompt = params.media_prompt.as_deref().unwrap_or("");
+            media
+                .image_to_image(image_url, prompt, params.media_strength)
+                .await
+        }
+        "remove_background" => {
+            let image_url = params.media_image_url.as_deref().unwrap_or("");
+            media.remove_background(image_url).await
+        }
+        "upscale" => {
+            let image_url = params.media_image_url.as_deref().unwrap_or("");
+            media.upscale(image_url, params.media_scale).await
+        }
+        "generate_video" => {
+            let prompt = params.media_prompt.as_deref().unwrap_or("");
+            media.generate_video(prompt, params.media_duration).await
+        }
+        "image_to_video" => {
+            let image_url = params.media_image_url.as_deref().unwrap_or("");
+            media
+                .image_to_video(
+                    image_url,
+                    params.media_prompt.as_deref(),
+                    params.media_duration,
+                )
+                .await
+        }
+        "generate_speech" => {
+            let text = params.media_text.as_deref().unwrap_or("");
+            let voice = params.media_voice.as_deref().unwrap_or("Rachel");
+            media.generate_speech(text, voice).await
+        }
+        "segment_object" => {
+            let image_url = params.media_image_url.as_deref().unwrap_or("");
+            let object_description = params.media_object_description.as_deref().unwrap_or("");
+            media.segment_object(image_url, object_description).await
+        }
+        "transcribe" => {
+            let audio_url = params.media_audio_url.as_deref().unwrap_or("");
+            media
+                .transcribe(audio_url, params.media_language.as_deref())
+                .await
+        }
+        "execute_workflow" => {
+            let workflow = params
+                .media_workflow
+                .clone()
+                .unwrap_or(serde_json::Value::Null);
+            let result = media.execute_workflow(&workflow).await?;
+            // `WorkflowResult` is defined in `hkask-inference` and isn't part
+            // of the IPC protocol; serialize it to JSON for transport.
+            Ok(serde_json::to_value(result).map_err(|e| {
+                InferenceError::Json(format!("WorkflowResult serialize failed: {e}"))
+            })?)
+        }
+        other => Err(InferenceError::Connection(format!(
+            "unknown media op: {other}"
+        ))),
     }
 }

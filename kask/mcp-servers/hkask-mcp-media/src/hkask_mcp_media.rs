@@ -26,7 +26,6 @@ pub use error::{MediaError, map_media_error};
 
 use gallery::GalleryState;
 use gallery::vision::{self};
-use hkask_inference::InferenceRouter;
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::database::value::DbValue;
@@ -95,12 +94,11 @@ struct GalleryAccess {
 
 hkask_mcp_server::mcp_server!(
     pub struct MediaServer {
-        pub inference: Arc<InferenceRouter>,
-        /// Inference port for vision/chat calls routed through zed's
-        /// LanguageModelRegistry via the IPC bridge. Used by `vision.rs`
-        /// for face detection, scene captioning, etc. The `inference`
-        /// field above is used for media-generation calls (image/video/
-        /// speech) which aren't part of the `InferencePort` trait.
+        /// Inference port for vision/chat AND media-generation calls routed
+        /// through zed's LanguageModelRegistry via the IPC bridge. The
+        /// `InferencePort::media_generate` trait method (overridden by
+        /// `InferenceIpcClient`) handles image/video/speech/transcription;
+        /// `embed` and `list_vision_models` handle the gallery embedding path.
         pub vision_port: Arc<dyn InferencePort>,
         pub gallery_state: Arc<Mutex<Option<GalleryState>>>,
         pub gallery_store: Arc<GalleryStore>,
@@ -225,6 +223,29 @@ impl MediaServer {
                 "No vision-capable provider configured (set DEEPINFRA_API_KEY, OPENROUTER_API_KEY, or TOGETHERAI_API_KEY)",
             )
         })
+    }
+
+    /// Embed a single text via the inference port's `embed` method.
+    ///
+    /// Resolves the embedding model from `HKASK_EMBEDDING_MODEL` (default
+    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) and returns the first (only)
+    /// embedding vector. Used by gallery similarity search.
+    async fn embed_text(&self, text: &str) -> Result<Vec<f32>, McpToolError> {
+        let model = hkask_inference::model_constants::embedding_model();
+        let vectors = self
+            .vision_port
+            .embed(&model, std::slice::from_ref(&text.to_string()))
+            .await
+            .map_err(|e| {
+                McpToolError::unavailable(format!(
+                    "Embedding model unavailable: {}. Configure a cloud provider.",
+                    e
+                ))
+            })?;
+        vectors
+            .into_iter()
+            .next()
+            .ok_or_else(|| McpToolError::unavailable("Embedding model returned an empty response"))
     }
 
     /// Render a Jinja2 prompt template with the given variables.
@@ -1351,15 +1372,13 @@ impl rmcp::ServerHandler for MediaServer {}
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     dotenvy::dotenv().ok();
 
-    // Resolve the inference port for vision/chat — routes through zed's
-    // LanguageModelRegistry via the IPC bridge when available.
+    // Resolve the inference port — routes through zed's LanguageModelRegistry
+    // via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to
+    // a standalone `InferenceRouter` with env-var keys otherwise. The same
+    // port handles vision/chat AND media generation (image/video/speech/
+    // transcription) — `InferencePort::media_generate` is overridden by
+    // `InferenceIpcClient` to proxy media calls through the IPC bridge.
     let vision_port = hkask_inference::resolve_inference_port().await;
-
-    // Build the inference router for media-generation tasks (image, video,
-    // speech, transcription). These APIs (fal.ai, Together) aren't part of
-    // zed's LanguageModel abstraction — they need the standalone router.
-    let inference_config = hkask_inference::InferenceConfig::from_env();
-    let inference = Arc::new(InferenceRouter::new(inference_config));
 
     // Create an in-memory GalleryStore for the media server.
     // Gracefully degrade if DB initialization fails — gallery tools
@@ -1387,7 +1406,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::ServerContext| {
             Ok(MediaServer::new(
                 ctx.webid,
-                inference.clone(),
                 vision_port.clone(),
                 Arc::new(Mutex::new(None)),
                 gallery_store.clone(),

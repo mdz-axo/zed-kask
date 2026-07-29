@@ -1534,9 +1534,24 @@ fn main() {
                         // can route inference through zed's LanguageModelRegistry (with
                         // fusion, guard, and zed's configured API keys) instead of
                         // constructing their own InferenceRouter with separate keys.
+                        //
+                        // The media router is a hKask `InferenceRouter` used for
+                        // media generation (image/video/speech/transcription via
+                        // fal.ai/DeepInfra). These backends aren't part of zed's
+                        // `LanguageModel` abstraction, so the media MCP server routes
+                        // them through the IPC bridge to this router instead of
+                        // constructing its own. Credentials come from env vars
+                        // (FALAI_API_KEY, DEEPINFRA_API_KEY) resolved by the zed
+                        // process — the same keys the media MCP server used to hold.
+                        let media_router = std::sync::Arc::new(
+                            kask_bridge::InferenceRouter::new(
+                                kask_bridge::InferenceConfig::from_env(),
+                            ),
+                        );
                         match kask_bridge::InferenceIpcServer::start(
                             guarded_inference.clone(),
                             embedding_port_for_ipc.clone(),
+                            Some(media_router),
                             cx,
                         ) {
                             Ok(ipc_server) => {

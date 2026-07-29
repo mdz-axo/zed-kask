@@ -30,6 +30,11 @@ pub use fusion_model::{
 /// Re-export so the composition root can name the type without depending on
 /// `hkask-inference` directly.
 pub use hkask_inference::openrouter_backend::FavoriteModel;
+/// Re-exports for the media IPC bridge — the composition root constructs the
+/// media router and passes it to `InferenceIpcServer::start`. Re-exported here
+/// so `zed` doesn't need a direct `hkask-inference` dependency for these two
+/// types (matching the `FavoriteModel` pattern above).
+pub use hkask_inference::{InferenceConfig, InferenceRouter};
 pub use identity::{
     ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
 };

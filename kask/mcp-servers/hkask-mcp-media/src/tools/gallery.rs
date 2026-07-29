@@ -279,12 +279,7 @@ impl MediaServer {
 
             // Determine the query embedding
             let query_embedding: Vec<f32> = if let Some(ref query_text) = text {
-                self.inference.embed_text(query_text, None).await.map_err(|e| {
-                    McpToolError::unavailable(format!(
-                        "Embedding model unavailable: {}. Configure a cloud provider.",
-                        e
-                    ))
-                })?
+                self.embed_text(query_text).await?
             } else if let Some(idx) = image_index {
                 let image_id = self.resolve_image_id(idx).map_err(map_media_error)?;
                 let tags = self
@@ -302,10 +297,7 @@ impl MediaServer {
                     ));
                 }
                 let caption_text = captions.join(" ");
-                self.inference
-                    .embed_text(&caption_text, None)
-                    .await
-                    .map_err(|e| McpToolError::unavailable(format!("Embedding model unavailable: {}", e)))?
+                self.embed_text(&caption_text).await?
             } else {
                 unreachable!();
             };
@@ -351,7 +343,7 @@ impl MediaServer {
             let candidate_texts: Vec<&str> = candidates.iter().map(|(_, c)| c.as_str()).collect();
             let mut candidate_embeddings = Vec::new();
             for ct in &candidate_texts {
-                match self.inference.embed_text(ct, None).await {
+                match self.embed_text(ct).await {
                     Ok(v) => candidate_embeddings.push(v),
                     Err(_) => candidate_embeddings.push(vec![]),
                 }
@@ -531,7 +523,7 @@ impl MediaServer {
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
             let r = self
-                .inference
+                .vision_port
                 .generate_vision(&prompt, &[image_url], &params, Some(vision_model))
                 .await
                 .map_err(|e| {
@@ -845,8 +837,13 @@ impl MediaServer {
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
 
-            self.inference
-                .segment_object(&image_url, &object_description)
+            let media_params = hkask_types::MediaGenerateParams {
+                image_url: Some(image_url.clone()),
+                object_description: Some(object_description.clone()),
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("segment_object", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Object extraction failed: {}", e)))
         })

@@ -19,6 +19,54 @@ use std::sync::Arc;
 pub type EmbedFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>;
 
+/// Future returned by [`InferencePort::media_generate`].
+///
+/// Same rationale as `EmbedFuture` — keeps the trait signature under
+/// clippy's `type_complexity` threshold.
+pub type MediaFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
+
+/// Parameters for [`InferencePort::media_generate`].
+///
+/// Carries the media-generation fields (image/video/speech/transcription)
+/// that the IPC bridge forwards to fal.ai/DeepInfra. Grouped into a struct
+/// so the trait method signature doesn't grow 12+ optional parameters.
+///
+/// `op` selects the backend method (e.g. "generate_image", "transcribe").
+/// The remaining fields are op-specific; the server-side dispatch reads
+/// only the fields relevant to each op.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MediaGenerateParams {
+    /// The media operation to perform (e.g. "generate_image", "transcribe").
+    pub op: String,
+    /// Text prompt for image/video generation.
+    pub prompt: Option<String>,
+    /// Image URL for image-to-image, image-to-video, upscale, etc.
+    pub image_url: Option<String>,
+    /// Audio URL for transcription.
+    pub audio_url: Option<String>,
+    /// Text for speech synthesis.
+    pub text: Option<String>,
+    /// Voice name for speech synthesis.
+    pub voice: Option<String>,
+    /// Image size for image generation.
+    pub size: Option<String>,
+    /// Number of images to generate.
+    pub count: Option<u32>,
+    /// Strength for image-to-image.
+    pub strength: Option<f32>,
+    /// Scale factor for upscaling.
+    pub scale: Option<u32>,
+    /// Duration for video generation.
+    pub duration: Option<f32>,
+    /// Object description for segmentation.
+    pub object_description: Option<String>,
+    /// Language hint for transcription.
+    pub language: Option<String>,
+    /// Workflow JSON for `execute_workflow`.
+    pub workflow: Option<serde_json::Value>,
+}
+
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
 /// Impls: `InferenceRouter` (hkask-inference), `Arc<dyn InferencePort>` (blanket).
 /// A model available from an inference provider.
@@ -205,6 +253,22 @@ pub trait InferencePort: Send + Sync {
                 .collect()
         })
     }
+
+    /// Generate media (image, video, speech, transcription) via fal.ai/DeepInfra.
+    ///
+    /// `op` selects the backend method (see `MediaGenerateParams::op`). The
+    /// default returns an error — `InferenceIpcClient` overrides this to route
+    /// through zed's IPC bridge, which dispatches to the hKask `InferenceRouter`
+    /// held by the zed process. The media MCP server calls this through its
+    /// `Arc<dyn InferencePort>` so it no longer needs its own `InferenceRouter`.
+    fn media_generate<'a>(&'a self, _op: &str, _params: &MediaGenerateParams) -> MediaFuture<'a> {
+        let op = _op.to_string();
+        Box::pin(async move {
+            Err(InferenceError::Connection(format!(
+                "media_generate not supported by this InferencePort (op: {op})"
+            )))
+        })
+    }
 }
 
 /// A single chunk of streaming inference output. Final chunk has `finish_reason` + `usage`.
@@ -322,6 +386,9 @@ impl InferencePort for Arc<dyn InferencePort> {
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
         self.as_ref().list_vision_models()
+    }
+    fn media_generate<'a>(&'a self, op: &str, params: &MediaGenerateParams) -> MediaFuture<'a> {
+        self.as_ref().media_generate(op, params)
     }
 }
 

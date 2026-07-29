@@ -35,6 +35,7 @@
 //! - `generate_vision` — prompt + images → result
 //! - `embed` — model + texts → embedding vectors (OpenAI-compatible `/embeddings`)
 //! - `list_models` — list available models from zed's `LanguageModelRegistry`
+//! - `media_generate` — generate media (image, video, speech, transcription) via fal.ai/DeepInfra
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -73,6 +74,13 @@ pub enum InferenceMethod {
     /// List available models from zed's `LanguageModelRegistry`.
     /// The result is returned as `InferenceOutcome::ModelList`.
     ListModels,
+    /// Generate media (image, video, speech, transcription, etc.) via
+    /// fal.ai/DeepInfra backends. Uses `media_op`, `media_prompt`,
+    /// `media_image_url`, `media_text`, `media_size`, `media_count`,
+    /// `media_strength`, `media_duration`, `media_workflow` from
+    /// `InferenceParams`. The result is returned as
+    /// `InferenceOutcome::Media`.
+    MediaGenerate,
 }
 
 /// Parameters for an inference request.
@@ -88,6 +96,35 @@ pub struct InferenceParams {
     pub embed_model: Option<String>,
     /// Texts to embed for `InferenceMethod::Embed`.
     pub embed_texts: Option<Vec<String>>,
+    // ── Media generation fields (for `InferenceMethod::MediaGenerate`) ──
+    /// The media operation to perform (e.g. "generate_image", "transcribe").
+    pub media_op: Option<String>,
+    /// Text prompt for image/video generation.
+    pub media_prompt: Option<String>,
+    /// Image URL for image-to-image, image-to-video, upscale, etc.
+    pub media_image_url: Option<String>,
+    /// Audio URL for transcription.
+    pub media_audio_url: Option<String>,
+    /// Text for speech synthesis.
+    pub media_text: Option<String>,
+    /// Voice name for speech synthesis.
+    pub media_voice: Option<String>,
+    /// Image size for image generation.
+    pub media_size: Option<String>,
+    /// Number of images to generate.
+    pub media_count: Option<u32>,
+    /// Strength for image-to-image.
+    pub media_strength: Option<f32>,
+    /// Scale factor for upscaling.
+    pub media_scale: Option<u32>,
+    /// Duration for video generation.
+    pub media_duration: Option<f32>,
+    /// Object description for segmentation.
+    pub media_object_description: Option<String>,
+    /// Language hint for transcription.
+    pub media_language: Option<String>,
+    /// Workflow JSON for `execute_workflow`.
+    pub media_workflow: Option<serde_json::Value>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -118,6 +155,12 @@ pub enum InferenceOutcome {
     ModelList {
         #[serde(rename = "models")]
         models: Vec<ModelListEntry>,
+    },
+    /// Media generation result from `InferenceMethod::MediaGenerate`.
+    /// The value is the raw JSON returned by fal.ai/DeepInfra.
+    Media {
+        #[serde(rename = "media")]
+        media: serde_json::Value,
     },
     /// Error from the inference port.
     Error {

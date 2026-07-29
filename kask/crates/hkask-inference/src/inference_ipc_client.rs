@@ -39,7 +39,7 @@ use hkask_types::inference_ipc::{
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult,
+    InferenceResult, MediaGenerateParams,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -146,6 +146,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
                 "received ModelList outcome for a non-list-models request".into(),
             )),
+            InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
+                "received Media outcome for a non-media request".into(),
+            )),
         }
     }
 
@@ -168,6 +171,20 @@ impl InferenceIpcClient {
                 tools: None,
                 embed_model: Some(model.to_string()),
                 embed_texts: Some(texts.to_vec()),
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+            media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -226,6 +243,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ModelList { .. } => Err(EmbeddingGenerationError::Connection(
                 "received ModelList outcome for an embed request".into(),
             )),
+            InferenceOutcome::Media { .. } => Err(EmbeddingGenerationError::Connection(
+                "received Media outcome for an embed request".into(),
+            )),
         }
     }
 
@@ -262,6 +282,20 @@ impl InferenceIpcClient {
                 tools: None,
                 embed_model: None,
                 embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+            media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -312,10 +346,128 @@ impl InferenceIpcClient {
         match response.outcome {
             InferenceOutcome::ModelList { models } => Ok(models),
             InferenceOutcome::Error { error } => Err(error.into()),
-            _ => Err(InferenceError::Connection(
-                "received unexpected outcome for list_models request".into(),
+            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
+                "received Result outcome for a list_models request".into(),
+            )),
+            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
+                "received Embeddings outcome for a list_models request".into(),
+            )),
+            InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
+                "received Media outcome for a list_models request".into(),
             )),
         }
+    }
+
+    /// Send a media-generation request and receive the response.
+    ///
+    /// `op` selects the backend method (e.g. "generate_image", "transcribe").
+    /// `params` carries the op-specific fields. The server-side dispatch
+    /// reads only the fields relevant to each op.
+    async fn call_media_generate(
+        &self,
+        op: &str,
+        params: &MediaGenerateParams,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: InferenceMethod::MediaGenerate,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: Some(op.to_string()),
+                media_prompt: params.prompt.clone(),
+                media_image_url: params.image_url.clone(),
+                media_audio_url: params.audio_url.clone(),
+                media_text: params.text.clone(),
+                media_voice: params.voice.clone(),
+                media_size: params.size.clone(),
+                media_count: params.count,
+                media_strength: params.strength,
+                media_scale: params.scale,
+                media_duration: params.duration,
+                media_object_description: params.object_description.clone(),
+                media_language: params.language.clone(),
+                media_workflow: params.workflow.clone(),
+            },
+        };
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut guard = self.stream.lock().await;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
+
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+
+        if line.is_empty() {
+            *guard = None;
+            return Err(InferenceError::Connection(
+                "IPC socket closed by server".into(),
+            ));
+        }
+
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+
+        if response.id != id {
+            return Err(InferenceError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )));
+        }
+
+        match response.outcome {
+            InferenceOutcome::Media { media } => Ok(media),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
+                "received Result outcome for a media request".into(),
+            )),
+            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
+                "received Embeddings outcome for a media request".into(),
+            )),
+            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
+                "received ModelList outcome for a media request".into(),
+            )),
+        }
+    }
+
+    /// Generate media (image, video, speech, transcription) via the IPC bridge.
+    ///
+    /// `op` selects the backend method (e.g. "generate_image", "transcribe").
+    /// `params` carries the op-specific fields. The zed process dispatches
+    /// to its hKask `InferenceRouter` (fal.ai/DeepInfra backends).
+    pub async fn media_generate(
+        &self,
+        op: &str,
+        params: &MediaGenerateParams,
+    ) -> Result<serde_json::Value, InferenceError> {
+        self.call_media_generate(op, params).await
     }
 }
 
@@ -337,6 +489,20 @@ impl InferencePort for InferenceIpcClient {
             tools: tools.map(|t| t.to_vec()),
             embed_model: None,
             embed_texts: None,
+            media_op: None,
+            media_prompt: None,
+            media_image_url: None,
+            media_audio_url: None,
+            media_text: None,
+            media_voice: None,
+            media_size: None,
+            media_count: None,
+            media_strength: None,
+            media_scale: None,
+            media_duration: None,
+            media_object_description: None,
+            media_language: None,
+            media_workflow: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::Generate, params).await }.boxed()
@@ -360,6 +526,20 @@ impl InferencePort for InferenceIpcClient {
             tools: tools.map(|t| t.to_vec()),
             embed_model: None,
             embed_texts: None,
+            media_op: None,
+            media_prompt: None,
+            media_image_url: None,
+            media_audio_url: None,
+            media_text: None,
+            media_voice: None,
+            media_size: None,
+            media_count: None,
+            media_strength: None,
+            media_scale: None,
+            media_duration: None,
+            media_object_description: None,
+            media_language: None,
+            media_workflow: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateWithModel, params).await }.boxed()
@@ -383,6 +563,20 @@ impl InferencePort for InferenceIpcClient {
             tools: tools.map(|t| t.to_vec()),
             embed_model: None,
             embed_texts: None,
+            media_op: None,
+            media_prompt: None,
+            media_image_url: None,
+            media_audio_url: None,
+            media_text: None,
+            media_voice: None,
+            media_size: None,
+            media_count: None,
+            media_strength: None,
+            media_scale: None,
+            media_duration: None,
+            media_object_description: None,
+            media_language: None,
+            media_workflow: None,
         };
         let this = self;
         async move {
@@ -410,6 +604,20 @@ impl InferencePort for InferenceIpcClient {
             tools: None,
             embed_model: None,
             embed_texts: None,
+            media_op: None,
+            media_prompt: None,
+            media_image_url: None,
+            media_audio_url: None,
+            media_text: None,
+            media_voice: None,
+            media_size: None,
+            media_count: None,
+            media_strength: None,
+            media_scale: None,
+            media_duration: None,
+            media_object_description: None,
+            media_language: None,
+            media_workflow: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()
@@ -447,5 +655,16 @@ impl InferencePort for InferenceIpcClient {
                 }
             }
         })
+    }
+
+    fn media_generate<'a>(
+        &'a self,
+        op: &str,
+        params: &MediaGenerateParams,
+    ) -> hkask_types::MediaFuture<'a> {
+        let op = op.to_string();
+        let params = params.clone();
+        let this = self;
+        async move { this.media_generate(&op, &params).await }.boxed()
     }
 }

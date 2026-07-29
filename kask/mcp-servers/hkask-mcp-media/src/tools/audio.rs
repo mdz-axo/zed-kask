@@ -28,7 +28,7 @@ impl MediaServer {
 
             let params = hkask_types::template::LLMParameters::default();
             let r = self
-                .inference
+                .vision_port
                 .generate_with_model(
                     &prompt,
                     &params,
@@ -75,8 +75,13 @@ impl MediaServer {
                 "Rachel".to_string()
             };
 
-            self.inference
-                .generate_speech(&text, &voice)
+            let media_params = hkask_types::MediaGenerateParams {
+                text: Some(text.clone()),
+                voice: Some(voice.clone()),
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("generate_speech", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Speech generation failed: {}", e)))
         })
@@ -98,8 +103,13 @@ impl MediaServer {
         execute_tool(self, "transcribe", async {
             validate_tool_url(&audio_url)?;
 
-            self.inference
-                .transcribe(&audio_url, language.as_deref())
+            let media_params = hkask_types::MediaGenerateParams {
+                audio_url: Some(audio_url.clone()),
+                language: language.clone(),
+                ..Default::default()
+            };
+            self.vision_port
+                .media_generate("transcribe", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Transcription failed: {}", e)))
         })
@@ -119,9 +129,14 @@ impl MediaServer {
         execute_tool(self, "transcribe_bundle", async {
             validate_tool_url(&audio_url)?;
 
+            let media_params = hkask_types::MediaGenerateParams {
+                audio_url: Some(audio_url.clone()),
+                language: language.clone(),
+                ..Default::default()
+            };
             let raw = self
-                .inference
-                .transcribe(&audio_url, language.as_deref())
+                .vision_port
+                .media_generate("transcribe", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Transcription failed: {}", e)))?;
 
@@ -257,11 +272,17 @@ impl MediaServer {
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_data);
             let audio_uri = format!("data:audio/wav;base64,{}", b64);
 
-            let transcribe_result = self
-                .inference
-                .transcribe(&audio_uri, language.as_deref())
-                .await
-                .map_err(|e| McpToolError::unavailable(format!("Transcription failed: {}", e)));
+            let transcribe_result = {
+                let media_params = hkask_types::MediaGenerateParams {
+                    audio_url: Some(audio_uri.clone()),
+                    language: language.clone(),
+                    ..Default::default()
+                };
+                self.vision_port
+                    .media_generate("transcribe", &media_params)
+                    .await
+                    .map_err(|e| McpToolError::unavailable(format!("Transcription failed: {}", e)))
+            };
 
             match transcribe_result {
                 Ok(raw) => {
