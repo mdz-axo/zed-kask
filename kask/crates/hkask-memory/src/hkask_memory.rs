@@ -32,3 +32,20 @@ pub use ports::{
 };
 pub use semantic::{SemanticMemory, SemanticMemoryError};
 pub use semantic_loop::SemanticLoop;
+
+// ── Canonical span namespace (hoisted from 5 per-call .expect() sites) ──
+//
+// `SpanNamespace::try_from` is not `const fn` (it validates against the
+// runtime canonical-namespace registry). This `LazyLock` computes the
+// canonical `reg.memory.encode` namespace once and caches it. All memory
+// modules reuse `MEMORY_ENCODE_SPAN` instead of `.expect()`-ing at each
+// call site. The `.expect` here is the single legitimate site — it pins
+// the invariant that `reg.memory.encode` is registered.
+
+use std::sync::LazyLock;
+
+pub(crate) static MEMORY_ENCODE_SPAN: LazyLock<hkask_types::event::SpanNamespace> =
+    LazyLock::new(|| {
+        hkask_types::event::SpanNamespace::try_from(hkask_types::regulation::RegulationSpan::MemoryEncode)
+            .expect("reg.memory.encode is in CANONICAL_NAMESPACES")
+    });

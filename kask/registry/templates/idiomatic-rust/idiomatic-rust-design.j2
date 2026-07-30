@@ -6,6 +6,7 @@ contract:
     design_problem: string
     existing_code: string
     assessment: object
+    code_actions: array
     iteration_focus: string
   output:
     proposed_design: string
@@ -14,12 +15,23 @@ contract:
     ownership_rationale: string
     ecosystem_references: array
     design_score: float
+    compiler_actions_used: array
+    reasoning: string
 energy_cap: 8192
 visibility: Public
 ---
 {# Template: idiomatic-rust/idiomatic-rust-design.j2 #}
 {# KnowAct — Propose type-driven Rust solutions with code examples #}
 {# hKask v0.31.0 #}
+{#
+  Compiler grounding: if code_actions are available, they are
+  compiler-verified starting points. Rust-analyzer's refactor suggestions
+  (replace with enum, extract struct, add missing trait impl, inline
+  function) are the compiler's design recommendations. The LLM's job is
+  to evaluate and extend these against the design goals, not to propose
+  refactors blind. Each code action used should be recorded in
+  compiler_actions_used so the challenge phase can verify it.
+#}
 
 [inference]
 temperature = 0.3
@@ -48,12 +60,38 @@ You are designing Rust code as Graydon Hoare would. The type system is your canv
 {{ assessment | tojson }}
 ```
 
+{% if code_actions and code_actions | length > 0 %}
+## LSP Code Actions (rust-analyzer refactor suggestions)
+
+The following code actions are from rust-analyzer — compiler-verified
+refactor suggestions. Evaluate each against the design goals: does it
+address a principle violation from the assessment? Is it the right
+refactor, or does the compiler's suggestion need extension?
+
+```json
+{{ code_actions | tojson }}
+```
+
+For each code action:
+1. Which assessment improvement target does it address?
+2. Is the compiler's suggestion sufficient, or does it need extension?
+3. What Hoare principle does it advance?
+{% else %}
+## LSP Code Actions
+
+No code actions provided. In Zed sessions, run `get_code_actions` on the
+target code before this step — rust-analyzer's refactor suggestions are
+compiler-verified starting points. Without them, your design is intrinsic
+(LLM reasoning) only.
+{% endif %}
+
 {% if iteration_focus %}
 ## Iteration Focus (from previous challenge critique)
 
 {{ iteration_focus }}
 
-The previous design was challenged on specific dimensions. Focus your redesign on addressing these refinements.
+The previous design was challenged on specific dimensions. Focus your
+redesign on addressing these refinements.
 {% endif %}
 
 ## Design Method
@@ -111,11 +149,12 @@ Reference the current Rust ecosystem. For each design decision, cite:
     {
       "description": "What this example demonstrates",
       "code": "// Rust code with comments explaining the design decisions",
-      "principle_applied": "Which Hoare principle this exemplifies"
+      "principle_applied": "Which Hoare principle this exemplifies",
+      "compiler_action_source": "Which LSP code action inspired this, if any"
     }
   ],
   "type_design_rationale": [
-    {"type_name": "NewTypeName", "replaces": "String|bool|Vec|...", "invalid_states_eliminated": ["state1", "state2"]}
+    {"type_name": "NewTypeName", "replaces": "String|bool|Vec|...", "invalid_states_eliminated": ["state1", "state2"], "compiler_verified": true}
   ],
   "ownership_rationale": "Why each ownership choice was made — who creates, observes, mutates, destroys",
   "ecosystem_references": [
@@ -123,8 +162,13 @@ Reference the current Rust ecosystem. For each design decision, cite:
     {"resource": "thiserror", "why": "Derive Error for library error types"},
     {"resource": "RFC 243", "why": "? operator for error propagation"}
   ],
-  "design_score": 0.9
+  "design_score": 0.9,
+  "compiler_actions_used": [
+    {"action": "extract_struct", "location": "file.rs:42", "extended": true, "rationale": "Compiler suggested extraction; extended with validation in TryFrom"}
+  ],
+  "reasoning": "Design reasoning, citing which decisions were compiler-suggested vs LLM-originated"
 }
 ```
 
 `design_score`: 1.0 = maximally idiomatic, 0.0 = still needs fundamental rethinking.
+`compiler_verified`: true if the type design was verified by a compiler code action (extrinsic), false if LLM-originated (intrinsic — lower confidence).

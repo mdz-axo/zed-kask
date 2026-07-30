@@ -12,17 +12,19 @@
 //! - `training_validate_config` — Run lora-training skill's static math-contract gates on a config
 //!
 //! Deleted tools (2026-07-19 cleanup, second pass):
-//! - training_deploy / training_deployment_status / training_teardown — replaced by
-//!   `crate::adapter::AdapterPort::{create_endpoint, endpoint_status, teardown_endpoint}`.
-//!   The MCP server was a thin wrapper; deployment now goes through the canonical
-//!   AdapterPort surface directly.
-//! - training_list_adapters / training_delete_adapter — `AdapterPort::list_adapters` and
-//!   `AdapterStore::delete` already cover these. Rare operations; route via CLI.
-//! - training_register_adapter — `training_status` auto-registers on completion; manual
-//!   registration is an `AdapterStore` API call, not an MCP tool.
-//! - training_preflight_check — replaced by `training_validate_config`, which runs the
-//!   actual lora-training skill gates (G-M1..G-M4, G-Q1, G-Q2, G-Q4, G-H1) via
-//!   `lora_validation::validate_training_params` and emits `reg.lora.audit` spans.
+//! - training_deploy / training_deployment_status / training_teardown — these
+//!   wrapped cloud endpoint provisioning via RunPod. The `AdapterPort` trait
+//!   and `AdapterRouter` that replaced them were dead code (zero production
+//!   callers) and have been removed. If deployment is needed, it should be
+//!   re-added as a thin MCP tool over `AdapterStore` + `InferencePort`.
+//! - training_list_adapters / training_delete_adapter — `AdapterStore` CRUD
+//!   already covers these. Rare operations; route via CLI.
+//! - training_register_adapter — `training_status` auto-registers on completion;
+//!   manual registration is an `AdapterStore` API call, not an MCP tool.
+//! - training_preflight_check — replaced by `training_validate_config`, which
+//!   runs the actual lora-training skill gates (G-M1..G-M4, G-Q1, G-Q2, G-Q4,
+//!   G-H1) via `lora_validation::validate_training_params` and emits
+//!   `reg.lora.audit` spans.
 //! - training_retrain — merged into `training_submit` as optional `feedback_path` +
 //!   `skill_name` + `adapter_name` parameters (merge + version-bump logic moved there).
 //!
@@ -80,7 +82,6 @@ pub mod types;
 
 mod tools;
 
-use crate::adapter::AdapterRouter;
 use crate::adapter::adapter_store::Checksum;
 use crate::adapter::expertise::{AdapterLifecycle, Expertise, MdsDomain, TrainingProvenance};
 use crate::adapter::{AdapterSource, TrainedLoRAAdapter};
@@ -110,7 +111,6 @@ hkask_mcp_server::mcp_server!(
         pub pipeline: Mutex<DatasetPipeline>,
         pub adapter_store: Arc<crate::adapter::AdapterStore>,
         pub job_store: Option<JobStore>,
-        pub adapter_router: Option<Arc<AdapterRouter>>,
         pub inference_port: Arc<dyn InferencePort>,
     }
 );
@@ -136,7 +136,7 @@ impl TrainingServer {
     /// `checksum` and `storage_path` are computed from the adapter weights file
     /// when `adapter_weight_path` is provided. When `None`, placeholder values
     /// are used (zero checksum, empty path) — the adapter cannot be deployed
-    /// via `AdapterRouter` until real values are provided.
+    /// until real values are provided.
     #[allow(clippy::too_many_arguments)]
     fn build_trained_adapter(
         id: String,
@@ -196,7 +196,7 @@ impl TrainingServer {
         let uuid = uuid::Uuid::parse_str(&id).unwrap_or_else(|_| uuid::Uuid::new_v4());
         // Compute checksum and storage_path from the adapter weights file.
         // When no path is provided, use placeholder values — the adapter cannot
-        // be deployed via AdapterRouter until real values are set.
+        // be deployed until real values are set.
         let (checksum, storage_path) = match adapter_weight_path {
             Some(path) => {
                 let storage = path.to_string_lossy().to_string();
@@ -351,7 +351,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .cloned()
                     .or_else(|| hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").ok());
 
-                let (semantic, adapter_store, job_store, adapter_router) = match passphrase {
+                let (semantic, adapter_store, job_store) = match passphrase {
                     Some(passphrase) => {
                         let db = hkask_storage::Database::open(&db_path, &passphrase)
                             .map_err(|e| {
@@ -384,12 +384,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         let store = crate::adapter::AdapterStore::from_driver(hmem_driver)
                             .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
 
-                        // Build the canonical adapter router (used by AdapterPort for
-                        // deployment, status, teardown — the MCP server no longer wraps these).
-                        let router = AdapterRouter::new(std::sync::Arc::new(store.clone()));
-                        let adapter_router = Some(std::sync::Arc::new(router));
-
-                        (semantic, Arc::new(store), job_store, adapter_router)
+                        (semantic, Arc::new(store), job_store)
                     }
                     None => {
                         // No passphrase configured — fall back to an in-memory driver
@@ -400,7 +395,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
                         let store = crate::adapter::AdapterStore::from_driver(driver)
                             .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
-                        (None, Arc::new(store), None, None)
+                        (None, Arc::new(store), None)
                     }
                 };
 
@@ -442,7 +437,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     Mutex::new(pipeline.clone()),
                     adapter_store,
                     job_store,
-                    adapter_router,
                     inference_port,
                 ))
             })()

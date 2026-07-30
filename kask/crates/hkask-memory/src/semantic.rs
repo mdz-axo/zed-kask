@@ -13,8 +13,7 @@ use crate::recall_dedup;
 use hkask_storage::{EmbeddingError, EmbeddingStore, HMem, HMemError, HMemStore, SimilarityResult};
 use hkask_types::RegulationSink;
 use hkask_types::Visibility;
-use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanNamespace};
-use hkask_types::regulation::RegulationSpan;
+use hkask_types::event::{CyclePhase, RegulationRecord, Span};
 use hkask_types::visibility::Confidence;
 use std::sync::Arc;
 use thiserror::Error;
@@ -259,7 +258,7 @@ impl SemanticMemory {
         // Regulation: emit RegulationRecord for semantic write
         if let Some(sink) = &self.event_sink {
             let span = Span::new(
-                SpanNamespace::try_from(RegulationSpan::MemoryEncode).expect("canonical span"),
+                crate::MEMORY_ENCODE_SPAN.clone(),
                 "semantic_stored",
             );
             let event = RegulationRecord::new(
@@ -281,7 +280,7 @@ impl SemanticMemory {
         // Regulation: emit RegulationRecord for consolidation write
         if let Some(sink) = &self.event_sink {
             let span = Span::new(
-                SpanNamespace::try_from(RegulationSpan::MemoryEncode).expect("canonical span"),
+                crate::MEMORY_ENCODE_SPAN.clone(),
                 "consolidated",
             );
             let event = RegulationRecord::new(

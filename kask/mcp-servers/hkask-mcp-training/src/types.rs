@@ -2,10 +2,11 @@
 //!
 //! Eight tools: ingest_qa, ingest_dataset, assemble_dataset, submit (handles
 //! retrain via optional feedback_path), status, cancel, evaluate,
-//! validate_config. Deployment tools removed in favor of `AdapterPort`;
-//! register/list/delete adapters removed in favor of `AdapterStore` /
-//! `AdapterPort` direct calls; preflight_check replaced by validate_config
-//! (runs the actual lora-training skill gates).
+//! validate_config. Deployment tools were removed (the `AdapterPort`/
+//! `AdapterRouter` that replaced them was dead code and has also been removed);
+//! register/list/delete adapters removed in favor of `AdapterStore` direct
+//! calls; preflight_check replaced by validate_config (runs the actual
+//! lora-training skill gates).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

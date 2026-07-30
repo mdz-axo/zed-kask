@@ -118,7 +118,21 @@ pub const RESERVATION_TIMEOUT_SECS: i64 = 300;
 impl GasBudget {
     /// expect: "The system tracks and constrains inference energy consumption through gas budgeting"
     pub fn new(cap: GasCost) -> Self {
-        assert!(cap.0 > 0, "cap must be positive");
+        // Invariant: cap > 0. The upstream boundary
+        // (GasBudgetManager::apply_override_gas_budget) clamps zero budgets
+        // to 1 with a warn. debug_assert catches a bypass in CI; the release
+        // path clamps + warns so production never panics on a regulation signal.
+        debug_assert!(cap.0 > 0, "cap must be positive");
+        let cap = if cap.0 == 0 {
+            tracing::warn!(
+                target: "reg.gas",
+                "GasBudget::new called with cap=0 — clamping to 1. \
+                 This indicates a call site bypassing apply_override_gas_budget."
+            );
+            GasCost(1)
+        } else {
+            cap
+        };
         let c = cap.0;
         Self {
             remaining: cap,
@@ -183,7 +197,17 @@ impl GasBudget {
 
     /// expect: "The system tracks and constrains inference energy consumption through gas budgeting"
     pub fn reset_to(&mut self, new_cap: GasCost) {
-        assert!(new_cap.0 > 0, "new cap must be positive");
+        debug_assert!(new_cap.0 > 0, "new cap must be positive");
+        let new_cap = if new_cap.0 == 0 {
+            tracing::warn!(
+                target: "reg.gas",
+                "reset_to called with new_cap=0 — clamping to 1. \
+                 This indicates a call site bypassing apply_override_gas_budget."
+            );
+            GasCost(1)
+        } else {
+            new_cap
+        };
         self.cap = new_cap;
         self.remaining = new_cap;
         self.reserved = GasCost::ZERO;

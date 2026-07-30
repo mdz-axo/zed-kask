@@ -14,8 +14,7 @@ use hkask_regulation::types::loops::{
 };
 use hkask_types::ConsolidationRequest;
 use hkask_types::WebID;
-use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanNamespace};
-use hkask_types::regulation::RegulationSpan;
+use hkask_types::event::{CyclePhase, RegulationRecord, Span};
 
 /// Episodic Loop — monitors episodic storage usage against budget and enforces limits.
 ///
@@ -80,7 +79,7 @@ impl EpisodicLoop {
     fn emit_reg(&self, verb: &str, observation: serde_json::Value) {
         if let Some(sink) = self.memory.event_sink() {
             let span = Span::new(
-                SpanNamespace::try_from(RegulationSpan::MemoryEncode).expect("canonical span"),
+                crate::MEMORY_ENCODE_SPAN.clone(),
                 verb,
             );
             let event =

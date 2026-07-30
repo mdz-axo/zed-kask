@@ -5,41 +5,61 @@ crate:
   name: idiomatic-rust
   version: "0.31.0"
   description: >
-    Idiomatic Rust design through Graydon Hoare's lens. Convergent inquiry loop:
-    anchor design problems against Hoare's principles, propose type-driven
-    solutions with code examples, challenge and refine through adversarial
-    review, and converge toward deeper, more idiomatic designs.
+    Idiomatic Rust design through Graydon Hoare's lens, grounded by
+    rust-analyzer and clippy as extrinsic oracles. Convergent inquiry loop:
+    anchor design problems against Hoare's principles using compiler
+    diagnostics as ground truth, propose type-driven solutions informed by
+    LSP code actions, challenge and refine through adversarial review
+    verified against compiler feedback, and converge toward deeper, more
+    idiomatic designs. The compiler is the oracle that prevents the LLM
+    from confidently proposing designs the borrow checker would reject.
 
 templates:
   - id: idiomatic-rust/idiomatic-rust-inquiry
-    name: "Assess a Rust design problem against Graydon Hoare's principles"
+    name: "Assess a Rust design problem against Hoare's principles using rust-analyzer diagnostics"
     path: idiomatic-rust-inquiry.j2
     type: KnowAct
-    lexicon_terms: [evaluate, classify, orient, anchor, specify]
+    lexicon_terms: [evaluate, classify, orient, anchor, specify, diagnostic]
     description: >
-      Assess a Rust design problem against Graydon Hoare's principles.
-      Identify invariants, invalid states, ownership graphs, and error domains.
-      Produce a scored design assessment with specific improvement targets.
+      Assess a Rust design problem against Graydon Hoare's principles, using
+      rust-analyzer diagnostics as ground truth. The compiler's errors and
+      warnings are the starting point — not the LLM's guess. Interpret each
+      diagnostic through the Hoare lens (borrow checker → ownership, type
+      mismatch → invalid states, etc.). Identify invariants, invalid states,
+      ownership graphs, and error domains. Produce a scored design assessment
+      with specific improvement targets, marking each as compiler-confirmed
+      (extrinsic) or LLM-identified (intrinsic — lower confidence).
+    generates_spans:
+      - reg.skill.idiomatic-rust.inquiry
 
   - id: idiomatic-rust/idiomatic-rust-design
-    name: "Propose type-driven Rust solutions with code examples"
+    name: "Propose type-driven Rust solutions informed by LSP code actions"
     path: idiomatic-rust-design.j2
     type: KnowAct
-    lexicon_terms: [design, compose, specify, generate, verify]
+    lexicon_terms: [design, compose, specify, generate, verify, refactor]
     description: >
-      Propose type-driven Rust solutions with code examples. Apply algebraic
-      types, ownership patterns, error propagation, and trait design. Reference
-      std library patterns, ecosystem best practices, and relevant RFCs.
+      Propose type-driven Rust solutions with code examples, informed by LSP
+      code actions. Rust-analyzer's refactor suggestions (replace with enum,
+      extract struct, add missing trait impl) are compiler-verified starting
+      points. Apply algebraic types, ownership patterns, error propagation,
+      and trait design. Reference std library patterns, ecosystem best
+      practices, and relevant RFCs. Record which decisions were compiler-
+      suggested vs LLM-originated.
+    generates_spans:
+      - reg.skill.idiomatic-rust.design
 
   - id: idiomatic-rust/idiomatic-rust-challenge
-    name: "Adversarial review of a Rust design proposal"
+    name: "Adversarial review grounded by find_references, diagnostics, and clippy"
     path: idiomatic-rust-challenge.j2
     type: KnowAct
-    lexicon_terms: [challenge, critique, evaluate, discriminate, orient]
+    lexicon_terms: [challenge, critique, evaluate, discriminate, orient, verify]
     description: >
-      Adversarial review of a Rust design proposal. Find gaps, test edge cases,
-      challenge assumptions, identify deeper connections. Produce a scored
-      critique with specific refinement directives. Few-shot: if the critique
-      score is below threshold, loop back to design with concrete targets.
-
-
+      Adversarial review of a Rust design proposal, grounded by compiler
+      feedback. Uses find_references (actual blast radius, not LLM's guess),
+      diagnostics (compile verification of proposed code), and clippy
+      (codified idiomatic Rust lints as ground-truth design feedback). Find
+      gaps, test edge cases, challenge assumptions, identify deeper
+      connections. Produce a scored critique with specific refinement
+      directives, marking each as compiler-confirmed or LLM-identified.
+    generates_spans:
+      - reg.skill.idiomatic-rust.challenge

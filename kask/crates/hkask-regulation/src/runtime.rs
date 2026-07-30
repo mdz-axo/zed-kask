@@ -802,13 +802,19 @@ impl RegulationLedger {
                 serde_json::json!({"domain": domain, "state": state_name}),
                 0,
             );
-            let subscribers = self.subscribers.read().await;
-            for observer in subscribers.iter() {
-                if observer.interest_mask().iter().any(|ns| ns == &span_ns) {
-                    observer.on_event(&event).await;
-                }
+            // Clone matching observers out of the lock before awaiting so a
+            // slow observer does not stall subscribe/publish_event.
+            let interested: Vec<Arc<dyn LedgerObserver>> = {
+                let subscribers = self.subscribers.read().await;
+                subscribers
+                    .iter()
+                    .filter(|o| o.interest_mask().iter().any(|ns| ns == &span_ns))
+                    .cloned()
+                    .collect()
+            };
+            for observer in interested {
+                observer.on_event(&event).await;
             }
-            drop(subscribers);
 
             if let Some(ref a) = alert
                 && a.severity == crate::algedonic::AlertSeverity::Critical
@@ -946,11 +952,18 @@ impl RegulationLedger {
     ///       has had `on_event` scheduled; unmatched subscribers are skipped
     pub async fn publish_event(&self, event: RegulationRecord) {
         let span_ns = event.span.namespace.clone();
-        let subscribers = self.subscribers.read().await;
-        for observer in subscribers.iter() {
-            if observer.interest_mask().iter().any(|ns| ns == &span_ns) {
-                observer.on_event(&event).await;
-            }
+        // Clone matching observers out of the lock before awaiting so a
+        // slow observer does not stall subscribe/publish_event.
+        let interested: Vec<Arc<dyn LedgerObserver>> = {
+            let subscribers = self.subscribers.read().await;
+            subscribers
+                .iter()
+                .filter(|o| o.interest_mask().iter().any(|ns| ns == &span_ns))
+                .cloned()
+                .collect()
+        };
+        for observer in interested {
+            observer.on_event(&event).await;
         }
     }
 
@@ -966,8 +979,13 @@ impl RegulationLedger {
     /// pre:  signal is valid
     /// post: backpressure signal emitted to subscribers
     pub async fn emit_backpressure(&self, signal: BackpressureSignal) {
-        let subscribers = self.subscribers.read().await;
-        for observer in subscribers.iter() {
+        // Clone all observers out of the lock before awaiting (backpressure
+        // has no interest-mask filter, but the lock-stall concern is the same).
+        let observers: Vec<Arc<dyn LedgerObserver>> = {
+            let subscribers = self.subscribers.read().await;
+            subscribers.iter().cloned().collect()
+        };
+        for observer in observers {
             observer.on_backpressure(&signal).await;
         }
     }

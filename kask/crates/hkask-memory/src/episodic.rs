@@ -12,8 +12,7 @@ use hkask_storage::{HMem, HMemError, HMemStore};
 use hkask_types::RegulationSink;
 use hkask_types::Visibility;
 use hkask_types::WebID;
-use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanNamespace};
-use hkask_types::regulation::RegulationSpan;
+use hkask_types::event::{CyclePhase, RegulationRecord, Span};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -126,7 +125,7 @@ impl EpisodicMemory {
         // Regulation: emit RegulationRecord for memory write observability
         if let Some(sink) = &self.event_sink {
             let span = Span::new(
-                SpanNamespace::try_from(RegulationSpan::MemoryEncode).expect("canonical span"),
+                crate::MEMORY_ENCODE_SPAN.clone(),
                 "episodic_stored",
             );
             let event = RegulationRecord::new(

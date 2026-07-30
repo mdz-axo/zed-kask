@@ -480,19 +480,38 @@ infrastructure — agents authoring manifests must set `category` correctly so
 the runtime can gate `resolve_manifest` (only `skill` manifests may bind as
 agent `process_manifests`).
 
-## `unwrap_or(0)` / `.is_ok()` / `let _ =` on regulation signals is a broken feedback loop
+## `unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop
 
-Every error path that feeds the cybernetic regulation loop (gas reserve/settle,
-consolidation delete, semantic purge, wallet draw, ROLLBACK, regulation record
-parse, escalation ID parse) must `tracing::warn!` on failure, not silently
-return zero/no-op. A `consolidation_candidate_count` that returns 0 on DB
-outage is indistinguishable from "no candidates" — the regulation loop sees
-no signal and suppresses consolidation triggers. A `settle_gas` that drops
-the error with `.ok()` creates a reinforcing loop (unbounded tool calls)
-instead of a corrective one. This generalizes the "Process-global hooks need
-a startup-failure signal" trap: every `unwrap_or` on a regulation signal is
-a missing failure signal. Found across `hkask-memory`, `hkask-regulation`,
-`hkask-mcp`, `hkask-storage` in audit cycle 7.
+Regulation loops (`EpisodicLoop`, `SemanticLoop`, `ConsolidationService`)
+read sense inputs via `unwrap_or(0)` on fallible storage queries. A DB outage
+returns 0, which the loop interprets as "no deviation from set-point" — the
+opposite of the truth. The loop sees no signal and suppresses its corrective
+action, producing a reinforcing loop instead of a corrective one. This
+generalizes the "Process-global hooks need a startup-failure signal" trap:
+every `unwrap_or` on a regulation signal is a missing failure signal.
+
+Verified swallowed-error sites (production, non-test) as of audit cycle 7:
+
+- `kask/crates/hkask-memory/src/episodic_loop.rs:108` —
+  `storage_usage(&perspective).unwrap_or(0)` feeds `SignalMetric::StorageUsage`.
+- `kask/crates/hkask-memory/src/semantic_loop.rs:217,221` —
+  `h_mem_count().unwrap_or(0)` and `low_confidence_count(threshold).unwrap_or(0)`
+  feed `SignalMetric::TripleCount` and the low-confidence signal.
+- `kask/crates/hkask-memory/src/consolidation_service.rs:109,113` —
+  `semantic_low_confidence_count` and `semantic_h_mem_count` return 0 on error,
+  masking the very deviation consolidation is supposed to act on.
+- `kask/crates/hkask-regulation/src/runtime.rs:305` —
+  `variety_for_domain` returns 0 when the domain is untracked AND when the
+  counter lookup fails; the two cases are indistinguishable to the caller.
+
+The fix is not always `tracing::warn!` — some of these are documented
+degradation (e.g. `consolidation_candidate_count` in `episodic.rs:394` is
+explicitly `post: returns 0 on error (graceful degradation)`). The trap is
+the *undocumented* `unwrap_or(0)` on a signal that a loop reads as a
+measurement. When you add a new sense input to a regulation loop, either
+propagate the error so the loop can mark the signal stale, or document the
+degradation in the doc comment and emit a `tracing::warn!` so an operator
+reading logs can distinguish "measured zero" from "failed to measure".
 
 ## `LanguageModelInferencePort` honors `model_override` via registry resolution
 

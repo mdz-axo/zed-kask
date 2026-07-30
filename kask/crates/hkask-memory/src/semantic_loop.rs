@@ -18,8 +18,7 @@ use hkask_regulation::types::loops::{
     RegulatoryActionParams, Signal, SignalMetric,
 };
 use hkask_storage::HMem;
-use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanNamespace};
-use hkask_types::regulation::RegulationSpan;
+use hkask_types::event::{CyclePhase, RegulationRecord, Span};
 
 /// Default storage budget for semantic h_mem count.
 pub const DEFAULT_SEMANTIC_STORAGE_BUDGET: usize = 25_000;
@@ -184,7 +183,7 @@ impl SemanticLoop {
     fn emit_reg(&self, verb: &str, observation: serde_json::Value) {
         if let Some(sink) = self.memory.event_sink() {
             let span = Span::new(
-                SpanNamespace::try_from(RegulationSpan::MemoryEncode).expect("canonical span"),
+                crate::MEMORY_ENCODE_SPAN.clone(),
                 verb,
             );
             let event = RegulationRecord::new(
