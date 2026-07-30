@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.2.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -34,8 +34,9 @@ component cannot escalate beyond the capabilities it holds.
 
 ## Verification state machine
 
-When a tool invocation arrives at the `ToolPort`, the `CapabilityChecker`
-verifies the attached `DelegationToken`. The verification produces a
+When a tool invocation arrives at the `ToolPort`, the free function
+`verify_delegation_token_now` verifies the attached `DelegationToken` using
+an optional `CapabilityChecker`. The verification produces a
 `VerificationOutcome` (`verification/types.rs:22`) with five possible states.
 The state machine below shows the transitions.
 
@@ -43,9 +44,9 @@ The state machine below shows the transitions.
 stateDiagram-v2
     [*] --> Checking: invoke(server, tool, args, token)
     Checking --> NoChecker: no CapabilityChecker provided
-    Checking --> InvalidSignature: signature mismatch
+    Checking --> InvalidSignature: signature or root check fails
     Checking --> Expired: expires_at < now
-    Checking --> InsufficientAccess: resource/action mismatch
+    Checking --> InsufficientAccess: holder or resource or action mismatch
     Checking --> Valid: all checks pass
     NoChecker --> [*]: deny (fail-closed)
     InvalidSignature --> [*]: deny
@@ -56,8 +57,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-002
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-capability/src/verification/checker.rs:20; kask/crates/hkask-capability/src/verification/verify.rs:22; kask/crates/hkask-capability/src/tool_port.rs:47
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-capability/src/verification/checker.rs:20; kask/crates/hkask-capability/src/verification/verify.rs:22,63; kask/crates/hkask-capability/src/tool_port.rs:47
 status: VERIFIED
 -->
 
@@ -65,6 +66,12 @@ The five outcomes map to two decisions: deny or forward. Four outcomes deny
 the call. Only `Valid` forwards the call to the underlying `McpRuntime`. The
 `NoChecker` outcome is a fail-closed default: if no `CapabilityChecker` is
 configured, access is denied rather than allowed.
+
+Note: `CapabilityChecker::verify` itself returns `bool` (signature + root
+trust only). The structured `VerificationOutcome` is produced by
+`verify_delegation_token` / `verify_delegation_token_now`, which layer
+expiry and capability checks on top of the checker's `verify` and `check`
+methods.
 
 ## Why fail-closed
 

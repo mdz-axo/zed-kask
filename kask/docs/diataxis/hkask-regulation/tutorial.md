@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Tutorial: Reading a Regulation Span"
 audience: [operators, developers]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.2.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [lifecycle]
@@ -18,30 +18,38 @@ monitor agent behavior.
 
 ```mermaid
 flowchart TD
-    A[Step 1: Identify the span namespace] --> B[Step 2: Read the span fields]
+    A[Step 1: Identify the span namespace] --> B[Step 2: Read the cycle entry]
     B --> C[Step 3: Trace the span to its source]
     C --> D[Step 4: Check the variety monitor]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-003
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-regulation/src/runtime.rs:405,276; kask/crates/hkask-regulation/src/qa_span.rs:13
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-regulation/src/runtime.rs:405,343,276; kask/crates/hkask-regulation/src/qa_span.rs:13
 status: VERIFIED
 -->
 
-## Steps 1-2: Identify the namespace and read the fields
+## Steps 1-2: Identify the namespace and read the cycle entry
 
 Regulation spans use the `reg.*` namespace. The `RegulationLedger`
-(`runtime.rs:405`) records each span as a `RegulationCycleEntry`
-(`runtime.rs:343`). Each entry has a `span_category`, `span_path`, `phase`,
-and `observer_webid`.
+(`runtime.rs:405`) records each cycle as a `RegulationCycleEntry`
+(`runtime.rs:343`). Each entry has a `timestamp`, a `signals` count (afferent
+signals from the sense phase), a `deviations` count (from compare), an
+`actions` count (from compute), a `verified` count (from verify), and
+decision counts (`accepted`, `staged`, `blocked`) from impact verification.
+
+Skill-feedback spans are stored separately in `StoredSkillSpan`
+(`runtime.rs:57`), keyed by `skill_id` and `phase` (`outcome` or
+`operator_feedback`), and queried via `RegulationLedger::query_skill_feedback`.
 
 ## Steps 3-4: Trace the source and check variety
 
 Trace the span to its emission point in the source code. Check the
 `VarietyMonitor` (`runtime.rs:276`) to see whether the span's domain has
-sufficient variety. A variety deficit triggers an algedonic alert.
+sufficient variety. The monitor counts distinct states per domain via
+`VarietyTracker` counters; a deficit (expected minus actual) that exceeds
+the `AlgedonicManager` threshold triggers an algedonic `RuntimeAlert`.
 
 ## See also
 

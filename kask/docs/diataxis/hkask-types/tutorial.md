@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Tutorial: Understanding the Port Traits"
 audience: [developers new to hKask]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.1.1"
 status: "Active"
 domain: "Foundation"
 mds_categories: [lifecycle]
@@ -28,16 +28,18 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-003
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:29; kask/crates/hkask-types/src/ports/memory_port.rs:94
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108
 status: VERIFIED
 -->
 
 ## Steps 1-2: Read InferencePort and find its implementor
 
-Open `kask/crates/hkask-types/src/ports/inference_port.rs:29`. The
-`InferencePort` trait defines two methods: `stream_chat` and `list_models`.
-Both return pinned boxed futures because inference is asynchronous.
+Open `kask/crates/hkask-types/src/ports/inference_port.rs:86`. The
+`InferencePort` trait defines three methods: `generate` (single-prompt),
+`generate_with_model` (with optional model override), and
+`generate_with_messages` (multi-turn with a `ChatMessage` array). All return
+pinned boxed futures because inference is asynchronous.
 
 Search for implementors with `grep -rn "impl InferencePort for"`. The
 primary implementor is `LanguageModelInferencePort` at
@@ -46,14 +48,15 @@ primary implementor is `LanguageModelInferencePort` at
 
 ## Steps 3-4: Trace the call path and read MemoryPort
 
-Follow the call path: a skill calls `InferencePort::stream_chat`, which
-hits `LanguageModelInferencePort`, which calls zed's
+Follow the call path: a skill calls `InferencePort::generate`, which hits
+`LanguageModelInferencePort`, which calls zed's
 `LanguageModel::stream_completion`. The port trait is the boundary; the
 adapter is the bridge.
 
-Now open `kask/crates/hkask-types/src/ports/memory_port.rs:94`. The
-`MemoryPort` trait defines `ingest_turn` and `recall`. Its implementor is
-`BridgeMemoryPort` at `kask/crates/kask_bridge/src/memory.rs:580`.
+Now open `kask/crates/hkask-types/src/ports/memory_port.rs:108`. The
+`MemoryPort` trait defines `ingest_turn`, `recall_context`, and
+`recall_thread`. Its implementors are `LoggingMemoryPort` (no-op placeholder)
+and `RealMemoryPort` (SQLite-backed), both in `kask/crates/kask_bridge/src/memory.rs`.
 
 ## Step 5: Compare the two patterns
 

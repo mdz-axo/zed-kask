@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.2.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [domain, lifecycle]
@@ -10,67 +10,92 @@ mds_categories: [domain, lifecycle]
 
 # hkask-condenser — Reference
 
-`hkask-condenser` implements thread condensation for hKask. It compresses
-agent conversation threads by extracting salient passages using domain
-saliency, persona scoring, and ontology-anchored keyword matching. The crate
-provides three condensation algorithms and an `AlgorithmRegistry` that selects
-among them.
+`hkask-condenser` compresses agent tool-result output to fit the model's
+context window. It classifies each tool result into a `ContextCategory`,
+derives an `OntologyAnchor`, selects a `CondenserAlgorithm` via the
+`AlgorithmRegistry`, and scores lines by domain saliency, persona keywords,
+and structural bonuses. The crate provides three algorithms and a learning
+`CondenserEngine` that recommends better-performing algorithms over time.
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
 | `CondenserEngine` | `kask/crates/hkask-condenser/src/engine.rs:39` |
+| `CondenserEngine::new` | `kask/crates/hkask-condenser/src/engine.rs:53` |
+| `CondenserEngine::compress` | `kask/crates/hkask-condenser/src/engine.rs:75` |
+| `recommend_algorithm` | `kask/crates/hkask-condenser/src/engine.rs:199` |
 | `CondenserAlgorithm` trait | `kask/crates/hkask-condenser/src/algorithms.rs:33` |
 | `RtkStyleAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:49` |
 | `WordRankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:119` |
 | `FlashrankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:429` |
 | `AlgorithmRegistry` | `kask/crates/hkask-condenser/src/algorithms.rs:576` |
+| `AlgorithmRegistry::select` | `kask/crates/hkask-condenser/src/algorithms.rs:596` |
 | `domain_saliency` fn | `kask/crates/hkask-condenser/src/algorithms.rs:231` |
 | `classify_tool` fn | `kask/crates/hkask-condenser/src/algorithms.rs:654` |
 | `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:680` |
 | `OntologyGraph` | `kask/crates/hkask-condenser/src/ontology_graph.rs:43` |
 | `OntologyRelation` enum | `kask/crates/hkask-condenser/src/ontology_graph.rs:28` |
+| `graph()` fn | `kask/crates/hkask-condenser/src/ontology_graph.rs:310` |
+| `anchor_keywords` fn | `kask/crates/hkask-condenser/src/ontology_graph.rs:316` |
 | `score_against_persona` | `kask/crates/hkask-condenser/src/saliency.rs:52` |
 | `extract_query_words` | `kask/crates/hkask-condenser/src/saliency.rs:91` |
 | `score_memory_results` | `kask/crates/hkask-condenser/src/saliency.rs:104` |
 | `format_conversation_text` | `kask/crates/hkask-condenser/src/inference.rs:22` |
 | `build_summarization_prompt` | `kask/crates/hkask-condenser/src/inference.rs:36` |
+| `OntologyAnchor` enum | `kask/crates/hkask-condenser/src/types.rs:23` |
+| `Profile` enum | `kask/crates/hkask-condenser/src/types.rs:217` |
+| `ContextCategory` enum | `kask/crates/hkask-condenser/src/types.rs:298` |
+| `CompressedOutput` | `kask/crates/hkask-condenser/src/types.rs:342` |
 
 ## Algorithm model
 
 The `CondenserAlgorithm` trait (`algorithms.rs:33`) defines the interface for
-condensation algorithms. Three implementations are provided:
-`RtkStyleAlgorithm` (`algorithms.rs:49`), `WordRankAlgorithm`
-(`algorithms.rs:119`), and `FlashrankAlgorithm` (`algorithms.rs:429`). The
-`AlgorithmRegistry` (`algorithms.rs:576`) selects among them.
+compression algorithms. The trait method is `compress` (not `condense`); it
+returns `(compressed_content, health_signals)`. Three implementations are
+provided: `RtkStyleAlgorithm` (`algorithms.rs:49`),
+`WordRankAlgorithm` (`algorithms.rs:119`), and `FlashrankAlgorithm`
+(`algorithms.rs:429`). The `AlgorithmRegistry` (`algorithms.rs:576`) selects
+among them via `select(category)` (`algorithms.rs:596`).
 
 ```mermaid
 classDiagram
     class CondenserAlgorithm {
         <<interface>>
-        +condense(text, anchor) CondensedOutput
+        +name() str
+        +default_for() ~[ContextCategory]~
+        +compress(input, profile, cat, anchor)
     }
     class RtkStyleAlgorithm {
-        +condense(text, anchor) CondensedOutput
+        +default_for() ShellCommand
     }
     class WordRankAlgorithm {
-        +condense(text, anchor) CondensedOutput
+        +default_for() LogOutput, ConversationHistory
     }
     class FlashrankAlgorithm {
-        +condense(text, anchor) CondensedOutput
+        +default_for() FileContents, Unknown
     }
     class AlgorithmRegistry {
-        +select(anchor) Box~CondenserAlgorithm~
+        +new()
+        +select(cat) CondenserAlgorithm
+        +select_by_name(name)
     }
     class CondenserEngine {
-        +condense(thread) CondensedThread
+        +new()
+        +compress(tool, output, cat)
+        +recommend_algorithm(cat)
     }
     class OntologyGraph {
-        +relations: Vec~OntologyRelation~
+        +graph_adjacency_bonus(line, kws)
     }
     class OntologyRelation {
         <<enumeration>>
+        PartOf
+        Precedes
+        HasProperty
+        RelatedTo
+        Contains
+        CrossDomain
     }
 
     CondenserAlgorithm <|.. RtkStyleAlgorithm
@@ -84,15 +109,19 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-COND-001
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-condenser/src/algorithms.rs:33,49,119,429,576; kask/crates/hkask-condenser/src/engine.rs:39; kask/crates/hkask-condenser/src/ontology_graph.rs:43,28
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-condenser/src/algorithms.rs:33,49,119,429,576,596; kask/crates/hkask-condenser/src/engine.rs:39,53,75,199; kask/crates/hkask-condenser/src/ontology_graph.rs:43,28; kask/crates/hkask-condenser/src/types.rs:23,217,298,342
 status: VERIFIED
 -->
 
 ## Saliency functions
 
 The `domain_saliency` function (`algorithms.rs:231`) scores a text line
-against an optional `OntologyAnchor`. The `score_against_persona` function
+against an optional `OntologyAnchor`. It returns `direct + graph_bonus`:
+`direct` is a per-namespace keyword-containment score (FIBO, CogAT, PKO,
+GOLEM, ML-Schema), and `graph_bonus` is computed via
+`OntologyGraph::graph_adjacency_bonus` using `anchor_keywords`
+(`ontology_graph.rs:316`). The `score_against_persona` function
 (`saliency.rs:52`) scores text against persona keywords. The
 `extract_query_words` function (`saliency.rs:91`) extracts query terms from
 text. The `score_memory_results` function (`saliency.rs:104`) scores memory
@@ -102,27 +131,37 @@ recall results by count.
 
 The `OntologyGraph` (`ontology_graph.rs:43`) holds the ontology relation
 structure used for anchoring. The `OntologyRelation` enum
-(`ontology_graph.rs:28`) defines the relation types. The `graph()` function
-(`ontology_graph.rs:310`) returns a static graph instance. The
+(`ontology_graph.rs:28`) defines six relation types: `PartOf`, `Precedes`,
+`HasProperty`, `RelatedTo`, `Contains`, `CrossDomain`. The `graph()` function
+(`ontology_graph.rs:310`) returns a static `OntologyGraph` instance. The
 `anchor_keywords` function (`ontology_graph.rs:316`) returns keywords for a
 given anchor.
 
 ## Tool classification
 
 The `classify_tool` function (`algorithms.rs:654`) maps a tool name to a
-`ContextCategory`. The `derive_ontology_anchor` function
-(`algorithms.rs:680`) derives an `OntologyAnchor` from a tool name. These
-functions connect tool invocations to the ontology graph for saliency
-scoring.
+`ContextCategory` (`types.rs:298`) via exact token match, then substring
+fallback. The `derive_ontology_anchor` function (`algorithms.rs:680`) derives
+an `OntologyAnchor` (`types.rs:23`) from a tool name. These functions connect
+tool invocations to the ontology graph for saliency scoring.
+
+## Learning
+
+`CondenserEngine::recommend_algorithm` (`engine.rs:199`) returns the
+best-performing algorithm for a category based on observed compression ratios
+in the engine's bounded history ring buffer. When sufficient observations
+exist (`MIN_OBSERVATIONS_FOR_RECOMMENDATION`), `compress()` uses the
+recommended algorithm instead of the static `default_for()` mapping. This is
+the condenser's cybernetic feedback loop: the more it compresses, the better
+it selects.
 
 ## See also
 
 - [hkask-condenser Explanation](./explanation.md): state diagram of the
-  2-phase condensation process.
-- [`kask/docs/architecture/salience-specification.md`](../../architecture/salience-specification.md):
-  the passage salience algorithm specification.
+  compression process.
+- [hkask-condenser How-to](./how-to.md): tuning salience weights.
 - [hkask-types Reference](../hkask-types/reference.md): the `MemoryPort`
-  trait that consumes condensed threads.
+  trait that consumes compressed output.
 
 ---
 

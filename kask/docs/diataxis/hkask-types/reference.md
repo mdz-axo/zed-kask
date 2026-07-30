@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.1.1"
 status: "Active"
 domain: "Foundation"
 mds_categories: [domain, composition]
@@ -23,8 +23,8 @@ and `hkask-templates`.
 |--------|----------|
 | Crate root, module list | `kask/crates/hkask-types/src/hkask_types.rs:1` |
 | `pub use ports::*` re-export | `kask/crates/hkask-types/src/hkask_types.rs:72` |
-| `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:29` |
-| `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:94` |
+| `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:86` |
+| `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:108` |
 | `WalletBudgetPort` trait | `kask/crates/hkask-types/src/ports/wallet_budget_port.rs:38` |
 | `ConsentPort` trait | `kask/crates/hkask-types/src/ports/consent_port.rs:21` |
 | `EmbeddingPort` trait | `kask/crates/hkask-types/src/ports/embedding_port.rs:16` |
@@ -49,79 +49,105 @@ carries OCAP semantics; it is included here for context.
 classDiagram
     class InferencePort {
         <<interface>>
-        +stream_chat(request) InferenceStream
-        +list_models() Vec~ModelEntry~
+        +generate(prompt, parameters, tools) Future
+        +generate_with_model(prompt, parameters, model, tools) Future
+        +generate_with_messages(messages, parameters, model, tools) Future
     }
     class MemoryPort {
         <<interface>>
-        +ingest_turn(record) Result
-        +recall(query) Vec~MemorySnippet~
+        +ingest_turn(record) MemoryFuture
+        +recall_context(query, limit) MemoryFuture
+        +recall_thread(thread_id, limit) MemoryFuture
     }
     class WalletBudgetPort {
         <<interface>>
-        +check_balance(agent) WalletBalance
-        +encumber(amount) Result
+        +gas_to_rjoules(gas) RJoule
+        +get_encumbrance(key_id) Option~Encumbrance~
+        +can_afford(wallet_id, cost_rj) bool
+        +consume(key_id, gas_rj) Result
+        +settle_rjoules(wallet_id, reserved, actual) Result
     }
     class ConsentPort {
         <<interface>>
-        +store_consent(record) Result
-        +verify_consent(scope) bool
+        +initialize_schema() Result
+        +store(record) Result
+        +list_active() Vec~StoredConsentRecord~
     }
     class EmbeddingPort {
         <<interface>>
-        +embed(text) Vec~f32~
-        +store_embedding(record) Result
+        +store(entity_ref, embedding) Result
+        +get(entity_ref) Option~StoredEmbedding~
+        +search(query_embedding, limit) Vec~StoredEmbedding~
+        +delete(entity_ref) Result
     }
     class EscalationPort {
         <<interface>>
-        +create_escalation(entry) Result
-        +list_escalations() Vec~EscalationEntry~
+        +list_pending() Vec~EscalationEntry~
+        +get(id) Option~EscalationEntry~
+        +resolve(id, resolved_by) Result
+        +dismiss(id, resolved_by) Result
+        +persist_batch(batch) Result
+        +add(template_id, bot_id, output, ...) EscalationID
     }
     class CircuitBreakerPort {
         <<interface>>
-        +is_open(circuit) bool
-        +record_event(circuit, event)
+        +allow_request() bool
+        +record_success()
+        +record_failure()
+        +state() CircuitState
     }
     class LedgerObserver {
         <<interface>>
+        +interest_mask() Vec~SpanNamespace~
         +on_event(event)
+        +on_depletion(signal)
+        +on_backpressure(signal)
     }
     class LedgerStoragePort {
         <<interface>>
-        +store_record(record) Result
-        +query_records(filter) Vec~Record~
+        +query_algedonic(since, limit) Vec~RegulationRecord~
+        +replay_weighted(since, limit, config) Vec~WeightedEvent~
+        +persist_cursor(key, value) Result
+        +load_cursor(key) Option~i64~
+        +query_by_namespace(prefix, since, limit) Vec~RegulationRecord~
     }
     class SkillRegistryIndex {
         <<interface>>
+        +register_skill(skill) Result
+        +get_skill(id) Option~Skill~
         +list_skills() Vec~Skill~
-        +find_skill(name) Option~Skill~
+        +list_skills_visible_to(visibility) Vec~Skill~
     }
     class RegistryIndex {
         <<interface>>
-        +list_entries() Vec~RegistryEntry~
+        +list(domain_hint) Vec~RegistryEntry~
+        +get(id) Result~RegistryEntry~
     }
     class ToolPort {
         <<interface>>
-        +invoke_tool(call) Result
-        +list_tools() Vec~ToolInfo~
+        +invoke(server, tool, args, token) ToolFuture
     }
 
-    InferencePort <|.. FusionLanguageModel
-    MemoryPort <|.. BridgeMemoryPort
+    InferencePort <|.. LanguageModelInferencePort
+    InferencePort <|.. GuardedInferencePort
+    InferencePort <|.. MultiModelInferencePort
+    MemoryPort <|.. LoggingMemoryPort
+    MemoryPort <|.. RealMemoryPort
     WalletBudgetPort <|.. WalletManager
     ConsentPort <|.. ConsentStore
     EmbeddingPort <|.. EmbeddingStore
     EscalationPort <|.. EscalationQueue
     LedgerObserver <|.. RegulationLedger
     LedgerStoragePort <|.. RegulationArchive
-    SkillRegistryIndex <|.. SkillRegistry
-    RegistryIndex <|.. SkillRegistry
+    SkillRegistryIndex <|.. Registry
+    RegistryIndex <|.. Registry
+    ToolPort <|.. BridgeToolPort
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-001
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:29; kask/crates/hkask-types/src/ports/memory_port.rs:94; kask/crates/hkask-types/src/ports/wallet_budget_port.rs:38; kask/crates/hkask-types/src/ports/consent_port.rs:21; kask/crates/hkask-types/src/ports/embedding_port.rs:16; kask/crates/hkask-types/src/ports/escalation.rs:86; kask/crates/hkask-types/src/ports/regulation.rs:14,64,81; kask/crates/hkask-types/src/ports/registry.rs:288,311; kask/crates/hkask-capability/src/tool_port.rs:47
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/wallet_budget_port.rs:38; kask/crates/hkask-types/src/ports/consent_port.rs:21; kask/crates/hkask-types/src/ports/embedding_port.rs:16; kask/crates/hkask-types/src/ports/escalation.rs:86; kask/crates/hkask-types/src/ports/regulation.rs:14,64,81; kask/crates/hkask-types/src/ports/registry.rs:288,311; kask/crates/hkask-capability/src/tool_port.rs:47
 status: VERIFIED
 -->
 
@@ -132,50 +158,70 @@ boundary they abstract.
 
 ### Inference cluster
 
-`InferencePort` (`ports/inference_port.rs:29`) abstracts LLM chat completion
-and model enumeration. The companion types `ModelEntry` and
-`InferenceStreamChunk` live in the same file. Implementors:
-`FusionLanguageModel` in `kask_bridge/src/fusion_model.rs`,
-`GuardedInferencePort` in `hkask-guard/src/guarded_inference.rs`, and the
-inference-router adapters in `hkask-inference/src/`.
+`InferencePort` (`ports/inference_port.rs:86`) abstracts LLM generation. The
+trait exposes three methods: `generate` (single-prompt), `generate_with_model`
+(with optional model override), and `generate_with_messages` (multi-turn with
+explicit `ChatMessage` array). All return `Pin<Box<dyn Future + Send>>`. The
+companion types `ModelEntry`, `InferenceStreamChunk`, `InferenceResult`,
+`ChatMessage`, and `ChatToolDefinition` live in the same file and
+`ports/inference_types.rs`. Implementors: `LanguageModelInferencePort` in
+`kask_bridge/src/inference.rs:246` (wraps zed's `LanguageModel`),
+`MultiModelInferencePort` in `kask_bridge/src/fusion_model.rs:338` (Fusion
+multi-provider), and `GuardedInferencePort` in
+`hkask-guard/src/guarded_inference.rs:56` (decorator that adds content
+scanning).
 
 ### Memory cluster
 
-`MemoryPort` (`ports/memory_port.rs:94`) abstracts turn ingestion and snippet
-recall. The companion types `TurnRecord`, `MemorySnippet`, `MemoryError`, and
-the `MemoryFuture` type alias live in the same file. Implementor:
-`BridgeMemoryPort` in `kask_bridge/src/memory.rs`, which adapts zed's
-`ThreadMemoryPort` to this trait.
+`MemoryPort` (`ports/memory_port.rs:108`) abstracts turn ingestion and snippet
+recall. The trait exposes `ingest_turn`, `recall_context` (semantic + episodic
+recall by query), and `recall_thread` (recall by exact thread ID). The
+companion types `TurnRecord`, `MemorySnippet`, `MemoryError`, and the
+`MemoryFuture` type alias live in the same file. Implementors:
+`LoggingMemoryPort` in `kask_bridge/src/memory.rs:49` (no-op placeholder when
+no DB is configured), `RealMemoryPort` in `kask_bridge/src/memory.rs:695`
+(SQLite-backed), and `BridgeMemoryPort` in `kask_bridge/src/memory.rs:1484`
+(adapts `MemoryPort` to zed's `agent::ThreadMemoryPort` trait — note: this
+adapter implements zed's trait, not hKask's).
 
 ### Regulation cluster
 
 Four ports govern the Regulation nervous system. `CircuitBreakerPort`
-(`ports/regulation.rs:14`) abstracts circuit-breaker state queries.
-`LedgerObserver` (`ports/regulation.rs:64`) receives Regulation events.
-`LedgerStoragePort` (`ports/regulation.rs:81`) persists Regulation records.
-`WalletBudgetPort` (`ports/wallet_budget_port.rs:38`) abstracts gas-budget
-balance and encumbrance. Implementors: `WalletManager` in
-`hkask-regulation/src/wallet_manager.rs`, `RegulationLedger` (as
-`LedgerObserver`) in `hkask-regulation/src/runtime.rs`, and `RegulationArchive`
-in `hkask-storage/src/regulation_store.rs:502`.
+(`ports/regulation.rs:14`) abstracts circuit-breaker state queries
+(`allow_request`, `record_success`, `record_failure`, `state`).
+`LedgerObserver` (`ports/regulation.rs:64`) receives Regulation events via
+`interest_mask`-filtered `on_event`/`on_depletion`/`on_backpressure` callbacks.
+`LedgerStoragePort` (`ports/regulation.rs:81`) persists and replays Regulation
+records (`query_algedonic`, `replay_weighted`, `persist_cursor`,
+`load_cursor`, `query_by_namespace`). `WalletBudgetPort`
+(`ports/wallet_budget_port.rs:38`) abstracts gas-budget balance, encumbrance,
+and settlement (`gas_to_rjoules`, `get_encumbrance`, `can_afford`, `consume`,
+`settle_rjoules`). Implementors: `WalletManager` in
+`hkask-regulation/src/wallet_manager.rs:176`, `RegulationLedger` (as
+`LedgerObserver` subscriber bus) in `hkask-regulation/src/runtime.rs:405`, and
+`RegulationArchive` (as `LedgerStoragePort`) in
+`hkask-storage/src/regulation_store.rs:505`.
 
 ### Persistence cluster
 
 Three ports abstract storage backends. `ConsentPort`
-(`ports/consent_port.rs:21`) stores and verifies consent records.
-`EmbeddingPort` (`ports/embedding_port.rs:16`) generates and stores vector
-embeddings. `EscalationPort` (`ports/escalation.rs:86`) manages escalation
-records. Implementors: `ConsentStore` in `hkask-storage/src/consent_store.rs`,
-`EmbeddingStore` in `hkask-storage/src/embeddings.rs:616`, and `EscalationQueue`
-in `hkask-storage/src/escalation.rs:402`.
+(`ports/consent_port.rs:21`) initializes, stores, and lists consent records.
+`EmbeddingPort` (`ports/embedding_port.rs:16`) stores, retrieves, searches,
+and deletes vector embeddings. `EscalationPort` (`ports/escalation.rs:86`)
+manages escalation records (`list_pending`, `get`, `resolve`, `dismiss`,
+`persist_batch`, `add`). Implementors: `ConsentStore` in
+`hkask-storage/src/consent_store.rs:154`, `EmbeddingStore` in
+`hkask-storage/src/embeddings.rs:629`, and `EscalationQueue` in
+`hkask-storage/src/escalation.rs:402`.
 
 ### Registry cluster
 
 `SkillRegistryIndex` (`ports/registry.rs:288`) and `RegistryIndex`
 (`ports/registry.rs:311`) abstract the skill and template registry. The
 companion types `Skill`, `RegistryEntry`, `SkillZone`, and `RegistryError`
-live in the same file. Implementor: `SkillRegistry` in
-`hkask-templates/src/registry.rs` and `hkask-templates/src/registry_sqlite.rs`.
+live in the same file. Implementor: `Registry` in
+`hkask-templates/src/registry.rs:523` (in-memory) and the SQLite-backed
+`SqliteRegistry` in `hkask-templates/src/registry_sqlite.rs`.
 
 ## Identifier newtypes
 

@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — How-to: Implement a New Port"
 audience: [developers]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.1.1"
 status: "Active"
 domain: "Foundation"
 mds_categories: [composition]
@@ -18,8 +18,8 @@ its infrastructure backends.
 
 | Symbol | Location |
 |--------|----------|
-| `InferencePort` trait (reference) | `kask/crates/hkask-types/src/ports/inference_port.rs:29` |
-| `MemoryPort` trait (reference) | `kask/crates/hkask-types/src/ports/memory_port.rs:94` |
+| `InferencePort` trait (reference) | `kask/crates/hkask-types/src/ports/inference_port.rs:86` |
+| `MemoryPort` trait (reference) | `kask/crates/hkask-types/src/ports/memory_port.rs:108` |
 | `ports/mod.rs` (re-export pattern) | `kask/crates/hkask-types/src/ports/mod.rs` |
 | `pub use ports::*` | `kask/crates/hkask-types/src/hkask_types.rs:72` |
 
@@ -36,8 +36,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-004
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:29; kask/crates/hkask-types/src/ports/memory_port.rs:94; kask/crates/hkask-types/src/ports/mod.rs; kask/crates/hkask-types/src/hkask_types.rs:72
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/mod.rs; kask/crates/hkask-types/src/hkask_types.rs:72
 status: VERIFIED
 -->
 
@@ -45,7 +45,7 @@ status: VERIFIED
 
 Create `kask/crates/hkask-types/src/ports/<name>_port.rs`. Define a
 `Send + Sync` trait. Use `Pin<Box<dyn Future + Send>>` for async return
-types. Follow the pattern in `inference_port.rs:29`.
+types. Follow the pattern in `inference_port.rs:86`.
 
 ### Step 2: Re-export from ports/mod.rs
 

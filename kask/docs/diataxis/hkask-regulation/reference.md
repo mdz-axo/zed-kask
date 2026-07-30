@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.2.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [domain, lifecycle]
@@ -13,8 +13,9 @@ mds_categories: [domain, lifecycle]
 `hkask-regulation` implements the Regulation nervous system for hKask. It
 provides the cybernetic loop that monitors agent behavior, enforces gas
 budgets, detects variety deficits, and escalates algedonic alerts. The crate
-defines the `RegulationLedger`, `MetacognitionLoop`, `WalletManager`, `Well`,
-`GasBudget`, and the span enums that emit `reg.*` observable events.
+defines the `RegulationLedger`, `CyberneticsLoop`, `MetacognitionLoop`,
+`WalletManager`, `Well`, `GasBudget`, and the span enums that emit `reg.*`
+observable events.
 
 ## Source citations
 
@@ -24,7 +25,7 @@ defines the `RegulationLedger`, `MetacognitionLoop`, `WalletManager`, `Well`,
 | `RegulationCycleEntry` struct | `kask/crates/hkask-regulation/src/runtime.rs:343` |
 | `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:276` |
 | `StoredSkillSpan` struct | `kask/crates/hkask-regulation/src/runtime.rs:57` |
-| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:1047` |
+| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:1045` |
 | `LedgerSink` | `kask/crates/hkask-regulation/src/runtime.rs:1067` |
 | `MetacognitionLoop` struct | `kask/crates/hkask-regulation/src/metacognition.rs:150` |
 | `MetacognitionConfig` | `kask/crates/hkask-regulation/src/metacognition.rs:121` |
@@ -33,6 +34,9 @@ defines the `RegulationLedger`, `MetacognitionLoop`, `WalletManager`, `Well`,
 | `EscalationTrigger` enum | `kask/crates/hkask-regulation/src/metacognition.rs:113` |
 | `AlertSink` trait | `kask/crates/hkask-regulation/src/metacognition.rs:78` |
 | `AlertEvent` | `kask/crates/hkask-regulation/src/metacognition.rs:61` |
+| `EscalationSeverity` enum | `kask/crates/hkask-types/src/curator.rs:68` |
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:79` |
+| `ProposedAction` struct | `kask/crates/hkask-regulation/src/regulation_policy.rs:27` |
 | `WalletManager` struct | `kask/crates/hkask-regulation/src/wallet_manager.rs:36` |
 | `WalletBalance` | `kask/crates/hkask-regulation/src/wallet_manager.rs:26` |
 | `Well` struct | `kask/crates/hkask-regulation/src/well.rs:28` |
@@ -48,142 +52,189 @@ defines the `RegulationLedger`, `MetacognitionLoop`, `WalletManager`, `Well`,
 | `RuntimePolicy` trait | `kask/crates/hkask-regulation/src/runtime_policy.rs:47` |
 | `PolicyVerdict` enum | `kask/crates/hkask-regulation/src/runtime_policy.rs:14` |
 | `DefaultPolicy` | `kask/crates/hkask-regulation/src/runtime_policy.rs:66` |
-| `ToolStats` | `kask/crates/hkask-regulation/src/tool_stats.rs:71` |
-| `CostDistribution` | `kask/crates/hkask-regulation/src/tool_stats.rs:48` |
+| `ToolStats` | `kask/crates/hkask-regulation/src/tool_stats.rs:73` |
+| `CostDistribution` | `kask/crates/hkask-regulation/src/tool_stats.rs:49` |
+| `ToolReliabilityAlert` | `kask/crates/hkask-regulation/src/tool_stats.rs:60` |
 | `QaSpan` enum | `kask/crates/hkask-regulation/src/qa_span.rs:13` |
+| `CANONICAL_NAMESPACES` | `kask/crates/hkask-types/src/event.rs` |
 
 ## Regulation architecture
 
-The crate has four responsibility clusters: the ledger and event sink, the
-metacognition loop, the wallet and gas budget, and the algedonic alert path.
-The class diagram below shows the key types and their relationships.
+The crate has five responsibility clusters: the ledger and event sink, the
+cybernetics loop, the metacognition loop, the wallet and gas budget, and the
+algedonic alert path. The class diagram below shows the key types and their
+relationships.
 
 ```mermaid
 classDiagram
     class RegulationLedger {
-        +cycle_entries: Vec~RegulationCycleEntry~
-        +record_event(event)
-        +run_cycle()
+        +regulation_history: VecDeque~RegulationCycleEntry~
+        +record_regulation_cycle(entry)
+        +publish_event(event)
+        +record_skill_span(skill_id, phase, payload)
+        +subscribe(observer)
+    }
+    class CyberneticsLoop {
+        +sense() Vec~Signal~
+        +compute(deviations) Vec~RegulatoryAction~
+        +act(actions)
+        +verify_impact()
     }
     class MetacognitionLoop {
         +config: MetacognitionConfig
-        +evaluate(health) EscalationAlert
+        +tick()
         +run()
+        +compare(snapshot) Vec~EscalationAlert~
     }
     class WalletManager {
-        +check_balance(agent) WalletBalance
-        +encumber(amount) Result
-        +settle(amount) Result
+        +balance(agent) WalletBalance
+        +settle_rjoules(wallet_id, amount)
+        +gas_to_rjoules(gas) RJoule
     }
     class Well {
-        +id: WellID
         +config: WellConfig
+        +gas_available: GasCost
+        +rjoule_available: u64
         +replenish()
-        +draw(amount)
+        +draw(gas, rjoule)
     }
     class GasBudget {
-        +cap: u64
-        +replenish_rate: f64
-        +current: u64
-        +encumber(amount)
+        +cap: GasCost
+        +remaining: GasCost
+        +replenish_rate: GasCost
+        +reserved: GasCost
+        +reserve(amount) Result
+        +replenish()
     }
     class RuntimeAlert {
-        +severity: AlertSeverity
         +domain: String
-        +message: String
+        +deficit: u64
+        +threshold: u64
+        +severity: AlertSeverity
+        +escalated: bool
     }
     class AlertSeverity {
         <<enumeration>>
         Info
         Warning
         Critical
-        Emergency
     }
     class PolicyVerdict {
         <<enumeration>>
         Allow
-        Deny
-        Throttle
+        Block
+        RequireHuman
+        Log
     }
     class ToolStats {
-        +cost_distribution: CostDistribution
-        +reliability: f64
+        +reliability_threshold: f64
+        +reserve_estimate(tool) Option
+        +reliability_alerts() Vec
     }
 
-    RegulationLedger --> MetacognitionLoop : feeds
-    RegulationLedger --> ToolStats : tracks
-    MetacognitionLoop --> RuntimeAlert : emits
+    CyberneticsLoop --> RegulationLedger : reads/writes
+    MetacognitionLoop --> RegulationLedger : senses
+    CyberneticsLoop ..> ProposedAction : consumes
+    MetacognitionLoop --> EscalationAlert : emits
     RuntimeAlert --> AlertSeverity
-    WalletManager --> GasBudget : manages
-    WalletManager --> Well : draws from
     WalletManager ..> WalletBudgetPort : implements
+    WalletManager --> Well : draws from
+    WalletManager --> GasBudget : manages
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-001
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-regulation/src/runtime.rs:405,343,276; kask/crates/hkask-regulation/src/metacognition.rs:150,103,113; kask/crates/hkask-regulation/src/wallet_manager.rs:36; kask/crates/hkask-regulation/src/well.rs:28; kask/crates/hkask-regulation/src/energy.rs:99; kask/crates/hkask-regulation/src/algedonic.rs:26,37; kask/crates/hkask-regulation/src/runtime_policy.rs:14,47
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-regulation/src/runtime.rs:405,343,276,57,1045,1067; kask/crates/hkask-regulation/src/metacognition.rs:150,121,103,113,88,78,61; kask/crates/hkask-regulation/src/cybernetics_loop.rs:79; kask/crates/hkask-regulation/src/regulation_policy.rs:27; kask/crates/hkask-regulation/src/wallet_manager.rs:36,26; kask/crates/hkask-regulation/src/well.rs:28,24,73,13; kask/crates/hkask-regulation/src/energy.rs:99,13,323; kask/crates/hkask-regulation/src/algedonic.rs:37,26,54; kask/crates/hkask-regulation/src/runtime_policy.rs:14,47,66; kask/crates/hkask-regulation/src/tool_stats.rs:73,49,60; kask/crates/hkask-types/src/curator.rs:68
 status: VERIFIED
 -->
 
 ## Ledger and event sink
 
 The `RegulationLedger` (`runtime.rs:405`) is the central record store. It
-holds `RegulationCycleEntry` records (`runtime.rs:343`) and a
-`VarietyMonitor` (`runtime.rs:276`) that tracks tool and template diversity.
-The ledger implements `LedgerObserver` from `hkask-types` to receive
-Regulation events.
+holds a `RegState` containing a `regulation_history: VecDeque<RegulationCycleEntry>`
+and a `VarietyMonitor` (`runtime.rs:276`) that tracks tool and template
+diversity. The ledger implements `LedgerObserver` from `hkask-types` to
+receive Regulation events, and exposes `subscribe` / `subscribe_async` to
+register `LedgerObserver`s whose `interest_mask` matches a span namespace.
 
-Two event sinks are provided: `NoopEventSink` (`runtime.rs:1047`) for tests
-and `LedgerSink` (`runtime.rs:1067`) for production. The sink forwards events
-to the ledger for recording.
+Two event sinks are provided: `NoopEventSink` (`runtime.rs:1045`) for tests
+and `LedgerSink` (`runtime.rs:1067`) for production. `LedgerSink::persist`
+spawns `publish_event` on a caller-supplied tokio handle so emitters on
+threads without a reactor context (e.g. the GPUI foreground thread) can
+forward spans without panicking.
 
 The `RuntimePolicy` trait (`runtime_policy.rs:47`) decides whether to allow,
-deny, or throttle an action. The `PolicyVerdict` enum
-(`runtime_policy.rs:14`) has three variants: `Allow`, `Deny`, and `Throttle`.
-The `DefaultPolicy` (`runtime_policy.rs:66`) is the default implementation.
+block, require human confirmation, or log an action. The `PolicyVerdict`
+enum (`runtime_policy.rs:14`) has four variants: `Allow`, `Block(String)`,
+`RequireHuman(String)`, and `Log(String)`. The `DefaultPolicy`
+(`runtime_policy.rs:66`) implements four rules: human-in-loop tools require
+confirmation, untrusted data flowing to `Sink`-tainted tools is blocked,
+sessions exceeding `max_actions_per_session` are blocked, and `Source`-tainted
+tools are logged.
 
-The `ToolStats` (`tool_stats.rs:71`) tracks per-tool cost distributions and
-reliability. The `CostDistribution` (`tool_stats.rs:48`) holds the cost
-histogram. The `ToolReliabilityAlert` (`tool_stats.rs:59`) fires when a tool's
-reliability drops below threshold.
+The `ToolStats` (`tool_stats.rs:73`) tracks per-tool cost distributions and
+reliability via a Beta posterior over success/failure outcomes. The
+`CostDistribution` (`tool_stats.rs:49`) holds the p90 reserve point and
+observation count. The `ToolReliabilityAlert` (`tool_stats.rs:60`) fires when
+a tool's success probability falls below `reliability_threshold`.
 
-## Metacognition and alerts
+## Cybernetics and metacognition loops
 
-The `MetacognitionLoop` (`metacognition.rs:150`) evaluates system health and
-emits `EscalationAlert` (`metacognition.rs:103`) when thresholds are breached.
-The `EscalationTrigger` enum (`metacognition.rs:113`) defines the conditions
-that trigger escalation. The loop uses a `HealthSnapshot`
-(`metacognition.rs:88`) as input and an `AlertSink` trait
-(`metacognition.rs:78`) as output.
+The `CyberneticsLoop` (`cybernetics_loop.rs:79`) drives the five-phase
+sense→compare→compute→act→verify cycle. It implements the `RegulationLoop`
+trait and consumes `ProposedAction` records (`regulation_policy.rs:27`)
+produced by matching `RegulationRule`s against `Deviation`s. Each phase
+produces data that the `RegulationCycleEntry` (`runtime.rs:343`) captures:
+afferent signal count, deviation count, action count, verified count, and
+decision counts (`accepted`/`staged`/`blocked`).
 
-The `RuntimeAlert` (`algedonic.rs:37`) carries an `AlertSeverity`
-(`algedonic.rs:26`) and a domain string. The `AlertEmailSink` trait
-(`algedonic.rs:54`) forwards critical alerts to an email recipient. The
-severity levels are `Info`, `Warning`, `Critical`, and `Emergency`.
+The `MetacognitionLoop` (`metacognition.rs:150`) is a separate, slower loop
+that senses `HealthSnapshot`s from the ledger, compares them against
+`MetacognitionConfig` thresholds, and emits `EscalationAlert`s
+(`metacognition.rs:103`). The `EscalationTrigger` enum
+(`metacognition.rs:113`) has three variants: `VarietyDeficit`,
+`CriticalAlerts`, and `LowEffectiveness`. The loop uses an `AlertSink` trait
+(`metacognition.rs:78`) for user-facing dispatch; only `Critical`-severity
+alerts are forwarded to the sink.
+
+## Algedonic alert path
+
+The `RuntimeAlert` (`algedonic.rs:37`) carries a `domain`, `deficit`,
+`threshold`, `severity`, `escalated` flag, and `message`. The `AlertSeverity`
+enum (`algedonic.rs:26`) has three levels: `Info`, `Warning`, and `Critical`.
+Severity is computed by binary thresholds: `deficit > threshold` → `Critical`,
+`deficit > threshold/2` → `Warning`, otherwise `Info`. The `AlertEmailSink`
+trait (`algedonic.rs:54`) forwards critical alerts to an email recipient.
+
+The `EscalationSeverity` enum (re-exported from `hkask_types::curator`,
+`kask/crates/hkask-types/src/curator.rs:68`) is used by `EscalationAlert` and
+also has three levels: `Info`, `Warning`, `Critical`.
 
 ## Wallet and gas budget
 
 The `WalletManager` (`wallet_manager.rs:36`) implements the `WalletBudgetPort`
-trait from `hkask-types`. It manages per-agent rJoule balances, encumbrances,
-and settlements. The `WalletBalance` struct (`wallet_manager.rs:26`) holds the
-current balance.
+trait from `hkask-types`. It manages per-agent rJoule balances via a
+`WalletStore`, holds a `gas_per_rjoule: AtomicU64` conversion rate (moved
+here from the deleted `hkask-wallet` crate), and delegates gas draws to a
+`WellManager`. The `WalletBalance` struct (`wallet_manager.rs:26`) holds the
+current `gas` and `rjoule` balances.
 
 The `Well` struct (`well.rs:28`) is a replenishment source. Each well has a
-`WellID` (`well.rs:24`) and a `WellConfig` (`well.rs:13`). The `WellManager`
-(`well.rs:73`) manages multiple wells. The `GasBudget` (`energy.rs:99`) holds
-the cap, replenish rate, and current balance for an agent's gas allocation.
+`WellConfig` (`well.rs:13`) carrying `gas_rate` and `rjoule_rate`, and a
+`WellID` (`well.rs:24`) newtype. The `WellManager` (`well.rs:73`) manages
+multiple wells, with the first-created well becoming the default. The
+`GasBudget` (`energy.rs:99`) holds the `cap`, `remaining`, `replenish_rate`,
+`reserved`, `alert_threshold`, `hard_limit`, and `priority` for an agent's
+gas allocation, enforcing the invariant `remaining + reserved ≤ cap`.
 
 ## See also
 
 - [hkask-regulation Explanation](./explanation.md): state diagram of the
   homeostatic loop.
 - [hkask-types Reference](../hkask-types/reference.md): the
-  `WalletBudgetPort`, `LedgerObserver`, and `LedgerStoragePort` traits this
-  crate implements.
-- [`kask/docs/reference/regulation-spans.md`](../../reference/regulation-spans.md):
-  cross-cutting Regulation span catalog (stale; this document supersedes it
-  for per-crate detail).
+  `WalletBudgetPort`, `LedgerObserver`, `LedgerStoragePort`, and
+  `EscalationSeverity` types this crate implements or consumes.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P9 (feedback loops) and P12 (authenticated host mandate).
 
