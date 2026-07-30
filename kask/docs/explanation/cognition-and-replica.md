@@ -75,9 +75,9 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-001
-verified_date: 2026-07-24
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs, kask/crates/kask_bridge/src/inference_port.rs (LanguageModelInferencePort over zed LanguageModel, D8), kask/crates/hkask-guard/src/guarded_inference.rs (GuardedInferencePort wraps InferencePort, D4)
-status: VERIFIED (v2 — InferenceRouter node replaced by GuardedInferencePort over LanguageModelInferencePort; reflects in-process guard-layer routing, not the old standalone InferenceRouter)
+verified_date: 2026-07-29
+verified_against: crates/hkask-types/src/fusion.rs (FusionConfig, FusionMode, FusionSkill), kask/crates/kask_bridge/src/inference_port.rs (LanguageModelInferencePort over zed LanguageModel, D8), kask/crates/hkask-guard/src/guarded_inference.rs (GuardedInferencePort wraps InferencePort, D4)
+status: VERIFIED (v3 — verified_against corrected to fusion.rs; hkask-memory/src/lib.rs reference removed as stale)
 -->
 
 ### Implications
@@ -189,9 +189,9 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-002
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
-status: VERIFIED
+verified_date: 2026-07-29
+verified_against: mcp-servers/hkask-mcp-scenarios/src/lib.rs (18 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
+status: VERIFIED (v2 — verified_against corrected to scenarios server; hkask-memory/src/lib.rs reference removed as stale)
 -->
 
 ### Implications
@@ -263,7 +263,7 @@ Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 248 namespac
 
 #### How ν-Events Feed the Regulation Homeostatic Loop
 
-The Regulation loop is sense → compare → compute → act → verify. ν-events enter at sense — they are the afferent signals. `CyberneticsLoop::sense()` (at `cybernetics_loop.rs:733`) reads via pluggable `Sensor` implementations: `EnergyBudgetSensor`, `VarietySensor`, `WalletKeyHealthSensor`. Each sensor queries the ν-event store for relevant events and produces `Signal` values with metrics and set-points.
+The Regulation loop is sense → compare → compute → act → verify. ν-events enter at sense — they are the afferent signals. `CyberneticsLoop::sense()` reads via pluggable `Sensor` implementations: `EnergyBudgetSensor`, `VarietySensor`, `WalletKeyHealthSensor`. Each sensor queries the ν-event store for relevant events and produces `Signal` values with metrics and set-points.
 
 In the compare phase, signals are measured against set-points to produce `Deviation` values with direction (`AboveSetPoint` / `BelowSetPoint`). In compute, deviations map to `RegulatoryAction` with action types like `Calibrate`, `Escalate`, `Throttle`, `Notify`. In act, actions are executed. In verify_impact, the `ImpactReport` records whether actions were effective.
 
@@ -271,7 +271,7 @@ The `parent_event` field creates causal chains: the `reg.tool.completed` event h
 
 #### WeightedEvent and Decay
 
-Events do not persist at full weight forever. `WeightedEvent` at `crates/hkask-types/src/regulation.rs:106` pairs a `RegulationRecord` with a `weight: f64`. `DecayConfig` (line 116) defines per-category exponential decay constants: cybernetics has a 5-minute half-life, curation 15 minutes, inference 2 minutes, episodic 10 minutes. Events below `weight_threshold` (default 0.001) are not replayed. This implements episodic memory — recent events matter more than ancient ones — and prevents the Regulation from drowning in historical noise.
+Events do not persist at full weight forever. `WeightedEvent` at `crates/hkask-types/src/ports/regulation.rs` pairs a `RegulationRecord` with a `weight: f64`. `DecayConfig` (same file) defines per-category exponential decay constants: cybernetics has a 5-minute half-life, curation 15 minutes, inference 2 minutes, episodic 10 minutes. Events below `weight_threshold` (default 0.001) are not replayed. This implements episodic memory — recent events matter more than ancient ones — and prevents the Regulation from drowning in historical noise.
 
 The `LedgerStoragePort::replay_weighted()` method provides time-decayed event replay, enabling the Regulation to reconstruct system state from recent history without loading the entire event store. This is the computational expression of the least-action principle applied to observability: only the computationally cheapest (most recent, most salient) events factor into regulation decisions.
 
@@ -297,9 +297,9 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-003
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
-status: VERIFIED
+verified_date: 2026-07-29
+verified_against: crates/hkask-types/src/event.rs (RegulationRecord, Span, SpanNamespace, CANONICAL_NAMESPACES — 248 entries), crates/hkask-types/src/regulation.rs (RegulationSpan enum with Fusion variant), crates/hkask-types/src/observable_span.rs (ObservableSpan trait), crates/hkask-regulation/src/cybernetics_loop.rs (CyberneticsLoop::sense, Sensor implementations)
+status: VERIFIED (v2 — corrected CANONICAL_NAMESPACES count to 248; added Fusion variant to RegulationSpan table; fixed WeightedEvent/DecayConfig file path to ports/regulation.rs; removed stale hkask-memory/src/lib.rs reference)
 -->
 
 ### Implications
@@ -421,9 +421,9 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-004
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
-status: VERIFIED
+verified_date: 2026-07-29
+verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct, combined_router, fetch, save_forecast), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager)
+status: VERIFIED (v2 — verified_against corrected to companies server; hkask-memory/src/lib.rs reference removed as stale)
 -->
 
 ### Implications

@@ -122,9 +122,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs (CondenserServer tool router + record_experience), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms); condense_history 2-phase invoked from zed's crates/agent; InferencePort node = GuardedInferencePort over LanguageModelInferencePort (D4/D8); record_experience edges point at live EpisodicMemory (in-process episodic.store when configured, else debug log) — no daemon, no DaemonClient
-status: VERIFIED (v4 — Daemon node removed; record_experience edges repointed to live EpisodicMemory)
+verified_date: 2026-07-29
+verified_against: mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs (CondenserServer tool router + record_experience), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms); condense_history 2-phase invoked from zed's crates/agent; InferencePort node = GuardedInferencePort over LanguageModelInferencePort (D4/D8); record_experience edges point at live EpisodicMemory (in-process episodic.store when configured, else debug log) — no daemon, no DaemonClient; tool count verified at 8 #[tool] annotations
+status: VERIFIED (v5 — Daemon node removed; record_experience edges repointed to live EpisodicMemory; tool count corrected to 8)
 -->
 
 ## Key paths

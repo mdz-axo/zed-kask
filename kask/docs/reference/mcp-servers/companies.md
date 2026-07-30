@@ -6,7 +6,6 @@ version: "0.32.0"
 status: "Active"
 domain: "Companies"
 mds_categories: [domain, composition, trust, lifecycle, curation]
-last-verified-against: "fae4d94"
 ---
 
 # Companies MCP Server — Reference
@@ -68,9 +67,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-004
-verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct via mcp_server!, combined_router, fetch, save_forecast, run_server entrypoint), mcp-servers/hkask-mcp-companies/src/tools/mod.rs (sub-router composition), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager), mcp-servers/hkask-mcp-companies/src/learning.rs (LearningState.record), mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:947 (result_feedback tool). No daemon, no DaemonClient, no record_experience, no record_fetch_outcome — those nodes were removed.
-status: VERIFIED (v3 — boot node corrected to hkask_mcp_server::run_server; fabricated record_fetch_outcome/record_experience node removed; result_feedback learning edge added; file paths corrected from lib.rs to hkask_mcp_companies.rs)
+verified_date: 2026-07-29
+verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct via mcp_server!, combined_router, fetch, save_forecast, run_server entrypoint), mcp-servers/hkask-mcp-companies/src/tools/mod.rs (sub-router composition), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager), mcp-servers/hkask-mcp-companies/src/learning.rs (LearningState.record), mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (result_feedback tool). No daemon, no DaemonClient, no record_experience, no record_fetch_outcome — those nodes were removed.
+status: VERIFIED (v4 — boot node corrected to hkask_mcp_server::run_server; fabricated record_fetch_outcome/record_experience node removed; result_feedback learning edge added; file paths corrected from lib.rs to hkask_mcp_companies.rs; tool count verified at 41 #[tool] annotations)
 -->
 
 ## Tools (41)

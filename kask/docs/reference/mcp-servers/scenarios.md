@@ -107,9 +107,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
-verified_date: 2026-07-21
-verified_against: mcp-servers/hkask-mcp-scenarios/src/lib.rs (18 tool routers + check_sequence), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate, convert_companies_output), mcp-servers/hkask-mcp-scenarios/src/types.rs
-status: VERIFIED
+verified_date: 2026-07-29
+verified_against: mcp-servers/hkask-mcp-scenarios/src/lib.rs (18 tool routers + check_sequence), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions: build_event_tree, calibrate_from_fermi, bayesian_update, score_forecast, compute_calibration_curve, synthesize_perspectives, assess_project, cross_validate, convert_companies_output), mcp-servers/hkask-mcp-scenarios/src/types.rs; tool count verified at 18 #[tool] annotations
+status: VERIFIED (v2 — tool count verified)
 -->
 
 ## Key paths

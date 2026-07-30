@@ -93,36 +93,7 @@ userpod_host: test-monitor
 4. `reg.runtime.*` spans are emitted (query via the in-process `reg_query_spans` tool)
 5. No synthetic signals — every finding references a real span target + timestamp
 
-### Fixture 3: Attack Taxonomy Mapper (attack-taxonomy-mapper)
-
-**Setup:** Requires findings from `supply-chain-sentinel` (Fixture 1) to exist
-in `security/regressions/` as `surface: supply-chain` entries.
-
-**Procedure:**
-
-Invoke the `attack-taxonomy-mapper` skill from the agent panel:
-
-```
-skill: attack-taxonomy-mapper
-source: all
-userpod_host: test-mapper
-```
-
-**Expected output:**
-- `select-evidence` phase: discovers `surface: supply-chain` regression entries
-- `map-taxonomy` phase: maps each finding to OSC&R tactic + technique
-- `taxonomize` phase: proposes `taxonomy_mapping` field additions
-- `convergence-check` phase: computes convergence metric
-
-**Validation:**
-1. The skill produces JSON output (not an error)
-2. `findings_to_map` includes at least one finding (if regressions exist)
-3. Each mapping includes `osc_r_tactic` and `osc_r_technique` (verified names)
-4. No invented OSC&R categories — all mapped to existing entries in `github.com/pbom-dev/OSCAR`
-5. `userpod_host` is present in all outputs
-6. `reg.taxonomy.*` spans are emitted (query via the in-process `reg_query_spans` tool)
-
-### Fixture 4: Kali Audit (kali-audit)
+### Fixture 3: Kali Audit (kali-audit)
 
 **Setup:** The zed-kask project itself is the test fixture.
 
@@ -139,6 +110,7 @@ userpod_host: test-auditor
 **Expected output:**
 - `select-surface` phase: discovers Rust source files
 - `audit` phase: checks for unsafe blocks, panics, auth bypass, crypto misuse
+- `taxonomy_map` phase: maps supply-chain findings to OSC&R tactic + technique (folded from the former `attack-taxonomy-mapper` skill)
 - `report` phase: proposes regression entries (if any findings)
 - `convergence-check` phase: computes convergence metric
 
@@ -148,6 +120,7 @@ userpod_host: test-auditor
 3. `userpod_host` is present in all outputs
 4. Every finding includes concrete evidence (file path, line number, code snippet)
 5. No fabricated findings — every finding is verifiable by reading the cited file
+6. `reg.taxonomy.*` spans are emitted by the `taxonomy_map` phase (query via the in-process `reg_query_spans` tool)
 
 ## Automated Smoke Test (Future)
 
@@ -179,12 +152,7 @@ skill: runtime-posture-monitor
 signal: all
 userpod_host: smoke-test
 
-# 3. Attack taxonomy mapper (requires supply-chain findings)
-skill: attack-taxonomy-mapper
-source: all
-userpod_host: smoke-test
-
-# 4. Kali audit
+# 3. Kali audit (includes taxonomy_map phase — folded from attack-taxonomy-mapper)
 skill: kali-audit
 surface: code
 userpod_host: smoke-test
