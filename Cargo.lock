@@ -11034,7 +11034,6 @@ name = "kask_panel"
 version = "0.1.0"
 dependencies = [
  "agent",
- "agent-client-protocol",
  "agent_ui",
  "anyhow",
  "chrono",

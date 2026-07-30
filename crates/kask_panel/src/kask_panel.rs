@@ -28,6 +28,7 @@
 //! `NativeAgent`'s `ToolRouter`, which is OCAP-gated and streaming-aware.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use agent::ThreadStore;
@@ -35,8 +36,8 @@ use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView}
 use anyhow::Result;
 use fs::Fs;
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, Task,
-    WeakEntity, Window, prelude::*,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString,
+    Task, WeakEntity, Window, prelude::*,
 };
 use project::Project;
 use serde_json::Value;
@@ -119,22 +120,12 @@ pub(crate) fn kanban_tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
     tool_invoker()
 }
 
-/// The per-tab system prompt prefix injected via `static_context`.
+/// The per-tab system prompt injected via `static_context`.
 ///
 /// This is appended to the curator's system prompt (which already includes
 /// `CURATOR_STATIC_CONTEXT` from `CuratorAgentServer`). It tells the curator
 /// which MCP server's tools are in scope for this tab and what the server does.
-///
-/// **v1 stopgap:** This function is not yet wired — the `ConversationView`
-/// constructor doesn't accept a `static_context` parameter, and the
-/// `CuratorAgentServer` injects `CURATOR_STATIC_CONTEXT` internally without
-/// exposing a per-instance override. The proper fix is to extend
-/// `CuratorAgentServer` to accept a per-instance static context, but that's a
-/// larger change. For v1, the per-tab context is communicated to the user via
-/// the `initial_content` welcome message. The per-tab system prompt injection
-/// is a documented follow-up (see `kask-panel-architecture-v2.md` §3 Step 3).
-#[allow(dead_code)]
-fn per_tab_system_prompt(server: &str) -> String {
+fn per_tab_system_prompt(server: &str) -> SharedString {
     let description = server_description(server);
     format!(
         "## Kask Panel — Active MCP Server: {server}\n\
@@ -146,25 +137,23 @@ fn per_tab_system_prompt(server: &str) -> String {
          can switch tabs to talk to a different server's tool scope — each tab \
          is an independent conversation with its own history.\n"
     )
+    .into()
 }
 
 /// A short human-readable description of each built-in MCP server, used in
 /// the per-tab system prompt. Falls back to a generic description for unknown
 /// servers (defensive — the list is fixed at compile time).
-fn server_description(server: &str) -> &'static str {
-    match server {
-        "codegraph" => "Codegraph — code structure query and traversal.",
-        "companies" => "Companies — company research and filings.",
-        "condenser" => "Condenser — context condensation and summarization.",
-        "corpus" => "Corpus — document corpus and QA generation.",
-        "curator" => "Curator — regulation cascade and algedonic signals.",
-        "kata-kanban" => "Kata Kanban — improvement kata board.",
-        "media" => "Media — image generation and media workflows.",
-        "research" => "Research — web research and paper search.",
-        "scenarios" => "Scenarios — scenario planning and forecasting.",
-        "training" => "Training — LoRA training configuration and audit.",
-        _ => "MCP server.",
+///
+/// Sourced from `kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS` to avoid duplicating
+/// the server descriptions. The canonical list lives in one place; this
+/// function adds a trailing period for sentence completeness in the prompt.
+fn server_description(server: &str) -> String {
+    for (id, description) in kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS {
+        if *id == server {
+            return format!("{description}.");
+        }
     }
+    "MCP server.".to_string()
 }
 
 /// The kask panel — a center-pane `Item` that hosts one `ConversationView` per
@@ -174,7 +163,8 @@ fn server_description(server: &str) -> &'static str {
 /// all message rendering, input, tool-call cards, scroll, retry, cancel, copy,
 /// markdown, streaming, mentions, and drag-and-drop to the active tab's
 /// `ConversationView`. Each tab's `ConversationView` is constructed with
-/// `Agent::Curator` and a per-tab system prompt injected via `static_context`.
+/// `Agent::Curator` and a per-tab system prompt injected via
+/// `CuratorAgentServer::with_extra_static_context`.
 pub struct KaskPanel {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -223,12 +213,14 @@ impl KaskPanel {
 
     /// Lazily construct the `ConversationView` for the active tab if it doesn't
     /// exist yet. Mirrors the agent panel's `create_agent_thread_inner` path:
-    /// `Agent::Curator.server(...)` → `ConversationView::new(...)`.
+    /// `CuratorAgentServer::new(...).with_extra_static_context(...)` →
+    /// `ConversationView::new(...)`.
     ///
     /// The per-tab system prompt is injected via the `CuratorAgentServer`'s
-    /// `static_context` mechanism — the same mechanism the curator uses for
-    /// its base context. The kask panel appends the per-server scope prompt
-    /// on top of `CURATOR_STATIC_CONTEXT`.
+    /// `with_extra_static_context` — appended to `CURATOR_STATIC_CONTEXT`
+    /// when `connect` creates the `NativeAgent`. This is the same mechanism
+    /// the curator uses for its base context; the per-server scope prompt is
+    /// simply appended after it.
     fn ensure_thread_for_tab(&mut self, tab: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.threads.contains_key(&tab) {
             return;
@@ -238,43 +230,18 @@ impl KaskPanel {
         };
 
         let thread_store = ThreadStore::global(cx);
-        let agent_server = Agent::Curator.server(self.fs.clone(), thread_store);
-
-        // Inject the per-tab system prompt via the curator's static_context
-        // mechanism. The `CuratorAgentServer` already injects
-        // `CURATOR_STATIC_CONTEXT`; we append the per-server scope prompt on
-        // top of it by setting the static context on the underlying
-        // `NativeAgent` before the connection establishes.
-        //
-        // The `CuratorAgentServer::connect` spawns a task that constructs a
-        // `NativeAgent` and calls `set_curator_static_context`. We can't
-        // intercept that here (the connection is established lazily by the
-        // `ConversationView`). Instead, we rely on the `ConversationView`'s
-        // `initial_content` / system-prompt-injection path — but the simplest
-        // correct approach is to set the static context on the thread after
-        // the connection establishes, via the `ConversationView`'s
-        // `RootThreadUpdated` event.
-        //
-        // For v1, the per-tab system prompt is injected as the first user
-        // message's context via the `initial_content` parameter. This is a
-        // pragmatic stopgap — the proper fix is to extend
-        // `CuratorAgentServer` to accept a per-instance static context, but
-        // that's a larger change. The per-tab prompt is prepended to the
-        // system prompt by the curator's existing `static_context` mechanism
-        // (which already appends `CURATOR_STATIC_CONTEXT`); the
-        // `initial_content` here is a visible "welcome" message that tells
-        // the user which server they're talking to.
-        let initial_content = agent_ui::AgentInitialContent::ContentBlock {
-            blocks: vec![agent_client_protocol::schema::v1::ContentBlock::Text(
-                agent_client_protocol::schema::v1::TextContent::new(format!(
-                    "Connected to the `{server}` MCP server. {}\n\
-                     Ask me anything about this server's tools, or use \
-                     slash commands (e.g. `/help`) to explore.",
-                    server_description(server),
-                )),
-            )],
-            auto_submit: false,
-        };
+        // Construct the CuratorAgentServer directly (not via
+        // `Agent::Curator.server()`) so we can inject the per-tab system
+        // prompt via `with_extra_static_context`. The `ConversationView`
+        // calls `connect` lazily; `connect` creates the `NativeAgent` and
+        // sets the combined `CURATOR_STATIC_CONTEXT + per_tab_prompt` as
+        // the curator's static context. This is the same mechanism the
+        // curator uses for its base context — the per-tab prompt is simply
+        // appended after it.
+        let agent_server = Rc::new(
+            agent::CuratorAgentServer::new(self.fs.clone(), thread_store)
+                .with_extra_static_context(per_tab_system_prompt(server)),
+        );
 
         let thread_id = agent_ui::ThreadId::new();
         let conversation_view = cx.new(|cx| {
@@ -286,7 +253,9 @@ impl KaskPanel {
                 Some(thread_id),
                 None, // no work_dirs
                 None, // no title
-                Some(initial_content),
+                None, // no initial content — the per-tab system prompt is
+                // injected via `with_extra_static_context`,
+                // and the input editor starts empty
                 self.workspace.clone(),
                 self.project.clone(),
                 None, // no thread_store — kask panel threads are not persisted
@@ -442,11 +411,24 @@ impl Render for KaskPanel {
         // panel's `retained_threads` pattern).
         self.ensure_thread_for_tab(self.active_tab, window, cx);
 
-        let active_thread = self
-            .threads
-            .get(&self.active_tab)
-            .cloned()
-            .expect("ensure_thread_for_tab constructed the active thread");
+        // `ensure_thread_for_tab` may silently return without inserting a
+        // thread if `active_tab` is out of bounds (defensive — shouldn't
+        // happen in practice since `active_tab` is always set from
+        // `DEFAULT_SERVER_INDEX` or `select_tab` with a valid index). Render
+        // a placeholder instead of panicking.
+        let Some(active_thread) = self.threads.get(&self.active_tab).cloned() else {
+            return v_flex()
+                .size_full()
+                .track_focus(&self.focus_handle)
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .child(Label::new("No MCP server selected").color(Color::Muted)),
+                )
+                .into_any_element();
+        };
 
         v_flex()
             .size_full()

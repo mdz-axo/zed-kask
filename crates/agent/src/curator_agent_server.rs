@@ -63,15 +63,36 @@ You are anchored on the following methodologies:\n\
 /// 1. Injects curator static context into each thread's system prompt
 /// 2. Registers the `curator_status` tool on each thread
 /// 3. Runs a background metacognition task
+///
+/// The optional `extra_static_context` is appended to
+/// `CURATOR_STATIC_CONTEXT` when the connection establishes. This is used by
+/// the kask panel to inject a per-tab system prompt describing which MCP
+/// server's tools are in scope for the conversation.
 #[derive(Clone)]
 pub struct CuratorAgentServer {
     fs: Arc<dyn Fs>,
     thread_store: Entity<ThreadStore>,
+    extra_static_context: Option<SharedString>,
 }
 
 impl CuratorAgentServer {
     pub fn new(fs: Arc<dyn Fs>, thread_store: Entity<ThreadStore>) -> Self {
-        Self { fs, thread_store }
+        Self {
+            fs,
+            thread_store,
+            extra_static_context: None,
+        }
+    }
+
+    /// Set extra static context appended to `CURATOR_STATIC_CONTEXT`.
+    ///
+    /// Used by the kask panel to inject a per-tab system prompt that tells
+    /// the curator which MCP server's tools are in scope. The extra context
+    /// is rendered after the base curator context, so the curator sees both
+    /// its regulatory role AND the per-tab tool scope.
+    pub fn with_extra_static_context(mut self, context: SharedString) -> Self {
+        self.extra_static_context = Some(context);
+        self
     }
 }
 
@@ -93,6 +114,7 @@ impl AgentServer for CuratorAgentServer {
         log::debug!("CuratorAgentServer::connect");
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
+        let extra_context = self.extra_static_context.clone();
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for Curator agent");
             let templates = Templates::new();
@@ -102,11 +124,18 @@ impl AgentServer for CuratorAgentServer {
 
             // Set the Curator static context — this is appended to the system
             // prompt, NOT a full override. The Zed Agent's coding instructions
-            // remain intact.
+            // remain intact. If the server has extra static context (e.g.,
+            // the kask panel's per-tab tool-scope prompt), append it after
+            // the base curator context.
             cx.update(|cx| {
                 agent.update(cx, |agent, cx| {
-                    agent
-                        .set_curator_static_context(SharedString::from(CURATOR_STATIC_CONTEXT), cx);
+                    let context = match extra_context {
+                        Some(extra) => {
+                            SharedString::from(format!("{CURATOR_STATIC_CONTEXT}\n{extra}"))
+                        }
+                        None => SharedString::from(CURATOR_STATIC_CONTEXT),
+                    };
+                    agent.set_curator_static_context(context, cx);
                 });
             });
 

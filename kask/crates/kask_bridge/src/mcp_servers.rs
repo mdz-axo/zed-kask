@@ -123,9 +123,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // provisioning, so the curator MCP server reads from the same
             // `agents/curator/pod.db` the agent writes curator copies to.
             "HKASK_CURATOR_DB",
-            // Curator WebID — set to `from_persona(b"curator")` so the
-            // curator MCP server's identity matches the persona used by
-            // `RealMemoryPort` when writing curator copies.
+            // Curator WebID — stashed in a non-global env var by the deferred
+            // task. `mcp_env()` maps this to `HKASK_WEBID` for the curator
+            // server only, so other MCP servers don't inherit the curator's
+            // identity.
+            "HKASK_CURATOR_WEBID",
+            // The mapped `HKASK_WEBID` — `mcp_env()` injects this from
+            // `HKASK_CURATOR_WEBID`. Must be in the allowlist so the
+            // per-server filter passes it through.
             "HKASK_WEBID",
             // Data dir — needed so `resolve_under_data_dir` in
             // `open_curator_stores` finds the same root as the agent.
@@ -137,7 +142,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-kata-kanban",
         description: "Kata Kanban — improvement kata board",
         credentials: Some(&[]),
-        config_env: Some(&["HKASK_DEFAULT_MODEL", "HKASK_EMBEDDING_MODEL"]),
+        config_env: Some(&[
+            "HKASK_DEFAULT_MODEL",
+            "HKASK_EMBEDDING_MODEL",
+            // kata-kanban resolves its DB path via `resolve_under_data_dir`,
+            // so it needs the data dir to match the parent process.
+            "HKASK_DATA_DIR",
+        ]),
     },
     BuiltinMcpServer {
         id: "media",
@@ -195,6 +206,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_TEMPLATE_ROOT",
             "HKASK_DEFAULT_MODEL",
             "HKASK_EMBEDDING_MODEL",
+            // training resolves its DB path via `resolve_under_data_dir`,
+            // so it needs the data dir to match the parent process.
+            "HKASK_DATA_DIR",
         ]),
     },
 ];

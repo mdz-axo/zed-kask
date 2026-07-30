@@ -360,4 +360,4 @@ pub struct EmbedResult {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 pub(crate) const USER_AGENT: &str = concat!("hkask-mcp-research/", env!("CARGO_PKG_VERSION"));
-pub(crate) const CURATOR_PERSONA: &[u8] = b"Curator";
+pub(crate) const CURATOR_PERSONA: &[u8] = b"curator";

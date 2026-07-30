@@ -23,7 +23,6 @@ futures.workspace = true
 kask_bridge.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
-agent-client-protocol.workspace = true
 fs.workspace = true
 serde.workspace = true
 chrono.workspace = true

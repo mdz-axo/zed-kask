@@ -132,14 +132,6 @@ pub struct ServiceConfig {
     /// Recalling a memory resets its decay clock (t goes back to 0).
     /// Override via HKASK_MEMORY_LIFE_DAYS env var.
     pub memory_life_days: f64,
-
-    /// Whether the Curator daemon may auto-consolidate memory when escalations exist.
-    ///
-    /// This is an opt-in flag (default `false`) gated by P2 affirmative consent.
-    /// Even when enabled, the Curator checks consent for both `EpisodicMemory`
-    /// and `SemanticMemory` before running, and posts an escalation entry describing
-    /// the event. Override via `HKASK_CURATOR_AUTO_CONSOLIDATION=1`.
-    pub curator_auto_consolidation_enabled: bool,
 }
 
 impl ServiceConfig {
@@ -200,8 +192,6 @@ impl ServiceConfig {
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(180.0);
-        let curator_auto_consolidation_enabled = read_curator_auto_consolidation_env();
-
         Ok(Self {
             db_path,
             db_passphrase,
@@ -218,7 +208,6 @@ impl ServiceConfig {
             memory_db_path,
             wallet_config: WalletConfig::default(),
             memory_life_days,
-            curator_auto_consolidation_enabled,
         })
     }
 
@@ -244,8 +233,6 @@ impl ServiceConfig {
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(180.0);
-        let curator_auto_consolidation_enabled = read_curator_auto_consolidation_env();
-
         Self {
             db_path,
             db_passphrase,
@@ -262,7 +249,6 @@ impl ServiceConfig {
             memory_db_path,
             wallet_config: WalletConfig::default(),
             memory_life_days,
-            curator_auto_consolidation_enabled,
         }
     }
 
@@ -292,17 +278,8 @@ impl ServiceConfig {
             memory_db_path: None,
             wallet_config: WalletConfig::default(),
             memory_life_days: 180.0,
-            curator_auto_consolidation_enabled: false,
         }
     }
-}
-
-/// Read `HKASK_CURATOR_AUTO_CONSOLIDATION` env var into a bool.
-///
-/// Returns `true` when set to `"1"`, `false` otherwise (including unset).
-/// Centralized here to avoid duplicating the env-var read across constructors.
-fn read_curator_auto_consolidation_env() -> bool {
-    std::env::var("HKASK_CURATOR_AUTO_CONSOLIDATION").as_deref() == Ok("1")
 }
 
 /// Parse the `HKASK_DB_PROVIDER` env var into a `DbProvider`.

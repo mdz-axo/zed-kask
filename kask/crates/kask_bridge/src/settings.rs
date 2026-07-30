@@ -680,6 +680,15 @@ impl KaskSettings {
             env.insert("HKASK_DATA_DIR".to_string(), data_dir);
         }
 
+        // Map the curator's WebID (stashed in `HKASK_CURATOR_WEBID` by the
+        // deferred task) to `HKASK_WEBID` so the curator MCP server picks it
+        // up as its identity. The `config_env` allowlist filters this to the
+        // curator server only — other servers don't receive `HKASK_WEBID`
+        // from this mapping and fall through to their own identity resolution.
+        if let Ok(curator_webid) = std::env::var("HKASK_CURATOR_WEBID") {
+            env.insert("HKASK_WEBID".to_string(), curator_webid);
+        }
+
         // Defaults are read from each subsection's `Default` impl so there's a
         // single source of truth — changing `Default` automatically updates
         // the comparison here. Do not inline magic numbers; they drift from

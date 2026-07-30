@@ -1154,37 +1154,31 @@ fn main() {
                                 // `RealMemoryPort::new`.
                                 //
                                 // `HKASK_CURATOR_DB` — the curator's sovereign DB
-                                // path. `HKASK_WEBID` — the curator's WebID, set
-                                // to `from_persona(b"curator")` to match the
-                                // persona used by `RealMemoryPort` when writing
-                                // curator copies. `HKASK_DATA_DIR` — so the
-                                // curator server resolves paths under the same
-                                // root as the agent.
+                                // path. `HKASK_CURATOR_WEBID` — the curator's
+                                // WebID, stashed in a non-global env var that
+                                // `mcp_env()` maps to `HKASK_WEBID` only for the
+                                // curator server (via the config_env allowlist).
+                                // We do NOT set `HKASK_WEBID` here — it's
+                                // process-global and would override the identity
+                                // of all other MCP servers (codegraph, condenser,
+                                // etc.), which resolve their identity from it in
+                                // `transport.rs`.
                                 let curator_db = hkask_types::agent_paths::resolve_under_data_dir(
                                     &hkask_types::agent_paths::agent_pod_db("curator"),
                                 );
-                                // SAFETY: These env vars are set during the deferred task
-                                // (post-login, before any MCP server reads them). The curator
-                                // MCP server reads them at process start. Setting them here
-                                // before `sync_kask_mcp_servers` ensures the curator server
-                                // picks them up. The race window is acceptable — the vars are
-                                // only read by the curator server, which is restarted by the
-                                // sync below.
                                 let curator_webid = hkask_types::WebID::from_persona(b"curator");
-                                // SAFETY: These env vars are set during the deferred task
-                                // (post-login, before any MCP server reads them). The curator
-                                // MCP server reads them at process start. Setting them here
-                                // before `sync_kask_mcp_servers` ensures the curator server
-                                // picks them up. The race window is acceptable — the vars are
-                                // only read by the curator server, which is restarted by the
-                                // sync below.
+                                // SAFETY: Set during the deferred task (post-login,
+                                // before MCP servers read these). The curator MCP
+                                // server reads `HKASK_CURATOR_DB` at process start;
+                                // `HKASK_CURATOR_WEBID` is consumed by `mcp_env()`.
+                                // Neither var is read by other MCP servers.
                                 unsafe {
                                     std::env::set_var(
                                         "HKASK_CURATOR_DB",
                                         curator_db.to_string_lossy().as_ref(),
                                     );
                                     std::env::set_var(
-                                        "HKASK_WEBID",
+                                        "HKASK_CURATOR_WEBID",
                                         curator_webid.to_string().as_str(),
                                     );
                                 }
