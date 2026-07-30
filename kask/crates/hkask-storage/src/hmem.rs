@@ -459,7 +459,16 @@ impl HMemStore {
                 Ok(())
             }
             Err(e) => {
-                let _ = self.driver.execute_batch("ROLLBACK");
+                if let Err(rb_err) = self.driver.execute_batch("ROLLBACK") {
+                    tracing::warn!(
+                        target: "reg.storage",
+                        error = %rb_err,
+                        original_error = %e,
+                        "ROLLBACK failed after transaction error — \
+                         the connection may be in an uncommitted state. \
+                         Subsequent transactions on this pooled connection may fail."
+                    );
+                }
                 Err(e)
             }
         }

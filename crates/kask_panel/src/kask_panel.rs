@@ -103,8 +103,18 @@ static TOOL_INVOKER: OnceLock<Option<Arc<dyn ToolInvoker>>> = OnceLock::new();
 /// Called from `main.rs` after the deferred task resolves the bridge ports.
 /// The hook is read by `kanban_tool_invoker()`, which the per-server
 /// visualization views use to fetch their data.
+///
+/// Uses `OnceLock` — a second call is silently dropped. The warn names the
+/// hook so operators can detect a stale invoker remaining active.
 pub fn set_tool_invoker(invoker: Option<Arc<dyn ToolInvoker>>) {
-    let _ = TOOL_INVOKER.set(invoker);
+    if let Err(prev) = TOOL_INVOKER.set(invoker) {
+        log::warn!(
+            "set_tool_invoker: hook already set — second wiring attempt dropped. \
+             The previously-wired invoker remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
 }
 
 fn tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {

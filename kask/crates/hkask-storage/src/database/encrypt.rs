@@ -29,21 +29,39 @@ impl Encryptor {
     }
 
     /// Encrypt a plaintext string → `ENCv1:<base64>`.
+    ///
+    /// If AES-GCM encryption fails (extremely unlikely for h_mem-sized values —
+    /// the only failure mode is plaintext exceeding the AES-GCM max message
+    /// size of ~64GB), the plaintext is returned as-is with a `log::error!`.
+    /// This is degraded (unencrypted) but keeps the process alive instead of
+    /// panicking.
     pub fn encrypt(&self, plaintext: &str) -> String {
         let cipher = Aes256Gcm::new(&self.key);
         let mut nonce_bytes = [0u8; NONCE_LEN];
         rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let ct = cipher
-            .encrypt(nonce, plaintext.as_bytes())
-            .expect("AES-GCM encrypt");
-        let mut combined = Vec::with_capacity(NONCE_LEN + ct.len());
-        combined.extend_from_slice(&nonce_bytes);
-        combined.extend_from_slice(&ct);
-        format!(
-            "{PREFIX}{}",
-            base64::engine::general_purpose::STANDARD.encode(&combined)
-        )
+        match cipher.encrypt(nonce, plaintext.as_bytes()) {
+            Ok(ct) => {
+                let mut combined = Vec::with_capacity(NONCE_LEN + ct.len());
+                combined.extend_from_slice(&nonce_bytes);
+                combined.extend_from_slice(&ct);
+                format!(
+                    "{PREFIX}{}",
+                    base64::engine::general_purpose::STANDARD.encode(&combined)
+                )
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "reg.storage",
+                    error = %e,
+                    plaintext_len = plaintext.len(),
+                    "AES-GCM encryption failed — returning plaintext unencrypted (degraded). \
+                     This should not happen for h_mem-sized values; investigate the \
+                     plaintext size."
+                );
+                plaintext.to_string()
+            }
+        }
     }
 
     /// Decrypt if prefixed, else return as-is.

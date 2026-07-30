@@ -41,7 +41,7 @@ mds_categories: [composition, trust, lifecycle]
 > 7. Constructs `BridgeManifestExecutor` with guarded inference + tools + secret + registry paths
 > 8. Calls `agent::set_manifest_executor(Some(executor))`
 > 9. Constructs `RealMemoryPort::from_env()` (or `LoggingMemoryPort` fallback) + `BridgeMemoryPort` and calls `agent::set_memory_port()` (D6)
-> 10. Constructs `PanelToolInvoker` + `PanelScopedInference` (each holding a `gpui::BackgroundExecutor` for spawning trait-method tasks without a `cx` in scope) and calls `kask_panel::set_tool_invoker()` / `set_scoped_inference()` (D10)
+> 10. Constructs `PanelToolInvoker` (holding a `gpui::BackgroundExecutor` for spawning trait-method tasks without a `cx` in scope) and calls `kask_panel::set_tool_invoker()` (D10). The curator turns route through `NativeAgent` — the `ConversationView` handles streaming + tool dispatch. The `set_scoped_inference` / `set_curator_session_factory` / `set_regulation_status` hooks were removed in the kask panel refactor; the kask panel has structural-pin tests asserting these traits/structs do not exist.
 > 11. After `settings::init(cx)`: reads `KaskSettings` and auto-launches enabled MCP servers via `McpRuntime::start_server()`
 > 12. Constructs `RegulationLedger::default()` + `CyberneticsLoop::new(ledger)` + `FlatEnergyEstimator` (10 gas per call) + `NoopEventSink` and calls `McpRuntime::with_governance()` — startup log: "hKask regulation system wired — tool invocations are governed". `hkask-regulation` and `tokio` are now dependencies of `zed`.
 >

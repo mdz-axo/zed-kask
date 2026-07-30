@@ -56,8 +56,14 @@ impl ConsolidationService {
             && !candidates.is_empty()
         {
             for h_mem in &candidates {
-                if self.semantic.delete_h_mem(&h_mem.id).is_ok() {
-                    deleted_count += 1;
+                match self.semantic.delete_h_mem(&h_mem.id) {
+                    Ok(()) => deleted_count += 1,
+                    Err(e) => tracing::warn!(
+                        target: "reg.consolidation",
+                        error = %e,
+                        h_mem_id = ?h_mem.id,
+                        "Failed to delete low-confidence h_mem during consolidation cleanup"
+                    ),
                 }
             }
         }
@@ -68,8 +74,14 @@ impl ConsolidationService {
             && let Ok(candidates) = self.semantic.lowest_confidence_h_mems(count - max)
         {
             for h_mem in &candidates {
-                if self.semantic.delete_h_mem(&h_mem.id).is_ok() {
-                    deleted_count += 1;
+                match self.semantic.delete_h_mem(&h_mem.id) {
+                    Ok(()) => deleted_count += 1,
+                    Err(e) => tracing::warn!(
+                        target: "reg.consolidation",
+                        error = %e,
+                        h_mem_id = ?h_mem.id,
+                        "Failed to delete excess h_mem during consolidation cleanup"
+                    ),
                 }
             }
         }

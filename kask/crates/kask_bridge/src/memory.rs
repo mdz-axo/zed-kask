@@ -215,7 +215,8 @@ impl RealMemoryPort {
         } else {
             embedding_dim
         };
-        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver))
+            .map_err(|e| format!("Failed to create second HMemStore for semantic memory: {e}"))?;
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 

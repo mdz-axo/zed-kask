@@ -534,8 +534,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     run_server(
         "hkask-mcp-codegraph",
         SERVER_VERSION,
-        |_ctx| {
-            let webid = WebID::new();
+        |ctx| {
+            let webid = ctx.webid.clone();
             let store =
                 match &db_path {
                     Some(path) => {

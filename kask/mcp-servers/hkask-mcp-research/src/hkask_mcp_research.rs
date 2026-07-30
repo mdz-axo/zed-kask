@@ -724,8 +724,11 @@ impl ResearchServer {
 
 /// Run the research MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    dotenvy::dotenv().ok();
-
+    // Do NOT call `dotenvy::dotenv()` here — it mutates the process
+    // environment via `set_var`, which contradicts the `load_dotenv()`
+    // design (preloaded map without `unsafe set_var`). The preloaded
+    // map is passed to `run_server_with_preloaded` which resolves
+    // credentials keychain-first, then env, then preloaded.
     let dotenv = hkask_mcp_server::load_dotenv();
 
     hkask_mcp_server::run_server_with_preloaded(

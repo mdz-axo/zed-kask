@@ -563,13 +563,22 @@ impl SemanticMemory {
         let mut centroid = vec![0.0f32; dim];
         let mut count = 0usize;
         for entity_ref in &matching_refs {
-            if let Ok(emb) = self.embedding.get(entity_ref) {
-                for (i, v) in emb.vector.iter().enumerate() {
-                    if i < dim {
-                        centroid[i] += v;
+            match self.embedding.get(entity_ref) {
+                Ok(emb) => {
+                    for (i, v) in emb.vector.iter().enumerate() {
+                        if i < dim {
+                            centroid[i] += v;
+                        }
                     }
+                    count += 1;
                 }
-                count += 1;
+                Err(e) => tracing::warn!(
+                    target: "hkask.semantic",
+                    error = %e,
+                    entity_ref = %entity_ref,
+                    "Failed to fetch embedding for centroid computation — \
+                     centroid will be computed from a subset of matching embeddings."
+                ),
             }
         }
 
@@ -629,8 +638,15 @@ impl SemanticMemory {
 
         let mut count = 0;
         for entity_ref in &to_delete {
-            if self.embedding.delete(entity_ref).is_ok() {
-                count += 1;
+            match self.embedding.delete(entity_ref) {
+                Ok(()) => count += 1,
+                Err(e) => tracing::warn!(
+                    target: "hkask.semantic",
+                    error = %e,
+                    entity_ref = %entity_ref,
+                    "Failed to delete embedding during purge_by_prefix — \
+                     the embedding may remain, causing duplicate vectors on re-embed."
+                ),
             }
         }
 

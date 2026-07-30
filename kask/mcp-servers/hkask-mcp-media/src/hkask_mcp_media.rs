@@ -1372,7 +1372,9 @@ impl rmcp::ServerHandler for MediaServer {}
 
 /// Run the media MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    dotenvy::dotenv().ok();
+    // Do NOT call `dotenvy::dotenv()` here — it mutates the process
+    // environment via `set_var`, which contradicts the `load_dotenv()`
+    // design. `run_server` calls `load_dotenv` internally.
 
     // Resolve the inference port — routes through zed's LanguageModelRegistry
     // via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to

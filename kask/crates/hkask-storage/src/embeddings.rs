@@ -113,24 +113,39 @@ impl EmbeddingStore {
     /// - SqliteDriver → SqliteVec (raw conn for sqlite-vec)
     /// - PostgresDriver → PgVector (driver-based pgvector)
     ///
-    /// `dim == 0` is rejected because a zero-dimensional store can never
-    /// accept any vector — every `store` call would fail with
-    /// `DimensionMismatch { expected: 0, actual: N }`, silently disabling
-    /// embedding-based recall. This has been observed in production when a
-    /// user's settings file explicitly sets `embedding_dim: 0`; the
-    /// `unwrap_or(1024)` default only fires for `None`, not for `Some(0)`.
+    /// `dim == 0` is clamped to 1024 (with a `log::warn!`) because a
+    /// zero-dimensional store can never accept any vector — every `store`
+    /// call would fail with `DimensionMismatch { expected: 0, actual: N }`,
+    /// silently disabling embedding-based recall. This has been observed in
+    /// production when a user's settings file explicitly sets `embedding_dim:
+    /// 0`; the `unwrap_or(1024)` default only fires for `None`, not for
+    /// `Some(0)`. Clamping keeps the system functional (degraded) instead of
+    /// panicking, per the `.rules` trap "Process-global hooks set at runtime
+    /// need a startup-failure signal".
     pub fn from_driver(
         driver: Arc<dyn crate::database::driver::DatabaseDriver>,
         dim: usize,
     ) -> Self {
-        assert!(
-            dim > 0,
-            "EmbeddingStore::from_driver called with dim == 0 — \
-             a zero-dimensional store can never accept any vector. \
-             Check kask_settings.corpus.embedding_dim (HKASK_EMBEDDING_DIM)"
-        );
+        let dim = if dim == 0 {
+            tracing::warn!(
+                target: "reg.storage",
+                embedding_dim = dim,
+                "EmbeddingStore::from_driver called with dim == 0 — \
+                 clamping to 1024 to avoid a zero-dimensional store. \
+                 Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
+                 to match the embedding model's output (default 1024 for \
+                 DeepInfra/Qwen/Qwen3-Embedding-0.6B)."
+            );
+            1024
+        } else {
+            dim
+        };
         let backend = match driver.provider() {
             crate::database::types::DbProvider::Sqlite => {
+                // SqliteDriver always provides a pool (constructed with one in
+                // `SqliteDriver::new`). A `None` return here means the driver
+                // is not a SqliteDriver despite `provider()` returning Sqlite
+                // — a logic error that cannot be recovered from.
                 let pool = driver
                     .sqlite_pool()
                     .cloned()
@@ -266,7 +281,9 @@ impl EmbeddingStore {
                     rusqlite::params![id, entity_ref, blob, dim, model],
                 );
                 if let Err(e) = result {
-                    let _ = conn.execute_batch("ROLLBACK;");
+                    if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                        tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings INSERT error");
+                    }
                     return Err(EmbeddingError::Storage(e));
                 }
                 // vec0 is keyed on its implicit integer rowid, which mirrors
@@ -284,7 +301,9 @@ impl EmbeddingStore {
                     rusqlite::params![rowid, &blob],
                 );
                 if let Err(e) = vec_result {
-                    let _ = conn.execute_batch("ROLLBACK;");
+                    if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                        tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings INSERT error");
+                    }
                     return Err(EmbeddingError::Storage(e));
                 }
                 conn.execute_batch("COMMIT;")?;
@@ -481,7 +500,9 @@ impl EmbeddingStore {
                     "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
                     rusqlite::params![id],
                 ) {
-                    let _ = conn.execute_batch("ROLLBACK;");
+                    if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                        tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings DELETE error");
+                    }
                     return Err(EmbeddingError::Storage(e));
                 }
                 // Delete from embeddings on the SAME connection — not via self.exec,
@@ -491,7 +512,9 @@ impl EmbeddingStore {
                     "DELETE FROM embeddings WHERE id = ?1",
                     rusqlite::params![id],
                 ) {
-                    let _ = conn.execute_batch("ROLLBACK;");
+                    if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                        tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings DELETE error");
+                    }
                     return Err(EmbeddingError::Storage(e));
                 }
                 conn.execute_batch("COMMIT;")?;

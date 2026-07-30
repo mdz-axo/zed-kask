@@ -34,8 +34,18 @@ static METACOGNITION_PROVIDER: std::sync::OnceLock<Option<Arc<dyn MetacognitionP
     std::sync::OnceLock::new();
 
 /// Set the global metacognition provider (composition root).
+///
+/// Uses `OnceLock` — a second call is silently dropped. The warn names the
+/// hook so operators can detect a stale provider remaining active.
 pub fn set_metacognition_provider(provider: Option<Arc<dyn MetacognitionProvider>>) {
-    let _ = METACOGNITION_PROVIDER.set(provider);
+    if let Err(prev) = METACOGNITION_PROVIDER.set(provider) {
+        log::warn!(
+            "set_metacognition_provider: hook already set — second wiring attempt dropped. \
+             The previously-wired provider remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
 }
 
 fn metacognition_provider() -> Option<&'static Arc<dyn MetacognitionProvider>> {

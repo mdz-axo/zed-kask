@@ -99,9 +99,20 @@ impl McpTool {
                     Err(errors)
                 }
             }
-            Err(_) => {
-                // Schema compilation failed — graceful degradation
-                Ok(())
+            Err(e) => {
+                // Schema compilation failed — fail closed (reject the input)
+                // rather than silently accepting all input. A malformed schema
+                // would disable all validation for this tool, allowing malformed
+                // arguments that could trigger downstream panics.
+                tracing::warn!(
+                    target: "hkask.mcp.validation",
+                    error = %e,
+                    "JSON Schema compilation failed for tool input — rejecting input (fail closed). \
+                     Investigate the tool's input_schema definition."
+                );
+                Err(vec![
+                    "input schema compilation failed — tool input_schema is malformed".into(),
+                ])
             }
         }
     }
@@ -518,7 +529,17 @@ impl hkask_capability::ToolPort for McpRuntime {
                         ),
                     ));
                 }
-                cyber_lock.reserve_gas(&agent, estimated).await.ok();
+                if let Err(e) = cyber_lock.reserve_gas(&agent, estimated).await {
+                    tracing::warn!(
+                        target: "hkask.mcp.gas",
+                        error = %e,
+                        agent = ?agent,
+                        tool = %tool,
+                        estimated_gas = estimated.0,
+                        "reserve_gas failed — tool will execute but gas may not be persisted. \
+                         If this persists, the agent's gas budget tracking will drift."
+                    );
+                }
                 drop(cyber_lock);
 
                 // Call the tool.
@@ -530,12 +551,22 @@ impl hkask_capability::ToolPort for McpRuntime {
                 } else {
                     estimated.0 / 2
                 };
-                cyber
+                if let Err(e) = cyber
                     .read()
                     .await
                     .settle_gas(&agent, estimated, hkask_regulation::GasCost(actual))
                     .await
-                    .ok();
+                {
+                    tracing::warn!(
+                        target: "hkask.mcp.gas",
+                        error = %e,
+                        agent = ?agent,
+                        tool = %tool,
+                        actual_gas = actual,
+                        "settle_gas failed — the agent's gas balance was not debited. \
+                         If this persists, the agent can make unbounded tool calls."
+                    );
+                }
 
                 // Regulation: emit invoked + completed spans (best-effort, non-blocking).
                 let status = if result.is_ok() { "success" } else { "failure" };

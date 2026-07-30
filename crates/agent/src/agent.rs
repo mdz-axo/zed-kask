@@ -2931,8 +2931,21 @@ static CURATOR_CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjec
     std::sync::OnceLock::new();
 
 /// Set the global context injector (D11 composition root).
+///
+/// Uses `OnceLock` — a second call (e.g. deferred task re-firing after a
+/// model change) is silently dropped. The warn names the hook so operators
+/// reading the log can distinguish "not configured" from "configured but
+/// the second wiring was dropped".
 pub fn set_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
-    let _ = CONTEXT_INJECTOR.set(injector);
+    if let Err(prev) = CONTEXT_INJECTOR.set(injector) {
+        log::warn!(
+            "set_context_injector: hook already set — second wiring attempt dropped. \
+             This usually means the deferred post-login task re-ran (re-login, multi-window, \
+             or retry). The previously-wired injector remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
 }
 
 /// Set the Curator's context injector (D11 composition root — curator mirror).
@@ -2942,7 +2955,14 @@ pub fn set_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
 /// builds its own semantic + episodic memory and recalls it automatically —
 /// a parallel of the user agent's memory loop.
 pub fn set_curator_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
-    let _ = CURATOR_CONTEXT_INJECTOR.set(injector);
+    if let Err(prev) = CURATOR_CONTEXT_INJECTOR.set(injector) {
+        log::warn!(
+            "set_curator_context_injector: hook already set — second wiring attempt dropped. \
+             The previously-wired curator injector remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
 }
 
 /// Get the global context injector, if set.
@@ -2992,8 +3012,19 @@ static THREAD_CONDENSER: std::sync::OnceLock<Option<Arc<dyn ThreadCondenser>>> =
     std::sync::OnceLock::new();
 
 /// Set the global thread condenser (D12 composition root).
+///
+/// Uses `OnceLock` — a second call (e.g. deferred task re-firing) is
+/// silently dropped. The warn names the hook so operators can detect a
+/// stale condenser remaining active after a re-wiring attempt.
 pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
-    let _ = THREAD_CONDENSER.set(condenser);
+    if let Err(prev) = THREAD_CONDENSER.set(condenser) {
+        log::warn!(
+            "set_thread_condenser: hook already set — second wiring attempt dropped. \
+             The previously-wired condenser remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
 }
 
 /// Get the global thread condenser, if set.
@@ -3008,8 +3039,18 @@ static TOOL_ROUTER: std::sync::OnceLock<Option<Arc<dyn crate::tool_router::ToolR
     std::sync::OnceLock::new();
 
 /// Set the global tool router.
+///
+/// Uses `OnceLock` — a second call is silently dropped. The warn names the
+/// hook so operators can detect a stale router remaining active.
 pub fn set_tool_router(router: Option<Arc<dyn crate::tool_router::ToolRouter>>) {
-    let _ = TOOL_ROUTER.set(router);
+    if let Err(prev) = TOOL_ROUTER.set(router) {
+        log::warn!(
+            "set_tool_router: hook already set — second wiring attempt dropped. \
+             The previously-wired router remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
 }
 
 /// Get the global tool router, if set. Returns `None` when no router has

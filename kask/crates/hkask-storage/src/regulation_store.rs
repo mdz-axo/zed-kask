@@ -444,8 +444,15 @@ fn row_to_regulation_record(
         .to_utc();
     // Reconstruct Span from stored category + path
     let namespace_str = format!("reg.{}", span_category);
-    let namespace = SpanNamespace::parse(&namespace_str)
-        .unwrap_or_else(|| SpanNamespace::new("reg.gas").expect("reg.gas must be canonical"));
+    let namespace = SpanNamespace::parse(&namespace_str).unwrap_or_else(|| {
+        tracing::warn!(
+            target: "reg.storage",
+            namespace_str = %namespace_str,
+            "Failed to parse span namespace from stored span_category — \
+             defaulting to reg.gas. The stored span_category may be corrupt."
+        );
+        SpanNamespace::new("reg.gas").expect("reg.gas must be canonical")
+    });
     // Extract the local path part after the namespace prefix.
     let ns_str = namespace.as_str();
     let local_path = if span_path.starts_with(ns_str)
@@ -478,8 +485,18 @@ fn row_to_regulation_record(
         regulation,
         outcome,
         recursion_depth: recursion_depth as u8,
-        parent_event: parent_event
-            .map(|s| EventID::from_uuid(uuid::Uuid::parse_str(&s).unwrap_or_default())),
+        parent_event: parent_event.map(|s| {
+            EventID::from_uuid(uuid::Uuid::parse_str(&s).unwrap_or_else(|e| {
+                tracing::warn!(
+                    target: "reg.storage",
+                    error = %e,
+                    raw_uuid = %s,
+                    "Failed to parse parent_event UUID — \
+                     using nil UUID. The event DAG causality link may be broken."
+                );
+                uuid::Uuid::nil()
+            }))
+        }),
         visibility: visibility_str,
     })
 }
