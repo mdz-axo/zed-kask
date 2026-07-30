@@ -345,9 +345,12 @@ The action threshold is the lazy universe *tuning knob* (P3 — Generative Space
 
 ## 4. Code Implementation Summary (Task 4)
 
-### 4.1 `EnergyDelta` type (`hkask-regulation::energy`)
+> **Verification status (2026-07-29 audit):** Of the four proposed implementations below, only **§4.4 (`action_threshold`)** was actually merged. `EnergyDelta` (§4.1), the three regulation spans (§4.2), and `DeletionTest` (§4.3) were **proposed in this research report but never implemented** — `hkask-regulation/src/energy.rs` contains no `EnergyDelta` type, `CANONICAL_NAMESPACES` in `hkask-types/src/event.rs` contains none of the three spans, and `hkask-services-core/src/` has no `deletion_test.rs`. The code blocks below are the **proposed** shapes, retained as design history; they do not reflect current code. The test inventory in §4.5 and Appendix B likewise lists tests that were never written (only the two `action_threshold` tests exist). This report is archived; do not cite §4.1–4.3 or Appendix A/B as evidence of current code.
+
+### 4.1 `EnergyDelta` type (`hkask-regulation::energy`) — NOT IMPLEMENTED
 
 ```rust
+// PROPOSED — never merged. hkask-regulation/src/energy.rs has no EnergyDelta type.
 pub struct EnergyDelta(pub f64);
 ```
 
@@ -355,21 +358,22 @@ pub struct EnergyDelta(pub f64);
 - **`is_descending()`:** Returns `true` for delta ≤ 0 (stationary point included)
 - **`is_ascending()`:** Returns `true` for delta > 0 (anti-lazy — alert candidate)
 - **`ALERT_THRESHOLD`:** 5 consecutive positive deltas before algedonic alert
-- **Regulation span:** `reg.evolution.energy_delta`
+- **Regulation span:** `reg.evolution.energy_delta` — NOT registered in `CANONICAL_NAMESPACES`
 
-### 4.2 New Regulation Spans (`hkask-types::event::CANONICAL_NAMESPACES`)
+### 4.2 New Regulation Spans (`hkask-types::event::CANONICAL_NAMESPACES`) — NOT REGISTERED
 
-| Span | Purpose |
-|------|---------|
-| `reg.condenser.compression_ratio` | Tracks bytes_out / bytes_in per compression cycle |
-| `reg.evolution.energy_delta` | Tracks energy(S_t) - energy(S_{t+1}) per evolutionary step |
-| `reg.architecture.module_depth` | Tracks public_fn_count / total_fn_count per module |
+| Span | Purpose | Status |
+|------|---------|--------|
+| `reg.condenser.compression_ratio` | Tracks bytes_out / bytes_in per compression cycle | ❌ NOT in `CANONICAL_NAMESPACES` (verified 2026-07-29) |
+| `reg.evolution.energy_delta` | Tracks energy(S_t) - energy(S_{t+1}) per evolutionary step | ❌ NOT in `CANONICAL_NAMESPACES` |
+| `reg.architecture.module_depth` | Tracks public_fn_count / total_fn_count per module | ❌ NOT in `CANONICAL_NAMESPACES` |
 
-### 4.3 `DeletionTest` trait (`hkask-services-core::deletion_test`)
+### 4.3 `DeletionTest` trait (`hkask-services-core::deletion_test`) — NOT IMPLEMENTED
 
-[Note: as of v0.31.0, the old monolithic service crate has been decomposed into 11 subcrates. `DeletionTest` was proposed but never implemented; the proposed path is now `hkask-services-core`.]
+[Note: as of v0.31.0, the old monolithic service crate has been decomposed. `DeletionTest` was proposed but never implemented; `hkask-services-core/src/` has no `deletion_test.rs` (verified 2026-07-29). The proposed path was `hkask-services-core`.]
 
 ```rust
+// PROPOSED — never merged. No deletion_test.rs exists in hkask-services-core.
 pub trait DeletionTest {
     fn deletion_energy(&self) -> EnergyDelta;
     fn depth_score(&self) -> f64;
@@ -381,7 +385,9 @@ pub trait DeletionTest {
 - **Contract:** `{P: module M exists} C: apply_deletion_test(M) {Q: M deleted ∨ depth improved}`
 - **Lazy universe connection:** Deletion test is architectural analog of least action — modules earn existence by demonstrating positive deletion energy
 
-### 4.4 Condenser Profile Extension (`hkask-mcp-condenser::types::Profile`)
+### 4.4 Condenser Profile Extension (`hkask-mcp-condenser::types::Profile`) — IMPLEMENTED ✅
+
+> **Verified 2026-07-29:** `Profile::action_threshold()` exists in `kask/mcp-servers/hkask-mcp-condenser/src/types.rs:248` (note: the crate is `hkask-condenser`, not `hkask-mcp-condenser` — the path in the original report was stale; the condenser domain crate is `kask/crates/hkask-condenser/`).
 
 ```rust
 pub fn action_threshold(&self) -> f64 {
@@ -394,21 +400,20 @@ pub fn action_threshold(&self) -> f64 {
 }
 ```
 
-### 4.5 Test Results
+### 4.5 Test Results — PARTIAL
 
-```
-cargo test -p hkask-regulation -p hkask-services-core -p hkask-mcp-condenser
-→ 96 passed, 0 failed, 2 ignored (doc-tests)
-```
+Of the 7 tests listed below, only the first 2 (`action_threshold_ordering`, `light_profile_is_most_permissive`) exist in the current codebase (`hkask-condenser/src/types.rs` tests module). The remaining 5 reference the unimplemented `DeletionTest`/`EnergyDelta` and were never written.
 
-New tests:
+**Implemented (✅):**
 - `action_threshold_ordering` — Heavy < Normal < Soft < Light
 - `light_profile_is_most_permissive` — Light threshold ≥ 0.85
-- `deep_module_has_positive_deletion_energy` — Deep module deletion increases energy
-- `shallow_module_has_negative_deletion_energy` — Shallow module deletion decreases energy
-- `energy_delta_zero_is_descending` — Stationary point = lazy universe satisfied
-- `energy_delta_display_shows_direction` — ↓ for descending, ↑ for ascending
-- `alert_threshold_is_five_consecutive_ascending` — Matches Regulation pattern
+
+**Proposed but never written (❌):**
+- `deep_module_has_positive_deletion_energy` — requires `DeletionTest` (not implemented)
+- `shallow_module_has_negative_deletion_energy` — requires `DeletionTest`
+- `energy_delta_zero_is_descending` — requires `EnergyDelta`
+- `energy_delta_display_shows_direction` — requires `EnergyDelta`
+- `alert_threshold_is_five_consecutive_ascending` — requires `EnergyDelta`
 
 ---
 

@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.2.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -10,12 +10,19 @@ mds_categories: [trust, curation]
 
 # hkask-mcp-server — Explanation
 
-The MCP server framework exists to standardize how hKask's 10 MCP servers are
+The MCP server framework exists to standardize how hKask's MCP servers are
 built. Without a shared framework, each server would reimplement validation,
 credential resolution, span emission, and error handling. The framework
 centralizes these concerns so that server authors focus on tool logic, not
 infrastructure. The tradeoff is a shared dependency: a change to the framework
-affects all 10 servers.
+affects all servers.
+
+Servers run standalone over stdio and derive agent identity from
+`ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to
+anonymous). There is no daemon transport, no `bootstrap_mcp_server`, and no
+`HKASK_MCP_HOST` / userpod identity concept — these were deleted. Each
+server is a child process launched by either `McpRuntime` (app-global,
+governed dispatch) or `ContextServerStore` (per-project, agent tool picker).
 
 ## Source citations
 
@@ -23,10 +30,11 @@ affects all 10 servers.
 |--------|----------|
 | `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:123` |
 | `ToolSpanGuard` | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:17` |
-| `ToolContext` trait | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:215` |
+| `ToolContext` trait | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:216` |
 | `resolve_credential` | `kask/crates/hkask-mcp-server/src/server/credentials.rs:54` |
 | `validate_identifier` | `kask/crates/hkask-mcp-server/src/server/validation.rs:13` |
-| `bootstrap_mcp_server` | _Removed_ — the `HKASK_MCP_HOST` / userpod identity concept was deleted; servers now derive identity from `ServerContext.webid` (resolved from `HKASK_WEBID`). See `kask/crates/hkask-mcp-server/src/server/context.rs:123` and the test comment at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:184`. |
+| `run_server` | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:30` |
+| `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server/transport.rs:33` |
 
 ## Launch sequence
 
@@ -39,28 +47,28 @@ sequenceDiagram
     participant Main as main.rs
     participant Bridge as kask_bridge
     participant Server as MCP server binary
-    participant Framework as hkask-mcp-server
+    participant Transport as run_stdio_server
     participant Keystore as hkask-keystore
 
     Main->>Bridge: BridgeToolPort::new(Arc<McpRuntime>)
     Bridge->>Server: McpRuntime spawns child process (stdio)
-    Server->>Framework: ServerContext::new(capability_tier)
-    Framework->>Framework: load_dotenv()
-    Framework->>Keystore: resolve_credential(env_var)
-    Keystore-->>Framework: credential value
-    Server->>Framework: register tools
+    Server->>Transport: run_server(name, version, factory, creds)
+    Transport->>Transport: load_dotenv()
+    Transport->>Keystore: resolve_credential(env_var)
+    Keystore-->>Transport: credential value
+    Transport->>Transport: resolve WebID from HKASK_WEBID
+    Transport->>Server: factory(ServerContext)
+    Server->>Transport: register tools
     loop tool invocation
-        Server->>Framework: ToolSpanGuard::start()
-        Framework-->>Server: span handle
-        Server->>Server: execute tool logic
-        Server->>Framework: ToolSpanGuard::end(span, result)
+        Server->>Transport: execute_tool(ctx, name, fut)
+        Transport->>Transport: ToolSpanGuard::new + finish
     end
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-MCP-002
-verified_date: 2026-07-27
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:123; kask/crates/hkask-mcp-server/src/server/tool_span.rs:17,215; kask/crates/hkask-mcp-server/src/server/credentials.rs:54
+verified_date: 2026-07-29
+verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:123; kask/crates/hkask-mcp-server/src/server/tool_span.rs:17,216,249; kask/crates/hkask-mcp-server/src/server/credentials.rs:18,54; kask/crates/hkask-mcp-server/src/server/transport.rs:33,84; kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:30
 status: VERIFIED
 -->
 
@@ -87,14 +95,16 @@ consume.
 
 Without the span guard, tool invocations would be invisible to Regulation.
 The guard is a RAII type, so the span is emitted even if the tool panics or
-returns an error.
+returns an error. In practice, servers use `execute_tool`
+(`tool_span.rs:249`) which constructs the guard internally — direct
+`ToolSpanGuard` manipulation is rare.
 
 ## See also
 
 - [hkask-mcp-server Reference](./reference.md): class diagram of the server
   context, tool context, and validation helpers.
 - [`kask/docs/reference/mcp-servers/README.md`](../../reference/mcp-servers/README.md):
-  the 10 MCP servers built on this framework.
+  the MCP servers built on this framework.
 - [kask_bridge Explanation](../kask_bridge/explanation.md): the composition
   root that launches MCP servers.
 

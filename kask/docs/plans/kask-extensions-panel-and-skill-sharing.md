@@ -1,9 +1,9 @@
 ---
 title: "Kask Extensions Panel & Skill Sharing — Build Plan"
 audience: [zed-kask integrators, hKask architects]
-last_updated 2026-07-27
-version: "0.3.0"
-status: "Draft"
+last_updated: 2026-07-29
+version: "0.4.0"
+status: "Active"
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
 ---
@@ -41,11 +41,11 @@ These already exist in the tree and the plan reuses them:
 |---|---|---|
 | `SkillVisibility` enum | `crates/agent_skills/agent_skills.rs:87` | Added in Phase 1. `Private` default, `Public` opt-in. |
 | `Skill` struct | `crates/agent_skills/agent_skills.rs:95` | Add `visibility: SkillVisibility` field. |
-| `SkillSource` enum | `crates/agent_skills/agent_skills.rs:125` | Add `Public { source_user, original_skill_id }` variant; update `precedence()`. |
-| `SkillMetadata` (frontmatter) | `crates/agent_skills/agent_skills.rs:261` | Add `visibility` field with `#[serde(default)]`. |
-| `SkillIndex` (global) | `crates/agent_skills/agent_skills.rs:240` | Read by Settings page; updated by install path. |
-| `SkillsUpdatedHook` | `crates/agent_skills/agent_skills.rs:255` | Existing "skills changed" signal; reused by install/uninstall. |
-| `encode_skill_share_link` / `decode_skill_share_link` | `crates/agent_skills/agent_skills.rs:875` | Existing `zed-kask://skill?data=...` deep link; orthogonal to this plan but shows the share primitive already exists. |
+| `SkillSource` enum | `crates/agent_skills/agent_skills.rs:129` | Add `Public { source_user, original_skill_id }` variant; update `precedence()`. |
+| `SkillMetadata` (frontmatter) | `crates/agent_skills/agent_skills.rs:266` | Add `visibility` field with `#[serde(default)]`. |
+| `SkillIndex` (global) | `crates/agent_skills/agent_skills.rs:245` | Read by Settings page; updated by install path. |
+| `SkillsUpdatedHook` | `crates/agent_skills/agent_skills.rs:258` | Existing "skills changed" signal; reused by install/uninstall. |
+| `encode_skill_share_link` / `decode_skill_share_link` | `crates/agent_skills/agent_skills.rs:1038` | Existing `zed-kask://skill?data=...` deep link; orthogonal to this plan but shows the share primitive already exists. |
 | `SettingsWindow` struct (queue field) | `crates/settings_ui/src/settings_ui.rs` (not `settings_window.rs` — that file does not exist) | Phase 2 adds `skill_visibility_queue` field here. |
 | `ExtensionsPage` | `crates/extensions_ui/src/extensions_ui.rs:414` | The upstream UI to fork into `KaskExtensionsPage`. |
 | `ExtensionStore` + S3/Postgres backend | `crates/extension_host/src/extension_host.rs`, `crates/collab/src/api/extensions.rs`, `crates/collab/src/db/queries/extensions.rs` | The plumbing to mirror for the kask-artifact catalog. |
@@ -266,9 +266,11 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ---
 
-### Phase 4 — Marketplace backend (server-side)
+### Phase 4 — Marketplace backend (server-side) ✅ COMPLETE
 
 **Goal:** the collab server can store and serve kask skill metadata, mirroring the extension marketplace architecture exactly: S3 is the source of truth, Postgres is a cache built by periodic polling, publishing is direct-to-S3, downloads redirect to S3 presigned URLs.
+
+**Implementation status (verified 2026-07-29):** `crates/cloud_api_types/src/kask_skill.rs` defines `KaskSkillManifest`, `KaskSkillMetadata`, `GetKaskSkillsResponse`. `crates/collab/src/api/kask_skills.rs` exposes `GET /api/kask-skills`, `GET /api/kask-skills/:id`, `GET /api/kask-skills/:id/download`, `POST /api/kask-skills/:id/vote`, `POST /api/kask-skills/upload`, `DELETE /api/kask-skills/:id`, plus `fetch_kask_skills_from_blob_store_periodically` (5-minute poll). The upload handler verifies the S3 key's `source_user` matches the authenticated user's `github_login` (FORBIDDEN on mismatch).
 
 **Architecture (mirrors `crates/collab/src/api/extensions.rs` + `crates/collab/src/db/queries/extensions.rs`):**
 - **Publishing:** the client packages the skill dir into `archive.tar.gz` + `manifest.json` and uploads both directly to S3 at `kask-skills/{source_user}/{skill_name}/{version}/`. No `PUT` endpoint.
@@ -410,9 +412,15 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ---
 
-### Phase 6 — Dependency resolution & policy enforcement
+### Phase 6 — Dependency resolution & policy enforcement (PARTIAL)
 
 **Goal:** the marketplace enforces the dependency contract at publish and install time.
+
+**Implementation status (verified 2026-07-29):** PARTIAL.
+- **Install-time dependency check (client):** implemented as **notify-only**, not blocking. `KaskExtensionsPage::install_kask_skill` (`crates/kask_extensions_ui/src/kask_extensions_ui.rs:485`) checks installed skill names against `manifest.dependencies`, logs a `warn!` listing missing deps, but proceeds with the install. The plan called for a blocking modal with per-dependency checkboxes; the implementation chose notify-only (simpler, the skill fails loudly at runtime via `ManifestExecutor` if a dep is missing).
+- **Publish-time dependency validation (server):** NOT implemented. The upload handler (`crates/collab/src/api/kask_skills.rs:upload_kask_skill`) does not reject 409 on missing dependencies. The manifest's `dependencies` field is stored but not validated against existing skills.
+- **Cycle detection:** NOT implemented. No recursive install with cycle refusal exists.
+- **Uninstall-time dependent warning:** eliminated per the plan's essentialist G1 note (a broken dependent fails loudly at load time).
 
 **Tasks:**
 1. At publish time (server-side, in `PUT /api/kask-artifacts/{id}` handler): parse `manifest_json.dependencies`; for each dependency, check that a `kask_artifact` row exists with that ID. Reject the publish with a 409 if any dependency is missing. Return the list of missing dependencies in the error body.
@@ -432,9 +440,14 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ---
 
-### Phase 7 — Tests pinning deviations from upstream
+### Phase 7 — Tests pinning deviations from upstream (PARTIAL)
 
 **Goal:** every deliberate deviation from upstream `ExtensionsPage` is pinned by a test, per the `.rules` "tests must pin deliberate zed-kask deviations from upstream" trap.
+
+**Implementation status (verified 2026-07-29):** PARTIAL.
+- **`agent_skills` deviation tests:** DONE. `crates/agent_skills/agent_skills.rs` tests module pins: `SkillVisibility` defaults to `Private`; `SkillSource::Public` precedence is between `BuiltIn` and `Global`; `Public` `display_label` is namespaced; `Public` matches the empty scope; `SkillMetadata` missing `visibility` field defaults to `Private`; explicit `visibility: public` parses.
+- **`settings_ui` visibility tests:** DONE. `crates/settings_ui/src/pages/skills_visibility.rs` tests module pins: `SkillVisibilityQueue` accumulates and drains (last-write-wins); `rewrite_skill_visibility_in_content` inserts/replaces the `visibility` field; `rewrite_skill_visibility_on_disk` writes the file; `update_skill_visibility_in_index` updates the global index.
+- **`kask_extensions_ui` deviation tests:** NOT DONE. No `crates/kask_extensions_ui/tests/` directory exists. The plan called for pinning tests that `KaskExtensionsPage` renders with kask-artifact metadata (not extension metadata), that `ToggleKaskExtensions` deploys the page, and that the visibility toggle only appears for `SkillSource::Global` skills. These tests are still owed.
 
 **Tasks:**
 1. Audit every `// zed-kask:` comment added in `crates/kask_extensions_ui/` and `crates/agent_skills/` during Phases 1–6.

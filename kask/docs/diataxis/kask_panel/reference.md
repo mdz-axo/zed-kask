@@ -1,8 +1,8 @@
 ---
 title: "kask_panel — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-27
-version: "0.1.0"
+last_updated: 2026-07-29
+version: "0.2.0"
 status: "Active"
 domain: "UI"
 mds_categories: [domain, composition]
@@ -10,70 +10,68 @@ mds_categories: [domain, composition]
 
 # kask_panel — Reference
 
-`kask_panel` implements the kask panel UI surface inside zed-kask. It defines
-the `KaskPanel` view, the `ToolInvoker` and `ScopedInference` traits that the
-panel uses to invoke tools and inference, and the `RegulationStatus` trait
-that surfaces Regulation system health. The panel also hosts the portfolio,
-kanban, and scenarios views.
+`kask_panel` implements the kask panel UI surface inside zed-kask. It is a
+native GPUI center-pane `Item` (not a dock `Panel`) — the same surface that
+hosts the terminal, editor, and extensions view. The panel is a thin wrapper
+around the agent panel's `ConversationView`: one tab per built-in MCP
+server, each lazily constructing a `ConversationView` with `Agent::Curator`
+and a per-tab system prompt describing the server's tool scope. The
+`ConversationView` handles all rendering (messages, input, tool-call cards,
+scroll, retry, cancel, copy, markdown, streaming, mentions). The kask panel
+only adds the tab strip and tab-switch logic.
+
+The panel also defines the `ToolInvoker` trait and `set_tool_invoker` hook,
+which the per-server visualization views (`KanbanBoardView`,
+`PortfolioDashboardView`, `ScenariosView`) use to fetch data via direct MCP
+tool calls. The chat panel itself does NOT use this hook — it routes through
+`NativeAgent`'s `ToolRouter`.
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
-| `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:190` |
-| `KaskMessage` | `crates/kask_panel/src/kask_panel.rs:65` |
-| `KaskMessageRole` enum | `crates/kask_panel/src/kask_panel.rs:71` |
-| `ToolDescriptor` | `crates/kask_panel/src/kask_panel.rs:80` |
-| `ToolInvoker` trait | `crates/kask_panel/src/kask_panel.rs:87` |
-| `ScopedInference` trait | `crates/kask_panel/src/kask_panel.rs:99` |
-| `RegulationSnapshot` | `crates/kask_panel/src/kask_panel.rs:110` |
-| `RegulationStatus` trait | `crates/kask_panel/src/kask_panel.rs:125` |
-| `set_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:136` |
-| `set_scoped_inference` | `crates/kask_panel/src/kask_panel.rs:141` |
-| `set_regulation_status` | `crates/kask_panel/src/kask_panel.rs:146` |
-| `init` fn | `crates/kask_panel/src/kask_panel.rs:982` |
+| `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:168` |
+| `ToolDescriptor` | `crates/kask_panel/src/kask_panel.rs:82` |
+| `ToolInvoker` trait | `crates/kask_panel/src/kask_panel.rs:89` |
+| `set_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:106` |
+| `kanban_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:119` |
+| `init` fn | `crates/kask_panel/src/kask_panel.rs:447` |
+| `Item` impl | `crates/kask_panel/src/kask_panel.rs:324` |
+| `Focusable` impl | `crates/kask_panel/src/kask_panel.rs:316` |
 | `PortfolioDashboardView` | `crates/kask_panel/src/portfolio_view.rs:170` |
 | `KanbanBoardView` | `crates/kask_panel/src/kanban_view.rs:90` |
 | `ScenariosView` | `crates/kask_panel/src/scenarios_view.rs:217` |
 
 ## Panel architecture
 
-The `KaskPanel` struct (`kask_panel.rs:190`) is the main view. It holds
-messages, tool descriptors, and references to the `ToolInvoker`,
-`ScopedInference`, and `RegulationStatus` traits. These traits are wired via
-process-global `set_*` hooks that are populated in the deferred task.
+The `KaskPanel` struct (`kask_panel.rs:168`) is the main view. It holds a
+`WeakEntity<Workspace>`, a `Project`, an `fs`, a `FocusHandle`, the
+`active_tab` index into `BUILT_IN_MCP_SERVERS`, and a
+`HashMap<usize, Entity<ConversationView>>` — one retained `ConversationView`
+per tab (mirrors the agent panel's `retained_threads` pattern). It does NOT
+hold messages, tool descriptors, or trait references directly — all of that
+lives inside each tab's `ConversationView`.
 
 ```mermaid
 classDiagram
     class KaskPanel {
-        +messages: Vec~KaskMessage~
-        +tools: Vec~ToolDescriptor~
+        +workspace: WeakEntity~Workspace~
+        +project: Entity~Project~
+        +focus_handle: FocusHandle
+        +active_tab: usize
+        +threads: HashMap~usize,Entity~ConversationView~~
     }
-    class KaskMessage {
-        +role: KaskMessageRole
-        +content: String
-    }
-    class KaskMessageRole {
-        <<enumeration>>
-        User
-        Assistant
-        Tool
+    class ToolDescriptor {
+        +name: String
+        +description: String
     }
     class ToolInvoker {
         <<interface>>
-        +invoke(tool, args) Result
+        +invoke_tool(server, tool, args) Task
+        +list_tools(server) Task
     }
-    class ScopedInference {
-        <<interface>>
-        +stream_chat(request) Stream
-    }
-    class RegulationStatus {
-        <<interface>>
-        +snapshot() RegulationSnapshot
-    }
-    class RegulationSnapshot {
-        +health: String
-        +alerts: Vec~String~
+    class ConversationView {
+        +render()
     }
     class PortfolioDashboardView {
         +render()
@@ -85,45 +83,56 @@ classDiagram
         +render()
     }
 
-    KaskPanel --> KaskMessage
-    KaskPanel --> ToolInvoker : uses
-    KaskPanel --> ScopedInference : uses
-    KaskPanel --> RegulationStatus : uses
-    RegulationStatus --> RegulationSnapshot
-    KaskPanel --> PortfolioDashboardView : hosts
-    KaskPanel --> KanbanBoardView : hosts
-    KaskPanel --> ScenariosView : hosts
+    KaskPanel --> ConversationView : one per tab
+    KaskPanel ..> ToolInvoker : visualization views use
+    ToolInvoker ..> ToolDescriptor : returns
+    KaskPanel --> PortfolioDashboardView : Toggle action
+    KaskPanel --> KanbanBoardView : Toggle action
+    KaskPanel --> ScenariosView : Toggle action
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-PANEL-001
-verified_date: 2026-07-27
-verified_against: crates/kask_panel/src/kask_panel.rs:190,65,71,87,99,125,110; crates/kask_panel/src/portfolio_view.rs:170; crates/kask_panel/src/kanban_view.rs:90; crates/kask_panel/src/scenarios_view.rs:217
+verified_date: 2026-07-29
+verified_against: crates/kask_panel/src/kask_panel.rs:168,82,89; crates/kask_panel/src/portfolio_view.rs:170; crates/kask_panel/src/kanban_view.rs:90; crates/kask_panel/src/scenarios_view.rs:217
 status: VERIFIED
 -->
 
 ## Panel hooks
 
-Three `set_*` hooks populate the panel's trait references:
-`set_tool_invoker` (`kask_panel.rs:136`), `set_scoped_inference`
-(`kask_panel.rs:141`), and `set_regulation_status` (`kask_panel.rs:146`).
-These are wired in the deferred task in `main.rs` after the zed user
-resolves.
+One `set_*` hook populates the panel's `ToolInvoker`:
+`set_tool_invoker` (`kask_panel.rs:106`). It is wired in the deferred task
+in `main.rs` after the zed user resolves. The hook is read by
+`kanban_tool_invoker()` (`kask_panel.rs:119`), which the visualization
+views use. The chat panel does not read this hook.
+
+There is no `ScopedInference` trait, `RegulationStatus` trait, or
+`RegulationSnapshot` struct in this crate. The structural pins
+`kask_panel_has_no_curator_session_trait` and
+`kask_panel_has_no_regulation_status_bar` (in `kask_panel.rs` tests) assert
+this. The chat panel routes inference and regulation through
+`NativeAgent`'s `ToolRouter` and the `ThreadView` activity bar,
+respectively.
 
 ## Sub-views
 
-The panel hosts three sub-views: `PortfolioDashboardView`
+The panel deploys three visualization sub-views via `Toggle` actions
+registered in `init`: `PortfolioDashboardView`
 (`portfolio_view.rs:170`) for the companies/portfolio surface,
 `KanbanBoardView` (`kanban_view.rs:90`) for the kata-kanban task board, and
-`ScenariosView` (`scenarios_view.rs:217`) for the scenario planning surface.
+`ScenariosView` (`scenarios_view.rs:217`) for the scenario planning
+surface. These views fetch data via direct MCP tool calls through
+`kanban_tool_invoker()`, not through the curator agent.
 
 ## See also
 
 - [kask_panel How-to](./how-to.md): adding a new panel action.
+- [kask_panel Explanation](./explanation.md): why the panel is a thin
+  ConversationView wrapper.
 - [kask_bridge Explanation](../kask_bridge/explanation.md): the composition
   root that wires the panel hooks.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  D2 (curator agent) integration seam.
+  D10 (kask panel) integration seam.
 
 ---
 

@@ -1,8 +1,8 @@
 ---
 title: zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 audience: hKask architects / zed-kask integrators
-last_updated: 2026-07-25
-version: 0.31.0
+last_updated: 2026-07-29
+version: 0.32.0
 status: in-progress
 domain: architecture
 mds_categories: [composition, trust, lifecycle]
@@ -10,9 +10,9 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **Updated 2026-07-25:** Regulation system wired, daemon removed, pod abstraction deleted, wallet/test-harness/git-cas/self-heal crates deleted, regulation orphaned modules pruned (~12,000 lines removed).
+> **Updated 2026-07-29:** Regulation system wired, daemon removed, pod abstraction deleted, wallet/test-harness/git-cas/self-heal crates deleted, regulation orphaned modules pruned (~12,000 lines removed). `DIVERGENCE.md` restored at repo root (T7.2 ✅ DONE).
 
-> **Build status (2026-07-25):** The kask workspace now has **24 kask crates** (down from 31; ~12,000 lines pruned: daemon, pod abstraction, wallet, test-harness, git-cas, self-heal, regulation orphaned modules). Total: **83,571 lines** (down from 95,550). The `zed` binary crate parses correctly but can't fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue).
+> **Build status (2026-07-29):** The kask workspace has **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus 10 MCP server crates under `kask/mcp-servers/` and 2 zed-side crates (`crates/kask_panel/` D10, `crates/kask_extensions_ui/`). The `zed` binary crate parses correctly but can't fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue).
 >
 > **Integration progress (D1–D10):**
 >
@@ -53,7 +53,7 @@ mds_categories: [composition, trust, lifecycle]
 > 3. **Direct chat guard** — the `kask.guard.direct_chat_strategy` setting exists but isn't enforced. `cascade_only` is hardcoded. Wrapping zed's `LanguageModel` trait for `buffer`/`incremental` modes is a zed-side change.
 > 4. **x11 system libs** — can't install `libx11-dev` without sudo. The `zed` binary can't fully build on this machine. All validation is via `cargo check` and `diagnostics`.
 >
-> **Assessment:** The integration is functionally complete (D1–D10 all done, MCP servers auto-launch with `HKASK_WEBID` falling back to anonymous identity, memory ingestion wired with `RealMemoryPort`, kask panel functional with tool invocation + scoped inference, guard wraps the cascade path, sovereignty keys via the `keyring` crate directly, settings UI with 5 sub-pages, regulation system wired via `McpRuntime::with_governance()`). The remaining items are a design decision (direct chat guard), a build environment limitation (x11), and documentation (done). No further code changes are needed for the MVP integration.
+> **Assessment (grill-me challenged, 2026-07-29):** D1–D10 are wired at the composition root (`crates/zed/src/main.rs`) — verified by grep of `set_manifest_executor` (L2781), `set_memory_port` (L2860), `set_thread_condenser` (L2995), `set_tool_invoker` (L1523), `with_governance` (L643), and the deferred post-login task (L1727). The wiring is **code-complete**, not **runtime-verified**: the `zed` binary cannot fully build on this machine (x11 system libs), so end-to-end runtime validation is pending. Open items that prevent a "functionally complete" verdict: T3.4 (double-gate reconciliation ⬜), T4.2 (Curator episodic+semantic publish ⬜), T4.3 (thread-watcher ⬜), T6.2 (sovereignty invariants on clean machine ⬜), T9.3 (guard wired into composition root for all inference ⬜ — cascade path is guarded; direct-chat streaming guard is `cascade_only` hardcoded, not enforced via setting). The remaining items are a design decision (direct chat guard enforcement), a build environment limitation (x11), and deferred verification (T6.2). No further code changes are *planned* for the MVP integration, but "functionally complete" is **aspirational until T6.2 runtime verification passes on a clean machine**.
 >
 > **One-line frame:** `zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 
@@ -92,7 +92,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (2026-07-25): workspace builds clean. 24 kask crates total (down from 31; ~12,000 lines pruned this cycle). 10 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).**
+**Status (2026-07-29):** workspace builds clean. **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus 10 MCP server crates under `kask/mcp-servers/` and 2 zed-side crates (`crates/kask_panel/` D10, `crates/kask_extensions_ui/`). 10 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate | Why irreducible |
 |---|---|
@@ -148,8 +148,8 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 | D6 | Thread → memory | `crates/agent/src/thread.rs` / `thread_store.rs` + `kask/crates/hkask-types` + `kask/crates/kask_bridge` | ✅ DONE | `MemoryPort` trait in `hkask-types`. `LoggingMemoryPort` + `BridgeMemoryPort` in `kask_bridge`. Global hook `agent::set_memory_port()`. Thread turn completion ingests via `cx.background_spawn()`. Full hKask memory stack deferred. |
 | D7 | App-identity | `crates/paths/src/paths.rs`, `crates/release_channel/src/lib.rs`, `crates/zed/src/zed/mac_only_instance.rs`, `crates/zed/Cargo.toml` | ✅ DONE | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
 | D8 | Bridge + adapters | `kask/crates/kask_bridge/` | ✅ DONE | `InferencePort` over `LanguageModel`, `keyring` crate directly (synchronous OS keychain), `BridgeManifestExecutor`, `BridgeToolPort`, `KaskSettings`. |
-| D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` | ✅ DONE | `KaskSettings` struct + `"kask"` section in settings.json; `keyring` crate directly (synchronous OS keychain) (kask namespace). Settings UI page pending (Phase 8). |
-| D10 | Kask panel | `crates/kask_panel/` | ✅ DONE | Native GPUI center-pane `Item` implementing `workspace::item::Item` (not a dock `Panel`). Server selector (10 built-in MCP servers). `kask_panel::Toggle`/`ToggleFocus` actions. Deployed on demand via `kask_panel::init(cx)`; NOT loaded in `zed.rs::initialize_panels()`. Tool invocation wiring (global `ToolPort` hook) is next. |
+| D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` + `crates/settings_ui/src/pages/kask_page.rs` + `crates/settings_ui/src/page_data.rs` | ✅ DONE | `KaskSettings` struct + `"kask"` section in settings.json; `keyring` crate directly (synchronous OS keychain) (kask namespace). Settings UI page with 5 sub-pages (Data Services, MCP Servers, Curator, Guard, Memory) registered in `page_data.rs` after `ai_page`. |
+| D10 | Kask panel | `crates/kask_panel/` | ✅ DONE | Native GPUI center-pane `Item` implementing `workspace::item::Item` (not a dock `Panel`). Tab strip (10 built-in MCP servers); each tab hosts the agent panel's `ConversationView` with `Agent::Curator`. `ToolInvoker` trait + `set_tool_invoker` hook for per-server visualization views (kanban, portfolio, scenarios). `kask_panel::Toggle`/`ToggleFocus` actions. Deployed on demand via `kask_panel::init(cx)`; NOT loaded in `zed.rs::initialize_panels()`. |
 
 **Discipline:** D1–D10 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
 
@@ -255,7 +255,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 
 ### Phase 7 — Upstream sync (ongoing)
 - **T7.1** Regular `git fetch upstream && git merge upstream/main` in `zed-kask`; resolve conflicts only in D1–D7 crates + `[workspace.members]`/`[workspace.dependencies]`. Ongoing.
-- **T7.2** Keep a `DIVERGENCE.md` at the zed-kask repo root listing D1–D10 + the hKask workspace members. ⬜ (deleted in prior prune; needs restoration)
+- **T7.2** Keep a `DIVERGENCE.md` at the zed-kask repo root listing D1–D10 + the hKask workspace members. ✅ DONE (restored 2026-07-29; lives at repo root, referenced from this doc §13.4)
 
 ### Phase 8 — Settings UI + kask panel (new)
 **T8.1** `crates/settings_ui/src/pages/kask_page.rs` — settings UI page with sub-pages: Data Services (API key entry → keychain via `CredentialsProvider`), MCP Servers (10 servers + load toggles), Curator, Guard/Regulation, Memory. ⬜
@@ -577,7 +577,7 @@ zed-kask app startup constructs the individual hKask components directly (~~`Kas
 - ✅ **D5 text** now reads "via the `keyring` crate directly" (matches the dependency invariant; `SecretsPort` trait deleted).
 - ✅ **§3 intro** now references D8–D10 (consolidated in §13.4).
 - ✅ **R4 finding (§10)** corrected to past tense ("had reached") and annotated with the current 10-on-disk count and the dead `DaemonClient` status. **Update (2026-07-25):** daemon transport deleted outright; see R4 row.
-- ✅ **2026-07-25 cleanup pass:** daemon removed, pod abstraction deleted, `hkask-wallet`/`hkask-test-harness`/`hkask-services-self-heal`/`hkask-git-cas` deleted, regulation orphaned modules pruned (~12,000 lines removed), `SecretsPort` trait deleted (keystore uses `keyring` crate directly), regulation system wired via `McpRuntime::with_governance()`. Crate count: 18 kask crates (down from 25).
+- ✅ **2026-07-25 cleanup pass:** daemon removed, pod abstraction deleted, `hkask-wallet`/`hkask-test-harness`/`hkask-services-self-heal`/`hkask-git-cas` deleted, regulation orphaned modules pruned (~12,000 lines removed), `SecretsPort` trait deleted (keystore uses `keyring` crate directly), regulation system wired via `McpRuntime::with_governance()`. Crate count: 19 kask crates under `kask/crates/` (18 `hkask-*` + `kask_bridge`) — verified 2026-07-29 by `ls kask/crates/`.
 
 ### 13.6 grill-me on the composition
 - **Is the bridge crate the only bidirectional seam?** Yes — by invariant. Audit: grep hKask for any `use` of a zed-kask crate — must be zero. (Open Q 27.)

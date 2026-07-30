@@ -1,8 +1,8 @@
 ---
 title: "Reference Documentation — Index"
 audience: [developers, operators, agents]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain]
@@ -13,7 +13,7 @@ mds_categories: [domain]
 Neutral, complete, descriptive-only documentation of the hKask system as it is hosted inside
 zed-kask. No procedures, no opinions, no explanations of why — only what.
 
-hKask runs in-process inside zed-kask: 29 hKask crates compiled into the editor and 10 MCP
+hKask runs in-process inside zed-kask: 19 hKask crates compiled into the editor and 10 MCP
 servers hosted on disk via zed's `context_server` infrastructure. The standalone `kask` CLI,
 HTTP API server, Matrix transport, daemon process, and REPL surfaces have been **deleted** and
 are not referenced here as current. See
@@ -27,10 +27,6 @@ for the D1–D10 integration seams and the essentialist split.
 ## Regulation Span Registry
 
 - [Regulation Span Registry](regulation-spans.md) — Domain-specific `ObservableSpan` enums, emission points, algedonic thresholds
-
-## Magna Carta
-
-- [Magna Carta Reference](magna-carta.md) — P1–P4 with prohibition levels and enforcement traces
 
 ## MCP Servers
 
