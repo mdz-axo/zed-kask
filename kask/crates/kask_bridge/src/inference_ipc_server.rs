@@ -64,13 +64,13 @@ impl InferenceIpcServer {
     /// `embedding_port` is the port to dispatch embedding requests to (the
     /// `LanguageModelEmbeddingPort`). When `None`, `embed` requests return an
     /// error.
-    /// `media_router` is the hKask `InferenceRouter` used for media generation
+    /// `media_router` is the hKask `MediaRouter` used for media generation
     /// (image, video, speech, transcription via fal.ai/DeepInfra). When `None`,.
     /// `media_generate` requests return an error.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
-        media_router: Option<Arc<hkask_inference::InferenceRouter>>,
+        media_router: Option<Arc<hkask_inference::MediaRouter>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path.
@@ -196,7 +196,7 @@ async fn handle_connection(
     stream: tokio::net::UnixStream,
     port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
-    media_router: Option<Arc<hkask_inference::InferenceRouter>>,
+    media_router: Option<Arc<hkask_inference::MediaRouter>>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -290,7 +290,7 @@ async fn handle_connection(
 async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
-    media_router: Option<&Arc<hkask_inference::InferenceRouter>>,
+    media_router: Option<&Arc<hkask_inference::MediaRouter>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -351,9 +351,9 @@ async fn dispatch(
         }
     }
 
-    // Media generation requests are dispatched to the hKask `InferenceRouter`,
+    // Media generation requests are dispatched to the hKask `MediaRouter`,
     // which holds the fal.ai/DeepInfra backends. Unlike `ListModels`, the
-    // `InferenceRouter` is `Send + Sync` and needs no GPUI access, so it can
+    // `MediaRouter` is `Send + Sync` and needs no GPUI access, so it can
     // be called directly from the tokio task.
     if matches!(request.method, InferenceMethod::MediaGenerate) {
         let Some(media) = media_router else {
@@ -430,13 +430,13 @@ async fn dispatch(
     }
 }
 
-/// Dispatch a media-generation request to the hKask `InferenceRouter`.
+/// Dispatch a media-generation request to the hKask `MediaRouter`.
 ///
 /// `op` selects the backend method. The `InferenceParams` media_* fields
 /// carry the op-specific arguments; only the fields relevant to each op
 /// are read.
 async fn dispatch_media(
-    media: &Arc<hkask_inference::InferenceRouter>,
+    media: &Arc<hkask_inference::MediaRouter>,
     op: &str,
     params: &hkask_types::inference_ipc::InferenceParams,
 ) -> Result<serde_json::Value, InferenceError> {

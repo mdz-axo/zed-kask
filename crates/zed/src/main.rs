@@ -1667,9 +1667,9 @@ fn main() {
                         // Start the inference IPC server so MCP server child processes
                         // can route inference through zed's LanguageModelRegistry (with
                         // fusion, guard, and zed's configured API keys) instead of
-                        // constructing their own InferenceRouter with separate keys.
+                        // constructing their own MediaRouter with separate keys.
                         //
-                        // The media router is a hKask `InferenceRouter` used for
+                        // The media router is a hKask `MediaRouter` used for
                         // media generation (image/video/speech/transcription via
                         // fal.ai/DeepInfra). These backends aren't part of zed's
                         // `LanguageModel` abstraction, so the media MCP server routes
@@ -1678,7 +1678,7 @@ fn main() {
                         // (FALAI_API_KEY, DEEPINFRA_API_KEY) resolved by the zed
                         // process — the same keys the media MCP server used to hold.
                         let media_router = std::sync::Arc::new(
-                            kask_bridge::InferenceRouter::new(
+                            kask_bridge::MediaRouter::new(
                                 kask_bridge::InferenceConfig::from_env(),
                             ),
                         );
@@ -1709,7 +1709,7 @@ fn main() {
                             Err(e) => {
                                 log::warn!(
                                     "Failed to start inference IPC server: {e} — \
-                                     MCP servers will fall back to InferenceRouter with env-var keys"
+                                     MCP servers will fall back to MediaRouter (media-only)"
                                 );
                             }
                         }
@@ -1772,7 +1772,7 @@ fn main() {
                         // `NoModelInferencePort`) so MCP server child processes
                         // receive `HKASK_INFERENCE_SOCKET` and route inference
                         // through this bridge rather than falling back to
-                        // `InferenceRouter::from_env()`. That fallback reads from
+                        // `MediaRouter::from_env()`. That fallback reads from
                         // the `hkask` keychain namespace, which is empty in zed-kask
                         // (inference keys live in zed's `CredentialsProvider` under
                         // `kask://credentials/<key>`). Without the IPC server, MCP
@@ -1802,7 +1802,7 @@ fn main() {
                         // works without a default chat model — media backends are
                         // not part of zed's `LanguageModel` abstraction.
                         let media_router = std::sync::Arc::new(
-                            kask_bridge::InferenceRouter::new(
+                            kask_bridge::MediaRouter::new(
                                 kask_bridge::InferenceConfig::from_env(),
                             ),
                         );
@@ -1829,7 +1829,7 @@ fn main() {
                             Err(e) => {
                                 log::warn!(
                                     "Failed to start inference IPC server (no-op port): {e} — \
-                                     MCP servers will fall back to InferenceRouter with env-var keys"
+                                     MCP servers will fall back to MediaRouter (media-only)"
                                 );
                             }
                         }

@@ -34,7 +34,7 @@ pub use hkask_inference::openrouter_backend::FavoriteModel;
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
 /// types (matching the `FavoriteModel` pattern above).
-pub use hkask_inference::{InferenceConfig, InferenceRouter};
+pub use hkask_inference::{InferenceConfig, MediaRouter};
 pub use identity::{
     ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
 };

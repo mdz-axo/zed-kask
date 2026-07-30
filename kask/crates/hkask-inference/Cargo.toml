@@ -12,7 +12,6 @@ path = "src/hkask_inference.rs"
 [dependencies]
 hkask-types = { path = "../hkask-types" }
 hkask-regulation = { path = "../hkask-regulation" }
-hkask-keystore = { path = "../hkask-keystore" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
