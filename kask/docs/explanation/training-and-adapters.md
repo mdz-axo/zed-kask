@@ -2,7 +2,7 @@
 title: "Training and Adapters"
 audience: [operators, developers, ml-engineers]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.33.0"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, lifecycle]
@@ -10,7 +10,7 @@ mds_categories: [domain, lifecycle]
 
 # Training and Adapters
 
-Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the in-process training MCP server. hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed in-process via the training MCP server (one of the 11 builtin in-process MCP servers registered inside zed-kask, D1–D3).
+Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the in-process training MCP server. hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed in-process via the training MCP server (one of the 10 builtin in-process MCP servers registered inside zed-kask, D1–D3).
 
 ---
 
@@ -172,45 +172,59 @@ On failure:
 
 ## Adapter Lifecycle via the Training MCP Server
 
-Adapter deployment and lifecycle management is performed in-process through the **training** MCP server (one of the 11 builtin in-process MCP servers, D1–D3). The former `kask adapter list/deploy/status/teardown` CLI commands have been removed; invoke the equivalent MCP tools from the zed-kask agent panel or kask panel (D10).
+The training MCP server (`hkask-mcp-training`) exposes 8 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `mcp-servers/hkask-mcp-training/src/adapter/adapter_router/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."
 
-### List Trained Adapters
+### Training Tools
 
-Invoke the adapter-listing tool from the agent panel:
+| Tool | Purpose |
+|------|---------|
+| `training_submit` | Submit a LoRA fine-tuning job (Axolotl YAML, TRL Python, or Ludwig YAML harness). Supports retrain mode with `feedback_path`. |
+| `training_status` | Check job status; auto-registers the adapter from the HuggingFace completion manifest when training completes. |
+| `training_cancel` | Cancel a running or queued training job. |
+| `training_validate_config` | Validate training params against the lora-training skill's math-contract gates (G-M1 through G-H1). |
+| `training_ingest_qa` | Ingest QA pairs into semantic memory for future dataset assembly. |
+| `training_assemble_dataset` | Assemble stored QA pairs into a ChatML JSONL training dataset. |
+| `training_ingest_dataset` | Ingest a raw dataset file (ChatML, ShareGPT, Alpaca, DPO/KTO/ORPO preference) into the normalized cache. |
+| `training_evaluate` | Evaluate a trained adapter against a test dataset (exact_match, contains, semantic, benchmark). |
 
-```
-tool: adapter_list
-arguments: {"skill": "<optional-skill-name>"}
-```
-
-### Deploy an Adapter
-
-Deploy an adapter to a cloud inference provider:
-
-```
-tool: adapter_deploy
-arguments: {"adapter_name": "<adapter-name>", "provider": "together"}
-```
-
-The `provider` field accepts `together` (default) or `runpod`.
-
-### Check Deployment Status
+### Submit a Training Job
 
 ```
-tool: adapter_status
-arguments: {"deployment_id": "<deployment_id>"}
+tool: training_submit
+arguments: {
+  "dataset_path": "<path-or-hf-repo>",
+  "base_model": "unsloth/Qwen3.6-27B",
+  "params": { "lora_r": 16, "lora_alpha": 32, "harness": "axolotl" }
+}
 ```
 
-Use the deployment ID returned by the `adapter_deploy` tool.
+The harness is selected via `params.harness` (operator-accepted from the lora-training skill's G6 gate): `axolotl` (default, SFT only), `trl` (SFT, DPO, KTO, ORPO, Reward), or `ludwig` (SFT, DPO, KTO, ORPO, GRPO).
 
-### Tear Down a Deployed Endpoint
+### Check Job Status and Auto-Registration
 
 ```
-tool: adapter_teardown
-arguments: {"deployment_id": "<deployment_id>"}
+tool: training_status
+arguments: {"job_id": "<job-id>"}
 ```
 
-This removes the deployed inference endpoint and releases associated resources.
+When training completes (detected via the HuggingFace completion manifest), `training_status` automatically registers the adapter with metadata from the manifest (adapter name, base model, repository, path). The `adapter_registered` field in the response indicates whether registration succeeded.
+
+### Validate Before Submitting
+
+```
+tool: training_validate_config
+arguments: {
+  "params": { "lora_r": 16, "lora_alpha": 32, "harness": "axolotl" },
+  "base_model": "unsloth/Qwen3.6-27B",
+  "dataset_path": "<optional-path>"
+}
+```
+
+This is the runtime enforcement point for the lora-training skill's audit-config phase. It checks gates G-M1 (no-op-at-init), G-M2 (merge equivalence), G-M3 (scaling form), G-M4 (rank budget), G-Q1 through G-Q5 (quantization), G-H1 (harness-method compatibility), G-D0 (dataset format), and G-D1 (dataset size). Emits `reg.lora.audit` spans.
+
+### Adapter Routing (Internal)
+
+The `AdapterRouter` is constructed inside the training server's `run()` when a database passphrase is available. It implements `AdapterPort` for adapter composition (selecting providers, creating endpoints, draining billable endpoints). This is consumed internally by the training server and the broader hKask inference path — it is not exposed as standalone MCP tools. The `EndpointGuard` (RAII) tears down endpoints on drop to prevent billing leaks.
 
 ---
 

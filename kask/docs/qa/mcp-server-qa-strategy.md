@@ -2,7 +2,7 @@
 title: "hKask MCP Server QA Strategy"
 audience: [QA engineers, security engineers, agents]
 last_updated: 2026-07-29
-version: "0.2.0"
+version: "0.3.0"
 status: "Active"
 domain: "trust"
 mds_categories: [trust, composition, lifecycle]
@@ -487,8 +487,8 @@ Output:
   fail or adversarial finding
 - Write proposed RR entries to kask/security/regressions/RR-NNNN.yaml with
   status: proposed (do not flip any existing RR to enforced)
-- Emit reg.tool spans during the run; do not emit reg.qa.run (Gap A — not
-  registered)
+- Emit reg.tool spans during the run; emit reg.qa.run.pass / .fail / .skipped
+  per (tool, category) cell (Gap A is closed — see Phase 1 §reg.qa.* reality check)
 
 Do not edit .rules. If you discover a non-obvious pattern, propose it as a
 "Suggested .rules additions" heading in your final message, not inline.

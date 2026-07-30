@@ -213,7 +213,7 @@ to the closest ElevenLabs voice preset via `to_elevenlabs_voice()`. Available pr
 
 ### Listen Service (STT — Speech to Text)
 
-**Proposed design — not yet implemented.**
+**Implemented** — exposed as the `transcribe`, `transcribe_bundle`, and `record_and_transcribe` tools on `MediaServer` (`kask/mcp-servers/hkask-mcp-media/src/tools/audio.rs`). The original research below framed this as proposed; it has since shipped.
 
 **Default STT model:** `openai/whisper-large-v3` on DeepInfra
 **Fallback:** `fal-ai/whisper` on fal.ai

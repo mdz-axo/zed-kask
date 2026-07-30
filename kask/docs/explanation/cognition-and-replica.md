@@ -2,7 +2,7 @@
 title: "Cognition and Replica — Fusion Design, Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.33.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, lifecycle, curation]
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle, curation]
 
 This document consolidates four topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts inside zed-kask. The fusion system design recommendations govern multi-model deliberation quality. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
 
-All four subsystems run in-process inside zed-kask: fusion is driven by `hkask-inference`'s `FusionOrchestrator` (wired through the guard layer, D4), the scenarios and companies MCP servers are registered as builtin in-process MCP servers (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D10 integration seams.
+All four subsystems run in-process inside zed-kask: fusion is driven by `FusionLanguageModel` in `kask_bridge/src/fusion_model.rs` (a zed `LanguageModel` that delegates to `fusion_orchestrator::orchestrate`, wired through the guard layer D4 over the D8 `LanguageModelInferencePort` seam), the scenarios and companies MCP servers are registered as builtin in-process MCP servers (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D10 integration seams.
 
 ---
 
@@ -24,13 +24,13 @@ The fusion system enables multi-model deliberation: N panel models generate pers
 
 ### Evidence
 
-The fusion system is configured per-manifest via a `FusionConfig` block with 5 fields. The executor sets `params.fusion_config` from `manifest.fusion`, the router checks `params.fusion_config` before falling back to global config, and the orchestrator dispatches to panel + judge. The per-manifest fusion config was verified end-to-end with 6 tests (3 router-level, 3 executor-level) covering the manifest → executor → router → orchestrator routing path.
+The fusion system is configured per-manifest via a `FusionConfig` block with 9 fields. The executor sets `params.fusion_config` from `manifest.fusion`, the router checks `params.fusion_config` before falling back to global config, and the orchestrator dispatches to panel + judge. The per-manifest fusion config was verified end-to-end with 6 tests (3 router-level, 3 executor-level) covering the manifest → executor → router → orchestrator routing path.
 
 Five design questions were evaluated:
 
 **Q1: Should per-manifest FusionConfig support partial inheritance?** (Should `judge: null` mean "inherit global judge" while overriding only the panel?) — **DON'T.** The current all-or-nothing config is simpler. Partial inheritance adds a new concept (field-level null = inherit) that increases total system action. If a skill wants to inherit the global judge but customize the panel, the manifest author can read the global env vars and copy the values. Deletion test: delete partial inheritance → nothing breaks → do not add it.
 
-**Q2: Should "fusion mode" be a first-class manifest concept?** (Should there be a top-level `fusion_mode: synthesis | critique | deliberation | best-of-n | pi | disabled` shorthand?) — **DON'T.** The `fusion:` block already IS the concept. Adding a shorthand `fusion_mode: synthesis` would duplicate what `fusion: { mode: synthesis }` already does. Two ways to say the same thing is more total action, not less. The full `FusionConfig` block is already minimal (5 fields, YAML-clean).
+**Q2: Should "fusion mode" be a first-class manifest concept?** (Should there be a top-level `fusion_mode: synthesis | critique | deliberation | best-of-n | pi | disabled` shorthand?) — **DON'T.** The `fusion:` block already IS the concept. Adding a shorthand `fusion_mode: synthesis` would duplicate what `fusion: { mode: synthesis }` already does. Two ways to say the same thing is more total action, not less. The full `FusionConfig` block is already minimal (9 fields, YAML-clean).
 
 **Q3: How does the algo / no-judge path relate to fusion?** — The algo / no-judge path (`judge: "algo"`) **is** a fusion path. Setting the judge to `"algo"` routes panel responses through a deterministic, algorithmic merge instead of an LLM judge call. No separate `FusionMode` variant, no new `FusionConfig` fields — the existing 5-field config with a special judge value. The judge IS the strategy. The corpus pipeline routes through the same fusion orchestrator. The architecture anticipates additional algo / no-judge methods beyond the current recursive JSON merge (e.g., set intersection, vote/tally, schema-validated merge), to be added as sub-selectors on the `algo` judge value when needed.
 
@@ -190,7 +190,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-002
 verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-scenarios/src/lib.rs (18 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
+verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (18 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
 status: VERIFIED (v2 — verified_against corrected to scenarios server; hkask-memory/src/lib.rs reference removed as stale)
 -->
 
@@ -238,7 +238,7 @@ The emission contract has three participants:
 
 - **Emitter** — Any system component that creates a `RegulationRecord`. `McpRuntime::invoke()` is the canonical emitter for tool invocations; `CyberneticsLoop` emits regulation spans; the Curator emits curation spans. The emitter constructs the event with `RegulationRecord::new(observer_webid, span, phase, observation, recursion_depth)`, optionally chaining `.with_outcome()`, `.with_regulation()`, `.with_parent()`, and `.with_visibility()`.
 
-- **Sink** — `RegulationSink` (line 640) is the persistence trait. It has a single method: `fn persist(&self, event: &RegulationRecord) -> Result<(), InfrastructureError>`. The production implementation is `RegulationArchive` in `hkask-storage`. The sink is the durable boundary — once persisted, the event is available for Regulation sensing, Curator review, and forensic audit.
+- **Sink** — `RegulationSink` is the persistence trait. It has a single method: `fn persist(&self, event: &RegulationRecord) -> Result<(), InfrastructureError>`. The production implementation is `RegulationArchive` in `hkask-storage`. The sink is the durable boundary — once persisted, the event is available for Regulation sensing, Curator review, and forensic audit.
 
 - **Observer** — The Regulation itself. `CurationLoop::sense()` reads algedonic-significant events from the store using cursor-based review. `CyberneticsLoop::sense()` reads via sensor providers (`Sensor` trait). Events are also replayed with decay weighting via `LedgerStoragePort::replay_weighted()`.
 
@@ -248,7 +248,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the 
 
 | Variant | Namespace | Purpose |
 |---------|-----------|--------|
-| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 10 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. |
+| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 10 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph` routes through `ToolSubsystem::Other` (no dedicated variant). |
 | `Inference` | `reg.inference` | LLM request/response |
 | `Fusion` | `reg.fusion` | Multi-model fusion deliberation (panel dispatch + judge orchestration) |
 | `AgentPod` | `reg.pod` | Pod lifecycle events |
@@ -422,7 +422,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-004
 verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct, combined_router, fetch, save_forecast), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager)
+verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct, run factory), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager), mcp-servers/hkask-mcp-companies/src/tools/ (41 tool methods across 7 tool modules)
 status: VERIFIED (v2 — verified_against corrected to companies server; hkask-memory/src/lib.rs reference removed as stale)
 -->
 

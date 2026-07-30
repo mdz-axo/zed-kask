@@ -2,7 +2,7 @@
 title: "Skill, Template, and Bundle Registry — Reference"
 audience: [developers, skill-authors, agents]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.32.1"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -27,7 +27,7 @@ mds_categories: [domain, composition]
 ## Open issues in this registry (2026-07-29)
 
 - **SKILL.md derivation is not wired.** No `skill-translator` code or CLI command exists; the `skill-maintenance-reverse.j2` template is the only derivation path and must be invoked as a skill by an agent. Existing SKILL.md files may be hand-maintained (a P5.1 drift risk).
-- **Count reconciliation:** the filesystem has 86 registry manifests (45 category=skill, 41 non-skill). 75 template crates under `registry/templates/`; 44 SKILL.md directories under `.agents/skills/` (at the repo root, not under `kask/`). Of the 44 SKILL.md directories, several have no FlowDef manifest (template-only or non-skill: `gpui-test`, `lora-training`, `skill-router`, `create-skill`). Total catalogued below: 41 (39 skills + 2 templates). Counts verified 2026-07-29 against the live filesystem.
+- **Count reconciliation:** the filesystem has 87 registry manifests (45 category=skill, 42 non-skill). 75 template crates under `registry/templates/`; 44 SKILL.md directories under `.agents/skills/` (at the repo root, not under `kask/`). Of the 44 SKILL.md directories, `skill-router` has no FlowDef manifest (template-only, stateless `KnowAct`). Total catalogued below: 45 skills. Counts verified 2026-07-29 against the live filesystem.
 
 ---
 
@@ -55,7 +55,7 @@ mds_categories: [domain, composition]
 
 ---
 
-## Reasoning & Analysis (7 skills)
+## Reasoning & Analysis (8 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -66,6 +66,7 @@ mds_categories: [domain, composition]
 | `sequential-inquiry` | Skill | Dynamic chain-of-thought with automatic deep-dive delegation | `registry/manifests/sequential-inquiry.yaml` · `registry/templates/sequential-inquiry/` |
 | `falsifiability` | Skill | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals | `registry/manifests/falsifiability.yaml` · `registry/templates/falsifiability/` |
 | `metacognition` | Skill | Master self-reflection: decompose goals, assess progress, calibrate strategy, GEPA self-improvement | `registry/manifests/metacognition.yaml` · `registry/templates/metacognition/` |
+| `gradient-hunter` | Skill | Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field. Anchored to Parisi spin glass theory + 7 surface gradient-shape ontologies. Phased: Prior → Map → Detect → Hypothesize → Report → Convergence. | `registry/manifests/gradient-hunter.yaml` · `registry/templates/gradient-hunter/` |
 
 ---
 
@@ -79,7 +80,7 @@ mds_categories: [domain, composition]
 
 ---
 
-## Meta & Maintenance (5 skills)
+## Meta & Maintenance (7 skills + 1 template)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -89,6 +90,8 @@ mds_categories: [domain, composition]
 | `skill-discovery` | Skill | Acquire NEW skills: detect capability gaps, search catalog, evaluate candidates, guide installation | `registry/manifests/skill-discovery.yaml` · `registry/templates/skill-discovery/` |
 | `skill-router` | Template | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless `KnowAct` matching service invoked by the orchestrator and by process-skill templates (not a PDCA loop; cannot bind as `process_manifest`) | `registry/templates/skill-router/manifest.yaml` (no FlowDef manifest) · `registry/templates/skill-router/` |
 | `gpa-evolution` | Skill | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier | `registry/manifests/gpa-evolution.yaml` · `registry/templates/gpa-evolution/` |
+| `create-skill` | Skill | Convergent kask-native skill creation with ontological grounding: research phase finds academic/industry anchors, PDCA shape emerges from anchors, artifacts annotated with ontology references (PKO, Dublin Core, GOLEM, MovieLabs OMC, ESO). Delegates to skill-maintenance-build for scaffolding and skill-maintenance-validate for validation. | `registry/manifests/create-skill.yaml` · `registry/templates/create-skill/` |
+| `curator-metacognition` | Skill | Metacognitive reasoning for system sense-making, performance monitoring, and coordination with hKask Administrator on system evolution. | `registry/manifests/curator-metacognition.yaml` · `registry/templates/curator-metacognition/` |
 
 ---
 
@@ -102,7 +105,7 @@ mds_categories: [domain, composition]
 
 ---
 
-## Specialized (11 skills + 1 template)
+## Specialized (14 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -117,7 +120,9 @@ mds_categories: [domain, composition]
 | `logo-builder` | Skill | Pragmatic logo design (Improvement Kata: Martin MVB → Bokhua gates → Peters iterative refinement) | `registry/manifests/logo-builder.yaml` · `registry/templates/logo-builder/` |
 | `media-workflow` | Skill | Multi-step Fal.ai media pipeline composition and execution (Improvement Kata) | `registry/manifests/media-workflow.yaml` · `registry/templates/media-workflow/` |
 | `wardley-mapper` | Skill | Generic Wardley mapping: inventory components, classify evolution, map value chain, derive strategy | `registry/manifests/wardley-mapper.yaml` · `registry/templates/wardley-mapper/` |
-| `lora-training` | Template | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit. Stateless `KnowAct` templates (advisory; not a PDCA loop, cannot bind as `process_manifest`) | `registry/templates/lora-training/manifest.yaml` (no FlowDef manifest) · `registry/templates/lora-training/` |
+| `lora-training` | Skill | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit. PDCA loop: select-method → audit-config → convergence-check → revise. | `registry/manifests/lora-training.yaml` · `registry/templates/lora-training/` |
+| `prompt-enhance` | Skill | General-purpose prompt enhancement: 7-type taxonomy routing (coding, reasoning, creative, classification, extraction, agent-task, meta) with 3-tier effort knob | `registry/manifests/prompt-enhance.yaml` · `registry/templates/prompt-enhance/` |
+| `sankey-flow` | Skill | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta`. Anchored to PKO Procedure. | `registry/manifests/sankey-flow.yaml` · `registry/templates/sankey-flow/` |
 
 ---
 
@@ -127,13 +132,13 @@ mds_categories: [domain, composition]
 |----------|-------|-------|
 | Guardrails | 1 | Skill |
 | Core Development | 9 | Skills |
-| Reasoning & Analysis | 7 | Skills |
+| Reasoning & Analysis | 8 | Skills |
 | Kata & Coaching | 3 | Skills |
-| Meta & Maintenance | 5 | Skills |
+| Meta & Maintenance | 7 skills + 1 template | Skills + Template |
 | Security & Posture | 3 | Skills |
-| Specialized | 11 skills + 1 template | Skills + Template |
-| **Catalogued here** | **39 skills + 2 templates** | **41 capabilities** |
+| Specialized | 14 | Skills |
+| **Catalogued here** | **45 skills + 1 template** | **46 capabilities** |
 
-> **Filesystem reality:** `registry/templates/` contains 75 template directories; `registry/manifests/` contains 86 FlowDef manifests (45 category=skill, 41 non-skill). `.agents/skills/` (at the repo root) contains 44 SKILL.md directories. Counts verified 2026-07-29.
+> **Filesystem reality:** `registry/templates/` contains 75 template directories; `registry/manifests/` contains 87 FlowDef manifests (45 category=skill, 42 non-skill). `.agents/skills/` (at the repo root) contains 44 SKILL.md directories. Counts verified 2026-07-29.
 >
 > **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist), `handoff` (session handoff — low value, replaced by native Zed session persistence), `qa-script-builder` (no consumers — dead code), `kata` bundle (dead code — `KataEngine::run_bundle` never called; `kata-coaching` and `kata-improvement` work independently). Deleted 8 `platform-*` infrastructure manifests + `platform-engineer` templates (aspirational Curator self-monitoring — compiled into registry but never invoked by any code). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).

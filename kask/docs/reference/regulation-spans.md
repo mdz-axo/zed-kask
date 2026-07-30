@@ -2,7 +2,7 @@
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.32.1"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -38,7 +38,7 @@ Spans describe *what* happened; RegulationRecords describe *who observed it, whe
 
 ### Span validation
 
-All namespace strings are registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`) — a 248-entry array that is the single source of truth. `SpanNamespace::new()` returns `None` on unknown namespaces; `SpanNamespace::parse()` returns `None`. Domain span enums construct namespaces via `SpanNamespace::from_observable()` which also validates. Hierarchical validation: a sub-namespace like `reg.pipeline.decimation.binarize` is valid if any prefix segment is registered.
+All namespace strings are registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`) — a 274-entry array that is the single source of truth. `SpanNamespace::new()` returns `None` on unknown namespaces; `SpanNamespace::parse()` returns `None`. Domain span enums construct namespaces via `SpanNamespace::from_observable()` which also validates. Hierarchical validation: a sub-namespace like `reg.pipeline.decimation.binarize` is valid if any prefix segment is registered.
 
 ---
 

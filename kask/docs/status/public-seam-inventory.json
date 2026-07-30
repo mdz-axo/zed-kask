@@ -1,6 +1,6 @@
 {
   "generated": "2026-07-29",
-  "note": "Structural inventory of kask crates and their lib roots. A full public-API surface enumeration (pub fn/struct/enum/trait/const/type counts per crate, with coverage by tests) requires an API-extraction tool that is not yet wired. The totals below are therefore 0 — they are placeholders until that tool runs. The `crates` map is populated with the lib root path and description for each crate so a future pass has the entry points.",
+  "note": "Structural inventory of the 19 kask crates under kask/crates/ (18 hkask-* + kask_bridge) and their lib roots. This is NOT a D-seam inventory — the D1–D10 integration seams are documented in docs/architecture/zed-host-architecture-plan.md §3. This inventory also excludes the 10 MCP server crates (kask/mcp-servers/) and the 2 zed-side crates (crates/kask_panel/, crates/kask_extensions_ui/). A full public-API surface enumeration (pub fn/struct/enum/trait/const/type counts per crate, with coverage by tests) requires an API-extraction tool that is not yet wired. The totals below are therefore 0 — they are placeholders until that tool runs. The `crates` map is populated with the lib root path and description for each crate so a future pass has the entry points.",
   "totals": {
     "crate_name": "workspace",
     "total_items": 0,

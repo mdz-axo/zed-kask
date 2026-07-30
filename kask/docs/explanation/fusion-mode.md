@@ -2,7 +2,7 @@
 title: "Fusion Mode — Multi-Model Deliberation"
 audience: [operators, developers, users]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.33.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition, trust]
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust]
 
 Configure and operate hKask's provider-agnostic fusion engine: a panel of models answers in parallel, then a **judge** processes the responses. The judge is either an **LLM** operating in one of five deliberation modes (synthesis, best-of-n, critique, deliberation, pi), or an **algorithm** — the `algo` / no-judge path that merges panel responses deterministically with zero LLM calls. Fusion is **opt-in and disabled by default** — it activates only when you explicitly configure a judge and panel.
 
-In zed-kask, fusion runs in-process through the `GuardedInferencePort` (D4) that wraps the `InferencePort`-over-`LanguageModel` seam. It is operated from the zed-kask agent panel, not from a standalone REPL or TUI. This guide covers global env-var configuration, per-skill manifest overrides, the five LLM deliberation modes, the algo / no-judge method family, skill anchoring, bypass semantics, and operational checks. All facts are verified against the implementation in `crates/hkask-inference/src/fusion_orchestrator.rs`, `crates/hkask-types/src/fusion.rs`, `crates/hkask-inference/src/config.rs`, and `crates/hkask-templates/src/executor.rs`.
+In zed-kask, fusion runs in-process. The `FusionLanguageModel` (in `kask_bridge/src/fusion_model.rs`) is a zed `LanguageModel` that delegates each `stream_completion` to hKask's `fusion_orchestrator::orchestrate`, which dispatches a panel of models in parallel through a `MultiModelInferencePort` and then runs a judge. Each panel model is wrapped by a `LanguageModelInferencePort` (the D8 seam over zed's `LanguageModel`); the guard layer (D4) wraps the inference port. Fusion is operated from the zed-kask agent panel, not from a standalone REPL or TUI. This guide covers global env-var configuration, per-skill manifest overrides, the five LLM deliberation modes, the algo / no-judge method family, skill anchoring, bypass semantics, and operational checks. Facts are verified against `kask/crates/kask_bridge/src/fusion_model.rs`, `kask/crates/hkask-inference/src/fusion_orchestrator.rs`, `kask/crates/hkask-types/src/fusion.rs`, `kask/crates/hkask-inference/src/config.rs`, and `kask/crates/hkask-templates/src/executor.rs`.
 
 ---
 
@@ -58,8 +58,8 @@ Fusion is off by default. Activate it by setting two required environment variab
 Minimal activation with an LLM judge (uses kask defaults for judge/panel when unset, but explicit is recommended):
 
 ```bash
-export HKASK_FUSION_JUDGE_MODEL=deepseek-v4-pro
-export HKASK_FUSION_PANEL_MODELS=Kimi2.7,Qwen3.7 Max,GLM5.2,Minimax3
+export HKASK_FUSION_JUDGE_MODEL=OpenRouter/z-ai/glm-5.2
+export HKASK_FUSION_PANEL_MODELS=OpenRouter/qwen/qwen3-235b-a22b,OpenRouter/minimax/minimax3
 ```
 
 With an explicit deliberation mode and skill anchor:
@@ -82,8 +82,10 @@ export HKASK_FUSION_PANEL_MODELS=KC/qwen/qwen3-235b-a22b-2507,DI/google/gemma-4-
 
 | Role | Model |
 |------|-------|
-| Judge | `deepseek-v4-pro` |
-| Panel | `Kimi2.7`, `Qwen3.7 Max`, `GLM5.2`, `Minimax3` |
+| Judge | `OpenRouter/z-ai/glm-5.2` |
+| Panel | `OpenRouter/z-ai/glm-5.2`, `OpenRouter/qwen/qwen3-235b-a22b`, `OpenRouter/minimax/minimax3` |
+
+The defaults are OpenRouter-routed; override them with `HKASK_FUSION_JUDGE_MODEL` / `HKASK_FUSION_PANEL_MODELS` to use other providers or models.
 
 ---
 
@@ -293,12 +295,10 @@ A skill's flow manifest can declare its own `FusionConfig` via a `fusion:` block
 ```yaml
 # registry/manifests/superforecasting.yaml
 fusion:
-  judge: deepseek-v4-pro
+  judge: OpenRouter/z-ai/glm-5.2
   panel:
-    - Kimi2.7
-    - Qwen3.7 Max
-    - GLM5.2
-    - Minimax3
+    - OpenRouter/qwen/qwen3-235b-a22b
+    - OpenRouter/minimax/minimax3
   mode: synthesis
   skills:
     - superforecasting
@@ -316,16 +316,19 @@ fusion:
     - DI/google/gemma-4-31b-it-turbo
 ```
 
-The full `FusionConfig` shape (5 fields, YAML-clean):
+The full `FusionConfig` shape (9 fields, YAML-clean):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `judge` | string | required | LLM model name (supports provider prefix) or the literal `algo` for the no-judge path. |
-| `panel` | string[] | required | 1–8 panel models; each supports provider prefix. |
+| `panel` | string[] (non-empty) | required | 1–8 panel models; each supports provider prefix. |
 | `mode` | `synthesis` \| `best-of-n` \| `critique` \| `deliberation` \| `pi` | `synthesis` | LLM judge deliberation mode. Ignored when `judge: algo`. |
 | `skills` | string[] | `[]` | Skill anchors to inject into the LLM judge. Ignored when `judge: algo`. |
 | `max_rounds` | u32 | `5` | Cap for `deliberation` mode. Ignored when `judge: algo`. |
 | `algo_method` | `merge` \| `vote` | `merge` | Algo merge strategy when `judge: algo`. Ignored when the judge is an LLM. |
+| `coherence_threshold` | number? | `None` | Optional coherence Γ threshold for advisory measured-convergence signal in `deliberation` mode. The judge verdict still wins. |
+| `panel_sizing_enabled` | bool | `false` | When `true`, dispatch fewer panel models for simple/medium queries (1 for Simple, 2 for Medium, all for Complex). |
+| `pressure_adaptive_enabled` | bool | `false` | When `true`, reduce panel size under high latency pressure (degraded output beats hard failure). |
 
 ### Resolution Priority
 
@@ -380,8 +383,8 @@ Fusion status is visible in the zed-kask agent panel and kask panel (D10). When 
 When fusion is configured and the judge model is set, zed-kask surfaces a fusion-active indicator at agent panel startup:
 
 ```
-  ⚡ Fusion mode active — model: deepseek-v4-pro
-     4 panel models judged by deepseek-v4-pro (mode: synthesis)
+  ⚡ Fusion mode active — model: OpenRouter/z-ai/glm-5.2
+     3 panel models judged by OpenRouter/z-ai/glm-5.2 (mode: synthesis)
 ```
 
 When the algo / no-judge path is active:
@@ -400,7 +403,7 @@ The zed-kask diagnostics surface verifies the fusion judge is reachable:
 ```
 Fusion Model
 ────────────
-  ✅ Fusion judge reachable — deepseek-v4-pro
+  ✅ Fusion judge reachable — OpenRouter/z-ai/glm-5.2
 ```
 
 When `judge: algo`, the doctor check skips the reachability test (there is no model to reach) and reports:
@@ -438,18 +441,17 @@ hKask's fusion orchestrator is a **client-side** multi-model deliberation engine
 
 | Artifact | Location |
 |----------|----------|
-| `FusionConfig`, `FusionMode`, `FusionSkill` types | `crates/hkask-types/src/fusion.rs` |
-| Env-var parser (`parse_fusion_config`) | `crates/hkask-inference/src/config.rs` |
-| Orchestrator entry (`orchestrate`), 5 LLM mode implementations, `ALGO_JUDGE` constant, `algo_merge()`, `merge_json_values()` | `crates/hkask-inference/src/fusion_orchestrator.rs` |
-| Router fusion override (`effective_model`, `orchestrate_fusion`) | `crates/hkask-inference/src/inference_router/` |
-| Per-manifest `fusion:` block (`BundleManifest.fusion`, `BundleManifestStep.fusion`) | `crates/hkask-templates/src/bundle/manifest.rs` |
-| Per-step resolution logic | `crates/hkask-templates/src/executor.rs` (`execute_select`) |
-| `LLMParameters.fusion_config` carrier | `crates/hkask-types/src/template.rs` |
-| `NonEmptyVec` (panel invariant) | `crates/hkask-types/src/fusion.rs` |
+| `FusionConfig`, `FusionMode`, `FusionSkill`, `AlgoMethod`, `NonEmptyVec` types | `kask/crates/hkask-types/src/fusion.rs` |
+| Env-var parser (`parse_fusion_config`) | `kask/crates/hkask-inference/src/config.rs` |
+| Orchestrator entry (`orchestrate`), 5 LLM mode implementations, `ALGO_JUDGE` constant, `algo_merge()`, `algo_vote()`, `merge_json_values()`, `vote_json_values()` | `kask/crates/hkask-inference/src/fusion_orchestrator.rs` |
+| `FusionLanguageModel` (zed `LanguageModel` impl), `MultiModelInferencePort`, `FusionLanguageModelProvider` | `kask/crates/kask_bridge/src/fusion_model.rs` |
+| Per-manifest `fusion:` block (`BundleManifest.fusion`, `BundleManifestStep.fusion`) | `kask/crates/hkask-templates/src/bundle/manifest.rs` |
+| Per-step resolution logic | `kask/crates/hkask-templates/src/executor.rs` (`execute_select`) |
+| `LLMParameters.fusion_config` carrier | `kask/crates/hkask-types/src/template.rs` |
 
 Types live in `hkask-types` (not `hkask-inference`) so manifests and `LLMParameters` can carry fusion config without a dependency on the inference crate.
 
-The `ALGO_JUDGE` constant (`"algo"`) and the `algo_merge()` / `merge_json_values()` functions are the implementation surface for the algo / no-judge family. The `orchestrate()` entry point checks `fusion.judge.to_lowercase() == ALGO_JUDGE` and routes to `algo_merge()` before the `FusionMode` match — the algo path bypasses the mode dispatch entirely.
+The `ALGO_JUDGE` constant (`"algo"`) and the `algo_merge()` / `algo_vote()` / `merge_json_values()` / `vote_json_values()` functions are the implementation surface for the algo / no-judge family. The `orchestrate()` entry point checks `fusion.judge.to_lowercase() == ALGO_JUDGE` and dispatches on `fusion.algo_method` (`Merge` → `algo_merge`, `Vote` → `algo_vote`) before the `FusionMode` match — the algo path bypasses the mode dispatch entirely. `algo_vote` requires ≥3 panelists and falls back to `algo_merge` for smaller panels.
 
 ---
 

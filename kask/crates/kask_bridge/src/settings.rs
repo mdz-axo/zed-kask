@@ -929,9 +929,19 @@ impl KaskSettings {
     ) -> std::collections::HashMap<String, String> {
         let mut env = self.mcp_env();
         for (env_var, url) in credential_urls {
-            // Don't override env vars already set in the process environment —
-            // the operator's shell takes precedence.
-            if std::env::var(env_var).is_ok() {
+            // The operator's shell takes precedence — but only when it carries
+            // a meaningful (non-empty) value. An empty env var (e.g. `FOO=` in
+            // the parent shell) is not a meaningful override: it would leave
+            // the child process with no key while suppressing the keychain
+            // injection, silently breaking inference with an "API key not
+            // configured" error that the operator cannot trace back to this
+            // skip. This was the polarity inversion in the credential-injection
+            // feedback loop: the very condition that should trigger injection
+            // (key missing from the child) suppressed it.
+            if std::env::var(env_var)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+            {
                 continue;
             }
             if let Ok(Some((_username, password))) =
@@ -1553,5 +1563,62 @@ mod tests {
     #[test]
     fn inference_providers_from_env_does_not_panic() {
         let _ = KaskInferenceProvidersSettings::from_env();
+    }
+
+    // Regression test for the `mcp_env_with_credentials` polarity inversion.
+    // The skip check `std::env::var(env_var).is_ok()` treated an empty env
+    // var (`FOO=`) as "present" and suppressed keychain injection, leaving
+    // the child process with no key. The fix skips only non-empty parent
+    // env vars. This test pins the `From<Content>` resolution path that
+    // feeds `credential_urls_for_mcp`: when a toggle is explicitly `false`,
+    // no credential URL is produced for that provider, so the polarity bug
+    // cannot suppress a key that should never be injected in the first
+    // place. The toggle→credential-URL gate is the upstream guard.
+    #[test]
+    fn credential_urls_for_mcp_omits_disabled_inference_providers() {
+        let settings = KaskSettings::default();
+        // All inference toggles default to false → no inference credential URLs.
+        let urls = crate::inference_providers::credential_urls_for_mcp(&settings);
+        let has_inference_key = urls.iter().any(|(env_var, _)| {
+            matches!(
+                env_var.as_str(),
+                "DEEPINFRA_API_KEY"
+                    | "FALAI_API_KEY"
+                    | "TOGETHERAI_API_KEY"
+                    | "OPENROUTER_API_KEY"
+                    | "KILOCODE_API_KEY"
+                    | "CLINE_API_KEY"
+            )
+        });
+        assert!(
+            !has_inference_key,
+            "disabled inference providers must not produce credential URLs — \
+             this is the gate that prevents the polarity bug from suppressing \
+             keys that should be injected"
+        );
+    }
+
+    // When an inference provider is explicitly enabled, its credential URL
+    // must appear in the MCP credential list. This is the cascade root: the
+    // UI toggle writes `inference_providers.<provider>_enabled = true` →
+    // `credential_urls_for_mcp` includes the URL → `mcp_env_with_credentials`
+    // injects the keychain value as an env var → MCP server `resolve_api_key`
+    // Tier 1 finds it. If any link breaks, inference fails with "API key not
+    // configured".
+    #[test]
+    fn credential_urls_for_mcp_includes_enabled_inference_providers() {
+        let mut settings = KaskSettings::default();
+        settings.inference_providers.openrouter_enabled = true;
+        let urls = crate::inference_providers::credential_urls_for_mcp(&settings);
+        let openrouter_url = urls
+            .iter()
+            .find(|(env_var, _)| env_var == "OPENROUTER_API_KEY")
+            .map(|(_, url)| url.clone());
+        assert_eq!(
+            openrouter_url.as_deref(),
+            Some("kask://credentials/openrouter"),
+            "enabled OpenRouter must produce its credential URL so the bridge \
+             injects the keychain value into MCP server env"
+        );
     }
 }

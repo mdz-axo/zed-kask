@@ -2,7 +2,7 @@
 title: "Kask Extensions Panel & Skill Sharing — Build Plan"
 audience: [zed-kask integrators, hKask architects]
 last_updated: 2026-07-29
-version: "0.4.0"
+version: "0.5.0"
 status: "Active"
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -162,7 +162,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 **Goal:** the data model exists and parses correctly. No UI, no network.
 
 **Tasks:**
-1. Add `SkillVisibility` enum to `crates/agent_skills/src/agent_skills.rs`:
+1. Add `SkillVisibility` enum to `crates/agent_skills/agent_skills.rs` (note: no `src/` prefix — the lib root is `agent_skills.rs` directly):
    ```rust
    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
    #[serde(rename_all = "lowercase")]
@@ -182,8 +182,8 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 9. **Tests:** pin the precedence ordering (`ProjectLocal > Global > Public > BuiltIn`); pin that a missing `visibility` field defaults to `Private`; pin that `Public` skills match the empty scope.
 
 **Files touched:**
-- `crates/agent_skills/src/agent_skills.rs`
-- `crates/agent_skills/src/agent_skills.rs` (tests module)
+- `crates/agent_skills/agent_skills.rs`
+- `crates/agent_skills/agent_skills.rs` (tests module)
 
 **Acceptance:** `cargo check -p agent_skills` passes; new tests pass; existing skill loading is unaffected (every skill defaults to `Private`).
 
@@ -404,7 +404,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 - `crates/kask_extensions_ui/src/publish.rs` (new)
 - `crates/kask_extensions_ui/src/kask_extensions_ui.rs` (install/uninstall/update/vote)
 - `crates/settings_ui/src/pages/skills_visibility.rs` (wire drain to pipelines + window-close/debounce triggers)
-- `crates/agent_skills/src/agent_skills.rs` (register `Public` skills in `SkillIndex`)
+- `crates/agent_skills/agent_skills.rs` (register `Public` skills in `SkillIndex`)
 
 **Acceptance:** a user on one machine can toggle a skill to Public, and a user on another machine can see it in the Kask Extensions Panel and install it. The installed skill loads and executes via the existing `ManifestExecutor` cascade. Voting works. End-to-end test passes.
 
@@ -417,7 +417,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 **Goal:** the marketplace enforces the dependency contract at publish and install time.
 
 **Implementation status (verified 2026-07-29):** PARTIAL.
-- **Install-time dependency check (client):** implemented as **notify-only**, not blocking. `KaskExtensionsPage::install_kask_skill` (`crates/kask_extensions_ui/src/kask_extensions_ui.rs:485`) checks installed skill names against `manifest.dependencies`, logs a `warn!` listing missing deps, but proceeds with the install. The plan called for a blocking modal with per-dependency checkboxes; the implementation chose notify-only (simpler, the skill fails loudly at runtime via `ManifestExecutor` if a dep is missing).
+- **Install-time dependency check (client):** implemented as **notify-only**, not blocking. `KaskExtensionsPage::install_kask_skill` (`crates/kask_extensions_ui/src/kask_extensions_ui.rs:453`) checks installed skill names against `manifest.dependencies`, logs a `warn!` listing missing deps, but proceeds with the install. The plan called for a blocking modal with per-dependency checkboxes; the implementation chose notify-only (simpler, the skill fails loudly at runtime via `ManifestExecutor` if a dep is missing).
 - **Publish-time dependency validation (server):** NOT implemented. The upload handler (`crates/collab/src/api/kask_skills.rs:upload_kask_skill`) does not reject 409 on missing dependencies. The manifest's `dependencies` field is stored but not validated against existing skills.
 - **Cycle detection:** NOT implemented. No recursive install with cycle refusal exists.
 - **Uninstall-time dependent warning:** eliminated per the plan's essentialist G1 note (a broken dependent fails loudly at load time).

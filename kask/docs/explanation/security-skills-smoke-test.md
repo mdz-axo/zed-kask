@@ -2,7 +2,7 @@
 title: "Security Skills — Execution Smoke Test Procedure"
 audience: [operators, developers, security-engineers]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.33.0"
 status: "Active"
 domain: "Security"
 mds_categories: [domain, trust, lifecycle, curation]
@@ -40,27 +40,25 @@ gates.
 Invoke the `supply-chain-sentinel` skill from the zed-kask agent panel
 (native agent, D2) or via the kask panel (D10). The skill executes
 in-process through the `ManifestExecutor` (D1); there is no `kask skill
-run` CLI. Supply the surface and userpod-host as context:
+run` CLI. Supply the surface and target path as context:
 
 ```
 skill: supply-chain-sentinel
-surface: cargo
-userpod_host: test-auditor
+manifest_path: <path-to-Cargo.toml-or-workspace-root>
 ```
 
 **Expected output:**
-- `select-surface` phase: discovers `Cargo.toml`, `Cargo.lock`, `deny.toml`
-- `probe` phase: reads manifest entries, checks version pinning, registry trust
-- `report` phase: proposes `surface: supply-chain` regression entries (if any findings)
-- `convergence-check` phase: computes convergence metric
+- `select-surface` step (ordinal 1): discovers `Cargo.toml`, `Cargo.lock`, `deny.toml`
+- `probe` step (ordinal 2): reads manifest entries, checks version pinning, registry trust
+- `report` step (ordinal 3): proposes `surface: supply-chain` regression entries (if any findings)
+- `convergence-check` step (ordinal 4, `compute` action with `compute_ref: kata.convergence_check`): computes the Cauchy convergence metric
 
 **Validation:**
 1. The skill produces JSON output (not an error)
 2. `manifest_paths` includes `Cargo.toml` and `Cargo.lock`
 3. `defense_layers_present` includes at least `dependency_pinning` and `sbom_presence`
-4. `userpod_host` is present in all outputs
-5. `reg.supply_chain.*` spans are emitted (query via the in-process `reg_query_spans` tool exposed through the kask panel or agent panel)
-6. No synthetic findings — every finding references a real `Cargo.toml` line
+4. `reg.skill.supply-chain-sentinel` spans are emitted (query via the in-process `reg_query_spans` tool exposed through the kask panel or agent panel)
+5. No synthetic findings — every finding references a real `Cargo.toml` line
 
 ### Fixture 2: Runtime Posture Monitor (runtime-posture-monitor)
 
@@ -76,22 +74,21 @@ userpod_host: test-auditor
 
 ```
 skill: runtime-posture-monitor
-signal: all
-userpod_host: test-monitor
+telemetry_stream: <optional-preloaded-spans>
+workspace_context: <optional-workspace-path>
 ```
 
 **Expected output:**
-- `select-signal` phase: discovers `hkask.*` and `reg.*` span sources
-- `classify-threat` phase: classifies observed signals (may find zero threats if baseline is clean)
-- `emit-regulation` phase: proposes `surface: runtime` regression entries (if any threats)
-- `convergence-check` phase: computes convergence metric
+- `select-signal` step (ordinal 1): discovers `hkask.*` and `reg.*` span sources
+- `classify-threat` step (ordinal 2): classifies observed signals (may find zero threats if baseline is clean)
+- `emit-regulation` step (ordinal 3): proposes `surface: runtime` regression entries (if any threats)
+- `convergence-check` step (ordinal 4, `compute` action): computes the Cauchy convergence metric
 
 **Validation:**
 1. The skill produces JSON output (not an error)
 2. `signal_sources` includes at least one `reg.*` or `hkask.*` target
-3. `userpod_host` is present in all outputs
-4. `reg.runtime.*` spans are emitted (query via the in-process `reg_query_spans` tool)
-5. No synthetic signals — every finding references a real span target + timestamp
+3. `reg.skill.runtime-posture-monitor` spans are emitted (query via the in-process `reg_query_spans` tool)
+4. No synthetic signals — every finding references a real span target + timestamp
 
 ### Fixture 3: Kali Audit (kali-audit)
 
@@ -103,24 +100,24 @@ Invoke the `kali-audit` skill from the agent panel:
 
 ```
 skill: kali-audit
-surface: code
-userpod_host: test-auditor
+target_surface: code
+target_path: <crate-or-workspace-path>
 ```
 
 **Expected output:**
-- `select-surface` phase: discovers Rust source files
-- `audit` phase: checks for unsafe blocks, panics, auth bypass, crypto misuse
-- `taxonomy_map` phase: maps supply-chain findings to OSC&R tactic + technique (folded from the former `attack-taxonomy-mapper` skill)
-- `report` phase: proposes regression entries (if any findings)
-- `convergence-check` phase: computes convergence metric
+- `select-surface` step (ordinal 1): discovers Rust source files, maps defense-layer coverage
+- `audit` step (ordinal 2): agent-coordinated MCP tool execution — checks for unsafe blocks, panics, auth bypass, crypto misuse
+- `report` step (ordinal 3): synthesizes findings into a structured report with verdict (Pass/Conditional/Fail)
+- `taxonomy-map` step (ordinal 4, conditional — only when `target_surface == 'supply-chain'`): maps supply-chain findings to OSC&R tactic + technique (folded from the former `attack-taxonomy-mapper` skill)
+- `convergence-check` step (ordinal 5, `compute` action): computes the Cauchy convergence metric
+- `loop` step (ordinal 6): re-enters the audit cycle if convergence is not met
 
 **Validation:**
 1. The skill produces JSON output (not an error)
 2. `defense_layers` includes at least 4 of the 8 layers
-3. `userpod_host` is present in all outputs
-4. Every finding includes concrete evidence (file path, line number, code snippet)
-5. No fabricated findings — every finding is verifiable by reading the cited file
-6. `reg.taxonomy.*` spans are emitted by the `taxonomy_map` phase (query via the in-process `reg_query_spans` tool)
+3. Every finding includes concrete evidence (file path, line number, code snippet)
+4. No fabricated findings — every finding is verifiable by reading the cited file
+5. `reg.skill.kali-audit` spans are emitted (query via the in-process `reg_query_spans` tool). The `taxonomy-map` step emits its own sub-span when `target_surface == 'supply-chain'`.
 
 ## Automated Smoke Test (Future)
 
@@ -144,18 +141,16 @@ skill run` CLI — skills execute in-process through the `ManifestExecutor`
 ```
 # 1. Supply chain audit
 skill: supply-chain-sentinel
-surface: cargo
-userpod_host: smoke-test
+manifest_path: <workspace-root>
 
 # 2. Runtime posture monitor (requires running session)
 skill: runtime-posture-monitor
-signal: all
-userpod_host: smoke-test
+telemetry_stream: <optional-preloaded-spans>
 
-# 3. Kali audit (includes taxonomy_map phase — folded from attack-taxonomy-mapper)
+# 3. Kali audit (includes taxonomy-map step when surface=supply-chain)
 skill: kali-audit
-surface: code
-userpod_host: smoke-test
+target_surface: code
+target_path: <workspace-root>
 ```
 
 Check Regulation span emissions by querying the in-process
@@ -163,13 +158,13 @@ Check Regulation span emissions by querying the in-process
 
 ```
 tool: reg_query_spans
-arguments: {"namespace": "reg.supply_chain", "since_hours": 1.0, "limit": 50}
+arguments: {"namespace": "reg.skill.supply-chain-sentinel", "since_hours": 1.0, "limit": 50}
 
 tool: reg_query_spans
-arguments: {"namespace": "reg.runtime", "since_hours": 1.0, "limit": 50}
+arguments: {"namespace": "reg.skill.runtime-posture-monitor", "since_hours": 1.0, "limit": 50}
 
 tool: reg_query_spans
-arguments: {"namespace": "reg.taxonomy", "since_hours": 1.0, "limit": 50}
+arguments: {"namespace": "reg.skill.kali-audit", "since_hours": 1.0, "limit": 50}
 ```
 
 ## What the Smoke Tests Catch

@@ -10,6 +10,8 @@ mds_categories: [domain, composition, curation, trust]
 
 # Dokkodo Mindset — User Guide and Research Companion
 
+> **Historical note (2026-07-29 audit):** This research report describes a `dokkodo-mindset` skill that was **never shipped** — it does not appear in `.agents/skills/` nor in `kask/registry/`. The report also references a `pragmatic-laziness` skill and a `falstaffian-perspective` skill, neither of which exists in the current skill corpus. The report is retained as historical research documenting a design direction that was explored but not implemented. Do not cite it as evidence of current behavior; read it as a point-in-time design exploration.
+
 **Purpose:** How to use the `dokkodo-mindset` skill, how it composes with other hKask skills, and the philosophical research that grounds it.
 
 **Source texts:**

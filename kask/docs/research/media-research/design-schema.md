@@ -14,6 +14,16 @@ mds_categories: [domain, composition]
 
 ## Design Phase: T4–T5
 
+> **Implementation drift note (2026-07-29 audit):** The tool signatures below are the **original design intent**. The shipped implementation in `kask/mcp-servers/hkask-mcp-media/src/tools/` consolidated several tools and renamed others. The internal Jinja2 prompt templates (`tag_faces`, `tag_objects`, `tag_colors`, `tag_composition`, `describe_scene`, `classify_style`, `caption`) still exist in `src/templates.rs` and are invoked by the consolidated tools. Specifically:
+> - `gallery_set_root` + `gallery_scan` → consolidated into `gallery_organize` (creates index + scans in one call)
+> - `gallery_get_image` + `gallery_get_metadata` → replaced by `gallery_status` + `gallery_search` + `gallery_find_similar`
+> - `tag_faces` + `tag_objects` + `tag_colors` + `tag_composition` → consolidated into `gallery_analyze` (runs all four pipelines, persists tags)
+> - `image_describe_scene` + `image_classify_style` → consolidated into `describe_image` (style parameter selects descriptive/artistic/technical/alt_text)
+> - `fal_caption`, `fal_upscale`, `fal_image_to_image` → renamed to `describe_image`, `upscale_image`, `transform_image`
+> - Added since this design: `gallery_refresh`, `gallery_name_face`, `face_validate`, `face_register`, `face_scan_folder`, `face_list`, `face_remove`, `extract_object`, `voice_design`, `generate_speech`, `transcribe_bundle`, `audio_capture`, `record_and_transcribe`, `execute_workflow`, `video_from_images`, `video_concat`, `video_caption`, `video_meme`
+>
+> The signatures below are retained as design history. For the current tool surface, read `src/tools/*.rs` directly.
+
 ---
 
 ## T4 — Gallery Abstraction ERD
@@ -182,7 +192,7 @@ async fn tag_composition(
 #### AbstractionTools
 
 ```rust
-// REQ: media-image-caption-01 (exists as fal_caption)
+// REQ: media-image-caption-01 (shipped as `describe_image` — was `fal_caption` in early design)
 // Delegates to: fal.ai any-llm or DeepInfra Llama 3.2 Vision
 
 // REQ: media-image-describe-scene-01
@@ -229,10 +239,10 @@ async fn image_create_collage(
 ) -> String {}
 // Delegates to: Bria/remove_background (per image) + image crate (composition)
 
-// REQ: media-upscale-01 (exists as fal_upscale)
+// REQ: media-upscale-01 (shipped as `upscale_image` — was `fal_upscale` in early design)
 // Delegates to: fal.ai seedvr2 or DeepInfra clarity-upscaler
 
-// REQ: media-image-to-image-01 (exists as fal_image_to_image)
+// REQ: media-image-to-image-01 (shipped as `transform_image` — was `fal_image_to_image` in early design)
 // Delegates to: fal.ai flux/dev/image-to-image
 ```
 
