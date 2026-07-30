@@ -46,7 +46,7 @@ These already exist in the tree and the plan reuses them:
 | `SkillIndex` (global) | `crates/agent_skills/agent_skills.rs:245` | Read by Settings page; updated by install path. |
 | `SkillsUpdatedHook` | `crates/agent_skills/agent_skills.rs:258` | Existing "skills changed" signal; reused by install/uninstall. |
 | `encode_skill_share_link` / `decode_skill_share_link` | `crates/agent_skills/agent_skills.rs:1038` | Existing `zed-kask://skill?data=...` deep link; orthogonal to this plan but shows the share primitive already exists. |
-| `SettingsWindow` struct (queue field) | `crates/settings_ui/src/settings_ui.rs` (not `settings_window.rs` — that file does not exist) | Phase 2 adds `skill_visibility_queue` field here. |
+| `SettingsWindow` struct (queue field) | `crates/settings_ui/src/settings_ui.rs:967` (not `settings_window.rs` — that file does not exist) | Phase 2 added `skill_visibility_queue` field here (COMPLETE). |
 | `ExtensionsPage` | `crates/extensions_ui/src/extensions_ui.rs:414` | The upstream UI to fork into `KaskExtensionsPage`. |
 | `ExtensionStore` + S3/Postgres backend | `crates/extension_host/src/extension_host.rs`, `crates/collab/src/api/extensions.rs`, `crates/collab/src/db/queries/extensions.rs` | The plumbing to mirror for the kask-artifact catalog. |
 | `kask_page()` | `crates/settings_ui/src/pages/kask_page.rs` | Existing Kask settings section; the Kask Extensions Panel is a center-pane `Item`, not a settings sub-page, so it does not live here. |
@@ -216,7 +216,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 **Files touched:**
 - `crates/settings_ui/src/pages/skills_setup.rs`
 - `crates/settings_ui/src/pages/skills_visibility.rs` (new)
-- `crates/settings_ui/src/settings_window.rs` (add queue field + drain trigger)
+- `crates/settings_ui/src/settings_ui.rs` (add queue field + drain trigger — not `settings_window.rs`, which does not exist)
 
 **Acceptance:** user can toggle a skill's visibility; the frontmatter is updated on disk; the queue accumulates; navigating away from the page triggers the (no-op) drain. `cargo check -p settings_ui` passes.
 

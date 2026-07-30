@@ -1,8 +1,8 @@
 ---
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Companies"
 mds_categories: [domain, composition, trust, lifecycle, curation]

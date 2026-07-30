@@ -1,8 +1,8 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition]
@@ -119,6 +119,4 @@ The corpus server is a builtin in-process MCP server in zed-kask — it
 auto-starts when enabled via KaskSettings (D9a). No standalone CLI command
 is needed.
 
-> **Note:** This document lists 27 tools, while `mcp-servers/README.md`
-> lists 24. The discrepancy is unresolved here — verify against
-> `mcp-servers/hkask-mcp-corpus/src/lib.rs` before relying on either count.
+> **Note:** Tool count verified against `#[tool]` annotations in `mcp-servers/hkask-mcp-corpus/src/` — 27 tools.

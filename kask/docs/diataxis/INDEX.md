@@ -44,7 +44,8 @@ Every artifact cites concrete file:line references in the current tree.
 | Crate(s) | Reason | Cross-cutting reference |
 |----------|--------|------------------------|
 | `hkask-mcp-companies`, `hkask-mcp-corpus`, `hkask-mcp-scenarios`, `hkask-mcp-condenser`, `hkask-mcp-curator`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`, `hkask-mcp-research`, `hkask-mcp-codegraph`, `hkask-mcp-training` | Already documented cross-cuttingly in `kask/docs/reference/mcp-servers/` | [`reference/mcp-servers/README.md`](../reference/mcp-servers/README.md) |
-| `hkask-goal`, `hkask-forecast`, `hkask-email`, `hkask-ledger`, `hkask-guard`, `hkask-keystore`, `hkask-memory`, `hkask-bridge-dublincore`, `hkask-services-*`, `hkask-mcp` | Small support crates (<3000 LOC); documented via crate READMEs and cross-cutting docs | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
+| `hkask-goal`, `hkask-forecast`, `hkask-email`, `hkask-ledger`, `hkask-guard`, `hkask-keystore`, `hkask-memory`, `hkask-bridge-dublincore`, `hkask-services-core`, `hkask-mcp` | Small support crates (<3000 LOC); documented via crate READMEs and cross-cutting docs. Note: the other `hkask-services-*` crates were folded into their MCP server consumers (F6 refactor). | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
+| `crates/kask_extensions_ui` | zed-kask-side skill marketplace UI; documented under D1 (skill execution) divergence | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
 | `crates/agent`, `crates/agent_ui`, `crates/zed`, etc. | Upstream zed crates, not zed-kask code; only `// zed-kask:` deviations documented under `kask_bridge` and `kask_panel` | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
 
 ## Governing specifications

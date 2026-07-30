@@ -591,7 +591,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | `hkask-bridge-dublincore` | Curation | Dublin Core metadata bridging |
 | ~~`hkask-test-harness`~~ (deleted) | (test infra) | Test infrastructure — deleted in 2026-07-25 cleanup; `ExpectProposal` moved to `hkask-types` |
 | `hkask-mcp` | Composition | MCP governance |
-| `hkask-services-core` | Domain | Foundation: config, error types, settings (dissolves at T3.0) |
+| `hkask-services-core` | Domain | Foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Kept (genuinely shared by 6 crates); the other `hkask-services-*` crates were folded into their MCP server consumers |
 | ~~`hkask-services-self-heal`~~ (deleted) | Lifecycle | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup |
 | ~~`hkask-services-inference`~~ (folded) | Composition | Inference orchestration scaffolding — folded into `hkask-mcp-corpus` |
 | ~~`hkask-services-kata-kanban`~~ (folded) | Domain, Curation | `KataEngine`, `KataManifest`, `Board`, `Task`, Kanban coordination — folded into `hkask-mcp-kata-kanban` |

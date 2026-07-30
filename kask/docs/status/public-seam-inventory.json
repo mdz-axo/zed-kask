@@ -1,5 +1,6 @@
 {
-  "generated": "",
+  "generated": "2026-07-29",
+  "note": "Structural inventory of kask crates and their lib roots. A full public-API surface enumeration (pub fn/struct/enum/trait/const/type counts per crate, with coverage by tests) requires an API-extraction tool that is not yet wired. The totals below are therefore 0 — they are placeholders until that tool runs. The `crates` map is populated with the lib root path and description for each crate so a future pass has the entry points.",
   "totals": {
     "crate_name": "workspace",
     "total_items": 0,
@@ -9,5 +10,140 @@
     "req_tests": 0,
     "high_risk_uncovered": 0
   },
-  "crates": {}
+  "crates": {
+    "hkask-bridge-dublincore": {
+      "lib_root": "src/hkask_bridge_dublincore.rs",
+      "description": "Ontology vocabulary bridge — Dublin Core + BIBO + CiTO + PKO constants and mapping helpers",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-capability": {
+      "lib_root": "src/hkask_capability.rs",
+      "description": "OCAP delegation token system with Ed25519-signed cryptographic attenuation",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-condenser": {
+      "lib_root": "src/hkask_condenser.rs",
+      "description": "Context condensation domain logic — compression algorithms, classification, profile management, and inference formatting",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-email": {
+      "lib_root": "src/hkask_email.rs",
+      "description": "Curator email (MXroute SMTP API outbound + IMAP inbound + algedonic alert email sink)",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-forecast": {
+      "lib_root": "src/hkask_forecast.rs",
+      "description": "Shared superforecasting computation engine — Fermi decomposition, outside/inside view, Bayesian updating, Brier scoring",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-goal": {
+      "lib_root": "src/hkask_goal.rs",
+      "description": "hKask goal types — minimal coordination substrate for multi-agent collaboration (extracted from hkask-services-core)",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-guard": {
+      "lib_root": "src/hkask_guard.rs",
+      "description": "hKask content safety guard — mandatory input/output scanning for all LLM boundaries, OWASP LLM Top 10 aligned",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-inference": {
+      "lib_root": "src/hkask_inference.rs",
+      "description": "Multi-provider inference router for hKask — DeepInfra, Together AI, fal.ai, OpenRouter, KiloCode",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-keystore": {
+      "lib_root": "src/hkask_keystore.rs",
+      "description": "OS keychain integration and AES-256-GCM encryption for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-ledger": {
+      "lib_root": "src/hkask_ledger.rs",
+      "description": "Double-entry accounting ledger — immutable transactions for cost, crypto, and securities tracking",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-mcp-server": {
+      "lib_root": "src/hkask_mcp_server.rs",
+      "description": "MCP server utilities, daemon transport, and startup verification for hKask MCP servers",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-mcp": {
+      "lib_root": "src/hkask_mcp.rs",
+      "description": "MCP runtime and governance for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-memory": {
+      "lib_root": "src/hkask_memory.rs",
+      "description": "Semantic and episodic memory pipelines for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-regulation": {
+      "lib_root": "src/hkask_regulation.rs",
+      "description": "Cybernetic Nervous System for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-services-core": {
+      "lib_root": "src/hkask_services_core.rs",
+      "description": "hKask service-layer foundation — ServiceError, ServiceConfig, HkaskSettings",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-storage": {
+      "lib_root": "src/hkask_storage.rs",
+      "description": "SQLite + SQLCipher storage for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-templates": {
+      "lib_root": "src/hkask_templates.rs",
+      "description": "Registry, vocabulary, and template execution for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-types": {
+      "lib_root": "src/hkask_types.rs",
+      "description": "ID types, nu-event, and visibility types for hKask",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "kask_bridge": {
+      "lib_root": "src/kask_bridge.rs",
+      "description": "The bidirectional seam between hKask port traits and zed-kask facilities (D8)",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    }
+  },
+  "follow_up": "Run an API-extraction pass (e.g. `cargo public-api` or a grep over `pub ` items in each lib root) to populate `public_items`, `covered`, and `uncovered` per crate. The lib roots are named (not `lib.rs`) per the .rules convention; the extraction tool must read the `[lib] path` from each Cargo.toml."
 }

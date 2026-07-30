@@ -1,8 +1,8 @@
 ---
 title: "Condenser MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, lifecycle]
@@ -11,7 +11,7 @@ mds_categories: [composition, lifecycle]
 # Condenser MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-condenser` (MCP wrapper) + `crates/hkask-condenser` (pure domain)
-**Tools:** 7 — `condenser_ping`, `condenser_compress`, `condenser_classify`, `condenser_set_profile`, `condenser_stats`, `condenser_persist`, `condenser_thread_summary`, `condenser_score_saliency`
+**Tools:** 8 — `condenser_ping`, `condenser_compress`, `condenser_classify`, `condenser_set_profile`, `condenser_stats`, `condenser_persist`, `condenser_thread_summary`, `condenser_score_saliency`
 **Auto-start:** Yes (one of the core servers auto-started at editor startup / agent panel initialization; not in `CORE_EXCLUDED`)
 
 > **Hosting note (v0.31.0):** The deleted `hkask-services-chat` crate has been replaced by zed's
@@ -137,6 +137,6 @@ status: VERIFIED (v4 — Daemon node removed; record_experience edges repointed 
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — all 11 on-disk MCP servers
+- [MCP Server Registry](README.md) — all 10 on-disk MCP servers
 - [Architecture Patterns](../../explanation/architecture-patterns.md) — MCP bootstrap and tool dispatch sequence
 - [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams, essentialist split (hkask-services-chat deleted; chat owned by zed's `crates/agent`)
