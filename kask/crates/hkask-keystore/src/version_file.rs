@@ -33,7 +33,23 @@ pub fn version_file_path() -> PathBuf {
 pub fn read_key_version() -> std::io::Result<u32> {
     let path = version_file_path();
     let contents = std::fs::read_to_string(&path)?;
-    let version = contents.trim().parse().unwrap_or(CURRENT_KEY_VERSION);
+    let trimmed = contents.trim();
+    let version = match trimmed.parse::<u32>() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.keystore",
+                error = %e,
+                raw_contents = %trimmed,
+                "Key version file contains a non-numeric value — \
+                 falling back to CURRENT_KEY_VERSION ({CURRENT_KEY_VERSION}). \
+                 If the file was supposed to contain a higher version (after key \
+                 rotation), existing encrypted data may become undecryptable. \
+                 Check the version file manually."
+            );
+            CURRENT_KEY_VERSION
+        }
+    };
     tracing::info!(target: "reg.keystore", operation = "read_key_version", version = version, "REG");
     Ok(version)
 }

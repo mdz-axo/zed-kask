@@ -87,8 +87,20 @@ impl WalletManager {
         // B: Draw initial balance from Well if available
         let (actual_gas, actual_rj) = if let Some(ref well) = self.well_manager {
             let mut w = well.write().await;
-            w.draw_from_default(initial_gas, initial_rjoule)
-                .unwrap_or((GasCost(0), 0))
+            match w.draw_from_default(initial_gas, initial_rjoule) {
+                Ok(drawn) => drawn,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.wallet",
+                        error = %e,
+                        agent = %agent,
+                        "Well draw failed during wallet creation — \
+                         wallet will start with zero balance. The agent may be \
+                         unable to make tool calls until the Well is replenished."
+                    );
+                    (GasCost(0), 0)
+                }
+            }
         } else {
             (initial_gas, initial_rjoule)
         };
@@ -111,12 +123,25 @@ impl WalletManager {
             if let Some(ref well) = self.well_manager {
                 let draw_amount = GasCost(amount.0 - balance);
                 let mut w = well.write().await;
-                if let Ok((drawn, _)) = w.draw_from_default(draw_amount, 0) {
-                    let new_balance = (balance + drawn.0) as i64;
-                    store.update_gas_balance(agent, new_balance)?;
-                    balance + drawn.0
-                } else {
-                    balance
+                match w.draw_from_default(draw_amount, 0) {
+                    Ok((drawn, _)) => {
+                        let new_balance = (balance + drawn.0) as i64;
+                        store.update_gas_balance(agent, new_balance)?;
+                        balance + drawn.0
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.wallet",
+                            error = %e,
+                            agent = %agent,
+                            needed = draw_amount.0,
+                            balance = balance,
+                            "Well auto-draw failed during spend — \
+                             the agent's balance is insufficient and cannot be \
+                             replenished. The tool call may fail."
+                        );
+                        balance
+                    }
                 }
             } else {
                 balance

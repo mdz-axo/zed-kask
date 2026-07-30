@@ -29,6 +29,13 @@ pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf 
             .join("hkask")
             .join(relative);
     }
+    tracing::warn!(
+        target: "reg.paths",
+        relative = %relative.display(),
+        "No data directory resolved (HKASK_DATA_DIR, XDG_DATA_HOME, HOME all unset) — \
+         falling back to CWD-relative path. Agent databases may be created in \
+         an unpredictable location across restarts. Set HKASK_DATA_DIR or HOME."
+    );
     relative.to_path_buf()
 }
 
@@ -172,8 +179,38 @@ pub(crate) fn publish_artifact(
 
     // Read existing manifest, append, write back
     let mut manifest: serde_json::Value = if manifest_path.exists() {
-        let content = std::fs::read_to_string(&manifest_path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({"artifacts": []}))
+        match std::fs::read_to_string(&manifest_path) {
+            Ok(content) => {
+                if content.trim().is_empty() {
+                    serde_json::json!({"artifacts": []})
+                } else {
+                    match serde_json::from_str(&content) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "reg.paths",
+                                error = %e,
+                                manifest_path = %manifest_path.display(),
+                                "Failed to parse existing manifest — \
+                                 starting fresh. The previous manifest was corrupt \
+                                 and its artifact history is lost."
+                            );
+                            serde_json::json!({"artifacts": []})
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.paths",
+                    error = %e,
+                    manifest_path = %manifest_path.display(),
+                    "Failed to read existing manifest — \
+                     starting fresh. Check file permissions."
+                );
+                serde_json::json!({"artifacts": []})
+            }
+        }
     } else {
         serde_json::json!({"artifacts": []})
     };
@@ -190,7 +227,12 @@ pub(crate) fn publish_artifact(
         }
     }
 
-    let json = serde_json::to_string_pretty(&manifest).unwrap_or_else(|_| String::from("{}"));
+    let json = serde_json::to_string_pretty(&manifest).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to serialize manifest: {e}"),
+        )
+    })?;
     std::fs::write(&manifest_path, json)
 }
 

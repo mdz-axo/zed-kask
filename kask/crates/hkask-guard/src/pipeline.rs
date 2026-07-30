@@ -93,10 +93,23 @@ impl GuardConfig {
     /// the pure default without touching the environment.
     pub fn from_env() -> Self {
         Self {
-            token_limit: std::env::var("HKASK_GUARD_TOKEN_LIMIT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(32_000),
+            token_limit: match std::env::var("HKASK_GUARD_TOKEN_LIMIT") {
+                Ok(val) => match val.trim().parse::<usize>() {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.guard",
+                            error = %e,
+                            raw_value = %val,
+                            "HKASK_GUARD_TOKEN_LIMIT is set but not a valid integer — \
+                             falling back to default (32000). The guard's DoS \
+                             protection (OWASP LLM04) will use the default budget."
+                        );
+                        32_000
+                    }
+                },
+                Err(_) => 32_000,
+            },
         }
     }
 }

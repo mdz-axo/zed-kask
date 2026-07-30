@@ -232,17 +232,26 @@ impl EscalationQueue {
                         .get(0)?
                         .as_text()?
                         .parse()
-                        .unwrap_or_else(|_| EscalationID::new()),
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(target: "reg.storage", error = %e, "Failed to parse escalation ID from DB — using a fresh random ID. The returned entry will not match its DB row, breaking resolve/dismiss.");
+                            EscalationID::new()
+                        }),
                     template_id: row
                         .get(1)?
                         .as_text()?
                         .parse()
-                        .unwrap_or_else(|_| TemplateID::new()),
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(target: "reg.storage", error = %e, "Failed to parse template_id from DB — using a fresh random ID.");
+                            TemplateID::new()
+                        }),
                     bot_id: row
                         .get(2)?
                         .as_text()?
                         .parse()
-                        .unwrap_or_else(|_| BotID::new()),
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(target: "reg.storage", error = %e, "Failed to parse bot_id from DB — using a fresh random ID.");
+                            BotID::new()
+                        }),
                     output: row.get(3)?.as_text()?.to_string(),
                     confidence: row.get(4)?.as_real()?,
                     retry_count: row.get(5)?.as_int()? as u32,
