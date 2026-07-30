@@ -18,7 +18,7 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: step_3_result.vsm_mapping
+  # target_artifacts_field removed — no compute step to consume it
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10
@@ -80,6 +80,24 @@ steps:
       system_context: "{{ system_context | default('') }}"
 
   - ordinal: 4
+    action: compute
+    compute_ref: kata.convergence_check
+    description: >
+      CHECK CONVERGENCE: Cauchy criterion on the unviable-component count.
+      The cybernetics diagnostic has converged when the unviable components
+      stop changing across iterations.
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 5
     action: loop
     description: Re-enter cybernetics cycle if convergence is not met.
     input_mapping:

@@ -47,12 +47,12 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 
 ## Fusion Mode
 
-This skill supports **fusion mode** via the `fusion:` block in its flow manifest.
-When enabled, all analysis steps route through a multi-model panel — either with
-LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for deterministic
-JSON merge without an LLM judge call. The falsifiability skill uses **critique mode**
-(draft hypotheses → panel attacks testability and counterfactual soundness → revise)
-to match the eliminative loop — each stage's output is the target of the next
+This skill inherits the operator's global `kask.fusion` settings (the manifest
+omits the `fusion` block). Recommended configuration: **critique mode** (draft
+hypotheses → panel attacks testability and counterfactual soundness → revise)
+to match the eliminative loop. Model names are not hardcoded in the manifest
+because models evolve quickly; the operator configures the panel via
+`kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
 stage's attack.
 
 ## Composition

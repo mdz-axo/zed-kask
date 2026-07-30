@@ -143,10 +143,13 @@ impl PartialEq for LispValue {
             (LispValue::String(a), LispValue::String(b)) => a == b,
             (LispValue::Symbol(a), LispValue::Symbol(b)) => a == b,
             (LispValue::List(a), LispValue::List(b)) => a.to_vec() == b.to_vec(),
-            // Lambdas and native functions compared by pointer identity.
-            (LispValue::Lambda { params: p1, .. }, LispValue::Lambda { params: p2, .. }) => {
-                Rc::as_ptr(&Rc::new(())) == Rc::as_ptr(&Rc::new(())) && p1 == p2
-            }
+            // Lambdas and native functions are never structurally equal —
+            // comparing closures by value is unsound. Two distinct lambda
+            // values are always unequal, even if they have the same source.
+            // This is correct for `assoc` (which compares keys, not functions)
+            // and for `=` (which should only be called on numbers).
+            (LispValue::Lambda { .. }, LispValue::Lambda { .. }) => false,
+            (LispValue::NativeFunc(_), LispValue::NativeFunc(_)) => false,
             _ => false,
         }
     }

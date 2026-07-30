@@ -98,11 +98,11 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 ## Fusion Mode
 
-This skill supports **fusion mode** via the `fusion:` block in its process manifest.
-When enabled, analysis steps route through a multi-model panel — either with
-LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for deterministic
-JSON merge without an LLM judge call. This skill uses **best-of-n mode** — pick the
-best diagnosis from multiple models.
+This skill inherits the operator's global `kask.fusion` settings (the manifest
+omits the `fusion` block). Recommended configuration: **best-of-n mode** —
+pick the best diagnosis from multiple models. Model names are not hardcoded
+in the manifest because models evolve quickly; the operator configures the
+panel via `kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
 
 - **Judge:** `deepseek-v4-pro`
 - **Panel:** `Kimi2.7`, `Qwen3.7 Max`, `GLM5.2`

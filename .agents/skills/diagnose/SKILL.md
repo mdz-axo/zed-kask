@@ -46,11 +46,12 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 ## Fusion Mode
 
-This skill supports **fusion mode** via the `fusion:` block in its flow manifest.
-When enabled, all analysis steps route through a multi-model panel — either with
-LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for deterministic
-JSON merge without an LLM judge call. This skill uses **critique mode** — Draft →
-panel critiques → revise matches the diagnosis loop.
+This skill inherits the operator's global `kask.fusion` settings (the manifest
+omits the `fusion` block). Recommended configuration: **critique mode** (draft →
+panel critiques → revise) to match the diagnosis loop. Model names are not
+hardcoded in the manifest because models evolve quickly; the operator
+configures the panel via `kask.fusion.panel_models` or
+`HKASK_FUSION_PANEL_MODELS`.
 
 ## Constraints
 

@@ -80,6 +80,15 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
+  - ordinal: 5
+    action: loop
+    description: >
+      Re-enter posture monitoring cycle if convergence is not met. Routes
+      back to step 1 (observe) to re-scan for threats.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      kata_hypotenuse: "{{ step_3_result.threats | default([]) | length }}"
+
 # Registry invariant X5 (skill-maintenance): verified.
 # Manifest version: 0.31.0. Registry authoritative; SKILL.md is companion.
 # Created as audit fix A (missing manifest recovery) + C (invariant X5 enforcement).

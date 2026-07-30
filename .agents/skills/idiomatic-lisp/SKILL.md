@@ -55,11 +55,11 @@ Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Converg
 
 ## Fusion Mode
 
-This skill supports **fusion mode** via the `fusion:` block in its flow manifest.
-When enabled, all analysis steps route through a multi-model panel — either with
-LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for deterministic
-JSON merge without an LLM judge call. This skill uses **critique mode** — Draft →
-challenge → refine matches Lisp design review.
+This skill inherits the operator's global `kask.fusion` settings (the manifest
+omits the `fusion` block). Recommended configuration: **critique mode** (draft →
+challenge → refine) to match Lisp design review. Model names are not hardcoded
+in the manifest because models evolve quickly; the operator configures the
+panel via `kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
 
 ## Constraints
 

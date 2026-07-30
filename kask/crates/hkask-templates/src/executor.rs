@@ -1915,7 +1915,7 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         //
         // Deterministic evaluation of a Lisp form against a JSON environment.
         // No LLM round-trip, no I/O, no filesystem, no network. Bounded
-        // recursion depth (64) and bounded evaluation steps (10000).
+        // recursion depth (64) and bounded evaluation steps (100000).
         // Used for recursive predicates over the context map — e.g.
         // capability-tree walks, structural invariant checks, falsifiability
         // counterfactuals that the LLM cannot reliably evaluate itself.
