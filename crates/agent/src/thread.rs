@@ -47,7 +47,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
     StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::{Project, trusted_worktrees::TrustedWorktrees};
+use project::{AgentId, Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
@@ -1343,6 +1343,13 @@ pub struct Thread {
     /// from the injected `static_context` so both can coexist — the Curator
     /// context is merged with memory-recall context in `render_system_prompt`.
     agent_static_context: Option<SharedString>,
+    /// The agent ID that owns this thread (e.g., `CURATOR_AGENT_ID`, `ZED_AGENT_ID`).
+    /// `None` for threads created before agent identity was tracked (upstream-zed
+    /// compatibility) and for subagent threads that inherit from their parent.
+    /// Used by the memory ingestion path (D6) to route Curator turns to the
+    /// curator's sovereign DB, and by the context injector dispatch (D11) to
+    /// select the correct per-agent recall store.
+    agent_id: Option<AgentId>,
     /// Tool results that are delivered asynchronously, after the immediate
     /// tool-result slot has been flushed. The outer turn loop drains completed
     /// entries at the top of each iteration and injects them as a synthetic
@@ -1506,6 +1513,7 @@ impl Thread {
             static_context: None,
             system_prompt_override: None,
             agent_static_context: None,
+            agent_id: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -1904,6 +1912,7 @@ impl Thread {
             static_context: None,
             system_prompt_override: None,
             agent_static_context: None,
+            agent_id: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -2115,6 +2124,28 @@ impl Thread {
         self.agent_static_context = Some(context);
         self.cached_system_prompt = None; // bust the cache
         cx.notify();
+    }
+
+    /// Set the agent ID that owns this thread (e.g., `CURATOR_AGENT_ID`).
+    ///
+    /// Called by `NativeAgent::new_session` when the agent is the Curator (or
+    /// any other non-default native agent). `None` leaves the thread in the
+    /// default (Zed Agent) state — the memory ingestion path treats `None` as
+    /// the user agent and writes to the user's `memory.db`.
+    ///
+    /// This is stored separately from `system_prompt_override` and
+    /// `agent_static_context` because it is a routing key, not a prompt
+    /// fragment. The memory port (D6) and context injector dispatch (D11) both
+    /// read it to select the correct perspective-scoped store.
+    pub fn set_agent_id(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
+        self.agent_id = Some(agent_id);
+        cx.notify();
+    }
+
+    /// The agent ID that owns this thread, if set. `None` for the default
+    /// (Zed Agent) and for subagent threads that inherit from their parent.
+    pub fn agent_id(&self) -> Option<&AgentId> {
+        self.agent_id.as_ref()
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
@@ -2863,6 +2894,7 @@ impl Thread {
                                     .map(|m| m.name().0.to_string())
                                     .unwrap_or_default(),
                                 thread_title: thread.title().map(|t| t.to_string()),
+                                agent_id: thread.agent_id().cloned(),
                             });
                             if let Ok(record) = record {
                                 let port = port.clone();
@@ -3007,7 +3039,10 @@ impl Thread {
                 .read_with(cx, |this, _| this.static_context.is_none())
                 .unwrap_or(false)
             {
-                if let Some(injector) = crate::context_injector() {
+                let agent_id = this
+                    .read_with(cx, |this, _| this.agent_id.clone())
+                    .unwrap_or(None);
+                if let Some(injector) = crate::context_injector_for(agent_id.as_ref()) {
                     let thread_id = this
                         .read_with(cx, |this, _| this.id.to_string())
                         .unwrap_or_default();
@@ -3043,7 +3078,11 @@ impl Thread {
                 intent,
                 CompletionIntent::UserPrompt | CompletionIntent::Subagent
             ) {
-                if let Some(injector) = crate::context_injector() {
+                let agent_id = this
+                    .read_with(cx, |this, _| this.agent_id.clone())
+                    .ok()
+                    .unwrap_or(None);
+                if let Some(injector) = crate::context_injector_for(agent_id.as_ref()) {
                     let thread_id = this
                         .read_with(cx, |this, _| this.id.to_string())
                         .ok()

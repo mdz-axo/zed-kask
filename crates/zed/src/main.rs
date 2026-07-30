@@ -1135,8 +1135,15 @@ fn main() {
                                         kask_settings.memory.consolidation_cadence_secs
                                     );
                                 }
-                                let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
+                                // Keep a typed handle for the curator context
+                                // injector, which calls `recall_context_curator`
+                                // (an inherent method on `RealMemoryPort`, not on
+                                // the `MemoryPort` trait). The trait-object coercion
+                                // below would lose the concrete type.
+                                let real_memory_typed: std::sync::Arc<kask_bridge::RealMemoryPort> =
                                     std::sync::Arc::new(real);
+                                let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
+                                    real_memory_typed.clone();
                                 let bridge = std::sync::Arc::new(
                                     kask_bridge::BridgeMemoryPort::new(real_memory.clone()),
                                 );
@@ -1208,6 +1215,42 @@ fn main() {
                                     );
                                     agent::set_context_injector(Some(injector));
                                     log::info!("hKask context injector wired (agent: {agent_name})");
+
+                                    // D11 curator mirror: wire the curator context
+                                    // injector so the Curator recalls its own
+                                    // sovereign memory (episodic + semantic from
+                                    // `agents/curator/pod.db`). Without this, the
+                                    // Curator has no automatic recall — it must
+                                    // call `curator_memory_recall` /
+                                    // `curator_semantic_search` as tools, which is
+                                    // the asymmetry this block fixes.
+                                    let curator_injector = std::sync::Arc::new(
+                                        kask_bridge::BridgeCuratorContextInjector::new(
+                                            real_memory_typed.clone(),
+                                            kask_settings.memory.recall_limit,
+                                            kask_settings.memory.recall_min_confidence,
+                                        ),
+                                    );
+                                    agent::set_curator_context_injector(Some(curator_injector));
+                                    log::info!(
+                                        "hKask curator context injector wired \
+                                         (agent: {agent_name}) — curator will \
+                                         recall from its own sovereign DB"
+                                    );
+                                } else {
+                                    // auto_inject is off — log that the curator
+                                    // injector is also unwired, per the .rules trap
+                                    // "Process-global hooks set at runtime need a
+                                    // startup-failure signal". The warn names both
+                                    // hooks left unwired so the operator can
+                                    // remediate correctly.
+                                    log::warn!(
+                                        "kask.memory.auto_inject is false — \
+                                         both the user context injector and the \
+                                         curator context injector are unwired. \
+                                         Set kask.memory.auto_inject true to enable \
+                                         memory recall for both agents."
+                                    );
                                 }
 
                                 // Wire the lazy tool router. The router narrows

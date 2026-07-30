@@ -860,6 +860,13 @@ impl NativeAgent {
         if let Some(ref curator_context) = self.curator_static_context {
             thread.update(cx, |thread, cx| {
                 thread.set_static_context(curator_context.clone(), cx);
+                // Tag the thread with the Curator agent ID so the memory
+                // ingestion path (D6) routes Curator turns to the curator's
+                // sovereign DB, and the context injector dispatch (D11)
+                // selects the curator's recall store. Without this, Curator
+                // turns would be ingested as user-perspective records and the
+                // curator would have no automatic recall.
+                thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
             });
         }
         if self.register_curator_tools {
@@ -2806,6 +2813,11 @@ pub struct ThreadTurnRecord {
     pub agent_response: String,
     pub model: String,
     pub thread_title: Option<String>,
+    /// The agent ID that produced this turn (e.g., `CURATOR_AGENT_ID`, `ZED_AGENT_ID`).
+    /// `None` for threads with no agent identity (upstream-zed compatibility).
+    /// The memory port uses this to route ingestion to the correct
+    /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
+    pub agent_id: Option<AgentId>,
 }
 
 /// Port for ingesting completed thread turns into memory (D6).
@@ -2901,14 +2913,58 @@ pub trait ContextInjector: Send + Sync {
 static CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
     std::sync::OnceLock::new();
 
+/// Global hook for the **Curator's** context injector (D11 — curator mirror).
+///
+/// Set by the zed-kask composition root alongside `set_context_injector`.
+/// When set, Curator threads get their prompts enriched with memories
+/// recalled from the curator's sovereign DB (`agents/curator/pod.db`),
+/// mirroring the user agent's recall loop. When `None`, Curator threads
+/// fall back to the user injector (if any) — graceful degradation that
+/// gives the curator user-scoped recall instead of curator-scoped recall.
+static CURATOR_CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
+    std::sync::OnceLock::new();
+
 /// Set the global context injector (D11 composition root).
 pub fn set_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
     let _ = CONTEXT_INJECTOR.set(injector);
 }
 
+/// Set the Curator's context injector (D11 composition root — curator mirror).
+///
+/// Called by the composition root alongside `set_context_injector`. The
+/// curator injector recalls from the curator's sovereign DB so the Curator
+/// builds its own semantic + episodic memory and recalls it automatically —
+/// a parallel of the user agent's memory loop.
+pub fn set_curator_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
+    let _ = CURATOR_CONTEXT_INJECTOR.set(injector);
+}
+
 /// Get the global context injector, if set.
 pub(crate) fn context_injector() -> Option<&'static Arc<dyn ContextInjector>> {
     CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
+}
+
+/// Get the context injector for a given agent ID (D11 per-agent dispatch).
+///
+/// Returns the Curator's injector when `agent_id` is `CURATOR_AGENT_ID`,
+/// falling back to the user injector when the curator injector is not set
+/// (graceful degradation — gives the curator user-scoped recall instead of
+/// none). Returns the user injector for any other agent ID (including
+/// `None` — the default Zed Agent).
+pub(crate) fn context_injector_for(
+    agent_id: Option<&AgentId>,
+) -> Option<&'static Arc<dyn ContextInjector>> {
+    if agent_id == Some(&CURATOR_AGENT_ID) {
+        if let Some(curator_injector) = CURATOR_CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
+        {
+            return Some(curator_injector);
+        }
+        // Fall back to the user injector so the curator still gets *some*
+        // recall when the curator injector isn't wired. Logged at composition
+        // root so the operator knows the curator is running on user-scoped
+        // memory instead of its own.
+    }
+    context_injector()
 }
 
 /// Thread condenser — compresses tool results before they enter the message

@@ -29,6 +29,8 @@ use language_model::{LanguageModelRequestMessage, Role};
 use language_model_core::MessageContent;
 use std::sync::Arc;
 
+use crate::memory::RealMemoryPort;
+
 /// Minimum prompt length (characters) for recall to fire.
 /// Prompts shorter than this skip recall entirely.
 const MIN_RECALL_PROMPT_LEN: usize = 20;
@@ -151,13 +153,13 @@ impl ContextInjector for BridgeContextInjector {
         let static_min_confidence = (self.recall_min_confidence + 0.1).min(1.0);
 
         Box::pin(async move {
-            let snippets = match memory_port.recall_context(&thread_id, static_limit).await {
+            let snippets = match memory_port.recall_thread(&thread_id, static_limit).await {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(
                         target: "reg.memory",
                         error = %e,
-                        "Static context recall failed"
+                        "Static context thread recall failed"
                     );
                     Vec::new()
                 }
@@ -184,6 +186,169 @@ impl ContextInjector for BridgeContextInjector {
                 target: "reg.memory",
                 injected_count = filtered.len(),
                 "Injecting static memory context into system prompt"
+            );
+
+            Some(context_text)
+        })
+    }
+}
+
+/// Bridge curator context injector — recalls from the curator's sovereign DB.
+///
+/// Mirrors `BridgeContextInjector` but delegates to
+/// `RealMemoryPort::recall_context_curator` (per-turn, content-similarity) and
+/// `RealMemoryPort::recall_thread_curator` (static, entity-scoped) instead of
+/// the user-scoped `MemoryPort` methods, so the Curator recalls its own
+/// episodic + semantic memory (stored in `agents/curator/pod.db`) rather than
+/// the user's. This closes the curator memory loop: the Curator ingests its
+/// own turns (D6, curator-perspective episodic) and recalls them here (D11,
+/// curator-scoped recall), exactly parallel to the user agent's loop.
+///
+/// Wired in the composition root via `agent::set_curator_context_injector`.
+pub struct BridgeCuratorContextInjector {
+    memory_port: Arc<RealMemoryPort>,
+    recall_limit: u32,
+    recall_min_confidence: f64,
+}
+
+impl BridgeCuratorContextInjector {
+    /// Construct a new curator context injector.
+    ///
+    /// Takes the same `RealMemoryPort` the user injector uses — the curator
+    /// recall method (`recall_context_curator`) is on `RealMemoryPort` and
+    /// reads from the `curator_episodic` / `curator_semantic` fields on that
+    /// struct, which are opened alongside the user's stores in `RealMemoryPort::new`.
+    pub fn new(
+        memory_port: Arc<RealMemoryPort>,
+        recall_limit: u32,
+        recall_min_confidence: f64,
+    ) -> Self {
+        Self {
+            memory_port,
+            recall_limit,
+            recall_min_confidence,
+        }
+    }
+
+    /// Reuse the same prompt-length gate as the user injector — short prompts
+    /// skip recall to avoid the embedding HTTP call + SQL queries.
+    fn should_recall(prompt: &str) -> bool {
+        if prompt.len() < MIN_RECALL_PROMPT_LEN {
+            return false;
+        }
+        let word_count = prompt.split_whitespace().count();
+        word_count >= MIN_RECALL_PROMPT_WORDS
+    }
+}
+
+impl ContextInjector for BridgeCuratorContextInjector {
+    fn inject_context(
+        &self,
+        _thread_id: &str,
+        user_prompt: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Vec<LanguageModelRequestMessage>> + Send + '_>,
+    > {
+        let limit = self.recall_limit as usize;
+        let min_confidence = self.recall_min_confidence;
+        let prompt = user_prompt.to_string();
+        let memory_port = self.memory_port.clone();
+
+        if !Self::should_recall(&prompt) {
+            return Box::pin(async move { Vec::new() });
+        }
+
+        Box::pin(async move {
+            let snippets = match memory_port.recall_context_curator(&prompt, limit).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        error = %e,
+                        "Curator context injection recall failed"
+                    );
+                    return Vec::new();
+                }
+            };
+
+            let filtered: Vec<_> = snippets
+                .into_iter()
+                .filter(|s| s.confidence >= min_confidence)
+                .collect();
+
+            if filtered.is_empty() {
+                return Vec::new();
+            }
+
+            let mut context_text = String::from("Relevant context from curator memory:\n\n");
+            for (i, snippet) in filtered.iter().enumerate() {
+                if i > 0 {
+                    context_text.push_str("\n---\n\n");
+                }
+                context_text.push_str(&snippet.text);
+            }
+
+            tracing::info!(
+                target: "reg.memory",
+                injected_count = filtered.len(),
+                "Injecting curator memory context into prompt"
+            );
+
+            vec![LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(context_text)],
+                cache: false,
+                reasoning_details: None,
+            }]
+        })
+    }
+
+    fn inject_static_context<'a>(
+        &'a self,
+        thread_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
+        let memory_port = self.memory_port.clone();
+        let thread_id = thread_id.to_string();
+        let static_limit = (self.recall_limit * 2) as usize;
+        let static_min_confidence = (self.recall_min_confidence + 0.1).min(1.0);
+
+        Box::pin(async move {
+            let snippets = match memory_port
+                .recall_thread_curator(&thread_id, static_limit)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        error = %e,
+                        "Curator static context thread recall failed"
+                    );
+                    Vec::new()
+                }
+            };
+
+            let filtered: Vec<_> = snippets
+                .into_iter()
+                .filter(|s| s.confidence >= static_min_confidence)
+                .collect();
+
+            if filtered.is_empty() {
+                return None;
+            }
+
+            let mut context_text = String::from("Session curator memory context:\n\n");
+            for (i, snippet) in filtered.iter().enumerate() {
+                if i > 0 {
+                    context_text.push_str("\n---\n\n");
+                }
+                context_text.push_str(&snippet.text);
+            }
+
+            tracing::info!(
+                target: "reg.memory",
+                injected_count = filtered.len(),
+                "Injecting static curator memory context into system prompt"
             );
 
             Some(context_text)

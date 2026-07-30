@@ -21,7 +21,7 @@ mod skill_executor;
 mod tool_port;
 
 pub use condenser_bridge::BridgeThreadCondenser;
-pub use context_injector::BridgeContextInjector;
+pub use context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
 pub use fusion_model::{
     FUSION_MODEL_ID, FUSION_PROVIDER_ID, FusionLanguageModel, FusionLanguageModelProvider,
     discover_favorites, favorite_model_selections, fusion_model_selection, resolve_fusion_models,
