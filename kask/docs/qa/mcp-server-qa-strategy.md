@@ -1,3 +1,13 @@
+---
+title: "hKask MCP Server QA Strategy"
+audience: [QA engineers, security engineers, agents]
+last_updated: 2026-07-29
+version: "0.2.0"
+status: "Active"
+domain: "trust"
+mds_categories: [trust, composition, lifecycle]
+---
+
 # hKask MCP Server QA Strategy
 
 A per-tool QA routine for every tool exposed by every hKask MCP server, with
@@ -58,16 +68,16 @@ boundary, external deps, McpToolError kinds used) is in
 
 | Server | `#[cfg(test)]` modules in `src/` | `tests/` dir | Verdict |
 |---|---|---|---|
-| codegraph | 10 | no | moderate inline coverage |
+| codegraph | 10 | yes (1 file: `qa_contract.rs`) | moderate inline coverage |
 | companies | 20 | no | moderate inline coverage |
-| condenser | **0** | no | **gap — no inline tests** |
-| corpus | 23 | no | moderate inline coverage |
-| curator | **0** | no | **gap — no inline tests** |
-| kata-kanban | 1 | no | **gap — minimal inline tests** |
+| condenser | **0** | yes (1 file: `qa_contract.rs`) | **gap — no inline tests**; qa_contract.rs covers the 8 tools |
+| corpus | 29 | yes (4 files) | moderate inline coverage |
+| curator | 1 | yes (1 file: `qa_contract.rs`) | **gap — minimal inline tests**; qa_contract.rs covers the 11 tools |
+| kata-kanban | 5 | yes (2 files: `qa_contract.rs`, `service_integration.rs`) | qa_contract.rs covers all 18 tools |
 | media | 5 | no | low inline coverage |
-| research | 4 | yes (1 file, 6 `Parameters()` calls) | low |
-| scenarios | 1 | yes (1 file, 4 `Parameters()` calls) | **gap — minimal inline tests** |
-| training | 15 | yes (1 file, 0 `Parameters()` calls) | moderate inline, no tool-behavior |
+| research | 4 | yes (1 file: `research_contract.rs`) | low |
+| scenarios | 1 | yes (1 file: `scenarios_contract.rs`) | **gap — minimal inline tests** |
+| training | 15 | yes (1 file: `live_adapter.rs`) | moderate inline, no tool-behavior |
 
 The existing CI gate `scripts/check-mcp-tool-tests.sh` passes because its
 grep keys on `Parameters(` in `src/` (where every tool's signature lives),
@@ -104,19 +114,22 @@ credential produces a structured `permission_denied` or
 ### `reg.qa.*` namespace reality check
 
 `CANONICAL_NAMESPACES` (in `kask/crates/hkask-types/src/event.rs`) registers
-exactly five `reg.qa.*` namespaces, all repair/mutation-oriented:
+the following `reg.qa.*` namespaces:
 
 - `reg.qa.mutant_survived`
 - `reg.qa.repair_attempted`
 - `reg.qa.repair_exhausted`
 - `reg.qa.repair_verified`
 - `reg.qa.bolero_failure`
+- `reg.qa.run` (QA routine pass — emitted by `scripts/qa-mcp-servers.sh`)
+- `reg.qa.run.pass`
+- `reg.qa.run.fail`
+- `reg.qa.run.skipped`
 
-There is **no** `reg.qa.run` or `reg.qa.tool` namespace for a QA routine
-pass. The `QaSpan` enum in `kask/crates/hkask-regulation/src/qa_span.rs`
-only models the three repair variants. The runnable routine in Phase 4
-therefore cannot emit a `reg.qa.*` span without first registering one. See
-Gap Report §4 for the proposed addition.
+The `reg.qa.run*` namespaces were added since the original Phase 1
+inventory (Gap A is now closed). The runnable routine in Phase 4 can emit
+`reg.qa.run.pass` / `reg.qa.run.fail` / `reg.qa.run.skipped` per
+(tool, category) cell.
 
 ---
 
@@ -181,15 +194,19 @@ evidence produced.
 - **Tools covered**: every tool marked "LLM I/O boundary? yes" in Phase 1
   (codegraph: `codegraph_index_embeddings`, `codegraph_context`;
   companies: `research_search`, `company_screener`; condenser:
+  condenser:
   `condenser_classify`, `condenser_thread_summary`,
-  `condenser_score_saliency`; corpus: `corpus_compose`, `corpus_mashup`,
-  `corpus_generate_qa`, `corpus_generate_qa_batch`,
+  `condenser_score_saliency`, `condenser_compress`; corpus: `corpus_compose`,
+  `corpus_mashup`, `corpus_generate_qa`, `corpus_generate_qa_batch`,
   `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr`,
-  `corpus_rewrite`, `corpus_build_persona`, `corpus_compare`; media:
+  `corpus_rewrite`, `corpus_build_persona`, `corpus_compare`,
+  `corpus_embed`; media:
   `generate_image`, `generate_video`, `voice_design`, `generate_speech`,
   `transcribe`, `transcribe_bundle`, `record_and_transcribe`,
-  `describe_image`, `gallery_analyze`, `video_caption`, `video_meme`,
-  `image_apply_style`; research: `web_search`, `web_extract`, `web_browse`,
+  `describe_image`, `gallery_analyze`, `extract_object`,
+  `transform_image`, `upscale_image`, `execute_workflow`,
+  `image_remove_background`, `image_apply_style`, `image_to_video`,
+  `video_remix`, `video_from_images`, `video_caption`, `video_meme`; research: `web_search`, `web_extract`, `web_browse`,
   `web_find_similar`; scenarios: `scenario_brainstorm`,
   `scenario_synthesize`, `scenario_assess`, `scenario_research`;
   training: `training_validate_config`, `training_evaluate`).
@@ -295,8 +312,8 @@ plus a per-tool Rust contract test file per server under
   triggers Phase 2.5)
 - for each tool, invokes the contract test via `cargo test --package
   <server> qa_contract::`
-- emits one `reg.qa.run` span per tool (see Gap Report — this namespace
-  must be registered first)
+- emits one `reg.qa.run` span per tool (namespace is registered — see
+  Gap Report §4 Gap A, now closed)
 - writes the row to `coverage-matrix.md`
 - has an explicit `--max-iterations` (default 1 pass per tool) and
   `--timeout` (default 30s per tool call, 10m per server)
@@ -333,15 +350,15 @@ evidence:
 
 ### Deliverable 4 — Gap report
 
-#### Gap A — No `reg.qa.run` namespace for QA routine passes
+#### Gap A — No `reg.qa.run` namespace for QA routine passes (CLOSED)
 
-`CANONICAL_NAMESPACES` has `reg.qa.mutant_survived`,
-`reg.qa.repair_attempted`, `reg.qa.repair_exhausted`,
-`reg.qa.repair_verified`, `reg.qa.bolero_failure` — all repair/mutation.
-There is no namespace for "a QA routine ran a tool and recorded pass/fail".
+`CANONICAL_NAMESPACES` now registers `reg.qa.run`, `reg.qa.run.pass`,
+`reg.qa.run.fail`, `reg.qa.run.skipped` (in
+`kask/crates/hkask-types/src/event.rs`). The runnable routine can emit
+these per (tool, category) cell. This gap is closed; the original
+proposal below is retained for the audit trail.
 
-**Proposed addition** (deferred to the user — this is a canonical-registry
-change, not something an agent should land unilaterally):
+**Original proposal (now implemented):**
 
 ```text
 // in kask/crates/hkask-types/src/event.rs CANONICAL_NAMESPACES
@@ -351,18 +368,12 @@ change, not something an agent should land unilaterally):
 "reg.qa.run.skipped",    // the tool call was skipped with a reason
 ```
 
-Plus a corresponding `QaRunSpan` variant in
-`kask/crates/hkask-regulation/src/qa_span.rs`. Until this is registered,
-the routine emits `reg.tool` spans (which already exist) and writes
-pass/fail to the coverage matrix file — it does not fabricate a
-`reg.qa.run` span.
-
 #### Gap B — No `reg.guard.*` emission on OCAP denial
 
 No MCP server emits `reg.guard.*` when a tool is called without the
 required capability. The Phase 2.3 contract is therefore weakened to
-"structured error, no panic" until OCAP is wired. **Proposed RR entry**
-(marked `proposed`, deferred to the user):
+"structured error, no panic" until OCAP is wired. **Filed as RR-0022**
+(`kask/security/regressions/RR-0022.yaml`, status: `proposed`):
 
 ```yaml
 id: RR-0022
@@ -382,6 +393,9 @@ ci_gate: scripts/check-kali-regressions.sh
 status: proposed
 ```
 
+The RR entry is filed; the QA routine references it rather than
+re-proposing it.
+
 #### Gap C — condenser and curator have zero `#[cfg(test)]` modules
 
 `hkask-mcp-condenser` and `hkask-mcp-curator` have no inline test modules
@@ -390,6 +404,11 @@ greps for `Parameters(` in `src/` (where every tool signature lives),
 which is a false positive. **No new RR entry** — this is a coverage gap,
 not a security regression — but `bug-hunt`'s missing-tests sub-phase will
 flag it and `tdd` should drive the red-green to close it.
+
+**Update (2026-07-29):** both servers now have `tests/qa_contract.rs`
+files covering all their tools (condenser 8, curator 11). The inline
+`#[cfg(test)]` gap in `src/` remains, but the per-tool contract is covered
+by the integration test files.
 
 #### Gap D — No existing skill covers "MCP stdio transport-level fuzzing"
 

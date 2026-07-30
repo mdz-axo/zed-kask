@@ -1,7 +1,7 @@
 ---
 title: "Rust LoRA Training Research"
 audience: [ml-engineers, developers]
-last_updated: 2026-07-20
+last_updated: 2026-07-29
 version: "0.31.0"
 status: "Active"
 domain: "Training"
@@ -10,6 +10,8 @@ mds_categories: [domain]
 
 # Rust-Native LoRA Training on RunPod — Research Report
 
+> **⚠ DEPRECATED (2026-07-29 audit):** This report presents OxiCUDA as a verified, production-ready pure-Rust CUDA replacement with 38,622 tests. A subsequent investigation (see `gpu-provider-research-2026-07-23.md` §"OxiCUDA — DEPRECATED") concluded **OxiCUDA is not a real option** — the repo is unverified and the claims are unconfirmed. Rust-native GPU training is not a viable path. The production training path is Python harness rendering (Axolotl/TRL/Ludwig) on GPU containers. This report is retained as historical research only; do not act on its recommendations.
+>
 > **Question**: Can we use a pure Rust Docker container on RunPod to train LoRA
 > adapters, eliminating the Python/axolotl dependency entirely?
 >

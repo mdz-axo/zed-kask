@@ -11,7 +11,7 @@
 | Document | Description |
 |----------|-------------|
 | [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D10 integration seams, composition root, crate inventory, deletion history. |
-| [`salience-specification.md`](architecture/salience-specification.md) | Passage salience algorithm for `hkask-condenser`. |
+| [`salience-specification.md`](architecture/salience-specification.md) | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`). |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — 4 sovereignty principles (P1–P4). |
 | [`core/scenarios-companies-bridge.md`](architecture/core/scenarios-companies-bridge.md) | Bridge tool between scenarios and companies MCP servers. |

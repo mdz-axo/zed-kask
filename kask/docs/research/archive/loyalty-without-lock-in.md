@@ -1,7 +1,7 @@
 ---
 title: "Loyalty Without Lock-In — The hKask Strategy for a Sovereign In-Process Agent Platform"
 audience: [architects, developers, agents, curator]
-last_updated: 2026-07-24
+last_updated: 2026-07-29
 version: "0.31.0"
 status: "Active"
 domain: "Strategy / Architecture"

@@ -1,7 +1,7 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-07-27
+last_updated: 2026-07-29
 version: "0.31.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -105,8 +105,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STD-001
-verified_date: 2026-05-24
-verified_against: docs/standards/DOCUMENTATION_STANDARDS.md; .gitignore; docs/archive/
+verified_date: 2026-07-29
+verified_against: docs/architecture/DOCUMENTATION_STANDARDS.md; .gitignore; docs/research/archive/
 status: VERIFIED
 -->
 
@@ -417,15 +417,13 @@ This documentation standard itself maps to the 5 MDS categories:
 | Directory | Owner | Review Cadence |
 |-----------|-------|---------------|
 | `docs/architecture/` | Architecture steward | Per-release |
-| `docs/specifications/` | Documentation steward | Per-release |
+| `docs/diataxis/` | Documentation steward | Per-release |
+| `docs/explanation/` | Architecture steward | Per-release |
 | `docs/plans/` | Workstream lead | Weekly |
-| `docs/handoffs/` | Agent sessions (transient) | Per-session |
+| `docs/qa/` | CI/CD steward | Per-build |
+| `docs/reference/` | Documentation steward | Per-release |
+| `docs/research/` | Research steward | Per-sweep (archive is historical) |
 | `docs/status/` | CI/CD steward | Per-build |
-| `docs/user-guides/` | User advocate | Per-release |
-| `docs/guides/` | Methodology steward | Per-release |
-| `docs/generated/` | Build system | Per-build |
-| `docs/ci/` | CI/CD steward | Per-build |
-| `docs/archive/` | Documentation steward | Per-sweep |
 
 ### 12.2 Responsibilities
 

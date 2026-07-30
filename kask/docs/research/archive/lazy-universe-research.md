@@ -1,7 +1,7 @@
 ---
 title: "The Lazy Universe as Architectural Grounding — Deep Research"
 audience: [architects, developers, agents, curator]
-last_updated: 2026-07-24
+last_updated: 2026-07-29
 version: "0.31.0"
 status: "Active"
 domain: "Architecture"
@@ -434,7 +434,7 @@ All new terms (`stationary_action`, `variational_principle`, `gradient_descent`,
 
 ### 5.3 Regulation Span Validity
 
-All three new spans (`reg.condenser.compression_ratio`, `reg.evolution.energy_delta`, `reg.architecture.module_depth`) are registered in `CANONICAL_NAMESPACES` and follow the hierarchical naming convention established by existing spans.
+> **Correction (2026-07-29 audit):** The original text claimed all three spans were registered in `CANONICAL_NAMESPACES`. This is **false** — none of `reg.condenser.compression_ratio`, `reg.evolution.energy_delta`, or `reg.architecture.module_depth` appear in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs`). The spans were proposed in this report but never registered. The hierarchical naming convention claim is aspirational, not verified.
 
 ### 5.4 Document Cross-References
 
@@ -539,7 +539,7 @@ Pragmatics provides a concrete measurement framework because it operates on a we
 
 **Question:** The prompt says "functional minimalism with recursion." The lazy universe implies that recursive decomposition should bottom out at the stationary action path — the point where further decomposition increases rather than decreases total system action. How do we detect this point?
 
-**Status: OPEN — requires DeletionTest implementation experience.**
+**Status: OPEN — requires `DeletionTest` implementation (proposed, never merged; see §4.3).**
 
 **Candidate answer:** When `DeletionTest::deletion_energy()` returns positive for all remaining modules, the system has reached its stationary action configuration. Further decomposition would scatter complexity (increase energy) rather than reduce it.
 
@@ -579,25 +579,29 @@ Pragmatics provides a concrete measurement framework because it operates on a we
 
 ## Appendix A: File Manifest
 
-| File | Change | Task |
-|------|--------|------|
-| `crates/hkask-types/src/event.rs` | +3 Regulation span namespaces | 4.2 |
-| `crates/hkask-regulation/src/energy.rs` | +EnergyDelta newtype (~70 lines) | 4.1 |
-| `crates/hkask-regulation/src/lib.rs` | +EnergyDelta export | 4.1 |
-| `crates/hkask-services-core/src/deletion_test.rs` | New file (~207 lines) [Note: path updated for services decomposition] | 4.3 |
-| `crates/hkask-services-core/src/lib.rs` | +deletion_test module + DeletionTest export [Note: path updated for services decomposition] | 4.3 |
-| `mcp-servers/hkask-mcp-condenser/src/types.rs` | +action_threshold() + 2 tests | 4.4 |
-| `crates/hkask-templates/src/vocabulary.rs` | +8 new terms | 1.2 |
-| `docs/architecture/lazy-universe-research.md` | This document | 1–6 |
+> **Correction (2026-07-29 audit):** The original manifest below listed files as if they were changed. In reality, only the condenser `action_threshold()` and its 2 tests were merged. The `EnergyDelta`, `DeletionTest`, and 3 regulation span entries were **never written** — `hkask-regulation/src/energy.rs` has no `EnergyDelta`, `hkask-services-core/src/` has no `deletion_test.rs`, and `hkask-types/src/event.rs` has none of the 3 spans. The manifest is retained as a record of the *proposed* plan.
+
+| File | Proposed Change | Task | Actual Status (2026-07-29) |
+|------|-----------------|------|-----------------------------|
+| `crates/hkask-types/src/event.rs` | +3 Regulation span namespaces | 4.2 | ❌ NOT merged — spans absent from `CANONICAL_NAMESPACES` |
+| `crates/hkask-regulation/src/energy.rs` | +EnergyDelta newtype (~70 lines) | 4.1 | ❌ NOT merged — no `EnergyDelta` in `energy.rs` |
+| `crates/hkask-regulation/src/lib.rs` | +EnergyDelta export | 4.1 | ❌ NOT merged |
+| `crates/hkask-services-core/src/deletion_test.rs` | New file (~207 lines) | 4.3 | ❌ NOT merged — file does not exist |
+| `crates/hkask-services-core/src/lib.rs` | +deletion_test module + DeletionTest export | 4.3 | ❌ NOT merged |
+| `mcp-servers/hkask-mcp-condenser/src/types.rs` | +action_threshold() + 2 tests | 4.4 | ✅ Merged (path corrected: `kask/crates/hkask-condenser/src/types.rs:248`) |
+| `crates/hkask-templates/src/vocabulary.rs` | +8 new terms | 1.2 | ⚠️ Unverified — not checked in this audit |
+| `docs/architecture/lazy-universe-research.md` | This document | 1–6 | ✅ (now under `docs/research/archive/`) |
 
 ## Appendix B: Test Inventory
 
+> **Correction (2026-07-29 audit):** Only the first 2 tests exist. The remaining 5 reference unimplemented `DeletionTest`/`EnergyDelta` and were never written.
+
 | Test | Crate | REQ Tag | Status |
 |------|-------|---------|--------|
-| `action_threshold_ordering` | condenser | Regulation-CONDENSER-LAZY-UNIVERSE | ✅ |
-| `light_profile_is_most_permissive` | condenser | Regulation-CONDENSER-LAZY-UNIVERSE | ✅ |
-| `deep_module_has_positive_deletion_energy` | services-core | svc-deletion-test-001 | ✅ |
-| `shallow_module_has_negative_deletion_energy` | services-core | svc-deletion-test-002 | ✅ |
-| `energy_delta_zero_is_descending` | services-core | svc-deletion-test-003 | ✅ |
-| `energy_delta_display_shows_direction` | services-core | svc-deletion-test-004 | ✅ |
-| `alert_threshold_is_five_consecutive_ascending` | services | svc-deletion-test-005 | ✅ |
+| `action_threshold_ordering` | condenser | Regulation-CONDENSER-LAZY-UNIVERSE | ✅ Verified 2026-07-29 (`hkask-condenser/src/types.rs`) |
+| `light_profile_is_most_permissive` | condenser | Regulation-CONDENSER-LAZY-UNIVERSE | ✅ Verified 2026-07-29 |
+| `deep_module_has_positive_deletion_energy` | services-core | svc-deletion-test-001 | ❌ NOT written — `DeletionTest` unimplemented |
+| `shallow_module_has_negative_deletion_energy` | services-core | svc-deletion-test-002 | ❌ NOT written |
+| `energy_delta_zero_is_descending` | services-core | svc-deletion-test-003 | ❌ NOT written — `EnergyDelta` unimplemented |
+| `energy_delta_display_shows_direction` | services-core | svc-deletion-test-004 | ❌ NOT written |
+| `alert_threshold_is_five_consecutive_ascending` | services | svc-deletion-test-005 | ❌ NOT written |

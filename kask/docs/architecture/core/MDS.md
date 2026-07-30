@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-07-27
+last_updated: 2026-07-29
 version: "0.31.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -541,7 +541,9 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ## KaskCore Composition Root (replaces the deleted AgentService specification)
 
-> **Supersedes:** the pre-fork `AgentService Specification` (incorporated from `docs/specifications/specs/MDS-agent-service.md`). The standalone `AgentService` orchestration layer, the `hkask-cli` `ReplState` wrapper, and the `hkask-api` `ApiState` wrapper are **deleted**. In zed-kask, the in-process composition root is `KaskCore`, exposed via `kask_bridge` (D8).
+> **Correction (2026-07-29 audit, grill-me challenged):** `KaskCore` was **never implemented** as a single struct. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` adapters — there is no `KaskCore` singleton. This section is retained as the *design specification* for the composition root's intent (grouped accessors, dependency direction, OCAP boundaries), but the `KaskCore::build(config)` API and the grouped accessor methods (`storage()`, `ledger()`, `templates()`, etc.) do not exist in code. The actual wiring is documented in `zed-host-architecture-plan.md` §13.3 (Composition root). Readers should treat the tables below as the *intended* surface, not a verifiable code reference.
+>
+> **Supersedes:** the pre-fork `AgentService Specification` (incorporated from `docs/specifications/specs/MDS-agent-service.md`). The standalone `AgentService` orchestration layer, the `hkask-cli` `ReplState` wrapper, and the `hkask-api` `ApiState` wrapper are **deleted**. In zed-kask, the in-process composition root wires components directly via `kask_bridge` (D8) — `KaskCore` was the proposed grouping but was not built.
 
 **Purpose:** `KaskCore` is the in-process handle that zed-kask surfaces (kask panel, `kask` admin CLI) and MCP servers use to reach hKask primitives. It owns shared infrastructure (storage, regulation, memory, templates, wallet primitives) and exposes them through a small interface. There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
 
@@ -569,7 +571,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
-| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `UserPod` |
+| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign` (moved from deleted `hkask-pods`), `HMemEntry` (moved from deleted `hkask-git-cas`), `ExpectProposal` (moved from deleted `hkask-test-harness`) |
 | `hkask-storage` | Domain, Lifecycle | `hMem`, `SpecStore`, `WalletStore`, per-user SQLCipher private sphere |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CyberneticsLoop`, variety/algedonic, `WalletManager` (implements `WalletBudgetPort`; `gas_per_rjoule` tracking) |
@@ -606,11 +608,11 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ```mermaid
 graph TD
-    ZEDSURF["zed-kask surfaces<br/>(kask panel, kask admin CLI, agent panel)"]
-    subgraph BRIDGE["kask_bridge (D8)"]
-        KC[KaskCore]
+    ZEDSURF["zed-kask surfaces<br/>kask panel, agent panel"]
+    subgraph BRIDGE["kask_bridge D8"]
+        ADAPT["Port adapters"]
     end
-    subgraph MCP["10 MCP servers (in-process)"]
+    subgraph MCP["10 MCP servers"]
         MSRV[servers]
     end
     subgraph HKASK["hKask domain crates"]
@@ -621,35 +623,35 @@ graph TD
         TEMPLATES[hkask-templates]
         GUARD[hkask-guard]
         CAP[hkask-capability]
-        KS[hkask-keystore trimmed]
+        KS[hkask-keystore]
         LEDGER[hkask-ledger]
         INF[hkask-inference]
-        SVCS[services-* scaffolding]
+        SVCCORE[hkask-services-core]
     end
-    subgraph ZED["zed-kask (host)"]
+    subgraph ZED["zed-kask host"]
         CRED[CredentialsProvider D9b]
-        LM[language_model / inference routing]
+        LM[language_model routing]
         AGENT[agent / agent_ui]
     end
 
-    ZEDSURF --> KC
-    MSRV --> KC
-    KC --> HKASK
-    KS -.->|"storage backend"| CRED
-    INF -.->|"API keys"| CRED
+    ZEDSURF --> ADAPT
+    MSRV --> ADAPT
+    ADAPT --> HKASK
+    KS -.->|keychain| CRED
+    INF -.->|API keys| CRED
     HKASK --> TYPES
     HKASK --> STORE
-    AGENT -.->|"chat / agent panel"| ZEDSURF
-    LM -.->|"inference routing"| ZEDSURF
+    AGENT -.->|chat| ZEDSURF
+    LM -.->|inference| ZEDSURF
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-07-24
-verified_against: kask/docs/architecture/zed-host-architecture-plan.md, kask/mcp-servers/hkask-mcp-curator/src/governance.rs
+verified_date: 2026-07-29
+verified_against: kask/docs/architecture/zed-host-architecture-plan.md §13.3, kask/crates/ directory listing
 status: VERIFIED
 -->
 
-Domain crates **never** depend on service-layer subcrates. MCP servers **never** link zed-kask crates directly — they reach `KaskCore` via `kask_bridge` (D8), preserving the P1 out-of-process isolation boundary at the MCP seam. zed-kask surfaces reach `KaskCore` through the guard layer (D4) and in-process transport (D1–D3).
+Domain crates **never** depend on zed-kask crates. MCP servers **never** link zed-kask crates directly — they reach the in-process components via `kask_bridge` (D8), preserving the P1 isolation boundary at the MCP seam. zed-kask surfaces reach hKask through the guard layer (D4) and in-process transport (D1–D3). Note: `KaskCore` was never implemented as a singleton; the composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3).
 
 ### OCAP Boundaries
 

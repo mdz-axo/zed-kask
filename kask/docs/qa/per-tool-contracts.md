@@ -1,3 +1,13 @@
+---
+title: "Per-Tool QA Contracts"
+audience: [QA engineers, agents]
+last_updated: 2026-07-29
+version: "0.2.0"
+status: "Active"
+domain: "trust"
+mds_categories: [trust, composition, lifecycle]
+---
+
 # Per-Tool QA Contracts
 
 This file is the authoritative per-tool contract for the hKask MCP server QA

@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-07-27
+last_updated: 2026-07-29
 version: "0.1.0"
 status: "Active"
 domain: "Cross-cutting"

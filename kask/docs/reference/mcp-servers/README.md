@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -37,16 +37,16 @@ struct.
 
 | Server | Crate | Domain | Tools | Math Engine |
 |--------|-------|--------|-------|-------------|
-| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 10 | `hkask-mcp-codegraph` |
+| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 9 | `hkask-mcp-codegraph` |
 | [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting | 41 | `hkask-forecast` |
-| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 7 | — |
-| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 24 | — |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | — | — |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 14 | — |
-| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | — | — |
+| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 8 | — |
+| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | — |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | 11 | — |
+| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 18 | — |
+| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 38 | — |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `hkask-mcp-research` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 18 | `hkask-forecast` |
-| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | — | — |
+| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | 8 | — |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
 > agent, D2). All 10 build clean.

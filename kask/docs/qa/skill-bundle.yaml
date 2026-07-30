@@ -1,6 +1,9 @@
 # Skill-bundle manifest for the hKask MCP server QA pass.
 # Consumed by the skill-bundler skill. See
 # kask/docs/qa/mcp-server-qa-strategy.md Phase 4 Deliverable 3.
+#
+# last_updated: 2026-07-29
+# version: 0.2.0
 
 bundle: mcp-server-qa
 description: >
@@ -87,8 +90,8 @@ evidence:
     - reg.skill.task-breakdown.*       # by task-breakdown
     - reg.skill.tdd.*                  # by tdd
   spans_NOT_emitted:
-    - reg.qa.run                       # Gap A — not registered in CANONICAL_NAMESPACES
-    - reg.guard.violation              # Gap B — no tool emits it on denial
+    - reg.bughunt.*                    # claimed by bug-hunt skill but NOT registered in CANONICAL_NAMESPACES (pre-existing skill gap)
+    - reg.guard.violation              # Gap B — no tool emits it on denial (RR-0022 filed, status: proposed)
   reports:
     - kask/docs/qa/coverage-matrix.md
     - kask/docs/qa/coverage.md
