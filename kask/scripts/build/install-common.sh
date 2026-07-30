@@ -235,11 +235,6 @@ print(json.dumps(settings, indent=2))
         # Merge into existing settings.json. Preserve everything except
         # overwrite kask server entries under context_servers.
         if command -v python3 >/dev/null 2>&1; then
-            # Back up the user's settings.json before rewriting. The merge
-            # writes plain JSON, so any // or /* */ comments in the original
-            # are lost — the backup preserves them.
-            cp -p "$settings_file" "$settings_file.bak"
-            log "Backed up $settings_file to $settings_file.bak (comments will be stripped on merge)"
             python3 -c "
 import json, sys
 sys.path.insert(0, sys.argv[3])

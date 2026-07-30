@@ -495,10 +495,19 @@ uninstall_hkask() {
     # Remove PATH entries from shell configs. Match both the current
     # `# zed-kask` marker and the legacy `# hKask` marker so users who
     # installed under the old name get cleaned up too.
+    #
+    # Escape `/` in $BIN_DIR before interpolating into the sed regex (sed uses
+    # `/` as its delimiter). Without this, a BIN_DIR like
+    # /home/user/.local/bin produces
+    #   sed: -e expression #1, char N: extra characters after command
+    # which aborts the uninstaller before remove_mcp_server_settings runs,
+    # leaving stale context_servers entries in settings.json.
+    local bin_dir_re
+    bin_dir_re=$(printf '%s' "$BIN_DIR" | sed 's|/|\\/|g')
     for cfg in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.profile"; do
         if [ -f "$cfg" ] && grep -qE '# (zed-kask|hKask)' "$cfg" 2>/dev/null; then
             sed -i -E '/# (zed-kask|hKask)/d' "$cfg"
-            sed -i "/export PATH.*$BIN_DIR/d" "$cfg"
+            sed -i "/export PATH.*${bin_dir_re}/d" "$cfg"
             log "Cleaned PATH entry from $cfg"
         fi
     done
