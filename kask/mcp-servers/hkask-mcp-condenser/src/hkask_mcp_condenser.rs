@@ -384,6 +384,12 @@ impl CondenserServer {
                 // Bypass fusion: thread summarization is a single-model call, not a
                 // multi-model deliberation. Fusion orchestration adds latency and
                 // cost without benefit for this straightforward extraction task.
+                // When fusion is enabled, this flag tells FusionLanguageModel to
+                // dispatch to a single panel model instead of orchestrating. The
+                // model_override is then honored by the underlying
+                // LanguageModelInferencePort (which resolves the named model from
+                // LanguageModelRegistry). When fusion is disabled, this flag is
+                // irrelevant — the port honors model_override directly.
                 bypass_fusion: true,
                 fusion_config: None,
                 system_prompt: None,

@@ -51,13 +51,14 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 |----------|------|--------|
 | `essentialist-flow.j2` | `KnowAct` | Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (Prohibition → required, Guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. |
 
-,## Fusion Mode
+## Fusion Mode
 
-This skill supports **fusion mode** via the `fusion:` block in its flow manifest.
-When enabled, all analysis steps route through a multi-model panel — either with
-LLM judge synthesis or the **algo / no-judge** path (`judge: algo`) for deterministic
-JSON merge without an LLM judge call. The essentialist uses **critique mode** (draft →
-panel critiques → revise) to match the 3-gate challenge loop.
+This skill inherits the operator's global `kask.fusion` settings (the manifest
+omits the `fusion` block). Recommended configuration: **critique mode** (draft →
+panel critiques → revise) to match the 3-gate challenge loop, with skills:
+`[essentialist, deep-module]`. Model names are not hardcoded in the manifest
+because models evolve quickly; the operator configures the panel via
+`kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
 
 ## Constraints
 

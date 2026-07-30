@@ -27,14 +27,10 @@ rjoule:
   alert_threshold: 0.8
   hard_limit: true
 
-fusion:
-  judge: algo
-  panel:
-    - KC/qwen/qwen3-235b-a22b-2507
-    - DI/google/gemma-4-31B-it-turbo
-  mode: synthesis
-  skills: []
-  max_rounds: 5
+# Fusion: omitted — defers to operator's global kask.fusion settings.
+# Recommended: judge "algo", algo_method "merge" (deterministic JSON union,
+# no LLM judge call). Model names are not hardcoded here because models
+# evolve quickly; the operator configures the panel via kask.fusion.panel_models.
 
 steps:
   - ordinal: 1

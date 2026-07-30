@@ -96,16 +96,9 @@ inputs:
       when not converged) to direct the next iteration. When absent, the
       hunt runs as a first pass with no prior context.
 
-fusion:
-  judge: deepseek-v4-pro
-  panel:
-    - Kimi2.7
-    - Qwen3.7 Max
-    - GLM5.2
-  mode: best-of-n
-  skills:
-    - pragmatic-cybernetics
-  max_rounds: 3
+# Fusion: omitted — defers to operator's global kask.fusion settings.
+# Recommended: mode "best-of-n" with skills: [pragmatic-cybernetics].
+# Model names are not hardcoded here because models evolve quickly.
 
 steps:
   - ordinal: 1

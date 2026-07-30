@@ -286,6 +286,14 @@ the failure branch naming the hook, the failure reason, and the remediation
 `a2a_secret` resolution path silently producing an empty secret; the same
 pattern exists for `TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
 
+`OnceLock`-based hooks (`set_manifest_executor`, `set_context_injector`,
+`set_curator_context_injector`, `set_tool_router`, `set_metacognition_provider`)
+must `log::warn!` on the `Err` branch of `OnceLock::set` — a second call
+(e.g. deferred task re-firing) is silently dropped without the warn.
+`Mutex`-based hooks (`set_memory_port`, `set_thread_condenser`,
+`set_tool_invoker`) are re-settable and don't need the warn (the second call
+replaces the first).
+
 When a deferred task wires multiple `set_*` hooks inside a single `if`
 block, the `else` branch warn must name ALL hooks left unwired, not just
 one. An operator reading the log sees "manifest executor not wired" and
@@ -334,13 +342,20 @@ updated env.
 
 ## Model-dependent kask wiring must run in the deferred task
 
-The `set_manifest_executor`, `set_tool_invoker`, and `set_thread_condenser`
-hooks are `OnceLock`-based and depend on `LanguageModelRegistry::default_model()`
-being populated. At startup (before user auth), `default_model()` returns
-`None`. Wiring these hooks synchronously at startup leaves them unwired for the
-entire session when no model is configured at startup — the "Process-global
-hooks set at runtime need a startup-failure signal" trap. They must be wired
-from the deferred task that runs after the Zed user resolves.
+The `set_manifest_executor` hook is `OnceLock`-based and depends on
+`LanguageModelRegistry::default_model()` being populated. At startup (before
+user auth), `default_model()` returns `None`. Wiring this hook synchronously
+at startup leaves it unwired for the entire session when no model is
+configured at startup — the "Process-global hooks set at runtime need a
+startup-failure signal" trap. It must be wired from the deferred task that
+runs after the Zed user resolves.
+
+`set_tool_invoker` and `set_thread_condenser` are `Mutex`-based (re-settable)
+and are wired twice: once unconditionally (pre-login, so the panel and
+condenser work before the model resolves) and once in the deferred task
+(post-login, to upgrade). The `Mutex` pattern allows the deferred call to
+replace the early one. `set_memory_port` uses the same `Mutex` pattern for
+the same reason.
 
 Note: `set_curator_session_factory`, `set_regulation_status`, and
 `set_scoped_inference` were removed when the kask panel was refactored to

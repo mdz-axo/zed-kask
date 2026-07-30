@@ -729,4 +729,112 @@ mod embedding_tests {
     fn strip_prefix_unknown_prefix_returns_unchanged() {
         assert_eq!(strip_provider_prefix("XX/some-model"), "XX/some-model");
     }
+
+    // ── model_override propagation tests ──
+    //
+    // These tests verify that generate_with_model and generate_with_messages
+    // propagate the model_override parameter into the InferenceRequest that's
+    // sent through the channel. The full GPUI-side resolution (looking up the
+    // model from LanguageModelRegistry) is tested via integration tests that
+    // require a TestAppContext; here we test the contract: the override
+    // reaches the channel, not silently dropped.
+    //
+    // Regression for the audit cycle 7 finding: LanguageModelInferencePort
+    // silently dropped model_override (passed None to generate_with_messages).
+    // The fix wires model_override through to InferenceRequest; these tests
+    // pin that wiring so a future refactor can't silently revert it.
+
+    #[tokio::test]
+    async fn generate_with_model_propagates_override_to_channel() {
+        // Construct a port with a channel we control. We don't spawn the
+        // receiver task — instead we recv from the channel ourselves to
+        // inspect the InferenceRequest.
+        let (tx, mut rx) =
+            tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let port = LanguageModelInferencePort { tx };
+
+        // Call generate_with_model with a model override. The receiver task
+        // isn't running, so the channel send will succeed (unbounded) and
+        // the reply will never come — but we only need to inspect the
+        // InferenceRequest, not the result.
+        let future = port.generate_with_model(
+            "test prompt",
+            &LLMParameters::default(),
+            Some("openrouter/z-ai/glm-5.2"),
+            None,
+        );
+        // Drive the future far enough to send the request. Since the channel
+        // is unbounded, the send succeeds immediately. The future then parks
+        // on rx_reply.await — we drop the future before that.
+        tokio::select! {
+            biased;
+            req = rx.recv() => {
+                let req = req.expect("should have received an InferenceRequest");
+                assert_eq!(
+                    req.model_override.as_deref(),
+                    Some("openrouter/z-ai/glm-5.2"),
+                    "generate_with_model must propagate model_override to the channel"
+                );
+            }
+            _ = future => {
+                panic!("future should not complete — receiver task isn't running");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_with_model_propagates_none_override_to_channel() {
+        let (tx, mut rx) =
+            tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let port = LanguageModelInferencePort { tx };
+
+        let future = port.generate_with_model(
+            "test prompt",
+            &LLMParameters::default(),
+            None,
+            None,
+        );
+        tokio::select! {
+            biased;
+            req = rx.recv() => {
+                let req = req.expect("should have received an InferenceRequest");
+                assert_eq!(
+                    req.model_override, None,
+                    "generate_with_model with None override must send None to the channel"
+                );
+            }
+            _ = future => {
+                panic!("future should not complete — receiver task isn't running");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_with_messages_propagates_override_to_channel() {
+        let (tx, mut rx) =
+            tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let port = LanguageModelInferencePort { tx };
+
+        let messages = vec![ChatMessage::user("hello".to_string())];
+        let future = port.generate_with_messages(
+            &messages,
+            &LLMParameters::default(),
+            Some("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+            None,
+        );
+        tokio::select! {
+            biased;
+            req = rx.recv() => {
+                let req = req.expect("should have received an InferenceRequest");
+                assert_eq!(
+                    req.model_override.as_deref(),
+                    Some("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+                    "generate_with_messages must propagate model_override to the channel"
+                );
+            }
+            _ = future => {
+                panic!("future should not complete — receiver task isn't running");
+            }
+        }
+    }
 }

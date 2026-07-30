@@ -373,8 +373,9 @@ impl InferencePort for MultiModelInferencePort {
         };
 
         match self.ports.get(model_name) {
-            // LanguageModelInferencePort ignores model_override (each port is
-            // bound to a single model at construction), so we pass None.
+            // We already resolved the correct port by name from the ports
+            // map, so pass None — the port's internal model_override resolution
+            // is redundant here (the port is already bound to the right model).
             Some(port) => port.generate_with_model(prompt, parameters, None, tools),
             None => {
                 let model_name = model_name.to_string();
@@ -415,7 +416,7 @@ impl InferencePort for MultiModelInferencePort {
         };
 
         match self.ports.get(model_name) {
-            // LanguageModelInferencePort ignores model_override.
+            // Already resolved by name — pass None to avoid redundant resolution.
             Some(port) => port.generate_with_messages(messages, parameters, None, tools),
             None => {
                 let model_name = model_name.to_string();

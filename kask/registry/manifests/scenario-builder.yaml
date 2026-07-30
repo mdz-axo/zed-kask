@@ -50,17 +50,9 @@ inputs:
     required: false
     description: Prior iteration's convergence metric for stall detection
 
-fusion:
-  judge: deepseek-v4-pro
-  panel:
-    - Kimi2.7
-    - Qwen3.7 Max
-    - GLM5.2
-    - Minimax3
-  mode: synthesis
-  skills:
-    - essentialist
-  max_rounds: 3
+# Fusion: omitted — defers to operator's global kask.fusion settings.
+# Recommended: mode "synthesis" with skills: [essentialist].
+# Model names are not hardcoded here because models evolve quickly.
 
 steps:
   - ordinal: 1
