@@ -17,7 +17,6 @@ templates:
     name: "Simplify agent text for spoken output (TTbS)"
     path: transform.j2
     type: WordAct
-    lexicon_terms: [simplify, compress, speak, transform, voice, spoken]
     description: >
       Apply caveman-style simplification to agent text before TTS rendering.
       Drops articles, filler, hedging; abbreviates references; removes

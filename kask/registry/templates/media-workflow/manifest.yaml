@@ -18,8 +18,6 @@ templates:
     name: "Compose a Fal.ai workflow DAG from a natural-language media intent,…"
     path: compose-and-execute.j2
     type: KnowAct
-    lexicon_terms:
-      [compose, generate, pipeline, chain, multi_step, workflow, batch]
     description: >
       Compose a Fal.ai workflow DAG from a natural-language media intent,
       then execute it as a single atomic operation. Use this when the user

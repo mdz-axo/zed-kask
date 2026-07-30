@@ -25,7 +25,6 @@ templates:
     name: "Phase 1 — Classify prompt type, select effort tier, synthesize proxy eval set"
     path: enhance-classify.j2
     type: KnowAct
-    lexicon_terms: [classify, discriminate, orient, specify, sample, synthesize]
     description: >
       Phase 1 — Classify the input prompt against the 7-type taxonomy
       (coding, reasoning, creative, classification, extraction, agent-task,
@@ -42,7 +41,6 @@ templates:
     name: "Phase 2 — Audit prompt health via semantics, cybernetics, essentialist"
     path: enhance-audit.j2
     type: KnowAct
-    lexicon_terms: [audit, evaluate, diagnose, classify, trace, simplify, reduce]
     description: >
       Phase 2 — Audit the input prompt through three lenses. (1) pragmatic-
       semantics: classify every claim, default, and hardcoded reference by
@@ -62,7 +60,6 @@ templates:
     name: "Phase 3 (coding) — Typed rewrite for coding prompts"
     path: enhance-rewrite-coding.j2
     type: KnowAct
-    lexicon_terms: [rewrite, structure, specify, constrain, verify]
     description: >
       Phase 3 typed rewrite for coding prompts (taxonomy: reasoning & planning).
       Focus: contract clarity, I/O specification, error case enumeration,
@@ -77,7 +74,6 @@ templates:
     name: "Phase 3 (reasoning) — Typed rewrite for reasoning prompts"
     path: enhance-rewrite-reasoning.j2
     type: KnowAct
-    lexicon_terms: [rewrite, structure, decompose, verify, challenge]
     description: >
       Phase 3 typed rewrite for reasoning prompts (taxonomy: reasoning &
       planning). Focus: chain-of-thought structure, problem decomposition,
@@ -91,7 +87,6 @@ templates:
     name: "Phase 3 (creative) — Typed rewrite for creative prompts"
     path: enhance-rewrite-creative.j2
     type: KnowAct
-    lexicon_terms: [rewrite, frame, constrain, amplify, orient]
     description: >
       Phase 3 typed rewrite for creative prompts (taxonomy: profile &
       instruction). Focus: persona depth, constraints as creative tension
@@ -104,7 +99,6 @@ templates:
     name: "Phase 3 (classification) — Typed rewrite for classification prompts"
     path: enhance-rewrite-classification.j2
     type: KnowAct
-    lexicon_terms: [rewrite, specify, balance, discriminate, verify]
     description: >
       Phase 3 typed rewrite for classification prompts (taxonomy: profile &
       instruction). Focus: explicit label space, edge-case enumeration,
@@ -118,7 +112,6 @@ templates:
     name: "Phase 3 (extraction) — Typed rewrite for extraction prompts"
     path: enhance-rewrite-extraction.j2
     type: KnowAct
-    lexicon_terms: [rewrite, specify, structure, constrain, verify]
     description: >
       Phase 3 typed rewrite for extraction prompts (taxonomy: knowledge).
       Focus: schema-first output, explicit field definitions, missing-field
@@ -132,7 +125,6 @@ templates:
     name: "Phase 3 (agent-task) — Typed rewrite for agent task prompts"
     path: enhance-rewrite-agent-task.j2
     type: KnowAct
-    lexicon_terms: [rewrite, constrain, specify, bound, verify]
     description: >
       Phase 3 typed rewrite for agent task prompts (taxonomy: reliability).
       Focus: tool-use contracts, failure-mode enumeration, context budget
@@ -146,7 +138,6 @@ templates:
     name: "Phase 3 (meta) — Typed rewrite for meta-prompts"
     path: enhance-rewrite-meta.j2
     type: KnowAct
-    lexicon_terms: [rewrite, structure, verify, bound, calibrate]
     description: >
       Phase 3 typed rewrite for meta-prompts (prompts that generate or refine
       other prompts; taxonomy: reliability). Focus: self-reference safety,
@@ -161,7 +152,6 @@ templates:
     name: "Collector — canonicalize the active rewrite step's output"
     path: enhance-collector.j2
     type: KnowAct
-    lexicon_terms: [coalesce, collect, canonicalize, resolve]
     description: >
       Collector step — coalesce the output of whichever Phase 3 typed
       rewrite step (3-9) actually ran into a single canonical context key.
@@ -174,7 +164,6 @@ templates:
     name: "Phase 4 — Decoupled critic via grill-me self-challenge"
     path: enhance-verify.j2
     type: KnowAct
-    lexicon_terms: [challenge, interrogate, evaluate, classify, detect]
     description: >
       Phase 4 — Decoupled critic. Runs grill-me self-challenge against the
       enhanced prompt across Recall -> Mechanism -> Rationale -> Edge Cases ->
@@ -191,7 +180,6 @@ templates:
     name: "Phase 5 — Evolutionary optimization via gpa-evolution delegate (high only)"
     path: enhance-evolve.j2
     type: KnowAct
-    lexicon_terms: [evolve, mutate, recombine, evaluate, converge]
     description: >
       Phase 5 — Evolutionary optimization. Fires only at high tier AND when
       the prompt is high-stakes enough to justify gas. Delegates to
@@ -208,7 +196,6 @@ templates:
     name: "ACT phase — Format and deliver the enhanced prompt"
     path: enhance-output.j2
     type: KnowAct
-    lexicon_terms: [format, deliver, structure, finalize]
     description: >
       ACT phase — Format the final enhanced prompt per output_format
       contract. inline (default): return the prompt in a fenced code block

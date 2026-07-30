@@ -14,7 +14,6 @@ templates:
     name: "Condense long session transcripts into compact summaries"
     path: condense_session.j2
     type: WordAct
-    lexicon_terms: [compact, compress, distill]
     description: >
       Condense long session transcripts into compact summaries.
       Extract key decisions, action items, and compute compression ratio.
@@ -23,7 +22,6 @@ templates:
     name: "Extract structured content and metadata from documents against an…"
     path: doc_extract.j2
     type: WordAct
-    lexicon_terms: [extract, parse, structure]
     description: >
       Extract structured content and metadata from documents against an
       optional extraction schema with confidence scoring.
@@ -32,7 +30,6 @@ templates:
     name: "Execute a single LLM inference call with configurable temperature,…"
     path: inference_call.j2
     type: WordAct
-    lexicon_terms: [prompt, request, query]
     description: >
       Execute a single LLM inference call with configurable temperature,
       max tokens, and stop sequences. Produces completion text.
@@ -41,7 +38,6 @@ templates:
     name: "Search academic databases for research papers matching a query, with…"
     path: scholar_extract.j2
     type: WordAct
-    lexicon_terms: [search, extract, query]
     description: >
       Search academic databases for research papers matching a query,
       with configurable year range, database selection, and abstract inclusion.
@@ -50,7 +46,6 @@ templates:
     name: "Search the web and extract content from results with configurable…"
     path: web_extract.j2
     type: WordAct
-    lexicon_terms: [search, extract, query]
     description: >
       Search the web and extract content from results with configurable
       source filtering, freshness constraints, and snippet inclusion.

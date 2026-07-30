@@ -20,7 +20,6 @@ templates:
     name: "Classify the prompt against the flow domain catalog"
     path: sankey-classify.j2
     type: KnowAct
-    lexicon_terms: [classify, select, orient, map, identify]
     description: >
       Classify the prompt against the 10-domain flow catalog (process,
       data-pipeline, resource-allocation, user-journey, energy-material,
@@ -36,7 +35,6 @@ templates:
     name: "GATHER — interrogation loop or research delegation"
     path: sankey-gather.j2
     type: KnowAct
-    lexicon_terms: [gather, interrogate, delegate, extract, probe]
     description: >
       GATHER phase — compute the spec gap (nodes/edges/weights/conservation)
       and either run the direct interrogation loop (Path A, no source) or
@@ -53,7 +51,6 @@ templates:
     name: "Render gathered nodes and edges into sankey-beta CSV"
     path: sankey-draft.j2
     type: KnowAct
-    lexicon_terms: [generate, compose, render, structure, format]
     description: >
       Render gathered nodes and weighted edges into Mermaid sankey-beta CSV
       (source,target,value per row). Apply conventions: title case labels ≤ 30
@@ -71,7 +68,6 @@ templates:
     name: "Score a drafted Sankey against four weighted quality criteria"
     path: sankey-evaluate.j2
     type: KnowAct
-    lexicon_terms: [evaluate, score, critique, verify, calibrate]
     description: >
       Score a drafted Sankey against four weighted criteria: node completeness
       (0.30), edge fidelity (0.25), data integrity (0.35), readability (0.10).
@@ -87,7 +83,6 @@ templates:
     name: "Finalize the Sankey into a markdown file with provenance"
     path: sankey-write.j2
     type: KnowAct
-    lexicon_terms: [write, compose, structure, format, finalize]
     description: >
       Finalize the Sankey into a markdown file. Wraps the sankey-beta source in
       a code block, adds a description paragraph stating domain, weight unit,

@@ -18,7 +18,6 @@ templates:
     name: "Classify the target for diagram generation"
     path: diataxis-diagram-classify.j2
     type: KnowAct
-    lexicon_terms: [classify, evaluate, orient, map, select]
     description: >
       Classify the target for diagram generation. Determine which Mermaid diagram
       type is appropriate (ERD, flowchart, state, sequence, or class), which
@@ -31,7 +30,6 @@ templates:
     name: "EXTRACT phase — agent-coordinated source reading"
     path: diataxis-diagram-extract.j2
     type: KnowAct
-    lexicon_terms: [extract, probe, read, map, structure]
     description: >
       EXTRACT phase — agent-coordinated source reading. Provides extraction
       guidance for the target diagram type: what to look for in SQL schemas
@@ -45,7 +43,6 @@ templates:
     name: "Render extracted entities into valid Mermaid syntax"
     path: diataxis-diagram-generate.j2
     type: KnowAct
-    lexicon_terms: [generate, compose, render, structure, format]
     description: >
       Render extracted entities into valid Mermaid syntax. Apply type-specific
       conventions: Crow's Foot cardinality for ERD, node shapes for flowcharts,
@@ -59,7 +56,6 @@ templates:
     name: "Score a generated diagram against Diataxis quality criteria"
     path: diataxis-diagram-evaluate.j2
     type: KnowAct
-    lexicon_terms: [evaluate, score, critique, verify, calibrate]
     description: >
       Score a generated diagram against Diataxis quality criteria. Six weighted
       dimensions: entity completeness (0.30), relationship accuracy (0.25), label
@@ -73,7 +69,6 @@ templates:
     name: "Finalize the diagram into a markdown file"
     path: diataxis-diagram-write.j2
     type: KnowAct
-    lexicon_terms: [write, compose, structure, format, finalize]
     description: >
       Finalize the diagram into a markdown file. Wraps the Mermaid source in a
       code block, adds a plain-English description paragraph keyed to the target

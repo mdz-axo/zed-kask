@@ -15,7 +15,6 @@ templates:
     name: "Recalibrate an agent's behavioral baseline after drift is detected"
     path: calibrate.j2
     type: KnowAct
-    lexicon_terms: [calibrate, adapt, regulate]
     description: >
       Recalibrate an agent's behavioral baseline after drift is detected.
       Produces adjustment recommendations and a new reference baseline.
@@ -24,7 +23,6 @@ templates:
     name: "Detect behavioral drift by comparing current agent behavior against…"
     path: detect.j2
     type: KnowAct
-    lexicon_terms: [detect, monitor, assess]
     description: >
       Detect behavioral drift by comparing current agent behavior against
       its baseline profile across multiple cognitive dimensions.
@@ -33,7 +31,6 @@ templates:
     name: "Reflect on completed cycle outcomes against the strategy used"
     path: reflect.j2
     type: KnowAct
-    lexicon_terms: [reflect, evaluate, adapt, revise]
     description: >
       Reflect on completed cycle outcomes against the strategy used.
       Produces insights and recommended adaptations for future cycles.

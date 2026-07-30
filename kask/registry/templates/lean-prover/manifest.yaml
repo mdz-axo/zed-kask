@@ -18,7 +18,6 @@ templates:
     name: "Anchor proof obligations against the Prop/Type discipline"
     path: lean-prover-anchor.j2
     type: KnowAct
-    lexicon_terms: [classify, anchor, specify, orient, verify]
     description: >
       Anchor a proof obligation against the Curry-Howard correspondence and
       the Prop/Type discipline. Classify the proposition (Prop vs Type),
@@ -31,7 +30,6 @@ templates:
     name: "Construct proofs via tactics and term mode"
     path: lean-prover-construct.j2
     type: KnowAct
-    lexicon_terms: [construct, verify, apply, refine, check]
     description: >
       Construct a Lean proof for the anchored obligation. Choose between term
       mode (explicit proof terms) and tactic mode (imperative proof steps).
@@ -43,7 +41,6 @@ templates:
     name: "Find counterexamples and failed proofs"
     path: lean-prover-refute.j2
     type: KnowAct
-    lexicon_terms: [challenge, critique, discriminate, evaluate, test]
     description: >
       Adversarial review of a proof attempt. Search for counterexamples that
       invalidate the proposition. Identify failed proof paths (tactics that
@@ -56,7 +53,6 @@ templates:
     name: "Reason about proof irrelevance and erasure"
     path: lean-prover-erase.j2
     type: KnowAct
-    lexicon_terms: [eliminate, classify, evaluate, reason, verify]
     description: >
       Reason about proof erasure and irrelevance. Determine which proof terms
       are computationally relevant (in Type) vs irrelevant (in Prop). Assess

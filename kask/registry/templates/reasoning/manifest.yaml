@@ -14,7 +14,6 @@ templates:
     name: "Perform constraint-guided convergent reasoning with evidence and tool…"
     path: reason_constrained.j2
     type: WordAct
-    lexicon_terms: [infer, converge, verify, constrain]
     description: >
       Perform constraint-guided convergent reasoning with evidence and
       tool augmentation. Iterates toward conclusions bounded by
@@ -24,7 +23,6 @@ templates:
     name: "Extract atomic facts from evidence with confidence scores"
     path: reasoning.j2
     type: WordAct
-    lexicon_terms: [deduce, infer, analyze, ground]
     description: >
       Extract atomic facts from evidence with confidence scores.
       Derives logical conclusions anchored in provided evidence

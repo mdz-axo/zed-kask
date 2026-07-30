@@ -14,7 +14,6 @@ templates:
     name: "Reformulate a query for improved retrieval by expanding terms,…"
     path: reformulate-query.j2
     type: KnowAct
-    lexicon_terms: [decompose, analyze, suggest]
     description: >
       Reformulate a query for improved retrieval by expanding terms,
       decomposing into sub-questions, and identifying query intent
@@ -24,7 +23,6 @@ templates:
     name: "Synthesize a grounded answer from memory and web context with inline…"
     path: synthesize-grounded.j2
     type: KnowAct
-    lexicon_terms: [synthesize, ground, distill, reference]
     description: >
       Synthesize a grounded answer from memory and web context with inline
       citations. Identifies unsupported claims and assigns confidence.
@@ -33,7 +31,6 @@ templates:
     name: "Verify citations in a synthesized answer against source contexts"
     path: verify-citations.j2
     type: KnowAct
-    lexicon_terms: [verify, analyze, detect]
     description: >
       Verify citations in a synthesized answer against source contexts.
       Flags unsupported claims and hallucinated content, computes overall

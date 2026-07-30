@@ -1,13 +1,6 @@
 {# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 OCAP). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. Emit reg.lora.select span (P9). No actual training execution; userpod_host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → convergence-check → revise inputs → re-invoke. #}
 [inference]
 template_type: KnowAct
-lexicon_terms:
-- select
-- decide
-- gate
-- method
-- config
-- training
 contract:
   input:
     training_config_path: string

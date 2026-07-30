@@ -19,7 +19,6 @@ templates:
     name: "Assess a Rust design problem against Hoare's principles using rust-analyzer diagnostics"
     path: idiomatic-rust-inquiry.j2
     type: KnowAct
-    lexicon_terms: [evaluate, classify, orient, anchor, specify, diagnostic]
     description: >
       Assess a Rust design problem against Graydon Hoare's principles, using
       rust-analyzer diagnostics as ground truth. The compiler's errors and
@@ -36,7 +35,6 @@ templates:
     name: "Propose type-driven Rust solutions informed by LSP code actions"
     path: idiomatic-rust-design.j2
     type: KnowAct
-    lexicon_terms: [design, compose, specify, generate, verify, refactor]
     description: >
       Propose type-driven Rust solutions with code examples, informed by LSP
       code actions. Rust-analyzer's refactor suggestions (replace with enum,
@@ -52,7 +50,6 @@ templates:
     name: "Adversarial review grounded by find_references, diagnostics, and clippy"
     path: idiomatic-rust-challenge.j2
     type: KnowAct
-    lexicon_terms: [challenge, critique, evaluate, discriminate, orient, verify]
     description: >
       Adversarial review of a Rust design proposal, grounded by compiler
       feedback. Uses find_references (actual blast radius, not LLM's guess),

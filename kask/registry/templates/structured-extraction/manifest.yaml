@@ -14,7 +14,6 @@ templates:
     name: "Extract semantic relations between identified entities"
     path: extract-relations.j2
     type: KnowAct
-    lexicon_terms: [analyze, parse, structure]
     description: >
       Extract semantic relations between identified entities. Links
       entities via subject-predicate-object triples within context.
@@ -23,7 +22,6 @@ templates:
     name: "Identify entities in unstructured text against a target schema with…"
     path: identify-entities.j2
     type: KnowAct
-    lexicon_terms: [detect, classify, recognize, extract]
     description: >
       Identify entities in unstructured text against a target schema
       with extraction hints. Tracks unmapped text and entity count.
@@ -32,7 +30,6 @@ templates:
     name: "Map extracted entities and relations to a target schema"
     path: map-to-schema.j2
     type: KnowAct
-    lexicon_terms: [map, transform, translate, resolve, infer]
     description: >
       Map extracted entities and relations to a target schema. Resolves
       field mappings, infers missing fields from context, and reports

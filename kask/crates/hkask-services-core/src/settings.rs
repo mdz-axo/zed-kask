@@ -16,7 +16,15 @@ use serde::{Deserialize, Serialize};
 pub fn settings_path() -> std::path::PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     path.push("hkask");
-    let _ = std::fs::create_dir_all(&path);
+    if let Err(e) = std::fs::create_dir_all(&path) {
+        tracing::warn!(
+            target: "hkask.services_core",
+            error = %e,
+            path = %path.display(),
+            "Failed to create hkask config directory — \
+             save_settings will fail if the directory doesn't exist."
+        );
+    }
     path.push("settings.json");
     path
 }

@@ -16,7 +16,6 @@ templates:
     name: "Assess module depth: enumerate public interface items, evaluate…"
     path: deep-module-assess.j2
     type: KnowAct
-    lexicon_terms: [assess, classify, evaluate, detect, infer]
     description: >
       Assess module depth: enumerate public interface items, evaluate behavior
       complexity, compute depth score, classify as Deep/Adequate/Shallow/
@@ -26,7 +25,6 @@ templates:
     name: "Execute the deletion test in both directions: caller's perspective…"
     path: deep-module-delete.j2
     type: KnowAct
-    lexicon_terms: [critique, evaluate, discriminate, audit, verify]
     description: >
       Execute the deletion test in both directions: caller's perspective
       (complexity reappears?) and module's perspective (complexity vanishes?).
@@ -36,7 +34,6 @@ templates:
     name: "Design a deep module interface from deletion test results"
     path: deep-module-design.j2
     type: KnowAct
-    lexicon_terms: [design, simplify, constrain, specify, structure]
     description: >
       Design a deep module interface from deletion test results. Minimize public
       surface, hide information, design for caller mental model, unify config

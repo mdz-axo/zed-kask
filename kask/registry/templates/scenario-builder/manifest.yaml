@@ -15,7 +15,6 @@ templates:
     name: "Generate divergent scenario narratives by selecting two critical…"
     path: axes-and-narratives.j2
     type: KnowAct
-    lexicon_terms: [synthesize, explore, structure]
     description: >
       Generate divergent scenario narratives by selecting two critical
       uncertainty axes from identified driving forces. Produces four
@@ -25,7 +24,6 @@ templates:
     name: "Map macro-level driving forces (STEEP: society, technology, economy,…"
     path: driving-forces.j2
     type: KnowAct
-    lexicon_terms: [analyze, classify, rank]
     description: >
       Map macro-level driving forces (STEEP: society, technology, economy,
       environment, politics) against an importance-uncertainty matrix to
@@ -35,7 +33,6 @@ templates:
     name: "Refine and bound the focal question with decision relevance, time…"
     path: focal-question.j2
     type: KnowAct
-    lexicon_terms: [specify, plan, structure]
     description: >
       Refine and bound the focal question with decision relevance, time
       horizon, and scope boundaries. Produces a current state summary.
@@ -44,7 +41,6 @@ templates:
     name: "Derive per-scenario implications and identify early-warning indicators"
     path: implications-indicators.j2
     type: KnowAct
-    lexicon_terms: [monitor, recommend, predict]
     description: >
       Derive per-scenario implications and identify early-warning indicators.
       Produces robust strategies (for all scenarios) and contingent
@@ -54,7 +50,6 @@ templates:
     name: "Identify micro-level forces: proximate factors, market dynamics,…"
     path: key-forces.j2
     type: KnowAct
-    lexicon_terms: [analyze, elicit, classify]
     description: >
       Identify micro-level forces: proximate factors, market dynamics,
       competitor actions, demand shifts, and regulatory changes. Clusters
@@ -64,17 +59,6 @@ templates:
     name: "Independent quality gate that evaluates scenario divergence,…"
     path: scenario-quality-gate.j2
     type: KnowAct
-    lexicon_terms:
-      [
-        evaluate,
-        verify,
-        gate,
-        divergence,
-        consistency,
-        coverage,
-        quality,
-        calibrate,
-      ]
     description: >
       Independent quality gate that evaluates scenario divergence, consistency,
       and coverage without self-assessment bias. Receives scenarios from the

@@ -14,7 +14,6 @@ templates:
     name: "Extract a structured goal from raw user intent"
     path: create.j2
     type: WordAct
-    lexicon_terms: [specify, propose, require, create]
     description: >
       Extract a structured goal from raw user intent. Produces goal text,
       completion criteria, visibility setting, and priority level.
@@ -23,7 +22,6 @@ templates:
     name: "Verify goal completion via semantic evaluation of outcome summary and…"
     path: judge.j2
     type: KnowAct
-    lexicon_terms: [evaluate, verify, ground]
     description: >
       Verify goal completion via semantic evaluation of outcome summary
       and produced artifacts against the original goal criteria.
@@ -32,7 +30,6 @@ templates:
     name: "Verify goal completion via executed command results against…"
     path: judge_command.j2
     type: KnowAct
-    lexicon_terms: [assert, command, verify]
     description: >
       Verify goal completion via executed command results against acceptance
       criteria. Produces a done/continue/blocked verdict with reasoning.
@@ -41,7 +38,6 @@ templates:
     name: "Fallback goal verification with minimal evaluation"
     path: judge_simple.j2
     type: KnowAct
-    lexicon_terms: [assert, acknowledge, evaluate]
     description: >
       Fallback goal verification with minimal evaluation. Produces a
       continue verdict and default confidence for lightweight judgment.

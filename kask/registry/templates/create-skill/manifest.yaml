@@ -27,7 +27,6 @@ templates:
     name: "Capture skill purpose, name, PDCA phases, delegates, span namespace"
     path: create-skill-describe.j2
     type: KnowAct
-    lexicon_terms: [describe, capture, name, purpose, phases, delegates]
     description: >
       Capture the skill's purpose from the user's natural-language
       description. Choose a name (lowercase, hyphenated, 2-40 chars,
@@ -43,7 +42,6 @@ templates:
     name: "Generate full registry crate (manifest + templates + process manifest + SKILL.md)"
     path: create-skill-scaffold.j2
     type: KnowAct
-    lexicon_terms: [scaffold, generate, manifest, template, flowdef, build]
     description: >
       Generate the full registry crate structure. Delegates to
       skill-maintenance-build for the mechanical scaffolding. Produces:
@@ -62,7 +60,6 @@ templates:
     name: "Validate scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10"
     path: create-skill-validate.j2
     type: KnowAct
-    lexicon_terms: [validate, check, verify, audit, compliance]
     description: >
       Validate the scaffolded crate against all check categories.
       Delegates to skill-maintenance-validate. Checks: R1-R12 (registry:

@@ -17,7 +17,6 @@ templates:
     name: "Assess a Lisp design problem against McCarthy/Sussman/Graham principles"
     path: idiomatic-lisp-inquiry.j2
     type: KnowAct
-    lexicon_terms: [evaluate, classify, orient, anchor, specify]
     description: >
       Assess a Lisp design problem against the founding principles of Lisp.
       Identify invariants, invalid states, evaluation models, and macro vs.
@@ -28,7 +27,6 @@ templates:
     name: "Propose idiomatic Lisp solutions with code examples"
     path: idiomatic-lisp-design.j2
     type: KnowAct
-    lexicon_terms: [design, compose, specify, generate, verify]
     description: >
       Propose idiomatic Lisp solutions with code examples. Apply homoiconicity,
       metacircular evaluation, data-as-program patterns, hygienic macros, and
@@ -39,7 +37,6 @@ templates:
     name: "Adversarial review of a Lisp design proposal"
     path: idiomatic-lisp-challenge.j2
     type: KnowAct
-    lexicon_terms: [challenge, critique, evaluate, discriminate, orient]
     description: >
       Adversarial review of a Lisp design proposal. Find gaps, test edge cases
       (tail-call depth, multiple-values, restarts, macro hygiene), challenge

@@ -120,11 +120,9 @@ impl SqliteRegistry {
             .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?
             .execute_batch(concat!(
             "CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY, template_type TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', description TEXT, source_path TEXT NOT NULL, cascade_level INTEGER NOT NULL DEFAULT 0, matroshka_limit INTEGER NOT NULL DEFAULT 7, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
-            "CREATE TABLE IF NOT EXISTS lexicon_terms(template_id TEXT NOT NULL, term TEXT NOT NULL, PRIMARY KEY(template_id, term), FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE TABLE IF NOT EXISTS template_capabilities(template_id TEXT NOT NULL, capability TEXT NOT NULL, PRIMARY KEY(template_id, capability), FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE TABLE IF NOT EXISTS provenance(id INTEGER PRIMARY KEY AUTOINCREMENT, template_id TEXT NOT NULL, git_sha TEXT NOT NULL, modified_by TEXT NOT NULL, modified_at DATETIME DEFAULT CURRENT_TIMESTAMP, branch TEXT, commit_message TEXT, FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE INDEX IF NOT EXISTS idx_templates_type ON templates(template_type);",
-            "CREATE INDEX IF NOT EXISTS idx_lexicon_terms ON lexicon_terms(term);",
             "CREATE INDEX IF NOT EXISTS idx_provenance_template ON provenance(template_id);",
             "CREATE INDEX IF NOT EXISTS idx_template_capabilities ON template_capabilities(capability);",
             "CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, domain TEXT NOT NULL, word_act TEXT, flow_def TEXT, know_act TEXT, polarity TEXT, content_hash TEXT, visibility TEXT NOT NULL DEFAULT 'private', zone TEXT NOT NULL DEFAULT 'private', namespace TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
@@ -145,7 +143,7 @@ impl SqliteRegistry {
     /// \[P3\] Motivating: Generative Space — persists template registration
     /// pre:  entry.id is non-empty, entry.template_type is valid
     /// post: entry inserted or replaced in templates table
-    /// post: lexicon_terms and capabilities synced
+    /// post: capabilities synced
     pub fn register(&mut self, entry: RegistryEntry) -> Result<()> {
         for warning in &entry.validate() {
             tracing::warn!(target: "hkask.templates", "{}", warning);
@@ -169,14 +167,11 @@ impl SqliteRegistry {
             "INSERT OR REPLACE INTO templates (id, template_type, name, description, source_path, cascade_level, matroshka_limit, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)",
             params![entry.id, entry.template_type.as_str(), entry.name, entry.description, entry.source_path, entry.cascade_level, entry.matroshka_limit],
         ).map_err(|e| TemplateError::Manifest(format!("Insert: {}", e)))?;
-        for (table, col, items) in [
-            ("lexicon_terms", "term", &entry.lexicon_terms),
-            (
-                "template_capabilities",
-                "capability",
-                &entry.required_capabilities,
-            ),
-        ] {
+        for (table, col, items) in [(
+            "template_capabilities",
+            "capability",
+            &entry.required_capabilities,
+        )] {
             tx.execute(
                 &format!("DELETE FROM {} WHERE template_id = ?1", table),
                 params![entry.id],
@@ -215,11 +210,10 @@ impl SqliteRegistry {
             name,
             description: desc,
             source_path: sp,
-            lexicon_terms: query_column(
-                conn,
-                "SELECT term FROM lexicon_terms WHERE template_id = ?1",
-                id,
-            )?,
+            // lexicon_terms are populated from YAML manifests at bootstrap,
+            // not persisted to SQLite. The table was deleted via essentialist
+            // reduction — no consumer queried by lexicon term.
+            lexicon_terms: Vec::new(),
             required_capabilities: query_column(
                 conn,
                 "SELECT capability FROM template_capabilities WHERE template_id = ?1",
@@ -274,7 +268,7 @@ impl SqliteRegistry {
                 return entry;
             }
         };
-        for table in &["lexicon_terms", "template_capabilities", "provenance"] {
+        for table in &["template_capabilities", "provenance"] {
             if let Err(e) = conn.execute(
                 &format!("DELETE FROM {} WHERE template_id = ?1", table),
                 params![id],

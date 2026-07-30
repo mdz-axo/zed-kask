@@ -17,7 +17,6 @@ templates:
     name: "Discover and map the target codebase area"
     path: code-discover.j2
     type: KnowAct
-    lexicon_terms: [discover, index, map, survey, structure]
     description: >
       Discover and map the target codebase area. Synthesizes index statistics
       and structure overview into a discovery summary with relevant crates
@@ -27,7 +26,6 @@ templates:
     name: "Query the code graph for symbols relevant to the goal"
     path: code-query.j2
     type: KnowAct
-    lexicon_terms: [query, search, find, locate, identify]
     description: >
       Query the code graph for symbols relevant to the goal. Scores results
       by relevance, identifies traversal targets, and flags gaps.
@@ -36,7 +34,6 @@ templates:
     name: "Traverse the dependency graph and run quality analysis"
     path: code-analyze.j2
     type: KnowAct
-    lexicon_terms: [traverse, analyze, impact, complexity, dead_code]
     description: >
       Traverse the dependency graph and run quality analysis. Organizes
       results into dependency maps, caller maps, impact analysis, and
@@ -46,7 +43,6 @@ templates:
     name: "Assemble token-budgeted context for downstream LLM use"
     path: code-context.j2
     type: KnowAct
-    lexicon_terms: [context, assemble, budget, format, package]
     description: >
       Assemble token-budgeted context from gathered analysis results for
       downstream LLM use. Formats symbol definitions, doc comments, and
@@ -58,7 +54,6 @@ templates:
     name: "Force-classify every graph edge by constraint hierarchy"
     path: semantic-classify.j2
     type: KnowAct
-    lexicon_terms: [classify, enforce, verify, assess, classify]
     description: >
       Force-classify every graph edge by the pragmatic-semantics constraint
       hierarchy (Prohibition > Guardrail > Guideline > Evidence > Hypothesis)
@@ -68,7 +63,6 @@ templates:
     name: "Evaluate graph health through four analytical lenses"
     path: semantic-analyze.j2
     type: KnowAct
-    lexicon_terms: [analyze, evaluate, synthesize, assess, classify]
     description: >
       Evaluate graph health through four lenses: pragmatic-cybernetics
       (cycle 5-properties, Ashby requisite variety, Good Regulator),
@@ -79,7 +73,6 @@ templates:
     name: "Detect structural pathologies from graph topology"
     path: semantic-detect.j2
     type: KnowAct
-    lexicon_terms: [detect, identify, classify, assess, verify]
     description: >
       Detect structural pathologies from graph topology: cycles, redundancies,
       gaps, orphans, fan-in/out anomalies, and force/structure mismatches.
@@ -89,7 +82,6 @@ templates:
     name: "Synthesize graph-health convergence metric and markdown report"
     path: semantic-report.j2
     type: KnowAct
-    lexicon_terms: [synthesize, report, converge, evaluate, classify]
     description: >
       Synthesize the classification, four-lens analysis, and structural
       detection into a normalized graph-health convergence metric and a
@@ -101,33 +93,28 @@ templates:
     name: "Generate one-sentence summaries of code symbols"
     path: symbol-summarize.j2
     type: KnowAct
-    lexicon_terms: [summarize, describe, classify]
     description: Generate one-sentence summaries of code symbols.
 
   - id: graph-audit/analysis-complexity
     name: "Analyze code complexity metrics for symbols and modules"
     path: analysis-complexity.j2
     type: KnowAct
-    lexicon_terms: [analyze, measure, classify]
     description: Analyze code complexity metrics for symbols and modules.
 
   - id: graph-audit/analysis-dead-code
     name: "Detect dead code and unused symbols"
     path: analysis-dead-code.j2
     type: KnowAct
-    lexicon_terms: [analyze, detect, classify]
     description: Detect dead code and unused symbols.
 
   - id: graph-audit/fix-suggestion
     name: "Generate fix suggestions for code issues"
     path: fix-suggestion.j2
     type: KnowAct
-    lexicon_terms: [suggest, propose, fix]
     description: Generate fix suggestions for code issues.
 
   - id: graph-audit/symbol-embedding
     name: "Generate embeddings for code symbols"
     path: symbol-embedding.j2
     type: KnowAct
-    lexicon_terms: [embed, encode, vectorize]
     description: Generate embeddings for code symbols.

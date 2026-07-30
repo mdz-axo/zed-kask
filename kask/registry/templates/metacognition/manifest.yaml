@@ -18,7 +18,6 @@ templates:
     name: "Improvement Kata Step 1: Grasp the current metacognitive condition"
     path: meta-grasp-current.j2
     type: KnowAct
-    lexicon_terms: [assess, observe, measure, grasp, ground, surface]
     description: >
       Measure the agent's actual metacognitive state right now. Identify
       obstacles, surface assumptions, count grounded claims, enumerate
@@ -29,7 +28,6 @@ templates:
     name: "Improvement Kata Step 2: Establish the target condition"
     path: meta-establish-target.j2
     type: KnowAct
-    lexicon_terms: [target, condition, declare, specify, measure]
     description: >
       Declare the target metacognitive state — what sufficient meta-knowledge
       looks like for this goal. Produces target_artifacts and target_procedure
@@ -39,7 +37,6 @@ templates:
     name: "Improvement Kata Step 3: Make a prediction"
     path: meta-predict.j2
     type: KnowAct
-    lexicon_terms: [predict, hypothesize, confidence, expect, forecast]
     description: >
       Predict which calibration will close the gap and by how much. Carry a
       confidence in [0,1]. The Brier score tracks whether the confidence is
@@ -49,7 +46,6 @@ templates:
     name: "Improvement Kata Step 4: Experiment (Do)"
     path: meta-experiment.j2
     type: KnowAct
-    lexicon_terms: [experiment, apply, calibrate, rotate, adjust, refine]
     description: >
       Apply the predicted calibration — Falstaffian perspective rotation,
       ellipsis analysis, or strategy adjustment. Re-measure the current
@@ -66,7 +62,6 @@ templates:
     name: "Reference: three-fold structure (shapes, experience, spirit) with…"
     path: falstaffian-perspective-engine.yaml
     type: RenderAct
-    lexicon_terms: [rotate, perspective, transform, tension, affirm]
     description: >
       Reference: three-fold structure (shapes, experience, spirit) with
       metacognitive application steps and shape selection decision tree.
@@ -75,7 +70,6 @@ templates:
     name: "Reference: seven semantic graph transformation operators — the…"
     path: falstaffian-shapes.yaml
     type: RenderAct
-    lexicon_terms: [shape, transform, rotate, invert, reverse]
     description: >
       Reference: seven semantic graph transformation operators — the
       Falstaffian shapes with input/output structures and tension components.
@@ -84,7 +78,6 @@ templates:
     name: "Reference: three-pass variance calibration with agreement matrix and…"
     path: falstaffian-variance-analysis.yaml
     type: RenderAct
-    lexicon_terms: [variance, calibrate, verify, agree, confidence]
     description: >
       Reference: three-pass variance calibration with agreement matrix and
       final taxonomy of core, secondary, and candidate shapes.

@@ -16,7 +16,6 @@ templates:
     name: "Step 1 — Execute the target artifact against its eval set and capture…"
     path: gpa-sample-trajectories.j2
     type: KnowAct
-    lexicon_terms: [sample, observe, execute, capture, measure]
     description: >
       Step 1 — Execute the target artifact against its eval set and capture
       trajectories (input, output, reasoning, tool calls, outcome scores).
@@ -27,7 +26,6 @@ templates:
     name: "Step 2 — Reflect in natural language on trajectories"
     path: gpa-reflect.j2
     type: KnowAct
-    lexicon_terms: [reflect, diagnose, evaluate, classify, surface]
     description: >
       Step 2 — Reflect in natural language on trajectories. Diagnose failures,
       surface high-level rules, identify success and failure patterns. This
@@ -37,7 +35,6 @@ templates:
     name: "Step 3 — Generate artifact variants from reflected lessons via…"
     path: gpa-propose-mutations.j2
     type: KnowAct
-    lexicon_terms: [propose, mutate, recombine, generate, apply]
     description: >
       Step 3 — Generate artifact variants from reflected lessons via mutation
       (targeted edit) and crossover (recombine complementary lessons from
@@ -47,7 +44,6 @@ templates:
     name: "Step 4 — Execute each mutated artifact against the eval set and…"
     path: gpa-test-variants.j2
     type: KnowAct
-    lexicon_terms: [test, execute, score, evaluate, measure]
     description: >
       Step 4 — Execute each mutated artifact against the eval set and collect
       per-objective scores (mean, min, max) plus cost (rollouts, gas, latency).
@@ -56,7 +52,6 @@ templates:
     name: "Step 5 — Update Pareto frontier"
     path: gpa-frontier-update.j2
     type: KnowAct
-    lexicon_terms: [evaluate, rank, select, converge, classify]
     description: >
       Step 5 — Update Pareto frontier. Merge current frontier with newly tested
       variants, keep non-dominated members, prune by crowding distance if

@@ -28,8 +28,6 @@ templates:
     name: "Plan a TDD cycle: extract functional requirements from specifications…"
     path: tdd-plan.j2
     type: KnowAct
-    lexicon_terms:
-      [assess, orient, discriminate, specify, plan, trace, anchor, principal]
     description: >
       Plan a TDD cycle: extract functional requirements from specifications with
       goal-principle anchoring (each requirement names its P{N} principle), identify
@@ -40,8 +38,6 @@ templates:
     name: "Execute a tracer bullet: write ONE failing test for ONE behavior…"
     path: tdd-tracer.j2
     type: KnowAct
-    lexicon_terms:
-      [detect, write, verify, constrain, specify, trace, expect, expectation]
     description: >
       Execute a tracer bullet: write ONE failing test for ONE behavior anchored to a
       spec requirement AND goal principle via expect: field with [P{N}] tag (per
@@ -53,8 +49,6 @@ templates:
     name: "Refactor while GREEN: extract duplication, deepen modules, apply…"
     path: tdd-refactor.j2
     type: KnowAct
-    lexicon_terms:
-      [simplify, extract, deepen, verify, regulate, trace, constrain]
     description: >
       Refactor while GREEN: extract duplication, deepen modules, apply SOLID
       principles. Preserve full v0.28.0 contract structure (expect:, [P{N}]
@@ -67,8 +61,6 @@ templates:
     name: "Verify TDD cycle completion: all tests pass, clippy clean, no…"
     path: tdd-verify.j2
     type: KnowAct
-    lexicon_terms:
-      [verify, evaluate, audit, calibrate, classify, trace, map, expectation]
     description: >
       Verify TDD cycle completion: all tests pass, clippy clean, no todo!/unimplemented!
       stubs. Contract completeness audit including expect: user expectation, [P{N}]
@@ -84,7 +76,6 @@ templates:
     name: "Functional gap analysis: compare specification requirements against…"
     path: tdd-gap-check.j2
     type: KnowAct
-    lexicon_terms: [trace, map, gap, defer, classify, audit]
     description: >
       Functional gap analysis: compare specification requirements against tested
       behaviors including goal-principle alignment cross-reference against MDS

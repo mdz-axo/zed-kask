@@ -1,13 +1,6 @@
 {# goal: Audit declared LoRA/QLoRA training artifacts phase-by-phase without executing training. Preserve the operator-selected method, distinguish recommendations from readiness, emit normalized evidence-backed findings and reg.lora.audit spans (P9), and require userpod_host (P12). #}
 [inference]
 template_type: KnowAct
-lexicon_terms:
-- audit
-- verify
-- gate
-- contract
-- evidence
-- config
 contract:
   input:
     config_paths: array

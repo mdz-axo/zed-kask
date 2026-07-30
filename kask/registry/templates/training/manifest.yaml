@@ -15,7 +15,6 @@ templates:
     name: "Render typed LoRA parameters as Axolotl YAML"
     path: axolotl-lora.j2
     type: RenderAct
-    lexicon_terms: [render, config, training, transform]
     description: >
       Render the canonical TrainingParams boundary as Axolotl YAML for the
       RunPod host. Provider support and LoRA contract validation remain in the
@@ -24,7 +23,6 @@ templates:
     name: "Render typed LoRA parameters as Ludwig YAML"
     path: ludwig-lora.j2
     type: RenderAct
-    lexicon_terms: [render, config, training, transform]
     description: >
       Render the canonical TrainingParams boundary as Ludwig YAML for the
       RunPod host. Ludwig (Linux Foundation AI & Data, Apache-2.0) is the
@@ -39,7 +37,6 @@ templates:
     name: "Render typed LoRA parameters as TRL SFT script"
     path: trl-sft.j2
     type: RenderAct
-    lexicon_terms: [render, config, training, transform]
     description: >
       Render the canonical TrainingParams boundary as a TRL SFTTrainer Python
       script for the RunPod host. TRL-specific capabilities (assistant_only_loss,
@@ -48,7 +45,6 @@ templates:
     name: "Render typed LoRA parameters as TRL preference optimization script"
     path: trl-preference.j2
     type: RenderAct
-    lexicon_terms: [render, config, training, transform]
     description: >
       Render the canonical TrainingParams boundary as a TRL preference
       optimization script (DPO/KTO/ORPO/GRPO) for the RunPod host. The

@@ -18,7 +18,6 @@ templates:
     name: "Inventory all components in a target system"
     path: inventory-components.j2
     type: KnowAct
-    lexicon_terms: [inventory, enumerate, discover, component, dependency]
     description: >
       Inventory all components in a target system. Enumerates every component
       with name, type, dependencies, and description. Exhaustive — missing
@@ -28,7 +27,6 @@ templates:
     name: "Classify each component on the Wardley evolution axis (Genesis,…"
     path: classify-evolution.j2
     type: KnowAct
-    lexicon_terms: [classify, assess, evolution, maturity, standardize]
     description: >
       Classify each component on the Wardley evolution axis (Genesis, Custom,
       Product, Commodity) using maturity, adoption, standardization, and
@@ -38,7 +36,6 @@ templates:
     name: "Place each classified component on the value chain map (Y:…"
     path: map-value-chain.j2
     type: KnowAct
-    lexicon_terms: [map, position, value_chain, coordinate, link]
     description: >
       Place each classified component on the value chain map (Y: visibility,
       X: evolution) with coordinates and dependency links. Generates a Mermaid
@@ -48,7 +45,6 @@ templates:
     name: "Identify strategic movement: what to commoditize, what to keep at…"
     path: identify-movement.j2
     type: KnowAct
-    lexicon_terms: [movement, commoditize, invest, divest, drift]
     description: >
       Identify strategic movement: what to commoditize, what to keep at
       Product, what's over-commoditized, what's missing, and drift from a
@@ -58,7 +54,6 @@ templates:
     name: "Synthesize actionable strategic recommendations (commoditize, invest,…"
     path: synthesize-recommendations.j2
     type: KnowAct
-    lexicon_terms: [recommend, prioritize, strategize, align, act]
     description: >
       Synthesize actionable strategic recommendations (commoditize, invest,
       divest, ecosystem, alignment) from the movement analysis and map.

@@ -21,8 +21,6 @@ templates:
     name: "PLAN phase — read-only mode with empty-spec validation"
     path: task-breakdown-plan.j2
     type: KnowAct
-    lexicon_terms:
-      [orient, map, discriminate, specify, plan, trace, anchor]
     description: >
       PLAN phase — read-only mode. Read the spec and relevant codebase sections,
       identify existing patterns/conventions, build the dependency graph, and
@@ -36,8 +34,6 @@ templates:
     name: "DO phase — single producer with algedonic escalation"
     path: task-breakdown-decompose.j2
     type: KnowAct
-    lexicon_terms:
-      [decompose, slice, write, verify, sequence, discriminate, escalate]
     description: >
       DO phase — single producer: slice vertically AND write tasks in one step.
       v0.31.0: emits plan_escalation for catastrophic plans (all XL, no deps in
@@ -54,8 +50,6 @@ templates:
     name: "CHECK phase — score with project context and task-count awareness"
     path: task-breakdown-evaluate.j2
     type: KnowAct
-    lexicon_terms:
-      [evaluate, score, audit, calibrate, classify]
     description: >
       CHECK phase — score the plan against six weighted criteria: task sizing
       (0.25, v0.31.0: now includes task-count awareness — >20 or <3 tasks penalized),
@@ -71,8 +65,6 @@ templates:
     name: "Independent quality gate with project context"
     path: task-breakdown-quality-gate.j2
     type: KnowAct
-    lexicon_terms:
-      [evaluate, audit, verify, score, calibrate, discriminate]
     description: >
       Independent quality gate (fusion: false) — evaluates the plan WITHOUT
       self-assessment bias, distinct from the producer-coupled evaluate step. v0.31.0:
@@ -86,8 +78,6 @@ templates:
     name: "ACT phase — finalize plan with refinement history"
     path: task-breakdown-write-plan.j2
     type: KnowAct
-    lexicon_terms:
-      [write, compose, structure, format, finalize]
     description: >
       ACT phase — finalize the plan into tasks/plan.md (overview, architecture
       decisions, phased task list with checkpoints, risks, open questions) and

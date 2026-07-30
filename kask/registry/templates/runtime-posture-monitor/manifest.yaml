@@ -25,7 +25,6 @@ templates:
     name: "Select runtime signal sources and discover telemetry"
     path: select-signal.j2
     type: KnowAct
-    lexicon_terms: [select, discover, signal, runtime, telemetry, monitor]
     description: >
       Discover runtime signal sources within the deployed userpod host:
       hkask.* performative spans (tool invocations, inference calls,
@@ -39,7 +38,6 @@ templates:
     name: "Classify runtime signals into threat patterns"
     path: classify-threat.j2
     type: KnowAct
-    lexicon_terms: [classify, threat, anomaly, runtime, signal, pattern]
     description: >
       Read observed runtime signals. Classify into threat patterns:
       endpoint abuse (repeated tool calls exceeding baseline), bot traffic
@@ -53,7 +51,6 @@ templates:
     name: "Synthesize runtime threats and propose regulation actions"
     path: emit-regulation.j2
     type: KnowAct
-    lexicon_terms: [synthesize, regulate, emit, block, escalate, report]
     description: >
       Synthesize classified threats with MITRE CWE / OWASP LLM / ATLAS
       taxonomy. For each threat: emit reg.regulation event and trigger

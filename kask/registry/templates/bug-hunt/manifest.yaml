@@ -27,7 +27,6 @@ templates:
     name: "Generate a focused bug-hunt charter with crate modeling and prior-expedition feedback"
     path: bug-hunt-charter.j2
     type: KnowAct
-    lexicon_terms: [charter, plan, target, explore, assess, map]
     description: >
       Generate a focused bug-hunt charter using Hendrickson format and Bach's
       Heuristic Test Strategy Model (HTSM). v0.31.0: builds a lightweight
@@ -41,7 +40,6 @@ templates:
     name: "PROBE phase — agent-coordinated MCP tool execution with dynamic pattern expansion"
     path: bug-hunt-probe.j2
     type: KnowAct
-    lexicon_terms: [probe, explore, search, test, verify, escalate]
     description: >
       PROBE phase — agent-coordinated MCP tool execution. Reads target source
       files, searches for bug patterns, runs cargo check/test/clippy, and
@@ -60,8 +58,6 @@ templates:
     name: "Apply Weinberg oracle with reproducibility axis and citation enforcement"
     path: bug-hunt-oracle.j2
     type: KnowAct
-    lexicon_terms:
-      [evaluate, verify, classify, discriminate, calibrate, critique]
     description: >
       Apply Weinberg oracle (bug = threat to user-defined quality), pragmatic-semantics
       IS/OUGHT classification, epistemic mode labeling, provenance tracing, and
@@ -78,7 +74,6 @@ templates:
     name: "Classify evaluated findings into Beizer taxonomy (requirements,…"
     path: bug-hunt-taxonomize.j2
     type: KnowAct
-    lexicon_terms: [classify, taxonomize, categorize, rank, label]
     description: >
       Classify evaluated findings into Beizer taxonomy (requirements, structural,
       data, coding, interface, integration, timing, configuration) and assign
@@ -91,7 +86,6 @@ templates:
     name: "Compile structured JSON bug report with lessons_learned and pattern_signatures"
     path: bug-hunt-report.j2
     type: KnowAct
-    lexicon_terms: [report, summarize, compose, document, learn]
     description: >
       Compile charter, oracle, and taxonomy results into a structured JSON bug
       report. Consolidates findings, computes summary statistics, and produces
@@ -105,7 +99,6 @@ templates:
     name: "Legacy monolithic expedition template (v0.30.0) — divergence documented"
     path: bug-hunt-expedition.j2
     type: KnowAct
-    lexicon_terms: [hunt, explore, probe, detect, classify, report, charter]
     description: >
       Legacy monolithic expedition template (v0.30.0). Retained for backward
       compatibility. Prefer the decomposed pipeline: charter → probe → oracle →

@@ -15,7 +15,6 @@ templates:
     name: "Evaluate concept coherence and network homeostasis"
     path: assess-coherence.j2
     type: KnowAct
-    lexicon_terms: [evaluate, reflect, calibrate, assess]
     description: >
       Evaluate concept coherence and network homeostasis. Compare interpretive
       equilibrium before and after effector binding, detect stability states.
@@ -24,7 +23,6 @@ templates:
     name: "Apply an effector to a concept's allosteric ports, compute the…"
     path: bind-effector.j2
     type: KnowAct
-    lexicon_terms: [infer, analogy, abduct]
     description: >
       Apply an effector to a concept's allosteric ports, compute the resulting
       equilibrium shift via the MWC state function, and generate a binding
@@ -34,7 +32,6 @@ templates:
     name: "Regulation instrumentation macros"
     path: reg-instrument.j2
     type: KnowAct
-    lexicon_terms: [instrument, monitor, observe]
     description: >
       Regulation instrumentation macros. Emit span events for monitoring, record
       errors, trigger algedonic alerts on variety deficits, and produce
@@ -44,7 +41,6 @@ templates:
     name: "Compute the MWC equilibrium before and after effector binding…"
     path: compute-equilibrium.j2
     type: KnowAct
-    lexicon_terms: [analyze, compare, evaluate]
     description: >
       Compute the MWC equilibrium before and after effector binding including
       Hill coefficient analysis, cooperativity assessment, and partition
@@ -54,7 +50,6 @@ templates:
     name: "Render-only fragment displayed when a GML operation returns a generic…"
     path: error-generic.j2
     type: RenderAct
-    lexicon_terms: [detect, handoff, escalate]
     description: >
       Render-only fragment displayed when a GML operation returns a generic
       error. Not sent to inference — a static error page with suggested actions.
@@ -63,7 +58,6 @@ templates:
     name: "Render-only fragment for field-level GML validation errors"
     path: error-validation.j2
     type: RenderAct
-    lexicon_terms: [validate, detect, handoff]
     description: >
       Render-only fragment for field-level GML validation errors. Included by
       operation templates via {% include %} — not a standalone inference template.
@@ -72,7 +66,6 @@ templates:
     name: "Render-only fragment displayed when a GML operation is missing…"
     path: error-missing-input.j2
     type: RenderAct
-    lexicon_terms: [validate, detect, handoff]
     description: >
       Render-only fragment displayed when a GML operation is missing required
       inputs. Included by operation templates via {% include %} — not a
@@ -82,7 +75,6 @@ templates:
     name: "Shared Jinja2 macro library (MWC state function, Hill coefficient,…"
     path: macros.j2
     type: RenderAct
-    lexicon_terms: [compute, partition, transform]
     description: >
       Shared Jinja2 macro library (MWC state function, Hill coefficient,
       partition function) imported by operation templates via {% from %}.
@@ -92,7 +84,6 @@ templates:
     name: "Parse a concept into its R-state and T-state ensemble components"
     path: recognize-ensemble.j2
     type: KnowAct
-    lexicon_terms: [recognize, discriminate, parse]
     description: >
       Parse a concept into its R-state and T-state ensemble components.
       Identify allosteric ports from possible effector shapes.
@@ -101,7 +92,6 @@ templates:
     name: "Generate alternative interpretation frames for a concept based on its…"
     path: reframe-concept.j2
     type: KnowAct
-    lexicon_terms: [synthesize, abduct, explore]
     description: >
       Generate alternative interpretation frames for a concept based on
       its coherence analysis. Synthesize new perspectives that might
@@ -111,7 +101,6 @@ templates:
     name: "Validate GML concept and effector inputs against type, shape, and…"
     path: validate-inputs.j2
     type: KnowAct
-    lexicon_terms: [validate, detect, enforce]
     description: >
       Validate GML concept and effector inputs against type, shape, and range
       constraints before template processing.

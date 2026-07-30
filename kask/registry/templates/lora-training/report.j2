@@ -1,13 +1,6 @@
 {# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, propose evidence-backed regressions, emit reg.lora.report (P9), and require userpod_host (P12). #}
 [inference]
 template_type: KnowAct
-lexicon_terms:
-- synthesize
-- report
-- regression
-- severity
-- gate
-- training
 contract:
   input:
     findings: array

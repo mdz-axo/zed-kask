@@ -31,8 +31,6 @@
 //!
 //! - `mod.rs` (this file) — enum definition, `From` impls, `Display`
 //! - `retryable.rs` — `is_retryable()` logic
-//! - `message_key.rs` — i18n `message_key()` logic
-//! - `regulation_record.rs` — Regulation regulation record emission logic
 
 use thiserror::Error;
 
@@ -44,7 +42,6 @@ use hkask_types::{EmbeddingGenerationError, InferenceError};
 // ── Helper implementation modules ─────────────────────────────────────
 
 mod message_key;
-mod regulation_record;
 mod retryable;
 
 /// Discriminates error semantics for HTTP status code mapping.

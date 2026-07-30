@@ -41,7 +41,6 @@ templates:
     name: "Dataset format compatibility preflight with mapping code emission"
     path: preflight-dataset.j2
     type: KnowAct
-    lexicon_terms: [detect, validate, format, dataset, mapping, compatibility]
     description: >
       v0.32.0: Detect dataset format, check compatibility against the expected
       format for the selected trainer/method, and emit copy-paste Python mapping
@@ -54,7 +53,6 @@ templates:
     name: "Recommend composable PEFT configuration via 8-gate refinement with capability reasoning"
     path: select-method.j2
     type: KnowAct
-    lexicon_terms: [select, decide, gate, method, config, training, harness, purpose, map]
     description: >
       Apply a deterministic 8-gate refinement without overwriting earlier
       constraints or operator requirements. v0.31.0: G6 reasons over the full
@@ -67,7 +65,6 @@ templates:
     name: "Audit training config with algedonic escalation and citation enforcement"
     path: audit-config.j2
     type: KnowAct
-    lexicon_terms: [audit, verify, gate, contract, evidence, config, harness, escalate]
     description: >
       Read training config, harness, runtime, and post-training evidence.
       Evaluate the applicable subset of 19 quality gates. v0.31.0: emits
@@ -85,7 +82,6 @@ templates:
     name: "Synthesize training-config findings and propose regressions"
     path: report.j2
     type: KnowAct
-    lexicon_terms: [synthesize, report, regression, severity, gate, training]
     description: >
       Synthesize audit findings with concrete config evidence, source
       citations (arXiv paper sections + PEFT v0.19.0 doc sections),

@@ -16,7 +16,6 @@ templates:
     name: "Select target surface and map check catalog"
     path: select-surface.j2
     type: KnowAct
-    lexicon_terms: [select, calibrate, target, audit, assess, classify]
     description: >
       Select the security audit target surface (code, template, supply-chain,
       mcp, config) and map it to the applicable check catalog. Reads the
@@ -26,7 +25,6 @@ templates:
     name: "Run security checks for the selected surface"
     path: audit.j2
     type: KnowAct
-    lexicon_terms: [audit, detect, probe, classify, verify, assess]
     description: >
       Run security checks for the selected surface. For code: unsafe blocks,
       panics, auth bypass, crypto misuse, deserialization, path traversal. For
@@ -38,7 +36,6 @@ templates:
     name: "Synthesize findings and propose regression entries"
     path: report.j2
     type: KnowAct
-    lexicon_terms: [synthesize, report, classify, escalate, evaluate]
     description: >
       Synthesize audit findings into a structured report. For each confirmed
       finding, propose a regression entry (RR-NNNN.yaml) for human review.
@@ -48,7 +45,6 @@ templates:
     name: "Map supply-chain findings to OSC&R attack taxonomy"
     path: taxonomy-map.j2
     type: KnowAct
-    lexicon_terms: [map, classify, verify, detect, escalate]
     description: >
       Map supply-chain audit findings to the OSC&R attack taxonomy (Open Software
       Supply Chain Attack Reference). Folded from the standalone attack-taxonomy-mapper

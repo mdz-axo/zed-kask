@@ -14,7 +14,6 @@ templates:
     name: "Execute a rendered prompt by dispatching to the inference engine"
     path: execute.j2
     type: WordAct
-    lexicon_terms: [prompt, write, undertake]
     description: >
       Execute a rendered prompt by dispatching to the inference engine.
       Produces the completion response and token usage.
@@ -23,7 +22,6 @@ templates:
     name: "Render a Jinja2 template with variable bindings into a complete…"
     path: render.j2
     type: WordAct
-    lexicon_terms: [transform, compose, specify]
     description: >
       Render a Jinja2 template with variable bindings into a complete
       prompt ready for inference execution.
@@ -32,7 +30,6 @@ templates:
     name: "Select the best-fit prompt template from available options based on…"
     path: selector.j2
     type: WordAct
-    lexicon_terms: [recognize, classify, match, discriminate, select]
     description: >
       Select the best-fit prompt template from available options based
       on context, with confidence scoring and rationale.
@@ -41,7 +38,6 @@ templates:
     name: "SOAP operational reporting template"
     path: soap.j2
     type: WordAct
-    lexicon_terms: [observe, assess, plan, monitor, report, probe]
     description: >
       SOAP operational reporting template. Produces structured reports
       with subjective, objective (profile, severity, host samples),

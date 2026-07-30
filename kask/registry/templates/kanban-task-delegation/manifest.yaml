@@ -14,7 +14,6 @@ templates:
     name: "Propose the minimum capable, consent-mediated sub-userpod…"
     path: configure-spawn.j2
     type: KnowAct
-    lexicon_terms: [delegate, configure, assess]
     description: >
       Propose the minimum capable, consent-mediated sub-userpod configuration
       for one kanban task: delegation level, skills, memory scope, tool servers,
@@ -24,7 +23,6 @@ templates:
     name: "Execute a delegated kanban task within its approved configuration and…"
     path: execute-task.j2
     type: KnowAct
-    lexicon_terms: [execute, produce, report]
     description: >
       Execute a delegated kanban task within its approved configuration and
       report its status, concrete deliverables, comment-thread progress note,

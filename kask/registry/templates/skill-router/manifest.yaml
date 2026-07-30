@@ -22,7 +22,6 @@ templates:
     name: "Match a task against the installed skill catalog and return ranked recommendations"
     path: skill-router-match.j2
     type: KnowAct
-    lexicon_terms: [match, rank, recommend, route, classify, confidence, uncertainty, epistemic]
     description: >
         Match a task/slice description against the installed skill catalog.
         Scores each candidate skill 0.0–1.0 on semantic fit (capability

@@ -22,7 +22,6 @@ templates:
     name: "Discovery-phase pipeline: map qualitative brand identity inputs to…"
     path: ../media/logo-discovery.yaml
     type: FlowDef
-    lexicon_terms: [classify, map, strategize, discover]
     description: >
       Discovery-phase pipeline: map qualitative brand identity inputs to
       formal logo design parameters, then select the appropriate generation
@@ -32,7 +31,6 @@ templates:
     name: "Map qualitative brand identity inputs (industry, audience, values) to…"
     path: ../media/logo-discovery-map.j2
     type: KnowAct
-    lexicon_terms: [classify, map, recommend, strategize]
     description: >
       Map qualitative brand identity inputs (industry, audience, values) to
       formal logo design parameters (style, type, shape, palette, density)
@@ -42,7 +40,6 @@ templates:
     name: "Core logo generation prompt encoding Bokhua's five design gates:…"
     path: ../media/logo-formal-prompt.j2
     type: KnowAct
-    lexicon_terms: [generate, design, create, formalize]
     description: >
       Core logo generation prompt encoding Bokhua's five design gates:
       simplicity, monochrome viability, grid discipline, negative space,
@@ -52,7 +49,6 @@ templates:
     name: "Peters-inspired iterative logo pipeline: generate N candidates, score…"
     path: ../media/logo-iterative-refine.yaml
     type: FlowDef
-    lexicon_terms: [generate, critique, refine, iterate, score]
     description: >
       Peters-inspired iterative logo pipeline: generate N candidates, score
       each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit
@@ -63,7 +59,6 @@ templates:
     name: "Generate a complete logo deliverables package from a refined logo:…"
     path: ../media/logo-presentation.yaml
     type: FlowDef
-    lexicon_terms: [package, export, deliver, present]
     description: >
       Generate a complete logo deliverables package from a refined logo:
       transparent PNG, monochrome variant, icon-only mark, and context

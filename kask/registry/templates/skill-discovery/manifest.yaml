@@ -19,7 +19,6 @@ templates:
     name: "Detect capability gaps in the registry corpus"
     path: skill-discovery-detect-gap.j2
     type: KnowAct
-    lexicon_terms: [detect, classify, assess, prioritize, recommend]
     description: >
       Detect capability gaps in the registry corpus. Analyze task patterns against
       existing registry crate descriptions and template_type coverage. Classify gaps
@@ -35,7 +34,6 @@ templates:
     name: "Search the skill catalog for candidates matching a capability gap"
     path: skill-discovery-search.j2
     type: KnowAct
-    lexicon_terms: [search, match, rank, retrieve, recommend]
     description: >
       Search the skill catalog for candidates that could fill a capability gap.
       Scores each skill 0.0–1.0 on capability match (0.50), lexicon overlap
@@ -51,7 +49,6 @@ templates:
     name: "Evaluate a candidate registry crate against format, quality, and…"
     path: skill-discovery-evaluate.j2
     type: KnowAct
-    lexicon_terms: [evaluate, validate, verify, classify, discriminate]
     description: >
       Evaluate a candidate registry crate against format, quality, and safety criteria.
       Check manifest structure, .j2 frontmatter validity, Magna Carta

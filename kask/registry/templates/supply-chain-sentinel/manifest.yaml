@@ -18,7 +18,6 @@ templates:
     name: "Select dependency surfaces and discover manifest files"
     path: select-surface.j2
     type: KnowAct
-    lexicon_terms: [select, discover, manifest, dependency, supply]
     description: >
       Discover dependency surfaces (Cargo.toml, package-lock.json,
       go.sum, requirements.txt, deny.toml) and map the dependency graph
@@ -29,7 +28,6 @@ templates:
     name: "Probe dependency graph for risk evidence"
     path: probe.j2
     type: KnowAct
-    lexicon_terms: [probe, dependency, reachability, cve, license, supply]
     description: >
       Read manifest files. Build dependency tree. Check for pinned
       versions, registry trust, unmaintained packages, license
@@ -42,7 +40,6 @@ templates:
     name: "Synthesize supply-chain findings and propose regressions"
     path: report.j2
     type: KnowAct
-    lexicon_terms: [synthesize, report, dependency, supply, regression]
     description: >
       Synthesize findings with concrete file evidence, source citations,
       severity (critical/high/medium/low), CWE reference, and OWASP

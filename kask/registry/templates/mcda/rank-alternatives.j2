@@ -1,13 +1,6 @@
 {# goal: Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for strong-on-one-criterion cases. #}
 [inference]
 template_type: KnowAct
-lexicon_terms:
-- rank
-- order
-- top
-- choice
-- compensation
-- veto
 contract:
   input:
     decision_question: string

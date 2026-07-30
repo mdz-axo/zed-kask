@@ -17,7 +17,6 @@ templates:
     name: "Explore the codebase for architectural friction"
     path: ra-explore.j2
     type: KnowAct
-    lexicon_terms: [detect, explore, classify, discriminate, orient]
     description: >
       Explore the codebase for architectural friction: shallow modules, tight
       coupling, missing locality, wide import surfaces, untested code. Apply
@@ -27,7 +26,6 @@ templates:
     name: "Present deepening candidates with files, problem, solution, benefits"
     path: ra-candidates.j2
     type: KnowAct
-    lexicon_terms: [assess, rank, propose, evaluate, specify]
     description: >
       Present deepening candidates with files, problem, solution, benefits
       (leverage and locality), and recommendation strength. Use hKask domain
@@ -37,7 +35,6 @@ templates:
     name: "Grill loop for a selected candidate: walk the design tree"
     path: ra-deepen.j2
     type: KnowAct
-    lexicon_terms: [deepen, design, constrain, verify, crystallize]
     description: >
       Grill loop for a selected candidate: walk the design tree, define the
       deepened module shape, identify seams and adapters, confirm test surface.
@@ -47,7 +44,6 @@ templates:
     name: "Route a deepened architecture design to the appropriate follow-up"
     path: ra-route.j2
     type: KnowAct
-    lexicon_terms: [route, decide, recommend, delegate, classify]
     description: >
       Route a deepened architecture design to the appropriate follow-up action
       (proceed_to_refactor, need_more_data, defer_or_reject).
@@ -57,7 +53,6 @@ templates:
     name: "Audit and classify all duplicated operations across CLI, API, and MCP"
     path: ra-audit.j2
     type: KnowAct
-    lexicon_terms: [detect, explore, classify, discriminate, orient, assess, rank]
     description: >
       Audit and classify all duplicated operations across CLI, API, and MCP surfaces.
       Apply the deletion test to each candidate. Produce RDF triples, classification
@@ -67,7 +62,6 @@ templates:
     name: "Plan the strangler-fig migration for a selected domain"
     path: ra-strangle.j2
     type: KnowAct
-    lexicon_terms: [deepen, design, constrain, verify, crystallize, migrate, extract]
     description: >
       Plan the strangler-fig migration for a selected domain: define the new
       service operation, design CLI/API adapters, identify duplication to delete,
@@ -78,7 +72,6 @@ templates:
     name: "Verify surgical completeness after a domain migration or full extraction"
     path: ra-verify.j2
     type: KnowAct
-    lexicon_terms: [verify, assess, validate, discriminate, crystallize]
     description: >
       Verify surgical completeness after a domain migration or full extraction:
       dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite,

@@ -17,7 +17,6 @@ templates:
     name: "Map voice profile preset to agent identity"
     path: profile.j2
     type: WordAct
-    lexicon_terms: [voice, profile, map, agent, preset, tts, mapping]
     description: >
       Build a registered voice profile that binds a profile preset to an
       agent mapping (userpod, replica, or system_agent). Returns the

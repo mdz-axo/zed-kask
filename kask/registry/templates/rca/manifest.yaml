@@ -14,7 +14,6 @@ templates:
     name: "Define and scope a problem with precise, measurable specification"
     path: define-problem.j2
     type: KnowAct
-    lexicon_terms: [analyze, specify, isolate]
     description: >
       Define and scope a problem with precise, measurable specification.
       Distinguishes symptoms from potential causes and assigns severity.
@@ -24,7 +23,6 @@ templates:
     name: "Perform Ishikawa fishbone analysis across the 6M categories: Machine,…"
     path: ishikawa-6m.j2
     type: KnowAct
-    lexicon_terms: [analyze, classify, decompose]
     description: >
       Perform Ishikawa fishbone analysis across the 6M categories:
       Machine, Method, Material, Measurement, Man, and Environment.
@@ -35,7 +33,6 @@ templates:
     name: "Build 5-Whys causal chains from the prioritized causes produced by…"
     path: five-whys-chain.j2
     type: KnowAct
-    lexicon_terms: [trace, analyze, verify]
     description: >
       Build 5-Whys causal chains from the prioritized causes produced
       by ishikawa-6m. Validates each cause path to a confirmed root
@@ -45,7 +42,6 @@ templates:
     name: "Define corrective actions for validated root causes"
     path: corrective-action.j2
     type: KnowAct
-    lexicon_terms: [fix, plan, recommend, verify]
     description: >
       Define corrective actions for validated root causes. Produces
       action items with owners, deadlines, systemic improvements,

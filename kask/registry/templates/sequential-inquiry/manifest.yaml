@@ -16,7 +16,6 @@ templates:
     name: "Improvement Kata Step 1: Grasp the current understanding"
     path: sequential-inquiry-grasp.j2
     type: KnowAct
-    lexicon_terms: [assess, observe, measure, grasp, ground]
     description: >
       Measure the agent's current understanding of the problem. Produces
       current_artifacts and current_procedure for gap computation.
@@ -25,7 +24,6 @@ templates:
     name: "Improvement Kata Step 2: Establish the target understanding"
     path: sequential-inquiry-target.j2
     type: KnowAct
-    lexicon_terms: [target, condition, declare, specify]
     description: >
       Declare the target understanding — what sufficient understanding looks
       like for this problem. Produces target_artifacts and target_procedure.
@@ -34,7 +32,6 @@ templates:
     name: "Improvement Kata Step 3: Predict which delegation will close the gap"
     path: sequential-inquiry-predict.j2
     type: KnowAct
-    lexicon_terms: [predict, hypothesize, confidence, expect, delegate]
     description: >
       Predict which deep-dive delegation will close the gap and by how much.
       Carry a confidence for Brier scoring.
@@ -43,7 +40,6 @@ templates:
     name: "Improvement Kata Step 4: Run the inquiry engine with delegation"
     path: sequential-inquiry-engine.j2
     type: KnowAct
-    lexicon_terms: [reason, analyze, hypothesize, verify, revise, branch, delegate, converge, synthesize, decompose, calibrate]
     description: >
       Core reasoning engine — advances the chain-of-thought with the predicted
       delegation. Generates, branches, revises, hypothesizes, and verifies.
@@ -53,7 +49,6 @@ templates:
     name: "Delegation target — frames a research question / testable hypothesis"
     path: sequential-inquiry-delegate-hypothesis-framer.j2
     type: KnowAct
-    lexicon_terms: [delegate, frame, evaluate, structure, hypothesize]
     description: >
       Delegation target — frames a research question / testable hypothesis
       via FINER + PICO when the engine detects a question-framing subproblem.
@@ -62,7 +57,6 @@ templates:
     name: "Delegation target — multi-criteria decision analysis"
     path: sequential-inquiry-delegate-mcda.j2
     type: KnowAct
-    lexicon_terms: [delegate, compare, weight, rank, decide]
     description: >
       Delegation target — multi-criteria decision analysis when the engine
       detects a choice among alternatives requiring structured tradeoff.
@@ -71,7 +65,6 @@ templates:
     name: "Delegation target — disciplined diagnosis loop"
     path: sequential-inquiry-delegate-diagnose.j2
     type: KnowAct
-    lexicon_terms: [delegate, detect, reproduce, hypothesise, instrument]
     description: >
       Delegation target — disciplined diagnosis loop when the engine detects
       a bug or regression requiring reproduce → anchor → hypothesize → fix.
@@ -80,7 +73,6 @@ templates:
     name: "Delegation target — eliminative inference engine"
     path: sequential-inquiry-delegate-falsifiability.j2
     type: KnowAct
-    lexicon_terms: [delegate, falsify, eliminate, counterfactual, corroborate]
     description: >
       Delegation target — eliminative inference engine when the engine branches
       on a counterfactual scenario or needs to rule out the untestable.

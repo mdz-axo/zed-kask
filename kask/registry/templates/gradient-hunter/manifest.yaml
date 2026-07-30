@@ -39,7 +39,6 @@ templates:
     name: "Build prior model of expected field (sibling/convention/principle)"
     path: gradient-prior.j2
     type: KnowAct
-    lexicon_terms: [prior, model, expect, sibling, convention, principle]
     description: >
       Build a prior model of the expected field. Without a prior, you can
       only detect absences, not gradients. The prior comes from one of
@@ -56,7 +55,6 @@ templates:
     name: "Map actual field with prior's granularity (delegate graph-audit for topology)"
     path: gradient-map.j2
     type: KnowAct
-    lexicon_terms: [map, measure, field, topology, observe]
     description: >
       Measure the actual field in the target region with the same granularity
       as the prior. The field is whatever is being hunted: test presence,
@@ -72,7 +70,6 @@ templates:
     name: "Detect gradients and classify shape, scale, domain, fractal recurrence"
     path: gradient-detect.j2
     type: KnowAct
-    lexicon_terms: [detect, classify, shape, gradient, fractal, scale]
     description: >
       Compare prior to actual. Classify each gradient by its shape using
       the eight ontological anchors (sharp cliff, roof edge, wombling
@@ -90,7 +87,6 @@ templates:
     name: "Generate reason hypotheses via Rubin + spin glass + allostery taxonomy"
     path: gradient-hypothesize.j2
     type: KnowAct
-    lexicon_terms: [hypothesize, reason, classify, rubin, allostery, trap]
     description: >
       For each gradient, generate multiple hypotheses for why it exists.
       Use the seven-class reason taxonomy: intentional boundary (MCAR),
@@ -108,7 +104,6 @@ templates:
     name: "Compile structured gradient report with priority ranking"
     path: gradient-report.j2
     type: KnowAct
-    lexicon_terms: [report, rank, prioritize, document, act]
     description: >
       Compile detected gradients into a structured report. Each gradient
       entry includes location, shape, ontology anchor, scale, domain,
@@ -128,7 +123,6 @@ templates:
     name: "Reference: eight gradient shape ontology with fractal recurrence and reason classes"
     path: gradient-shapes.yaml
     type: RenderAct
-    lexicon_terms: [shape, ontology, gradient, fractal, reason, taxonomy]
     description: >
       Reference: eight gradient shapes drawn from seven academic domains
       (image processing, spatial statistics, causal inference, computational

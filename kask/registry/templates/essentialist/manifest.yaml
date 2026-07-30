@@ -16,20 +16,6 @@ templates:
     name: "Run the 3-gate eliminative interrogation loop in either autonomous…"
     path: essentialist-flow.j2
     type: KnowAct
-    lexicon_terms:
-      [
-        sequence,
-        iteration,
-        evaluate,
-        classify,
-        discriminate,
-        verify,
-        audit,
-        simplify,
-        reduce,
-        calibrate,
-        constrain,
-      ]
     description: >
       Run the 3-gate eliminative interrogation loop in either autonomous
       (agent evaluates and recommends without pause) or advisory (agent recommends,

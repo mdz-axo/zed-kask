@@ -26,7 +26,6 @@ templates:
     name: "Triage a forecasting question to determine difficulty level and…"
     path: stage_0_triage.j2
     type: WordAct
-    lexicon_terms: [classify, assess, query]
     description: >
       Triage a forecasting question to determine difficulty level and whether
       it falls in the Goldilocks zone warranting full pipeline investment.
@@ -35,7 +34,6 @@ templates:
     name: "Fermi-decompose the forecasting question into independent, tractable…"
     path: stage_1_fermi_decompose.j2
     type: WordAct
-    lexicon_terms: [decompose, analyze, query]
     description: >
       Fermi-decompose the forecasting question into independent, tractable
       sub-questions. Separate knowns from unknowns and document assumptions.
@@ -44,7 +42,6 @@ templates:
     name: "Establish base rates by identifying reference classes and determining…"
     path: stage_2_outside_view.j2
     type: WordAct
-    lexicon_terms: [analyze, compare, search]
     description: >
       Establish base rates by identifying reference classes and determining
       how often similar events occur. Produces the outside-view starting
@@ -54,7 +51,6 @@ templates:
     name: "Inside-view probability estimation"
     path: stage_3_probability_estimate.j2
     type: WordAct
-    lexicon_terms: [assess, weigh, estimate, combine, update]
     description: >
       Inside-view probability estimation. Takes pre-generated hypotheses (from
       falsifiability/falsifiability-hypothesize) and their counterfactual
@@ -68,7 +64,6 @@ templates:
     name: "Incorporate new evidence via Bayesian updating with likelihood ratios"
     path: stage_4_evidence_update.j2
     type: WordAct
-    lexicon_terms: [probe, assert, validate]
     description: >
       Incorporate new evidence via Bayesian updating with likelihood ratios.
       Revise the prior probability based on evidence strength.
@@ -77,7 +72,6 @@ templates:
     name: "Synthesize a dragonfly-eye view by integrating multiple causal models…"
     path: stage_5_synthesis.j2
     type: WordAct
-    lexicon_terms: [synthesize, aggregate, compose]
     description: >
       Synthesize a dragonfly-eye view by integrating multiple causal models
       and perspectives. Steel-man dissenting views and produce a synthesized
@@ -87,7 +81,6 @@ templates:
     name: "Calibrate the final probability using the full 0-100% scale"
     path: stage_6_calibration.j2
     type: WordAct
-    lexicon_terms: [calibrate, assert, specify]
     description: >
       Calibrate the final probability using the full 0-100% scale. Justify
       precision against known calibration principles and the pipeline's
@@ -97,7 +90,6 @@ templates:
     name: "Create a structured forecast record with resolution criteria and…"
     path: stage_7_record.j2
     type: WordAct
-    lexicon_terms: [document, report, commit]
     description: >
       Create a structured forecast record with resolution criteria and
       expiration date for later tracking, Brier scoring, and post-mortem
@@ -107,7 +99,6 @@ templates:
     name: "Independent quality gate that evaluates forecast calibration realism,…"
     path: forecast-quality-gate.j2
     type: KnowAct
-    lexicon_terms: [evaluate, verify, gate, calibrate]
     description: >
       Independent quality gate that evaluates forecast calibration realism,
       confidence justification, evidence trail completeness, and record

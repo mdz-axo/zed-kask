@@ -13,7 +13,6 @@ templates:
     name: "Translate and normalize source skill definitions into target…"
     path: translate-skill.j2
     type: KnowAct
-    lexicon_terms: [translate, map, normalize, transform, validate]
     description: >
       Translate and normalize source skill definitions into target schema-ready
       hKask-compatible representation with explicit mapping rationale.

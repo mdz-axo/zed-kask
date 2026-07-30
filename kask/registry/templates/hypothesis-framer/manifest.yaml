@@ -18,7 +18,6 @@ templates:
     name: "Apply FINER criteria to a broad research topic"
     path: finer-evaluate.j2
     type: KnowAct
-    lexicon_terms: [evaluate, classify, assess, critique, rank]
     description: >
       Apply FINER criteria to a broad research topic. Evaluate feasibility
       (subjects, expertise, resources), interest (audience relevance),
@@ -30,7 +29,6 @@ templates:
     name: "Apply PICO framework to structure the research question"
     path: pico-structure.j2
     type: KnowAct
-    lexicon_terms: [structure, specify, select, elicit, extract]
     description: >
       Apply PICO framework to structure the research question. Identifies
       Population characteristics, Intervention/exposure, Comparison/control,
@@ -41,19 +39,6 @@ templates:
     name: "Single cognitive act: derive a testable hypothesis from the…"
     path: hypothesis-operationalize.j2
     type: KnowAct
-    lexicon_terms:
-      [
-        declare,
-        predict,
-        synthesize,
-        design,
-        compose,
-        plan,
-        target,
-        measure,
-        specify,
-        document,
-      ]
     description: >
       Single cognitive act: derive a testable hypothesis from the PICO-structured
       question, formulate the null hypothesis, classify type, operationalize into

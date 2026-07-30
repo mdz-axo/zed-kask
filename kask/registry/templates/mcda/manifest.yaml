@@ -14,7 +14,6 @@ templates:
     name: "Identify and classify decision criteria as benefit or cost dimensions"
     path: identify-criteria.j2
     type: KnowAct
-    lexicon_terms: [classify, analyze, structure]
     description: >
       Identify and classify decision criteria as benefit or cost dimensions.
       Validates criteria independence and produces a structured criterion set.
@@ -23,7 +22,6 @@ templates:
     name: "Rank alternatives by composite scores with compensation masking…"
     path: rank-alternatives.j2
     type: KnowAct
-    lexicon_terms: [rank, evaluate, select, resolve]
     description: >
       Rank alternatives by composite scores with compensation masking
       detection. Produces a top choice recommendation with warnings for
@@ -33,7 +31,6 @@ templates:
     name: "Perform sensitivity analysis on decision rankings by perturbing…"
     path: sensitivity-analysis.j2
     type: KnowAct
-    lexicon_terms: [evaluate, analyze, verify]
     description: >
       Perform sensitivity analysis on decision rankings by perturbing
       weights. Identifies rank reversals, critical weights, and classifies
@@ -43,7 +40,6 @@ templates:
     name: "Weight criteria and score alternatives using the specified weighting…"
     path: weight-and-score.j2
     type: KnowAct
-    lexicon_terms: [score, rank, evaluate]
     description: >
       Weight criteria and score alternatives using the specified weighting
       method (direct or swing). Produces normalized scores and composite

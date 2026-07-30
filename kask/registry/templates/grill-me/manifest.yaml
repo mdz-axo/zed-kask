@@ -14,8 +14,6 @@ templates:
     name: "Generate interrogation questions at the appropriate difficulty level,…"
     path: grill-me-round.j2
     type: KnowAct
-    lexicon_terms:
-      [probe, challenge, discriminate, classify, evaluate, infer, detect]
     description: >
       Generate interrogation questions at the appropriate difficulty level,
       evaluate answers, and decide whether to escalate, hold, or re-probe.
@@ -24,7 +22,6 @@ templates:
     name: "Synthesize final assessment with per-area ratings (Solid/Partial/Gap)…"
     path: grill-me-assess.j2
     type: KnowAct
-    lexicon_terms: [evaluate, classify, integrate, crystallize, contextualise]
     description: >
       Synthesize final assessment with per-area ratings (Solid/Partial/Gap)
       and prioritized study recommendations.
@@ -33,7 +30,6 @@ templates:
     name: "Decide whether to escalate difficulty, hold, or re-probe based on…"
     path: grill-me-escalate.j2
     type: KnowAct
-    lexicon_terms: [detect, evaluate, regulate, orient]
     description: >
       Decide whether to escalate difficulty, hold, or re-probe based on
       answer quality ratio.

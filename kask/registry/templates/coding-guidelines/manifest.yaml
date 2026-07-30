@@ -14,7 +14,6 @@ templates:
     name: "Shared Jinja2 fragment listing the seven canonical Karpathy…"
     path: anti-patterns.j2
     type: RenderAct
-    lexicon_terms: [constrain, apply, verify]
     description: >
       Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns.
       Included by coding-guidelines/guidelines-apply via {% include %}.
@@ -24,7 +23,6 @@ templates:
     name: "Assess a coding task against four behavioral principles before…"
     path: guidelines-assess.j2
     type: KnowAct
-    lexicon_terms: [assess, orient, detect, classify, discriminate]
     description: >
       Assess a coding task against four behavioral principles before implementation.
       Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria.
@@ -33,7 +31,6 @@ templates:
     name: "Generate constrained implementation directives from the assessment"
     path: guidelines-apply.j2
     type: KnowAct
-    lexicon_terms: [constrain, apply, regulate, simplify, specify]
     description: >
       Generate constrained implementation directives from the assessment.
       Produces file-level guardrails, forbidden patterns, and style matching rules.
@@ -42,7 +39,6 @@ templates:
     name: "Verify an implementation or diff against all four principles"
     path: guidelines-verify.j2
     type: KnowAct
-    lexicon_terms: [verify, evaluate, discriminate, calibrate, audit]
     description: >
       Verify an implementation or diff against all four principles.
       Produces a violations report, compliance scores, and corrective recommendations.

@@ -16,7 +16,6 @@ templates:
     name: "Select appropriate beginner drill based on learner profile"
     path: beginner-selector.j2
     type: KnowAct
-    lexicon_terms: [select, classify, route, discriminate, recommend]
     description: >
       Select appropriate starter drill based on practice history and
       automaticity. If no history, start with Observation Drill. If
@@ -27,7 +26,6 @@ templates:
     name: "Five Questions Drill — practice asking the 5 coaching questions"
     path: beginner-five-questions.j2
     type: KnowAct
-    lexicon_terms: [prompt, query, challenge, transform, synthesize]
     description: >
       Five Questions Drill — exercise asking the 5 coaching questions in
       order on a trivial process (making toast, brewing coffee).
@@ -36,7 +34,6 @@ templates:
     name: "PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial process"
     path: beginner-pdca-cycle.j2
     type: KnowAct
-    lexicon_terms: [prompt, query, challenge, transform, synthesize]
     description: >
       PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable
       process.
@@ -45,7 +42,6 @@ templates:
     name: "Observation Drill — practice separating facts from interpretations"
     path: beginner-observation-drill.j2
     type: KnowAct
-    lexicon_terms: [prompt, query, challenge, transform, synthesize]
     description: >
       Observation Drill — practice separating observed facts (IS) from
       interpretations (OUGHT).
@@ -55,7 +51,6 @@ templates:
     name: "Step 1 — understand direction/challenge"
     path: improvement-step1-direction.j2
     type: KnowAct
-    lexicon_terms: [specify, orient, classify, assess, verify]
     description: >
       Step 1 of the Improvement Kata — understand the strategic direction
       and challenge from the level above.
@@ -64,7 +59,6 @@ templates:
     name: "Step 2 — grasp current condition with data"
     path: improvement-step2-current.j2
     type: KnowAct
-    lexicon_terms: [observe, measure, classify, assess, verify]
     description: >
       Step 2 of the Improvement Kata — grasp the current condition by
       gathering facts and data to establish a baseline.
@@ -73,7 +67,6 @@ templates:
     name: "Step 3 — establish target condition"
     path: improvement-step3-target.j2
     type: KnowAct
-    lexicon_terms: [specify, target, constrain, verify, classify]
     description: >
       Step 3 of the Improvement Kata — establish a measurable, time-bounded
       next target condition.
@@ -82,7 +75,6 @@ templates:
     name: "Step 4 — define next experiment"
     path: improvement-step4-experiment.j2
     type: KnowAct
-    lexicon_terms: [propose, experiment, predict, verify, transform]
     description: >
       Step 4 of the Improvement Kata — define next experiment with testable
       predictions toward the target.

@@ -14,7 +14,6 @@ templates:
     name: "Anchor a bug diagnosis to functional requirements: classify by MDS…"
     path: diagnose-spec-anchor.j2
     type: KnowAct
-    lexicon_terms: [anchor, classify, map, verify, specify]
     description: >
       Anchor a bug diagnosis to functional requirements: classify by MDS
       category, map symptom to FR# references, flag spec gaps. Phase 0 of
@@ -24,7 +23,6 @@ templates:
     name: "Build a feedback loop for the bug"
     path: diagnose-loop.j2
     type: KnowAct
-    lexicon_terms: [detect, reproduce, observe, discriminate, orient]
     description: >
       Build a feedback loop for the bug. Evaluate repro strategies, select the
       fastest deterministic signal, and confirm the bug reproduces before hypothesising.
@@ -33,7 +31,6 @@ templates:
     name: "Instrument the code with targeted probes mapped to specific hypotheses"
     path: diagnose-instrument.j2
     type: KnowAct
-    lexicon_terms: [probe, instrument, constrain, isolate, verify]
     description: >
       Instrument the code with targeted probes mapped to specific hypotheses.
       Change one variable at a time. Use tagged diagnostic logs or breakpoints.
@@ -42,7 +39,6 @@ templates:
     name: "Apply fix with regression test (before the fix)"
     path: diagnose-fix.j2
     type: KnowAct
-    lexicon_terms: [fix, verify, audit, document, calibrate]
     description: >
       Apply fix with regression test (before the fix). Verify original repro
       no longer reproduces. Clean up instrumentation. Write post-mortem.

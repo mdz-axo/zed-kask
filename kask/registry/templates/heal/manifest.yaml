@@ -14,54 +14,46 @@ templates:
     name: "Classify errors by type and suggest recovery actions"
     path: classify-error.j2
     type: KnowAct
-    lexicon_terms: [classify, discriminate, diagnose, route]
     description: Classify errors by type and suggest recovery actions.
 
   - id: heal/command_not_found
     name: "Diagnose command-not-found errors and suggest alternatives"
     path: command_not_found.j2
     type: KnowAct
-    lexicon_terms: [diagnose, suggest, recover]
     description: Diagnose command-not-found errors and suggest alternatives.
 
   - id: heal/config_not_found
     name: "Diagnose missing configuration and create default files"
     path: config_not_found.j2
     type: KnowAct
-    lexicon_terms: [diagnose, create, recover]
     description: Diagnose missing configuration and create default files.
 
   - id: heal/missing_api_key
     name: "Diagnose missing API key errors and guide setup"
     path: missing_api_key.j2
     type: KnowAct
-    lexicon_terms: [diagnose, identify, guide]
     description: Diagnose missing API key errors and guide setup.
 
   - id: heal/network_error
     name: "Diagnose network errors and recommend retry strategies"
     path: network_error.j2
     type: KnowAct
-    lexicon_terms: [diagnose, retry, recover]
     description: Diagnose network errors and recommend retry strategies.
 
   - id: heal/permission_denied
     name: "Diagnose permission errors and guide remediation"
     path: permission_denied.j2
     type: KnowAct
-    lexicon_terms: [diagnose, identify, guide]
     description: Diagnose permission errors and guide remediation.
 
   - id: heal/self-heal
     name: "General self-healing orchestration template"
     path: self-heal.j2
     type: KnowAct
-    lexicon_terms: [heal, recover, restore]
     description: General self-healing orchestration template.
 
   - id: heal/transient_retry
     name: "Handle transient errors with retry logic"
     path: transient_retry.j2
     type: KnowAct
-    lexicon_terms: [retry, recover, transient]
     description: Handle transient errors with retry logic.

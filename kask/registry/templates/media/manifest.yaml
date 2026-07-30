@@ -15,7 +15,6 @@ templates:
     name: "Classify an image's photographic style, genre, and era using a vision…"
     path: classify_style.j2
     type: KnowAct
-    lexicon_terms: [classify, discriminate, analyze]
     description: >
       Classify an image's photographic style, genre, and era using a
       vision LLM. Evaluates across genre, era/style, and technique dimensions.
@@ -24,7 +23,6 @@ templates:
     name: "Generate a detailed scene description in one of four modes:…"
     path: describe_scene.j2
     type: KnowAct
-    lexicon_terms: [observe, analyze, document]
     description: >
       Generate a detailed scene description in one of four modes:
       descriptive, artistic, technical, or accessibility alt-text.
@@ -33,7 +31,6 @@ templates:
     name: "Analyze an image's color palette: dominant colors with hex codes,…"
     path: tag_colors.j2
     type: KnowAct
-    lexicon_terms: [analyze, classify, detect]
     description: >
       Analyze an image's color palette: dominant colors with hex codes,
       approximate area coverage, compositional role, palette style,
@@ -43,7 +40,6 @@ templates:
     name: "Analyze an image's photographic composition: focal point, rule of…"
     path: tag_composition.j2
     type: KnowAct
-    lexicon_terms: [analyze, evaluate, structure]
     description: >
       Analyze an image's photographic composition: focal point, rule of
       thirds, leading lines, depth of field, perspective, framing,
@@ -53,7 +49,6 @@ templates:
     name: "Discovery-phase pipeline: map qualitative brand identity inputs to…"
     path: logo-discovery.yaml
     type: FlowDef
-    lexicon_terms: [classify, map, strategize, discover]
     description: >
       Discovery-phase pipeline: map qualitative brand identity inputs to
       formal logo design parameters using the logo-discovery-map.j2
@@ -63,7 +58,6 @@ templates:
     name: "Map qualitative brand identity inputs (industry, audience, values) to…"
     path: logo-discovery-map.j2
     type: KnowAct
-    lexicon_terms: [classify, map, recommend, strategize]
     description: >
       Map qualitative brand identity inputs (industry, audience, values) to
       formal logo design parameters (style, type, shape, palette, density)
@@ -73,7 +67,6 @@ templates:
     name: "Core logo generation prompt encoding Bokhua's five design gates:…"
     path: logo-formal-prompt.j2
     type: KnowAct
-    lexicon_terms: [generate, design, create, formalize]
     description: >
       Core logo generation prompt encoding Bokhua's five design gates:
       simplicity, monochrome viability, grid discipline, negative space,
@@ -83,7 +76,6 @@ templates:
     name: "Peters-inspired iterative logo pipeline: generate N candidates, score…"
     path: logo-iterative-refine.yaml
     type: FlowDef
-    lexicon_terms: [generate, critique, refine, iterate, score]
     description: >
       Peters-inspired iterative logo pipeline: generate N candidates, score
       each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit
@@ -94,7 +86,6 @@ templates:
     name: "Generate a complete logo deliverables package from a refined logo:…"
     path: logo-presentation.yaml
     type: FlowDef
-    lexicon_terms: [package, export, deliver, present]
     description: >
       Generate a complete logo deliverables package from a refined logo:
       transparent PNG, monochrome variant, icon-only mark, and context
@@ -104,7 +95,6 @@ templates:
     name: "Compose a valid Fal.ai workflow JSON DAG from a natural-language…"
     path: workflow-composer.j2
     type: KnowAct
-    lexicon_terms: [compose, generate, design, structure, pipeline]
     description: >
       Compose a valid Fal.ai workflow JSON DAG from a natural-language
       media intent. Selects appropriate models, defines node topology,

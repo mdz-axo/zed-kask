@@ -13,19 +13,16 @@ templates:
     name: "Analyze the attack surface of a prompt for vulnerabilities"
     path: analyze-attack-surface.j2
     type: KnowAct
-    lexicon_terms: [analyze, classify, detect]
     description: Analyze the attack surface of a prompt for vulnerabilities.
 
   - id: prompt-defense/classify-threat
     name: "Classify the threat type and severity of a prompt attack"
     path: classify-threat.j2
     type: KnowAct
-    lexicon_terms: [classify, categorize, assess]
     description: Classify the threat type and severity of a prompt attack.
 
   - id: prompt-defense/recommend-defenses
     name: "Recommend defenses against identified prompt threats"
     path: recommend-defenses.j2
     type: KnowAct
-    lexicon_terms: [recommend, propose, defend]
     description: Recommend defenses against identified prompt threats.

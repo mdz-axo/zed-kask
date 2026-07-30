@@ -15,7 +15,6 @@ templates:
     name: "Validate skills against registry format and quality checks"
     path: skill-maintenance-validate.j2
     type: KnowAct
-    lexicon_terms: [validate, verify, classify, audit, recommend]
     description: >
       Validate skills against registry format and quality checks. Check manifest
       structure, .j2 frontmatter (template_type, contract, visibility, energy_cap).
@@ -25,7 +24,6 @@ templates:
     name: "Scaffold a new registry crate from a user description"
     path: skill-maintenance-build.j2
     type: KnowAct
-    lexicon_terms: [create, specify, design, compose, verify]
     description: >
       Scaffold a new registry crate from a user description. Generate manifest.yaml
       with crate metadata, template entries, and lexicon_terms. Generate companion
@@ -35,7 +33,6 @@ templates:
     name: "Forward translation: convert a classified source skill into a hKask…"
     path: skill-maintenance-translate.j2
     type: KnowAct
-    lexicon_terms: [translate, adapt, extract, compose, verify]
     description: >
       Forward translation: convert a classified source skill into a hKask registry crate
       (manifest.yaml + *.j2 templates). Map source elements to hKask equivalents,
@@ -45,7 +42,6 @@ templates:
     name: "Reverse translation: generate a SKILL.md companion from a registry…"
     path: skill-maintenance-reverse.j2
     type: KnowAct
-    lexicon_terms: [translate, extract, compose, generate, verify]
     description: >
       Reverse translation: generate a SKILL.md companion from a registry crate.
       Read manifest.yaml for crate metadata, read .j2 templates for methodology,
@@ -55,7 +51,6 @@ templates:
     name: "Prose-only derivation: synthesize the \"When to Use\" and…"
     path: skill-maintenance-prose.j2
     type: KnowAct
-    lexicon_terms: [synthesize, extract, compose, derive, instruct]
     description: >
       Prose-only derivation: synthesize the "When to Use" and "Instructions"
       sections of a SKILL.md from a registry crate, emitted as raw markdown.
@@ -68,7 +63,6 @@ templates:
     name: "Run staleness and health audit for target scope"
     path: skill-maintenance-audit.j2
     type: KnowAct
-    lexicon_terms: [audit, assess, classify, recommend, prioritize]
     description: >
       Run staleness and health audit for target scope. Checks R1-R12 registry
       rules, Z1-Z8 companion checks, X1-X4 cross-artifact checks. Used by the
@@ -78,7 +72,6 @@ templates:
     name: "Run corpus coverage analysis for uncovered/partial capabilities"
     path: skill-maintenance-coverage.j2
     type: KnowAct
-    lexicon_terms: [map, trace, gap, classify, prioritize]
     description: >
       Run corpus coverage analysis for uncovered/partial capabilities.
       Maps common task patterns against the existing skill corpus, identifies
@@ -90,7 +83,6 @@ templates:
     name: "Parse the annotated goal block from a .j2 or manifest.yaml file"
     path: logic-load-goal.j2
     type: WordAct
-    lexicon_terms: [extract, parse, specify, verify]
     description: >
       Parse the annotated goal: block from a .j2 or manifest.yaml file and
       return it as a normalized string. Verify that a goal exists and is
@@ -100,7 +92,6 @@ templates:
     name: "Adversarial critique of a template body against its stated goal"
     path: logic-critique-template.j2
     type: KnowAct
-    lexicon_terms: [critique, assess, detect, classify, recommend]
     description: >
       Adversarial critique anchored to the extracted goal. For each flaw,
       provide the location, claim, anchor to goal, severity, and suggested fix.
@@ -109,7 +100,6 @@ templates:
     name: "Soundness filter — separate valid concerns from spurious ones"
     path: logic-critique-critique.j2
     type: KnowAct
-    lexicon_terms: [validate, filter, classify, assess, verify]
     description: >
       Review a critique for soundness and goal-anchoring. Separate valid,
       goal-anchored concerns from spurious ones.
@@ -118,7 +108,6 @@ templates:
     name: "Compose a concrete revised artifact and diff from calibrated concerns"
     path: logic-compose-proposal.j2
     type: KnowAct
-    lexicon_terms: [compose, propose, revise, synthesize, verify]
     description: >
       Compose a concrete revised artifact and unified diff from the calibrated
       concerns.
@@ -127,7 +116,6 @@ templates:
     name: "Present the proposal and capture accept/reject/counter-proposal"
     path: logic-user-choice.j2
     type: KnowAct
-    lexicon_terms: [present, recommend, confirm, classify, route]
     description: >
       Present the proposal to the user and capture accept, reject, or
       counter-proposal choice.
