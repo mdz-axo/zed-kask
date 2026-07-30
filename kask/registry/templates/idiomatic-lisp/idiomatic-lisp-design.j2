@@ -1,0 +1,163 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [design, compose, specify, generate, verify]
+contract:
+  input:
+    design_problem: string
+    existing_code: string
+    assessment: object
+    repl_actions: array
+    iteration_focus: string
+  output:
+    proposed_design: string
+    code_examples: array
+    macro_rationale: array
+    data_as_program_rationale: string
+    ecosystem_references: array
+    design_score: float
+    repl_actions_used: array
+    reasoning: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: idiomatic-lisp/idiomatic-lisp-design.j2 #}
+{# KnowAct — Propose idiomatic Lisp solutions with code examples #}
+{# hKask v0.31.0 #}
+{#
+  REPL grounding: if repl_actions are available, they are evaluator-verified
+  starting points. The REPL's macroexpand, trace, and disassemble outputs are
+  the evaluator's design recommendations. The LLM's job is to evaluate and
+  extend these against the design goals, not to propose forms blind. Each REPL
+  action used should be recorded in repl_actions_used so the challenge phase
+  can verify it.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are designing Lisp code as McCarthy, Sussman, and Graham would. The
+homoiconic form is your canvas. Every macro is a design decision. Every closure
+is an architectural commitment. Every recursive function is a statement about
+the structure of the problem.
+
+## Design Problem
+
+{{ design_problem }}
+
+{% if existing_code %}
+## Existing Code
+
+```lisp
+{{ existing_code }}
+```
+{% endif %}
+
+## Assessment from Phase 1
+
+```json
+{{ assessment | tojson }}
+```
+
+{% if repl_actions and repl_actions | length > 0 %}
+## REPL Actions (evaluator-verified starting points)
+
+The following REPL actions are from the evaluator — macroexpand, trace,
+disassemble, time. These are the evaluator's design recommendations. The LLM's
+job is to evaluate and extend these against the design goals.
+
+```json
+{{ repl_actions | tojson }}
+```
+{% endif %}
+
+{% if iteration_focus %}
+## Iteration Focus (from previous challenge)
+
+{{ iteration_focus }}
+
+The previous design was challenged on specific dimensions. Address these
+findings in your new design.
+{% endif %}
+
+## Design Method
+
+### 1. Choose the Right Abstraction Mechanism
+
+For each abstraction in the design, choose deliberately:
+
+- **Function** — when you compute a value from arguments. The default choice.
+  First-class, composable, testable at the REPL.
+- **Macro** — when you need to transform code, control evaluation order, or
+  create new syntactic forms. Macros receive unevaluated forms; they produce
+  forms. A macro that could be a function is over-engineering.
+- **Closure** — when you need to encapsulate state. A closure is a function
+  paired with its definition environment. Use closures for iterators, state
+  machines, and delayed evaluation.
+- **Data-driven dispatch** — when the structure of the problem is a table or
+  tree. `assoc`, `gethash`, `case`, `cond` with patterns. Let the data drive
+  the control flow.
+
+### 2. Design for the Evaluation Model
+
+- **Substitution model** — for pure functions without side effects. Reasonable
+  for most of the design.
+- **Environment model** — when closures capture state. Be explicit about what
+  environment each closure captures.
+- **Continuation model** — when you need non-local exits, generators, or
+  backtracking. Use `call/cc` (Scheme) or conditions/restarts (Common Lisp)
+  deliberately, not accidentally.
+
+### 3. Design Macros Hygienically
+
+- Use `gensym` for symbols that must not collide with user code.
+- Use `macroexpand` to verify the expansion is what you intended.
+- Document what forms the macro expects and what forms it produces.
+- A macro should produce code that could have been written by hand — it just
+  saves the user from writing it repeatedly.
+
+### 4. Design for Tail-Call Optimization
+
+- Identify which recursive functions should be tail-recursive.
+- Ensure the recursive call is in tail position (the last thing the function
+  does, with no pending operations).
+- Use an accumulator when the natural formulation isn't tail-recursive.
+- Verify with `trace` or by testing with large inputs.
+
+### 5. Reference the Ecosystem
+
+For each design decision, cite:
+- **CLHS** (Common Lisp HyperSpec) for Common Lisp
+- **SRFI** (Scheme Requests for Implementation) for Scheme
+- **Clojure Docs** for Clojure
+- Relevant papers: McCarthy's original Lisp papers, Sussman's SICP, Graham's
+  "On Lisp" and "ANSI Common Lisp"
+
+## Output
+
+```json
+{
+  "proposed_design": "high-level description of the design approach",
+  "code_examples": [
+    {"name": "function/macro name", "code": "lisp source", "type": "function|macro|closure|data-driven", "rationale": "why this form"}
+  ],
+  "macro_rationale": [
+    {"macro": "name", "why_macro_not_function": "reason", "expansion_example": "what it expands to", "hygiene": "gensym usage and collision prevention"}
+  ],
+  "data_as_program_rationale": "how the design exploits homoiconicity — where code is treated as data, where data drives control flow",
+  "ecosystem_references": [
+    {"reference": "CLHS/SRFI/paper", "relevance": "how it applies to this design"}
+  ],
+  "design_score": 0.85,
+  "repl_actions_used": [
+    {"action": "macroexpand", "form": "(my-macro ...)", "result": "expansion", "verified": true}
+  ],
+  "reasoning": "Step-by-step reasoning through each design decision, citing REPL actions and ecosystem references"
+}
+```
+
+`design_score`: 1.0 = perfectly idiomatic, 0.0 = completely unidiomatic. Higher is better.
+`repl_actions_used`: record each REPL action consulted so the challenge phase can verify the design against evaluator ground truth.

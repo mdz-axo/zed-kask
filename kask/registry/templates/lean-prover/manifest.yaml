@@ -1,0 +1,65 @@
+# Template crate manifest for lean-prover skill
+# hKask v0.31.0
+
+crate:
+  name: lean-prover
+  version: "0.31.0"
+  description: >
+    Machine-checked proof construction through the lens of Curry-Howard,
+    de Bruijn, and Carneiro. Convergent inquiry loop: anchor proof obligations
+    against the Prop/Type discipline, construct proofs via tactics and term
+    mode, challenge through counterexample search and proof irrelevance
+    analysis, and converge toward proofs that compile and erase. Sibling to
+    falsifiability — where falsifiability designs discriminating tests,
+    lean-prover constructs machine-checked proofs that discriminate.
+
+templates:
+  - id: lean-prover/lean-prover-anchor
+    name: "Anchor proof obligations against the Prop/Type discipline"
+    path: lean-prover-anchor.j2
+    type: KnowAct
+    lexicon_terms: [classify, anchor, specify, orient, verify]
+    description: >
+      Anchor a proof obligation against the Curry-Howard correspondence and
+      the Prop/Type discipline. Classify the proposition (Prop vs Type),
+      identify the proof obligation's structure (universal, existential,
+      implication, conjunction), determine the appropriate proof method
+      (term mode, tactic mode, decide, native_decide), and assess whether
+      the proposition is decidable.
+
+  - id: lean-prover/lean-prover-construct
+    name: "Construct proofs via tactics and term mode"
+    path: lean-prover-construct.j2
+    type: KnowAct
+    lexicon_terms: [construct, verify, apply, refine, check]
+    description: >
+      Construct a Lean proof for the anchored obligation. Choose between term
+      mode (explicit proof terms) and tactic mode (imperative proof steps).
+      Apply the appropriate tactics (intro, apply, exact, induction, simp,
+      rw, decide). Handle termination via structural recursion or
+      well-founded recursion. Produce a proof that compiles.
+
+  - id: lean-prover/lean-prover-refute
+    name: "Find counterexamples and failed proofs"
+    path: lean-prover-refute.j2
+    type: KnowAct
+    lexicon_terms: [challenge, critique, discriminate, evaluate, test]
+    description: >
+      Adversarial review of a proof attempt. Search for counterexamples that
+      invalidate the proposition. Identify failed proof paths (tactics that
+      don't apply, induction that doesn't terminate, simp lemmas that loop).
+      Challenge proof irrelevance assumptions. Test edge cases (empty types,
+      uninhabited Props, proof terms that don't erase). Produce refinement
+      directives for each failure.
+
+  - id: lean-prover/lean-prover-erase
+    name: "Reason about proof irrelevance and erasure"
+    path: lean-prover-erase.j2
+    type: KnowAct
+    lexicon_terms: [eliminate, classify, evaluate, reason, verify]
+    description: >
+      Reason about proof erasure and irrelevance. Determine which proof terms
+      are computationally relevant (in Type) vs irrelevant (in Prop). Assess
+      whether the proof erases to a no-op or carries computational content.
+      Identify small vs large elimination. Verify that the proof doesn't
+      leak computational content across the Prop/Type boundary.

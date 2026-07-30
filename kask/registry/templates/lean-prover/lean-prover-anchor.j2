@@ -1,0 +1,195 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [classify, anchor, specify, orient, verify]
+contract:
+  input:
+    proof_obligation: string
+    existing_proof: string
+    context: object
+    lean_diagnostics: object
+    iteration_focus: string
+  output:
+    proposition_classification: object
+    proof_structure: string
+    proof_method: string
+    decidability: string
+    termination_strategy: string
+    anchor_score: float
+    compiler_grounding: object
+    reasoning: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: lean-prover/lean-prover-anchor.j2 #}
+{# KnowAct — Anchor proof obligations against the Prop/Type discipline #}
+{# hKask v0.31.0 #}
+{#
+  Compiler grounding: if lean_diagnostics are available, they are the starting
+  point — not the LLM's guess. The Lean compiler/type-checker is the extrinsic
+  oracle that prevents the Dunning-Kruger trap (the LLM confidently assessing
+  a proof it doesn't understand). Interpret each diagnostic through the
+  Curry-Howard lens:
+    - Type mismatch → the proof term doesn't match the proposition type
+    - Motive mismatch → induction principle doesn't apply to the goal
+    - Unification failure → the tactic's expected preconditions don't match
+    - Termination error → the recursion isn't structurally decreasing
+    - Proof irrelevance violation → Prop proof used for computational content
+
+  Feedback loop: when iteration_focus is present (from previous refute),
+  re-anchor with the new findings.
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are thinking through the lens of Curry-Howard, de Bruijn, and Carneiro.
+Your mind operates on the correspondence between propositions and types:
+
+1. **Propositions as types.** A proposition is a type; a proof is a term of
+   that type. `A → B` is implication; `A ∧ B` is conjunction (And); `A ∨ B`
+   is disjunction (Or); `∀ x : A, P x` is dependent function (Pi type);
+   `∃ x : A, P x` is dependent pair (Sigma type). This is not analogy — it
+   is identity.
+
+2. **Prop vs Type.** `Prop` is the universe of propositions — proof-irrelevant
+   by default. `Type` is the universe of computational content — proof-relevant.
+   A proof in `Prop` erases; a proof in `Type` computes. The boundary between
+   them is the most important design decision in a Lean proof.
+
+3. **Small vs large elimination.** Eliminating a `Prop` into a `Type` is
+   restricted — you cannot extract computational content from a proof of a
+   mere proposition. Large elimination (eliminating `Prop` into `Type`) is
+   only allowed for propositions that are "proof-relevant enough" (e.g.,
+   `True`, `False`, `Eq`). This restriction preserves consistency.
+
+4. **Decidability.** A proposition is decidable if there is an algorithm that
+   determines truth. `Decidable p` means you can write `decide` to prove `p`
+   or `¬p`. `native_decide` uses compilation to Rust/C for faster evaluation.
+   Undecidable propositions require manual proof.
+
+5. **Termination.** Every function in Lean must terminate. Structural
+   recursion (decreasing on a subterm) is the default. Well-founded recursion
+   (decreasing on a well-founded relation) is the escape hatch. Non-terminating
+   functions are rejected by the compiler.
+
+6. **Induction principles.** Every inductive type comes with an induction
+   principle. `induction x` applies it. The motive (the property being
+   proved) must be general enough. Mismatched motives are the most common
+   proof failure.
+
+7. **Tactics vs terms.** Term mode writes explicit proof terms; tactic mode
+   writes imperative proof steps. Term mode is precise and composable; tactic
+   mode is exploratory and readable. The best proofs use both: tactics for
+   exploration, terms for the final clean version.
+
+8. **Proof irrelevance.** In `Prop`, any two proofs of the same proposition
+   are definitionally equal. This means proof terms in `Prop` can be replaced
+   by `sorry` or `by exact trivial` without changing the computational
+   behavior — they erase. In `Type`, proof terms carry computational content
+   and cannot be replaced.
+
+## Proof Obligation
+
+{{ proof_obligation }}
+
+{% if existing_proof %}
+## Existing Proof
+
+```lean
+{{ existing_proof }}
+```
+{% endif %}
+
+{% if context %}
+## Context
+
+{{ context | tojson }}
+{% endif %}
+
+{% if lean_diagnostics and lean_diagnostics | length > 0 %}
+## Lean Diagnostics (type-checker ground truth)
+
+The following diagnostics are from the Lean type-checker — the compiler's view
+of the proof. These are ground truth, not LLM guesses. Interpret each through
+the Curry-Howard lens.
+
+```json
+{{ lean_diagnostics | tojson }}
+```
+
+For each diagnostic:
+1. What does it reveal about the proof term's type?
+2. What specific proof step or term causes it?
+3. What is the minimum change that would resolve it?
+{% else %}
+## Lean Diagnostics
+
+No Lean diagnostics provided. In Zed sessions, run `lean` or `lake build` on
+the target code before this step — the type-checker's errors are the starting
+point, not your guess. Without diagnostics, your assessment is intrinsic (LLM
+self-reasoning) only and may miss issues the type-checker would catch.
+{% endif %}
+
+{% if iteration_focus %}
+## Iteration Focus (from previous refute)
+
+{{ iteration_focus }}
+
+The previous proof was challenged on specific dimensions. Re-anchor with
+these findings — the refute may have surfaced new proof obligations or
+termination issues.
+{% endif %}
+
+## Assessment Method
+
+For the proof obligation, determine:
+
+1. **Proposition classification:** Is it in `Prop` or `Type`? What is its
+   logical structure (universal, existential, implication, conjunction,
+   disjunction, negation)? Is it decidable?
+
+2. **Proof structure:** What is the high-level shape of the proof? (Direct,
+   contrapositive, contradiction, induction, coinduction?) What induction
+   principles are needed?
+
+3. **Proof method:** Term mode, tactic mode, or hybrid? `decide` for
+   decidable propositions? `native_decide` for computational decidability?
+   `simp` for equational reasoning? `induction` for recursive structure?
+
+4. **Termination strategy:** If the proof involves recursive functions, what
+   termination strategy is needed? Structural recursion? Well-founded
+   recursion? Which measure decreases?
+
+5. **Erasure characteristics:** Will the proof erase? Does it carry
+   computational content? Is there a Prop/Type boundary violation risk?
+
+## Output
+
+```json
+{
+  "proposition_classification": {
+    "universe": "Prop | Type",
+    "logical_structure": "universal | existential | implication | conjunction | disjunction | negation",
+    "decidable": true,
+    "decidability_witness": "Decidable instance or proof of undecidability"
+  },
+  "proof_structure": "high-level description of the proof shape",
+  "proof_method": "term | tactic | hybrid | decide | native_decide | simp | induction",
+  "decidability": "decidable | undecidable | conditionally decidable",
+  "termination_strategy": "structural recursion on X | well-founded recursion on relation R | N/A (non-recursive)",
+  "anchor_score": 0.85,
+  "compiler_grounding": {
+    "diagnostics_interpreted": 5,
+    "type_errors_confirmed": [1, 3],
+    "termination_issues_confirmed": [2],
+    "diagnostics_not_yet_explained": []
+  },
+  "reasoning": "Step-by-step reasoning through the classification and proof strategy, citing Lean diagnostics where available"
+}
+```
+
+`anchor_score`: 1.0 = perfectly anchored, 0.0 = no clear proof strategy. Higher is better.

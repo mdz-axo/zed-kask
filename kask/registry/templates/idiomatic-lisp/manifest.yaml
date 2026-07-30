@@ -1,0 +1,48 @@
+# Template crate manifest for idiomatic-lisp skill
+# hKask v0.31.0
+
+crate:
+  name: idiomatic-lisp
+  version: "0.31.0"
+  description: >
+    Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham.
+    Convergent inquiry loop: anchor design problems against Lisp's founding
+    principles (homoiconicity, metacircularity, data-as-program), propose
+    macro- and data-driven solutions with code examples, challenge and refine
+    through adversarial review with REPL evaluation as the extrinsic oracle,
+    and converge toward deeper, more idiomatic designs.
+
+templates:
+  - id: idiomatic-lisp/idiomatic-lisp-inquiry
+    name: "Assess a Lisp design problem against McCarthy/Sussman/Graham principles"
+    path: idiomatic-lisp-inquiry.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, classify, orient, anchor, specify]
+    description: >
+      Assess a Lisp design problem against the founding principles of Lisp.
+      Identify invariants, invalid states, evaluation models, and macro vs.
+      function decisions. Produce a scored design assessment with specific
+      improvement targets.
+
+  - id: idiomatic-lisp/idiomatic-lisp-design
+    name: "Propose idiomatic Lisp solutions with code examples"
+    path: idiomatic-lisp-design.j2
+    type: KnowAct
+    lexicon_terms: [design, compose, specify, generate, verify]
+    description: >
+      Propose idiomatic Lisp solutions with code examples. Apply homoiconicity,
+      metacircular evaluation, data-as-program patterns, hygienic macros, and
+      proper use of special forms. Reference CLHS, SRFI, and ecosystem best
+      practices.
+
+  - id: idiomatic-lisp/idiomatic-lisp-challenge
+    name: "Adversarial review of a Lisp design proposal"
+    path: idiomatic-lisp-challenge.j2
+    type: KnowAct
+    lexicon_terms: [challenge, critique, evaluate, discriminate, orient]
+    description: >
+      Adversarial review of a Lisp design proposal. Find gaps, test edge cases
+      (tail-call depth, multiple-values, restarts, macro hygiene), challenge
+      assumptions, identify deeper connections. Produce a scored critique with
+      specific refinement directives. Few-shot: if the critique score is below
+      threshold, loop back to design with concrete targets.

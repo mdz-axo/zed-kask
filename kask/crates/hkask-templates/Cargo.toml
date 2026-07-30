@@ -13,6 +13,7 @@ path = "src/hkask_templates.rs"
 hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
 hkask-forecast = { path = "../hkask-forecast" }
+hkask-lisp = { path = "../hkask-lisp" }
 hkask-guard = { path = "../hkask-guard" }
 hkask-regulation = { path = "../hkask-regulation" }
 minijinja.workspace = true

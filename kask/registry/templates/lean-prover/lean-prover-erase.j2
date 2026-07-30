@@ -1,0 +1,114 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [eliminate, classify, evaluate, reason, verify]
+contract:
+  input:
+    proof_obligation: string
+    proof_attempt: object
+    anchor: object
+    erase_diagnostics: object
+  output:
+    erasure_classification: object
+    computational_content: string
+    prop_type_boundary: string
+    elimination_type: string
+    erase_score: float
+    issues_found: array
+    reasoning: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: lean-prover/lean-prover-erase.j2 #}
+{# KnowAct — Reason about proof irrelevance and erasure #}
+{# hKask v0.31.0 #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "detailed"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are reasoning about proof erasure through the lens of Curry-Howard and
+Carneiro's "The Type Theory of Lean." The central question: does this proof
+carry computational content, or does it erase?
+
+## Proof Obligation
+
+{{ proof_obligation }}
+
+## Proof Attempt
+
+```json
+{{ proof_attempt | tojson }}
+```
+
+## Anchor
+
+```json
+{{ anchor | tojson }}
+```
+
+{% if erase_diagnostics %}
+## Erasure Diagnostics
+
+```json
+{{ erase_diagnostics | tojson }}
+```
+{% endif %}
+
+## Erasure Analysis
+
+### 1. Classify the Proof's Universe
+
+- Is the proposition in `Prop` (proof-irrelevant, erases) or `Type`
+  (proof-relevant, computes)?
+- If in `Prop`, is it a "proof-relevant enough" proposition (like `Eq`,
+  `True`, `False`) that allows large elimination?
+- If in `Type`, what computational content does the proof term carry?
+
+### 2. Identify Elimination Type
+
+- **Small elimination** — eliminating a `Prop` into another `Prop`. Always
+  allowed. The proof erases completely.
+- **Large elimination** — eliminating a `Prop` into a `Type`. Restricted.
+  Only allowed for propositions with sufficient proof relevance.
+- **No elimination** — the proof is used only for type-checking, never
+  eliminated. Erases to a no-op.
+
+### 3. Check the Prop/Type Boundary
+
+- Does the proof leak computational content from `Prop` into `Type`?
+- Are there `sorry` or `by trivial` proofs in `Prop` that are used for
+  computational decisions in `Type`?
+- Is the proof's erasure consistent with the proposition's classification?
+
+### 4. Assess Erasure Consequences
+
+- If the proof erases: the runtime behavior is independent of the proof term.
+  Any proof of the same proposition produces the same computation.
+- If the proof computes: the runtime behavior depends on the specific proof
+  term. Different proofs may produce different results.
+
+## Output
+
+```json
+{
+  "erasure_classification": {
+    "universe": "Prop | Type",
+    "erases": true,
+    "proof_relevant": false,
+    "allows_large_elimination": false
+  },
+  "computational_content": "description of what the proof term computes, or 'none — erases to no-op'",
+  "prop_type_boundary": "clean | violation — description of any boundary crossing",
+  "elimination_type": "small | large | none",
+  "erase_score": 0.9,
+  "issues_found": [
+    {"issue": "description", "severity": "critical|high|medium", "fix": "what to change"}
+  ],
+  "reasoning": "Step-by-step reasoning through the erasure analysis"
+}
+```
+
+`erase_score`: 1.0 = proof erases cleanly, 0.0 = proof has serious erasure issues. Higher is better.

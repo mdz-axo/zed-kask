@@ -1911,8 +1911,41 @@ fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 "calibration_converged": calibration_converged,
             }))
         }
+        // ── Lisp evaluation primitive ──
+        //
+        // Deterministic evaluation of a Lisp form against a JSON environment.
+        // No LLM round-trip, no I/O, no filesystem, no network. Bounded
+        // recursion depth (64) and bounded evaluation steps (10000).
+        // Used for recursive predicates over the context map — e.g.
+        // capability-tree walks, structural invariant checks, falsifiability
+        // counterfactuals that the LLM cannot reliably evaluate itself.
+        //
+        // Security: the interpreter has no `eval` builtin (Lisp code cannot
+        // evaluate arbitrary strings), no `load`/`require`, and the
+        // environment is immutable from Lisp's perspective. The caller must
+        // gate `lisp.eval` to `category: skill` manifests only — infrastructure
+        // manifests run without human review and a Turing-complete step
+        // language is an attack surface (see .rules trap on manifests).
+        "lisp.eval" => {
+            let form = input.get("form").and_then(|v| v.as_str()).ok_or_else(|| {
+                TemplateError::Manifest("compute 'lisp.eval': missing 'form' string".into())
+            })?;
+            let env_input = input.get("env").cloned().unwrap_or(Value::Null);
+            let max_steps = input
+                .get("max_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(100000);
+            let max_depth = input
+                .get("max_depth")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(64);
+            let result =
+                hkask_lisp::eval_sandboxed_with_budget(form, &env_input, max_steps, max_depth)
+                    .map_err(|e| TemplateError::Manifest(format!("lisp.eval: {e}")))?;
+            Ok(result)
+        }
         other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, kata.convergence_check",
+            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, kata.convergence_check, lisp.eval",
             other
         ))),
     }

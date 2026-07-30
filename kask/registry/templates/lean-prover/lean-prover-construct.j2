@@ -1,0 +1,148 @@
+[inference]
+template_type: KnowAct
+lexicon_terms: [construct, verify, apply, refine, check]
+contract:
+  input:
+    proof_obligation: string
+    anchor: object
+    existing_proof: string
+    lean_code_actions: array
+    iteration_focus: string
+  output:
+    proof_term: string
+    tactic_proof: string
+    proof_rationale: array
+    termination_proof: string
+    ecosystem_references: array
+    construct_score: float
+    compiler_actions_used: array
+    reasoning: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: lean-prover/lean-prover-construct.j2 #}
+{# KnowAct — Construct proofs via tactics and term mode #}
+{# hKask v0.31.0 #}
+{#
+  Compiler grounding: if lean_code_actions are available, they are
+  type-checker-verified starting points. Lean's code actions (add sorry,
+  insert implicit arguments, generate induction principle) are the compiler's
+  proof recommendations. The LLM's job is to evaluate and extend these against
+  the proof goals, not to propose proofs blind.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are constructing a Lean proof as Curry-Howard, de Bruijn, and Carneiro
+would. Every proof term is a program. Every tactic is a program transformation.
+The type-checker is your design partner.
+
+## Proof Obligation
+
+{{ proof_obligation }}
+
+{% if existing_proof %}
+## Existing Proof
+
+```lean
+{{ existing_proof }}
+```
+{% endif %}
+
+## Anchor (Phase 1)
+
+```json
+{{ anchor | tojson }}
+```
+
+{% if lean_code_actions and lean_code_actions | length > 0 %}
+## Lean Code Actions (type-checker-verified starting points)
+
+```json
+{{ lean_code_actions | tojson }}
+```
+{% endif %}
+
+{% if iteration_focus %}
+## Iteration Focus (from previous refute)
+
+{{ iteration_focus }}
+{% endif %}
+
+## Construction Method
+
+### 1. Choose the Proof Mode
+
+- **Term mode** — write explicit proof terms. Best for: simple proofs,
+  composable lemmas, proofs that should read as programs. Example:
+  `fun h => Or.inr h` proves `A ∨ B` from `h : B`.
+- **Tactic mode** — write imperative proof steps. Best for: complex proofs,
+  exploratory proofs, proofs with many cases. Example: `by intro h; left;
+  exact h`.
+- **Hybrid** — use tactics for the skeleton, terms for the leaves. Best for:
+  medium-complexity proofs where the structure is clear but the details
+  require exploration.
+
+### 2. Apply the Right Tactics
+
+- `intro` — introduce hypotheses (universal quantifier elimination)
+- `apply` — backward reasoning (modus ponens)
+- `exact` — provide the exact proof term
+- `induction` — apply the induction principle
+- `simp` — equational rewriting with a lemma database
+- `rw` — directed rewriting with specific equations
+- `decide` — computational decidability (for decidable propositions)
+- `native_decide` — compiled decidability (faster, for complex computations)
+- `cases` — case analysis on a sum type
+- `constructor` — split a conjunction or introduce a disjunction
+- `omega` — linear arithmetic over integers/naturals
+- `ring` — algebraic simplification
+
+### 3. Handle Termination
+
+For recursive functions:
+- **Structural recursion** — the default. Ensure the recursive call is on a
+  structurally smaller subterm. Use `decreasing_by` if Lean can't figure it
+  out automatically.
+- **Well-founded recursion** — the escape hatch. Provide a well-founded
+  relation and a proof that the measure decreases. Use `termination_by` to
+  specify the measure.
+- **Tail recursion** — for functions that should be constant-space. Use
+  an accumulator and prove the equivalence.
+
+### 4. Reference Mathlib
+
+For each proof, check whether Mathlib already has the lemma:
+- `simp` lemma database — the most common equational reasoning
+- `omega` — linear arithmetic
+- `ring` — algebraic identities
+- `norm_num` — numeric computation
+- Specific lemmas in `Mathlib.Data.*`, `Mathlib.Logic.*`, `Mathlib.Tactic.*`
+
+## Output
+
+```json
+{
+  "proof_term": "the term-mode proof (if applicable)",
+  "tactic_proof": "the tactic-mode proof (if applicable)",
+  "proof_rationale": [
+    {"step": "tactic or term", "purpose": "what it accomplishes", "alternatives": "what else could have been used"}
+  ],
+  "termination_proof": "the termination argument (if recursive)",
+  "ecosystem_references": [
+    {"reference": "Mathlib lemma/tactic", "relevance": "how it applies to this proof"}
+  ],
+  "construct_score": 0.85,
+  "compiler_actions_used": [
+    {"action": "code action name", "result": "what it produced", "verified": true}
+  ],
+  "reasoning": "Step-by-step reasoning through the proof construction"
+}
+```
+
+`construct_score`: 1.0 = proof compiles and is elegant, 0.0 = no valid proof. Higher is better.
