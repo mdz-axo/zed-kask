@@ -109,6 +109,10 @@ impl List {
         count
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.is_nil()
+    }
+
     pub fn to_vec(&self) -> Vec<LispValue> {
         let mut out = Vec::new();
         let mut cursor: Option<&List> = Some(self);

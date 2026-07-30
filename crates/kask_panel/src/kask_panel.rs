@@ -607,72 +607,141 @@ mod tests {
     //
     // These tests pin the deliberate zed-kask deviations from the agent
     // panel, per the `.rules` "tests must pin deliberate zed-kask
+    // ── Deliberate deviations from the agent panel ─────────────────────
+    //
+    // These tests pin the deliberate zed-kask deviations from the agent
+    // panel, per the `.rules` "tests must pin deliberate zed-kask
     // deviations" trap. The kask panel reuses the agent panel's
     // `ConversationView` directly — it does NOT fork `ThreadView` or
     // `MessageEditor`. The only deviation is the tab strip.
+    //
+    // Rust has no stable "assert this type/path does not resolve" mechanism,
+    // so we walk the crate source and assert the forbidden symbols/files are
+    // absent. A regression that re-introduces any of these fails this test
+    // with the offending file:line.
+
+    /// Forbidden symbols — re-introducing any of these in `src/` fails the
+    /// pin test. Each entry documents the architectural reason for its
+    /// absence (previously pinned by an `assert!(true)` no-op test).
+    const FORBIDDEN_SYMBOLS: &[(&str, &str)] = &[
+        // kask_panel_reuses_conversation_view_not_fork:
+        //   KaskPanel hosts the agent panel's ConversationView directly; no
+        //   custom ThreadView/MessageEditor fork.
+        ("ThreadView", "custom fork of agent panel ThreadView"),
+        ("MessageEditor", "custom fork of agent panel MessageEditor"),
+        // kask_panel_has_no_custom_completion_provider:
+        ("KaskToolCompletionProvider", "custom completion provider"),
+        ("KaskMentionCompletionProvider", "custom mention provider"),
+        // kask_panel_has_no_curator_session_trait:
+        ("CuratorSession", "CuratorSession trait"),
+        ("PanelCuratorSession", "PanelCuratorSession struct"),
+        // kask_panel_has_no_regulation_status_bar:
+        ("RegulationSnapshot", "RegulationSnapshot struct"),
+        ("RegulationStatus", "RegulationStatus trait"),
+    ];
+
+    /// Forbidden module files — re-introducing any of these in `src/` fails
+    /// the pin test.
+    const FORBIDDEN_FILES: &[&str] = &[
+        // kask_panel_has_no_markdown_render_or_tool_call_card_modules:
+        "markdown_render.rs",
+        "tool_call_card.rs",
+        // kask_panel_has_no_kvp_persistence:
+        "persistence.rs",
+    ];
 
     #[test]
-    fn kask_panel_reuses_conversation_view_not_fork() {
-        // The kask panel does NOT fork `ConversationView` or `ThreadView`.
-        // It hosts the agent panel's `ConversationView` directly. This is
-        // the central architectural decision: zero visual divergence from
-        // the agent panel, all rendering inherited for free.
-        // (Structural pin: `KaskPanel` has `threads: HashMap<usize,
-        //  Entity<ConversationView>>`, not a custom view type.)
-        assert!(true);
-    }
+    fn kask_panel_pins_deliberate_deviations() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let src_dir = std::path::Path::new(manifest_dir).join("src");
+        assert!(
+            src_dir.exists(),
+            "kask_panel src dir not found at {} — CARGO_MANIFEST_DIR is stale",
+            src_dir.display()
+        );
 
-    #[test]
-    fn kask_panel_has_no_custom_message_rendering() {
-        // The kask panel does NOT have `render_messages`, `render_input`,
-        // or `render_status_bar`. All rendering is delegated to the
-        // `ConversationView`. (Structural pin: the `Render` impl only
-        // renders the tab strip + the active `ConversationView`.)
-        assert!(true);
-    }
+        let mut violations: Vec<String> = Vec::new();
 
-    #[test]
-    fn kask_panel_has_no_custom_completion_provider() {
-        // The kask panel does NOT have `KaskToolCompletionProvider` or
-        // `KaskMentionCompletionProvider`. The `ConversationView`'s
-        // `MessageEditor` handles completion, mentions, and slash commands.
-        // (Structural pin: no completion provider types in this crate.)
-        assert!(true);
-    }
+        for entry in std::fs::read_dir(&src_dir).expect("read src dir") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let rel = path.strip_prefix(&src_dir).unwrap_or(&path);
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    violations.push(format!("{}: read failed: {}", rel.display(), e));
+                    continue;
+                }
+            };
 
-    #[test]
-    fn kask_panel_has_no_curator_session_trait() {
-        // The kask panel does NOT have a `CuratorSession` trait or
-        // `PanelCuratorSession`. The `ConversationView` → `ThreadView` →
-        // `NativeAgent` path handles streaming, tool dispatch, and cancel.
-        // (Structural pin: no `CuratorSession` trait in this crate.)
-        assert!(true);
-    }
+            // Forbidden module files — entire file must not exist.
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if FORBIDDEN_FILES.contains(&name) {
+                    violations.push(format!(
+                        "{}: forbidden module file re-introduced ({})",
+                        rel.display(),
+                        name
+                    ));
+                }
+            }
 
-    #[test]
-    fn kask_panel_has_no_regulation_status_bar() {
-        // The kask panel does NOT have a `RegulationSnapshot` or
-        // `RegulationStatus` trait. The status bar is part of
-        // `ThreadView`'s activity bar. (Structural pin: no
-        // `RegulationSnapshot` struct in this crate.)
-        assert!(true);
-    }
+            // Forbidden symbols — scan line by line, skipping comments.
+            for (lineno, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//") || trimmed.starts_with("/*") {
+                    continue;
+                }
+                for (sym, reason) in FORBIDDEN_SYMBOLS {
+                    // Skip lines where the symbol appears inside a string
+                    // literal (e.g. the FORBIDDEN_SYMBOLS table itself).
+                    let quoted = format!("\"{sym}\"");
+                    if line.contains(&quoted) {
+                        continue;
+                    }
+                    // Check for word-boundary match: the character before
+                    // and after the symbol must not be an identifier char.
+                    // This prevents `PanelCuratorSession` matching `CuratorSession`.
+                    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_';
+                    let has_word_match = || {
+                        let mut start = 0;
+                        while let Some(pos) = line[start..].find(sym) {
+                            let abs = start + pos;
+                            let before = line[..abs].chars().next_back();
+                            let after = line[abs + sym.len()..].chars().next();
+                            let before_ok = before.map_or(true, |c| !is_ident_char(c));
+                            let after_ok = after.map_or(true, |c| !is_ident_char(c));
+                            if before_ok && after_ok {
+                                return true;
+                            }
+                            start = abs + sym.len();
+                        }
+                        false
+                    };
+                    if has_word_match() {
+                        violations.push(format!(
+                            "{}:{}: forbidden symbol `{}` ({}): {}",
+                            rel.display(),
+                            lineno + 1,
+                            sym,
+                            reason,
+                            line.trim()
+                        ));
+                    }
+                }
+            }
+        }
 
-    #[test]
-    fn kask_panel_has_no_kvp_persistence() {
-        // The kask panel does NOT persist conversations to the KVP store.
-        // Each tab's `ConversationView` is constructed with
-        // `thread_store: None` — the conversation lives only for the
-        // panel's lifetime. (Structural pin: no `persistence` module.)
-        assert!(true);
-    }
-
-    #[test]
-    fn kask_panel_has_no_markdown_render_or_tool_call_card_modules() {
-        // The kask panel does NOT have `markdown_render.rs` or
-        // `tool_call_card.rs` modules. The `ConversationView`'s
-        // `ThreadView` handles markdown rendering and tool-call cards.
-        // (Structural pin: these modules are deleted.)
-        assert!(true);
+        assert!(
+            violations.is_empty(),
+            "kask_panel deliberate-deviation pins violated:\n  - {}\n\
+             These symbols/files were deliberately removed from the kask panel \
+             (it reuses the agent panel's ConversationView directly). \
+             Re-introducing them breaks the architectural decision documented \
+             in the .rules \"tests must pin deliberate zed-kask deviations\" trap.",
+            violations.join("\n  - ")
+        );
     }
 }

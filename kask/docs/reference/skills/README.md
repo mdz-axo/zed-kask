@@ -39,7 +39,7 @@ mds_categories: [domain, composition]
 
 ---
 
-## Core Development (9 skills)
+## Core Development (10 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -49,13 +49,14 @@ mds_categories: [domain, composition]
 | `deep-module` | Skill | Module design via Ousterhout's deletion test and interface minimalism (≤7 public functions) | `registry/manifests/deep-module.yaml` · `registry/templates/deep-module/` |
 | `refactor-architecture` | Skill | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity. Merged from improve-codebase-architecture + refactor-service-layer + strangler-fig. | `registry/manifests/refactor-architecture.yaml` · `registry/templates/refactor-architecture/` |
 | `idiomatic-rust` | Skill | Type-driven Rust design through Graydon Hoare's principles | `registry/manifests/idiomatic-rust.yaml` · `registry/templates/idiomatic-rust/` |
+| `idiomatic-lisp` | Skill | Idiomatic Lisp design through McCarthy/Sussman/Graham principles (homoiconicity, metacircularity, data-as-program) with REPL evaluation as the extrinsic oracle | `registry/templates/idiomatic-lisp/` |
 | `task-breakdown` | Skill | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing | `registry/manifests/task-breakdown.yaml` · `registry/templates/task-breakdown/` |
 | `graph-audit` | Skill | Unified graph analysis: code mode (query/traverse/analyze code graph via MCP), semantic mode (domain-agnostic graph health), dual mode (extract code graph then audit it). Includes context-expansion mode (folded from zoom-out). Merged from codegraph + semantic-graph-audit. | `registry/manifests/graph-audit.yaml` · `registry/templates/graph-audit/` |
 | `diataxis-diagram` | Skill | Generate Mermaid diagrams from code using Diataxis methodology | `registry/manifests/diataxis-diagram.yaml` · `registry/templates/diataxis-diagram/` |
 
 ---
 
-## Reasoning & Analysis (8 skills)
+## Reasoning & Analysis (9 skills)
 
 | Skill | Type | Purpose | Artifacts |
 |-------|------|---------|----------|
@@ -65,6 +66,7 @@ mds_categories: [domain, composition]
 | `grill-me` | Skill | Socratic questioning to stress-test understanding | `registry/manifests/grill-me.yaml` · `registry/templates/grill-me/` |
 | `sequential-inquiry` | Skill | Dynamic chain-of-thought with automatic deep-dive delegation | `registry/manifests/sequential-inquiry.yaml` · `registry/templates/sequential-inquiry/` |
 | `falsifiability` | Skill | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals | `registry/manifests/falsifiability.yaml` · `registry/templates/falsifiability/` |
+| `lean-prover` | Skill | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability — where falsifiability designs discriminating tests, lean-prover constructs machine-checked proofs that discriminate | `registry/templates/lean-prover/` |
 | `metacognition` | Skill | Master self-reflection: decompose goals, assess progress, calibrate strategy, GEPA self-improvement | `registry/manifests/metacognition.yaml` · `registry/templates/metacognition/` |
 | `gradient-hunter` | Skill | Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field. Anchored to Parisi spin glass theory + 7 surface gradient-shape ontologies. Phased: Prior → Map → Detect → Hypothesize → Report → Convergence. | `registry/manifests/gradient-hunter.yaml` · `registry/templates/gradient-hunter/` |
 
@@ -131,13 +133,13 @@ mds_categories: [domain, composition]
 | Category | Count | Types |
 |----------|-------|-------|
 | Guardrails | 1 | Skill |
-| Core Development | 9 | Skills |
-| Reasoning & Analysis | 8 | Skills |
+| Core Development | 10 | Skills |
+| Reasoning & Analysis | 9 | Skills |
 | Kata & Coaching | 3 | Skills |
 | Meta & Maintenance | 7 skills + 1 template | Skills + Template |
 | Security & Posture | 3 | Skills |
 | Specialized | 14 | Skills |
-| **Catalogued here** | **45 skills + 1 template** | **46 capabilities** |
+| **Catalogued here** | **47 skills + 1 template** | **48 capabilities** |
 
 > **Filesystem reality:** `registry/templates/` contains 75 template directories; `registry/manifests/` contains 87 FlowDef manifests (45 category=skill, 42 non-skill). `.agents/skills/` (at the repo root) contains 44 SKILL.md directories. Counts verified 2026-07-29.
 >

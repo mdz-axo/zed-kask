@@ -3,7 +3,7 @@
 
 manifest:
   id: curator-metacognition
-  category: skill
+  category: runtime-config
   name: Curator Metacognition
   functional_role: knowact
   description: >
