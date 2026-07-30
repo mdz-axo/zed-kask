@@ -457,3 +457,54 @@ receive `HKASK_SMTP_PASSWORD` (credential leak) or `HKASK_SMTP_USERNAME`
 in its process. New servers must use `Some(&[])` (no credentials/config) for
 both allowlists and add specific env vars as needed, never `None` (receives
 all). The `all_servers_have_credential_allowlist` test pins this.
+
+## Manifests must not hardcode model names in the `fusion` block
+
+Model names go stale — `deepseek-v4-pro`, `Kimi2.7`, `Qwen3.7 Max` will all be
+renamed or deprecated within months. The `fusion` block's `panel` field is
+required by serde (`NonEmptyVec` with no `#[serde(default)]`), so you cannot
+specify `judge: algo` without also specifying a panel. The correct pattern:
+**omit the `fusion` block entirely** from the manifest. The executor's
+resolution chain (`step.fusion` → `manifest.fusion` → global default) falls
+through to the operator's global `kask.fusion` settings when `manifest.fusion`
+is `None`. The operator configures the panel via `kask.fusion.panel_models` or
+`HKASK_FUSION_PANEL_MODELS`. For skills that need a specific mode or skill
+anchor (e.g., `mode: "critique"`, `skills: [essentialist, deep-module]`),
+document the recommendation in a comment where the `fusion` block would have
+been — not in the block itself. This applies to all manifest categories
+(`skill`, `pipeline`, `runtime-config`, `daemon-process`, `qa-script`);
+infrastructure manifests are even more sensitive because they run without human
+review and a stale model name fails silently. The `category` field on
+`BundleManifest` already distinguishes agent skills (`is_skill()`) from
+infrastructure — agents authoring manifests must set `category` correctly so
+the runtime can gate `resolve_manifest` (only `skill` manifests may bind as
+agent `process_manifests`).
+
+## `unwrap_or(0)` / `.is_ok()` / `let _ =` on regulation signals is a broken feedback loop
+
+Every error path that feeds the cybernetic regulation loop (gas reserve/settle,
+consolidation delete, semantic purge, wallet draw, ROLLBACK, regulation record
+parse, escalation ID parse) must `tracing::warn!` on failure, not silently
+return zero/no-op. A `consolidation_candidate_count` that returns 0 on DB
+outage is indistinguishable from "no candidates" — the regulation loop sees
+no signal and suppresses consolidation triggers. A `settle_gas` that drops
+the error with `.ok()` creates a reinforcing loop (unbounded tool calls)
+instead of a corrective one. This generalizes the "Process-global hooks need
+a startup-failure signal" trap: every `unwrap_or` on a regulation signal is
+a missing failure signal. Found across `hkask-memory`, `hkask-regulation`,
+`hkask-mcp`, `hkask-storage` in audit cycle 7.
+
+## `LanguageModelInferencePort` honors `model_override` via registry resolution
+
+`LanguageModelInferencePort::generate_with_model` resolves the named model
+from `LanguageModelRegistry` via `resolve_fusion_models` when
+`model_override` is `Some(name)`. The resolution happens inside the GPUI-side
+receiver task (which has `&mut AsyncApp` → `cx.update(|cx| ...)`). If the
+model can't be resolved, the port falls back to the default model with a
+`tracing::warn!`. MCP servers (condenser, corpus, training) that pass
+`Some(model)` to `generate_with_model` expect the override to be honored —
+silently dropping it (the pre-fix behavior) caused the condenser to use the
+default model instead of the requested one, defeating `bypass_fusion: true`.
+The `MultiModelInferencePort` (fusion) already resolves by name before
+calling the single-model port, so it passes `None` to avoid redundant
+resolution. Tests in `inference.rs` pin the propagation.

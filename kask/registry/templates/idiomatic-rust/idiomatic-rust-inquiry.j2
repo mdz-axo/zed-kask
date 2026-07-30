@@ -6,6 +6,8 @@ contract:
     design_problem: string
     existing_code: string
     design_constraints: object
+    compiler_diagnostics: object
+    iteration_focus: string
   output:
     invariants: array
     invalid_states: array
@@ -14,6 +16,7 @@ contract:
     principle_violations: array
     improvement_targets: array
     assessment_score: float
+    compiler_grounding: object
     reasoning: string
 energy_cap: 8192
 visibility: Public
@@ -21,6 +24,23 @@ visibility: Public
 {# Template: idiomatic-rust/idiomatic-rust-inquiry.j2 #}
 {# KnowAct — Anchor a Rust design problem against Hoare's principles #}
 {# hKask v0.31.0 #}
+{#
+  Compiler grounding: if compiler_diagnostics are available, they are the
+  starting point — not the LLM's guess. The compiler is the extrinsic
+  oracle that prevents the Dunning-Kruger trap (the LLM confidently
+  assessing a design it doesn't understand). Interpret each diagnostic
+  through the Hoare lens:
+    - Borrow checker error → Principle 2 (ownership is architecture)
+    - Type mismatch → Principle 1 (invalid states unrepresentable)
+    - Lifetime error → Principle 2 (ownership) or Principle 5 (explicit)
+    - Missing trait impl → Principle 6 (composition over inheritance)
+    - Panic path → Principle 7 (errors as values)
+    - Unsafe block → Principle 8 (unsafe as contract)
+
+  Feedback loop: when iteration_focus is present (from previous challenge),
+  re-assess with the new findings. The agent should re-run `diagnostics`
+  to check whether the compiler's view has changed.
+#}
 
 [inference]
 temperature = 0.2
@@ -65,6 +85,41 @@ You are thinking like Graydon Hoare, the creator of Rust. Your mind operates on 
 {{ design_constraints | tojson }}
 {% endif %}
 
+{% if compiler_diagnostics and compiler_diagnostics | length > 0 %}
+## Compiler Diagnostics (rust-analyzer ground truth)
+
+The following diagnostics are from rust-analyzer — the compiler's view of
+the code. These are ground truth, not LLM guesses. Interpret each through
+the Hoare lens.
+
+```json
+{{ compiler_diagnostics | tojson }}
+```
+
+For each diagnostic:
+1. Which Hoare principle does it violate?
+2. What specific state or relationship causes it?
+3. What is the minimum change that would resolve it?
+{% else %}
+## Compiler Diagnostics
+
+No compiler diagnostics provided. In Zed sessions, run the `diagnostics`
+tool on the target code before this step — the compiler's errors and
+warnings are the starting point, not your guess. Without compiler
+diagnostics, your assessment is intrinsic (LLM self-reasoning) only and
+may miss issues the borrow checker would catch.
+{% endif %}
+
+{% if iteration_focus %}
+## Iteration Focus (from previous challenge)
+
+{{ iteration_focus }}
+
+The previous design was challenged on specific dimensions. Re-assess with
+these findings — the challenge may have surfaced new invariants or
+invalid states that the original assessment missed.
+{% endif %}
+
 ## Assessment Method
 
 For each of the eight principles, ask:
@@ -88,7 +143,7 @@ Then synthesize:
 {
   "invariants": ["invariant_1: must always be true", "..."],
   "invalid_states": [
-    {"state": "description of possible-but-invalid state", "principle_violated": 1, "severity": "critical|high|medium"}
+    {"state": "description of possible-but-invalid state", "principle_violated": 1, "severity": "critical|high|medium", "compiler_diagnostic": "related rust-analyzer error if any"}
   ],
   "ownership_graph": "textual description of the ownership DAG: who creates/observes/mutates/destroys each value",
   "error_domain": {
@@ -97,14 +152,21 @@ Then synthesize:
     "silently_swallowed": ["error paths that silently fail"]
   },
   "principle_violations": [
-    {"principle": 1, "name": "Make invalid states unrepresentable", "violation": "specific description", "severity": "critical|high|medium"}
+    {"principle": 1, "name": "Make invalid states unrepresentable", "violation": "specific description", "severity": "critical|high|medium", "compiler_confirmed": true}
   ],
   "improvement_targets": [
-    {"target": "specific change", "principle_addressed": 1, "impact": "high|medium|low", "effort": "small|medium|large"}
+    {"target": "specific change", "principle_addressed": 1, "impact": "high|medium|low", "effort": "small|medium|large", "compiler_action": "related LSP code action if any"}
   ],
   "assessment_score": 0.85,
-  "reasoning": "Step-by-step reasoning through each principle and the synthesis"
+  "compiler_grounding": {
+    "diagnostics_interpreted": 5,
+    "principles_confirmed_by_compiler": [2, 7],
+    "principles_violated_by_compiler": [1, 5],
+    "diagnostics_not_yet_explained": ["any rust-analyzer warnings not yet mapped to a principle"]
+  },
+  "reasoning": "Step-by-step reasoning through each principle and the synthesis, citing compiler diagnostics where they confirmed or contradicted the LLM's assessment"
 }
 ```
 
 `assessment_score`: 1.0 = perfectly idiomatic, 0.0 = completely unidiomatic. Higher is better.
+`compiler_confirmed`: true if a compiler diagnostic confirms this violation (extrinsic evidence), false if the LLM identified it without compiler help (intrinsic reasoning only — lower confidence).

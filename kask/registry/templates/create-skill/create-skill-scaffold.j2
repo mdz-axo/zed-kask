@@ -82,6 +82,7 @@ templates:
 For each PDCA phase, generate a .j2 template with:
 
 ```
+{% raw %}
 [inference]
 template_type: KnowAct
 lexicon_terms:
@@ -121,6 +122,7 @@ thinking_budget = "full"
 ## Output
 
 Produce a JSON object with: <output fields>.
+{% endraw %}
 ```
 
 For reference documents (RenderAct), generate .yaml files (no [inference] frontmatter).
@@ -130,6 +132,7 @@ For reference documents (RenderAct), generate .yaml files (no [inference] frontm
 Generate the process manifest (`kask/registry/manifests/<name>.yaml`):
 
 ```yaml
+{% raw %}
 manifest:
   id: <skill_name>
   category: skill
@@ -241,6 +244,7 @@ ocap:
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
+{% endraw %}
 ```
 
 ## Step 4 — Generate SKILL.md Companion

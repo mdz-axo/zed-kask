@@ -1,16 +1,35 @@
 # Idiomatic Rust Process Manifest
 # hKask v0.31.0 — Convergent inquiry into Rust design quality
 # Graydon Hoare's principles as the operating system
+#
+# Compiler grounding: this skill uses rust-analyzer (via the agent's
+# diagnostics, get_code_actions, go_to_definition, find_references tools)
+# and clippy (via ./script/clippy) as extrinsic oracles. The LLM reasons
+# about design through Hoare's principles; the compiler verifies whether
+# the reasoning is correct. This closes the intrinsic/extrinsic feedback
+# gap — the LLM's self-critique (intrinsic) is checked against compiler
+# diagnostics (extrinsic), preventing the Dunning-Kruger trap where the
+# LLM confidently proposes a design the borrow checker would reject.
+#
+# PDCA loop: inquiry (assess with compiler) → design (propose with
+# compiler suggestions) → challenge (verify with compiler) → convergence
+# check → re-assess (if not converged). The loop targets step 1 (inquiry),
+# not step 2 (design), so challenge findings re-inform the assessment.
 
 manifest:
   id: idiomatic-rust
   category: skill
   name: Idiomatic Rust
   description: >
-    Convergent inquiry into Rust design quality through Graydon Hoare's lens.
-    Anchors design problems against Hoare's principles, proposes type-driven
-    solutions with code examples, challenges and refines through adversarial
-    review, and iterates until the design converges toward deeper idiomaticity.
+    Convergent inquiry into Rust design quality through Graydon Hoare's
+    lens, grounded by rust-analyzer and clippy as extrinsic oracles.
+    Anchors design problems against Hoare's eight principles using
+    compiler diagnostics as ground truth, proposes type-driven solutions
+    informed by LSP code actions, challenges and refines through
+    adversarial review verified against compiler feedback, and iterates
+    until the design converges toward deeper idiomaticity. The compiler
+    is the oracle that prevents the LLM from confidently proposing designs
+    the borrow checker would reject.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
@@ -18,12 +37,12 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: step_2_result
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10
   min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "step_3_result"
 
 gas:
   cap: 120000
@@ -53,68 +72,144 @@ inputs:
     type: string
     description: "Specific aspect to focus on from previous challenge critique"
     required: false
+  - name: compiler_diagnostics
+    type: object
+    description: >
+      Pre-populated rust-analyzer diagnostics for the target code. In Zed
+      sessions, the agent runs the `diagnostics` tool before invoking the
+      flow. In pure FlowDef execution, this should be pre-populated by the
+      caller. When absent, the inquiry phase operates on LLM reasoning
+      alone (less reliable — the compiler oracle is missing).
+    required: false
+  - name: code_actions
+    type: array
+    description: >
+      Pre-populated LSP code actions (rust-analyzer refactor suggestions)
+      for the target code. In Zed sessions, the agent runs
+      `get_code_actions` before invoking the flow. When absent, the design
+      phase operates on LLM reasoning alone.
+    required: false
+  - name: clippy_lints
+    type: array
+    description: >
+      Pre-populated clippy lint output for the target code. In Zed
+      sessions, the agent runs `./script/clippy` before invoking the flow.
+      When absent, the challenge phase operates on LLM reasoning alone.
+    required: false
 
 # Fusion: omitted — defers to operator's global kask.fusion settings.
 # Recommended: mode "critique" with skills: [coding-guidelines, deep-module].
 # Model names are not hardcoded here because models evolve quickly.
+# Optional: a Rust-specialized model (e.g., strand-rust-coder via Ollama)
+# may be included in the fusion panel for the design phase — its strengths
+# in code generation and refactoring complement the LSP tools. Configure
+# via kask.fusion.panel_models.
 
 steps:
   - ordinal: 1
     action: select
     description: >
-      Anchor the design problem against Graydon Hoare's principles.
-      Identify invariants, invalid states, ownership graphs, error domains.
-      Produce scored assessment with improvement targets.
+      Anchor the design problem against Graydon Hoare's principles, using
+      rust-analyzer diagnostics as ground truth. The agent should run the
+      `diagnostics` tool on the target code before this step (in Zed
+      sessions) — the compiler's errors and warnings are the starting
+      point, not the LLM's guess. Identify invariants, invalid states,
+      ownership graphs, error domains. Interpret compiler diagnostics
+      through the Hoare lens: a borrow checker error is a Principle 2
+      (ownership) violation; a type mismatch is a Principle 1 (invalid
+      states) violation. Produce scored assessment with improvement
+      targets. Consumes iteration_focus from previous challenge when
+      present (feedback loop closure).
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-inquiry
     gas_cap: 8192
-    timeout_seconds: 60
+    timeout_seconds: 90
     input_mapping:
       design_problem: "{{ design_problem }}"
       existing_code: "{{ existing_code | default('') }}"
       design_constraints: "{{ design_constraints | default({}) }}"
+      compiler_diagnostics: "{{ compiler_diagnostics | default({}) }}"
+      iteration_focus: "{{ iteration_focus | default('') }}"
 
   - ordinal: 2
     action: select
     description: >
-      Propose type-driven Rust solutions with code examples. Apply algebraic
-      types, ownership patterns, error propagation, trait design.
-      Reference std patterns, crate ecosystem, and RFCs.
+      Propose type-driven Rust solutions with code examples, informed by
+      LSP code actions. The agent should run `get_code_actions` on the
+      target code before this step (in Zed sessions) — rust-analyzer's
+      refactor suggestions (replace with enum, extract struct, add missing
+      trait impl) are compiler-verified starting points. Apply algebraic
+      types, ownership patterns, error propagation, trait design. Reference
+      std patterns, crate ecosystem, and RFCs. The LLM's job is to
+      evaluate and extend the compiler's suggestions against the design
+      goals, not to propose refactors blind.
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-design
     gas_cap: 8192
-    timeout_seconds: 60
+    timeout_seconds: 90
     input_mapping:
       design_problem: "{{ design_problem }}"
       existing_code: "{{ existing_code | default('') }}"
       assessment: "{{ step_1_result }}"
+      code_actions: "{{ code_actions | default([]) }}"
       iteration_focus: "{{ iteration_focus | default('') }}"
 
   - ordinal: 3
     action: select
     description: >
-      Adversarial review: find gaps, test edge cases, challenge assumptions,
-      identify deeper connections. Produce scored critique with specific
-      refinement directives for potential re-design.
+      Adversarial review grounded by compiler feedback. The agent should
+      run `find_references` on the types being changed (to find the actual
+      blast radius, not the LLM's guess) and `diagnostics` on any proposed
+      code (to verify it compiles). If clippy lints are available, use them
+      as a codified subset of idiomatic Rust — clippy's warnings are
+      ground-truth design feedback. Find gaps, test edge cases, challenge
+      assumptions, identify deeper connections. Produce scored critique
+      with specific refinement directives for potential re-design.
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-challenge
     gas_cap: 8192
-    timeout_seconds: 60
+    timeout_seconds: 90
     input_mapping:
       design_problem: "{{ design_problem }}"
       design_proposal: "{{ step_2_result }}"
       assessment: "{{ step_1_result }}"
       design_constraints: "{{ design_constraints | default({}) }}"
+      clippy_lints: "{{ clippy_lints | default([]) }}"
 
   - ordinal: 4
+    action: compute
+    compute_ref: kata.convergence_check
+    description: >
+      CHECK CONVERGENCE: Cauchy criterion on the critique score. The
+      design has converged when the critique score stops moving — the
+      adversarial review is no longer finding significant new issues.
+      Oscillating scores (design improves on one dimension, challenge
+      finds new issues on another) indicate the design is not converging
+      and may need escalation.
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 5
     action: loop
     description: >
-      If convergence is not met and the critique identified concrete
-      refinement targets, loop back to design (step 2) with those targets.
+      Re-enter the inquiry cycle if convergence is not met. Routes back to
+      step 1 (inquiry), not step 2 (design), so the challenge's
+      refinement_directives re-inform the assessment — the LLM re-assesses
+      with the new findings, and the agent re-runs diagnostics to check
+      whether the compiler's view has changed. This closes the feedback
+      loop properly: challenge findings → re-assess → re-design →
+      re-challenge.
     input_mapping:
-      loop_target: "{{ 2 }}"
-      # Push the critique score into kata_hypotenuse so the Cauchy
-      # criterion can detect when the design has stopped moving.
+      loop_target: "{{ 1 }}"
+      iteration_focus: "{{ step_3_result.refinement_directives | default([]) | tojson }}"
       kata_hypotenuse: "{{ step_3_result.critique_score | default(1.0) }}"
 
 error_handling:

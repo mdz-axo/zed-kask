@@ -5662,6 +5662,7 @@ mod tests {
                 "image_viewer",
                 "inline_assistant",
                 "journal",
+                "kask_extensions",
                 "kask_panel",
                 "keymap_editor",
                 "keystroke_input",

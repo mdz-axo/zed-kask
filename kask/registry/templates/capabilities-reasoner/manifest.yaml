@@ -49,7 +49,7 @@ templates:
     name: "Measure elicited capability with deliberate metric choice"
     path: capability-elicit.j2
     type: KnowAct
-    lexicon_terms: [elicit, measure, capability, metric, probe, password-locked]
+    lexicon_terms: [elicit, measure, capability, metric, probe, password_locked]
     description: >
       Elicit actual capability using the Password-Locked principle: capability
       is what the system CAN do when properly elicited, not what it DOES do
@@ -118,7 +118,7 @@ templates:
     name: "Reference: capability taxonomy (Nussbaum 10 + object-capability + CMMI levels + ML eval definitions)"
     path: capability-ontology.yaml
     type: RenderAct
-    lexicon_terms: [ontology, capability, nussbaum, object-capability, cmmi, definition]
+    lexicon_terms: [ontology, capability, nussbaum, object_capability, cmmi, definition]
     description: >
       Reference: three limit types (floor, ceiling, maturity gate) drawn from
       the capability approach (Nussbaum, object-capability security, CMMI),

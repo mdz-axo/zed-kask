@@ -749,8 +749,7 @@ mod embedding_tests {
         // Construct a port with a channel we control. We don't spawn the
         // receiver task — instead we recv from the channel ourselves to
         // inspect the InferenceRequest.
-        let (tx, mut rx) =
-            tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
         let port = LanguageModelInferencePort { tx };
 
         // Call generate_with_model with a model override. The receiver task
@@ -784,16 +783,10 @@ mod embedding_tests {
 
     #[tokio::test]
     async fn generate_with_model_propagates_none_override_to_channel() {
-        let (tx, mut rx) =
-            tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
         let port = LanguageModelInferencePort { tx };
 
-        let future = port.generate_with_model(
-            "test prompt",
-            &LLMParameters::default(),
-            None,
-            None,
-        );
+        let future = port.generate_with_model("test prompt", &LLMParameters::default(), None, None);
         tokio::select! {
             biased;
             req = rx.recv() => {
@@ -811,8 +804,7 @@ mod embedding_tests {
 
     #[tokio::test]
     async fn generate_with_messages_propagates_override_to_channel() {
-        let (tx, mut rx) =
-            tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
         let port = LanguageModelInferencePort { tx };
 
         let messages = vec![ChatMessage::user("hello".to_string())];
