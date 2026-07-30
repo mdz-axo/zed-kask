@@ -46,7 +46,7 @@ that no `CuratorSession` trait, `RegulationSnapshot` struct, or
   `ConversationView` per tab (`HashMap<usize, Entity<ConversationView>>`).
 - Each tab's `ConversationView` is constructed with `Agent::Curator` and a
   per-tab system prompt via `CuratorAgentServer::with_extra_static_context`
-  (`kask_panel.rs:224`).
+  (`kask_panel.rs:226`).
 - The `ConversationView` handles all rendering, streaming, tool-call cards,
   retry, cancel, copy, markdown, mentions, drag-and-drop.
 - The `ToolInvoker` trait (`kask_panel.rs:89`) remains for the visualization

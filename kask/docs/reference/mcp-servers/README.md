@@ -2,7 +2,7 @@
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.32.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -69,7 +69,7 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 ## Cross-links
 
 - [Companies MCP Server Reference](companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
-- [Condenser MCP Server Reference](condenser.md) — 7 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
+- [Condenser MCP Server Reference](condenser.md) — 8 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
 - [Corpus MCP Server Reference](corpus.md) — corpus gathering, document processing, QA generation, style replicas
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — scenarios tool flow (DIAG-RF-005 inline)
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture

@@ -10,6 +10,8 @@ mds_categories: [domain, composition, curation]
 
 # The Lazy Universe as Architectural Grounding
 
+> **Historical note (2026-07-29 audit):** This research report's central recommendation — ground P5 in the least action principle — was partially adopted: the grounding now lives in PRINCIPLES.md §0 ("Lazy Grounding: The Principle of Least Action"), not as a P5 extension. The report references a `pragmatic-laziness` skill that does **not exist** in the current skill corpus (`.agents/skills/`); the closest active analogue is `essentialist`. The proposed code implementations (§4.1 `EnergyDelta`, §4.3 `DeletionTest`, §4.2 regulation spans) were never merged — see the in-body correction notes at §4 and Appendix A/B. The report is retained as design history for PRINCIPLES.md §0; do not cite §4.1–4.3 or Appendix A/B as evidence of current code.
+
 **Purpose:** Ground hKask's essentialist design philosophy in the least action principle — the physical universe's *selection mechanism* for what happens next. Action minimization is not a tendency systems happen to exhibit; it is the governing dynamic that selects which path reality takes. Determine whether this becomes a standalone P13 or extends P5, extract falsifiable design rules, implement type-level invariants, and capture open questions — including the epistemic gap between knowing action minimization governs all systems and knowing how to measure it in software.
 
 **Source text:** Jennifer Coopersmith, [*The Lazy Universe: An Introduction to the Principle of Least Action*](https://a.co/d/0eVwmycu) (Oxford, 2017).

@@ -2,7 +2,7 @@
 title: zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 audience: hKask architects / zed-kask integrators
 last_updated: 2026-07-29
-version: 0.32.0
+version: 0.32.1
 status: in-progress
 domain: architecture
 mds_categories: [composition, trust, lifecycle]

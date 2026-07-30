@@ -594,6 +594,57 @@ struct OpenAiEmbedResponse {
     data: Vec<OpenAiEmbeddingData>,
 }
 
+// ── NoModelInferencePort ────────────────────────────────────────────────────
+//
+// An `InferencePort` that returns a clear "no default model configured" error
+// on every call. Used to start the `InferenceIpcServer` unconditionally —
+// even when no default `LanguageModel` is configured at startup — so MCP
+// server child processes receive `HKASK_INFERENCE_SOCKET` and route inference
+// through the IPC bridge rather than falling back to `InferenceRouter::from_env()`.
+//
+// Without this, the `else` branch of the model-dependent wiring block (in
+// `crates/zed/src/main.rs`) left `INFERENCE_SOCKET_PATH` unset, forcing the
+// curator and other MCP servers into the env-var/keychain fallback path.
+// That fallback reads from the `hkask` keychain namespace (via
+// `hkask_keystore::resolve`), which is empty in zed-kask because inference
+// keys live in zed's `CredentialsProvider` under `kask://credentials/<key>`.
+// The result was a silent "API key not configured" error that operators
+// could not trace back to the missing IPC socket.
+//
+// This port closes that gap: the IPC server starts with a no-op port, MCP
+// servers connect to the socket, and any inference request returns a
+// diagnostic error naming the remediation (configure a default model). When
+// the deferred task later observes a default model, it replaces this port
+// with a real `LanguageModelInferencePort` (the `OnceLock`-based hooks are
+// not used here — the IPC server holds an `Arc<dyn InferencePort>` that
+// can be swapped on re-wiring). For the initial implementation, the port
+// is constructed once at startup; a future enhancement can make it
+// upgradeable when the model registry populates.
+
+/// An `InferencePort` that rejects every request with a "no default model"
+/// error. See the module-level comment for the rationale.
+pub struct NoModelInferencePort;
+
+impl InferencePort for NoModelInferencePort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &LLMParameters,
+        _tools: Option<&[ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+    > {
+        Box::pin(async {
+            Err(InferenceError::Generation(
+                "No default LanguageModel configured — configure one in Settings → AI \
+                 so inference routed through the zed IPC bridge can dispatch to it. \
+                 Until then, this MCP server cannot run inference."
+                    .to_string(),
+            ))
+        })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenAiEmbeddingData {
     embedding: Vec<f32>,

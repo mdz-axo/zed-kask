@@ -2,7 +2,7 @@
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
 last_updated: 2026-07-29
-version: "0.31.0"
+version: "0.31.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -62,7 +62,7 @@ They are the floor, not the ceiling — the Generative Space requires a safe con
 #### P4 — Clear Boundaries (OCAP)
 P1–P3 are enforced through explicit capability boundaries. No ambient authority and no admin bypass. Per **Miller's Object Capability model** (Miller, 2006): no ambient authority; every capability is an unforgeable reference; attenuation preserves safety.[^miller-ocap]
 
-**P4.1 — Pod Boundary as OCAP Enforcement Perimeter (v0.29.0):** The pod boundary IS the OCAP enforcement perimeter. Each pod deploys with its own `DelegationToken`, its own `CapabilityChecker`, and its own MCP server bindings. Tool dispatch cannot cross pod boundaries structurally — a pod has no handle to another pod's MCP servers. `PerPodToolBinding` makes cross-pod dispatch an invalid state.
+**P4.1 — Per-User Data Directory as OCAP Enforcement Perimeter (v0.31.1, re-anchored):** The per-user data directory IS the OCAP enforcement perimeter. Each user's encrypted SQLCipher file (`{data_dir}/agents/{sanitized_name}/pod.db`) is the isolation boundary — no connection handle to another user's file means no cross-user data access is structurally possible. The `hkask-pods` crate (ActivePods, PodDeployment, PodFactory, PodRegistry, `PerPodToolBinding`, etc.) was **deleted** in the 2026-07-25 cleanup; the per-user data directory replaces the pod abstraction as the enforcement perimeter. Capability tokens (`DelegationToken`) and the `CapabilityChecker` are scoped to the active user's WebID at composition-root wiring time. Tool dispatch is scoped to the active user's MCP server bindings — cross-user dispatch is an invalid state because no user has a handle to another user's data directory.
 
 ---
 
@@ -115,17 +115,17 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **scenarios** | PKO | DC+BIBO | — |
 | **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
 
-> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`crates/hkask-skills`); memory is owned by the userpod's SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (curator may be unloaded via `kask.mcp.overrides`).
+> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`kask/registry/` manifests + `hkask-templates`/`ManifestExecutor`); memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (curator may be unloaded via `kask.mcp.overrides`). (Corrected 2026-07-29: the prior reference to `crates/hkask-skills` was stale — that crate does not exist; the skill registry lives at `kask/registry/`.)
 
 **Bridge locations:**
 - Process axis vocabulary: `crates/hkask-bridge-dublincore/` (shared crate)
 - State axis vocabulary: `crates/hkask-bridge-dublincore/` (shared crate)
 - Domain-specific bridges: server-local modules following the `fibo.rs` pattern
 
-#### P6 — Space for UserPods
-hKask exists as a generative container for **human user agency** (each user via their own userpod) and **AI tools** (skills + MCP servers), coordinated by the Curator — a native in-process agent (D2) running inside zed-kask, not a daemon — under sovereignty and capability constraints.
+#### P6 — Space for Per-User Data Directories
+hKask exists as a generative container for **human user agency** (each user via their own per-user data directory) and **AI tools** (skills + MCP servers), coordinated by the Curator — a native in-process agent (D2) running inside zed-kask, not a daemon — under sovereignty and capability constraints.
 
-**P6.1 — Per-UserPod Deployment Model (v0.29.0):** Each user inhabits exactly one persistent userpod (1:1; multi-persona removed). The userpod IS the deployment unit — not a cache entry in a shared manager — and persists for the life of the account. A userpod owns its SQLCipher file (`{data_dir}/agents/{sanitized_name}/pod.db`), its Regulation runtime (per-pod variety counters), and its MCP server bindings (no cross-pod dispatch). The userpod makes shared state structurally impossible. See Pattern D.1 — UserPod as Solid Pod Isomorphism.
+**P6.1 — Per-User Data Directory Model (v0.31.1, re-anchored from v0.29.0 Per-UserPod):** Each user inhabits exactly one persistent per-user data directory (1:1; multi-persona removed). The data directory IS the deployment unit — not a cache entry in a shared manager — and persists for the life of the account. A user's data directory owns its SQLCipher file (`{data_dir}/agents/{sanitized_name}/pod.db`), its Regulation runtime (per-user variety counters), and its MCP server bindings (no cross-user dispatch). The per-user data directory makes shared state structurally impossible. The `hkask-pods` crate (ActivePods, PodDeployment, PodFactory, PodRegistry, PodContext, PerPodLedger, LoopScheduler, AgentPod, PodKind, PodLifecycleState) was **deleted** in the 2026-07-25 cleanup; the per-user data directory replaces the pod abstraction. See `zed-host-architecture-plan.md` §13.3 for the composition-root wiring.
 
 #### P7 — Evolutionary Architecture
 Types and seams should emerge from real usage, not speculative abstraction.
@@ -192,7 +192,7 @@ These six spans are the same for every skill, regardless of domain. The typed en
 | Skill lifecycle | `reg.skill` | 5 | ✅ activate/load/discover/publish/validate | `Skill` |
 | MCP server infra | `reg.mcp.*` | 47 | ✅ startup gates + in-process wiring | *(stringly-typed)* |
 | Kata coaching | `reg.kata` | 20 | ✅ PDCA cycles, automaticity | `Kata` |
-| Agent pod | `reg.agent_pod` | — | ✅ revert, spawn_agent (via PodBackupOps) | `AgentPod` |
+| Agent pod | `reg.agent_pod` | — | ~~✅ revert, spawn_agent (via PodBackupOps)~~ **Removed (v0.31.1):** `hkask-pods` deleted; `PodBackupOps` and the `AgentPod` variant removed. Per-user data directory replaces the pod abstraction. | ~~`AgentPod`~~ (deleted) |
 | Wallet | `reg.wallet.*` | — | ✅ pre-existing | `WalletBalance` etc. |
 | Memory | `reg.memory.*` | — | ✅ pre-existing | `MemoryEncode` |
 | Curation | `reg.curation` | — | ✅ pre-existing | `Curation` |

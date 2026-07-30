@@ -2,7 +2,7 @@
 title: "Diagram Verification Registry"
 audience: [developers, architects, agents]
 last_updated: 2026-07-29
-version: "0.31.0"
+version: "0.32.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [lifecycle, curation]
@@ -12,7 +12,7 @@ mds_categories: [lifecycle, curation]
 
 **Purpose:** Verifiable registry of all Mermaid diagrams in the hKask documentation corpus. Per the Mermaid-First Mandate from `DOCUMENTATION_STANDARDS.md` §4: every interaction pattern, data flow, and object model is diagrammed. Every diagram carries `DIAGRAM_ALIGNMENT` metadata.
 
-**Consolidation status (2026-07-12):** Most standalone diagram files from the former `docs/diagrams/` directory have been inlined into their parent documents per `DOCUMENTATION_STANDARDS.md` §1. A small number of standalone reference diagrams remain in `docs/diagrams/` for crate-specific architecture flows (e.g., scenario forecasting pipeline, condenser pipeline). This registry maps each diagram to the document where it currently resides.
+**Consolidation status (2026-07-29):** Most standalone diagram files from the former `docs/diagrams/` directory were inlined into their parent documents per `DOCUMENTATION_STANDARDS.md` §1. A subsequent cleanup (2026-07-24) deleted several parent documents whose diagrams are now recoverable only via git history. The Diataxis documentation set (`docs/diataxis/`) added 40 new diagrams (one per artifact across 10 crates) that are tracked in `diataxis/INDEX.md`, not in this registry. This registry maps each surviving diagram to the document where it currently resides; deleted parent documents are marked.
 
 ---
 
@@ -20,8 +20,8 @@ mds_categories: [lifecycle, curation]
 
 | Diagram ID | Description | Now Inline In | Verified Against | Status |
 |-----------|-------------|---------------|-----------------|--------|
-| DIAG-DC-004 | OCAP Capability Attenuation Chain (depth ≤ 7) | `explanation/sovereignty-and-ocap.md` | `crates/hkask-capability/src/lib.rs` | ✅ VERIFIED 2026-07-01 |
-| DIAG-DC-005 | MCP Tool Dispatch with OCAP constraint enforcement | `explanation/architecture-patterns.md` | `crates/hkask-mcp/src/runtime.rs:59`, `crates/hkask-mcp/src/security.rs` | ✅ VERIFIED 2026-07-01 |
+| DIAG-DC-004 | OCAP Capability Attenuation Chain (depth ≤ 7) | (deleted — `explanation/sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | `crates/hkask-capability/src/lib.rs` | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-DC-005 | MCP Tool Dispatch with OCAP constraint enforcement | (deleted — `explanation/architecture-patterns.md` removed 2026-07-24; recoverable via git) | `crates/hkask-mcp/src/runtime.rs:59`, `crates/hkask-mcp/src/security.rs` | ⚠️ PARENT DELETED 2026-07-24 |
 | DIAG-DC-008 | Adapter Lifecycle State Machine (Cold → Warming → Active → Draining → Removed) | `explanation/federation-and-transport.md` | `mcp-servers/hkask-mcp-training/src/adapter/endpoint_lifecycle.rs`, `mcp-servers/hkask-mcp-training/src/adapter/adapter_router/mod.rs` | ✅ VERIFIED 2026-07-01 |
 | DIAG-DC-012 | Research Compound Search Flow — validate → cache → strategy → join_all → RRF fusion → rerank → deep extract → record | (removed - host status report deleted; recoverable via git) | `mcp-servers/hkask-mcp-research/src/research/providers/mod.rs:213-410,516-620`, `mcp-servers/hkask-mcp-research/src/lib.rs:265-375` | ✅ VERIFIED 2026-07-17 |
 | DIAG-DC-013 | CodeGraph Architecture — CodeGraphServer, indexed_once flag, IndexPipeline, GraphStore, EmbeddingRouter, Jinja | (removed - host status report deleted; recoverable via git) | `mcp-servers/hkask-mcp-codegraph/src/lib.rs:24-31,33-76,159-548`, `mcp-servers/hkask-mcp-codegraph/src/codegraph/lib.rs:20-31`, `mcp-servers/hkask-mcp-codegraph/src/codegraph/indexer/pipeline.rs:22-273`, `mcp-servers/hkask-mcp-codegraph/src/codegraph/graph/mod.rs:1-7` | ✅ VERIFIED 2026-07-20 |
@@ -30,12 +30,12 @@ mds_categories: [lifecycle, curation]
 
 | Diagram ID | Description | Now Inline In | Verified Against | Status |
 |-----------|-------------|---------------|-----------------|--------|
-| DIAG-IC-002 | Hexagonal Architecture — Ports, Adapters, Core | `explanation/architecture-patterns.md` | `crates/hkask-types/src/` (7 port traits) | ✅ VERIFIED 2026-07-01 |
-| DIAG-IC-004 | Template Cascade Flow (depth ≤ 7, DependencyGraph acyclic) | `explanation/architecture-patterns.md` | `crates/hkask-templates/src/executor.rs` | ✅ VERIFIED 2026-07-01 |
-| DIAG-IC-005 | Rendering Pipeline — Template → Jinja2 → LLM | `explanation/architecture-patterns.md` | `crates/hkask-templates/src/` (minijinja integration) | ✅ VERIFIED 2026-07-01 |
-| DIAG-IC-007 | MCP Tool Dispatch Sequence with OCAP Enforcement | `explanation/architecture-patterns.md` | `crates/hkask-mcp/src/runtime.rs`, `crates/hkask-mcp/src/security.rs` | ✅ VERIFIED 2026-07-01 |
+| DIAG-IC-002 | Hexagonal Architecture — Ports, Adapters, Core | (deleted — `explanation/architecture-patterns.md` removed 2026-07-24; recoverable via git) | `crates/hkask-types/src/` (7 port traits) | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-IC-004 | Template Cascade Flow (depth ≤ 7, DependencyGraph acyclic) | (deleted — `explanation/architecture-patterns.md` removed 2026-07-24; recoverable via git) | `crates/hkask-templates/src/executor.rs` | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-IC-005 | Rendering Pipeline — Template → Jinja2 → LLM | (deleted — `explanation/architecture-patterns.md` removed 2026-07-24; recoverable via git) | `crates/hkask-templates/src/` (minijinja integration) | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-IC-007 | MCP Tool Dispatch Sequence with OCAP Enforcement | (deleted — `explanation/architecture-patterns.md` removed 2026-07-24; recoverable via git) | `crates/hkask-mcp/src/runtime.rs`, `crates/hkask-mcp/src/security.rs` | ⚠️ PARENT DELETED 2026-07-24 |
 
-| DIAG-IC-012 | Regulation Architecture — responsibility clusters, wallet port, extraction status | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-regulation/src/wallet_budget.rs`, `crates/hkask-regulation/src/slo_manager.rs`, `crates/hkask-regulation/src/seam_watcher.rs`, `crates/hkask-types/src/wallet_budget_port.rs` | ✅ VERIFIED 2026-07-11 (note: `hkask-services-context/src/storage_guard.rs` was dead code and deleted in the F6 fold; removed from verified_against) |
+| DIAG-IC-012 | Regulation Architecture — responsibility clusters, wallet port, extraction status | (deleted — `explanation/regulation-and-loops.md` removed 2026-07-24; recoverable via git) | `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-regulation/src/wallet_budget.rs`, `crates/hkask-regulation/src/slo_manager.rs`, `crates/hkask-regulation/src/seam_watcher.rs`, `crates/hkask-types/src/wallet_budget_port.rs` | ⚠️ PARENT DELETED 2026-07-24 |
 | DIAG-IC-013 | Research MCP Server Architecture — ResearchServer, ProviderPool, WebSearchPort, cache, rate limiter, RSS DB | (removed - host status report deleted; recoverable via git) | `mcp-servers/hkask-mcp-research/src/lib.rs:41-48`, `mcp-servers/hkask-mcp-research/src/research/providers/mod.rs:130-135,494-620` | ✅ VERIFIED 2026-07-17 |
 | DIAG-IC-014 | Research Provider Trait Hierarchy — WebSearchPort, WebSearchProvider, WebExtractProvider, WebBrowseProvider, 9 concrete providers | (removed - host status report deleted; recoverable via git) | `mcp-servers/hkask-mcp-research/src/research/providers/mod.rs:50-135`, `mcp-servers/hkask-mcp-research/src/research/providers/brave.rs:18`, `mcp-servers/hkask-mcp-research/src/research/providers/firecrawl.rs:28,100,181` | ✅ VERIFIED 2026-07-17 |
 
@@ -46,11 +46,11 @@ mds_categories: [lifecycle, curation]
 
 | Diagram ID | Description | Now Inline In | Verified Against | Status |
 |-----------|-------------|---------------|-----------------|--------|
-| DIAG-TO-002 | OCAP Boundary Enforcement Flow | `explanation/sovereignty-and-ocap.md` | `crates/hkask-mcp/src/security.rs` (SecurityGateway) | ✅ VERIFIED 2026-07-01 |
-| DIAG-TO-004 | Regulation Span Emission Flow (4 namespaces → Sink) | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-types/src/event.rs` | ✅ VERIFIED 2026-07-01 |
-| DIAG-TO-005 | Algedonic Alert Escalation (variety deficit > threshold → Curator/Human) | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/algedonic.rs` | ✅ VERIFIED 2026-07-01 |
-| DIAG-TO-006 | Regulation Span Emission and Algedonic Alert End-to-End Flow | `explanation/regulation-and-loops.md` | `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/algedonic.rs` (curator agent module in zed-kask; `hkask-pods` deleted 2026-07-25) | ✅ VERIFIED 2026-07-25 |
-| DIAG-TO-006-CM | ConsentManager Authorization Flow | `explanation/sovereignty-and-ocap.md` | `hkask-types::visibility` (replaces deleted `crates/hkask-pods/src/consent.rs` and `sovereignty.rs`), `crates/hkask-storage/src/consent_store.rs` | ✅ VERIFIED 2026-07-25 |
+| DIAG-TO-002 | OCAP Boundary Enforcement Flow | (deleted — `explanation/sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | `crates/hkask-mcp/src/security.rs` (SecurityGateway) | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-TO-004 | Regulation Span Emission Flow (4 namespaces → Sink) | (deleted — `explanation/regulation-and-loops.md` removed 2026-07-24; recoverable via git) | `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-types/src/event.rs` | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-TO-005 | Algedonic Alert Escalation (variety deficit > threshold → Curator/Human) | (deleted — `explanation/regulation-and-loops.md` removed 2026-07-24; recoverable via git) | `crates/hkask-regulation/src/algedonic.rs` | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-TO-006 | Regulation Span Emission and Algedonic Alert End-to-End Flow | (deleted — `explanation/regulation-and-loops.md` removed 2026-07-24; recoverable via git) | `crates/hkask-regulation/src/cybernetics_loop.rs`, `crates/hkask-regulation/src/algedonic.rs` (curator agent module in zed-kask; `hkask-pods` deleted 2026-07-25) | ⚠️ PARENT DELETED 2026-07-24 |
+| DIAG-TO-006-CM | ConsentManager Authorization Flow | (deleted — `explanation/sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | `hkask-types::visibility` (replaces deleted `crates/hkask-pods/src/consent.rs` and `sovereignty.rs`), `crates/hkask-storage/src/consent_store.rs` | ⚠️ PARENT DELETED 2026-07-24 |
 
 ## 4. Persistence & Lifecycle Diagrams
 
@@ -65,7 +65,7 @@ mds_categories: [lifecycle, curation]
 | DIAG-FW-001 | MDS RDF/Turtle Semantic Graph | `architecture/core/MDS.md` §1.1 | `docs/architecture/core/MDS.md` (textual RDF reference) | ✅ VERIFIED 2026-07-01 |
 | DIAG-FW-002 | MDS Entity Relationship Diagram (Spec ↔ Goal ↔ Curation) | `architecture/core/MDS.md` §1.2 | `docs/architecture/core/MDS.md` (textual ERD reference) | ✅ VERIFIED 2026-07-01 |
 | DIAG-FW-003 | MVSDD Cycle Sequence Diagram (Specify → Grant → Compose → Curate → Reflect) | `architecture/core/MDS.md` §4.3 | `docs/architecture/core/MDS.md` (textual cycle reference) | ✅ VERIFIED 2026-07-01 |
-| DIAG-FW-004 | Hexagonal Component Diagram (HKaskHexagon) | `explanation/architecture-patterns.md` | `crates/hkask-types/src/` | ✅ VERIFIED 2026-07-01 |
+| DIAG-FW-004 | Hexagonal Component Diagram (HKaskHexagon) | (deleted — `explanation/architecture-patterns.md` removed 2026-07-24; recoverable via git) | `crates/hkask-types/src/` | ⚠️ PARENT DELETED 2026-07-24 |
 
 
 ## 6. Reference Diagrams
@@ -73,7 +73,7 @@ mds_categories: [lifecycle, curation]
 | Diagram ID | Description | Now Inline In | Verified Against | Status |
 |-----------|-------------|---------------|-----------------|--------|
 
-| DIAG-DOC-001 | hKask Documentation Structure — Diataxis navigation map (quadrants + supporting directories) | `README.md` (Diataxis Structure section) | `docs/README.md`, `docs/specifications/DOCUMENTATION_STANDARDS.md`, `docs/` directory listing | ✅ VERIFIED 2026-07-21 (inlined from `diagrams/flowchart-documentation-structure.md`) |
+| DIAG-DOC-001 | hKask Documentation Structure — Diataxis navigation map (quadrants + supporting directories) | (deleted — `README.md` no longer contains a Mermaid diagram as of 2026-07-29; recoverable via git) | `docs/README.md`, `docs/specifications/DOCUMENTATION_STANDARDS.md`, `docs/` directory listing | ⚠️ PARENT NO LONGER CONTAINS DIAGRAM 2026-07-29 |
 | DIAG-RF-004 | Companies tool routing and dispatch flow — combined_router (7 sub-routers) → execute_tool seam → three sinks (provider fetch, valuation engines → StoredForecast, PortfolioManager spawn_blocking) | `reference/mcp-servers/companies.md` | `mcp-servers/hkask-mcp-companies/src/lib.rs:499-509,368-495`, `mcp-servers/hkask-mcp-companies/src/tools/mod.rs:1-8`, `mcp-servers/hkask-mcp-companies/src/providers.rs:111-198`, `mcp-servers/hkask-mcp-companies/src/portfolio.rs:290-340` | ✅ VERIFIED 2026-07-17 (standalone duplicate deleted) |
 | DIAG-RF-005 | Scenario Forecasting Pipeline — 18 MCP tools grouped by pipeline phase (Framing → Ideation → Structuring → Computation → Aggregation → Tracking → Assessment) with engine delegation | `reference/mcp-servers/scenarios.md` | `mcp-servers/hkask-mcp-scenarios/src/lib.rs`, `mcp-servers/hkask-mcp-scenarios/src/superforecast.rs`, `mcp-servers/hkask-mcp-scenarios/src/types.rs` | ✅ VERIFIED 2026-07-21 (inlined from `diagrams/flowchart-scenario-forecasting-pipeline.md`) |
 
@@ -109,55 +109,62 @@ These interaction patterns exist in the codebase but lack dedicated diagram cove
 
 ## 11. Additional Inlined Diagrams (Not Previously Indexed)
 
-The following diagrams were standalone files not individually tracked in the original index sections 1–10. They are now inlined in their parent documents.
+The following diagrams were standalone files not individually tracked in the original index sections 1–10. They were inlined into their parent documents. **Several parent documents have since been deleted (2026-07-24 cleanup); those diagrams are recoverable via git history only.**
 
-| Diagram File (former) | Type | Now Inline In | Description |
-|----------------------|------|---------------|-------------|
-| `class-ports-trait-hierarchy.md` | class | `explanation/architecture-patterns.md` | Hexagonal Ports Trait Hierarchy |
-| `class-service-error-hierarchy.md` | class | `explanation/architecture-patterns.md` | ServiceError Hierarchy |
-| `erd-k8s-resources.md` | ERD | `how-to/deployment-and-transport.md` | K8s Resource Relationships |
-| `flowchart-architecture-overview.md` | flowchart | `explanation/architecture-patterns.md` | Classification + Guard Architecture Overview |
-| `flowchart-regulation-homeostatic-loop.md` | flowchart | `explanation/regulation-and-loops.md` | Regulation Homeostatic Loop |
-| `flowchart-regulation-regulation.md` | flowchart | `explanation/regulation-and-loops.md` | Regulation Regulation Pipeline — 5-Phase Cybernetic Cycle |
-| `flowchart-curator-metacognition.md` | flowchart | `explanation/regulation-and-loops.md` | Curator Metacognition Loop |
-| `flowchart-deployment-architecture.md` | flowchart | `how-to/deployment-and-transport.md` | K8s Deployment Architecture |
-| `flowchart-algo-classification.md` | flowchart | `explanation/cognition-and-replica.md` | Algo / No-Judge Classification Flow |
-| `flowchart-guard-pipeline.md` | flowchart | `explanation/sovereignty-and-ocap.md` | Content Safety Guard Pipeline |
-| `flowchart-memory-remember.md` | flowchart | `explanation/cognition-and-replica.md` | Memory Remember — Algo / No-Judge Template Cascade |
-| `flowchart-oauth-registration.md` | flowchart | `how-to/deployment-and-transport.md` | OAuth Registration & Onboarding Flow |
-| `flowchart-pod-startup.md` | flowchart | `how-to/deployment-and-transport.md` | K8s Pod Startup Sequence |
-| `sequence-auth-flow.md` | sequence | `how-to/deployment-and-transport.md` | Authentication Flow — OAuth Sequence |
-| `sequence-classify-to-memory.md` | sequence | `explanation/cognition-and-replica.md` | Classification-to-Memory Sequence |
-| `sequence-mcp-bootstrap.md` | sequence | `explanation/architecture-patterns.md` | MCP Bootstrap and Tool Dispatch |
-| `state-guard-violations.md` | state | `explanation/sovereignty-and-ocap.md` | Guard Violation Lifecycle |
-| `state-invite-lifecycle.md` | state | `how-to/deployment-and-transport.md` | Invite Lifecycle State Machine |
-| `state-loop-action-lifecycle.md` | state | `explanation/regulation-and-loops.md` | RegulatoryAction Lifecycle |
+| Diagram File (former) | Type | Now Inline In | Description | Status |
+|----------------------|------|---------------|-------------|--------|
+| `class-ports-trait-hierarchy.md` | class | `explanation/architecture-patterns.md` | Hexagonal Ports Trait Hierarchy | ⚠️ PARENT DELETED |
+| `class-service-error-hierarchy.md` | class | `explanation/architecture-patterns.md` | ServiceError Hierarchy | ⚠️ PARENT DELETED |
+| `erd-k8s-resources.md` | ERD | `how-to/deployment-and-transport.md` | K8s Resource Relationships | ⚠️ PARENT DELETED |
+| `flowchart-architecture-overview.md` | flowchart | `explanation/architecture-patterns.md` | Classification + Guard Architecture Overview | ⚠️ PARENT DELETED |
+| `flowchart-regulation-homeostatic-loop.md` | flowchart | `explanation/regulation-and-loops.md` | Regulation Homeostatic Loop | ⚠️ PARENT DELETED |
+| `flowchart-regulation-regulation.md` | flowchart | `explanation/regulation-and-loops.md` | Regulation Regulation Pipeline — 5-Phase Cybernetic Cycle | ⚠️ PARENT DELETED |
+| `flowchart-curator-metacognition.md` | flowchart | `explanation/regulation-and-loops.md` | Curator Metacognition Loop | ⚠️ PARENT DELETED |
+| `flowchart-deployment-architecture.md` | flowchart | `how-to/deployment-and-transport.md` | K8s Deployment Architecture | ⚠️ PARENT DELETED |
+| `flowchart-algo-classification.md` | flowchart | `explanation/cognition-and-replica.md` | Algo / No-Judge Classification Flow | ✅ SURVIVES |
+| `flowchart-guard-pipeline.md` | flowchart | `explanation/sovereignty-and-ocap.md` | Content Safety Guard Pipeline | ⚠️ PARENT DELETED |
+| `flowchart-memory-remember.md` | flowchart | `explanation/cognition-and-replica.md` | Memory Remember — Algo / No-Judge Template Cascade | ✅ SURVIVES |
+| `flowchart-oauth-registration.md` | flowchart | `how-to/deployment-and-transport.md` | OAuth Registration & Onboarding Flow | ⚠️ PARENT DELETED |
+| `flowchart-pod-startup.md` | flowchart | `how-to/deployment-and-transport.md` | K8s Pod Startup Sequence | ⚠️ PARENT DELETED |
+| `sequence-auth-flow.md` | sequence | `how-to/deployment-and-transport.md` | Authentication Flow — OAuth Sequence | ⚠️ PARENT DELETED |
+| `sequence-classify-to-memory.md` | sequence | `explanation/cognition-and-replica.md` | Classification-to-Memory Sequence | ✅ SURVIVES |
+| `sequence-mcp-bootstrap.md` | sequence | `explanation/architecture-patterns.md` | MCP Bootstrap and Tool Dispatch | ⚠️ PARENT DELETED |
+| `state-guard-violations.md` | state | `explanation/sovereignty-and-ocap.md` | Guard Violation Lifecycle | ⚠️ PARENT DELETED |
+| `state-invite-lifecycle.md` | state | `how-to/deployment-and-transport.md` | Invite Lifecycle State Machine | ⚠️ PARENT DELETED |
+| `state-loop-action-lifecycle.md` | state | `explanation/regulation-and-loops.md` | RegulatoryAction Lifecycle | ⚠️ PARENT DELETED |
 
 ## 12. Summary
 
-All Mermaid diagrams are now inline in their parent documents. The former `docs/diagrams/` directory has been eliminated (all standalone files inlined or deleted as duplicates). Post-pivot cleanup (2026-07-21) inlined 8 more diagrams into 5 parent documents and created 2 new reference files (`condenser.md`, `scenarios.md`).
+All Mermaid diagrams were inline in their parent documents. The former `docs/diagrams/` directory has been eliminated (all standalone files inlined or deleted as duplicates). **A 2026-07-24 cleanup deleted several parent documents** (`explanation/regulation-and-loops.md`, `explanation/architecture-patterns.md`, `explanation/sovereignty-and-ocap.md`, `explanation/federation-and-transport.md`, `how-to/training-and-adapters.md`, `how-to/deployment-and-transport.md`); diagrams inlined into those files are recoverable via git history only. The Diataxis documentation set (`docs/diataxis/`) added 40 new per-crate diagrams (one per artifact) that are tracked in `diataxis/INDEX.md`, not here.
 
-**2026-07-24 cleanup (pass 2):** Removed all remaining entries pointing to deleted parent documents and deleted-crate `verified_against` evidence paths: `how-to/install-and-configure.md` (2 diagrams), `how-to/skills-and-composition.md` (3 diagrams), `how-to/getting-started.md`, `specifications/REPL-specification.md` (3 diagrams), `reference/mcp-servers/filesystem.md` (1 diagram), `reference/mcp-servers/skill-server.md` (1 diagram), `explanation/tui-architecture.md` (1 diagram), `reference/mcp-servers/condenser.md` (1 diagram — `hkask-services-chat` evidence path deleted), and entries whose `verified_against` column referenced deleted crates (`hkask-cli/`, `hkask-repl/`, `hkask-services-chat/`, `hkask-services-wallet/`, `hkask-mcp-filesystem`, `hkask-mcp-skill/`, `hkask-mcp-memory/`, `hkask-mcp-communication/`). Removed diagrams are recoverable via git history.
-
-**Earlier 2026-07-24 cleanup (pass 1):** Removed entries pointing to deleted parent documents: `architecture/core/FUNCTIONAL_SPECIFICATION.md` (14 inline diagrams), `architecture/core/hKask-architecture-master.md` (8 diagrams), `reference/api-reference.md` (9 diagrams), and the former `explanation/daemon-systemd.md`, `explanation/getting-started.md`, `generated/cli-reference.md`, `generated/openapi.json`, and `architecture/ADRs/` directory.
-
-**Parent document diagram distribution (remaining):**
+**Parent document diagram distribution (surviving only):**
 
 | Parent Document | Inlined Diagram Count |
 |----------------|----------------------|
-| `explanation/regulation-and-loops.md` | 8 |
-| `explanation/architecture-patterns.md` | 7 |
-| `how-to/training-and-adapters.md` | 6 |
-| `how-to/deployment-and-transport.md` | 6 |
-| `explanation/cognition-and-replica.md` | 4 |
-| `explanation/sovereignty-and-ocap.md` | 4 |
-| `explanation/federation-and-transport.md` | 1 |
+| `explanation/cognition-and-replica.md` | 9 |
+| `explanation/training-and-adapters.md` | 5 |
+| `explanation/skills-and-composition.md` | 3 |
 | `reference/mcp-servers/scenarios.md` | 1 |
 | `reference/mcp-servers/companies.md` | 1 |
+| `reference/mcp-servers/condenser.md` | 1 |
 | `reference/mcp-servers/README.md` | 1 |
-| `architecture/core/MDS.md` | 3 |
-| `README.md` | 1 |
-| **Total** | **43** |
+| `reference/regulation-spans.md` | 1 |
+| `architecture/core/MDS.md` | 1 |
+| `diataxis/` (40 artifacts, 1 diagram each) | 40 |
+| `plans/kask-extensions-panel-and-skill-sharing.md` | 1 |
+| **Total (surviving)** | **64** |
+
+**Deleted parent documents (diagrams recoverable via git):**
+
+| Deleted Parent Document | Diagrams Lost |
+|------------------------|---------------|
+| `explanation/regulation-and-loops.md` | 8 |
+| `explanation/architecture-patterns.md` | 7 |
+| `how-to/deployment-and-transport.md` | 6 |
+| `explanation/sovereignty-and-ocap.md` | 4 |
+| `explanation/federation-and-transport.md` | 1 |
+| `how-to/training-and-adapters.md` | (merged into `explanation/training-and-adapters.md`) |
+| **Total lost** | **26** |
 
 **MDS completeness:** all five MDS categories have diagram coverage. Training diagrams are additionally anchored to the P2 consent boundary, P4 capability-boundary requirement, and P9 feedback-loop requirement in [`PRINCIPLES.md`](architecture/core/PRINCIPLES.md).
 
@@ -170,6 +177,6 @@ All Mermaid diagrams are now inline in their parent documents. The former `docs/
 
 ---
 
-*ℏKask v0.31.0 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry*
+*ℏKask v0.32.0 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry*
 *Mermaid-First Mandate: Every interaction pattern, data flow, and object model is diagrammed.*
 *All diagrams inline per DOCUMENTATION_STANDARDS §1 — consolidated 2026-07-12.*

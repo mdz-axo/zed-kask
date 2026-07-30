@@ -2,7 +2,7 @@
 title: "Skills and Composition"
 audience: [developers, operators, users]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.33.0"
 status: "Active"
 domain: "Skill System"
 mds_categories: [domain, composition, lifecycle, trust]
@@ -10,7 +10,7 @@ mds_categories: [domain, composition, lifecycle, trust]
 
 # Skills and Composition
 
-Design, invoke, audit, publish, and compose hKask skills. Skills are PDCA (Plan-Do-Check-Act) templates loaded from a two-zone model and executed in-process by the `ManifestExecutor` (D1). This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtin in-process servers inside the editor, not as standalone binaries started via a CLI.
+Design, invoke, audit, publish, and compose hKask skills. Skills are PDCA (Plan-Do-Check-Act) templates loaded from a two-zone model and executed in-process by the `BridgeManifestExecutor` (D1), which implements the `SkillManifestExecutor` trait defined in zed's `agent` crate. This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtin in-process servers inside the editor, not as standalone binaries started via a CLI.
 
 ---
 
@@ -330,7 +330,7 @@ Open the zed-kask agent panel and invoke the skill:
 /skill my-skill "Review the authentication module in src/auth.rs"
 ```
 
-The agent panel routes this through the in-process `ManifestExecutor` (D1):
+The agent panel routes this through the in-process `BridgeManifestExecutor` (D1, implementing the `SkillManifestExecutor` trait):
 
 1. **Lookup** — Skill ID resolved against the loaded registry
 2. **Template rendering** — Jinja2 templates rendered with context variables
@@ -355,7 +355,7 @@ After publishing, verify by querying the skill status surface for your skill nam
 
 ## Invoking Skills
 
-Skills are invoked in-process through the `ManifestExecutor` (D1), which is wired into zed-kask's `agent_skills` and `agent/tools/skill_tool.rs`. The former `kask skill execute` CLI and the `hkask-mcp-skill` MCP server have been removed — skill execution is now native, not routed through a separate MCP server.
+Skills are invoked in-process through the `BridgeManifestExecutor` (D1, implementing the `SkillManifestExecutor` trait), which is wired into zed-kask's `agent_skills` and `agent/tools/skill_tool.rs`. The former `kask skill execute` CLI and the `hkask-mcp-skill` MCP server have been removed — skill execution is now native, not routed through a separate MCP server. The `SkillTool` resolves the executor at invocation time (not session-creation time) so sessions created before the deferred post-login wiring pick up the executor on later invocations.
 
 ### Via the Agent Panel
 
@@ -365,7 +365,7 @@ Open the zed-kask agent panel and invoke a skill:
 /skill diagnose "My application crashes on startup"
 ```
 
-The agent panel routes this through the `skill_tool`, which calls the `ManifestExecutor` directly in-process. Alternatively, skills can be invoked through bundles:
+The agent panel routes this through the `skill_tool`, which calls the `BridgeManifestExecutor` directly in-process. Alternatively, skills can be invoked through bundles:
 
 ```
 /bundle diagnose coding-guidelines
@@ -373,15 +373,16 @@ The agent panel routes this through the `skill_tool`, which calls the `ManifestE
 
 ### Via the Kask Panel
 
-In the kask panel (D10), navigate to the skills surface, select a skill, and invoke it with context. The kask panel routes through the same in-process `ManifestExecutor` (D1) as the agent panel.
+In the kask panel (D10), navigate to the skills surface, select a skill, and invoke it with context. The kask panel routes through the same in-process `BridgeManifestExecutor` (D1) as the agent panel.
 
 ### What Happens During Execution
 
 When a skill is invoked in-process:
 
-1. **Lookup** — The skill ID is resolved against the loaded registry of `SkillDef` entries.
-2. **Template rendering** — The skill's Jinja2 template is rendered with the provided context variables.
-3. **System prompt prepended** — A tool-awareness preamble is added:
+1. **Lookup** — The skill ID is resolved against the loaded registry of `SkillDef` entries. The `BridgeManifestExecutor::has_manifest()` check determines whether a `registry/manifests/<name>.yaml` exists; if so, the cascade runs. If not, the `SkillTool` returns the no-manifest envelope (body injection is disabled in zed-kask — the SKILL.md body is never injected).
+2. **Task injection** — The user's task (from `SkillToolInput.task`) is injected into the cascade context as `task` so templates can reference `{{ task }}` instead of running blind.
+3. **Template rendering** — The skill's Jinja2 template is rendered with the provided context variables.
+4. **System prompt prepended** — A tool-awareness preamble is added:
 
    ```
    You are executing a skill template. Follow its instructions precisely.
@@ -392,8 +393,9 @@ When a skill is invoked in-process:
    or report the missing capability.
    ```
 
-4. **Inference** — The rendered template is sent to the inference port via the guard layer (D4) with `temperature: 0.3`, `max_tokens: 2048`.
-5. **Regulation span** — `reg.tool.skill_execute` is emitted with the skill ID and result.
+5. **Inference** — The rendered template is sent to the inference port via the guard layer (D4) with `temperature: 0.3`, `max_tokens: 2048`.
+6. **Final-result extraction** — The `BridgeManifestExecutor` extracts the final step result via `extract_final_step_result()`, which parses the ordinal from `step_N_result` keys and picks the highest (HashMap iteration order is randomized, so `values().last()` would pick an arbitrary step).
+7. **Regulation span** — `reg.tool.skill_execute` is emitted with the skill ID and result.
 
 ### Convergence (FlowDef Skills Only)
 

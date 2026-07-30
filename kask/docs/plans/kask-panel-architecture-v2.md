@@ -32,7 +32,7 @@ All of it. The implemented panel matches the plan's Option A:
 - `KaskPanel` (`crates/kask_panel/src/kask_panel.rs:168`) is a center-pane
   `Item` holding `HashMap<usize, Entity<ConversationView>>` — one retained
   `ConversationView` per tab.
-- `ensure_thread_for_tab` (`kask_panel.rs:224`) lazily constructs each tab's
+- `ensure_thread_for_tab` (`kask_panel.rs:226`) lazily constructs each tab's
   `ConversationView` with `Agent::Curator` and
   `CuratorAgentServer::with_extra_static_context(per_tab_system_prompt(server))`.
 - The `ConversationView` handles all rendering (messages, input, tool-call

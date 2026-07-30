@@ -2,7 +2,7 @@
 title: "Reference Documentation — Index"
 audience: [developers, operators, agents]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.32.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain]
@@ -32,7 +32,7 @@ for the D1–D10 integration seams and the essentialist split.
 
 - [MCP Server Registry](mcp-servers/README.md) — All 10 on-disk MCP servers with tool tables and capability tiers
 - [Companies MCP Server](mcp-servers/companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger
-- [Condenser MCP Server](mcp-servers/condenser.md) — 7 tools, 3 compression algorithms, 2-phase condensation
+- [Condenser MCP Server](mcp-servers/condenser.md) — 8 tools, 3 compression algorithms, 2-phase condensation
 - [Corpus / DocProc MCP Server](mcp-servers/corpus.md) — Corpus gathering, document processing, QA generation, style replicas
 - [Scenarios MCP Server](mcp-servers/scenarios.md) — Event-tree forecasting pipeline
 

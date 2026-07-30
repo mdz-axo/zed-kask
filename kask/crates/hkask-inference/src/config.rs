@@ -36,8 +36,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use hkask_types::secret::SecretRef;
-
 /// Provider identifier for inference routing. Used as the model-string
 /// prefix (e.g. `DeepInfra/model`, `fal.ai/model`) and in log messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -347,55 +345,45 @@ impl InferenceConfig {
 
 /// Parse an `f64` from an environment variable, falling back to `default` on
 /// absence or parse failure. Used for tunable thresholds (price caps, etc.).
+/// Reads only the env var — does not fall back to the `hkask` keychain
+/// (reserved for sovereignty keys per the `hkask_keystore` module contract).
 fn env_f64(key: &str, default: f64) -> f64 {
-    // Tier 1: Environment variable (fast path)
     if let Ok(val) = std::env::var(key)
         && !val.is_empty()
         && let Ok(f) = val.parse::<f64>()
     {
         return f;
     }
-    // Tier 2: OS keychain (loaded from .env at setup time via kask keystore load)
-    let keychain_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        hkask_keystore::resolve(&SecretRef::Keychain(key.to_string()))
-    }));
-    if let Ok(Ok(zeroizing)) = keychain_result {
-        let val_str = String::from_utf8_lossy(&zeroizing);
-        if !val_str.is_empty()
-            && let Ok(f) = val_str.parse::<f64>()
-        {
-            return f;
-        }
-    }
     default
 }
 
-/// Resolve a provider API key through the 2-tier chain: env var → OS keychain.
+/// Resolve a provider API key from the process environment.
 ///
-/// Tier 1: Environment variable (fast path — set via shell or keychain).
-/// Tier 2: OS keychain (encrypted at rest; guarded against the
-/// concurrent-access SIGABRT from libdbus via `catch_unwind`).
-/// Returns an empty string if no key is found — the backend will be unavailable.
+/// In zed-kask, inference API keys are injected into MCP server child
+/// processes as environment variables by the parent zed process (via
+/// `kask_bridge::KaskSettings::mcp_env_with_credentials`, which reads from
+/// zed's `CredentialsProvider` keychain under `kask://credentials/<key>`).
+/// Standalone MCP servers set the same env vars in their shell.
+///
+/// This function reads **only** the environment variable. It does **not**
+/// fall back to the `hkask` keychain namespace — that namespace is reserved
+/// for sovereignty keys (a2a_secret, db_passphrase, ocap_secret) per the
+/// `hkask_keystore` module contract. Reading inference keys from the `hkask`
+/// namespace was a spec violation: the settings UI writes to zed's
+/// `CredentialsProvider` (`kask://credentials/<key>`), not the `hkask`
+/// keyring, so the fallback read a namespace that was always empty in
+/// zed-kask, producing silent "API key not configured" errors.
+///
+/// Returns an empty string if the env var is unset or empty — the backend
+/// will be unavailable.
 fn resolve_api_key(env_name: &str) -> String {
-    // Tier 1: Environment variable (fast path — set via shell or keychain)
+    // The env var is the sole source. In zed-kask it is injected by the
+    // parent process; standalone, by the operator's shell.
     if let Ok(val) = std::env::var(env_name)
         && !val.is_empty()
     {
         return val;
     }
-
-    // Tier 2: OS keychain (guarded against concurrent-access SIGABRT from libdbus)
-    let keychain_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        hkask_keystore::resolve(&SecretRef::Keychain(env_name.to_string()))
-    }));
-    if let Ok(Ok(zeroizing)) = keychain_result {
-        let key = String::from_utf8_lossy(&zeroizing).into_owned();
-        if !key.is_empty() {
-            return key;
-        }
-    }
-
-    // Tier 3: Empty string (provider not configured)
     String::new()
 }
 
@@ -428,21 +416,18 @@ fn parse_provider_code(raw: &str) -> ProviderId {
     }
 }
 
-/// Resolve a configuration string from env or keychain (2-tier chain).
+/// Resolve a configuration string from the process environment.
+///
+/// Reads only the env var. Does not fall back to the `hkask` keychain —
+/// that namespace is reserved for sovereignty keys per the `hkask_keystore`
+/// module contract. Config values (`HKASK_DEFAULT_MODEL`, `HKASK_FUSION_*`,
+/// etc.) are injected by the parent zed process via `mcp_env()` or set in
+/// the operator's shell.
 fn resolve_config_str(key: &str) -> Option<String> {
     if let Ok(val) = std::env::var(key)
         && !val.is_empty()
     {
         return Some(val);
-    }
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        hkask_keystore::resolve(&SecretRef::Keychain(key.to_string()))
-    }));
-    if let Ok(Ok(zeroizing)) = result {
-        let val_str = String::from_utf8_lossy(&zeroizing);
-        if !val_str.is_empty() {
-            return Some(val_str.to_string());
-        }
     }
     None
 }

@@ -2,7 +2,7 @@
 title: "RunPod LoRA Training Guide"
 audience: [ml-engineers, developers]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.33.0"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, lifecycle]

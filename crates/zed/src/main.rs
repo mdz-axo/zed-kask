@@ -1767,6 +1767,19 @@ fn main() {
                         // "Process-global hooks set at runtime need a startup-failure
                         // signal" trap from .rules: the warn must cover the full
                         // ensemble of model-dependent hooks, not just one.
+                        //
+                        // The inference IPC server is still started (with a
+                        // `NoModelInferencePort`) so MCP server child processes
+                        // receive `HKASK_INFERENCE_SOCKET` and route inference
+                        // through this bridge rather than falling back to
+                        // `InferenceRouter::from_env()`. That fallback reads from
+                        // the `hkask` keychain namespace, which is empty in zed-kask
+                        // (inference keys live in zed's `CredentialsProvider` under
+                        // `kask://credentials/<key>`). Without the IPC server, MCP
+                        // servers silently failed with "API key not configured" —
+                        // an error operators could not trace to the missing socket.
+                        // The `NoModelInferencePort` returns a clear diagnostic so
+                        // the failure mode is visible and actionable.
                         log::warn!(
                             "No default LanguageModel configured — hKask model-dependent hooks not wired: \
                              manifest executor (skill invocations return no-op envelope), \
@@ -1774,10 +1787,52 @@ fn main() {
                              panel tool invoker (panel cannot dispatch tools), \
                              curator session factory (panel cannot run per-tab curator conversations), \
                              regulation status (panel cannot emit regulation spans). \
+                             The inference IPC server is started with a no-op port so MCP \
+                             servers route through the bridge and get a diagnostic error \
+                             instead of falling back to an empty keychain. \
                              Remediation: configure a default LanguageModel in Settings → \
                              or sign in to your model provider. The deferred task will re-run \
                              on next login and wire these hooks."
                         );
+
+                        // Start the IPC server with a no-op inference port so
+                        // `INFERENCE_SOCKET_PATH` is set and MCP servers connect
+                        // to the bridge. The media router is still constructed
+                        // from env-var keys so media generation (fal.ai/DeepInfra)
+                        // works without a default chat model — media backends are
+                        // not part of zed's `LanguageModel` abstraction.
+                        let media_router = std::sync::Arc::new(
+                            kask_bridge::InferenceRouter::new(
+                                kask_bridge::InferenceConfig::from_env(),
+                            ),
+                        );
+                        let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
+                            std::sync::Arc::new(kask_bridge::NoModelInferencePort);
+                        match kask_bridge::InferenceIpcServer::start(
+                            no_model_port,
+                            None,
+                            Some(media_router),
+                            cx,
+                        ) {
+                            Ok(ipc_server) => {
+                                let socket_path =
+                                    ipc_server.socket_path().to_string_lossy().to_string();
+                                let _ = INFERENCE_SOCKET_PATH.set(socket_path.clone());
+                                log::info!(
+                                    "hKask inference IPC server started (no-op port) at {socket_path} — \
+                                     MCP servers will route through the bridge and receive a \
+                                     diagnostic error until a default model is configured"
+                                );
+                                std::mem::forget(ipc_server);
+                                sync_kask_mcp_servers(cx);
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to start inference IPC server (no-op port): {e} — \
+                                     MCP servers will fall back to InferenceRouter with env-var keys"
+                                );
+                            }
+                        }
                     }
                 });
 

@@ -40,6 +40,7 @@ pub use identity::{
 };
 pub use inference::LanguageModelEmbeddingPort;
 pub use inference::LanguageModelInferencePort;
+pub use inference::NoModelInferencePort;
 pub use inference_ipc_server::InferenceIpcServer;
 pub use inference_providers::{
     DATA_SERVICE_CREDENTIALS, INFERENCE_PROVIDERS, InferenceProviderDescriptor,

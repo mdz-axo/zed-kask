@@ -2,7 +2,7 @@
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
 last_updated: 2026-07-29
-version: "0.32.0"
+version: "0.32.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, lifecycle]

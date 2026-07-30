@@ -2,7 +2,7 @@
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
 last_updated: 2026-07-29
-version: "0.31.1"
+version: "0.31.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -21,7 +21,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Supersedes:** The previous 9-category DDMVSS. All MDS references in the codebase should be updated.
 
-**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 29 surviving hKask crates and 10 MCP servers are listed in the architecture plan §2.2/§2.4.
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 10 MCP servers are listed in the architecture plan §2.2/§2.4. (Corrected 2026-07-29 from a stale "29 surviving crates" claim — verified by `ls kask/crates/`.)
 
 **Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
@@ -31,7 +31,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 The domain ontology is grounded in **Ontology Design Pattern (ODP) methodology** as described by Norouzi et al. (2025, arXiv:2509.23776): compact, requirement-driven extraction patterns rather than navigating entire complex ontologies.[^norouzi-odp]
 
-The ontology is re-anchored to the **29 surviving hKask crates** compiled in-process inside zed-kask (see [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2.2). Deleted crates are not referenced as current; where a deleted crate's job moved to a zed-kask surface, the entity is mapped to that surface.
+The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` + `kask_bridge`) compiled in-process inside zed-kask (see [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2.2). Deleted crates are not referenced as current; where a deleted crate's job moved to a zed-kask surface, the entity is mapped to that surface.
 
 ### 1.1 Core Entities
 
@@ -160,6 +160,8 @@ Curation decisions (Accept/Revise/Reject) are made by the Curator or human — n
 ---
 
 ## 4. Spec Operations & QA Integration
+
+> **Pragmatic-semantics note (2026-07-29 audit):** This section describes the **planned (OUGHT)** spec-operations surface. `SpecStore`, `SqliteSpecStore`, `DefaultSpecCurator`, and the `spec_types` module (`Spec`, `GoalSpec`, `SpecCategory`, `SpecId`) are **not yet implemented** in `hkask-storage` — verified by grep of `kask/crates/hkask-storage/src/`. The `kask spec` CLI subcommands and `kask qa spec-check` are likewise not yet built. This section is retained as the design specification for the intended surface; readers should treat the tables and code paths below as the *intended* API, not a verifiable code reference. The MDS category framework (§1–§3, §5–§10) and the `KaskCore` composition-root spec (below) are independent of this surface and remain authoritative.
 
 Specifications are managed through in-process surfaces plus QA validation. The standalone `hkask-cli` `kask spec` subcommands and the `hkask-api` REST endpoints are **deleted**. Spec capture/list/validate/cultivate now run through the in-process `kask` admin CLI and the curator MCP server; MCP does not expose spec capture/list/validate/cultivate beyond surfacing spec drift via the Curator server.
 
@@ -535,7 +537,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ---
 
-*MDS v0.31.0 — five categories, SpecStore + QA. Re-anchored to the 29 surviving hKask crates compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology.*
+*MDS v0.31.2 — five categories, SpecStore + QA. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology.*
 
 ---
 
@@ -572,7 +574,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
 | `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign` (moved from deleted `hkask-pods`), `HMemEntry` (moved from deleted `hkask-git-cas`), `ExpectProposal` (moved from deleted `hkask-test-harness`) |
-| `hkask-storage` | Domain, Lifecycle | `hMem`, `SpecStore`, `WalletStore`, per-user SQLCipher private sphere |
+| `hkask-storage` | Domain, Lifecycle | `hMem`, `WalletStore`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CyberneticsLoop`, variety/algedonic, `WalletManager` (implements `WalletBudgetPort`; `gas_per_rjoule` tracking) |
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
