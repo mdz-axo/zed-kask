@@ -2734,6 +2734,56 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_lisp_eval_basic() {
+        let input = serde_json::json!({
+            "form": "(+ 1 2 3)"
+        });
+        let result = dispatch_compute("lisp.eval", &input).unwrap();
+        assert_eq!(result, serde_json::json!(6));
+    }
+
+    #[test]
+    fn dispatch_lisp_eval_with_env() {
+        let input = serde_json::json!({
+            "form": "(assoc \"score\" step_1_result)",
+            "env": {
+                "step_1_result": {"score": 0.85, "findings": ["a", "b"]}
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &input).unwrap();
+        assert_eq!(result, serde_json::json!(0.85));
+    }
+
+    #[test]
+    fn dispatch_lisp_eval_predicate() {
+        let input = serde_json::json!({
+            "form": "(and (> (length findings) 0) (< composite 0.15))",
+            "env": {
+                "findings": ["a", "b"],
+                "composite": 0.12
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &input).unwrap();
+        assert_eq!(result, serde_json::json!(true));
+    }
+
+    #[test]
+    fn dispatch_lisp_eval_missing_form_errors() {
+        let input = serde_json::json!({"env": {}});
+        assert!(dispatch_compute("lisp.eval", &input).is_err());
+    }
+
+    #[test]
+    fn dispatch_lisp_eval_step_limit() {
+        let input = serde_json::json!({
+            "form": "(begin (define loop (lambda () (loop))) (loop))",
+            "max_steps": 100,
+            "max_depth": 1000
+        });
+        assert!(dispatch_compute("lisp.eval", &input).is_err());
+    }
+
+    #[test]
     fn dispatch_kata_object_gap_complete() {
         let input = serde_json::json!({
             "current_artifacts": {"title": "My Plan", "obstacles": ["a", "b"], "assessment": "grounded"},

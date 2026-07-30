@@ -269,9 +269,9 @@ impl Registry {
             tracing::warn!(target: "hkask.templates", "Registration warning: {}", warning);
         }
 
-        // Validate lexicon_terms against known vocabulary (F-07 fix:
-        // unknown terms are now errors, not warnings — a typo like
-        // `visibilty` should not silently register with a bad tag).
+        // Validate lexicon_terms format (F-07 fix: ill-formed terms like
+        // `Multi-Step` or `multi-step` are errors, not warnings — a typo
+        // should not silently register with a bad tag).
         let vocab_warnings = crate::vocabulary::validate_entry(&entry);
         if !vocab_warnings.is_empty() {
             return Err(hkask_types::RegistryError::Other(format!(

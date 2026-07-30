@@ -527,3 +527,26 @@ default model instead of the requested one, defeating `bypass_fusion: true`.
 The `MultiModelInferencePort` (fusion) already resolves by name before
 calling the single-model port, so it passes `None` to avoid redundant
 resolution. Tests in `inference.rs` pin the propagation.
+
+## Trait-with-one-impl is speculative generality
+
+A `trait` with a single implementor in the same crate, where the implementor
+is constructed but never read, is dead code regardless of ADR-042 "port
+promotion" aspirations. The port promotion rule says a port *moves* to a
+shared crate when a second consumer materializes — it does not justify
+creating the port before the first consumer exists. Grep for `self.<field>`
+before merging a new trait + router + field; if the only matches are the
+constructor, the abstraction is unwired. Found in `hkask-mcp-training`
+`AdapterPort`/`AdapterRouter` — 1,740 lines of dead surface area including
+a fictional OCAP seam (`_token` parameters never verified).
+
+## Advertised invariants need enforcement points
+
+A doc comment that claims a security property (OCAP gating, capability
+tokens, unforgeability) must point to the line of code that enforces it.
+A trait whose every method takes `_token: &DelegationToken` and never reads
+it is security theater — it advertises a property the code does not have,
+which is worse than no property (operators reading the docs believe the gate
+exists). The `.rules` trap "Process-global hooks set at runtime need a
+startup-failure signal" generalizes: every advertised invariant needs an
+enforcement point, or the doc must say "not yet enforced."

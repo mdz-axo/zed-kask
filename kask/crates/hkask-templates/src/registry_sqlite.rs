@@ -150,7 +150,7 @@ impl SqliteRegistry {
         for warning in &entry.validate() {
             tracing::warn!(target: "hkask.templates", "{}", warning);
         }
-        // F-07 fix: unknown lexicon terms are now errors, not warnings.
+        // F-07 fix: ill-formed lexicon terms are errors, not warnings.
         let vocab_warnings = crate::vocabulary::validate_entry(&entry);
         if !vocab_warnings.is_empty() {
             return Err(TemplateError::Validation(format!(
@@ -286,31 +286,6 @@ impl SqliteRegistry {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "delete_entry: DELETE templates failed");
         }
         entry
-    }
-
-    /// Search templates by lexicon term.
-    ///
-    /// expect: "The system persists template registrations to SQLite"
-    /// \[P3\] Motivating: Generative Space — vocabulary-aware template search
-    /// \[P8\] Constraining: Semantic Grounding — search uses lexicon terms
-    /// pre:  term is non-empty
-    /// post: returns `Vec<RegistryEntry>` for templates declaring this term
-    pub fn search_by_lexicon(&self, term: &str) -> Result<Vec<RegistryEntry>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?;
-        let rows: Vec<TemplateRow> = conn
-    			.prepare("SELECT t.id, t.template_type, t.name, t.description, t.source_path, t.cascade_level, t.matroshka_limit FROM templates t JOIN lexicon_terms l ON t.id = l.template_id WHERE l.term = ?1")
-    			.map_err(|e| TemplateError::Database(InfrastructureError::database(format!("Prepare: {}", e))))?
-    			.query_map(params![term], parse_template_row)
-    			.map_err(|e| TemplateError::Database(InfrastructureError::database(format!("Query: {}", e))))?
-    			.filter_map(|r| r.ok()).collect();
-        let mut results = Vec::new();
-        for (id, tt, name, desc, sp, cl, ml) in rows {
-            results.push(Self::row_to_entry(&conn, &id, tt, name, desc, sp, cl, ml)?);
-        }
-        Ok(results)
     }
 
     /// Count registered templates.

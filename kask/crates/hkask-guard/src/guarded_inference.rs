@@ -276,6 +276,7 @@ impl InferencePort for GuardedInferencePort {
 mod tests {
     use super::*;
     use crate::GuardConfig;
+    use futures_util::TryStreamExt;
     use hkask_types::template::LLMParameters;
 
     struct EchoPort;
@@ -300,6 +301,26 @@ mod tests {
                     reasoning: None,
                 })
             })
+        }
+
+        fn generate_stream(
+            &self,
+            prompt: &str,
+            _params: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>>
+        {
+            let text = prompt.to_string();
+            Box::pin(futures_util::stream::once(async move {
+                Ok(InferenceStreamChunk {
+                    text_delta: text,
+                    reasoning_delta: String::new(),
+                    model: "echo".to_string(),
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    tool_calls: vec![],
+                })
+            }))
         }
     }
 
@@ -378,5 +399,44 @@ mod tests {
             .generate_with_messages(&messages, &LLMParameters::default(), None, None)
             .await;
         assert!(result.is_err());
+    }
+
+    /// Pinning test for F48: streaming output is NOT scanned.
+    ///
+    /// The streaming methods (`generate_stream`, `generate_stream_with_model`,
+    /// `generate_stream_with_messages`) scan input but delegate directly to
+    /// `inner.generate_stream(...)` without scanning output chunks. This is a
+    /// deliberate trade-off documented at guarded_inference.rs:211-212:
+    /// collecting the stream would defeat streaming latency.
+    ///
+    /// This test pins the CURRENT behavior: a secret in the streaming output
+    /// survives unredacted. If a future change adds output scanning to the
+    /// stream path, this test will fail — forcing the author to update it
+    /// deliberately rather than silently changing the security surface.
+    #[tokio::test]
+    async fn streaming_output_secret_survives_unredacted_f48_pin() {
+        let port = guarded_echo();
+        let secret = "sk-abc123def456ghi789jkl012mno345pqr678stu";
+        let prompt = format!("key: {secret}");
+
+        let stream = port.generate_stream(&prompt, &LLMParameters::default(), None);
+        let chunks: Vec<InferenceStreamChunk> = stream
+            .try_collect()
+            .await
+            .expect("stream should complete without error");
+
+        assert_eq!(chunks.len(), 1, "echo port yields exactly one chunk");
+        let collected: String = chunks.iter().map(|c| c.text_delta.as_str()).collect();
+        assert!(
+            collected.contains(secret),
+            "F48 pin: streaming output secret must survive unredacted (current behavior). \
+             If you intentionally added output scanning to the stream path, update this \
+             test to assert `[REDACTED]` instead and remove this pin."
+        );
+        assert!(
+            !collected.contains("[REDACTED]"),
+            "F48 pin: streaming output was redacted — output scanning was added to the \
+             stream path. Update this test to reflect the new (scanned) behavior."
+        );
     }
 }
