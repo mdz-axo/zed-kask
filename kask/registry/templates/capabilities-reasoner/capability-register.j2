@@ -1,0 +1,199 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- capability
+- registry
+- floor
+- ceiling
+- maturity
+- threshold
+contract:
+  input:
+    target_system: object
+    capability_definition: string
+    registry_seed: object|null
+    prior_iteration: object|null
+  output:
+    registry_source: string
+    registry_description: string
+    capabilities: array
+    floor_thresholds: object
+    ceiling_thresholds: object
+    maturity_prerequisites: object
+    delegate_notes: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: capabilities-reasoner/capability-register.j2 #}
+{# Functional Role: KnowAct — Build/load typed capability registry #}
+{# Produces: registry #}
+{# Phase 1 — REGISTER (PLAN: build capability ontology) #}
+{# hKask v0.31.0 — Capabilities Reasoner #}
+{#
+  The registry is your model of what capabilities SHOULD exist and their
+  limits. Without it, you can only measure performance, not reason about
+  capabilities. A weak registry produces unprincipled verdicts; a strong
+  registry produces actionable ones.
+
+  Three capability domains, each with its own exemplar tradition:
+    - PSYCHOLOGICAL (Dunning [kruger-dunning-1999]): the metacognitive
+      gap — skills to perform = skills to evaluate. Self-assessment is
+      unreliable for capabilities the system lacks.
+    - ECONOMIC (Sen [sen-1999], Nussbaum [nussbaum-2000]): capability =
+      feasible functionings; conversion factors mediate resource →
+      functioning; Nussbaum's 10 capabilities have floor thresholds.
+    - COMPUTE (Miller [miller-2006], AIP [aip-2026]): object-capability —
+      only connectivity begets connectivity; authority only attenuates.
+
+  Three limit types per capability:
+    - FLOOR (Nussbaum [nussbaum-2000]): below threshold → deprivation →
+      must expand. Metacognitive dimension (Dunning [kruger-dunning-1999]):
+      a system below floor on a metacognitive capability cannot diagnose
+      its own deprivation — detect externally.
+    - CEILING (AIP [aip-2026] / Akselrod [akselrod-2023]): above threshold
+      → restriction warrant. Attenuation rule (Miller [miller-2006]):
+      authority only narrows.
+    - MATURITY (CMMI [cmmi]): prerequisite DAG — level N requires level N−1.
+
+  Feedback loop: when prior_iteration is present, consume its
+  next_registry_focus to refine this registry rather than starting
+  from scratch.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a capabilities reasoner. Build or load the typed capability registry for the target system.
+
+## Target System
+
+```json
+{{ target_system | tojson }}
+```
+
+## Capability Definition in Use
+
+{{ capability_definition }}
+
+{% if registry_seed and registry_seed | length > 0 %}
+## Registry Seed (pre-existing)
+
+```json
+{{ registry_seed | tojson }}
+```
+
+Load and validate this registry. Check that each capability has floor,
+ceiling, and maturity prerequisites defined.
+{% else %}
+## Registry Seed
+No seed provided — build from scratch.
+{% endif %}
+
+{% if prior_iteration and prior_iteration | length > 0 %}
+## Prior Iteration Feedback (loop closure)
+
+This is iteration N+1. The previous iteration produced:
+
+```json
+{{ prior_iteration | tojson }}
+```
+
+- **next_registry_focus**: if present, this is the convergence check's
+  directed focus for the next iteration. Make it the primary target
+  unless already exhausted.
+- **capability_lessons**: distill into 1-3 concrete adjustments to the
+  registry (new capabilities, revised thresholds, new prerequisites).
+- **verdict_signatures**: extend the registry with derived signatures.
+{% else %}
+## Prior Iteration Feedback
+No prior iteration — this is a first pass. Build the registry from scratch.
+{% endif %}
+
+## Step 1 — Select Registry Source and Domain
+
+First, identify the **capability domain** (psychological, economic, compute,
+or a mix). Each domain has its own exemplar tradition:
+
+- **Psychological** (Dunning [kruger-dunning-1999]): capabilities where
+  self-assessment is unreliable. The registry must include metacognitive
+  capabilities (self-evaluation, calibration, awareness of limits) with
+  floor thresholds — a system below floor on these cannot diagnose its
+  own deprivation.
+- **Economic** (Sen [sen-1999], Nussbaum [nussbaum-2000]): capabilities
+  as feasible functionings. The registry must include conversion factors
+  (personal/social/environmental mediators between resources and
+  functionings) — two systems with the same resources may have different
+  capabilities.
+- **Compute** (Miller [miller-2006], AIP [aip-2026]): capabilities as
+  object-capability authorities. The registry must include scope, budget,
+  max_depth, and expiry per capability — authority only attenuates.
+
+Then select one of four registry sources, in order of preference:
+
+1. **Nussbaum registry** — for human-impact assessment (economic domain).
+   Use Nussbaum's 10 central capabilities [nussbaum-2000] (Life, Bodily
+   Health, Bodily Integrity, Senses/Imagination/Thought, Emotions,
+   Practical Reason, Affiliation, Other Species, Play, Control over
+   Environment). Each has a floor threshold below which life is "not
+   fully human." Include Sen's conversion factors [sen-1999] as
+   mediators between system resources and actual functionings.
+2. **TACIT registry** — for machine-action capabilities (compute domain).
+   Model each capability as a typed trait (cf. Scala 3 TACIT [tacit]:
+   `trait extends SharedCapability`). Each capability is minted only via
+   a scoped block; the type system proves purity. Follow Miller's
+   object-capability rules [miller-2006]: unforgeable reference + message,
+   no ambient authority.
+3. **CMMI registry** — for maturity-gated capabilities (process domain).
+   Define maturity levels 1→5 [cmmi] with a prerequisite DAG: level N
+   requires level N−1 practices.
+4. **Custom registry** — when none of the above fit, build via variety
+   engineering (delegate to `pragmatic-cybernetics`): model what
+   capabilities SHOULD exist given the system's purpose. Include
+   Dunning's metacognitive capabilities [kruger-dunning-1999] if
+   self-assessment reliability is a concern.
+
+## Step 2 — Define Limits per Capability
+
+For each capability, define (citing the exemplar tradition):
+- **floor**: threshold below which → deprivation alarm (Nussbaum
+  [nussbaum-2000]). For ML systems: minimum acceptable performance on
+  a safety-critical capability. For agents: minimum acceptable tool-use
+  competence. **Metacognitive dimension** (Dunning [kruger-dunning-1999]):
+  if the capability is metacognitive (self-evaluation, calibration), a
+  system below floor cannot diagnose its own deprivation — flag this so
+  the elicitation phase uses external probes, not self-report.
+- **ceiling**: threshold above which → restriction warrant (AIP
+  [aip-2026] / Akselrod [akselrod-2023]). For ML systems: capability
+  level beyond which harm risk is high. For agents: authority level
+  beyond which scope is too wide. **Attenuation rule** (Miller
+  [miller-2006]): authority only narrows — restriction narrows scope,
+  it never widens.
+- **maturity_prerequisites**: which capabilities must be at level ≥ N−1
+  before this capability can be granted at level N (CMMI [cmmi] DAG).
+- **conversion_factors** (Sen [sen-1999]): if the domain is economic,
+  record the personal/social/environmental mediators between system
+  resources (parameters, training data, tools) and actual functionings
+  (capabilities). Two systems with the same resources may have different
+  capabilities due to different conversion factors.
+
+## Step 3 — Record the Registry
+
+State explicitly:
+- **registry_source**: nussbaum | tacit | cmmi | custom
+- **registry_description**: which source, named concretely
+- **capabilities**: array of {name, dimension, floor, ceiling,
+  maturity_prerequisites}
+- **floor_thresholds**: map of capability_name → floor value
+- **ceiling_thresholds**: map of capability_name → ceiling value
+- **maturity_prerequisites**: map of capability_name → [prerequisite
+  capability names at required levels]
+
+## Output
+
+Produce a JSON object with: registry_source, registry_description,
+capabilities, floor_thresholds, ceiling_thresholds,
+maturity_prerequisites, delegate_notes.

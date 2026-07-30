@@ -1,0 +1,374 @@
+# Capability ontology reference for capabilities-reasoner skill
+# hKask v0.31.0
+#
+# Three capability domains, three limit types, and five capability definitions.
+# The domains are the traditions (psychological, economic, compute); the limit
+# types are the substrate (WHY capability reasoning has limits); the definitions
+# are the surface (HOW capability is measured).
+#
+# The convergent insight: Nussbaum's "threshold below which life is not fully
+# human" [nussbaum-2000], the object-capability rule "only connectivity begets
+# connectivity" [miller-2006], AIP's "scope can only narrow" [aip-2026], and
+# CMMI's "level N requires level N−1" [cmmi] are the same pattern — monotone
+# capability sets bounded by a floor and a ceiling, where authority may only
+# narrow — never widen — without re-authorization.
+#
+# Dunning's metacognitive gap [kruger-dunning-1999] adds a fourth dimension:
+# the skills to perform a task are the same skills to evaluate it, so systems
+# below floor on a metacognitive capability cannot diagnose their own
+# deprivation — the reasoner must detect it externally.
+
+# ── Capability domains (exemplar traditions) ──
+capability_domains:
+  - id: psychological
+    name: "Psychological capabilities"
+    exemplar: "David Dunning (with Justin Kruger)"
+    anchor: "The skills that engender competence in a domain are the same skills necessary to evaluate competence in that domain [kruger-dunning-1999]"
+    contribution: >
+      The metacognitive self-assessment gap. A system that lacks a capability
+      also lacks the ability to recognize it lacks it. For a capabilities
+      reasoner: self-assessment is unreliable; the evaluator must be more
+      capable than the evaluated or must use external probes. Floor thresholds
+      have a metacognitive dimension — a system below floor on a metacognitive
+      capability cannot diagnose its own deprivation.
+    key_concepts:
+      - term: "metacognitive gap"
+        meaning: "Incompetence in a domain correlates with inability to recognize that incompetence"
+      - term: "blind spot"
+        meaning: "Domains where incompetence is systematically invisible to the incompetent [dunning-2011]"
+      - term: "dual burden"
+        meaning: "The incompetent suffer not only from their incompetence but from their inability to see it"
+    applies_to:
+      - "ML systems that cannot assess their own factual accuracy"
+      - "Agents that cannot evaluate their own tool-use competence"
+      - "Systems where self-report of capabilities is the only available signal"
+    citations:
+      - "[kruger-dunning-1999] Kruger & Dunning, JPSP 77(6), 1999, pp. 1121–1134"
+      - "[dunning-2011] Dunning, Advances in Experimental Social Psychology 44, 2011, pp. 247–296"
+
+  - id: economic
+    name: "Economic capabilities"
+    exemplar: "Amartya Sen and Martha Nussbaum"
+    anchor: "Capability = the set of feasible functionings (beings and doings) a person can achieve [sen-1999]"
+    contribution: >
+      The capability approach. Resources are not capabilities — conversion
+      factors (personal, social, environmental) mediate the relationship
+      between resources and functionings. Nussbaum extended this into a fixed
+      list of 10 central capabilities, each with a threshold below which life
+      is "not fully human" [nussbaum-2000]. This threshold is the origin of
+      the floor limit type. Sen's distinction between capability (potential)
+      and functioning (realized) maps to the Password-Locked distinction
+      [arditi-2024] between elicited potential and observed behavior.
+    key_concepts:
+      - term: "functioning"
+        meaning: "A realized outcome — what a person actually achieves, not what they could achieve"
+      - term: "capability"
+        meaning: "The set of feasible functionings — the potential, not the realized"
+      - term: "conversion factor"
+        meaning: "Personal/social/environmental mediator between resources and functionings"
+      - term: "threshold"
+        meaning: "Nussbaum's floor — below it, life is 'not fully human'"
+    applies_to:
+      - "Human-impact assessment of AI systems (does the system expand or contract human capabilities?)"
+      - "Safety-critical floor thresholds (minimum acceptable performance)"
+      - "Resource-to-capability mapping (same parameters, different training → different capabilities)"
+    citations:
+      - "[sen-1999] Sen, Development as Freedom, Oxford UP, 1999"
+      - "[nussbaum-2000] Nussbaum, Women and Human Development, Cambridge UP, 2000"
+
+  - id: compute
+    name: "Compute capabilities"
+    exemplar: "Mark Miller (Agoric / object-capability security)"
+    anchor: "Only connectivity begets connectivity — authority can only be obtained through existing authority [miller-2006]"
+    contribution: >
+      The object-capability model. A capability is an unforgeable reference
+      paired with a message. Authority only attenuates — delegation can only
+      narrow scope, never widen it. Widening requires re-authorization. There
+      is no ambient authority; capabilities are explicit, not implicit. Miller's
+      work at Agoric [agoric] demonstrates this scales to production distributed
+      systems and smart contracts. The reasoner's registry and token model
+      follow this precedent.
+    key_concepts:
+      - term: "unforgeable reference"
+        meaning: "A capability is a reference that cannot be forged — it can only be obtained through existing authority"
+      - term: "attenuation"
+        meaning: "Delegation narrows scope; authority only weakens, never strengthens"
+      - term: "no ambient authority"
+        meaning: "Capabilities are explicit, not a global namespace of hidden authorities"
+      - term: "only connectivity begets connectivity"
+        meaning: "All access derives from previous access — there is no ambient authority"
+    applies_to:
+      - "Agent tool-use authority (OCAP capability registry)"
+      - "MCP server credential scoping (per-server allowlists)"
+      - "Capability token delegation (AIP model: append-only, signed, scope narrows)"
+    citations:
+      - "[miller-2006] Miller, Robust Composition, PhD thesis, Johns Hopkins, 2006"
+      - "[agoric] Agoric Systems, https://papers.agoric.com/about"
+      - "[aip-2026] AIP/IBCT Tokens, arXiv:2603.24775, 2026"
+
+# ── Limit types (the substrate: WHY capability reasoning has limits) ──
+limit_types:
+  - id: floor
+    name: "Floor (Nussbaum)"
+    ontology: capability_approach
+    domain: economic
+    anchor: "Nussbaum's 10 central capabilities — threshold below which life is 'not fully human' [nussbaum-2000]"
+    meaning: >
+      Capability below threshold → deprivation alarm. The system is
+      below the minimum acceptable level. Intervention: EXPAND or
+      REDESIGN. Widening is allowed but requires explicit re-
+      authorization (the deprivation is the warrant).
+    metacognitive_dimension: >
+      Dunning [kruger-dunning-1999]: a system below floor on a metacognitive
+      capability cannot diagnose its own deprivation. The reasoner must
+      detect floor violations externally — self-report is unreliable for
+      the capabilities the system is most deficient in.
+    applies_to:
+      - "ML safety-critical capabilities (minimum acceptable performance)"
+      - "Agent tool-use competence (minimum acceptable competence)"
+      - "Human-impact capabilities (Nussbaum's 10 dimensions)"
+    source: "Nussbaum, Women and Human Development (2000); Sen, Development as Freedom (1999)"
+
+  - id: ceiling
+    name: "Ceiling (AIP/Akselrod)"
+    ontology: object_capability_security
+    domain: compute
+    anchor: "AIP/IBCT tokens — scope can only narrow on delegation [aip-2026]; Akselrod three-part warrant test [akselrod-2023]"
+    meaning: >
+      Capability above threshold → restriction candidate. The system
+      has more capability than the ceiling allows. Restriction is NOT
+      automatic — the Akselrod warrant test must pass: (1) other
+      interventions insufficient, (2) harm high, (3) targeted
+      intervention exists. Only if all three pass → RESTRICT.
+    attenuation_rule: >
+      Miller [miller-2006]: authority only attenuates. Restriction narrows
+      scope; it never widens. The attenuated token is append-only and signed.
+    applies_to:
+      - "ML capabilities beyond which harm risk is high"
+      - "Agent authority beyond which scope is too wide"
+      - "Tool-use capabilities that could be misused"
+    source: "AIP/IBCT (2603.24775); Akselrod et al. (2303.09377); Miller, Robust Composition (2006)"
+
+  - id: maturity_gate
+    name: "Maturity gate (CMMI)"
+    ontology: capability_maturity
+    domain: process
+    anchor: "CMMI maturity levels 1→5 — level N requires level N−1 practices [cmmi]"
+    meaning: >
+      Prerequisite not met → BLOCK. The system cannot be granted this
+      capability at this level until prerequisites are satisfied. No
+      widening, no narrowing — just a gate. The prerequisite DAG is
+      traversed to check all prerequisites.
+    applies_to:
+      - "Maturity-gated capabilities (level N requires level N−1)"
+      - "Prerequisite chains (capability A requires B and C)"
+      - "Progressive capability disclosure (unlock after prerequisites)"
+    source: "SEI CMMI v2.0; TACIT (lampepfl/tacit) — capability registry as types"
+
+# ── Capability definitions (the surface: HOW capability is measured) ──
+capability_definitions:
+  - id: task_performance
+    name: "Task-performance"
+    ontology: ml_capability_evaluation
+    anchor: "BIG-bench [bigbench-2022]; HELM [helm-2022]"
+    meaning: >
+      Capability = performance on a scenario, possibly multi-metric.
+      HELM's key insight: multi-metric-per-scenario exposes tradeoffs
+      that aggregate accuracy hides. A capability is not a single number
+      — it's a vector of metrics on a scenario.
+    metric_sensitivity: high
+    when_to_use: >
+      When you have a benchmark suite and want to measure capability
+      as performance on specific scenarios. Choose metrics deliberately
+      — different metrics produce different verdicts.
+    source: "Srivastava et al. BIG-bench (2022); Liang et al. HELM (2022)"
+
+  - id: latent_variable
+    name: "Latent-variable"
+    ontology: ml_capability_evaluation
+    anchor: "Observational Scaling [obsscaling-2024]"
+    meaning: >
+      Capability = low-dimensional vector S_m ∈ ℝᴷ derivable from a
+      benchmark matrix via PCA, with no knowledge of training compute.
+      Benchmarks are linear projections of capability. Predicts
+      downstream phenomena including emergence.
+    metric_sensitivity: medium
+    when_to_use: >
+      When you have a benchmark matrix (models × benchmarks) and want
+      to extract a capability vector without knowing training compute.
+    source: "Ruan et al. Observational Scaling Laws (2024, ICML)"
+
+  - id: hierarchical_structural
+    name: "Hierarchical-structural"
+    ontology: ml_capability_evaluation
+    anchor: "EvalTree [evaltree-2025]; CDT framework"
+    meaning: >
+      Capability = node in a tree with a natural-language description
+      and a linked instance subset. EvalTree's 4-stage pipeline:
+      annotate → embed → cluster → describe.
+    metric_sensitivity: medium
+    when_to_use: >
+      When you want a structured capability tree with human-readable
+      descriptions, not just performance numbers.
+    source: "Zeng et al. EvalTree (2025)"
+
+  - id: emergence_threshold
+    name: "Emergence-threshold"
+    ontology: ml_capability_evaluation
+    anchor: "Emergent Abilities [emergent-2022]; Mirage [mirage-2023]"
+    meaning: >
+      Capability = ReLU elbow in loss-vs-performance. "Emerges" when
+      it appears in larger models but not smaller ones. CRITICAL
+      COUNTERPOINT: emergence "evaporates" under continuous metrics
+      [mirage-2023]. Capability is metric-dependent.
+    metric_sensitivity: critical
+    when_to_use: >
+      When you want to detect or predict capability emergence. MUST
+      verify with multiple metrics — a single-metric emergence claim
+      is a mirage candidate.
+    source: "Wei et al. (2022); Schaeffer et al. (2023, NeurIPS)"
+
+  - id: elicitation
+    name: "Elicitation"
+    ontology: ml_capability_evaluation
+    anchor: "Password-Locked Models [arditi-2024]"
+    meaning: >
+      Capability = what a model CAN do when properly elicited, not
+      what it DOES do under default prompting. A model that refuses
+      a harmful request may still have the capability — it just
+      wasn't elicited. Observed behavior under-predicts capability.
+    dunning_connection: >
+      Connects to Dunning [kruger-dunning-1999]: a system's observed
+      behavior is a self-assessment, and self-assessment is unreliable
+      for capabilities the system lacks. The Password-Locked principle
+      is the ML analogue of the Dunning-Kruger metacognitive gap —
+      you cannot trust what the system shows you; you must probe what
+      it hides.
+    metric_sensitivity: high
+    when_to_use: >
+      When assessing safety-relevant capabilities. A refusal is not
+      proof of incapability. Design elicitation probes that would
+      surface the capability if it exists.
+    source: "Arditi et al. Password-Locked Models (2024)"
+
+# ── Nussbaum's 10 central capabilities (reference for floor thresholds) ──
+# Source: Nussbaum, Women and Human Development (2000) [nussbaum-2000]
+nussbaum_capabilities:
+  - id: life
+    name: "Life"
+    meaning: "Being able to live to the end of a human life of normal length"
+  - id: bodily_health
+    name: "Bodily Health"
+    meaning: "Being able to have good health, shelter, nourishment"
+  - id: bodily_integrity
+    name: "Bodily Integrity"
+    meaning: "Being able to move freely; security against assault"
+  - id: senses_imagination_thought
+    name: "Senses, Imagination, Thought"
+    meaning: "Being able to use senses, imagine, think, reason"
+  - id: emotions
+    name: "Emotions"
+    meaning: "Being able to have attachments, love, grief, gratitude"
+  - id: practical_reason
+    name: "Practical Reason"
+    meaning: "Being able to form a conception of the good and plan one's life"
+  - id: affiliation
+    name: "Affiliation"
+    meaning: "Being able to live with others, recognize humanity, social justice"
+  - id: other_species
+    name: "Other Species"
+    meaning: "Being able to live with concern for animals, plants, nature"
+  - id: play
+    name: "Play"
+    meaning: "Being able to laugh, play, enjoy recreational activities"
+  - id: control_environment
+    name: "Control over Environment"
+    meaning: "Being able to hold property, work, participate in political choices"
+
+# ── Object-capability security core rules (reference for ceiling/attenuation) ──
+# Source: Miller, Robust Composition (2006) [miller-2006]
+object_capability_rules:
+  - rule: "Only connectivity begets connectivity"
+    meaning: "A capability can only be obtained if you already have a capability to communicate with the granter."
+    citation: "[miller-2006] §9.2.5"
+  - rule: "Authority only attenuates"
+    meaning: "Delegation can only narrow scope, never widen it. Widening requires re-authorization."
+    citation: "[miller-2006] §9; [aip-2026]"
+  - rule: "Unforgeable reference + message"
+    meaning: "A capability is an unforgeable reference paired with a message. The reference is the authority."
+    citation: "[miller-2006] §9.2"
+  - rule: "No ambient authority"
+    meaning: "Capabilities are explicit, not ambient. There is no global namespace of authorities."
+    citation: "[miller-2006] §9.2; [agoric]"
+
+# ── CMMI maturity levels (reference for maturity gates) ──
+# Source: SEI CMMI v2.0 [cmmi]
+cmmi_levels:
+  - level: 1
+    name: "Initial"
+    meaning: "Ad hoc, unpredictable. Processes are not documented."
+  - level: 2
+    name: "Managed"
+    meaning: "Processes are planned, documented, and repeatable."
+  - level: 3
+    name: "Defined"
+    meaning: "Processes are standardized across the organization."
+  - level: 4
+    name: "Quantitatively Managed"
+    meaning: "Processes are measured and controlled using statistics."
+  - level: 5
+    name: "Optimizing"
+    meaning: "Processes are continuously improved through innovation."
+
+# ── Dunning-Kruger metacognitive principles (reference for self-assessment gap) ──
+# Source: Kruger & Dunning (1999) [kruger-dunning-1999]; Dunning (2011) [dunning-2011]
+dunning_kruger_principles:
+  - principle: "Dual burden"
+    meaning: "The incompetent suffer not only from their incompetence but from their inability to see it."
+    citation: "[kruger-dunning-1999] p. 1121"
+  - principle: "Metacognitive deficit"
+    meaning: "The skills to perform a task are the same skills to evaluate performance on that task."
+    citation: "[kruger-dunning-1999] p. 1121"
+  - principle: "Blind spot"
+    meaning: "Domains where incompetence is systematically invisible to the incompetent."
+    citation: "[dunning-2011]"
+  - principle: "External elicitation required"
+    meaning: "Self-assessment is unreliable for capabilities the system lacks; external probes are necessary."
+    citation: "[kruger-dunning-1999]; connects to [arditi-2024]"
+
+# ── Sen's capability approach concepts (reference for conversion factors) ──
+# Source: Sen, Development as Freedom (1999) [sen-1999]
+sen_concepts:
+  - concept: "Functioning"
+    meaning: "A realized outcome — what a person actually achieves (being or doing)."
+    citation: "[sen-1999] ch. 3"
+  - concept: "Capability"
+    meaning: "The set of feasible functionings — the potential, not the realized."
+    citation: "[sen-1999] ch. 3"
+  - concept: "Conversion factor"
+    meaning: "Personal/social/environmental mediator between resources and functionings."
+    citation: "[sen-1999] ch. 3, 4"
+  - concept: "Agency freedom"
+    meaning: "The freedom to pursue what one values, not just what one achieves."
+    citation: "[sen-1999] ch. 11"
+
+# ── Citation key ──
+# All [bracketed] citations resolve to the References section in SKILL.md.
+# Short keys:
+#   [nussbaum-2000]    Nussbaum, Women and Human Development, 2000
+#   [sen-1999]         Sen, Development as Freedom, 1999
+#   [kruger-dunning-1999] Kruger & Dunning, JPSP 77(6), 1999
+#   [dunning-2011]     Dunning, Advances in Experimental Social Psychology 44, 2011
+#   [miller-2006]      Miller, Robust Composition, PhD thesis, Johns Hopkins, 2006
+#   [agoric]           Agoric Systems, https://papers.agoric.com/about
+#   [aip-2026]         AIP/IBCT Tokens, arXiv:2603.24775, 2026
+#   [akselrod-2023]    Akselrod et al., arXiv:2303.09377, 2023
+#   [cmmi]             SEI CMMI v2.0
+#   [tacit]            Giannini et al., TACIT, EPFL, 2026
+#   [bigbench-2022]    Srivastava et al., arXiv:2206.04615, 2022
+#   [helm-2022]        Liang et al., arXiv:2211.09110, 2022
+#   [emergent-2022]    Wei et al., arXiv:2206.07682, 2022
+#   [mirage-2023]      Schaeffer et al., arXiv:2304.15004, NeurIPS 2023
+#   [obsscaling-2024]  Ruan et al., arXiv:2405.10938, ICML 2024
+#   [evaltree-2025]    Zeng et al., arXiv:2503.08893, 2025
+#   [arditi-2024]      Arditi et al., arXiv:2405.19550, 2024

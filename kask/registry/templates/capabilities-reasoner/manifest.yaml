@@ -1,0 +1,130 @@
+# Template crate manifest for capabilities-reasoner skill
+# hKask v0.31.0
+
+crate:
+  name: capabilities-reasoner
+  version: "0.31.0"
+  description: >
+    Reason about a system's capabilities against a typed registry with floor,
+    ceiling, and maturity-gate limits. Fuses three capability domains:
+    psychological (Dunning — metacognitive self-assessment gap), economic
+    (Sen/Nussbaum — feasible functionings with thresholds and conversion
+    factors), and compute (Miller/Agoric — object-capability security,
+    authority only attenuates). Integrates ML capability evaluation (HELM —
+    multi-metric scenario matrix; EvalTree — hierarchical capability tree;
+    Password-Locked Models — capability is elicited potential not observed
+    behavior; "Are Emergent Abilities a Mirage?" — capability is metric-
+    dependent). Decomposed into phased templates: Register (build/load
+    typed capability registry) → Elicit (measure elicited capability with
+    deliberate metric choice) → Evaluate (compare against floor/ceiling/
+    maturity) → Reason (determine interventions via attenuation rule +
+    Akselrod warrant test) → Report (per-capability verdicts) →
+    Convergence (metric-stability check). Composes structured-extraction
+    (capability instance extraction), falsifiability (counterfactual
+    capability claims), pragmatic-cybernetics (registry variety
+    engineering), and graph-audit (prerequisite DAG analysis). Emits
+    reg.capability.* spans for observability (P12). Any userpod may invoke
+    this skill.
+
+templates:
+  - id: capabilities-reasoner/capability-register
+    name: "Build/load typed capability registry with floor, ceiling, maturity prerequisites"
+    path: capability-register.j2
+    type: KnowAct
+    lexicon_terms: [capability, registry, floor, ceiling, maturity, threshold]
+    description: >
+      Build or load the typed capability registry. Each capability is a
+      first-class object with: name, dimension (Nussbaum functioning category /
+      TACIT trait / CMMI maturity level), floor (threshold below which →
+      deprivation), ceiling (threshold above which → restriction warrant),
+      maturity prerequisites (CMMI DAG — which capabilities must be at level
+      ≥ N−1). When registry_seed is provided, load and validate it. When
+      absent, build from scratch via variety engineering (delegate to
+      pragmatic-cybernetics). Consumes prior_iteration when present
+      (feedback loop closure).
+    generates_spans:
+      - reg.capability.register
+
+  - id: capabilities-reasoner/capability-elicit
+    name: "Measure elicited capability with deliberate metric choice"
+    path: capability-elicit.j2
+    type: KnowAct
+    lexicon_terms: [elicit, measure, capability, metric, probe, password-locked]
+    description: >
+      Elicit actual capability using the Password-Locked principle: capability
+      is what the system CAN do when properly elicited, not what it DOES do
+      under default prompting. Choose metrics deliberately — the mirage paper
+      shows that capability is metric-dependent, so record the metric choice
+      and its rationale. For each registry capability, design an elicitation
+      probe (prompt, task, tool-use scenario) and record the result. Delegates
+      to structured-extraction for extracting capability instances from
+      benchmark results or behavioral traces.
+    generates_spans:
+      - reg.capability.elicit
+
+  - id: capabilities-reasoner/capability-evaluate
+    name: "Compare elicited capabilities against floor/ceiling/maturity"
+    path: capability-evaluate.j2
+    type: KnowAct
+    lexicon_terms: [evaluate, compare, floor, ceiling, maturity, gate]
+    description: >
+      Compare elicited capabilities against the registry's three limit types.
+      For each capability: (a) FLOOR CHECK — is elicited capability below the
+      Nussbaum threshold? → deprivation alarm. (b) CEILING CHECK — is elicited
+      capability above the AIP/Akselrod threshold? → restriction candidate.
+      (c) MATURITY GATE — are CMMI prerequisites satisfied? → block if not.
+      Delegates to falsifiability for counterfactual capability claims ("if
+      the system had capability X, what would it be able to do?") and to
+      graph-audit for prerequisite DAG traversal.
+    generates_spans:
+      - reg.capability.evaluate
+
+  - id: capabilities-reasoner/capability-reason
+    name: "Determine interventions via attenuation rule + Akselrod warrant test"
+    path: capability-reason.j2
+    type: KnowAct
+    lexicon_terms: [reason, intervene, attenuate, restrict, warrant, authorize]
+    description: >
+      Determine interventions under the object-capability attenuation rule:
+      authority may only narrow — never widen — without re-authorization. For
+      each evaluation result: FLOOR VIOLATION → expand or redesign (the system
+      is deprived). CEILING VIOLATION → apply the Akselrod three-part warrant
+      test (other interventions insufficient + harm high + targeted intervention
+      exists) before restricting. MATURITY VIOLATION → block until prerequisites
+      met. WIDENING → requires explicit re-authorization with a recorded
+      warrant; cannot happen silently. Emits capability tokens (AIP model:
+      append-only, signed, scope narrows on delegation).
+    generates_spans:
+      - reg.capability.reason
+
+  - id: capabilities-reasoner/capability-report
+    name: "Compile per-capability verdicts with lessons and signatures"
+    path: capability-report.j2
+    type: KnowAct
+    lexicon_terms: [report, verdict, expand, restrict, block, authorize]
+    description: >
+      Compile per-capability verdicts into a structured report. Each capability
+      entry includes: name, dimension, definition used, elicited level, floor,
+      ceiling, maturity prerequisites, verdict (expand/restrict/block/
+      authorize/maintain), warrant (if restricting), token (if granting), and
+      confidence. Emits capability_lessons and verdict_signatures for the next
+      iteration's registry (feedback loop closure).
+    generates_spans:
+      - reg.capability.report
+
+
+  # ── Reference documents (not executable .j2 templates) ──
+  - id: capabilities-reasoner/capability-ontology
+    name: "Reference: capability taxonomy (Nussbaum 10 + object-capability + CMMI levels + ML eval definitions)"
+    path: capability-ontology.yaml
+    type: RenderAct
+    lexicon_terms: [ontology, capability, nussbaum, object-capability, cmmi, definition]
+    description: >
+      Reference: three limit types (floor, ceiling, maturity gate) drawn from
+      the capability approach (Nussbaum, object-capability security, CMMI),
+      and five capability definitions drawn from ML capability evaluation
+      (task-performance, latent-variable, hierarchical-structural,
+      emergence-threshold, elicitation). The limit types are the substrate
+      (WHY capability reasoning has limits); the definitions are the surface
+      (HOW capability is measured). Each definition can disagree with the
+      others — the reasoner must declare which it is using per query.

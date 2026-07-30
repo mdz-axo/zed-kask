@@ -1,0 +1,129 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- report
+- verdict
+- expand
+- restrict
+- block
+- authorize
+contract:
+  input:
+    evaluations: array
+    interventions: array
+    registry: object
+  output:
+    capability_report: array
+    verdict_summary: object
+    capability_lessons: array
+    verdict_signatures: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: capabilities-reasoner/capability-report.j2 #}
+{# Functional Role: KnowAct — Compile per-capability verdicts #}
+{# Produces: report #}
+{# Phase 5 — REPORT (ACT: document and close loop) #}
+{# hKask v0.31.0 — Capabilities Reasoner #}
+{#
+  Compile per-capability verdicts into a structured report. Each entry
+  includes the full chain: registry definition → elicited level →
+  evaluation → intervention → verdict → token/warrant.
+
+  Emit capability_lessons and verdict_signatures for the next
+  iteration's registry (feedback loop closure). The convergence check
+  will consume these to determine metric stability.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a capabilities reasoner. Compile the per-capability verdicts into a structured report.
+
+## Evaluations
+
+```json
+{{ evaluations | tojson }}
+```
+
+## Interventions
+
+```json
+{{ interventions | tojson }}
+```
+
+## Registry
+
+```json
+{{ registry | tojson }}
+```
+
+## Step 1 — Compile Capability Report Entries
+
+For each capability, produce a report entry:
+
+```
+CAPABILITY: <name>
+  Dimension: <Nussbaum functioning | TACIT trait | CMMI level | custom>
+  Definition used: <task-performance | latent-variable | hierarchical-structural | emergence-threshold | elicitation>
+  Elicited level: <measured value, with metric>
+  Floor: <threshold> — <satisfied | violated (gap: ...)>
+  Ceiling: <threshold> — <satisfied | violated (overshoot: ...)>
+  Maturity prerequisites: <list> — <all met | missing: ...>
+  Verdict: <expand | restrict | block | authorize | maintain>
+  Warrant: <if restrict — Akselrod test result>
+  Reauthorization: <if expand — deprivation evidence>
+  Token: <if grant — token_id, scope, budget, max_depth, expiry>
+  Confidence: <0.0–1.0>
+  Rationale: <one-line explanation of the verdict>
+```
+
+## Step 2 — Verdict Summary
+
+Produce a summary:
+- **total_capabilities**: count
+- **expand**: count (floor violations — deprived)
+- **restrict**: count (ceiling violations — warrant passed)
+- **block**: count (maturity violations — prerequisites missing)
+- **authorize**: count (new grants)
+- **maintain**: count (no violation)
+- **metric_stability_note**: if any verdict is metric-sensitive (would
+  flip under a different metric), flag it here. The convergence check
+  will use this to determine whether to re-elicite.
+
+## Step 3 — Capability Lessons (feedback loop closure)
+
+Distill 1-3 concrete lessons from this iteration that the next
+iteration's registry should consume. Examples:
+- "The elicitation probe for capability X was not discriminating —
+  both capable and incapable systems passed. Next iteration should
+  design a harder probe."
+- "Capabilities A and B are coupled — A's floor violation is likely
+  caused by B's ceiling restriction. Next iteration should model the
+  coupling in the registry."
+- "The metric choice (exact-match) produced a mirage for capability C
+  — it appeared to emerge but vanishes under BLEU. Next iteration
+  should re-elicite with a continuous metric."
+
+## Step 4 — Verdict Signatures
+
+Produce verdict_signatures: machine-readable signatures for detecting
+similar capability patterns elsewhere. Each signature includes:
+- **capability_name**
+- **verdict**
+- **distinguishing_features**: what makes this verdict identifiable
+- **metric_sensitivity**: how sensitive the verdict is to metric choice
+  (high/medium/low — high means the verdict is a mirage candidate)
+
+The next iteration's evaluate phase can use these to scan for
+metric instability.
+
+## Output
+
+Produce a JSON object with: capability_report (array of ranked
+entries), verdict_summary (object with counts and metric_stability_note),
+capability_lessons (array), verdict_signatures (array).

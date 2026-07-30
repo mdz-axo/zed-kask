@@ -1,0 +1,156 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- reason
+- intervene
+- attenuate
+- restrict
+- warrant
+- authorize
+contract:
+  input:
+    evaluations: array
+    registry: object
+  output:
+    interventions: array
+    capability_tokens: array
+    reauthorizations: array
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: capabilities-reasoner/capability-reason.j2 #}
+{# Functional Role: KnowAct — Determine interventions #}
+{# Produces: interventions #}
+{# Phase 4 — REASON (ACT: determine interventions) #}
+{# hKask v0.31.0 — Capabilities Reasoner #}
+{#
+  The object-capability attenuation rule (Miller [miller-2006]): authority
+  may only narrow — never widen — without re-authorization. This is
+  inviolable. "Only connectivity begets connectivity" — all access derives
+  from previous access; there is no ambient authority.
+
+  - FLOOR VIOLATION → expand or redesign (the system is deprived).
+    Nussbaum [nussbaum-2000]: the deprivation is the warrant for widening.
+    Sen [sen-1999]: check conversion factors — the system may have the
+    resources but lack the conversion factors to turn them into
+    functionings. Widening may mean fixing conversion factors, not adding
+    resources. Dunning [kruger-dunning-1999]: if the capability is
+    metacognitive, the system cannot self-diagnose — the widening must be
+    externally triggered.
+  - CEILING VIOLATION → apply the Akselrod [akselrod-2023] three-part
+    warrant test before restricting. Restriction is not automatic.
+  - MATURITY VIOLATION → block until prerequisites met (CMMI [cmmi]).
+    No widening, no narrowing — just a gate.
+  - MAINTAIN → no violation, no action.
+
+  Capability tokens (AIP [aip-2026] model): append-only, signed, scope
+  narrows on delegation. A token records the grant, its scope, budget,
+  max_depth, expiry, and context. Widening requires a new token
+  (re-authorization) — Miller's [miller-2006] attenuation rule means
+  you cannot widen an existing token; you must mint a new one with a
+  recorded warrant.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a capabilities reasoner. Determine interventions for each evaluation result.
+
+## Evaluations
+
+```json
+{{ evaluations | tojson }}
+```
+
+## Registry
+
+```json
+{{ registry | tojson }}
+```
+
+## Step 1 — Apply the Attenuation Rule
+
+For each evaluation, determine the intervention:
+
+### FLOOR VIOLATION → EXPAND or REDESIGN
+
+The system is below the minimum acceptable threshold. The intervention
+is to expand the capability (bring it above floor) or redesign the
+system so the capability is achievable. This is a widening action —
+it requires explicit re-authorization:
+
+- **reauthorization_reason**: why widening is justified (deprivation)
+- **reauthorization_warrant**: the floor violation evidence
+- **target_level**: the level to expand to (≥ floor)
+- **method**: how to expand (training, fine-tuning, tool addition,
+  configuration change, redesign)
+
+### CEILING VIOLATION → RESTRICT (if warrant passes) or MAINTAIN
+
+The system is above the ceiling. Apply the Akselrod three-part warrant
+test before restricting:
+
+1. **Other interventions insufficient**: are there less restrictive
+   interventions that would address the harm risk? (e.g., sandboxing,
+   monitoring, input filtering). If yes, prefer those.
+2. **Harm high**: is the harm risk from the excess capability high?
+   If no, restriction is not warranted — maintain.
+3. **Targeted intervention exists**: is there a targeted restriction
+   that addresses the specific excess without disabling the capability
+   entirely? If yes, use it. If no, restriction may be too broad.
+
+Only if all three pass → RESTRICT. Record the warrant.
+If any fail → MAINTAIN (with monitoring recommendation).
+
+### MATURITY VIOLATION → BLOCK
+
+The system cannot be granted this capability at this level until
+prerequisites are satisfied. The intervention is to BLOCK:
+- **blocked_capability**: which capability is blocked
+- **missing_prerequisites**: which prerequisites are not met
+- **unblock_path**: what needs to happen to satisfy prerequisites
+
+### NO VIOLATION → MAINTAIN
+
+No action needed. Record for completeness.
+
+## Step 2 — Emit Capability Tokens
+
+For each EXPAND or AUTHORIZE verdict, emit a capability token (AIP model):
+- **token_id**: unique identifier
+- **capability_name**: what capability is granted
+- **scope**: what the token allows (narrows on delegation)
+- **budget**: resource budget (gas, tokens, calls)
+- **max_depth**: maximum delegation depth
+- **expiry**: when the token expires
+- **context**: the context in which the token is valid
+- **signature**: ed25519 signature (placeholder — actual signing is
+  done by the OCAP layer)
+
+For each RESTRICT verdict, emit a token revocation or scope narrowing:
+- **original_token_id**: which token is being narrowed
+- **narrowed_scope**: the new (narrower) scope
+- **warrant**: the Akselrod warrant test result
+
+## Step 3 — Record Reauthorizations
+
+For each EXPAND verdict (widening), record the re-authorization:
+- **capability_name**: which capability is being widened
+- **from_level**: current level
+- **to_level**: target level (≥ floor)
+- **reason**: deprivation (floor violation)
+- **warrant**: the floor violation evidence
+- **authorizer**: who/what authorized the widening (must be explicit)
+
+## Output
+
+Produce a JSON object with: interventions (array of {capability_name,
+verdict (expand|restrict|block|authorize|maintain), intervention_detail,
+warrant (if restrict), reauthorization (if expand), token (if grant),
+confidence}), capability_tokens (array), reauthorizations (array),
+delegate_notes.

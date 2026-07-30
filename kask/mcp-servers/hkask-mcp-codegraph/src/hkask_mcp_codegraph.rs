@@ -534,7 +534,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-codegraph",
         SERVER_VERSION,
         |ctx| {
-            let webid = ctx.webid.clone();
+            let webid = ctx.webid;
             let store =
                 match &db_path {
                     Some(path) => {
@@ -554,7 +554,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 };
             let pipeline = IndexPipeline::new(store);
             Ok(CodeGraphServer::new(
-                webid.clone(),
+                webid,
                 CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
                 Arc::new(Mutex::new(pipeline)),
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),

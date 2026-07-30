@@ -1794,7 +1794,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         SERVER_VERSION,
         |ctx| {
             Ok(ScenariosServer::new(
-                ctx.webid.clone(),
+                ctx.webid,
                 std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
                     std::env::var("HKASK_SCENARIOS_DATA")
                         .ok()

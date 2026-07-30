@@ -314,6 +314,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: false,

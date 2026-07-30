@@ -1226,7 +1226,7 @@ fn main() {
                                     // the asymmetry this block fixes.
                                     let curator_injector = std::sync::Arc::new(
                                         kask_bridge::BridgeCuratorContextInjector::new(
-                                            real_memory_typed.clone(),
+                                            real_memory_typed,
                                             kask_settings.memory.recall_limit,
                                             kask_settings.memory.recall_min_confidence,
                                         ),

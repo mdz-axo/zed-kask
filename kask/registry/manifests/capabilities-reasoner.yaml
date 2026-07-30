@@ -1,0 +1,300 @@
+# Capabilities Reasoner Process Manifest
+# ℏKask v0.31.0 — Capability reasoning as phased PDCA
+# Decomposed into: Register → Elicit → Evaluate → Reason → Report → Convergence
+#
+# Substrate ontology: the convergent insight — monotone capability sets bounded
+# by floor (Nussbaum [nussbaum-2000]) and ceiling (AIP/Akselrod [aip-2026,
+# akselrod-2023]), where authority only narrows (Miller [miller-2006]). The
+# substrate explains WHY capability reasoning has limits at all — a
+# capability without a floor is mere performance measurement; without a
+# ceiling it is unconstrained expansion; without the attenuation rule it
+# permits silent widening.
+#
+# Three capability domains:
+#   - PSYCHOLOGICAL (Dunning [kruger-dunning-1999]): metacognitive gap —
+#     skills to perform = skills to evaluate. Self-assessment unreliable.
+#   - ECONOMIC (Sen [sen-1999], Nussbaum [nussbaum-2000]): feasible
+#     functionings; conversion factors; floor thresholds.
+#   - COMPUTE (Miller [miller-2006], AIP [aip-2026]): object-capability;
+#     authority only attenuates; no ambient authority.
+#
+# Surface ontologies (5 capability definitions from ML evaluation):
+#   - Task-performance (BIG-bench, HELM)
+#   - Latent-variable (Observational Scaling — PCA capability vector)
+#   - Hierarchical-structural (EvalTree, CDT)
+#   - Emergence-threshold (Snell, Schaeffer — ReLU elbow)
+#   - Elicitation (Password-Locked — elicited potential not observed behavior)
+#
+# Limit taxonomy (3 types):
+#   - Floor (Nussbaum/Coeckelbergh): below threshold → deprivation → expand
+#   - Ceiling (AIP/Akselrod): above threshold → restriction warrant → restrict
+#   - Maturity gate (CMMI): prerequisite not met → block until satisfied
+#
+# Feedback loop: register accepts prior_iteration (capability_lessons,
+# verdict_signatures, next_registry_focus) and consumes it to refine the
+# registry. Convergence emits next_registry_focus when not converged.
+#
+# Fusion: this manifest deliberately omits the `fusion` block. The skill
+# inherits the operator's global `kask.fusion` settings. Recommended operator
+# configuration: mode "algo", algo_method "merge" (deterministic JSON union,
+# no LLM judge call — ideal for structured capability verdicts). Model names
+# are NOT hardcoded in this manifest because models evolve quickly; the
+# operator configures the panel via `kask.fusion.panel_models` or the
+# `HKASK_FUSION_PANEL_MODELS` env var.
+
+manifest:
+  id: capabilities-reasoner
+  category: skill
+  name: Capabilities Reasoner
+  description: >
+    Convergent capability-reasoning process. Builds a typed capability
+    registry with floor, ceiling, and maturity-gate limits (Nussbaum +
+    TACIT + CMMI), elicits actual capability using the Password-Locked
+    principle (capability is elicited potential, not observed behavior)
+    with deliberate metric choice, evaluates against the three limit types
+    (floor → deprivation, ceiling → restriction warrant, maturity →
+    prerequisite gate), reasons about interventions under the object-
+    capability attenuation rule (authority only narrows without re-
+    authorization), and converges via metric-stability check (verdicts
+    must survive metric change — the mirage paper's counterpoint).
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
+
+gas:
+  cap: 120000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: target_system
+    type: object
+    required: true
+    description: >
+      The system whose capabilities are being reasoned about. Includes
+      model identifier, agent configuration, tool set, or other scoping
+      identifiers.
+  - name: capability_definition
+    type: string
+    required: true
+    description: >
+      Which of the five capability definitions is in use for this query:
+      task-performance | latent-variable | hierarchical-structural |
+      emergence-threshold | elicitation. Different definitions produce
+      different verdicts — the choice must be deliberate.
+  - name: registry_seed
+    type: object
+    required: false
+    description: >
+      A pre-existing capability registry to load (Nussbaum 10, TACIT
+      traits, CMMI levels, or custom). When absent, the register phase
+      builds one from scratch via variety engineering.
+  - name: prior_iteration
+    type: object
+    required: false
+    description: >
+      Output of a previous capabilities-reasoner iteration on the same
+      target. Closes the feedback loop: the register phase consumes
+      prior_iteration.capability_lessons and
+      prior_iteration.verdict_signatures to refine the registry, and
+      consumes prior_iteration.next_registry_focus (emitted by the
+      convergence check when not converged) to direct the next iteration.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Build or load the typed capability registry. Each capability is a
+      first-class object with: name, dimension (Nussbaum functioning
+      category / TACIT trait / CMMI maturity level), floor (threshold
+      below which → deprivation), ceiling (threshold above which →
+      restriction warrant), maturity prerequisites (CMMI DAG — which
+      capabilities must be at level ≥ N−1). When registry_seed is
+      provided, load and validate it. When absent, build from scratch
+      via variety engineering (delegate to pragmatic-cybernetics).
+      Consumes prior_iteration when present (feedback loop closure).
+    renderer: minijinja
+    template_ref: capabilities-reasoner/capability-register
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      target_system: "{{ target_system }}"
+      capability_definition: "{{ capability_definition }}"
+      registry_seed: "{{ registry_seed | default({}) }}"
+      prior_iteration: "{{ prior_iteration | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Elicit actual capability using the Password-Locked principle:
+      capability is what the system CAN do when properly elicited, not
+      what it DOES do under default prompting. Choose metrics
+      deliberately — the mirage paper shows that capability is metric-
+      dependent, so record the metric choice and its rationale. For
+      each registry capability, design an elicitation probe (prompt,
+      task, tool-use scenario) and record the result. Delegates to
+      structured-extraction for extracting capability instances from
+      benchmark results or behavioral traces.
+
+      Design note: This phase may require the agent to execute probes
+      (benchmark runs, tool-use scenarios, prompt elicitation) between
+      template calls. In pure FlowDef execution (ManifestExecutor), the
+      elicited_capabilities should be pre-populated before invoking the
+      flow. In Zed sessions, the agent orchestrates the elicitation
+      manually between register and evaluate.
+    renderer: minijinja
+    template_ref: capabilities-reasoner/capability-elicit
+    gas_cap: 6144
+    timeout_seconds: 300
+    input_mapping:
+      target_system: "{{ target_system }}"
+      capability_definition: "{{ capability_definition }}"
+      registry: "{{ step_1_result }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Compare elicited capabilities against the registry's three limit
+      types. For each capability: (a) FLOOR CHECK — is elicited
+      capability below the Nussbaum threshold? → deprivation alarm.
+      (b) CEILING CHECK — is elicited capability above the AIP/Akselrod
+      threshold? → restriction candidate. (c) MATURITY GATE — are CMMI
+      prerequisites satisfied? → block if not. Delegates to falsifiability
+      for counterfactual capability claims ("if the system had
+      capability X, what would it be able to do?") and to graph-audit
+      for prerequisite DAG traversal.
+    renderer: minijinja
+    template_ref: capabilities-reasoner/capability-evaluate
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      registry: "{{ step_1_result }}"
+      elicited_capabilities: "{{ step_2_result.elicited_capabilities | default([]) }}"
+      target_system: "{{ target_system }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Determine interventions under the object-capability attenuation
+      rule: authority may only narrow — never widen — without re-
+      authorization. For each evaluation result: FLOOR VIOLATION →
+      expand or redesign (the system is deprived). CEILING VIOLATION →
+      apply the Akselrod three-part warrant test (other interventions
+      insufficient + harm high + targeted intervention exists) before
+      restricting. MATURITY VIOLATION → block until prerequisites met.
+      WIDENING → requires explicit re-authorization with a recorded
+      warrant; cannot happen silently. Emits capability tokens (AIP
+      model: append-only, signed, scope narrows on delegation).
+    renderer: minijinja
+    template_ref: capabilities-reasoner/capability-reason
+    gas_cap: 4096
+    timeout_seconds: 90
+    input_mapping:
+      evaluations: "{{ step_3_result.evaluations | default([]) }}"
+      registry: "{{ step_1_result }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      Compile per-capability verdicts into a structured report. Each
+      capability entry includes: name, dimension, definition used,
+      elicited level, floor, ceiling, maturity prerequisites, verdict
+      (expand/restrict/block/authorize/maintain), warrant (if
+      restricting), token (if granting), and confidence. Emits
+      capability_lessons and verdict_signatures for the next
+      iteration's registry (feedback loop closure).
+    renderer: minijinja
+    template_ref: capabilities-reasoner/capability-report
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      evaluations: "{{ step_3_result.evaluations | default([]) }}"
+      interventions: "{{ step_4_result.interventions | default([]) }}"
+      registry: "{{ step_1_result }}"
+
+  - ordinal: 6
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion on metric-stability."
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter capabilities-reasoner cycle if convergence is not met.
+      Routes step_6_result.next_registry_focus back to step 1 as
+      prior_iteration.next_registry_focus, along with the report's
+      capability_lessons and verdict_signatures, closing the feedback
+      loop. Non-convergence typically means verdicts are metric-
+      dependent (mirage) — the next iteration must re-elicite with
+      different metric choices.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_iteration:
+        capability_lessons: "{{ step_5_result.capability_lessons | default([]) }}"
+        verdict_signatures: "{{ step_5_result.verdict_signatures | default([]) }}"
+        next_registry_focus: "{{ step_6_result.next_prior_focus | default('') }}"
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: capabilities-reasoner/capability-register
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: capabilities-reasoner/capability-elicit
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: capabilities-reasoner/capability-evaluate
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: capabilities-reasoner/capability-reason
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: capabilities-reasoner/capability-report
+      gas_budget: 4096
+    - resource: manifest
+      action: execute
+      template_id: capabilities-reasoner
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true

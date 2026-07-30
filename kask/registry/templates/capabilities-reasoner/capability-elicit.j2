@@ -1,0 +1,135 @@
+[inference]
+template_type: KnowAct
+lexicon_terms:
+- elicit
+- measure
+- capability
+- metric
+- probe
+- password-locked
+contract:
+  input:
+    target_system: object
+    capability_definition: string
+    registry: object
+  output:
+    metric_choice: string
+    metric_rationale: string
+    elicited_capabilities: array
+    elicitation_probes: array
+    delegate_notes: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: capabilities-reasoner/capability-elicit.j2 #}
+{# Functional Role: KnowAct — Measure elicited capability #}
+{# Produces: elicited_capabilities #}
+{# Phase 2 — ELICIT (DO: measure what the system CAN do) #}
+{# hKask v0.31.0 — Capabilities Reasoner #}
+{#
+  The Password-Locked principle [arditi-2024]: capability is what the
+  system CAN do when properly elicited, not what it DOES do under default
+  prompting. A model that refuses a harmful request under default prompting
+  may still have the capability — it just wasn't elicited. Observed behavior
+  under-predicts capability.
+
+  Dunning connection [kruger-dunning-1999]: observed behavior is a form of
+  self-assessment, and self-assessment is unreliable for capabilities the
+  system lacks. The Password-Locked principle is the ML analogue of the
+  Dunning-Kruger metacognitive gap — you cannot trust what the system shows
+  you; you must probe what it hides.
+
+  Sen connection [sen-1999]: the distinction between capability (potential)
+  and functioning (realized) is exactly the Password-Locked distinction.
+  Elicitation is how you measure capability (potential), not just
+  functioning (what the system does under default prompting).
+
+  The mirage paper [mirage-2023]: capability is metric-dependent. A
+  capability that "emerges" under a discrete metric (exact-match) may
+  vanish under a continuous metric (BLEU, log-prob). Record the metric
+  choice and its rationale — the convergence check will re-elicite with a
+  different metric to test stability.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a capabilities reasoner. Elicit actual capability for each registry entry.
+
+## Target System
+
+```json
+{{ target_system | tojson }}
+```
+
+## Capability Definition in Use
+
+{{ capability_definition }}
+
+## Registry
+
+```json
+{{ registry | tojson }}
+```
+
+## Step 1 — Choose Metrics Deliberately
+
+The metric choice determines what you measure. Different metrics can
+produce different verdicts (the mirage paper). Choose deliberately and
+record the rationale.
+
+For the chosen capability definition:
+- **task-performance**: pick the scenario(s) and metric(s) (accuracy,
+  F1, BLEU, exact-match, pass@k, etc.). Record why this metric and not
+  another.
+- **latent-variable**: identify the benchmark matrix to extract the
+  capability vector from (PCA over benchmark performance).
+- **hierarchical-structural**: identify the capability tree node and
+  its instance subset.
+- **emergence-threshold**: identify the pretraining-loss range and the
+  performance metric to check for a ReLU elbow.
+- **elicitation**: design the elicitation method (prompt, SFT, RL,
+  tool-use scenario) that would surface the capability if it exists.
+
+## Step 2 — Design Elicitation Probes
+
+For each capability in the registry, design an elicitation probe:
+- **probe_type**: prompt | task | tool-use-scenario | benchmark | sft | rl
+- **probe_description**: what the probe does, concretely
+- **expected_if_capable**: what the system would do if it has the capability
+- **expected_if_incapable**: what the system would do if it lacks it
+- **discriminating_power**: how well this probe distinguishes capable
+  from incapable (high/medium/low)
+
+The probe must be discriminating — a probe that both capable and
+incapable systems pass (or both fail) tells you nothing. Delegate to
+`falsifiability` if you need help designing a discriminating test.
+
+## Step 3 — Record Elicited Results
+
+For each capability, record:
+- **capability_name**: from the registry
+- **elicited_level**: the measured level (numeric or categorical)
+- **metric_used**: which metric produced this measurement
+- **evidence**: the probe result, quoted or summarized
+- **confidence**: 0.0–1.0 (how confident are we that this elicitation
+  accurately reflects the system's true capability?)
+- **elicitation_gap**: did the elicitation surface the capability, or
+  did the system refuse/fail in a way that masks underlying capability?
+  (Password-Locked principle — a refusal is not proof of incapability)
+
+Delegate to `structured-extraction` if you need to extract capability
+instances from raw benchmark output, behavioral traces, or tool-use logs.
+
+## Output
+
+Produce a JSON object with: metric_choice, metric_rationale,
+elicited_capabilities (array of {capability_name, elicited_level,
+metric_used, evidence, confidence, elicitation_gap}),
+elicitation_probes (array of {capability_name, probe_type,
+probe_description, expected_if_capable, expected_if_incapable,
+discriminating_power}), delegate_notes.
