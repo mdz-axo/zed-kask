@@ -27,3 +27,4 @@ fs.workspace = true
 serde.workspace = true
 chrono.workspace = true
 dirs.workspace = true
+log.workspace = true

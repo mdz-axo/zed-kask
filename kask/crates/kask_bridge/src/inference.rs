@@ -33,6 +33,12 @@ use tokio::sync::oneshot;
 /// Request sent from the tokio side (trait method) to the GPUI side (executor).
 struct InferenceRequest {
     request: LanguageModelRequest,
+    /// Provider-prefixed model name (e.g. "openrouter/z-ai/glm-5.2").
+    /// When `Some`, the receiver resolves the model from
+    /// `LanguageModelRegistry` and dispatches to it instead of the
+    /// default model. When `None` or resolution fails, the default
+    /// model is used.
+    model_override: Option<String>,
     reply: oneshot::Sender<Result<InferenceResult, InferenceError>>,
 }
 
@@ -58,7 +64,31 @@ impl LanguageModelInferencePort {
 
         let task = cx.spawn(async move |cx| {
             while let Some(req) = rx.recv().await {
-                let model = model_for_task.clone();
+                // Resolve the model: use the override if provided, else the default.
+                let model = if let Some(ref override_name) = req.model_override {
+                    let override_name = override_name.clone();
+                    let resolved = cx.update(|cx| {
+                        let registry = language_model::LanguageModelRegistry::read_global(cx);
+                        crate::resolve_fusion_models(registry, &[override_name.clone()], cx)
+                            .into_values()
+                            .next()
+                    });
+                    match resolved {
+                        Some(m) => m,
+                        None => {
+                            tracing::warn!(
+                                target: "hkask.inference",
+                                model_override = %override_name.as_str(),
+                                "model_override could not be resolved from LanguageModelRegistry — \
+                                 falling back to the default model. Ensure the model is configured \
+                                 in Settings → AI → LLM Providers."
+                            );
+                            model_for_task.clone()
+                        }
+                    }
+                } else {
+                    model_for_task.clone()
+                };
                 let cx = cx.clone();
                 // Run on the foreground executor — stream_completion needs &AsyncApp
                 // which is not Send, so it can't go to background_spawn.
@@ -260,30 +290,32 @@ impl InferencePort for LanguageModelInferencePort {
         &self,
         prompt: &str,
         parameters: &LLMParameters,
-        _model_override: Option<&str>,
+        model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
         let messages = vec![ChatMessage::user(prompt.to_string())];
-        self.generate_with_messages(&messages, parameters, None, tools)
+        self.generate_with_messages(&messages, parameters, model_override, tools)
     }
 
     fn generate_with_messages(
         &self,
         messages: &[ChatMessage],
         parameters: &LLMParameters,
-        _model_override: Option<&str>,
+        model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
         let request = self.build_request(messages, parameters, tools);
+        let model_override = model_override.map(|s| s.to_string());
         let (tx_reply, rx_reply) = oneshot::channel();
         async move {
             self.tx
                 .send(InferenceRequest {
                     request,
+                    model_override,
                     reply: tx_reply,
                 })
                 .map_err(|e| InferenceError::Connection(e.to_string()))?;
@@ -305,17 +337,19 @@ impl InferencePort for LanguageModelInferencePort {
         prompt: &str,
         images: &[String],
         parameters: &LLMParameters,
-        _model_override: Option<&str>,
+        model_override: Option<&str>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
         let messages = vec![ChatMessage::user(prompt.to_string())];
         let request = self.build_request_with_images(&messages, images, parameters, None);
+        let model_override = model_override.map(|s| s.to_string());
         let (tx_reply, rx_reply) = oneshot::channel();
         async move {
             self.tx
                 .send(InferenceRequest {
                     request,
+                    model_override,
                     reply: tx_reply,
                 })
                 .map_err(|e| InferenceError::Connection(e.to_string()))?;

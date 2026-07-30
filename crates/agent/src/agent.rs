@@ -3008,28 +3008,30 @@ pub trait ThreadCondenser: Send + Sync {
 }
 
 /// Global hook for the thread condenser (D12).
-static THREAD_CONDENSER: std::sync::OnceLock<Option<Arc<dyn ThreadCondenser>>> =
-    std::sync::OnceLock::new();
+///
+/// Uses a `Mutex` (not `OnceLock`) so the condenser can be replaced after
+/// startup — the composition root installs an early condenser before the
+/// model resolves, then the deferred post-login task may upgrade it.
+static THREAD_CONDENSER: std::sync::Mutex<Option<Arc<dyn ThreadCondenser>>> =
+    std::sync::Mutex::new(None);
 
 /// Set the global thread condenser (D12 composition root).
 ///
-/// Uses `OnceLock` — a second call (e.g. deferred task re-firing) is
-/// silently dropped. The warn names the hook so operators can detect a
-/// stale condenser remaining active after a re-wiring attempt.
+/// Re-settable — later calls replace the earlier condenser (e.g., upgrading
+/// from an early condenser to one constructed after the model resolves).
 pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
-    if let Err(prev) = THREAD_CONDENSER.set(condenser) {
-        log::warn!(
-            "set_thread_condenser: hook already set — second wiring attempt dropped. \
-             The previously-wired condenser remains active. \
-             Remediation: restart the app to re-wire from a clean process."
-        );
-        let _ = prev;
-    }
+    *THREAD_CONDENSER.lock().expect("THREAD_CONDENSER poisoned") = condenser;
 }
 
-/// Get the global thread condenser, if set.
-pub(crate) fn thread_condenser() -> Option<&'static Arc<dyn ThreadCondenser>> {
-    THREAD_CONDENSER.get().and_then(|opt| opt.as_ref())
+/// Get a cloned handle to the global thread condenser, if set.
+///
+/// Returns an owned `Arc` clone so the caller doesn't hold the lock across
+/// an await point.
+pub(crate) fn thread_condenser() -> Option<Arc<dyn ThreadCondenser>> {
+    THREAD_CONDENSER
+        .lock()
+        .expect("THREAD_CONDENSER poisoned")
+        .clone()
 }
 
 /// Global hook for the tool router. When set, `Thread::enabled_tools`

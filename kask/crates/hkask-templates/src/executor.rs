@@ -1291,7 +1291,20 @@ impl ManifestExecutor {
         // smaller budget, that smaller value is used (min of declared and
         // remaining).
         let sub_gas_cap = (sub_manifest.gas.cap as u64).min(parent_gas_remaining);
-        let sub_rjoule_cap = (sub_manifest.rjoule.cap as f64).min(parent_rjoule_remaining.max(0.0));
+        let sub_rjoule_cap_f64 =
+            (sub_manifest.rjoule.cap as f64).min(parent_rjoule_remaining.max(0.0));
+        // Guard against NaN: if parent_rjoule_remaining is NaN, the min is NaN,
+        // and `NaN as u32` silently becomes 0. Clamp to 0.0 if not finite.
+        let sub_rjoule_cap = if sub_rjoule_cap_f64.is_finite() {
+            sub_rjoule_cap_f64
+        } else {
+            tracing::warn!(
+                target: "hkask.templates",
+                parent_rjoule_remaining = ?parent_rjoule_remaining,
+                "sub_rjoule_cap is not finite (NaN/Inf) — clamping to 0."
+            );
+            0.0
+        };
         sub_manifest.gas.cap = sub_gas_cap as u32;
         sub_manifest.rjoule.cap = sub_rjoule_cap as u32;
 

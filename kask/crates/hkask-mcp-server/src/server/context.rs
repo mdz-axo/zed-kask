@@ -74,15 +74,26 @@ pub struct CapabilityTier {
 }
 
 impl CapabilityTier {
-    /// Detect capabilities from resolved credentials and environment.
-    /// Detect which credentials are available from resolved values.
+    /// Detect capabilities from the resolved WebID, resolved credentials, and environment.
+    ///
+    /// `embedded` is `true` when the WebID is non-anonymous (i.e., the server
+    /// was launched by the hKask runtime, which injects a real WebID via
+    /// `HKASK_WEBID`). This is checked by comparing the WebID against the
+    /// anonymous persona (`WebID::from_persona(b"anonymous")`) — not by
+    /// probing the credential map, because `HKASK_WEBID` is an identity
+    /// (non-secret), not a credential, and is injected via `config_env`, not
+    /// `credentials`.
     ///
     /// expect: "The system provides authenticated tool execution context for MCP servers"
-    /// pre:  resolved_credentials is a valid map
+    /// pre:  resolved_credentials is a valid map, webid is the resolved identity
     /// post: returns CapabilityTier with embedded, keystore_available, persistence_available fields set
     #[must_use]
-    pub fn detect(resolved_credentials: &HashMap<String, String>) -> Self {
-        let embedded = resolved_credentials.contains_key("HKASK_WEBID");
+    pub fn detect(
+        webid: &hkask_types::WebID,
+        resolved_credentials: &HashMap<String, String>,
+    ) -> Self {
+        let anonymous = hkask_types::WebID::from_persona(b"anonymous");
+        let embedded = *webid != anonymous;
         let persistence_available = resolved_credentials.contains_key("HKASK_DB_PATH");
         let keystore_available = Self::probe_keystore();
         Self {

@@ -669,6 +669,10 @@ pub async fn load_marketplace_skills(
 
     // List source_user directories.
     let Ok(mut user_entries) = fs.read_dir(marketplace_dir).await else {
+        log::warn!(
+            "Failed to read marketplace directory: {} — returning empty skill list",
+            marketplace_dir.display()
+        );
         return Vec::new();
     };
     while let Some(Ok(user_path)) = user_entries.next().await {
@@ -683,6 +687,10 @@ pub async fn load_marketplace_skills(
 
         // List skill_name directories under each source_user.
         let Ok(mut skill_entries) = fs.read_dir(&user_path).await else {
+            log::warn!(
+                "Failed to read marketplace user directory: {} — skipping",
+                user_path.display()
+            );
             continue;
         };
         while let Some(Ok(skill_path)) = skill_entries.next().await {
@@ -717,6 +725,10 @@ pub async fn load_marketplace_skills(
 /// names it. See `crates/agent_skills/README.md` for why we don't recurse.
 async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
     let Ok(mut entries) = fs.read_dir(directory).await else {
+        log::warn!(
+            "Failed to read skill directory: {} — returning empty",
+            directory.display()
+        );
         return Vec::new();
     };
 
@@ -732,6 +744,10 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
             let fs = fs.clone();
             async move {
                 let Ok(Some(metadata)) = fs.metadata(&entry_path).await else {
+                    log::warn!(
+                        "Failed to stat skill entry: {} — skipping",
+                        entry_path.display()
+                    );
                     return None;
                 };
                 if !metadata.is_dir {

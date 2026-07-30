@@ -126,10 +126,17 @@ impl CorpusServer {
 
     /// Accumulate cross-validations and check for threshold drift.
     fn accumulate_and_check_drift(&self, outcome: &crate::ocr::PipelineOutcome) {
-        let mut acc = self
-            .cv_accumulator
-            .lock()
-            .expect("Failed to lock CV accumulator for drift check");
+        let mut acc = match self.cv_accumulator.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.corpus.ocr",
+                    error = %e,
+                    "Failed to lock CV accumulator for drift check — skipping."
+                );
+                return;
+            }
+        };
         acc.extend(outcome.cross_validations.clone());
 
         let synthetic_outcome = crate::ocr::PipelineOutcome {

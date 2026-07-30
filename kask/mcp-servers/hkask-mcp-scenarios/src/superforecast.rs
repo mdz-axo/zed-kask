@@ -1088,7 +1088,9 @@ impl ForecastStore {
     fn save_entry(&self, key: &str, record: &StoredForecastRecord) {
         if let (Some(jp), Some(dp)) = (&self.journal_path, &self.data_path) {
             if let Some(parent) = dp.parent() {
-                let _ = fs::create_dir_all(parent);
+                if let Err(e) = fs::create_dir_all(parent) {
+                    tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to create parent dir for forecast journal");
+                }
             }
             if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(jp)
                 && let Ok(line) = serde_json::to_string(&serde_json::json!({
@@ -1096,7 +1098,9 @@ impl ForecastStore {
                     "record": record
                 }))
             {
-                let _ = writeln!(file, "{}", line);
+                if let Err(e) = writeln!(file, "{}", line) {
+                    tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to append to forecast journal — in-memory state is ahead of disk");
+                }
             }
         }
     }
@@ -1129,12 +1133,18 @@ impl ForecastStore {
     fn compact(&self) {
         if let Some(ref dp) = self.data_path {
             if let Some(parent) = dp.parent() {
-                let _ = fs::create_dir_all(parent);
+                if let Err(e) = fs::create_dir_all(parent) {
+                    tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to create parent dir for forecast snapshot");
+                }
             }
             if let Ok(data) = serde_json::to_string_pretty(&self.records) {
-                let _ = fs::write(dp, data);
+                if let Err(e) = fs::write(dp, data) {
+                    tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to write forecast snapshot — in-memory state is ahead of disk");
+                }
                 if let Some(ref jp) = self.journal_path {
-                    let _ = fs::write(jp, "");
+                    if let Err(e) = fs::write(jp, "") {
+                        tracing::warn!(target: "hkask.mcp.scenarios.forecast", error = %e, "Failed to truncate forecast journal after compaction");
+                    }
                 }
             }
         }

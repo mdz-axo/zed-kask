@@ -349,8 +349,11 @@ impl CorpusServer {
                 },
             };
 
-            let inference_ctx =
-                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model, inf_cfg);
+            let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
+                Some(self.inference_router.clone()),
+                &gen_model,
+                inf_cfg,
+            );
 
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
@@ -696,8 +699,11 @@ impl CorpusServer {
                 },
             };
 
-            let inference_ctx =
-                crate::inference_svc::InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model, inf_cfg);
+            let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
+                Some(self.inference_router.clone()),
+                &gen_model,
+                inf_cfg,
+            );
 
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,

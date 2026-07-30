@@ -12,7 +12,6 @@ use crate::codegraph::{ContextBudget, graph};
 use hkask_mcp_server::run_server;
 use hkask_mcp_server::server::{CapabilityTier, CredentialRequirement, McpToolError, execute_tool};
 use hkask_types::InferencePort;
-use hkask_types::WebID;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -555,8 +554,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 };
             let pipeline = IndexPipeline::new(store);
             Ok(CodeGraphServer::new(
-                webid,
-                CapabilityTier::detect(&std::collections::HashMap::new()),
+                webid.clone(),
+                CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
                 Arc::new(Mutex::new(pipeline)),
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 inference_port.clone(),

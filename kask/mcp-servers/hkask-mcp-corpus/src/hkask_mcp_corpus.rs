@@ -195,10 +195,18 @@ impl CorpusServer {
             }
         };
 
-        let mut index = self
-            .index
-            .lock()
-            .expect("Failed to lock index for passage indexing");
+        let mut index = match self.index.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.corpus",
+                    error = %e,
+                    "Failed to lock index for passage indexing — skipping. \
+                     The index mutex may be poisoned from a prior panic."
+                );
+                return 0;
+            }
+        };
         for (i, ((entity_ref, passage_text), embedding)) in passages.iter().zip(vectors).enumerate()
         {
             index.push(IndexedPassage {

@@ -29,7 +29,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use agent::ThreadStore;
 use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView};
@@ -96,7 +96,7 @@ pub trait ToolInvoker: Send + Sync {
     fn list_tools(&self, server: &str) -> Task<Result<Vec<ToolDescriptor>, String>>;
 }
 
-static TOOL_INVOKER: OnceLock<Option<Arc<dyn ToolInvoker>>> = OnceLock::new();
+static TOOL_INVOKER: std::sync::Mutex<Option<Arc<dyn ToolInvoker>>> = std::sync::Mutex::new(None);
 
 /// Inject the global tool invoker (composition root).
 ///
@@ -104,21 +104,14 @@ static TOOL_INVOKER: OnceLock<Option<Arc<dyn ToolInvoker>>> = OnceLock::new();
 /// The hook is read by `kanban_tool_invoker()`, which the per-server
 /// visualization views use to fetch their data.
 ///
-/// Uses `OnceLock` — a second call is silently dropped. The warn names the
-/// hook so operators can detect a stale invoker remaining active.
+/// Re-settable — later calls replace the earlier invoker (e.g., upgrading
+/// from an early invoker to one constructed after the model resolves).
 pub fn set_tool_invoker(invoker: Option<Arc<dyn ToolInvoker>>) {
-    if let Err(prev) = TOOL_INVOKER.set(invoker) {
-        log::warn!(
-            "set_tool_invoker: hook already set — second wiring attempt dropped. \
-             The previously-wired invoker remains active. \
-             Remediation: restart the app to re-wire from a clean process."
-        );
-        let _ = prev;
-    }
+    *TOOL_INVOKER.lock().expect("TOOL_INVOKER poisoned") = invoker;
 }
 
-fn tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
-    TOOL_INVOKER.get().and_then(|opt| opt.as_ref())
+fn tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
+    TOOL_INVOKER.lock().expect("TOOL_INVOKER poisoned").clone()
 }
 
 /// Access the global tool invoker for the per-server visualization views.
@@ -126,7 +119,7 @@ fn tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
 /// This is `pub(crate)` so `KanbanBoardView`, `PortfolioDashboardView`, and
 /// `ScenariosView` can fetch data via direct MCP tool calls. The chat panel
 /// itself does not use this — it routes through `NativeAgent`'s `ToolRouter`.
-pub(crate) fn kanban_tool_invoker() -> Option<&'static Arc<dyn ToolInvoker>> {
+pub(crate) fn kanban_tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
     tool_invoker()
 }
 

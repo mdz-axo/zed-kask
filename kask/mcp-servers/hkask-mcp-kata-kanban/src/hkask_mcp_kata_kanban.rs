@@ -916,13 +916,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     hkask_storage::open_or_repair(&kanban_db_path, passphrase)
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                 } else {
-                    // No passphrase configured — use a deterministic default key so
-                    // the computed kanban_db_path is actually used for persistence.
-                    // This is NOT encrypted; users should set HKASK_DB_PASSPHRASE
-                    // for production deployments.
-                    let default_key = "__k4nb4n__curator__d3f4ult__".to_string();
-                    hkask_storage::Database::open(&kanban_db_path, &default_key)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                    // No passphrase configured — fall back to in-memory mode.
+                    // All DBs should be encrypted at rest; using a hardcoded
+                    // public key provides zero confidentiality. In-memory mode
+                    // loses persistence but matches the security posture of
+                    // the curator and condenser servers.
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        "HKASK_DB_PASSPHRASE not set — falling back to in-memory mode. \
+                         Kanban data will not persist across server restarts. \
+                         Set HKASK_DB_PASSPHRASE for encrypted persistent storage."
+                    );
+                    hkask_storage::Database::in_memory()
+                        .map_err(|e| anyhow::anyhow!("in-memory DB: {e}"))?
                 };
                 let pool = db.sqlite_pool().map_err(|e| anyhow::anyhow!("pool: {e}"))?;
                 let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
@@ -939,7 +945,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         owner_webid TEXT NOT NULL
                     )",
                     )
-                    .expect("DDL batch must succeed");
+                    .map_err(|e| anyhow::anyhow!("DDL batch failed: {e}"))?;
                 let service = KanbanService::new(store);
                 Ok(KanbanServer::new(ctx.webid, service))
             })()

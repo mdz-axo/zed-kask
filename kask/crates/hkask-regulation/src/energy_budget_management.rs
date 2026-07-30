@@ -295,6 +295,21 @@ impl GasBudgetManager {
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
     /// Metacognitive override — recorded in active_overrides so replenish skips this agent.
     pub async fn apply_override_gas_budget(&self, agent: WebID, new_budget: GasCost) {
+        // Clamp to minimum 1 — a zero budget would panic in GasBudget::new/reset_to
+        // (which assert cap > 0). A zero-budget directive from the LLM is likely
+        // a mistake; clamping to 1 preserves the directive's intent (minimal
+        // budget) without crashing the regulation loop.
+        let new_budget = if new_budget.0 == 0 {
+            tracing::warn!(
+                target: "reg.cybernetics",
+                agent = %agent,
+                "OverrideEnergyBudget directive had new_budget=0 — clamping to 1. \
+                 A zero budget is not valid; the agent will have minimal gas."
+            );
+            GasCost(1)
+        } else {
+            new_budget
+        };
         // Default TTL of 0 means override persists until explicitly cleared
         let ttl_secs: u64 = 0;
         let mut budgets = self.gas_budgets.write().await;

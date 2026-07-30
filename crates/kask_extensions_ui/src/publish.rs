@@ -42,12 +42,18 @@ pub const KASK_SKILLS_S3_PREFIX: &str = "kask-skills";
 ///
 /// Returns the base URL with no trailing slash.
 fn kask_marketplace_base_url(_http_client: &HttpClientWithUrl) -> String {
-    std::env::var("HKASK_MARKETPLACE_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "http://localhost:3000".to_string())
-        .trim_end_matches('/')
-        .to_string()
+    match std::env::var("HKASK_MARKETPLACE_URL") {
+        Ok(val) if !val.trim().is_empty() => val.trim_end_matches('/').to_string(),
+        _ => {
+            log::warn!(
+                "HKASK_MARKETPLACE_URL not set — falling back to localhost:3000. \
+                 Marketplace operations (publish/install/vote) will fail unless a \
+                 marketplace server is running locally. Set HKASK_MARKETPLACE_URL \
+                 to point to a production marketplace."
+            );
+            "http://localhost:3000".to_string()
+        }
+    }
 }
 
 /// zed-kask: Build a full marketplace URL string by joining `path` to the

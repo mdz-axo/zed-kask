@@ -25,8 +25,3 @@ base64.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
-wiremock = "0.6"
-
-[[test]]
-name = "inference_routing_integration"
-path = "tests/inference_routing_integration.rs"

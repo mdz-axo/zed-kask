@@ -166,7 +166,7 @@ where
     };
 
     tracing::info!(webid = %webid.redacted_display(), "Agent identity resolved");
-    let capability_tier = CapabilityTier::detect(&resolved);
+    let capability_tier = CapabilityTier::detect(&webid, &resolved);
     tracing::info!(
         embedded = capability_tier.embedded,
         keystore = capability_tier.keystore_available,

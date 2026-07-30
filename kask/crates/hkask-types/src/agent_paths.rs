@@ -30,7 +30,7 @@ pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf 
             .join(relative);
     }
     tracing::warn!(
-        target: "reg.paths",
+        target: "hkask.paths",
         relative = %relative.display(),
         "No data directory resolved (HKASK_DATA_DIR, XDG_DATA_HOME, HOME all unset) — \
          falling back to CWD-relative path. Agent databases may be created in \
@@ -188,7 +188,7 @@ pub(crate) fn publish_artifact(
                         Ok(v) => v,
                         Err(e) => {
                             tracing::warn!(
-                                target: "reg.paths",
+                                target: "hkask.paths",
                                 error = %e,
                                 manifest_path = %manifest_path.display(),
                                 "Failed to parse existing manifest — \
@@ -202,7 +202,7 @@ pub(crate) fn publish_artifact(
             }
             Err(e) => {
                 tracing::warn!(
-                    target: "reg.paths",
+                    target: "hkask.paths",
                     error = %e,
                     manifest_path = %manifest_path.display(),
                     "Failed to read existing manifest — \
@@ -227,12 +227,8 @@ pub(crate) fn publish_artifact(
         }
     }
 
-    let json = serde_json::to_string_pretty(&manifest).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to serialize manifest: {e}"),
-        )
-    })?;
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| std::io::Error::other(format!("Failed to serialize manifest: {e}")))?;
     std::fs::write(&manifest_path, json)
 }
 
