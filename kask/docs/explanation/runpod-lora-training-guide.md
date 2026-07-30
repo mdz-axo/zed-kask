@@ -342,7 +342,7 @@ No per-harness images, no pre-baked packages, no CUDA toolkit.
 
 ---
 
-## Lesson 11: Rust-Only Tooling Policy — No Python in Our Code
+## Lesson 12: Rust-Only Tooling Policy — No Python in Our Code
 
 **Symptom**: Policy violation. Python scripts baked into the image for config
 generation and manifest writing.
@@ -438,7 +438,7 @@ sequenceDiagram
 
 ---
 
-## Lesson 12: TRL Harness — Pin TRL Version in the Pod Template
+## Lesson 13: TRL Harness — Pin TRL Version in the Pod Template
 
 **Symptom**: Adapter trained with TRL produces garbage output when loaded with
 a different TRL/transformers version at inference time.

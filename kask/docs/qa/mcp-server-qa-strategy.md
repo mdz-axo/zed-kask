@@ -28,10 +28,10 @@ at `kask/scripts/qa-mcp-servers.sh` and the per-tool contracts at
 
 | # | Server crate | Binary | Transport | Lib root | Entry | Credentials (env vars) |
 |---|---|---|---|---|---|---|
-| 1 | `hkask-mcp-codegraph` | `hkask-mcp-codegraph` | stdio | `src/hkask_mcp_codegraph.rs` | `pub async fn run()` L593 | (none declared; `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY` read inline by `codegraph_index_embeddings`) |
+| 1 | `hkask-mcp-codegraph` | `hkask-mcp-codegraph` | stdio | `src/hkask_mcp_codegraph.rs` | `pub async fn run()` L529 | (none declared; `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY` read inline by `codegraph_index_embeddings`) |
 | 2 | `hkask-mcp-companies` | `hkask-mcp-companies` | stdio | `src/hkask_mcp_companies.rs` | `run()` | **required**: `HKASK_FMP_API_KEY`, `HKASK_EODHD_API_KEY`; **optional**: `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_BRAVE_API_KEY` |
 | 3 | `hkask-mcp-condenser` | `hkask-mcp-condenser` | stdio | `src/hkask_mcp_condenser.rs` | `run()` | (none; uses `InferencePort` injected from `HKASK_INFERENCE_URL`) |
-| 4 | `hkask-mcp-corpus` | `hkask-mcp-corpus` | stdio | `src/lib.rs` | `run()` | **optional**: `HKASK_OCR_MODEL`, `HKASK_EMBEDDING_MODEL`, `HKASK_DEFAULT_MODEL`; inline `FALAI_API_KEY` for docres |
+| 4 | `hkask-mcp-corpus` | `hkask-mcp-corpus` | stdio | `src/hkask_mcp_corpus.rs` | `run()` | **optional**: `HKASK_OCR_MODEL`, `HKASK_EMBEDDING_MODEL`, `HKASK_DEFAULT_MODEL`; inline `FALAI_API_KEY` for docres |
 | 5 | `hkask-mcp-curator` | `hkask-mcp-curator` | stdio | `src/hkask_mcp_curator.rs` | `run()` | **optional**: `HKASK_CURATOR_DB`, `HKASK_DB_PASSPHRASE` |
 | 6 | `hkask-mcp-kata-kanban` | `hkask-mcp-kata-kanban` | stdio | `src/hkask_mcp_kata_kanban.rs` | `run()` | **optional**: `HKASK_KANBAN_DB`, `HKASK_DB_PASSPHRASE` |
 | 7 | `hkask-mcp-media` | `hkask-mcp-media` | stdio | `src/hkask_mcp_media.rs` | `run()` | **optional**: `DEEPINFRA_API_KEY`, `FALAI_API_KEY`, `TOGETHERAI_API_KEY` |

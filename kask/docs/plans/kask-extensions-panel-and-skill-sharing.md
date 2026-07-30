@@ -128,9 +128,9 @@ flowchart TD
 
     subgraph Server[collab server]
         S3[(S3 blob store)]
-        Postgres[(Postgres - kask_artifacts + kask_artifact_versions)]
-        Router[/api/kask-artifacts router]
-        PeriodicFetch[fetch_kask_artifacts_from_blob_store_periodically]
+        Postgres[(Postgres - kask_skills + kask_skill_versions + kask_skill_votes)]
+        Router[/api/kask-skills router]
+        PeriodicFetch[fetch_kask_skills_from_blob_store_periodically]
     end
 
     SettingsPage -->|toggle| VisibilityQueue
@@ -423,15 +423,15 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 - **Uninstall-time dependent warning:** eliminated per the plan's essentialist G1 note (a broken dependent fails loudly at load time).
 
 **Tasks:**
-1. At publish time (server-side, in `PUT /api/kask-artifacts/{id}` handler): parse `manifest_json.dependencies`; for each dependency, check that a `kask_artifact` row exists with that ID. Reject the publish with a 409 if any dependency is missing. Return the list of missing dependencies in the error body.
-2. At install time (client-side, in `KaskExtensionsPage`): before downloading, fetch the artifact metadata; if `dependencies` is non-empty, show a modal: "This skill depends on: [list]. Install them too?" with per-dependency checkboxes (all pre-checked). On confirm, install each missing dependency first (recursively, with cycle detection — refuse cycles).
+1. At publish time (server-side, in `POST /api/kask-skills/upload` handler): parse `manifest_json.dependencies`; for each dependency, check that a `kask_skill` row exists with that ID. Reject the publish with a 409 if any dependency is missing. Return the list of missing dependencies in the error body.
+2. At install time (client-side, in `KaskExtensionsPage`): before downloading, fetch the skill metadata; if `dependencies` is non-empty, show a modal: "This skill depends on: [list]. Install them too?" with per-dependency checkboxes (all pre-checked). On confirm, install each missing dependency first (recursively, with cycle detection — refuse cycles).
 3. At uninstall time: remove the directory, deregister from `SkillIndex`, fire `SkillsUpdatedHook`. If a dependent skill breaks, the `ManifestExecutor` reports the missing dependency at load time with a clear error.
 4. **Tests:** pin that publish with a missing dependency is rejected; pin that install prompts for dependencies; pin that cyclic dependencies are refused.
 
 **Eliminated (essentialist G1 FAIL):** Uninstall-time dependent warning modal ("the following skills depend on this"). Scanning all installed skills to build a reverse dependency graph and rendering a modal adds significant complexity for a polish feature. A broken dependent skill already fails loudly at load time via the `ManifestExecutor`. Defer the warning modal to v2.
 
 **Files touched:**
-- `crates/collab/src/api/kask_artifacts.rs` (server-side dependency check)
+- `crates/collab/src/api/kask_skills.rs` (server-side dependency check)
 - `crates/kask_extensions_ui/src/kask_extensions_ui.rs` (client-side install modal)
 
 **Acceptance:** publishing `essentialist` without `deep-module` and `coding-guidelines` in the marketplace fails with a clear error. Installing `essentialist` prompts to install its dependencies. Cyclic dependencies are refused.
@@ -504,7 +504,7 @@ Each phase is independently shippable. Phases 1–3 land client-side without any
 
 ## 7. Open Questions (defer to v2)
 
-- **Multi-version pinning:** v1 offers only the latest. v2 should add a `kask_artifact_version` table that allows multiple rows per artifact and a UI to pin.
+- **Multi-version pinning:** v1 offers only the latest. v2 should add a `kask_skill_version` table that allows multiple rows per skill and a UI to pin.
 - **Project-local skill publishing:** v1 only allows publishing `SkillSource::Global` skills. v2 should add a "promote to global then publish" flow for project-local skills.
 - **Embeddings, userpods, MCP-server configs as marketplace artifacts:** v1 is skills-only. v2 adds other artifact types; the catalog schema is designed to extend.
 - **Ratings, comments, social features:** out of scope for v1.

@@ -83,7 +83,7 @@ This is not abstract philosophy — it's an operational filter with teeth:
 - **Who** — agent (generic), human user, userpod, role, owner (anchored by P12 authenticated host mandate)
 - **What** — entity, artifact, resource, data, input, output, state
 - **When** — time, sequence, ordering, duration, schedule, temporal scope
-- **Where** — location, pod boundary, namespace, domain, spatial context
+- **Where** — location, per-user data directory boundary, namespace, domain, spatial context
 - **Why** — goal, purpose, intent, constraint motivation, principle anchoring (anchored by P1–P4 Magna Carta)
 - **How** — method, mechanism, procedure, transformation, execution path
 

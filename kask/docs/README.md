@@ -1,3 +1,13 @@
+---
+title: "zed-kask Documentation"
+audience: [developers, architects, agents, operators]
+last_updated: 2026-07-29
+version: "0.2.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, composition, trust, lifecycle, curation]
+---
+
 # zed-kask Documentation
 
 > **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, MCP servers, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces.
@@ -69,9 +79,6 @@ lifecycle definition.
 | Document | Status | Description |
 |----------|--------|-------------|
 | [`plans/kask-extensions-panel-and-skill-sharing.md`](plans/kask-extensions-panel-and-skill-sharing.md) | Active | Skill marketplace (visibility toggle, publish/install, Kask Extensions Panel). Phases 1–5 complete; Phases 6–7 partial. |
-| [`plans/kask-panel-architecture-v2.md`](plans/kask-panel-architecture-v2.md) | Superseded | Kask panel as thin `ConversationView` wrapper. Implemented; Diataxis `kask_panel/` is now canonical. |
-| [`plans/kask-panel-architecture-v2-continuation.md`](plans/kask-panel-architecture-v2-continuation.md) | Superseded | Continuation prompt for the v2 plan. Implemented; stub retained for audit trail. |
-| [`plans/kask-panel-redesign.md`](plans/kask-panel-redesign.md) | Superseded | v3 plan proposing `CuratorSession` trait. NOT implemented (v2 Option A won); stub retained for audit trail. |
 
 ## QA
 

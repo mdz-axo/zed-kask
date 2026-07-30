@@ -556,7 +556,7 @@ sequenceDiagram
     rect rgb(245, 248, 252)
         Note over Tool,Epi: Phase 1 — Tool Call Experience → Episodic Store
 
-        Tool->>+Bridge: store_experience(userpod, entity, attribute, value, confidence)
+        Tool->>+Bridge: store_experience(webid, entity, attribute, value, confidence)
         Note over Tool: e.g., "moat_check"<br/>outcome="success"<br/>confidence=0.85
         Bridge->>+Epi: record_experience() → store(h_mem)
         Note over Epi: access.visibility = Private<br/>access.perspective = Some(agent_webid)

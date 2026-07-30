@@ -2,7 +2,7 @@
 title: "Scenarios ↔ Companies Bridge"
 audience: [developers, architects]
 last_updated: 2026-07-29
-version: "0.31.0"
+version: "0.31.1"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition]

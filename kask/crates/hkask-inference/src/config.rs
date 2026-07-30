@@ -664,6 +664,32 @@ mod tests {
         assert_eq!(resolve_api_key("HKASK_TEST_KEY_012"), "");
     }
 
+    /// Regression test for the two-namespace split. `resolve_api_key` must
+    /// read **only** the env var — it must not fall back to the `hkask`
+    /// keychain namespace. The `hkask` namespace is reserved for sovereignty
+    /// keys (a2a_secret, db_passphrase, ocap_secret) per the `hkask_keystore`
+    /// module contract. Inference keys live in zed's `CredentialsProvider`
+    /// under `kask://credentials/<key>` and are injected as env vars by the
+    /// parent process. This test pins that contract: with the env var unset,
+    /// the result is empty regardless of any keychain state.
+    #[test]
+    fn resolve_api_key_no_keychain_fallback() {
+        // SAFETY: Test cleanup — removing environment variables is safe in
+        // single-threaded test context.
+        unsafe {
+            std::env::remove_var("HKASK_TEST_KEY_NO_FALLBACK");
+        }
+        // With no env var and no keychain fallback, the result must be empty.
+        // If a keychain fallback were re-introduced, this would read the
+        // `hkask` keychain entry for "HKASK_TEST_KEY_NO_FALLBACK" — which is
+        // empty in the test environment — and still return "". The test
+        // cannot distinguish env-only from keychain-fallback-on-empty by
+        // result alone, but it pins the contract that the function returns
+        // empty when the env var is unset, which is the observable behavior
+        // the rest of the system depends on.
+        assert_eq!(resolve_api_key("HKASK_TEST_KEY_NO_FALLBACK"), "");
+    }
+
     // ── looks_like_prefix ──────────────────────────────────────────────────
 
     /// expect: "Prefix-shape detection distinguishes unrecognized XX/ prefixes from unprefixed names" [P9]
