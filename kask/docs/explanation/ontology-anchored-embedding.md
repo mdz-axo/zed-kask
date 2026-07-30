@@ -1,8 +1,8 @@
 ---
 title: "Ontology-Anchored Embedding Pipeline"
 audience: [developers, architects]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition]

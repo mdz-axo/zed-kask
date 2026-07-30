@@ -1,8 +1,8 @@
 ---
 title: "Security Skills — Execution Smoke Test Procedure"
 audience: [operators, developers, security-engineers]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Security"
 mds_categories: [domain, trust, lifecycle, curation]

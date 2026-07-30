@@ -46,9 +46,9 @@ Five design questions were evaluated:
 
 | Skill type | Fusion benefit | Examples |
 |------------|---------------|----------|
-| Generative analysis | High — diverse perspectives improve quality | diagnose, review, self-critique-revision, metacognition, improve-codebase-architecture, bug-hunt, idiomatic-rust, deep-module, refactor-service-layer |
-| Deterministic rubric | Low — rubric evaluation does not benefit from multiple opinions | goal-analysis, skill-logic-audit, semantic-graph-audit, magna-carta-verifier |
-| Interactive/dialogue | Medium — depends on use case | kata-coaching, grill-me, improv, essentialist, pragmatic-laziness |
+| Generative analysis | High — diverse perspectives improve quality | diagnose, metacognition, refactor-architecture, bug-hunt, idiomatic-rust, deep-module |
+| Deterministic rubric | Low — rubric evaluation does not benefit from multiple opinions | goal-analysis, skill-maintenance (validate sub-op) |
+| Interactive/dialogue | Medium — depends on use case | kata-coaching, grill-me, improv, essentialist |
 | Infrastructure | None — not agent-facing | qa-*, regulation-gas-tracking, bootstrap-sequence, dispatch |
 
 #### Dead Field Cleanup
@@ -210,7 +210,7 @@ A ν-event (nu-event) is a thin domain event — a timestamped, attributed, name
 
 ### Evidence
 
-The `RegulationRecord` struct at `crates/hkask-types/src/event.rs:16` carries:
+The `RegulationRecord` struct at `crates/hkask-types/src/event.rs` carries:
 
 - `id: EventID` — unique identifier
 - `timestamp: DateTime<Utc>` — when the event occurred
@@ -226,11 +226,11 @@ The `RegulationRecord` struct at `crates/hkask-types/src/event.rs:16` carries:
 
 #### ObservableSpan vs RegulationRecord
 
-This distinction is crucial. `ObservableSpan` (at `crates/hkask-types/src/observable_span.rs:56`) is a trait that typed span enums implement — it produces a canonical dot-separated namespace string like `"reg.tool.web_search"`. `RegulationSpan` is the primary implementor, but the trait is designed to be domain-extensible: `WalletSpan`, and other domain span enums can implement it. A span is a **trace** — it marks where in the system something happened.
+This distinction is crucial. `ObservableSpan` (at `crates/hkask-types/src/observable_span.rs`) is a trait that typed span enums implement — it produces a canonical dot-separated namespace string like `"reg.tool.web_search"`. `RegulationSpan` is the primary implementor, but the trait is designed to be domain-extensible: `InfraSpan`, `QaSpan`, and other domain span enums can implement it. A span is a **trace** — it marks where in the system something happened.
 
 A `RegulationRecord` contains a `Span`, but it adds: who, when, what, which phase, and what was the regulatory outcome. A span says "tool invoked"; a ν-event says "Agent A invoked the web_search tool in the Sense phase, observing {server, tool, estimated_cost}, with no regulation applied, at recursion depth 0."
 
-The bridging function is `SpanNamespace::from_observable()` — it takes any `impl ObservableSpan`, validates against the canonical namespace set in `CANONICAL_NAMESPACES` (139 entries at v0.31.0), and produces a validated `SpanNamespace` for `RegulationRecord` construction. This design decouples domain span definitions from namespace validation: domain crates define their spans; the event system validates.
+The bridging function is `SpanNamespace::from_observable()` — it takes any `impl ObservableSpan`, validates against the canonical namespace set in `CANONICAL_NAMESPACES` (248 entries at v0.32.0), and produces a validated `SpanNamespace` for `RegulationRecord` construction. This design decouples domain span definitions from namespace validation: domain crates define their spans; the event system validates.
 
 #### The Emission Contract
 
@@ -244,21 +244,22 @@ The emission contract has three participants:
 
 #### Regulation Span Namespaces
 
-The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs:111` defines the core span identifiers:
+The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the core span identifiers:
 
 | Variant | Namespace | Purpose |
-|---------|-----------|---------|
+|---------|-----------|--------|
 | `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 10 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. |
 | `Inference` | `reg.inference` | LLM request/response |
-| `AgentPod` | `reg.agent_pod` | Pod lifecycle events |
+| `Fusion` | `reg.fusion` | Multi-model fusion deliberation (panel dispatch + judge orchestration) |
+| `AgentPod` | `reg.pod` | Pod lifecycle events |
 | `Gas` | `reg.gas` | Energy consumption tracking |
 | `Curation` | `reg.curation` | Registry sync, pod sync, directive issuance |
 | `SelfHeal` | `reg.heal` | Self-healing operations |
 | `MemoryEncode` | `reg.memory.encode` | Memory encoding events |
 
-The `SpanKind` enum at `event.rs:523` provides typed construction for common spans, eliminating string typos: `ToolInvoked`, `ToolCompleted`, `GasReserved`, `GasSettled`, `GasDepleted`, `CurationDirectiveAcknowledged`, `CurationEscalation`, `AgentPodRegistered`, `AgentPodActivated`, `VarietyAlgedonicAlert`, and the v0.31.0 regulation spans (`ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`).
+The `SpanKind` enum at `event.rs` provides typed construction for common spans, eliminating string typos: `ToolInvoked`, `ToolCompleted`, `ToolError`, `GasReserved`, `GasSettled`, `GasDepleted`, `CurationDirectiveAcknowledged`, `CurationEscalation`, `AgentPodRegistered`, `AgentPodActivated`, `AgentPodDeactivated`, `VarietyAlgedonicAlert`, `DepositCredited`, and the v0.31.0 regulation spans (`ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`).
 
-Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 139 namespace strings spanning architecture seams, chat, CI, classification, condenser, consent, consolidation, contracts, curation, cybernetics, deploy, gas, guard, healing, inference, kata, MCP media, memory, multi-agent, platform metrics (11 spans for PaaP/DORA/SPACE/Loyalty), QA (4 spans), regulation, userpod, semantic, skills, SLOs, sovereignty (5 spans), specs, storage, tools, variety, and wallet (10 sub-spans).
+Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 248 namespace strings spanning architecture seams, chat, CI, classification, condenser, consent, consolidation, contracts, curation, cybernetics, deploy, gas, guard, healing, inference, fusion, kata, MCP media, memory, multi-agent, platform metrics (11 spans for PaaP/DORA/SPACE/Loyalty), QA, regulation, semantic, skills, SLOs, sovereignty, specs, storage, tools, variety, wallet, well, pipeline, supply chain, runtime posture, attack taxonomy, LoRA training, template, and training providers.
 
 #### How ν-Events Feed the Regulation Homeostatic Loop
 
@@ -303,7 +304,7 @@ status: VERIFIED
 
 ### Implications
 
-The ν-event design is the Good Regulator theorem applied to observability: the Regulation's internal model of the system is built from ν-events, and the model's fidelity depends on the events' structure. A raw log line ("tool invoked at 14:32") is a poor model — it lacks who, what phase, what outcome, and what regulation was applied. A ν-event is a rich model — it carries all of these in a typed, queryable, replayable format. The 139-entry `CANONICAL_NAMESPACES` registry ensures that every namespace is validated against a known set — a typo in a span namespace is caught at construction time, not discovered during debugging. The decay-weighted replay is the least-action principle in action: the Regulation does not need to load the entire event store to regulate the system; it needs only the recent, salient events. This is what makes cybernetic regulation computationally feasible — the regulator's model is bounded by decay, not by the full history of the system.
+The ν-event design is the Good Regulator theorem applied to observability: the Regulation's internal model of the system is built from ν-events, and the model's fidelity depends on the events' structure. A raw log line ("tool invoked at 14:32") is a poor model — it lacks who, what phase, what outcome, and what regulation was applied. A ν-event is a rich model — it carries all of these in a typed, queryable, replayable format. The 248-entry `CANONICAL_NAMESPACES` registry ensures that every namespace is validated against a known set — a typo in a span namespace is caught at construction time, not discovered during debugging. The decay-weighted replay is the least-action principle in action: the Regulation does not need to load the entire event store to regulate the system; it needs only the recent, salient events. This is what makes cybernetic regulation computationally feasible — the regulator's model is bounded by decay, not by the full history of the system.
 
 ---
 

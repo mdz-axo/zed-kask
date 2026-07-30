@@ -1,8 +1,8 @@
 ---
 title: "Fusion Mode — Multi-Model Deliberation"
 audience: [operators, developers, users]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-07-29
+version: "0.32.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition, trust]
@@ -254,7 +254,6 @@ The LLM judge can be anchored on hKask's pragmatic methodologies via `HKASK_FUSI
 |--------------|---------------------|
 | `pragmatic-semantics` | IS vs OUGHT, certainty levels, provenance, constraint hierarchy |
 | `pragmatic-cybernetics` | Feedback loops, variety engineering, homeostasis |
-| `pragmatic-laziness` | Path of least action, delete before adding |
 | `coding-guidelines` | Karpathy's 4 principles: think first, simplicity, surgical changes, goal-driven |
 | `deep-module` | Ousterhout deletion test, interface minimalism (≤7 public items) |
 | `essentialist` | 3-gate challenge loop: Exist → Surface → Contract |
@@ -266,10 +265,11 @@ The LLM judge can be anchored on hKask's pragmatic methodologies via `HKASK_FUSI
 | `falsifiability` | Popper/Platt/Chamberlin: rule out untestable, eliminate falsified, corroborate survivors |
 | `grill-me` | Socratic interrogation: Recall → Mechanism → Rationale → Edge Cases → Synthesis |
 | `idiomatic-rust` | Hoare: validating newtypes, ownership DAG, error domains, many small traits |
-| `improve-codebase-architecture` | Ousterhout: deletion test, deep modules, surface shallow modules |
+| `refactor-architecture` | End-to-end refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity |
 | `metacognition` | Goal decomposition, progress self-assessment, perspective rotation, GEPA improvement |
-| `refactor-service-layer` | Strangler fig migration, deep-module discipline, vertical tracer-bullet TDD |
-| `self-critique-revision` | Draft → critique against criteria → revise. Iterative cycle, no first-draft acceptance. Subsumes the former `review` skill (use `quality_criteria: [contradictions, unsupported_claims, logical_gaps, calibration]` for the review-only path). |
+| `prompt-enhance` | Typed prompt enhancement over 7-type taxonomy with 3-tier effort knob |
+| `behavioral-locks` | Codette behavioral locks: answer-then-stop, constraints override, completeness self-check |
+| `aegis-pro-social` | AEGIS pro-social ethics: Care, Reciprocity, Ubuntu, Utilitarian, Deontological, Virtue |
 
 Example: a judge anchored on cybernetics and essentialism:
 

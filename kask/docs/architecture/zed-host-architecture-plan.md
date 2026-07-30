@@ -18,7 +18,7 @@ mds_categories: [composition, trust, lifecycle]
 >
 > | D | Surface | Status | What's wired |
 > |---|---|---|---|
-> | D1 | Skill execution | ✅ **DONE** | `SkillTool` has optional `SkillManifestExecutor`; composition root in `main.rs` constructs `BridgeManifestExecutor` with `InferencePort` + `ToolPort` + registry paths and calls `agent::set_manifest_executor()`. 49 skills linked (SKILL.md + manifest.yaml). |
+| D1 | Skill execution | ✅ **DONE** | `SkillTool` has optional `SkillManifestExecutor`; composition root in `main.rs` constructs `BridgeManifestExecutor` with `InferencePort` + `ToolPort` + registry paths and calls `agent::set_manifest_executor()`. 48 skills linked (SKILL.md + manifest.yaml in `kask/registry/`). |
 > | D2 | Curator agent | ✅ **DONE** | `Curator` variant in `agent_ui::Agent` enum; `CURATOR_AGENT_ID` in `agent` crate; selectable in Agent Panel. |
 > | D3 | Tools in-process | ✅ **DONE** | `BridgeToolPort` wraps `McpRuntime` (implements `ToolPort` with OCAP/gas/spans). MCP servers run as child processes (stdio). Daemon transport removed; identity is `ServerContext.webid` resolved from `HKASK_WEBID` (no `userpod`/`MCPBootstrap`). |
 > | D4 | Guard layer | ✅ **DONE** | `GuardedInferencePort` wraps the `InferencePort` at the composition root. `hkask-guard` crate's `ContentGuard::mandatory()` provides input scanning (prompt injection, role override, token limit) and output scanning (secret redaction). Guard wraps the skill cascade path (ManifestExecutor). Direct chat uses zed's `LanguageModel::stream_completion` with provider-side safety + refusal fallback (`cascade_only` default per `kask.guard.direct_chat_strategy`). `hkask-guard` added as dep of `zed` crate. All 29 guard tests pass. |
