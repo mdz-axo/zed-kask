@@ -12,7 +12,7 @@ mds_categories: [lifecycle]
 
 This tutorial walks through creating and verifying a `DelegationToken`. You
 will learn how the OCAP model grants access, how attenuation limits
-delegation depth, and how the `CapabilityChecker` verifies tokens at the
+delegation depth, and how `capabilities_match` verifies tokens at the
 actuator boundary.
 
 ## Learning path
@@ -27,7 +27,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-003
 verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/token_types.rs:58,90; kask/crates/hkask-capability/src/verification/checker.rs:20; kask/crates/hkask-capability/src/verification/verify.rs:22; kask/crates/hkask-capability/src/verification/types.rs:22
+verified_against: kask/crates/hkask-capability/src/token_types.rs:58,90; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match)
 status: VERIFIED
 -->
 
@@ -38,12 +38,12 @@ with a `DelegationResource::Tool`, a `DelegationAction::Execute`, and a
 resource ID matching the target MCP server. Sign it with an Ed25519 key via
 `builder.sign()`.
 
-Pass the token to `verify_delegation_token_now` (`verify.rs:22`) along with
+Pass the token to `capabilities_match` (in `hkask-mcp/src/runtime.rs`) along with
 the holder WebID, resource, resource_id, and action. The function returns
 `VerificationOutcome::Valid` if the signature is correct, the token has not
-expired, and the resource and action match the request. Alternatively, call
-`CapabilityChecker::verify` (`checker.rs:20`) directly for a `bool` result
-that checks signature and root trust only.
+expired, and the resource and action match the request. (The former
+`verify_delegation_token_now` / `CapabilityChecker::verify` helpers in
+`hkask-capability` were removed; enforcement now lives in `hkask-mcp`.)
 
 ## Steps 3-4: Attempt insufficient access and attenuate
 
@@ -52,11 +52,10 @@ tool that requires `Execute`. The verifier returns
 `VerificationOutcome::InsufficientAccess { resource_id, action }`. This is
 the fail-closed behavior: the token does not grant the requested access.
 
-Now attenuate the token: use `CapabilityChecker::attenuate` to increase the
-`attenuation_level` field (`token_types.rs:58`) and re-delegate to a
-sub-task. The sub-task's token is strictly less powerful. When
-`attenuation_level` reaches `max_attenuation`, the token cannot be further
-delegated.
+Now attenuate the token: increase the `attenuation_level` field
+(`token_types.rs:58`) and re-delegate to a sub-task. The sub-task's token is
+strictly less powerful. When `attenuation_level` reaches `max_attenuation`,
+the token cannot be further delegated.
 
 ## See also
 

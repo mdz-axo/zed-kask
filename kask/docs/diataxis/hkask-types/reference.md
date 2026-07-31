@@ -26,10 +26,8 @@ and `hkask-templates`.
 | `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:86` |
 | `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:108` |
 | `WalletBudgetPort` trait | `kask/crates/hkask-types/src/ports/wallet_budget_port.rs:38` |
-| `ConsentPort` trait | `kask/crates/hkask-types/src/ports/consent_port.rs:21` |
 | `EmbeddingPort` trait | `kask/crates/hkask-types/src/ports/embedding_port.rs:16` |
 | `EscalationPort` trait | `kask/crates/hkask-types/src/ports/escalation.rs:86` |
-| `CircuitBreakerPort` trait | `kask/crates/hkask-types/src/ports/regulation.rs:14` |
 | `LedgerObserver` trait | `kask/crates/hkask-types/src/ports/regulation.rs:64` |
 | `LedgerStoragePort` trait | `kask/crates/hkask-types/src/ports/regulation.rs:81` |
 | `SkillRegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:288` |
@@ -67,12 +65,6 @@ classDiagram
         +consume(key_id, gas_rj) Result
         +settle_rjoules(wallet_id, reserved, actual) Result
     }
-    class ConsentPort {
-        <<interface>>
-        +initialize_schema() Result
-        +store(record) Result
-        +list_active() Vec~StoredConsentRecord~
-    }
     class EmbeddingPort {
         <<interface>>
         +store(entity_ref, embedding) Result
@@ -88,13 +80,6 @@ classDiagram
         +dismiss(id, resolved_by) Result
         +persist_batch(batch) Result
         +add(template_id, bot_id, output, ...) EscalationID
-    }
-    class CircuitBreakerPort {
-        <<interface>>
-        +allow_request() bool
-        +record_success()
-        +record_failure()
-        +state() CircuitState
     }
     class LedgerObserver {
         <<interface>>
@@ -134,7 +119,6 @@ classDiagram
     MemoryPort <|.. LoggingMemoryPort
     MemoryPort <|.. RealMemoryPort
     WalletBudgetPort <|.. WalletManager
-    ConsentPort <|.. ConsentStore
     EmbeddingPort <|.. EmbeddingStore
     EscalationPort <|.. EscalationQueue
     LedgerObserver <|.. RegulationLedger
@@ -147,7 +131,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-001
 verified_date: 2026-07-29
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/wallet_budget_port.rs:38; kask/crates/hkask-types/src/ports/consent_port.rs:21; kask/crates/hkask-types/src/ports/embedding_port.rs:16; kask/crates/hkask-types/src/ports/escalation.rs:86; kask/crates/hkask-types/src/ports/regulation.rs:14,64,81; kask/crates/hkask-types/src/ports/registry.rs:288,311; kask/crates/hkask-capability/src/tool_port.rs:47
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/wallet_budget_port.rs:38; kask/crates/hkask-types/src/ports/embedding_port.rs:16; kask/crates/hkask-types/src/ports/escalation.rs:86; kask/crates/hkask-types/src/ports/regulation.rs:64,81; kask/crates/hkask-types/src/ports/registry.rs:288,311; kask/crates/hkask-capability/src/tool_port.rs:47
 status: VERIFIED
 -->
 
@@ -186,10 +170,7 @@ adapter implements zed's trait, not hKask's).
 
 ### Regulation cluster
 
-Four ports govern the Regulation nervous system. `CircuitBreakerPort`
-(`ports/regulation.rs:14`) abstracts circuit-breaker state queries
-(`allow_request`, `record_success`, `record_failure`, `state`).
-`LedgerObserver` (`ports/regulation.rs:64`) receives Regulation events via
+Three ports govern the Regulation nervous system. `LedgerObserver` (`ports/regulation.rs:64`) receives Regulation events via
 `interest_mask`-filtered `on_event`/`on_depletion`/`on_backpressure` callbacks.
 `LedgerStoragePort` (`ports/regulation.rs:81`) persists and replays Regulation
 records (`query_algedonic`, `replay_weighted`, `persist_cursor`,
@@ -204,15 +185,14 @@ and settlement (`gas_to_rjoules`, `get_encumbrance`, `can_afford`, `consume`,
 
 ### Persistence cluster
 
-Three ports abstract storage backends. `ConsentPort`
-(`ports/consent_port.rs:21`) initializes, stores, and lists consent records.
-`EmbeddingPort` (`ports/embedding_port.rs:16`) stores, retrieves, searches,
+Two ports abstract storage backends. `EmbeddingPort` (`ports/embedding_port.rs:16`) stores, retrieves, searches,
 and deletes vector embeddings. `EscalationPort` (`ports/escalation.rs:86`)
 manages escalation records (`list_pending`, `get`, `resolve`, `dismiss`,
-`persist_batch`, `add`). Implementors: `ConsentStore` in
-`hkask-storage/src/consent_store.rs:154`, `EmbeddingStore` in
+`persist_batch`, `add`). Implementors: `EmbeddingStore` in
 `hkask-storage/src/embeddings.rs:629`, and `EscalationQueue` in
 `hkask-storage/src/escalation.rs:402`.
+
+(`ConsentPort` / `ConsentStore` were removed — consent records are no longer persisted.)
 
 ### Registry cluster
 
@@ -238,7 +218,7 @@ This pattern prevents identifier confusion at compile time.
 The crate root (`hkask_types.rs:72`) re-exports the entire `ports` module via
 `pub use ports::*`. Downstream crates depend on `hkask-types` and receive all
 port traits, identifier newtypes, and domain types (`HMemEntry`, `WebID`,
-`RJoule`, `ObservableSpan`, `RegulationRecord`, `CircuitState`, `VoiceDesign`,
+`RJoule`, `ObservableSpan`, `RegulationRecord`, `VoiceDesign`,
 and the wallet, curation, and loop types) through this single dependency.
 
 ## See also

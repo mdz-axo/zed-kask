@@ -41,7 +41,7 @@ The OCAP-gated tool invocation membrane (`McpRuntime::invoke` / `ToolGovernance`
 ## Dependencies
 
 - `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError)
-- `hkask-ports` — hexagonal port traits (InferencePort, CircuitBreakerPort)
+- `hkask-ports` — hexagonal port traits (InferencePort)
 - `hkask-storage` — persistence (via ports)
 - `hkask-capability` — OCAP delegation tokens
 - `tokio`, `tracing`, `serde`, `chrono`

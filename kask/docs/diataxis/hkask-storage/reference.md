@@ -49,7 +49,6 @@ backend. The schema is defined in SQL files under `src/sql/` and in inline
 | `EmbeddingStore` (impl EmbeddingPort) | `kask/crates/hkask-storage/src/embeddings.rs:629` |
 | `EscalationQueue` (impl EscalationPort) | `kask/crates/hkask-storage/src/escalation.rs:402` |
 | `RegulationArchive` (impl LedgerStoragePort) | `kask/crates/hkask-storage/src/regulation_store.rs:505` |
-| `ConsentStore` (impl ConsentPort) | `kask/crates/hkask-storage/src/consent_store.rs:154` |
 
 ## Entity relationship diagram
 
@@ -330,12 +329,13 @@ shown in the ERD above.
 
 ## Port trait implementors
 
-Four port traits from `hkask-types` are implemented in this crate:
+Three port traits from `hkask-types` are implemented in this crate:
 
 - `EmbeddingPort` by `EmbeddingStore` at `embeddings.rs:629`.
 - `EscalationPort` by `EscalationQueue` at `escalation.rs:402`.
 - `LedgerStoragePort` by `RegulationArchive` at `regulation_store.rs:505`.
-- `ConsentPort` by `ConsentStore` at `consent_store.rs:154`.
+
+(`ConsentPort` / `ConsentStore` were removed — consent records are no longer persisted via this crate.)
 
 ## See also
 

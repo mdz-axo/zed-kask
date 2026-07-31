@@ -574,10 +574,10 @@ sequenceDiagram
 
             Epi->>+Epi: storage_usage(perspective)
             opt usage > 80% of budget
-                Note over Epi: EpisodicLoop produces<br/>Throttle action (self-targeted)
+                Note over Epi: (EpisodicLoop removed —<br/>budget throttling was aspirational)
             end
             opt usage > 100% of budget
-                Note over Epi: EpisodicLoop escalates to Curation
+                Note over Epi: (EpisodicLoop removed —<br/>escalation was aspirational)
             end
         end
     end
@@ -602,7 +602,7 @@ sequenceDiagram
     rect rgb(255, 252, 240)
         Note over Epi,Svc: Phase 3 — Consolidation Bridge (Episodic → Semantic)
 
-        Note over Bridge: Triggered by EpisodicLoop.act()<br/>when budget pressure detected
+        Note over Bridge: Triggered by consolidation schedule<br/>(EpisodicLoop removed — was aspirational)
         Bridge->>+Epi: consolidation_candidates(perspective, limit)
         Note over Epi: Selects oldest/lowest<br/>effective-confidence hMems
         Epi-->>-Bridge: Vec<hMem> (candidates)
@@ -726,7 +726,7 @@ sequenceDiagram
 | Encryption | Per-agent SQLCipher key | Shared encryption key |
 | Dedup strategy | `recall_dedup::dedup_h_mems()` | `recall_dedup::dedup_h_mems()` |
 | Confidence at read | Wozniak-Gorzelanczyk decay applied | Wozniak-Gorzelanczyk decay applied |
-| Budget enforcement | `EpisodicLoop` (80%/100% thresholds) | `ConsolidationService` (confidence floor + max count) |
+| Budget enforcement | (EpisodicLoop removed — aspirational) | `ConsolidationService` (confidence floor + max count) |
 
 ---
 
@@ -735,12 +735,12 @@ id: DIAG-PL-003
 verified_date: 2026-07-02
 verified_against: >
   crates/hkask-memory/src/episodic.rs:51-220 (EpisodicMemory, store, query_for_deduped, storage_usage),
-  crates/hkask-memory/src/episodic_loop.rs:26-80 (EpisodicLoop, budget enforcement),
+  (episodic_loop.rs removed — EpisodicLoop was aspirational, never constructed),
   crates/hkask-memory/src/semantic.rs:61-175 (SemanticMemory, store, query_deduped with decay, store_consolidated),
   crates/hkask-memory/src/consolidation.rs:26-179 (ConsolidationBridge, consolidate with dual-decay Bayesian combine),
   crates/hkask-memory/src/consolidation_service.rs:10-100 (ConsolidationService, consolidate, cleanup),
   crates/hkask-memory/src/recall_dedup.rs:10-57 (eav_hash, dedup_h_mems, BLAKE3),
-  crates/hkask-memory/src/ports.rs:1-216 (EpisodicStoragePort, SemanticStoragePort, StorageRequest, RecallRequest),
+  (ports.rs removed — EpisodicStoragePort/SemanticStoragePort were aspirational),
   crates/hkask-mcp-server/src/server/tool_span.rs:78-84 (ExperienceCallback, record_experience trigger)
 status: VERIFIED
 -->
@@ -753,9 +753,9 @@ status: VERIFIED
 | [`SemanticMemory`](crates/hkask-memory/src/semantic.rs:61-175) | Shared, public memory with confidence decay and similarity-augmented recall |
 | [`ConsolidationBridge`](crates/hkask-memory/src/consolidation.rs:26-168) | One-way episodic→semantic promotion with Bayesian combination |
 | [`ConsolidationService`](crates/hkask-memory/src/consolidation_service.rs:10-100) | Combined consolidation + semantic cleanup |
-| [`EpisodicLoop`](crates/hkask-memory/src/episodic_loop.rs:26-80) | Cybernetic loop with budget regulation |
+| ~~`EpisodicLoop`~~ (removed — aspirational, never constructed) | Cybernetic loop with budget regulation — was never constructed; budget enforcement moved to `ConsolidationService` |
 | [`recall_dedup`](crates/hkask-memory/src/recall_dedup.rs:10-57) | BLAKE3 EAV-hash deduplication layer |
-| [`MemoryPorts`](crates/hkask-memory/src/ports.rs:1-216) | Episodic and Semantic storage port traits |
+| ~~`MemoryPorts`~~ (removed — aspirational) | Episodic and Semantic storage port traits (`EpisodicStoragePort`/`SemanticStoragePort`) were aspirational and removed |
 | [`store_experience` / `generate_narrative`](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | In-process experience recording (thread→memory bridge, D6) and narrative generation; the former daemon-based implementations were removed |
 | [`ToolSpanGuard` experience callback](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | Experience callback wiring for tool span guards |
 | [Magna Carta P1](../reference/magna-carta.md#p1-user-sovereignty) | User Sovereignty — episodic memory as sovereign first-person |

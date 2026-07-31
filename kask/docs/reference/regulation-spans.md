@@ -258,7 +258,7 @@ The following namespace groups are registered in `CANONICAL_NAMESPACES` and emit
 | **Training providers** | `reg.training.provider`, `.runpod.cancel`, `.runpod.drain`, `.runpod.graphql`, `.runpod.provision`, `.runpod.status`, `.runpod.submit`, `.runpod.teardown`, `.runpod.upload` | RunPod provider HTTP observability |
 | **Training checkpoint** | `reg.training.checkpoint.resume` | Pod restart → Axolotl auto-resume |
 | **Agent** | `reg.agent.registered` | Agent registration |
-| **Meta** | `reg.meta`, `.circuit_breaker`, `.directive`, `.escalation`, `.self_calibration` | Curator self-observation |
+| ~~**Meta**~~ (removed) | ~~`reg.meta`, `.circuit_breaker`, `.directive`, `.escalation`, `.self_calibration`~~ | Curator self-observation — `reg.meta.*` spans removed from `CANONICAL_NAMESPACES` |
 
 ---
 

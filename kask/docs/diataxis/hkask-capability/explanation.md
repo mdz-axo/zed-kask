@@ -23,8 +23,7 @@ component cannot escalate beyond the capabilities it holds.
 | Symbol | Location |
 |--------|----------|
 | `VerificationOutcome` enum | `kask/crates/hkask-capability/src/verification/types.rs:22` |
-| `CapabilityChecker` struct | `kask/crates/hkask-capability/src/verification/checker.rs:20` |
-| `verify_delegation_token_now` | `kask/crates/hkask-capability/src/verification/verify.rs:22` |
+| `capabilities_match` (enforcement) | `kask/crates/hkask-mcp/src/runtime.rs` |
 | `DelegationToken` struct | `kask/crates/hkask-capability/src/token_types.rs:58` |
 | `ToolPort` trait | `kask/crates/hkask-capability/src/tool_port.rs:47` |
 | `DelegationResource` enum | `kask/crates/hkask-capability/src/resources.rs:51` |
@@ -34,16 +33,16 @@ component cannot escalate beyond the capabilities it holds.
 
 ## Verification state machine
 
-When a tool invocation arrives at the `ToolPort`, the free function
-`verify_delegation_token_now` verifies the attached `DelegationToken` using
-an optional `CapabilityChecker`. The verification produces a
-`VerificationOutcome` (`verification/types.rs:22`) with five possible states.
-The state machine below shows the transitions.
+When a tool invocation arrives at the `ToolPort`, the `capabilities_match`
+function (in `hkask-mcp/src/runtime.rs`) verifies the attached
+`DelegationToken`. The verification produces a `VerificationOutcome`
+(`verification/types.rs:22`) with five possible states. The state machine
+below shows the transitions.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Checking: invoke(server, tool, args, token)
-    Checking --> NoChecker: no CapabilityChecker provided
+    Checking --> NoChecker: no checker configured
     Checking --> InvalidSignature: signature or root check fails
     Checking --> Expired: expires_at < now
     Checking --> InsufficientAccess: holder or resource or action mismatch
@@ -58,24 +57,24 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-002
 verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-capability/src/verification/checker.rs:20; kask/crates/hkask-capability/src/verification/verify.rs:22,63; kask/crates/hkask-capability/src/tool_port.rs:47
+verified_against: kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match); kask/crates/hkask-capability/src/tool_port.rs:47
 status: VERIFIED
 -->
 
 The five outcomes map to two decisions: deny or forward. Four outcomes deny
 the call. Only `Valid` forwards the call to the underlying `McpRuntime`. The
-`NoChecker` outcome is a fail-closed default: if no `CapabilityChecker` is
-configured, access is denied rather than allowed.
+`NoChecker` outcome is a fail-closed default: if no checker is configured,
+access is denied rather than allowed.
 
-Note: `CapabilityChecker::verify` itself returns `bool` (signature + root
-trust only). The structured `VerificationOutcome` is produced by
-`verify_delegation_token` / `verify_delegation_token_now`, which layer
-expiry and capability checks on top of the checker's `verify` and `check`
-methods.
+Note: enforcement is performed by `capabilities_match` in
+`hkask-mcp/src/runtime.rs`. The former `CapabilityChecker` struct and
+`verify_delegation_token` / `verify_delegation_token_now` helpers in
+`hkask-capability` were removed; the structured `VerificationOutcome` is
+still produced from `verification/types.rs`.
 
 ## Why fail-closed
 
-The `NoChecker` variant exists because the `CapabilityChecker` is an optional
+The `NoChecker` variant exists because the checker is an optional
 dependency. A pod-internal checker may construct tokens locally and verify
 only the self-signature (`enforce_roots: false`). A boundary checker
 verifies against a trusted root set (`enforce_roots: true`). If neither is

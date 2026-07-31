@@ -587,7 +587,6 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | `hkask-inference` | Composition | `InferenceRouter`, `EmbeddingRouter`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 10 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
-| `hkask-goal` | Domain | Goal analysis, completion verification |
 | `hkask-condenser` | Curation | Context condensation |
 | ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |
 | `hkask-bridge-dublincore` | Curation | Dublin Core metadata bridging |

@@ -96,8 +96,10 @@ strategy traits in `hkask_mcp_corpus::corpus::embed::strategies`:
 | Trait | Persona impl | QA training impl |
 |-------|-------------|-----------------|
 | `ChunkingStrategy` | `WordCountChunker` (sentence-boundary, word-count) | Token-count (multi-tier, configurable) |
-| `EmbeddingStrategy` | Plain (no annotation) | INSTRUCTOR (ontology tags prepended) |
-| `TripleExtractionStrategy` | `hkask_services_runtime` (batch) | Jinja2 template + hallucination guard |
+
+(`EmbeddingStrategy` and `TripleExtractionStrategy` traits were removed —
+the persona and QA branches now inline their embedding and triple-extraction
+implementations directly.)
 
 Centroid computation is persona-specific (no trait, no QA equivalent).
 

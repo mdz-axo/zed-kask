@@ -132,7 +132,7 @@ The Curator (P12.1) is a per-userpod regulatory loop. Its metacognition template
 | `system_state_gather` | Local pod health, Regulation spans, tool success rates, guard outcomes |
 | `metacognition-diagnose` | Local alert cascades, resource exhaustion, skill composition failures |
 | `metacognition-calibrate` | Local threshold tuning, gas budget adjustment, convergence window sizing |
-| `metacognition-self-calibrate` | Curator self-management — generates its own escalation-threshold adjustment from self-quality + effectiveness delta (generative-first, Rust safety-rail fallback; `reg.meta.self_calibration` spans) |
+| `metacognition-self-calibrate` | Curator self-management — generates its own escalation-threshold adjustment from self-quality + effectiveness delta (generative-first, Rust safety-rail fallback; ~~`reg.meta.self_calibration` spans~~ — `reg.meta.*` spans have been removed from `CANONICAL_NAMESPACES`) |
 | `metacognition-escalate` | User-visible alerts for local issues; sovereignty breaches; guard refusals |
 
 The critical architectural principle: the Curator is a **capability surface**, not a control surface. It does not block, gate, or reject on the user's behalf. It surfaces the 5W1H answers — "this artifact was authored by userpod X, serves principle P3, has a convergence threshold of 0.15, and its content hash is Y." The user retains sovereignty (P1). The Curator's job is to make ontological answers visible and verifiable, enabling the user to make capability decisions without performing the analysis themselves.
