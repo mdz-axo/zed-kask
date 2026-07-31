@@ -310,6 +310,15 @@ impl LanguageModelRegistry {
             .filter(move |model| filter.map_or(true, |f| f(model.as_ref())))
     }
 
+    /// Returns `true` if `model` passes the cross-provider model filter
+    /// (economic guardrails). Callers that build model lists from
+    /// `visible_providers()` + `provided_models()` must apply this to every
+    /// model so expensive models are de-listed from every surface, not just
+    /// `available_models()`.
+    pub fn passes_model_filter(&self, model: &dyn LanguageModel) -> bool {
+        self.model_filter_fn.as_ref().map_or(true, |f| f(model))
+    }
+
     pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {
         self.providers.get(id).cloned()
     }

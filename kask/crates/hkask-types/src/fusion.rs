@@ -205,7 +205,10 @@ pub struct FusionConfig {
     /// When `Some(t)` and the computed coherence Γ > t, an advisory
     /// "measured convergence" signal is emitted alongside the judge verdict.
     /// The judge verdict still wins — this is an additional signal, not a
-    /// replacement. Default: `None` (measured convergence disabled).
+    /// Coherence threshold for measured convergence in `deliberation` mode.
+    /// Not yet implemented — the embedding source for ξ/Γ measurement was
+    /// never wired. The field remains for future implementation; setting it
+    /// has no effect.
     #[serde(default)]
     pub coherence_threshold: Option<f64>,
     /// Enable query-complexity-based panel sizing. When `true`, simple queries

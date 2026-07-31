@@ -367,33 +367,16 @@ impl InferencePort for LanguageModelInferencePort {
 
 // ── LanguageModelEmbeddingPort ───────────────────────────────────────────────
 //
-// Embedding generation over zed's `LanguageModel` credentials.
+// Embedding generation over OpenAI-compatible provider credentials.
 //
-// zed's `LanguageModel` trait has no `embed` method — only chat completion.
-// But OpenAI-compatible providers (DeepInfra, OpenRouter, etc.) expose a
-// `/embeddings` endpoint at the same base URL as `/chat/completions`, using
-// the same API key. This port resolves `(api_url, api_key)` from the zed
-// `LanguageModel` (via the `api_url()` and `api_key()` trait methods added in
-// this fork) and makes a raw OpenAI-compatible `/embeddings` POST.
-//
-// This replaces hKask's standalone `EmbeddingRouter`, which resolved
-// credentials from `InferenceConfig::from_env()` (env vars) and bypassed
-// zed's `LanguageModelRegistry` + keychain. Routing embeddings through zed's
-// credential resolution means a user who configures DeepInfra in
-// Settings → AI → LLM Providers gets working embeddings without also
-// setting `DEEPINFRA_API_KEY` in the environment.
+// The port takes `(api_url, api_key)` resolved upfront from the bridge's
+// `INFERENCE_PROVIDERS` table (env var) and makes raw
+// `/embeddings` POSTs through the app's `HttpClient`. No GPUI access is
+// needed at request time — credentials are resolved once at construction.
 //
 // The model string (e.g. `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) is stripped
 // of its provider prefix before being sent to the API — DeepInfra expects
-// `Qwen/Qwen3-Embedding-0.6B`, not the prefixed form. Both long-form
-// (`DeepInfra/`) and 2-letter (`DI/`) prefixes are accepted, case-insensitive,
-// so either convention works.
-//
-// Like `LanguageModelInferencePort`, this struct holds only a channel sender
-// (`Send + Sync`); the actual HTTP call happens on the GPUI side via a
-// spawned task that owns the `AsyncApp` (needed to read the model's
-// `api_key()` / `api_url()`). Per the `.rules` trap "Cross-thread GPUI
-// communication uses channels, not `AsyncApp` handles".
+// `Qwen/Qwen3-Embedding-0.6B`, not the prefixed form.
 
 use hkask_types::EmbeddingGenerationError;
 use http_client::{AsyncBody, HttpClient, Method, Request};
@@ -402,7 +385,7 @@ use tokio::sync::mpsc;
 
 use futures::AsyncReadExt;
 
-/// Request sent from the tokio side to the GPUI-side embedding executor.
+/// Request sent to the tokio-side embedding executor.
 struct EmbedRequest {
     /// The provider-prefixed model string (e.g. `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
     /// The prefix is stripped before the API call.
@@ -413,70 +396,40 @@ struct EmbedRequest {
     reply: oneshot::Sender<Result<Vec<Vec<f32>>, EmbeddingGenerationError>>,
 }
 
-/// Embedding generation port over zed's `LanguageModel` credentials.
+/// Embedding generation port over OpenAI-compatible provider credentials.
 ///
-/// Construct with a zed `LanguageModel` (any OpenAI-compatible model from
-/// the same provider as the embedding model — only its `api_url()` and
-/// `api_key()` are used) and the app's `HttpClient`. Drop the returned
-/// `Task` to stop the GPUI-side receiver.
+/// Construct with `(api_url, api_key)` resolved from the bridge's
+/// `INFERENCE_PROVIDERS` table and the app's `HttpClient`. The port is
+/// `Send + Sync` — no GPUI access is needed at request time.
 #[derive(Clone)]
 pub struct LanguageModelEmbeddingPort {
     tx: mpsc::UnboundedSender<EmbedRequest>,
 }
 
 impl LanguageModelEmbeddingPort {
-    /// Construct the port and spawn the GPUI-side receiver task.
+    /// Construct the port and spawn the receiver task on the tokio runtime.
     ///
-    /// `credential_model` is a zed `LanguageModel` whose provider matches the
-    /// embedding model's provider prefix. Only its `api_url()` and `api_key()`
-    /// are read — the model itself is never used for chat. A convenient choice
-    /// is the provider's `default_model(cx)`, but any model from the same
-    /// provider works.
+    /// `api_url` is the OpenAI-compatible base URL (e.g.
+    /// `https://api.deepinfra.com/v1/openai`). `api_key` is the bearer token.
+    /// Both are resolved once at construction from `INFERENCE_PROVIDERS` +
+    /// env var; no GPUI access is needed at request time. The `tokio_handle`
+    /// is used to spawn the receiver task (obtained via
+    /// `gpui_tokio::Tokio::handle(cx)` at the call site).
     pub fn new(
-        credential_model: Arc<dyn LanguageModel>,
+        api_url: String,
+        api_key: String,
         http_client: Arc<dyn HttpClient>,
-        cx: AsyncApp,
-    ) -> (Self, gpui::Task<()>) {
+        tokio_handle: tokio::runtime::Handle,
+    ) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
 
-        let task = cx.spawn(async move |cx| {
+        // The receiver runs on the tokio runtime — no GPUI access needed.
+        tokio_handle.spawn(async move {
             while let Some(req) = rx.recv().await {
-                let model = credential_model.clone();
                 let http_client = http_client.clone();
-                let cx = cx.clone();
+                let api_url = api_url.clone();
+                let api_key = api_key.clone();
                 let result = async move {
-                    // Resolve credentials from the zed LanguageModel. These
-                    // read the provider's State entity on the GPUI side.
-                    // `AsyncApp::update` returns `R` directly (not Result) —
-                    // it panics if the app was dropped, which is fine here
-                    // (the port is owned by the app).
-                    let (api_url, api_key) = cx.update(|cx| {
-                        let api_url = model.api_url(cx);
-                        let api_key = model.api_key(cx);
-                        (api_url, api_key)
-                    });
-
-                    let api_url = api_url.ok_or_else(|| {
-                        EmbeddingGenerationError::Connection(format!(
-                            "Embedding model '{}' — provider '{}' does not expose an api_url \
-                             through zed's LanguageModel trait. Only OpenAI-compatible providers \
-                             (DeepInfra, OpenRouter, etc.) support embeddings. Add the provider \
-                             in Settings → AI → LLM Providers.",
-                            req.model,
-                            model.provider_name().0
-                        ))
-                    })?;
-
-                    let api_key = api_key.ok_or_else(|| {
-                        EmbeddingGenerationError::Connection(format!(
-                            "Embedding model '{}' — no API key configured for provider '{}' \
-                             in zed. Add the API key in Settings → AI → LLM Providers, \
-                             or set the corresponding env var (e.g. DEEPINFRA_API_KEY).",
-                            req.model,
-                            model.provider_name().0
-                        ))
-                    })?;
-
                     // Strip the provider prefix (case-insensitive). The
                     // API expects the bare model id.
                     let model_id = strip_provider_prefix(&req.model);
@@ -549,10 +502,10 @@ impl LanguageModelEmbeddingPort {
             }
         });
 
-        (Self { tx }, task)
+        Self { tx }
     }
 
-    /// Construct a port with no backing GPUI task. Any `embed` call will
+    /// Construct a port with no backing receiver task. Any `embed` call will
     /// return a `Connection` error (the channel is closed). For tests that
     /// construct a `RealMemoryPort` but never call embed.
     #[cfg(test)]

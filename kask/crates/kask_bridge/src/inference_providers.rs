@@ -300,6 +300,58 @@ pub fn delete_provider_api_key(
     })
 }
 
+/// Resolve `(api_url, api_key)` for an embedding model string directly from
+/// the `INFERENCE_PROVIDERS` table + env var.
+///
+/// This is the direct path: parse the provider prefix from the model string
+/// (e.g. `DeepInfra/Qwen/...` → `DeepInfra`), look up the descriptor in
+/// `INFERENCE_PROVIDERS`, and read the API key from the env var named in the
+/// descriptor (`DEEPINFRA_API_KEY`, etc.). No `LanguageModelRegistry` lookup,
+/// no GPUI access, no case-sensitivity traps.
+///
+/// Returns `None` (after logging a warn) if:
+/// - The model string has no recognized provider prefix.
+/// - The provider is not in `INFERENCE_PROVIDERS`.
+/// - The env var is not set (key not loaded).
+pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, String)> {
+    let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
+        tracing::warn!(
+            "Embedding model '{}' has no recognized provider prefix \
+             (expected e.g. 'DeepInfra/...'). \
+             Set kask.corpus.embedding_model to a provider-prefixed name, \
+             or set HKASK_EMBEDDING_MODEL.",
+            embedding_model
+        );
+        None
+    })?;
+
+    let api_key = std::env::var(provider.env_var).ok().or_else(|| {
+        tracing::warn!(
+            "Embedding provider '{}' — env var {} is not set. \
+             Embedding-based recall will not work until the key is loaded.",
+            provider.id,
+            provider.env_var
+        );
+        None
+    })?;
+
+    Some((provider.api_url.to_string(), api_key))
+}
+
+/// Find the `InferenceProviderDescriptor` for an embedding model string by
+/// matching its provider prefix (case-insensitive) against `INFERENCE_PROVIDERS`.
+fn embedding_provider_descriptor(embedding_model: &str) -> Option<&'static InferenceProviderDescriptor> {
+    for provider in INFERENCE_PROVIDERS {
+        let prefix = format!("{}/", provider.id);
+        if embedding_model.len() >= prefix.len()
+            && embedding_model[..prefix.len()].eq_ignore_ascii_case(&prefix)
+        {
+            return Some(provider);
+        }
+    }
+    None
+}
+
 /// Check whether an inference provider's API key is available.
 ///
 /// Checks the env var synchronously (instant). The keychain read is async
@@ -347,4 +399,55 @@ pub fn delete_data_service_api_key(
 /// Check whether a data service API key is available (env var only).
 pub fn has_data_service_api_key(env_var: &str) -> bool {
     std::env::var(env_var).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialize env-var tests so they don't race with each other.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn resolve_embedding_credentials_deepinfra_with_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: test-only env mutation, serialized by ENV_LOCK.
+        unsafe { std::env::set_var("DEEPINFRA_API_KEY", "test-key"); }
+        let result = resolve_embedding_credentials("DeepInfra/Qwen/Qwen3-Embedding-0.6B");
+        unsafe { std::env::remove_var("DEEPINFRA_API_KEY"); }
+        assert!(result.is_some(), "should resolve with key present");
+        let (api_url, api_key) = result.unwrap();
+        assert_eq!(api_url, "https://api.deepinfra.com/v1/openai");
+        assert_eq!(api_key, "test-key");
+    }
+
+    #[test]
+    fn resolve_embedding_credentials_deepinfra_case_insensitive() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("DEEPINFRA_API_KEY", "test-key"); }
+        let result = resolve_embedding_credentials("deepinfra/Qwen/Qwen3-Embedding-0.6B");
+        unsafe { std::env::remove_var("DEEPINFRA_API_KEY"); }
+        assert!(result.is_some(), "lowercase prefix should match case-insensitively");
+    }
+
+    #[test]
+    fn resolve_embedding_credentials_deepinfra_no_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("DEEPINFRA_API_KEY"); }
+        let result = resolve_embedding_credentials("DeepInfra/Qwen/Qwen3-Embedding-0.6B");
+        assert!(result.is_none(), "should return None when key is missing");
+    }
+
+    #[test]
+    fn resolve_embedding_credentials_unknown_provider() {
+        let result = resolve_embedding_credentials("UnknownProvider/some-model");
+        assert!(result.is_none(), "unknown provider should return None");
+    }
+
+    #[test]
+    fn resolve_embedding_credentials_no_prefix() {
+        let result = resolve_embedding_credentials("Qwen/Qwen3-Embedding-0.6B");
+        assert!(result.is_none(), "bare model id without prefix should return None");
+    }
 }

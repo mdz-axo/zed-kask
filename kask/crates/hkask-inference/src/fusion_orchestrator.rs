@@ -252,70 +252,6 @@ async fn dispatch_panel(
 // deliberation mode — the judge may see subtleties the embedding misses, so
 // the judge verdict still wins when they disagree.
 
-/// Compute epistemic tension (ξ) from a set of response embeddings.
-///
-/// ξ is the mean squared Euclidean distance of each embedding from their
-/// centroid. Returns 0.0 for a single response (no disagreement possible).
-fn epistemic_tension(embeddings: &[Vec<f32>]) -> f64 {
-    if embeddings.len() <= 1 {
-        return 0.0;
-    }
-    let dim = embeddings[0].len();
-    if dim == 0 {
-        return 0.0;
-    }
-    // Guard against mismatched embedding dimensions — skip any embedding
-    // whose length differs from the first. This prevents index-out-of-bounds
-    // panics when the embedding source returns inconsistent vectors.
-    let valid: Vec<&Vec<f32>> = embeddings.iter().filter(|e| e.len() == dim).collect();
-    if valid.len() <= 1 {
-        return 0.0;
-    }
-    let k = valid.len() as f64;
-    // Centroid: element-wise mean.
-    let centroid: Vec<f64> = (0..dim)
-        .map(|j| valid.iter().map(|e| e[j] as f64).sum::<f64>() / k)
-        .collect();
-    // Mean squared distance from centroid.
-    let sum_sq: f64 = valid
-        .iter()
-        .map(|e| {
-            (0..dim)
-                .map(|j| {
-                    let diff = e[j] as f64 - centroid[j];
-                    diff * diff
-                })
-                .sum::<f64>()
-        })
-        .sum::<f64>();
-    sum_sq / k
-}
-
-/// Coherence index Γ = 1 / (1 + ξ). Range (0, 1].
-/// Higher Γ means panel responses are more similar (less disagreement).
-fn coherence(xi: f64) -> f64 {
-    1.0 / (1.0 + xi)
-}
-
-/// Fetch embeddings for a set of texts via the inference router.
-///
-/// Uses the configured embedding model (`HKASK_EMBEDDING_MODEL`, default
-/// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). Returns empty vec on failure — the
-/// caller treats empty embeddings as "measurement unavailable" and skips
-/// the ξ/Γ computation.
-async fn fetch_embeddings(router: &dyn InferencePort, texts: &[String]) -> Vec<Vec<f32>> {
-    // The InferencePort trait doesn't expose embeddings directly. We use
-    // a lightweight approach: ask the router to generate a JSON array of
-    // embeddings by prompting the embedding model. This is a fallback —
-    // production use should route through EmbeddingRouter directly.
-    //
-    // For now, return empty — the ξ/Γ feature is opt-in and requires
-    // the operator to wire an embedding source. When embeddings are empty,
-    // mode_deliberation skips the measured-convergence signal.
-    let _ = (router, texts);
-    Vec::new()
-}
-
 // ── Codette-inspired: Query Complexity Router ───────────────────────────────
 //
 // Codette §4.1 classifies queries as SIMPLE/MEDIUM/COMPLEX to set agent
@@ -1194,28 +1130,6 @@ async fn mode_deliberation(
         ));
     }
 
-    // Codette-inspired: compute epistemic tension ξ and coherence Γ from
-    // panel response embeddings. Advisory signal — the judge verdict still
-    // wins. Only computed when coherence_threshold is set.
-    let mut measured_coherence: Option<f64> = None;
-    if let Some(_threshold) = fusion.coherence_threshold {
-        let texts: Vec<String> = prior_responses.iter().map(|r| r.text.clone()).collect();
-        let embeddings = fetch_embeddings(router, &texts).await;
-        if !embeddings.is_empty() {
-            let xi = epistemic_tension(&embeddings);
-            let gamma = coherence(xi);
-            measured_coherence = Some(gamma);
-            info!(
-                target: "reg.fusion",
-                fusion_mode = "deliberation",
-                round = 1,
-                epistemic_tension = xi,
-                coherence = gamma,
-                "Measured epistemic tension (round 1)"
-            );
-        }
-    }
-
     let mut intermediate: Vec<InferenceUsage> =
         prior_responses.iter().map(|r| r.usage.clone()).collect();
     let mut prior_text = format_panel_responses(&prior_responses);
@@ -1254,25 +1168,8 @@ async fn mode_deliberation(
                 round = round,
                 convergence_rounds = round,
                 verdict = ConvergenceVerdict::Converged.as_str(),
-                measured_coherence =? measured_coherence,
                 "Deliberation converged (judge stabilization verdict)"
             );
-            // Codette-inspired: if measured coherence exceeds threshold,
-            // emit an advisory measured-convergence signal. The judge
-            // verdict already won — this is an additional observability span.
-            if let (Some(gamma), Some(threshold)) = (measured_coherence, fusion.coherence_threshold)
-                && gamma > threshold
-            {
-                info!(
-                    target: "reg.fusion",
-                    fusion_mode = "deliberation",
-                    round = round,
-                    measured_convergence = true,
-                    coherence = gamma,
-                    threshold,
-                    "Measured coherence exceeded threshold (advisory)"
-                );
-            }
             let result = InferenceResult {
                 text: payload.unwrap_or_default(),
                 ..judge_result
@@ -1293,26 +1190,6 @@ async fn mode_deliberation(
         prior_responses = dispatch_panel(router, &follow_up, params, tools, effective).await;
         record_latency(dispatch_start.elapsed().as_millis() as u64);
         intermediate.extend(prior_responses.iter().map(|r| r.usage.clone()));
-
-        // Recompute ξ/Γ for the new round of responses.
-        if let Some(_threshold) = fusion.coherence_threshold {
-            let texts: Vec<String> = prior_responses.iter().map(|r| r.text.clone()).collect();
-            let embeddings = fetch_embeddings(router, &texts).await;
-            if !embeddings.is_empty() {
-                let xi = epistemic_tension(&embeddings);
-                let gamma = coherence(xi);
-                measured_coherence = Some(gamma);
-                info!(
-                    target: "reg.fusion",
-                    fusion_mode = "deliberation",
-                    round = round + 1,
-                    epistemic_tension = xi,
-                    coherence = gamma,
-                    "Measured epistemic tension (round {})",
-                    round + 1
-                );
-            }
-        }
 
         prior_text = format_panel_responses(&prior_responses);
     }
@@ -1953,46 +1830,6 @@ mod tests {
             result.text, "the quick brown fox",
             "biased judge returns the first-displayed pick (dispatch order = panel[0])"
         );
-    }
-
-    // ── Codette-inspired: epistemic tension & coherence tests ─────────────
-
-    #[test]
-    fn epistemic_tension_zero_for_single_embedding() {
-        let embeddings = vec![vec![1.0, 2.0, 3.0]];
-        let xi = super::epistemic_tension(&embeddings);
-        assert_eq!(xi, 0.0, "single embedding has zero tension");
-    }
-
-    #[test]
-    fn epistemic_tension_zero_for_identical_embeddings() {
-        let embeddings = vec![
-            vec![1.0, 2.0, 3.0],
-            vec![1.0, 2.0, 3.0],
-            vec![1.0, 2.0, 3.0],
-        ];
-        let xi = super::epistemic_tension(&embeddings);
-        assert_eq!(xi, 0.0, "identical embeddings have zero tension");
-    }
-
-    #[test]
-    fn epistemic_tension_positive_for_divergent_embeddings() {
-        let embeddings = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
-        let xi = super::epistemic_tension(&embeddings);
-        assert!(xi > 0.0, "divergent embeddings have positive tension");
-        // Centroid = (0.5, 0.5). Distance² from each = 0.25 + 0.25 = 0.5.
-        // Mean = (0.5 + 0.5) / 2 = 0.5
-        assert!((xi - 0.5).abs() < 1e-6, "expected 0.5, got {}", xi);
-    }
-
-    #[test]
-    fn coherence_decreases_as_tension_increases() {
-        let gamma_low = super::coherence(0.0);
-        let gamma_mid = super::coherence(1.0);
-        let gamma_high = super::coherence(10.0);
-        assert_eq!(gamma_low, 1.0, "zero tension → perfect coherence");
-        assert!(gamma_mid > gamma_high, "higher tension → lower coherence");
-        assert!(gamma_mid < gamma_low, "any tension < perfect coherence");
     }
 
     // ── Codette-inspired: query complexity router tests ───────────────────

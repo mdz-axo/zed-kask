@@ -38,7 +38,6 @@
 pub mod chat_protocol;
 pub mod config;
 pub mod deepinfra_backend;
-pub mod embedding_router;
 pub mod fal_backend;
 pub mod fal_workflow;
 pub mod fusion_orchestrator;
@@ -53,7 +52,6 @@ pub mod openrouter_backend;
 pub use config::{
     AlgoMethod, FusionConfig, FusionMode, FusionSkill, InferenceConfig, ProviderConfig, ProviderId,
 };
-pub use embedding_router::EmbeddingRouter;
 pub use inference_ipc_client::InferenceIpcClient;
 pub use media_router::MediaRouter;
 pub use ollama_registry::{

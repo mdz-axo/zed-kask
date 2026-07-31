@@ -1101,41 +1101,27 @@ fn main() {
                     Ok(provisioned) => {
                         let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: user_webid } = provisioned;
 
-                        // Construct the embedding port. This resolves a zed
-                        // LanguageModel from the embedding model's provider
-                        // (e.g. `DeepInfra/...` → the `deepinfra` provider)
-                        // and uses its `api_url()` + `api_key()` to make raw
-                        // `/embeddings` calls through zed's HTTP client —
-                        // replacing hKask's standalone `EmbeddingRouter` which
-                        // resolved credentials from env vars and bypassed
-                        // zed's `LanguageModelRegistry` + keychain.
-                        //
-                        // The port is cloned: one copy goes to
-                        // `RealMemoryPort` (in-process embedding recall),
-                        // the other goes to `InferenceIpcServer` (so MCP
-                        // server child processes can route embeddings through
-                        // zed too, via the IPC bridge).
-                        //
-                        // Per the .rules trap "Process-global hooks set at
-                        // runtime need a startup-failure signal": if the
-                        // provider isn't registered or has no model, we warn
-                        // loudly and skip the real memory port (logging mode
-                        // stays active) rather than silently degrading.
+                        // Resolve embedding credentials directly from the bridge's
+                        // `INFERENCE_PROVIDERS` table + env var. Per the .rules trap
+                        // on startup-failure signals: failure warns loudly and
+                        // skips the real memory port (logging mode stays active).
                         let embedding_port_result = cx.update(|cx| {
-                            resolve_embedding_port(
-                                &embedding_model,
-                                &app_state_for_deferred,
-                                cx,
-                            )
+                            let http_client = app_state_for_deferred.client.http_client();
+                            let tokio_handle = gpui_tokio::Tokio::handle(cx);
+                            kask_bridge::resolve_embedding_credentials(&embedding_model)
+                                .map(|(api_url, api_key)| {
+                                    kask_bridge::LanguageModelEmbeddingPort::new(
+                                        api_url,
+                                        api_key,
+                                        http_client,
+                                        tokio_handle,
+                                    )
+                                })
                         });
 
-                        let Some((embedding_port, embedding_task)) = embedding_port_result else {
-                            // `resolve_embedding_port` already logged a warn
-                            // with remediation guidance. Skip the real memory
-                            // port — logging mode stays active.
+                        let Some(embedding_port) = embedding_port_result else {
                             return;
                         };
-                        embedding_task.detach();
 
                         // Clone for the IPC server (the other copy goes to
                         // RealMemoryPort below).
@@ -1537,6 +1523,59 @@ fn main() {
                         None
                     };
 
+                // Register the fusion provider so it appears in the agent
+                // panel's model picker. This is decoupled from `default_model()`
+                // resolution: the fusion provider's `provided_models` returns
+                // empty when fusion is disabled, so registering it
+                // unconditionally is safe. Gating this on
+                // `default_model().is_some()` meant the fusion model never
+                // appeared in the picker when no default model was resolved at
+                // deferred-task time.
+                cx.update(|cx| {
+                    let fusion_provider =
+                        kask_bridge::FusionLanguageModelProvider::new(cx);
+                    language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                        registry.register_provider(Arc::new(fusion_provider), cx);
+                    });
+                    log::info!("Kask fusion language model provider registered");
+                });
+
+                // Auto-favorite: when fusion is configured (enabled in
+                // settings), add the fusion model and any discovered
+                // OpenRouter favorites to `agent.favorite_models` so they
+                // appear in the agent panel's model picker favorites cycle
+                // (CycleFavoriteModels action). This is decoupled from
+                // `fusion_model` construction success: discovered favorites
+                // should appear in the picker even if the fusion model itself
+                // failed to construct (e.g. because the OpenRouter provider
+                // hadn't fetched its model list yet at startup). The user can
+                // still cycle to the discovered models and select them
+                // manually. `add_favorite_model` is idempotent — entries
+                // already present are not duplicated. This is best-effort:
+                // settings write failures are logged but do not block startup.
+                if fusion_configured {
+                    cx.update(|cx| {
+                        let fs = app_state_for_deferred.fs.clone();
+                        let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
+                        selections.push(kask_bridge::fusion_model_selection());
+                        let favorite_count = selections.len();
+                        let discovered_count = discovered_favorites.len();
+                        let fusion_constructed = fusion_model.is_some();
+                        settings::update_settings_file(fs, cx, move |settings, _| {
+                            let agent = settings.agent.get_or_insert_default();
+                            for selection in &selections {
+                                agent.add_favorite_model(selection.clone());
+                            }
+                        });
+                        log::info!(
+                            "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered); fusion model {}",
+                            favorite_count,
+                            discovered_count,
+                            if fusion_constructed { "constructed" } else { "NOT constructed — favorites still written" },
+                        );
+                    });
+                }
+
                 // Sync model-dependent wiring (inside cx.update).
                 cx.update(|cx| {
                     let model_registry = language_model::LanguageModelRegistry::read_global(cx);
@@ -1635,52 +1674,6 @@ fn main() {
                                 }
                                 configured.model.clone()
                             });
-
-                        // Register the fusion provider so it appears in the agent
-                        // panel's model picker. When fusion is disabled, the provider
-                        // returns no models and doesn't appear in the picker.
-                        let fusion_provider =
-                            kask_bridge::FusionLanguageModelProvider::new(cx);
-                        language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                            registry.register_provider(Arc::new(fusion_provider), cx);
-                        });
-                        log::info!("Kask fusion language model provider registered");
-
-                        // Auto-favorite: when fusion is configured (enabled in
-                        // settings), add the fusion model and any discovered
-                        // OpenRouter favorites to `agent.favorite_models` so
-                        // they appear in the agent panel's model picker favorites
-                        // cycle (CycleFavoriteModels action). This is decoupled
-                        // from `fusion_model` construction success: discovered
-                        // favorites should appear in the picker even if the
-                        // fusion model itself failed to construct (e.g. because
-                        // the OpenRouter provider hadn't fetched its model list
-                        // yet at startup). The user can still cycle to the
-                        // discovered models and select them manually.
-                        // `add_favorite_model` is idempotent — entries already
-                        // present are not duplicated. This is best-effort:
-                        // settings write failures are logged but do not block
-                        // startup.
-                        if fusion_configured {
-                            let fs = app_state_for_deferred.fs.clone();
-                            let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
-                            selections.push(kask_bridge::fusion_model_selection());
-                            let favorite_count = selections.len();
-                            let discovered_count = discovered_favorites.len();
-                            let fusion_constructed = fusion_model.is_some();
-                            settings::update_settings_file(fs, cx, move |settings, _| {
-                                let agent = settings.agent.get_or_insert_default();
-                                for selection in &selections {
-                                    agent.add_favorite_model(selection.clone());
-                                }
-                            });
-                            log::info!(
-                                "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered); fusion model {}",
-                                favorite_count,
-                                discovered_count,
-                                if fusion_constructed { "constructed" } else { "NOT constructed — favorites still written" },
-                            );
-                        }
 
                         let (inference_port, inference_task) =
                             kask_bridge::LanguageModelInferencePort::new(
@@ -2446,110 +2439,6 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
         // re-evaluate and restart servers whose configuration changed.
         cx.notify();
     });
-}
-
-// ── Embedding port resolution ─────────────────────────────────────────────
-//
-// Resolves a zed `LanguageModel` from the embedding model's provider prefix
-// (e.g. `DeepInfra/Qwen/...` → the `deepinfra` provider) and constructs a
-// `LanguageModelEmbeddingPort` that uses the provider's `api_url()` + `api_key()`
-// to make raw `/embeddings` calls through zed's HTTP client. This replaces
-// hKask's standalone `EmbeddingRouter` which resolved credentials from env vars.
-
-/// Parse the zed provider id from an embedding model string.
-///
-/// `DeepInfra/Qwen/...` → `"deepinfra"`, `OpenRouter/...` → `"openrouter"`,
-/// etc. Case-insensitive. Returns `None` if no recognized prefix is found.
-fn embedding_provider_id(embedding_model: &str) -> Option<&str> {
-    // Long-form prefixes (case-insensitive) → zed provider id.
-    const LONG_FORM: &[(&str, &str)] = &[
-        ("DeepInfra/", "deepinfra"),
-        ("fal.ai/", "fal"),
-        ("Together AI/", "together"),
-        ("RunPod/", "runpod"),
-        ("OpenRouter/", "openrouter"),
-        ("KiloCode/", "kilocode"),
-        ("ollama/", "ollama"),
-        ("Cline/", "cline"),
-    ];
-    for (prefix, id) in LONG_FORM {
-        if embedding_model.len() >= prefix.len()
-            && embedding_model[..prefix.len()].eq_ignore_ascii_case(prefix)
-        {
-            return Some(id);
-        }
-    }
-    None
-}
-
-/// Resolve a zed `LanguageModel` from the embedding model's provider and
-/// construct a `LanguageModelEmbeddingPort`.
-///
-/// Returns `None` (after logging a warn with remediation guidance) if:
-/// - The embedding model has no recognized provider prefix.
-/// - The provider isn't registered in zed's `LanguageModelRegistry`.
-/// - The provider has no models (not authenticated / no models discovered).
-///
-/// Per the `.rules` trap "Process-global hooks set at runtime need a
-/// startup-failure signal": failure is surfaced, not silently degraded.
-fn resolve_embedding_port(
-    embedding_model: &str,
-    app_state: &Arc<workspace::AppState>,
-    cx: &mut gpui::App,
-) -> Option<(kask_bridge::LanguageModelEmbeddingPort, gpui::Task<()>)> {
-    let provider_id = embedding_provider_id(embedding_model).or_else(|| {
-        // No prefix — try the default model's provider as a fallback.
-        // This handles users who set a bare model id like `Qwen/Qwen3-Embedding-0.6B`.
-        log::warn!(
-            "Embedding model '{}' has no recognized provider prefix \
-             (expected e.g. 'DeepInfra/...'). \
-             Cannot resolve provider from zed's LanguageModelRegistry. \
-             Set kask.corpus.embedding_model to a provider-prefixed name, \
-             or set HKASK_EMBEDDING_MODEL.",
-            embedding_model
-        );
-        None
-    })?;
-
-    let registry = language_model::LanguageModelRegistry::read_global(cx);
-    let provider = registry
-        .providers()
-        .into_iter()
-        .find(|p| p.id().0 == provider_id);
-
-    let Some(provider) = provider else {
-        log::warn!(
-            "Embedding provider '{}' is not registered in zed's \
-             LanguageModelRegistry. Add it in Settings → AI → LLM Providers, \
-             or set the corresponding env var (e.g. DEEPINFRA_API_KEY). \
-             Embedding-based recall will not work until the provider is configured.",
-            provider_id
-        );
-        return None;
-    };
-
-    let Some(credential_model) = provider.default_model(cx) else {
-        log::warn!(
-            "Embedding provider '{}' has no default model — it may not be \
-             authenticated or has not discovered models yet. Add the API key \
-             in Settings → AI → LLM Providers. Embedding-based recall will \
-             not work until the provider is authenticated.",
-            provider_id
-        );
-        return None;
-    };
-
-    let http_client = app_state.client.http_client();
-    let async_cx = cx.to_async();
-    let (port, task) =
-        kask_bridge::LanguageModelEmbeddingPort::new(credential_model, http_client, async_cx);
-    log::info!(
-        "hKask embedding port constructed — routing embeddings through \
-         zed provider '{}' (model: {})",
-        provider_id,
-        embedding_model
-    );
-    Some((port, task))
 }
 
 // ── D10: Kask panel adapters ───────────────────────────────────────────────

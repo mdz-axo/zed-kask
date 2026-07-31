@@ -489,8 +489,8 @@ pub struct KaskFusionSettings {
     /// Coherence threshold (0.0–1.0) for measured convergence in deliberation
     /// mode. When set, the orchestrator computes epistemic tension ξ and
     /// coherence Γ from panel response embeddings; if Γ exceeds this threshold,
-    /// an advisory "measured convergence" signal is emitted. Empty/disabled
-    /// by default — requires an embedding API key (`DEEPINFRA_API_KEY` or `OPENROUTER_API_KEY`).
+    /// Coherence threshold for measured convergence. Not yet implemented —
+    /// setting this has no effect until the embedding source is wired.
     pub coherence_threshold: Option<f64>,
 
     /// Enable query-complexity-based panel sizing. When `true`, simple queries
