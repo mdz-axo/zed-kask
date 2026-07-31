@@ -1321,8 +1321,9 @@ pub async fn finalize_auto_update_on_quit() {
 mod tests {
     use client::Client;
     use clock::FakeSystemClock;
+    use db::AppDatabase;
     use futures::channel::oneshot;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use http_client::{FakeHttpClient, Response};
     use settings::default_settings;
     use std::{
@@ -1375,6 +1376,27 @@ mod tests {
 
         cx.update(|cx| {
             settings::init(cx);
+
+            // zed-kask: `auto_update` defaults to `false` in
+            // `assets/settings/default.json` (auto-update from Zed's release
+            // feed would replace the zed-kask binary with upstream Zed,
+            // losing the fork). This test exercises the download path, so it
+            // must opt back in — otherwise `crate::init` reads
+            // `AutoUpdateSetting::get_global(cx).0 == false`, never calls
+            // `start_polling`, and the test's `loop` waiting for
+            // `status != Idle` spins until the 60s timeout. This pins the
+            // divergence: production defaults off, tests that need it opt in.
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.auto_update = Some(true);
+                });
+            });
+
+            // The auto-updater persists update-notification state in the KV
+            // store (`KeyValueStore::global` → `Database::global`). Use an
+            // isolated test DB so the test doesn't hit the
+            // `panic!("database not initialized")` path in `Database::global`.
+            cx.set_global(AppDatabase::test_new());
 
             let current_version = semver::Version::new(0, 100, 0);
             release_channel::init_test(current_version, ReleaseChannel::Stable, cx);

@@ -1070,10 +1070,7 @@ mod tests {
             // queue. This pins the divergence: production defaults off, tests
             // that need it opt in.
             settings_store.update_user_settings(cx, |content| {
-                content
-                    .telemetry
-                    .get_or_insert_default()
-                    .metrics = Some(true);
+                content.telemetry.get_or_insert_default().metrics = Some(true);
             });
             cx.set_global(settings_store);
         });

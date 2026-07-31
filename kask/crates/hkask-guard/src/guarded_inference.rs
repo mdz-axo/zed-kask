@@ -330,9 +330,9 @@ impl InferencePort for GuardedInferencePort {
             }));
         }
         let cleaned = scan.output.content(prompt).to_string();
-        let inner = self
-            .inner
-            .generate_stream_with_model(&cleaned, parameters, model_override, tools);
+        let inner =
+            self.inner
+                .generate_stream_with_model(&cleaned, parameters, model_override, tools);
         Box::pin(GuardedStream {
             inner,
             guard: Arc::clone(&self.guard),
@@ -361,9 +361,9 @@ impl InferencePort for GuardedInferencePort {
                 }));
             }
         }
-        let inner = self
-            .inner
-            .generate_stream_with_messages(messages, parameters, model_override, tools);
+        let inner =
+            self.inner
+                .generate_stream_with_messages(messages, parameters, model_override, tools);
         Box::pin(GuardedStream {
             inner,
             guard: Arc::clone(&self.guard),

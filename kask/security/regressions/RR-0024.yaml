@@ -9,8 +9,8 @@ discovered_at: 2026-07-30
 severity: medium
 detection:
   kind: grep
-  pattern: 'Sanitized\(text\.to_string\(\)\)'
-  include: "kask/crates/hkask-guard/src/pipeline.rs"
+  pattern: "Sanitized\(text\.to_string\(\)\)"
+  include: "crates/hkask-guard/src/pipeline.rs"
 mitigation: "Replace text.to_string() with text.replace(self.canary.as_str(), \"[REDACTED-CANARY]\")."
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced

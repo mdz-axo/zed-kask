@@ -243,10 +243,7 @@ async fn test_remote_telemetry_event_forwarding(
     // defaults off, tests that need it opt in.
     cx.update_global::<SettingsStore, _>(|store, cx| {
         store.update_user_settings(cx, |settings| {
-            settings
-                .telemetry
-                .get_or_insert_default()
-                .metrics = Some(true);
+            settings.telemetry.get_or_insert_default().metrics = Some(true);
         });
     });
     project

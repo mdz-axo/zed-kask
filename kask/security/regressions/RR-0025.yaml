@@ -8,8 +8,8 @@ discovered_at: 2026-07-30
 severity: high
 detection:
   kind: grep
-  pattern: '^llm-guard = "0\.2"$'
-  include: "Cargo.toml"
+  pattern: "^llm-guard = \"0\.2\"$"
+  include: "../Cargo.toml"
 mitigation: "Pin to =0.2.0; cargo-deny advisory check in CI catches known vulnerabilities."
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced

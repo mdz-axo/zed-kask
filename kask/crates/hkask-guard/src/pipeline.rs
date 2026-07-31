@@ -566,7 +566,8 @@ mod tests {
 
     #[test]
     fn canary_is_redacted_from_sanitized_output() {
-        // Before the BH-2 fix, scan_output returned Sanitized(text.to_string())
+        // Before the BH-2 fix, scan_output returned the original text
+        // (canary included) in the Sanitized branch — re-exfiltrating the
         // when the canary was detected — the canary token was still present in
         // the returned content, re-exfiltrating the detection signal into the
         // UI/log path. The fix replaces the canary with [REDACTED-CANARY].

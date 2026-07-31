@@ -95,7 +95,7 @@ check_regressions() {
         # Extract the crate name from the include path (e.g., "kask/crates/hkask-templates/src/executor.rs" → "hkask-templates").
         local crate_name=""
         if [ -n "$rr_include" ]; then
-          crate_name=$(echo "$rr_include" | sed -n 's|.*\(kask/crates/\)\([^/][^/]*\)/.*|\2|p')
+          crate_name=$(echo "$rr_include" | sed -n 's|.*\(crates/\)\([^/][^/]*\)/.*|\2|p')
         fi
         if [ -z "$crate_name" ]; then
           echo "::warning::Regression $rr_id (cargo-test): could not extract crate name from include '$rr_include' — skipping"

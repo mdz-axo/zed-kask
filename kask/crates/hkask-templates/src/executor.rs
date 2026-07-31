@@ -326,7 +326,9 @@ impl ManifestExecutor {
                 let mut remaining = s.as_str();
                 while let Some(open) = remaining.find("{{") {
                     let after_open = &remaining[open + 2..];
-                    let Some(close) = after_open.find("}}") else { break };
+                    let Some(close) = after_open.find("}}") else {
+                        break;
+                    };
                     let expr = after_open[..close].trim();
                     // Extract the first identifier-like token (starts with
                     // letter/underscore, followed by word chars). This avoids
@@ -337,16 +339,16 @@ impl ManifestExecutor {
                             !t.is_empty()
                                 && (t.starts_with(|c: char| c.is_alphabetic())
                                     || t.starts_with('_'))
-                                && !matches!(*t, "if" | "for" | "endif" | "endfor" | "else" | "elif")
+                                && !matches!(
+                                    *t,
+                                    "if" | "for" | "endif" | "endfor" | "else" | "elif"
+                                )
                         });
                     if let Some(tok) = token {
                         // Only treat as a context key if it looks like a step
                         // result or a known context variable. Step results are
                         // the primary Source-tainted entries.
-                        if tok.starts_with("step_")
-                            || tok == "task"
-                            || tok == "prev_step"
-                        {
+                        if tok.starts_with("step_") || tok == "task" || tok == "prev_step" {
                             keys.push(tok.to_string());
                         }
                     }
@@ -3442,17 +3444,11 @@ mod tests {
     /// `propagate_taint_for_binding` and `extract_referenced_keys` in isolation.
     ///
     /// The inference/tool ports are stubs — the taint methods don't call them.
-    fn test_executor_with_taint(
-        taint: Vec<(&str, ToolTaint)>,
-    ) -> ManifestExecutor {
+    fn test_executor_with_taint(taint: Vec<(&str, ToolTaint)>) -> ManifestExecutor {
         let inference = Arc::new(StubInferencePort);
         let tools = Arc::new(StubToolPort);
-        let executor = ManifestExecutor::new(
-            inference,
-            tools,
-            LLMParameters::default(),
-            vec![0u8; 32],
-        );
+        let executor =
+            ManifestExecutor::new(inference, tools, LLMParameters::default(), vec![0u8; 32]);
         // Populate taint_labels directly.
         let mut labels = executor.taint_labels.lock().expect("taint mutex");
         for (key, taint) in taint {
@@ -3472,7 +3468,14 @@ mod tests {
             _prompt: &str,
             _parameters: &LLMParameters,
             _tools: Option<&[ChatToolDefinition]>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = std::result::Result<InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
             Box::pin(async {
                 Err(hkask_types::InferenceError::Generation(
                     "StubInferencePort: inference should not be called for taint tests".into(),
@@ -3491,12 +3494,17 @@ mod tests {
             _tool: &'a str,
             _args: Value,
             _token: &'a hkask_capability::DelegationToken,
-        ) -> hkask_capability::ToolFuture<'a, std::result::Result<Value, hkask_capability::ToolPortError>> {
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<Value, hkask_capability::ToolPortError>,
+        > {
             Box::pin(async {
-                Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
-                    entity_type: "tool".to_string(),
-                    id: "stub".to_string(),
-                }))
+                Err(hkask_capability::ToolPortError::NotFound(
+                    hkask_types::NotFound {
+                        entity_type: "tool".to_string(),
+                        id: "stub".to_string(),
+                    },
+                ))
             })
         }
 
@@ -3599,8 +3607,7 @@ mod tests {
 
     #[test]
     fn propagate_taint_endorser_is_preserved_but_not_upgraded() {
-        let executor =
-            test_executor_with_taint(vec![("step_1_result", ToolTaint::Endorser)]);
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Endorser)]);
         let value = serde_json::json!("{{ step_1_result }}");
         executor.propagate_taint_for_binding(&value, "endorsed_key");
         let labels = executor.taint_labels.lock().expect("taint mutex");
