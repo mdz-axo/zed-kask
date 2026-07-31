@@ -129,6 +129,6 @@ Configure via `kask.fusion.panel_models`. Do not hardcode in the manifest.
 - `idiomatic-rust-challenge.j2`: Public.
 - The loop targets step 1 (inquiry), not step 2 (design) — challenge findings must re-inform the assessment.
 - The convergence check (step 5) is mandatory — the loop must not run until gas exhaustion.
-- Step 4 uses `lisp.eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. See the manifest for the Lisp form.
+- Step 4 uses `lisp.eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. See the manifest for the Lisp form. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
 - Compiler grounding is preferred but not required — when LSP tools are unavailable (pure FlowDef execution), the skill falls back to intrinsic reasoning with reduced confidence.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

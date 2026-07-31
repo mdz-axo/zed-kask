@@ -189,6 +189,9 @@ steps:
         score = critique_score * 0.5 + (compiler_confirmed / total) * 0.3 + (1 - unresolved/total) * 0.2
       The env provides the values from the challenge step's JSON output.
       The result feeds into the convergence check as the hypotenuse.
+      Note: the interpreter supports infix notation (a + b = (+ a b))
+      for simple expressions; this form uses prefix because it needs
+      let, if, and assoc for safe JSON field extraction.
     input_mapping:
       form: >
         (let ((critique (assoc "critique_score" env))

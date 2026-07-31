@@ -113,7 +113,7 @@ steps:
   # authors can use `compute_ref: lisp.eval` to write custom deterministic
   # logic inline in the manifest — no Rust change needed. The sandboxed
   # Lisp interpreter supports arithmetic, conditionals, list ops, and
-  # lambda. Example:
+  # lambda. Supports infix: `a + b` = `(+ a b)`. Example:
   #
   #   - ordinal: N
   #     action: compute

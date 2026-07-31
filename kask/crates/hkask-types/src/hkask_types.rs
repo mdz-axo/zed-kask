@@ -28,7 +28,9 @@ pub mod template_type;
 pub mod ports;
 pub mod time;
 pub mod tool_taint;
+pub mod transcript;
 pub mod visibility;
+pub mod voice;
 pub mod wallet_types;
 
 #[cfg(feature = "sql")]
@@ -49,7 +51,7 @@ pub use id::{
     ApiKeyId, BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID,
     HMemId, Id, IdKind, PhaseId, PodID, TaskId, TemplateID, UserID, WalletId, WebID,
 };
-pub use regulation::CircuitState;
+pub use regulation::LedgerHealth;
 
 pub use loops::{
     ActionDecision, ActionType, BudgetOption, Deviation, DeviationDirection,
@@ -61,7 +63,9 @@ pub use skill::SkillPolarity;
 pub use template::LLMParameters;
 pub use template_type::TemplateType;
 pub use tool_taint::ToolTaint;
+pub use transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 pub use visibility::{Confidence, Dimension, Visibility};
+pub use voice::VoiceDesign;
 
 pub use ports::*;
 pub use wallet_types::{

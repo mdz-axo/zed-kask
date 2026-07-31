@@ -64,5 +64,5 @@ Orchestrate and compose multiple skills into a cohesive bundle. Activates a set 
 - `bundler-compose.j2`: Public.
 - `bundler-validate.j2`: Public.
 - `bundler-evolve.j2`: Public.
-- **`lisp.eval` is available for custom deterministic compute steps.** When composing skills into bundles, `lisp.eval` can compute custom composition scores (e.g., weighted combinations of skill coverage, overlap, and ordering constraints) inline in the manifest — no Rust change needed. This enables skill authors to define custom composition logic without modifying the executor. Security: gated to `category: skill` manifests only.
+- **`lisp.eval` is available for custom deterministic compute steps.** When composing skills into bundles, `lisp.eval` can compute custom composition scores (e.g., weighted combinations of skill coverage, overlap, and ordering constraints) inline in the manifest — no Rust change needed. This enables skill authors to define custom composition logic without modifying the executor. Security: gated to `category: skill` manifests only. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple composition-score expressions, prefix for complex nested logic.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

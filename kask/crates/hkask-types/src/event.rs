@@ -169,12 +169,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.curator.consolidation",
     "reg.curator.efficiency.exceeded",
     "reg.curator.metacognition",
-    // ── Meta (curator self-observation / self-management) ──
-    "reg.meta",
-    "reg.meta.circuit_breaker",
-    "reg.meta.directive",
-    "reg.meta.escalation",
-    "reg.meta.self_calibration",
     // ── Cybernetics ──
     "reg.cybernetics",
     "reg.cybernetics.backpressure",

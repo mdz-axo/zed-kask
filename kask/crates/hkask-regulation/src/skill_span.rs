@@ -15,7 +15,7 @@
 //! hierarchical `is_canonical` function makes `reg.skill.<any-skill-id>.*`
 //! valid without per-skill registration.
 //!
-//! Pattern: thin typed enum mirroring InfraSpan / QaSpan / MetaSpan.
+//! Pattern: thin typed enum mirroring InfraSpan / QaSpan.
 //! Reference: P9 §9.1 — Regulation span coverage.
 
 use hkask_types::ObservableSpan;

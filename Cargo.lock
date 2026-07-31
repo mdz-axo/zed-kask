@@ -9368,7 +9368,6 @@ dependencies = [
  "hkask-capability",
  "hkask-mcp-server",
  "hkask-memory",
- "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",
  "hkask-types",

@@ -44,20 +44,6 @@ impl QueueDepth {
     }
 }
 
-// Circuit Breaker — States
-
-/// Circuit breaker states
-///
-/// Defined here (not in hkask-regulation) so the `CircuitBreakerPort` trait can
-/// reference it without creating an upward dependency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum CircuitState {
-    Closed,
-    Open,
-    HalfOpen,
-}
-
 // Regulation Health — Observability data struct
 
 /// Regulation health status

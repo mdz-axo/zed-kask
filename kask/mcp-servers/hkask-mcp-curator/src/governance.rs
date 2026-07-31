@@ -1,14 +1,7 @@
-//! Governance context — OCAP enforcement, consent management, tool dispatch,
-//! agent registration, escalation queue, and curation signal routing.
+//! Governance — escalation CRUD and regulation event emission for the curator MCP server.
 //!
-//! Extracted from `AgentService` as part of the strangler-fig decomposition.
-//! Public fields provide direct access to each subsystem; the single behavioral
-//! method (`notify_goal_transition`) encapsulates `GoalTransitionEvent` construction.
-//!
-//! Escalation CRUD lives here — the data and the behavior co-locate.
-
-use hkask_capability::CapabilityChecker;
-use hkask_regulation::types::loops::{CurationInput, GoalTransitionEvent};
+//! Free functions provide granular access for MCP tool handlers without
+//! requiring a consolidated context struct.
 
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use hkask_storage::{EscalationEntry, EscalationQueue};
@@ -49,85 +42,6 @@ impl From<EscalationEntry> for EscalationResponse {
             resolved_at: e.resolved_at.map(|dt| dt.to_rfc3339()),
             resolved_by: e.resolved_by,
         }
-    }
-}
-
-// ── GovernanceContext ──────────────────────────────────────────────────
-
-/// Consolidated governance context — OCAP, consent, dispatch, agents,
-/// escalations, and curation signals.
-pub struct GovernanceContext {
-    pub checker: Arc<CapabilityChecker>,
-    pub escalations: Arc<EscalationQueue>,
-    pub events: Arc<dyn RegulationSink>,
-    pub curation_tx: tokio::sync::mpsc::UnboundedSender<CurationInput>,
-}
-
-impl GovernanceContext {
-    pub fn new(
-        checker: Arc<CapabilityChecker>,
-        escalations: Arc<EscalationQueue>,
-        events: Arc<dyn RegulationSink>,
-        curation_tx: tokio::sync::mpsc::UnboundedSender<CurationInput>,
-    ) -> Self {
-        Self {
-            checker,
-            escalations,
-            events,
-            curation_tx,
-        }
-    }
-
-    /// Notify the curation loop of a goal state transition.
-    ///
-    /// Constructs and sends a `GoalTransitionEvent` through the curation
-    /// channel. Silently drops the notification if no channel is configured.
-    ///
-    /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
-    /// post: sends a GoalTransitionEvent to the curation loop; no-op if unconfigured
-    pub fn notify_goal_transition(
-        &self,
-        goal_id: String,
-        from_state: String,
-        to_state: String,
-        agent: WebID,
-    ) {
-        let event = CurationInput::GoalTransition(GoalTransitionEvent {
-            goal_id,
-            from_state,
-            to_state,
-            agent,
-        });
-        let _ = self.curation_tx.send(event);
-    }
-
-    // ── Escalation CRUD ──────────────────────────────────────────────
-
-    /// List pending escalations.
-    ///
-    /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
-    /// post: returns all currently pending escalation entries as EscalationResponse records
-    #[must_use = "result must be used"]
-    pub fn list_pending_escalations(&self) -> Result<Vec<EscalationResponse>, ServiceError> {
-        list_escalations_direct(self.escalations.as_ref())
-    }
-
-    /// Resolve an escalation by ID.
-    ///
-    /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
-    /// post: marks the escalation as resolved; emits a Regulation regulation record; Err if not found
-    #[must_use = "result must be used"]
-    pub fn resolve_escalation(&self, id: &str, resolved_by: &str) -> Result<(), ServiceError> {
-        resolve_direct(self.escalations.as_ref(), &self.events, id, resolved_by)
-    }
-
-    /// Dismiss an escalation by ID.
-    ///
-    /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
-    /// post: marks the escalation as dismissed; emits a Regulation regulation record; Err if not found
-    #[must_use = "result must be used"]
-    pub fn dismiss_escalation(&self, id: &str, dismissed_by: &str) -> Result<(), ServiceError> {
-        dismiss_direct(self.escalations.as_ref(), &self.events, id, dismissed_by)
     }
 }
 
