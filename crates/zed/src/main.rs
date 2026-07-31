@@ -1309,8 +1309,8 @@ fn main() {
                 // startup — the "Process-global hooks set at runtime need a
                 // startup-failure signal" trap from .rules.
                 //
-                // The fusion discovery is async (OpenRouter HTTP call with a
-                // 5s timeout) and must run outside cx.update (which holds the
+                // The fusion discovery is async (Artificial Analysis HTTP
+                // call with a 5s timeout) and must run outside cx.update (which holds the
                 // app borrow and can't pump the foreground executor). The
                 // rest is synchronous GPUI mutation and runs inside cx.update.
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
@@ -1439,11 +1439,11 @@ fn main() {
                             log::info!(
                                 "hKask fusion: auto-discovering panel models from Artificial \
                                  Analysis (max_price=${}/M, min_ia={})",
-                                kask_settings.fusion.openrouter_max_price,
-                                kask_settings.fusion.openrouter_min_intelligence
+                                kask_settings.fusion.discovery_max_price,
+                                kask_settings.fusion.discovery_min_intelligence
                             );
-                            let max_price = kask_settings.fusion.openrouter_max_price;
-                            let min_ia = kask_settings.fusion.openrouter_min_intelligence;
+                            let max_price = kask_settings.fusion.discovery_max_price;
+                            let min_ia = kask_settings.fusion.discovery_min_intelligence;
                             // Spawn discovery on the tokio runtime, not GPUI's
                             // background thread pool. `discover_favorites`
                             // drives a `reqwest::Client` which requires a tokio
@@ -1560,7 +1560,7 @@ fn main() {
 
                 // Auto-favorite: when fusion is configured (enabled in
                 // settings), add the fusion model and any discovered
-                // OpenRouter favorites to `agent.favorite_models` so they
+                // Artificial Analysis favorites to `agent.favorite_models` so they
                 // appear in the agent panel's model picker favorites cycle
                 // (CycleFavoriteModels action). This is decoupled from
                 // `fusion_model` construction success: discovered favorites

@@ -22,11 +22,9 @@
 //!
 //! The API requires a key (env: `AA_API_KEY`). The free tier (100 req/day)
 //! includes `evaluations.artificial_analysis_intelligence_index` and
-//! `pricing.price_1m_input_tokens` — the two fields needed for filtering. The
-//! `openrouter_api_id` field (which maps an AA model to its OpenRouter
-//! identifier) and `licensing.is_open_weights` are Pro-tier only; on the free
-//! tier we fall back to the AA `slug` and a normalization table for the common
-//! cases.
+//! `pricing.price_1m_input_tokens` — the two fields needed for filtering.
+//! Model-to-OpenRouter ID mapping is done via a slug normalization table
+//! since the AA `openrouter_api_id` field is not available on the free tier.
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -175,12 +173,7 @@ pub async fn discover_favorites(
                 return None;
             }
 
-            // Pro tier exposes `openrouter_api_id` directly; free tier doesn't,
-            // so we fall back to the AA slug and a normalization table.
-            let or_id = model
-                .openrouter_api_id
-                .clone()
-                .unwrap_or_else(|| normalize_slug_to_openrouter_id(&model.slug));
+            let or_id = normalize_slug_to_openrouter_id(&model.slug);
 
             if or_id.is_empty() {
                 return None;
@@ -193,9 +186,6 @@ pub async fn discover_favorites(
                 intelligence_index,
                 prompt_price_per_m,
                 completion_price_per_m,
-                // Context window is Pro-tier only on the AA API; the free tier
-                // doesn't expose it. Set to 0 — the fusion panel doesn't use
-                // this field for routing.
                 context_length: 0,
             })
         })
@@ -277,9 +267,6 @@ struct AaModel {
     evaluations: Option<AaEvaluations>,
     #[serde(default)]
     pricing: Option<AaPricing>,
-    /// Pro-tier only — present when the caller's key has Pro access.
-    #[serde(default)]
-    openrouter_api_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

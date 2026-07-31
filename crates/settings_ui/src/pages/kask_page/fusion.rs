@@ -62,8 +62,8 @@ pub(crate) fn render_fusion_page(
     let algo_method = fusion.algo_method;
     let skills = fusion.skills;
     let max_rounds = fusion.max_rounds.to_string();
-    let openrouter_max_price = fusion.openrouter_max_price.to_string();
-    let openrouter_min_intelligence = fusion.openrouter_min_intelligence.to_string();
+    let discovery_max_price = fusion.discovery_max_price.to_string();
+    let discovery_min_intelligence = fusion.discovery_min_intelligence.to_string();
     let coherence_threshold = fusion
         .coherence_threshold
         .map(|v| format!("{v}"))
@@ -171,9 +171,9 @@ pub(crate) fn render_fusion_page(
             }
         });
 
-    let openrouter_max_price_input = SettingsInputField::new("kask-fusion-or-max-price")
+    let discovery_max_price_input = SettingsInputField::new("kask-fusion-discovery-max-price")
         .tab_index(0)
-        .with_initial_text(openrouter_max_price)
+        .with_initial_text(discovery_max_price)
         .with_placeholder("2.0")
         .aria_label("Max Price")
         .confirm_on_focus_out()
@@ -189,16 +189,16 @@ pub(crate) fn render_fusion_page(
                             .get_or_insert_default()
                             .fusion
                             .get_or_insert_default()
-                            .openrouter_max_price = Some(parsed);
+                            .discovery_max_price = Some(parsed);
                     },
                 );
             }
         });
 
-    let openrouter_min_intelligence_input =
-        SettingsInputField::new("kask-fusion-or-min-intelligence")
+    let discovery_min_intelligence_input =
+        SettingsInputField::new("kask-fusion-discovery-min-intelligence")
             .tab_index(0)
-            .with_initial_text(openrouter_min_intelligence)
+            .with_initial_text(discovery_min_intelligence)
             .with_placeholder("40.0")
             .aria_label("Min Intelligence")
             .confirm_on_focus_out()
@@ -214,7 +214,7 @@ pub(crate) fn render_fusion_page(
                                 .get_or_insert_default()
                                 .fusion
                                 .get_or_insert_default()
-                                .openrouter_min_intelligence = Some(parsed);
+                                .discovery_min_intelligence = Some(parsed);
                         },
                     );
                 }
@@ -436,9 +436,7 @@ pub(crate) fn render_fusion_page(
                     Label::new(
                         "When the panel models field is empty or set to \"auto\", the panel \
                          is populated from Artificial Analysis models passing both thresholds. \
-                         These gates also feed the default-model onboarding thresholds. \
-                         Set AA_API_KEY to use the Pro tier (exposes the OpenRouter model \
-                         ID mapping); the free tier works without a key.",
+                         Set AA_API_KEY (free tier — get a key at artificialanalysis.ai/data-api).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -448,13 +446,21 @@ pub(crate) fn render_fusion_page(
             v_flex()
                 .gap_1()
                 .child(Label::new("Max Price (USD per 1M prompt tokens)"))
-                .child(openrouter_max_price_input),
+                .child(discovery_max_price_input),
         )
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("Min Intelligence Index"))
-                .child(openrouter_min_intelligence_input),
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Label::new("Min AA Intelligence Index"))
+                        .child(
+                            ButtonLink::new("artificialanalysis.ai", "https://artificialanalysis.ai")
+                                .label_size(LabelSize::Small),
+                        ),
+                )
+                .child(discovery_min_intelligence_input),
         )
         .child(Divider::horizontal())
         .child(

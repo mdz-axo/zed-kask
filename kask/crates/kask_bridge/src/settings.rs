@@ -486,16 +486,14 @@ pub struct KaskFusionSettings {
     pub max_rounds: u32,
 
     /// Auto-discovery max prompt price per million tokens (USD).
-    /// Default 1.0. Used by fusion auto-discovery to filter candidate panel
-    /// models. Discovery now queries Artificial Analysis (not OpenRouter); the
-    /// field name is retained for settings compatibility.
-    pub openrouter_max_price: f64,
+    /// Default 2.0. Used by fusion auto-discovery (Artificial Analysis) to
+    /// filter candidate panel models by input token price.
+    pub discovery_max_price: f64,
 
-    /// Auto-discovery minimum intelligence index.
-    /// Default 40.0. Used by fusion auto-discovery to filter candidate panel
-    /// models. Discovery now queries Artificial Analysis (not OpenRouter); the
-    /// field name is retained for settings compatibility.
-    pub openrouter_min_intelligence: f64,
+    /// Auto-discovery minimum AA Intelligence Index.
+    /// Default 40.0. Used by fusion auto-discovery (Artificial Analysis) to
+    /// filter candidate panel models by intelligence score.
+    pub discovery_min_intelligence: f64,
 
     /// Coherence threshold (0.0–1.0) for measured convergence in deliberation
     /// mode. When set, the orchestrator computes epistemic tension ξ and
@@ -524,8 +522,8 @@ impl Default for KaskFusionSettings {
             algo_method: "merge".to_string(),
             skills: String::default(),
             max_rounds: 5,
-            openrouter_max_price: 2.0,
-            openrouter_min_intelligence: 40.0,
+            discovery_max_price: 2.0,
+            discovery_min_intelligence: 40.0,
             coherence_threshold: None,
             panel_sizing_enabled: false,
             pressure_adaptive_enabled: false,
@@ -1164,12 +1162,10 @@ impl From<KaskFusionSettingsContent> for KaskFusionSettings {
             algo_method: c.algo_method.unwrap_or(default.algo_method),
             skills: c.skills.unwrap_or(default.skills),
             max_rounds: c.max_rounds.unwrap_or(default.max_rounds),
-            openrouter_max_price: c
-                .openrouter_max_price
-                .unwrap_or(default.openrouter_max_price),
-            openrouter_min_intelligence: c
-                .openrouter_min_intelligence
-                .unwrap_or(default.openrouter_min_intelligence),
+            discovery_max_price: c.discovery_max_price.unwrap_or(default.discovery_max_price),
+            discovery_min_intelligence: c
+                .discovery_min_intelligence
+                .unwrap_or(default.discovery_min_intelligence),
             coherence_threshold: c.coherence_threshold,
             panel_sizing_enabled: c
                 .panel_sizing_enabled
@@ -1435,8 +1431,8 @@ mod tests {
         assert_eq!(default.mode, "synthesis");
         assert_eq!(default.algo_method, "merge");
         assert_eq!(default.max_rounds, 5);
-        assert_eq!(default.openrouter_max_price, 1.0);
-        assert_eq!(default.openrouter_min_intelligence, 40.0);
+        assert_eq!(default.discovery_max_price, 2.0);
+        assert_eq!(default.discovery_min_intelligence, 40.0);
     }
 
     #[test]
