@@ -90,11 +90,6 @@ impl EpisodicMemory {
         self
     }
 
-    /// Access the Regulation event sink for loop-level RegulationRecord emission.
-    pub(crate) fn event_sink(&self) -> Option<&Arc<dyn RegulationSink>> {
-        self.event_sink.as_ref()
-    }
-
     // Store
 
     /// Store an episodic h_mem (private by default, with perspective).
@@ -124,10 +119,7 @@ impl EpisodicMemory {
         self.h_mem_store.insert(&h_mem)?;
         // Regulation: emit RegulationRecord for memory write observability
         if let Some(sink) = &self.event_sink {
-            let span = Span::new(
-                crate::MEMORY_ENCODE_SPAN.clone(),
-                "episodic_stored",
-            );
+            let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "episodic_stored");
             let event = RegulationRecord::new(
                 h_mem.access.owner_webid,
                 span,

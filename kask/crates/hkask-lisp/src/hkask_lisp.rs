@@ -11,7 +11,16 @@
 //! The interpreter supports a minimal but practical Lisp subset:
 //!   Special forms: quote, if, let, lambda, define, begin, and, or, not
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
-//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, assoc
+//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, assoc
+//!
+//! # Infix Operator Notation
+//!
+//! Binary operators can be written infix: `a + b` is equivalent to `(+ a b)`.
+//! Chained same-operator expressions are supported: `a + b + c` → `(+ a b c)`.
+//! Operator mixing requires explicit parentheses: `(* (+ 1 2) 3)` — `1 + 2 * 3`
+//! is NOT supported (no operator precedence). This makes simple scoring and
+//! threshold expressions more readable in YAML manifests without adding a
+//! parser dependency or sacrificing the sandboxed security model.
 //!
 //! # Security
 //!
@@ -199,6 +208,7 @@ impl Env {
 
 pub fn parse(source: &str) -> Result<Vec<LispValue>, LispError> {
     let tokens = tokenize(source);
+    let tokens = expand_infix(&tokens);
     let mut forms = Vec::new();
     let mut rest: &[String] = &tokens;
     while !rest.is_empty() {
@@ -207,6 +217,60 @@ pub fn parse(source: &str) -> Result<Vec<LispValue>, LispError> {
         rest = next;
     }
     Ok(forms)
+}
+
+/// Operators that support infix notation: `a + b` → `(+ a b)`.
+const INFIX_OPERATORS: &[&str] = &["+", "-", "*", "/", "=", "!=", "<", "<=", ">", ">="];
+
+/// Transform infix operator triplets to prefix form at the token level.
+///
+/// Scans the token stream for patterns like `a + b` (where the middle token
+/// is an operator and the surrounding tokens are not parens) and rewrites them
+/// to `(+ a b)`. Handles chained same-operator expressions: `a + b + c` →
+/// `(+ a b c)`. Does NOT support operator precedence — mixing operators
+/// requires explicit parentheses: `(a + b) * c` works, `a + b * c` does not.
+///
+/// This is a pre-processing step before `parse_form` — the evaluator sees
+/// only standard prefix S-expressions.
+fn expand_infix(tokens: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        // Check if tokens[i] is an atom (not a paren or quote) followed by
+        // an operator followed by another atom.
+        if i + 2 < tokens.len()
+            && is_infix_context(&tokens[i])
+            && INFIX_OPERATORS.contains(&tokens[i + 1].as_str())
+            && is_infix_context(&tokens[i + 2])
+        {
+            // Collect the operator and all chained operands: a + b + c → (+ a b c)
+            let op = tokens[i + 1].clone();
+            let mut operands = vec![tokens[i].clone()];
+            let mut j = i + 1;
+            while j + 1 < tokens.len() && tokens[j] == op && is_infix_context(&tokens[j + 1]) {
+                operands.push(tokens[j + 1].clone());
+                j += 2;
+            }
+            // Emit: ( op operand1 operand2 ... )
+            out.push("(".to_string());
+            out.push(op);
+            for operand in &operands {
+                out.push(operand.clone());
+            }
+            out.push(")".to_string());
+            i = j;
+        } else {
+            out.push(tokens[i].clone());
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Check if a token is a valid context for infix transformation — it's an
+/// atom (symbol, number, string, true, false, nil) but not a paren or quote.
+fn is_infix_context(tok: &str) -> bool {
+    tok != "(" && tok != ")" && tok != "'"
 }
 
 fn tokenize(source: &str) -> Vec<String> {
@@ -660,6 +724,7 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         ("nth", nth),
         ("reverse", reverse),
         ("is_null", is_null),
+        ("numberp", numberp),
         ("assoc", assoc_fn),
     ]
 }
@@ -1192,6 +1257,123 @@ mod tests {
         assert_eq!(
             eval_sandboxed("(not (> 5 3))", &json!({})).unwrap(),
             json!(false)
+        );
+    }
+
+    // ── Infix operator notation tests ──
+
+    #[test]
+    fn test_infix_addition() {
+        assert_eq!(eval_sandboxed("1 + 2", &json!({})).unwrap(), json!(3));
+    }
+
+    #[test]
+    fn test_infix_subtraction() {
+        assert_eq!(eval_sandboxed("10 - 4", &json!({})).unwrap(), json!(6));
+    }
+
+    #[test]
+    fn test_infix_multiplication() {
+        assert_eq!(eval_sandboxed("3 * 4", &json!({})).unwrap(), json!(12));
+    }
+
+    #[test]
+    fn test_infix_comparison() {
+        assert_eq!(eval_sandboxed("5 > 3", &json!({})).unwrap(), json!(true));
+        assert_eq!(eval_sandboxed("3 > 5", &json!({})).unwrap(), json!(false));
+        assert_eq!(eval_sandboxed("3 = 3", &json!({})).unwrap(), json!(true));
+    }
+
+    #[test]
+    fn test_infix_chained_same_operator() {
+        // a + b + c → (+ a b c)
+        assert_eq!(eval_sandboxed("1 + 2 + 3", &json!({})).unwrap(), json!(6));
+        assert_eq!(eval_sandboxed("2 * 3 * 4", &json!({})).unwrap(), json!(24));
+    }
+
+    #[test]
+    fn test_infix_with_parens_for_precedence() {
+        // Mixed operators require prefix for the parenthesized part:
+        // (* (+ 1 2) 3) — infix only applies to bare atom triplets.
+        assert_eq!(
+            eval_sandboxed("(* (+ 1 2) 3)", &json!({})).unwrap(),
+            json!(9)
+        );
+    }
+
+    #[test]
+    fn test_infix_with_variables() {
+        let env = json!({"a": 10, "b": 3});
+        assert_eq!(eval_sandboxed("a + b", &env).unwrap(), json!(13));
+        assert_eq!(eval_sandboxed("a * b", &env).unwrap(), json!(30));
+    }
+
+    #[test]
+    fn test_infix_in_let_binding() {
+        // Infix works inside let forms too
+        assert_eq!(
+            eval_sandboxed("(let ((x 5)) x + 3)", &json!({})).unwrap(),
+            json!(8)
+        );
+    }
+
+    #[test]
+    fn test_infix_in_if_condition() {
+        assert_eq!(
+            eval_sandboxed("(if 5 > 3 \"yes\" \"no\")", &json!({})).unwrap(),
+            json!("yes")
+        );
+    }
+
+    #[test]
+    fn test_prefix_still_works() {
+        // Ensure existing prefix notation is not broken by the infix transform
+        assert_eq!(eval_sandboxed("(+ 1 2 3)", &json!({})).unwrap(), json!(6));
+        assert_eq!(eval_sandboxed("(* 2 3)", &json!({})).unwrap(), json!(6));
+        assert_eq!(eval_sandboxed("(> 5 3)", &json!({})).unwrap(), json!(true));
+    }
+
+    // ── numberp tests ──
+
+    #[test]
+    fn test_numberp_int() {
+        assert_eq!(
+            eval_sandboxed("(numberp 42)", &json!({})).unwrap(),
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn test_numberp_float() {
+        assert_eq!(
+            eval_sandboxed("(numberp 3.14)", &json!({})).unwrap(),
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn test_numberp_string() {
+        assert_eq!(
+            eval_sandboxed("(numberp \"hello\")", &json!({})).unwrap(),
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn test_numberp_nil() {
+        assert_eq!(
+            eval_sandboxed("(numberp nil)", &json!({})).unwrap(),
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn test_numberp_in_conditional() {
+        // Realistic use case from the idiomatic-rust manifest
+        let env = json!({"score": 0.85});
+        assert_eq!(
+            eval_sandboxed("(if (numberp score) score 1.0)", &env).unwrap(),
+            json!(0.85)
         );
     }
 }

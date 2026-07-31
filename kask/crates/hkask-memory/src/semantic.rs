@@ -137,10 +137,6 @@ impl SemanticMemory {
         self.memory_life_days
     }
 
-    pub(crate) fn event_sink(&self) -> Option<&Arc<dyn RegulationSink>> {
-        self.event_sink.as_ref()
-    }
-
     /// Query by entity with deduplication, confidence decay, and recall-touch.
     ///
     /// Applies Wozniak-Gorzelanczyk (1995) forgetting curve decay at recall

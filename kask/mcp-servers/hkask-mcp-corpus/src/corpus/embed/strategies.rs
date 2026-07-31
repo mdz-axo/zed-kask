@@ -14,9 +14,6 @@
 pub trait ChunkingStrategy: Send + Sync {
     /// Chunk `text` into passages, returning `(entity_ref, text)` pairs.
     fn chunk(&self, text: &str, entity_ref_prefix: &str) -> Vec<(String, String)>;
-
-    /// Human-readable name for diagnostics (e.g., "word-count", "token-count").
-    fn name(&self) -> &'static str;
 }
 
 // ── Concrete strategy implementations ──────────────────────────────────────
@@ -40,25 +37,11 @@ impl ChunkingStrategy for WordCountChunker {
             &self.sentence_boundary,
         )
     }
-
-    fn name(&self) -> &'static str {
-        "word-count"
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn word_count_chunker_name() {
-        let chunker = WordCountChunker {
-            min_words: 40,
-            max_words: 150,
-            sentence_boundary: ".!? ".to_string(),
-        };
-        assert_eq!(chunker.name(), "word-count");
-    }
 
     #[test]
     fn word_count_chunker_produces_passages() {
