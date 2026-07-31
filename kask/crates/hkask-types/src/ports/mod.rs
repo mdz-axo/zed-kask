@@ -4,7 +4,6 @@
 //! Port traits enable crates to depend on abstractions rather than
 //! concrete implementations.
 
-pub mod consent_port;
 pub mod embedding;
 pub mod embedding_port;
 pub mod escalation;
@@ -28,7 +27,7 @@ pub use registry::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
 pub use regulation::{
-    BackpressureSignal, CircuitBreakerPort, ConsolidationOutcome, ConsolidationRequest,
-    DecayConfig, DepletionSignal, LedgerObserver, LedgerStoragePort, WeightedEvent,
+    BackpressureSignal, ConsolidationOutcome, ConsolidationRequest, DecayConfig, DepletionSignal,
+    LedgerObserver, LedgerStoragePort, WeightedEvent,
 };
 pub use wallet_budget_port::{WalletBudgetError, WalletBudgetPort};

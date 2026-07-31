@@ -14,7 +14,6 @@ path = "src/hkask_storage.rs"
 hkask-capability = { path = "../hkask-capability" }
 hkask-types = { path = "../hkask-types", features = ["sql"] }
 
-hkask-goal = { path = "../hkask-goal" }
 hkask-keystore = { path = "../hkask-keystore" }
 rusqlite.workspace = true
 r2d2.workspace = true

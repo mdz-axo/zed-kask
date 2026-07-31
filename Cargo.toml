@@ -269,7 +269,6 @@ members = [
     "kask/crates/hkask-types",
     "kask/crates/kask_bridge",
     "kask/crates/hkask-capability",
-    "kask/crates/hkask-goal",
     "kask/crates/hkask-keystore",
     "kask/crates/hkask-regulation",
     "kask/crates/hkask-guard",
@@ -858,7 +857,6 @@ sha2 = "0.10"
 blake3 = "1"
 hkask-types = { path = "kask/crates/hkask-types" }
 hkask-capability = { path = "kask/crates/hkask-capability" }
-hkask-goal = { path = "kask/crates/hkask-goal" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }

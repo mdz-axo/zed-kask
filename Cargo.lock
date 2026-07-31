@@ -9149,16 +9149,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-goal"
-version = "0.31.0"
-dependencies = [
- "chrono",
- "hkask-types",
- "serde",
- "uuid",
-]
-
-[[package]]
 name = "hkask-guard"
 version = "0.31.0"
 dependencies = [
@@ -9612,7 +9602,6 @@ dependencies = [
  "chrono",
  "hex",
  "hkask-capability",
- "hkask-goal",
  "hkask-keystore",
  "hkask-types",
  "r2d2",

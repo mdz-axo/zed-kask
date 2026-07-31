@@ -926,6 +926,17 @@ fn is_null(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lis
     }))
 }
 
+/// Number predicate: `(numberp x)` returns true if x is an Int or Float.
+fn numberp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 1 {
+        return Err(LispError::Arity("numberp expects 1 arg".into()));
+    }
+    Ok(LispValue::Bool(matches!(
+        args[0],
+        LispValue::Int(_) | LispValue::Float(_)
+    )))
+}
+
 /// Association list lookup: `(assoc key alist)` returns the value associated
 /// with `key` in the association list, or nil if not found. JSON objects
 /// are converted to association lists at the `from_json` boundary, so this

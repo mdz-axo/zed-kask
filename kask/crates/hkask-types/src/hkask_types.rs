@@ -5,7 +5,6 @@
 pub mod agent_paths;
 pub mod corpus;
 pub mod crypto;
-pub mod curation;
 pub mod curator;
 pub mod document;
 pub mod error;
@@ -29,7 +28,6 @@ pub mod template_type;
 pub mod ports;
 pub mod time;
 pub mod tool_taint;
-pub mod transcript;
 pub mod visibility;
 pub mod wallet_types;
 
@@ -39,9 +37,6 @@ pub mod sql_impls;
 // ── Essential re-exports (used by ≥3 downstream crates) ─────────────────
 
 pub use crypto::Ed25519PublicKey;
-pub use curation::{
-    BoundaryClassification, DataCategory, DataSovereigntyBoundary, UserSovereigntyState,
-};
 pub use curator::{CurationThresholdConfig, CuratorDirective, CuratorHandle, EscalationSeverity};
 pub use document::{Block, DocStructure, Page};
 pub use error::{
@@ -66,7 +61,6 @@ pub use skill::SkillPolarity;
 pub use template::LLMParameters;
 pub use template_type::TemplateType;
 pub use tool_taint::ToolTaint;
-pub use transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 pub use visibility::{Confidence, Dimension, Visibility};
 
 pub use ports::*;
@@ -105,6 +99,3 @@ pub struct ExpectProposal {
     pub suggested_goal_principle: String,
     pub existing_constraining_principles: Vec<String>,
 }
-
-pub mod voice;
-pub use voice::VoiceDesign;

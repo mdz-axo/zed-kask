@@ -10,9 +10,7 @@
 //! Methods that need capability tokens (e.g., `issue_consolidation_token`) live
 //! as free functions or extension traits in crates that have the capability dep.
 
-use crate::DataCategory;
 use crate::id::WebID;
-use crate::visibility::Visibility;
 
 // ── CuratorHandle — Loop 5 capability handle ────────────────────────────────
 
@@ -44,19 +42,6 @@ impl CuratorHandle {
 
     pub fn curator_id(&self) -> &WebID {
         &self.curator_id
-    }
-
-    /// Curator can read everything EXCEPT private episodic memory
-    pub fn can_read(&self, category: &DataCategory) -> bool {
-        !matches!(category, DataCategory::EpisodicMemory)
-    }
-
-    /// Curator can write to shared and public categories that it governs
-    pub fn can_write(&self, category: &DataCategory) -> bool {
-        matches!(
-            category.default_visibility(),
-            Visibility::Shared | Visibility::Public
-        )
     }
 }
 

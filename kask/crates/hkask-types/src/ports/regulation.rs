@@ -2,21 +2,9 @@ use crate::InfrastructureError;
 use crate::event::{RegulationRecord, SpanNamespace};
 use crate::id::WebID;
 use crate::loops::LoopId;
-use crate::regulation::CircuitState;
 use chrono::{DateTime, Utc};
 
 use async_trait::async_trait;
-
-/// Circuit breaker boundary for the Cybernetics membrane.
-///
-/// Allows the Inference loop to use circuit breaking without depending on hkask-regulation.
-/// Impl: `CircuitBreaker` (in hkask-regulation)
-pub trait CircuitBreakerPort: Send + Sync {
-    fn allow_request(&self) -> bool;
-    fn record_success(&self);
-    fn record_failure(&self);
-    fn state(&self) -> CircuitState;
-}
 
 /// Parameters for consolidation. All fields except `limit` optional.
 #[derive(Debug, Clone)]
