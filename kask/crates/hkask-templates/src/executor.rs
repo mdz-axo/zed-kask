@@ -237,6 +237,126 @@ impl ManifestExecutor {
         }
     }
 
+    /// Propagate taint labels from referenced context entries to a newly bound key.
+    ///
+    /// When `input_mapping` resolves a value via `resolve_mapping_value`, the
+    /// resolved value may originate from a Source-tainted context entry. This
+    /// method inspects the *original* (pre-resolution) mapping value for
+    /// references to tainted keys — both `$ref` patterns and inline Jinja
+    /// `{{ step_N_result }}` expressions — and if any referenced key is tainted,
+    /// labels the new key with the same taint.
+    ///
+    /// This closes the FIDES closure break (ART-3/IR-1) where inline-Jinja
+    /// bindings used `context.insert` (not `insert_tainted`), losing the
+    /// Source taint label and bypassing the Source→Sink block rule.
+    ///
+    /// expect: "The system propagates taint labels through input_mapping bindings"
+    /// pre:  original_value is the pre-resolution mapping value; new_key is the
+    ///       context key the resolved value will be inserted under
+    /// post: if any referenced context key is tainted, new_key is labeled with
+    ///       the strongest taint found (Source > Endorser > Pure)
+    fn propagate_taint_for_binding(&self, original_value: &Value, new_key: &str) {
+        let referenced_keys = self.extract_referenced_keys(original_value);
+        if referenced_keys.is_empty() {
+            return;
+        }
+        let labels = self
+            .taint_labels
+            .lock()
+            .expect("taint_labels mutex poisoned");
+        // Find the strongest taint among referenced keys.
+        // Source > Endorser > Pure (Source is the only one that triggers the
+        // Sink block rule, but propagating Endorser preserves the audit trail).
+        let mut strongest = ToolTaint::Pure;
+        for key in &referenced_keys {
+            let taint = labels.get(key).copied().unwrap_or(ToolTaint::Pure);
+            if taint == ToolTaint::Source {
+                strongest = ToolTaint::Source;
+                break; // Source is the strongest — no need to check further.
+            }
+            if taint == ToolTaint::Endorser && strongest == ToolTaint::Pure {
+                strongest = ToolTaint::Endorser;
+            }
+        }
+        if strongest != ToolTaint::Pure {
+            labels.insert(new_key.to_string(), strongest);
+        }
+    }
+
+    /// Extract context keys referenced in a mapping value, before resolution.
+    ///
+    /// Recognizes two reference patterns:
+    /// - `$ref`: `{"$ref": "step_1_result.field"}` → extracts `step_1_result`
+    /// - Inline Jinja: `"{{ step_1_result.field }}"` or `"{{ step_1_result }}"`
+    ///   → extracts `step_1_result`
+    ///
+    /// Returns the set of referenced context keys (first segment before any dot).
+    fn extract_referenced_keys(&self, value: &Value) -> Vec<String> {
+        let mut keys = Vec::new();
+        self.collect_referenced_keys(value, &mut keys);
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    fn collect_referenced_keys(&self, value: &Value, keys: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(ref_path)) = map.get("$ref") {
+                    if let Some(key) = ref_path.split('.').next() {
+                        if !key.is_empty() {
+                            keys.push(key.to_string());
+                        }
+                    }
+                    return;
+                }
+                for v in map.values() {
+                    self.collect_referenced_keys(v, keys);
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    self.collect_referenced_keys(v, keys);
+                }
+            }
+            Value::String(s) => {
+                // Inline Jinja: extract identifiers that look like context keys.
+                // Pattern: {{ identifier }} or {{ identifier.field }}
+                // We look for `{{` ... `}}` spans and extract the first identifier.
+                let mut remaining = s.as_str();
+                while let Some(open) = remaining.find("{{") {
+                    let after_open = &remaining[open + 2..];
+                    let Some(close) = after_open.find("}}") else { break };
+                    let expr = after_open[..close].trim();
+                    // Extract the first identifier-like token (starts with
+                    // letter/underscore, followed by word chars). This avoids
+                    // matching Jinja keywords like `if`, `for`, `endif`.
+                    let token = expr
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .find(|t| {
+                            !t.is_empty()
+                                && (t.chars().next().unwrap().is_alphabetic()
+                                    || t.chars().next().unwrap() == '_')
+                                && !matches!(*t, "if" | "for" | "endif" | "endfor" | "else" | "elif")
+                        });
+                    if let Some(tok) = token {
+                        // Only treat as a context key if it looks like a step
+                        // result or a known context variable. Step results are
+                        // the primary Source-tainted entries.
+                        if tok.starts_with("step_")
+                            || tok == "task"
+                            || tok == "prev_step"
+                        {
+                            keys.push(tok.to_string());
+                        }
+                    }
+                    remaining = &after_open[close + 2..];
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Execute a single KnowAct template — render, infer, parse, return.
     ///
     /// This is the minimal template invocation path: no manifest cascade,
@@ -700,6 +820,9 @@ impl ManifestExecutor {
                                     &context,
                                     self.template_renderer.base_path(),
                                 );
+                                // Propagate taint from referenced Source entries
+                                // to the new binding key (ART-3/IR-1 fix).
+                                self.propagate_taint_for_binding(v, k);
                                 context.insert(k.clone(), bound);
                             }
                         }
@@ -1052,6 +1175,9 @@ impl ManifestExecutor {
         {
             for (k, v) in map {
                 let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                // Propagate taint from referenced Source entries to the new
+                // binding key (ART-3/IR-1 fix — closes FIDES closure break).
+                self.propagate_taint_for_binding(v, k);
                 context.insert(k.clone(), bound);
             }
         }
@@ -1210,6 +1336,9 @@ impl ManifestExecutor {
         {
             for (k, v) in map {
                 let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                // Propagate taint from referenced Source entries to the new
+                // binding key (ART-3/IR-1 fix — closes FIDES closure break).
+                self.propagate_taint_for_binding(v, k);
                 context.insert(k.clone(), bound);
             }
         }
@@ -1315,6 +1444,9 @@ impl ManifestExecutor {
         {
             for (k, v) in map {
                 let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                // Propagate taint from referenced Source entries to the new
+                // binding key (ART-3/IR-1 fix — closes FIDES closure break).
+                self.propagate_taint_for_binding(v, k);
                 context.insert(k.clone(), bound);
             }
         }
@@ -3303,4 +3435,164 @@ mod tests {
         let template_content = "No frontmatter here.";
         assert!(resolve_output_schema(&step, template_content).is_none());
     }
-}
+
+    // ── ART-3/IR-1: taint propagation through input_mapping bindings ──
+
+    /// Build a minimal executor with only taint_labels populated, for testing
+    /// `propagate_taint_for_binding` and `extract_referenced_keys` in isolation.
+    ///
+    /// The inference/tool ports are stubs — the taint methods don't call them.
+    fn test_executor_with_taint(
+        taint: Vec<(&str, ToolTaint)>,
+    ) -> ManifestExecutor {
+        use hkask_capability::NoopToolPort;
+        let inference = Arc::new(StubInferencePort);
+        let tools = Arc::new(NoopToolPort);
+        let mut executor = ManifestExecutor::new(
+            inference,
+            tools,
+            LLMParameters::default(),
+            vec![0u8; 32],
+        );
+        // Populate taint_labels directly.
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        for (key, taint) in taint {
+            labels.insert(key.to_string(), taint);
+        }
+        drop(labels);
+        executor
+    }
+
+    /// Stub inference port for taint-propagation tests. The taint methods
+    /// never call inference, so this just needs to satisfy the constructor.
+    struct StubInferencePort;
+
+    impl InferencePort for StubInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Generation(
+                    "StubInferencePort: inference should not be called for taint tests".into(),
+                ))
+            })
+        }
+    }
+
+    #[test]
+    fn extract_referenced_keys_from_ref() {
+        let executor = test_executor_with_taint(vec![]);
+        let value = serde_json::json!({"$ref": "step_1_result.field"});
+        let keys = executor.extract_referenced_keys(&value);
+        assert_eq!(keys, vec!["step_1_result".to_string()]);
+    }
+
+    #[test]
+    fn extract_referenced_keys_from_inline_jinja() {
+        let executor = test_executor_with_taint(vec![]);
+        let value = serde_json::json!("{{ step_2_result.data }}");
+        let keys = executor.extract_referenced_keys(&value);
+        assert_eq!(keys, vec!["step_2_result".to_string()]);
+    }
+
+    #[test]
+    fn extract_referenced_keys_ignores_jinja_keywords() {
+        let executor = test_executor_with_taint(vec![]);
+        // `if` and `for` are Jinja keywords, not context keys.
+        let value = serde_json::json!("{% if step_1_result %}{{ step_1_result }}{% endif %}");
+        let keys = executor.extract_referenced_keys(&value);
+        assert_eq!(keys, vec!["step_1_result".to_string()]);
+    }
+
+    #[test]
+    fn extract_referenced_keys_from_nested_object() {
+        let executor = test_executor_with_taint(vec![]);
+        let value = serde_json::json!({
+            "items": [
+                {"$ref": "step_1_result.a"},
+                "{{ step_2_result.b }}"
+            ]
+        });
+        let mut keys = executor.extract_referenced_keys(&value);
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["step_1_result".to_string(), "step_2_result".to_string()]
+        );
+    }
+
+    #[test]
+    fn propagate_taint_from_ref_source() {
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
+        let value = serde_json::json!({"$ref": "step_1_result.field"});
+        executor.propagate_taint_for_binding(&value, "new_key");
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("new_key").copied(),
+            Some(ToolTaint::Source),
+            "Source taint must propagate through $ref bindings"
+        );
+    }
+
+    #[test]
+    fn propagate_taint_from_inline_jinja_source() {
+        // This is the ART-3/IR-1 regression test: inline Jinja binding of a
+        // Source-tainted entry must propagate the taint label. Before the fix,
+        // `context.insert` (not `insert_tainted`) was used, so the new key
+        // was silently labeled Pure — bypassing the FIDES Source→Sink block.
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
+        let value = serde_json::json!("{{ step_1_result }}");
+        executor.propagate_taint_for_binding(&value, "bound_data");
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("bound_data").copied(),
+            Some(ToolTaint::Source),
+            "Source taint must propagate through inline-Jinja bindings"
+        );
+    }
+
+    #[test]
+    fn propagate_taint_does_not_label_pure_references() {
+        let executor = test_executor_with_taint(vec![]); // no tainted entries
+        let value = serde_json::json!("{{ step_1_result }}");
+        executor.propagate_taint_for_binding(&value, "new_key");
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("new_key"),
+            None,
+            "Pure references must not acquire a taint label"
+        );
+    }
+
+    #[test]
+    fn propagate_taint_endorser_is_preserved_but_not_upgraded() {
+        let executor =
+            test_executor_with_taint(vec![("step_1_result", ToolTaint::Endorser)]);
+        let value = serde_json::json!("{{ step_1_result }}");
+        executor.propagate_taint_for_binding(&value, "endorsed_key");
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("endorsed_key").copied(),
+            Some(ToolTaint::Endorser),
+            "Endorser taint must propagate (audit trail) but not upgrade to Source"
+        );
+    }
+
+    #[test]
+    fn check_untrusted_input_detects_tainted_ref_after_propagation() {
+        // End-to-end: after propagate_taint_for_binding labels a new key as
+        // Source, check_untrusted_input on a $ref to that key must return true.
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
+        // Simulate: input_mapping binds step_1_result (Source) to "data".
+        let mapping_value = serde_json::json!("{{ step_1_result }}");
+        executor.propagate_taint_for_binding(&mapping_value, "data");
+        // Now a Sink tool receives input referencing "data" via $ref.
+        let sink_input = serde_json::json!({"$ref": "data.field"});
+        assert!(
+            executor.check_untrusted_input(&sink_input),
+            "After taint propagation, $ref to the bound key must be detected as untrusted"
+        );
+    }

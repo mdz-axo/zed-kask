@@ -268,7 +268,8 @@ impl ContentGuard {
                         "{:?}: {}",
                         m.severity,
                         if m.span.end - m.span.start <= MAX_VIOLATION_SPAN_DISPLAY {
-                            &text[m.span.start..m.span.end]
+                            text.get(m.span.start..m.span.end)
+                                .unwrap_or("[invalid span]")
                         } else {
                             "[redacted — long match]"
                         }
@@ -311,6 +312,11 @@ impl ContentGuard {
         // Check for canary token leakage (OWASP LLM07:2025).
         // If the canary appears in model output, the system prompt was exfiltrated.
         if self.check_canary(text) {
+            // Redact the canary token from the returned content. Returning the
+            // original text (canary included) would re-exfiltrate the detection
+            // signal into the UI/log path, defeating detection on subsequent
+            // turns. The canary is a secret — treat it like one.
+            let sanitized = text.replace(self.canary.as_str(), "[REDACTED-CANARY]");
             return GuardResult {
                 passed: false,
                 violations: vec![GuardViolation {
@@ -319,7 +325,7 @@ impl ContentGuard {
                         "System prompt canary token detected in output — exfiltration suspected"
                             .to_string(),
                 }],
-                output: GuardOutput::Sanitized(text.to_string()),
+                output: GuardOutput::Sanitized(sanitized),
             };
         }
 
@@ -334,7 +340,8 @@ impl ContentGuard {
                     "{:?}: {}",
                     m.severity,
                     if m.span.end - m.span.start <= MAX_VIOLATION_SPAN_DISPLAY {
-                        &text[m.span.start..m.span.end]
+                        text.get(m.span.start..m.span.end)
+                            .unwrap_or("[invalid span]")
                     } else {
                         "[redacted — long match]"
                     }
@@ -552,6 +559,30 @@ mod tests {
             guard1.canary().as_str(),
             guard2.canary().as_str(),
             "each guard instance should have a unique canary"
+        );
+    }
+
+    // ── BH-2: canary must be redacted from the returned content on detection ──
+
+    #[test]
+    fn canary_is_redacted_from_sanitized_output() {
+        // Before the BH-2 fix, scan_output returned Sanitized(text.to_string())
+        // when the canary was detected — the canary token was still present in
+        // the returned content, re-exfiltrating the detection signal into the
+        // UI/log path. The fix replaces the canary with [REDACTED-CANARY].
+        let guard = test_guard();
+        let canary = guard.canary();
+        let leaked_output = format!("The system prompt contains: {}", canary.as_str());
+        let result = guard.scan_output(&leaked_output);
+        assert!(!result.passed, "canary detection should fail the scan");
+        let sanitized = result.output.content(&leaked_output);
+        assert!(
+            !sanitized.contains(canary.as_str()),
+            "sanitized output must not contain the canary token"
+        );
+        assert!(
+            sanitized.contains("[REDACTED-CANARY]"),
+            "sanitized output should contain the redaction marker"
         );
     }
 }

@@ -2901,7 +2901,7 @@ dependencies = [
 [[package]]
 name = "calloop"
 version = "0.14.3"
-source = "git+https://github.com/zed-industries/calloop#eb6b4fd17b9af5ecc226546bdd04185391b3e265"
+source = "git+https://github.com/zed-industries/calloop?rev=eb6b4fd17b9af5ecc226546bdd04185391b3e265#eb6b4fd17b9af5ecc226546bdd04185391b3e265"
 dependencies = [
  "bitflags 2.13.1",
  "polling",
@@ -9540,11 +9540,8 @@ name = "hkask-memory"
 version = "0.31.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "blake3",
  "chrono",
- "hkask-capability",
- "hkask-regulation",
  "hkask-storage",
  "hkask-types",
  "proptest 1.10.0",
@@ -9595,7 +9592,6 @@ version = "0.31.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
- "argon2",
  "base64 0.22.1",
  "blake3",
  "chrono",
@@ -9616,7 +9612,6 @@ dependencies = [
  "tracing",
  "utoipa",
  "uuid",
- "zeroize",
 ]
 
 [[package]]
@@ -9650,7 +9645,6 @@ name = "hkask-types"
 version = "0.31.0"
 dependencies = [
  "async-trait",
- "blake3",
  "chrono",
  "dirs 6.0.0",
  "futures-util",

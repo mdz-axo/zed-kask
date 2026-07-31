@@ -426,6 +426,17 @@ doesn't exist. Before treating a `.rules` trap as the expected field, grep
 for the artifact name in `crates/` — if no match, the `.rules` entry is
 itself a finding (stale refactor, topological hole).
 
+## Cargo.toml deps outlive their consumers
+
+When a commit deletes a source file, grep the crate's `Cargo.toml` deps
+against the remaining `src/` in the same commit — including the workspace
+`Cargo.toml` for `[workspace.dependencies]` entries, which become transitive
+orphans when their sole consumer crate drops them. A dep whose only `use`
+statements lived in the deleted file stays declared silently — `cargo check`
+passes because the dep is simply never imported, and `cargo machete`/`cargo
+udeps` are not in the default toolchain. The fix is mechanical: for each dep,
+grep `src/` and `tests/` for `use <dep>` and `<dep>::`; zero hits = remove.
+
 ## Kask settings defaults must live in `Default` impls — the single source of truth
 
 Do not encode kask settings defaults in `#[serde(default = "...")]` attributes

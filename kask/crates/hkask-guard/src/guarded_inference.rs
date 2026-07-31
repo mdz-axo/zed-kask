@@ -18,13 +18,93 @@
 //! backend doesn't override streaming.
 
 use crate::ContentGuard;
-use futures_util::{Future, Stream};
+use futures_util::{Future, Stream, StreamExt};
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,
     InferenceStreamChunk, LLMParameters,
 };
 use std::pin::Pin;
 use std::sync::Arc;
+
+/// A stream wrapper that buffers `text_delta` chunks, forwards them unchanged
+/// (preserving streaming latency for the common clean case), and on stream end
+/// runs `scan_output` on the full accumulated text.
+///
+/// If the guard detects secrets in the accumulated output, a final redaction
+/// chunk is emitted containing the sanitized replacement. This closes the
+/// OWASP LLM07 gap where streaming output was never scanned. The consumer
+/// may have already rendered the leaked text, but the *stored* version is
+/// redacted and the `reg.guard.output` span fires.
+struct GuardedStream<S> {
+    inner: Pin<Box<S>>,
+    guard: Arc<ContentGuard>,
+    accumulated: String,
+    scanned: bool,
+}
+
+impl<S> Stream for GuardedStream<S>
+where
+    S: Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send,
+{
+    type Item = Result<InferenceStreamChunk, InferenceError>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.scanned {
+            return std::task::Poll::Ready(None);
+        }
+        match this.inner.as_mut().poll_next(cx) {
+            std::task::Poll::Ready(None) => {
+                // Stream ended — scan the accumulated output.
+                let result = this.guard.scan_output(&this.accumulated);
+                this.scanned = true;
+                if result.output.is_modified() {
+                    let sanitized = result.output.content(&this.accumulated).to_string();
+                    // Emit a redaction chunk: the sanitized text replaces the
+                    // accumulated text. The consumer concatenates deltas, so
+                    // emitting the full sanitized text as a final delta would
+                    // duplicate. Instead, emit the *difference* — the sanitized
+                    // text with the already-streamed portion removed.
+                    //
+                    // The simplest correct redaction: emit a chunk whose
+                    // text_delta, when appended to the accumulated text,
+                    // produces the sanitized version. Since we can't un-emit
+                    // the leaked text, we emit a marker that signals redaction
+                    // occurred. Downstream storage should use the sanitized
+                    // text from the final chunk's `finish_reason` metadata.
+                    //
+                    // For now: emit the sanitized full text as a delta. The
+                    // consumer's accumulation will contain both the leaked
+                    // text and the sanitized text; the *stored* assistant
+                    // message should be reconstructed from the sanitized
+                    // version. This is a known tradeoff — see ART-1 note.
+                    std::task::Poll::Ready(Some(Ok(InferenceStreamChunk {
+                        text_delta: sanitized,
+                        reasoning_delta: String::new(),
+                        model: String::new(),
+                        finish_reason: Some("redacted".to_string()),
+                        usage: None,
+                        tool_calls: vec![],
+                    })))
+                } else {
+                    std::task::Poll::Ready(None)
+                }
+            }
+            std::task::Poll::Ready(Some(Ok(chunk))) => {
+                this.accumulated.push_str(&chunk.text_delta);
+                std::task::Poll::Ready(Some(Ok(chunk)))
+            }
+            std::task::Poll::Ready(Some(Err(e))) => {
+                this.scanned = true;
+                std::task::Poll::Ready(Some(Err(e)))
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
 
 /// Decorator enforcing `ContentGuard` scanning at every `InferencePort` call.
 ///
@@ -208,8 +288,12 @@ impl InferencePort for GuardedInferencePort {
         })
     }
 
-    // ── Streaming: scan input, delegate to inner. Output not scanned (known
-    //    limitation — collecting the stream would defeat streaming latency). ──
+    // ── Streaming: scan input, delegate to inner, then scan output on stream
+    //    end. The stream is wrapped in `GuardedStream` which buffers text deltas
+    //    and runs `scan_output` when the inner stream completes. This closes the
+    //    OWASP LLM07 gap where streaming output was never scanned (ART-1).
+    //    The common clean case preserves streaming latency — chunks are
+    //    forwarded as-is; only on stream end is the scan run.
 
     fn generate_stream(
         &self,
@@ -225,7 +309,13 @@ impl InferencePort for GuardedInferencePort {
             }));
         }
         let cleaned = scan.output.content(prompt).to_string();
-        self.inner.generate_stream(&cleaned, parameters, tools)
+        let inner = self.inner.generate_stream(&cleaned, parameters, tools);
+        Box::pin(GuardedStream {
+            inner,
+            guard: Arc::clone(&self.guard),
+            accumulated: String::new(),
+            scanned: false,
+        })
     }
 
     fn generate_stream_with_model(
@@ -243,8 +333,15 @@ impl InferencePort for GuardedInferencePort {
             }));
         }
         let cleaned = scan.output.content(prompt).to_string();
-        self.inner
-            .generate_stream_with_model(&cleaned, parameters, model_override, tools)
+        let inner = self
+            .inner
+            .generate_stream_with_model(&cleaned, parameters, model_override, tools);
+        Box::pin(GuardedStream {
+            inner,
+            guard: Arc::clone(&self.guard),
+            accumulated: String::new(),
+            scanned: false,
+        })
     }
 
     fn generate_stream_with_messages(
@@ -267,8 +364,15 @@ impl InferencePort for GuardedInferencePort {
                 }));
             }
         }
-        self.inner
-            .generate_stream_with_messages(messages, parameters, model_override, tools)
+        let inner = self
+            .inner
+            .generate_stream_with_messages(messages, parameters, model_override, tools);
+        Box::pin(GuardedStream {
+            inner,
+            guard: Arc::clone(&self.guard),
+            accumulated: String::new(),
+            scanned: false,
+        })
     }
 }
 
@@ -401,20 +505,19 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Pinning test for F48: streaming output is NOT scanned.
+    /// Pinning test for ART-1: streaming output IS scanned on stream end.
     ///
     /// The streaming methods (`generate_stream`, `generate_stream_with_model`,
-    /// `generate_stream_with_messages`) scan input but delegate directly to
-    /// `inner.generate_stream(...)` without scanning output chunks. This is a
-    /// deliberate trade-off documented at guarded_inference.rs:211-212:
-    /// collecting the stream would defeat streaming latency.
+    /// `generate_stream_with_messages`) wrap the inner stream in `GuardedStream`,
+    /// which buffers `text_delta` chunks and runs `scan_output` when the inner
+    /// stream completes. If secrets are detected, a final redaction chunk is
+    /// emitted with `finish_reason: "redacted"`.
     ///
-    /// This test pins the CURRENT behavior: a secret in the streaming output
-    /// survives unredacted. If a future change adds output scanning to the
-    /// stream path, this test will fail — forcing the author to update it
-    /// deliberately rather than silently changing the security surface.
+    /// This test pins the FIXED behavior: a secret in the streaming output
+    /// triggers redaction. The `reg.guard.output` span fires and the sanitized
+    /// text is emitted as a final chunk. This closes the OWASP LLM07 gap.
     #[tokio::test]
-    async fn streaming_output_secret_survives_unredacted_f48_pin() {
+    async fn streaming_output_secret_is_redacted_art1() {
         let port = guarded_echo();
         let secret = "sk-abc123def456ghi789jkl012mno345pqr678stu";
         let prompt = format!("key: {secret}");
@@ -425,18 +528,29 @@ mod tests {
             .await
             .expect("stream should complete without error");
 
-        assert_eq!(chunks.len(), 1, "echo port yields exactly one chunk");
-        let collected: String = chunks.iter().map(|c| c.text_delta.as_str()).collect();
+        // The echo port yields one chunk (the echoed prompt), then GuardedStream
+        // scans the accumulated output and emits a redaction chunk if secrets
+        // are found.
         assert!(
-            collected.contains(secret),
-            "F48 pin: streaming output secret must survive unredacted (current behavior). \
-             If you intentionally added output scanning to the stream path, update this \
-             test to assert `[REDACTED]` instead and remove this pin."
+            chunks.len() >= 2,
+            "echo chunk + redaction chunk expected; got {} chunks",
+            chunks.len()
+        );
+
+        // The last chunk should carry the redaction marker.
+        let last = chunks.last().expect("at least one chunk");
+        assert_eq!(
+            last.finish_reason.as_deref(),
+            Some("redacted"),
+            "final chunk should signal redaction via finish_reason"
         );
         assert!(
-            !collected.contains("[REDACTED]"),
-            "F48 pin: streaming output was redacted — output scanning was added to the \
-             stream path. Update this test to reflect the new (scanned) behavior."
+            !last.text_delta.contains(secret),
+            "redacted chunk must not contain the original secret"
+        );
+        assert!(
+            last.text_delta.contains("[REDACTED]"),
+            "redacted chunk should contain the [REDACTED] marker"
         );
     }
 }

@@ -668,11 +668,7 @@ futures-lite = "1.13"
 futures-util = "0.3.32"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 
-# Curator email (IMAP inbound + MIME parsing)
-async-imap = "0.9"
 tokio-rustls = "0.26"
-webpki-roots = "0.26"
-mailparse = "0.16"
 
 globset = "0.4"
 heapless = "0.9.2"
@@ -866,7 +862,7 @@ hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
-llm-guard = "0.2"
+llm-guard = "=0.2.0"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"
 rmcp = "1"
@@ -1060,7 +1056,7 @@ features = [
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
-calloop = { git = "https://github.com/zed-industries/calloop" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "eb6b4fd17b9af5ecc226546bdd04185391b3e265" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
 libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
 notify = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
