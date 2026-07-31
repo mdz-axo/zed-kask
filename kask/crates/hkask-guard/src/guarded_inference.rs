@@ -18,7 +18,7 @@
 //! backend doesn't override streaming.
 
 use crate::ContentGuard;
-use futures_util::{Future, Stream, StreamExt};
+use futures_util::{Future, Stream};
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,
     InferenceStreamChunk, LLMParameters,
@@ -35,17 +35,14 @@ use std::sync::Arc;
 /// OWASP LLM07 gap where streaming output was never scanned. The consumer
 /// may have already rendered the leaked text, but the *stored* version is
 /// redacted and the `reg.guard.output` span fires.
-struct GuardedStream<S> {
-    inner: Pin<Box<S>>,
+struct GuardedStream<'a> {
+    inner: Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + 'a>>,
     guard: Arc<ContentGuard>,
     accumulated: String,
     scanned: bool,
 }
 
-impl<S> Stream for GuardedStream<S>
-where
-    S: Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send,
-{
+impl<'a> Stream for GuardedStream<'a> {
     type Item = Result<InferenceStreamChunk, InferenceError>;
 
     fn poll_next(

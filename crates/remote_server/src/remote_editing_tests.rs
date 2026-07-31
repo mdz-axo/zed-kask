@@ -234,6 +234,21 @@ async fn test_remote_telemetry_event_forwarding(
 
     let ssh = RemoteClient::connect_mock(opts, cx).await;
     let project = build_project(ssh, cx);
+    // zed-kask disables telemetry metrics by default in
+    // `assets/settings/default.json` (a fork sending events to Zed's
+    // pipeline is noise + a minor info leak). This test exercises remote
+    // telemetry forwarding, so it must opt back in — otherwise the client's
+    // `report_event` early-returns and the forwarded event is dropped before
+    // it reaches `queued_events()`. This pins the divergence: production
+    // defaults off, tests that need it opt in.
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .telemetry
+                .get_or_insert_default()
+                .metrics = Some(true);
+        });
+    });
     project
         .update(cx, {
             let headless = headless.clone();
@@ -3676,6 +3691,11 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let output = task.await.unwrap();
     cx.run_until_parked();
+    // zed-kask: `SkillTool::new` wires no manifest executor, so `run` returns
+    // the no-op envelope (body injection is disabled in zed-kask — the
+    // SKILL.md body is never injected; skills execute via YAML manifests in
+    // the kask registry). The envelope structure — wrapper tag, source,
+    // worktree, directory — must still be present; the body must NOT be.
     let expected = format!(
         concat!(
             "<skill_content name=\"test-skill\">\n",
@@ -3684,7 +3704,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             "<directory>{}</directory>\n",
             "Relative paths in this skill resolve against <directory>.\n",
             "\n",
-            "test body\n",
+            "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)\n",
             "</skill_content>\n",
         ),
         path!("/project/.agents/skills/test-skill"),
@@ -3726,6 +3746,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap();
 
     let output = task.await.unwrap();
+    // Same no-op envelope as above — body injection is disabled in zed-kask.
     let expected2 = format!(
         concat!(
             "<skill_content name=\"test-2\">\n",
@@ -3734,7 +3755,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             "<directory>{}</directory>\n",
             "Relative paths in this skill resolve against <directory>.\n",
             "\n",
-            "test body\n",
+            "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)\n",
             "</skill_content>\n",
         ),
         path!("/project/.agents/skills/test-2"),

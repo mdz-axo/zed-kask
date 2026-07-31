@@ -1,0 +1,17 @@
+id: RR-0023
+title: "GuardedInferencePort generate_stream* skips scan_output (OWASP LLM07 bypass)"
+surface: code
+cwe: CWE-200
+owasp_llm_2025: LLM07
+atlas_tactic: AML.TA0010
+discovered_in: kask/crates/hkask-guard/src/guarded_inference.rs
+discovered_by: adversarial-red-team
+discovered_at: 2026-07-30
+severity: high
+detection:
+  kind: grep
+  pattern: "Output not scanned"
+  include: "kask/crates/hkask-guard/src/**/*.rs"
+mitigation: "Wrap the inner stream in GuardedStream, which buffers text_delta chunks and runs scan_output on stream end. Emit a redaction chunk with finish_reason: 'redacted' when secrets are detected."
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

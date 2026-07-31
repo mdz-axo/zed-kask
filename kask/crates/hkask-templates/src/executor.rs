@@ -260,7 +260,7 @@ impl ManifestExecutor {
         if referenced_keys.is_empty() {
             return;
         }
-        let labels = self
+        let mut labels = self
             .taint_labels
             .lock()
             .expect("taint_labels mutex poisoned");
@@ -303,10 +303,10 @@ impl ManifestExecutor {
         match value {
             Value::Object(map) => {
                 if let Some(Value::String(ref_path)) = map.get("$ref") {
-                    if let Some(key) = ref_path.split('.').next() {
-                        if !key.is_empty() {
-                            keys.push(key.to_string());
-                        }
+                    if let Some(key) = ref_path.split('.').next()
+                        && !key.is_empty()
+                    {
+                        keys.push(key.to_string());
                     }
                     return;
                 }
@@ -335,8 +335,8 @@ impl ManifestExecutor {
                         .split(|c: char| !c.is_alphanumeric() && c != '_')
                         .find(|t| {
                             !t.is_empty()
-                                && (t.chars().next().unwrap().is_alphabetic()
-                                    || t.chars().next().unwrap() == '_')
+                                && (t.starts_with(|c: char| c.is_alphabetic())
+                                    || t.starts_with('_'))
                                 && !matches!(*t, "if" | "for" | "endif" | "endfor" | "else" | "elif")
                         });
                     if let Some(tok) = token {
@@ -3445,17 +3445,16 @@ mod tests {
     fn test_executor_with_taint(
         taint: Vec<(&str, ToolTaint)>,
     ) -> ManifestExecutor {
-        use hkask_capability::NoopToolPort;
         let inference = Arc::new(StubInferencePort);
-        let tools = Arc::new(NoopToolPort);
-        let mut executor = ManifestExecutor::new(
+        let tools = Arc::new(StubToolPort);
+        let executor = ManifestExecutor::new(
             inference,
             tools,
             LLMParameters::default(),
             vec![0u8; 32],
         );
         // Populate taint_labels directly.
-        let labels = executor.taint_labels.lock().expect("taint mutex");
+        let mut labels = executor.taint_labels.lock().expect("taint mutex");
         for (key, taint) in taint {
             labels.insert(key.to_string(), taint);
         }
@@ -3473,12 +3472,43 @@ mod tests {
             _prompt: &str,
             _parameters: &LLMParameters,
             _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<InferenceResult, hkask_types::InferenceError>> + Send + '_>> {
             Box::pin(async {
                 Err(hkask_types::InferenceError::Generation(
                     "StubInferencePort: inference should not be called for taint tests".into(),
                 ))
             })
+        }
+    }
+
+    /// Stub tool port for taint-propagation tests.
+    struct StubToolPort;
+
+    impl hkask_capability::ToolPort for StubToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: Value,
+            _token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<'a, std::result::Result<Value, hkask_capability::ToolPortError>> {
+            Box::pin(async {
+                Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
+                    entity_type: "tool".to_string(),
+                    id: "stub".to_string(),
+                }))
+            })
+        }
+
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async { None })
+        }
+
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec![] })
         }
     }
 
@@ -3596,3 +3626,4 @@ mod tests {
             "After taint propagation, $ref to the bound key must be detected as untrusted"
         );
     }
+}

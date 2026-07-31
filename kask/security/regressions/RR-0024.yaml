@@ -1,0 +1,16 @@
+id: RR-0024
+title: "scan_output canary branch returned Sanitized(original_text) — canary still present"
+surface: code
+cwe: CWE-200
+owasp_llm_2025: LLM07
+discovered_in: kask/crates/hkask-guard/src/pipeline.rs
+discovered_by: bug-hunt
+discovered_at: 2026-07-30
+severity: medium
+detection:
+  kind: grep
+  pattern: 'Sanitized\(text\.to_string\(\)\)'
+  include: "kask/crates/hkask-guard/src/pipeline.rs"
+mitigation: "Replace text.to_string() with text.replace(self.canary.as_str(), \"[REDACTED-CANARY]\")."
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

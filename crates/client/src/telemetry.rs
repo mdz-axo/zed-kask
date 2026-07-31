@@ -1061,7 +1061,20 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
+            let mut settings_store = SettingsStore::test(cx);
+            // zed-kask disables telemetry metrics by default in
+            // `assets/settings/default.json` (a fork sending events to Zed's
+            // pipeline is noise + a minor info leak). These tests exercise
+            // telemetry behavior, so they must opt back in — otherwise
+            // `report_event` early-returns and every assertion sees an empty
+            // queue. This pins the divergence: production defaults off, tests
+            // that need it opt in.
+            settings_store.update_user_settings(cx, |content| {
+                content
+                    .telemetry
+                    .get_or_insert_default()
+                    .metrics = Some(true);
+            });
             cx.set_global(settings_store);
         });
     }

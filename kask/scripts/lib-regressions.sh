@@ -19,6 +19,11 @@
 # - surface: "" (all) or "training" / "supply-chain" / "runtime" / etc.
 # - include_patterns: grep --include flags as a single string
 # - deferred_kind_name: name for deferred regressions (e.g., "runtime-assert" / "reg-span")
+#
+# Supported detection kinds:
+#   grep        — pattern must NOT appear in the codebase (enforced)
+#   cargo-test  — named test must pass (enforced via cargo test --lib)
+#   <deferred>  — acknowledged but not mechanically enforced (e.g., reg-span)
 check_regressions() {
   local surface="$1"
   local include_patterns="$2"
@@ -35,6 +40,7 @@ check_regressions() {
   local pending=0
   local enforced=0
   local deferred=0
+  local cargo_test_failures=0
 
   # Parse include_patterns into array for grep.
   local include_array=()
@@ -62,7 +68,7 @@ check_regressions() {
     rr_title=$(grep -m1 '^title:' "$rr_file" | sed 's/^title:\s*//' | sed 's/^"\(.*\)"$/\1/')
 
     # Skip kinds we don't handle.
-    if [ "$rr_kind" != "grep" ] && [ "$rr_kind" != "$deferred_kind" ]; then
+    if [ "$rr_kind" != "grep" ] && [ "$rr_kind" != "$deferred_kind" ] && [ "$rr_kind" != "cargo-test" ]; then
       continue
     fi
 
@@ -72,6 +78,34 @@ check_regressions() {
       if [ "$rr_status" = "enforced" ]; then
         deferred=$((deferred + 1))
         echo "deferred: $rr_id is $deferred_kind (enforced but runtime check not in CI) — $rr_title"
+      elif [ "$rr_status" = "pending" ]; then
+        pending=$((pending + 1))
+        echo "ratchet: $rr_id is pending (known, not yet enforced) — $rr_title"
+      fi
+      continue
+    fi
+
+    # cargo-test regressions: run the named test via cargo test --lib.
+    # The pattern field is the test name (substring match via cargo test filter).
+    if [ "$rr_kind" = "cargo-test" ]; then
+      if [ "$rr_status" = "enforced" ]; then
+        enforced=$((enforced + 1))
+        local rr_include
+        rr_include=$(grep -m1 'include:' "$rr_file" | sed 's/.*include:\s*//' | sed 's/^"\(.*\)"$/\1/')
+        # Extract the crate name from the include path (e.g., "kask/crates/hkask-templates/src/executor.rs" → "hkask-templates").
+        local crate_name=""
+        if [ -n "$rr_include" ]; then
+          crate_name=$(echo "$rr_include" | sed -n 's|.*\(kask/crates/\)\([^/][^/]*\)/.*|\2|p')
+        fi
+        if [ -z "$crate_name" ]; then
+          echo "::warning::Regression $rr_id (cargo-test): could not extract crate name from include '$rr_include' — skipping"
+          continue
+        fi
+        if ! cargo test -p "$crate_name" --lib "$rr_pattern" 2>/dev/null; then
+          echo "::error::Regression $rr_id violated: $rr_title"
+          echo "  cargo-test: '$rr_pattern' failed in crate '$crate_name'"
+          cargo_test_failures=$((cargo_test_failures + 1))
+        fi
       elif [ "$rr_status" = "pending" ]; then
         pending=$((pending + 1))
         echo "ratchet: $rr_id is pending (known, not yet enforced) — $rr_title"
@@ -107,7 +141,7 @@ check_regressions() {
     fi
   done
 
-  echo "summary: $violations violation(s), $enforced enforced, $pending pending, $deferred $deferred_kind (deferred)"
+  echo "summary: $violations grep violation(s), $cargo_test_failures cargo-test failure(s), $enforced enforced, $pending pending, $deferred $deferred_kind (deferred)"
 
-  [ "$violations" -eq 0 ]
+  [ "$violations" -eq 0 ] && [ "$cargo_test_failures" -eq 0 ]
 }

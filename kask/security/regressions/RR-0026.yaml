@@ -1,0 +1,17 @@
+id: RR-0026
+title: "input_mapping bindings lose Source taint via context.insert (FIDES closure break)"
+surface: code
+cwe: CWE-20
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+discovered_in: kask/crates/hkask-templates/src/executor.rs
+discovered_by: adversarial-red-team
+discovered_at: 2026-07-30
+severity: high
+detection:
+  kind: cargo-test
+  pattern: "propagate_taint_from_inline_jinja_source"
+  include: "kask/crates/hkask-templates/src/executor.rs"
+mitigation: "Call propagate_taint_for_binding(v, k) before context.insert(k, bound) at every input_mapping call site. Without it, inline-Jinja bindings ({{ step_N_result }}) lose their Source taint label — context.insert is a plain HashMap method with no taint awareness, and the FIDES Source→Sink block is silently bypassed."
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

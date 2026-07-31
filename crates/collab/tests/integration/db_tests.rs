@@ -124,6 +124,25 @@ macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
+            // zed-kask: the postgres test variants require a live Postgres on
+            // `localhost:5432` (see `TestDb::postgres`, which hardcodes
+            // `postgres://postgres@localhost/zed-test-{random}` and
+            // `expect`s `create_database` to succeed). The kask CI workflow
+            // (`.github/workflows/kask-ci.yml`) deliberately does NOT spin up
+            // a postgres service — kask reads `HKASK_DATABASE_URL` (not
+            // `DATABASE_URL`) and `HKASK_DB_PROVIDER` defaults to sqlite, so a
+            // postgres service would provide zero kask coverage.
+            //
+            // Gate on `HKASK_DATABASE_URL` presence so the variants skip
+            // cleanly when no Postgres is configured, instead of panicking
+            // inside `create_database`. This mirrors how kask itself chooses
+            // the backend (`ServiceConfig::open_driver` requires
+            // `HKASK_DATABASE_URL` when `HKASK_DB_PROVIDER=postgres`). To run
+            // these locally, set `HKASK_DATABASE_URL` (any non-empty value)
+            // and ensure `localhost:5432` is reachable.
+            if std::env::var("HKASK_DATABASE_URL").is_err() {
+                return;
+            }
             // In CI, only run postgres tests on Linux (where we have the postgres service).
             // Locally, always run them (assuming postgres is available).
             if std::env::var("CI").is_ok() && !cfg!(target_os = "linux") {

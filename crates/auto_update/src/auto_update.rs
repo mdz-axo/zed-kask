@@ -1345,7 +1345,13 @@ mod tests {
     impl Global for InstallOverride {}
 
     #[gpui::test]
-    fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
+    fn test_auto_update_defaults_to_false(cx: &mut TestAppContext) {
+        // zed-kask: auto_update is disabled by default in
+        // `assets/settings/default.json`. Auto-update from Zed's release feed
+        // would replace the zed-kask binary with upstream Zed, losing the
+        // fork. zed-kask is built from source; re-run the install script to
+        // update. This test pins the divergence from upstream (which defaults
+        // to true).
         cx.update(|cx| {
             let mut store = SettingsStore::new(cx, &settings::default_settings());
             store
@@ -1355,7 +1361,7 @@ mod tests {
                 .set_user_settings("{}", cx)
                 .expect("Unable to set user settings");
             cx.set_global(store);
-            assert!(AutoUpdateSetting::get_global(cx).0);
+            assert!(!AutoUpdateSetting::get_global(cx).0);
         });
     }
 
