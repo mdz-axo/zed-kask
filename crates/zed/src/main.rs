@@ -1442,7 +1442,6 @@ fn main() {
                                 kask_settings.fusion.openrouter_max_price,
                                 kask_settings.fusion.openrouter_min_intelligence
                             );
-                            let or_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
                             let max_price = kask_settings.fusion.openrouter_max_price;
                             let min_ia = kask_settings.fusion.openrouter_min_intelligence;
                             // Spawn discovery on the tokio runtime, not GPUI's
@@ -1457,7 +1456,7 @@ fn main() {
                             let discovery_task = gpui_tokio::Tokio::spawn(
                                 &*cx,
                                 async move {
-                                    kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
+                                    kask_bridge::discover_favorites(max_price, min_ia).await
                                 },
                             );
                             let timeout = cx.background_executor().timer(std::time::Duration::from_secs(5));
@@ -1466,7 +1465,7 @@ fn main() {
                                     Ok(favs) => favs,
                                     Err(join_err) => {
                                         log::warn!(
-                                            "hKask fusion: OpenRouter discovery task failed: {join_err} — \
+                                            "hKask fusion: Artificial Analysis discovery task failed: {join_err} — \
                                              falling back to kask_default panel"
                                         );
                                         Vec::new()
@@ -1474,7 +1473,7 @@ fn main() {
                                 },
                                 _ = timeout.fuse() => {
                                     log::warn!(
-                                        "hKask fusion: OpenRouter discovery timed out after 5s — \
+                                        "hKask fusion: Artificial Analysis discovery timed out after 5s — \
                                          falling back to kask_default panel"
                                     );
                                     Vec::new()

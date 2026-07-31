@@ -668,10 +668,7 @@ fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
 /// discover the default model was screening it out. Artificial Analysis scores
 /// models on a single intelligence axis without a supported-parameters gate.
 ///
-/// The `openrouter_api_key` parameter is retained for API compatibility but is
-/// no longer used for discovery. The Artificial Analysis API key is read from
-/// the `ARTIFICIAL_ANALYSIS_API_KEY` env var; the free tier works without a key
-/// but sends the header when present to avoid anonymous rate limits.
+/// The Artificial Analysis API key is read from the `AA_API_KEY` env var.
 ///
 /// Returns provider-prefixed model IDs (e.g. `"OpenRouter/z-ai/glm-5.2"`) sorted by
 /// intelligence index descending. On any error, returns an empty vec.
@@ -679,11 +676,10 @@ fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
 /// Used by the composition root to auto-populate the fusion panel when
 /// `kask.fusion.panel_models` is empty or set to `"auto"`.
 pub async fn discover_favorites(
-    _openrouter_api_key: &str,
     max_price_per_m: f64,
     min_intelligence_index: f64,
-) -> Vec<hkask_inference::openrouter_backend::FavoriteModel> {
-    let aa_api_key = std::env::var("ARTIFICIAL_ANALYSIS_API_KEY").unwrap_or_default();
+) -> Vec<hkask_inference::artificial_analysis::FavoriteModel> {
+    let aa_api_key = std::env::var("AA_API_KEY").unwrap_or_default();
     hkask_inference::artificial_analysis::discover_favorites(
         &aa_api_key,
         max_price_per_m,
@@ -720,7 +716,7 @@ const ZED_OPENROUTER_PROVIDER_ID: &str = "openrouter";
 /// root calls `update_settings_file` to persist the result.
 #[must_use]
 pub fn favorite_model_selections(
-    favorites: &[hkask_inference::openrouter_backend::FavoriteModel],
+    favorites: &[hkask_inference::artificial_analysis::FavoriteModel],
 ) -> Vec<settings_content::LanguageModelSelection> {
     favorites
         .iter()
@@ -755,7 +751,7 @@ pub fn fusion_model_selection() -> settings_content::LanguageModelSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_inference::openrouter_backend::FavoriteModel;
+    use hkask_inference::artificial_analysis::FavoriteModel;
 
     fn fav(id: &str) -> FavoriteModel {
         FavoriteModel {

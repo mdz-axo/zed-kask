@@ -524,7 +524,7 @@ impl Default for KaskFusionSettings {
             algo_method: "merge".to_string(),
             skills: String::default(),
             max_rounds: 5,
-            openrouter_max_price: 1.0,
+            openrouter_max_price: 2.0,
             openrouter_min_intelligence: 40.0,
             coherence_threshold: None,
             panel_sizing_enabled: false,

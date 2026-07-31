@@ -174,7 +174,7 @@ pub(crate) fn render_fusion_page(
     let openrouter_max_price_input = SettingsInputField::new("kask-fusion-or-max-price")
         .tab_index(0)
         .with_initial_text(openrouter_max_price)
-        .with_placeholder("1.0")
+        .with_placeholder("2.0")
         .aria_label("Max Price")
         .confirm_on_focus_out()
         .on_confirm(move |value, _window, cx| {
@@ -437,8 +437,8 @@ pub(crate) fn render_fusion_page(
                         "When the panel models field is empty or set to \"auto\", the panel \
                          is populated from Artificial Analysis models passing both thresholds. \
                          These gates also feed the default-model onboarding thresholds. \
-                         Set ARTIFICIAL_ANALYSIS_API_KEY to use the Pro tier (exposes \
-                         the OpenRouter model ID mapping); the free tier works without a key.",
+                         Set AA_API_KEY to use the Pro tier (exposes the OpenRouter model \
+                         ID mapping); the free tier works without a key.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

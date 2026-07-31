@@ -202,9 +202,6 @@ pub struct InferenceConfig {
     pub together_api_key: String,
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
-    /// OpenRouter model discovery thresholds (used by CLI model discovery).
-    pub openrouter_max_prompt_price_per_m: f64,
-    pub openrouter_min_intelligence_index: f64,
     pub kilocode_base_url: String,
     pub kilocode_api_key: String,
     /// Ollama local inference — defaults to `http://localhost:11434`. The API key
@@ -241,8 +238,6 @@ impl Default for InferenceConfig {
             together_api_key: String::new(),
             openrouter_base_url: "https://openrouter.ai/api".to_string(),
             openrouter_api_key: String::new(),
-            openrouter_max_prompt_price_per_m: 1.0,
-            openrouter_min_intelligence_index: 40.0,
             kilocode_base_url: "https://api.kilo.ai/api/gateway".to_string(),
             kilocode_api_key: String::new(),
             ollama_base_url: "http://localhost:11434".to_string(),
@@ -288,9 +283,6 @@ impl InferenceConfig {
 
         let fal_api_key = resolve_api_key("FALAI_API_KEY");
 
-        let openrouter_max_prompt_price_per_m = env_f64("HKASK_OR_MAX_PRICE", 1.0);
-        let openrouter_min_intelligence_index = env_f64("HKASK_OR_MIN_INTELLIGENCE_INDEX", 40.0);
-
         // Fusion: parse structured env vars.
         let fusion = parse_fusion_config();
 
@@ -306,8 +298,6 @@ impl InferenceConfig {
             together_api_key: tg.api_key,
             openrouter_base_url: or.base_url,
             openrouter_api_key: or.api_key,
-            openrouter_max_prompt_price_per_m,
-            openrouter_min_intelligence_index,
             kilocode_base_url: kc.base_url,
             kilocode_api_key: kc.api_key,
             ollama_base_url: om.base_url,
@@ -345,18 +335,6 @@ impl InferenceConfig {
 
 /// Parse an `f64` from an environment variable, falling back to `default` on
 /// absence or parse failure. Used for tunable thresholds (price caps, etc.).
-/// Reads only the env var — does not fall back to the `hkask` keychain
-/// (reserved for sovereignty keys per the `hkask_keystore` module contract).
-fn env_f64(key: &str, default: f64) -> f64 {
-    if let Ok(val) = std::env::var(key)
-        && !val.is_empty()
-        && let Ok(f) = val.parse::<f64>()
-    {
-        return f;
-    }
-    default
-}
-
 /// Resolve a provider API key from the process environment.
 ///
 /// In zed-kask, inference API keys are injected into MCP server child

@@ -2,9 +2,9 @@
 //!
 //! Artificial Analysis (https://artificialanalysis.ai) provides an independent
 //! Intelligence Index, pricing, and performance data for language models via a
-//! documented REST API. This module uses the free-tier
-//! `/api/v2/language/models/free` endpoint to discover models that meet kask's
-//! fusion panel thresholds (intelligence index ≥ N, input price ≤ $X/M).
+//! documented REST API. This module uses the `/api/v2/language/models/free`
+//! endpoint to discover models that meet kask's fusion panel thresholds
+//! (intelligence index ≥ N, input price ≤ $X/M).
 //!
 //! ## Why Artificial Analysis instead of OpenRouter's `/v1/models`
 //!
@@ -18,40 +18,60 @@
 //! supported-parameters gate, so the default model is never excluded for
 //! lacking an optional API parameter.
 //!
-//! ## API tiers
+//! ## API key
 //!
-//! The free tier (100 req/day, `x-api-key` header) returns the public subset:
-//! `evaluations.artificial_analysis_intelligence_index`, `pricing.price_1m_input_tokens`,
-//! and `pricing.price_1m_output_tokens`. The `openrouter_api_id` field (which
-//! maps an AA model to its OpenRouter identifier) is Pro-tier only; on the free
-//! tier we fall back to the AA `slug` and a small normalization table for the
-//! common cases.
+//! The API requires a key (env: `AA_API_KEY`). The free tier (100 req/day)
+//! includes `evaluations.artificial_analysis_intelligence_index` and
+//! `pricing.price_1m_input_tokens` — the two fields needed for filtering. The
+//! `openrouter_api_id` field (which maps an AA model to its OpenRouter
+//! identifier) and `licensing.is_open_weights` are Pro-tier only; on the free
+//! tier we fall back to the AA `slug` and a normalization table for the common
+//! cases.
 
-use serde::Deserialize;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::ProviderId;
-pub use crate::openrouter_backend::FavoriteModel;
 
 const AA_BASE_URL: &str = "https://artificialanalysis.ai/api/v2";
 const AA_FREE_MODELS_PATH: &str = "/language/models/free";
+const MAX_PAGES: u32 = 5;
+
+/// A model that passed the favorites thresholds.
+///
+/// Returned by `discover_favorites` — models that meet the price and
+/// intelligence gates, sorted by intelligence index descending.
+#[derive(Debug, Clone, Serialize)]
+pub struct FavoriteModel {
+    /// Provider-prefixed model ID (e.g. "OpenRouter/z-ai/glm-5.2").
+    pub prefixed_id: String,
+    /// Raw model ID (e.g. "z-ai/glm-5.2").
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Intelligence index (0–100 scale).
+    pub intelligence_index: f64,
+    /// Prompt price per million tokens (USD).
+    pub prompt_price_per_m: f64,
+    /// Completion price per million tokens (USD).
+    pub completion_price_per_m: f64,
+    /// Context length in tokens (0 when unavailable on the free tier).
+    pub context_length: u64,
+}
 
 /// Discover fusion panel favorites from Artificial Analysis.
 ///
-/// Queries the free-tier `/language/models/free` endpoint and filters
+/// Queries the `/language/models/free` endpoint (paginated) and filters
 /// client-side by `artificial_analysis_intelligence_index >= min_intelligence_index`
 /// and `price_1m_input_tokens <= max_price_per_m`. Results are sorted by
 /// intelligence index descending.
 ///
-/// The `api_key` is the Artificial Analysis API key (env: `ARTIFICIAL_ANALYSIS_API_KEY`).
-/// The free tier works without a key for the public subset, but the `x-api-key`
-/// header is sent when a key is present to avoid anonymous rate limits.
+/// The `api_key` is the Artificial Analysis API key (env: `AA_API_KEY`).
 ///
 /// Returns `Vec<FavoriteModel>` with `prefixed_id` set to the OpenRouter-prefixed
 /// model ID (e.g. `"OpenRouter/z-ai/glm-5.2"`) so the result is drop-in
-/// compatible with the previous OpenRouter-based discovery. On any error
-/// (network, parse, empty key) returns an empty vec — the caller falls back to
+/// compatible with the fusion panel's model resolution. On any error
+/// (network, parse, non-200) returns an empty vec — the caller falls back to
 /// the kask default panel.
 pub async fn discover_favorites(
     api_key: &str,
@@ -63,7 +83,7 @@ pub async fn discover_favorites(
         .user_agent("zed-kask-fusion")
         .build()
     {
-        Ok(c) => Arc::new(c),
+        Ok(c) => c,
         Err(e) => {
             warn!(
                 target: "reg.fusion",
@@ -74,23 +94,11 @@ pub async fn discover_favorites(
         }
     };
 
-    discover_favorites_with_client(&client, api_key, max_price_per_m, min_intelligence_index).await
-}
-
-/// Internal entry point that accepts an injected `reqwest::Client` for testing.
-async fn discover_favorites_with_client(
-    client: &reqwest::Client,
-    api_key: &str,
-    max_price_per_m: f64,
-    min_intelligence_index: f64,
-) -> Vec<FavoriteModel> {
     // The free endpoint is paginated (page_size=200). Fetch all pages up to a
-    // sane cap (5 pages = 1000 models) to avoid unbounded pagination on a
-    // misbehaving server.
+    // sane cap (5 pages = 1000 models) to avoid unbounded pagination.
     let mut all_models: Vec<AaModel> = Vec::new();
     let mut page = 1u32;
-    let max_pages = 5u32;
-    while page <= max_pages {
+    while page <= MAX_PAGES {
         let url = format!("{AA_BASE_URL}{AA_FREE_MODELS_PATH}?page={page}");
         let mut req = client.get(&url);
         if !api_key.is_empty() {
@@ -160,7 +168,6 @@ async fn discover_favorites_with_client(
                 .and_then(|p| p.price_1m_output_tokens)
                 .unwrap_or(f64::INFINITY);
 
-            // Client-side gates (server does not filter on these for the free tier).
             if prompt_price_per_m > max_price_per_m {
                 return None;
             }
@@ -168,36 +175,32 @@ async fn discover_favorites_with_client(
                 return None;
             }
 
-            // Resolve the OpenRouter model ID. Pro tier exposes
-            // `openrouter_api_id` directly; free tier doesn't, so we fall back
-            // to the AA slug and a normalization table for common cases.
+            // Pro tier exposes `openrouter_api_id` directly; free tier doesn't,
+            // so we fall back to the AA slug and a normalization table.
             let or_id = model
                 .openrouter_api_id
                 .clone()
-                .unwrap_or_else(|| normalize_slug_to_openrouter_id(&model.slug, &model.name));
+                .unwrap_or_else(|| normalize_slug_to_openrouter_id(&model.slug));
 
             if or_id.is_empty() {
-                // No OpenRouter mapping — skip; the fusion panel only routes
-                // through OpenRouter today.
                 return None;
             }
 
-            let prefixed_id = ProviderId::OpenRouter.prefix_model(&or_id);
-            let name = model.name.clone();
-
             Some(FavoriteModel {
-                prefixed_id,
+                prefixed_id: ProviderId::OpenRouter.prefix_model(&or_id),
                 id: or_id,
-                name,
+                name: model.name,
                 intelligence_index,
                 prompt_price_per_m,
                 completion_price_per_m,
+                // Context window is Pro-tier only on the AA API; the free tier
+                // doesn't expose it. Set to 0 — the fusion panel doesn't use
+                // this field for routing.
                 context_length: 0,
             })
         })
         .collect();
 
-    // Sort by intelligence index descending (stable on ties).
     favorites.sort_by(|a, b| {
         b.intelligence_index
             .partial_cmp(&a.intelligence_index)
@@ -215,56 +218,41 @@ async fn discover_favorites_with_client(
     favorites
 }
 
-/// Heuristic mapping from an Artificial Analysis slug/name to an OpenRouter
-/// model ID, for the free tier where `openrouter_api_id` is not exposed.
+/// Heuristic mapping from an Artificial Analysis slug to an OpenRouter model ID.
 ///
 /// Artificial Analysis uses slugs like `glm-5-2`, `claude-sonnet-4`,
 /// `deepseek-v3`. OpenRouter uses IDs like `z-ai/glm-5.2`,
-/// `anthropic/claude-sonnet-4`, `deepseek/deepseek-v3`. The mapping is
-/// imperfect — when in doubt we return an empty string so the model is skipped
-/// rather than fabricating a wrong OpenRouter ID.
-fn normalize_slug_to_openrouter_id(slug: &str, name: &str) -> String {
+/// `anthropic/claude-sonnet-4`, `deepseek/deepseek-v3`. When in doubt we
+/// return an empty string so the model is skipped rather than fabricating a
+/// wrong OpenRouter ID.
+fn normalize_slug_to_openrouter_id(slug: &str) -> String {
     let slug_l = slug.to_lowercase();
-    let name_l = name.to_lowercase();
 
     // GLM family — Zhipu AI on OpenRouter is `z-ai/<id>`.
+    // AA slug "glm-5-2" → OR id "z-ai/glm-5.2"
     if slug_l.contains("glm") {
-        // AA slug "glm-5-2" → OR id "z-ai/glm-5.2"
         let version = slug_l.trim_start_matches("glm-").replace('-', ".");
         return format!("z-ai/glm-{version}");
     }
-
-    // Claude family — Anthropic on OpenRouter.
     if slug_l.contains("claude") {
         return format!("anthropic/{slug}");
     }
-
-    // DeepSeek family.
     if slug_l.contains("deepseek") {
         return format!("deepseek/{slug}");
     }
-
-    // Qwen family.
     if slug_l.contains("qwen") {
         return format!("qwen/{slug}");
     }
-
-    // Gemini family — Google on OpenRouter.
     if slug_l.contains("gemini") {
         return format!("google/{slug}");
     }
-
-    // GPT / OpenAI family.
-    if slug_l.starts_with("gpt") || name_l.contains("openai") {
+    if slug_l.starts_with("gpt") {
         return format!("openai/{slug}");
     }
-
-    // Llama family — Meta on OpenRouter, often via Together/DeepInfra.
     if slug_l.contains("llama") {
         return format!("meta-llama/{slug}");
     }
 
-    // Unknown — return empty so the caller skips it rather than guessing.
     String::new()
 }
 
@@ -314,44 +302,19 @@ mod tests {
 
     #[test]
     fn normalize_glm_slug() {
-        assert_eq!(
-            normalize_slug_to_openrouter_id("glm-5-2", "GLM 5.2"),
-            "z-ai/glm-5.2"
-        );
+        assert_eq!(normalize_slug_to_openrouter_id("glm-5-2"), "z-ai/glm-5.2");
     }
 
     #[test]
     fn normalize_claude_slug() {
         assert_eq!(
-            normalize_slug_to_openrouter_id("claude-sonnet-4", "Claude Sonnet 4"),
+            normalize_slug_to_openrouter_id("claude-sonnet-4"),
             "anthropic/claude-sonnet-4"
         );
     }
 
     #[test]
     fn normalize_unknown_returns_empty() {
-        assert_eq!(
-            normalize_slug_to_openrouter_id("some-niche-model", "Niche Model"),
-            ""
-        );
-    }
-
-    #[test]
-    fn filter_drops_below_intelligence_threshold() {
-        let models = vec![AaModel {
-            name: "Low IA Model".into(),
-            slug: "low-ia".into(),
-            evaluations: Some(AaEvaluations {
-                artificial_analysis_intelligence_index: Some(10.0),
-            }),
-            pricing: Some(AaPricing {
-                price_1m_input_tokens: Some(0.10),
-                price_1m_output_tokens: Some(0.20),
-            }),
-            openrouter_api_id: Some("openai/low-ia".into()),
-        }];
-        // We can't easily unit-test the async filter without a mock server,
-        // but the normalization logic is the part that needs pinning.
-        let _ = models;
+        assert_eq!(normalize_slug_to_openrouter_id("some-niche-model"), "");
     }
 }

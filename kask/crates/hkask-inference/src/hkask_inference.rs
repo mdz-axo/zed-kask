@@ -10,7 +10,7 @@
 //! - `InferenceConfig` — shared configuration (base URLs, API keys, default model).
 //! - `ProviderId` — provider routing enum used by the training adapter router.
 //! - `fusion_orchestrator` — multi-model panel deliberation.
-//! - `openrouter_backend::FavoriteModel` — model favorites discovery.
+//! - `artificial_analysis::FavoriteModel` — model favorites discovery.
 //! - `artificial_analysis` — independent benchmark data for fusion panel discovery.
 
 // Used via derive macros (serde/thiserror/async_trait) — invisible to unused_crate_dependencies lint
