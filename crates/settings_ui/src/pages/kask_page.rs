@@ -6,7 +6,6 @@
 //! - Curator (`always_on` toggle + `algedonic_threshold`)
 //! - Curator Email (MXroute SMTP config + keychain-backed password)
 //! - Guard / Regulation (`direct_chat_strategy`)
-//! - Economic Guardrails (OpenRouter output-price de-listing filter)
 //! - Memory (`consolidation_cadence_secs` + `confidence_floor`)
 //!
 //! API keys are stored in the OS keychain under the `kask://credentials/<key>`
@@ -23,7 +22,6 @@ mod companies;
 mod condenser;
 mod curator;
 mod data_services;
-mod economic_guardrails;
 mod fusion;
 mod guard;
 mod inference_providers;
@@ -31,11 +29,10 @@ pub(crate) use {
     codegraph::render_codegraph_page, companies::render_companies_page,
     condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
-    data_services::render_data_services_page, economic_guardrails::render_economic_guardrails_page,
-    fusion::render_fusion_page, guard::render_guard_page,
-    inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
-    media::render_media_page, memory::render_memory_page, models::render_models_page,
-    scenarios::render_scenarios_page, training::render_training_page,
+    data_services::render_data_services_page, fusion::render_fusion_page,
+    guard::render_guard_page, inference_providers::render_inference_providers_page,
+    mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
+    models::render_models_page, scenarios::render_scenarios_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -503,35 +500,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_guard_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Economic Guardrails".into(),
-            r#type: Default::default(),
-            json_path: Some("language_models.open_router.max_output_price_per_million_tokens"),
-            description: Some(
-                "De-list expensive models from the picker by capping output \
-                 price (USD per million tokens). Applies across ALL providers \
-                 (Zed cloud, OpenRouter, Anthropic, OpenAI, DeepInfra, Together, \
-                 etc.) using pricing data sourced from OpenRouter. Protects against \
-                 accidentally selecting models that charge tens or hundreds of \
-                 dollars per million output tokens."
-                    .into(),
-            ),
-            search_aliases: &[
-                "cost",
-                "economic",
-                "guardrail",
-                "price",
-                "pricing",
-                "openrouter",
-                "de-list",
-                "expensive",
-                "budget",
-                "spend",
-            ],
-            in_json: true,
-            files: USER,
-            render: render_economic_guardrails_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Memory".into(),

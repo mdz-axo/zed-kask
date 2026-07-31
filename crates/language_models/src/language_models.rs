@@ -8,7 +8,6 @@ use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
-mod economic_guardrails;
 pub mod extension;
 pub mod provider;
 mod settings;
@@ -45,47 +44,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             credentials_provider.clone(),
             cx,
         );
-        // Install the cross-provider economic guardrails filter. The filter
-        // reads the deny-list populated by `update_expensive_model_denylist`
-        // (called from the OpenRouter provider after model fetch) and the
-        // threshold from settings, de-listing expensive models from all
-        // providers, not just OpenRouter.
-        economic_guardrails::install_model_filter(registry);
     });
-
-    // Fetch OpenRouter's public model catalog (no API key required) and build
-    // the cross-provider deny-list of expensive models. This runs at startup
-    // regardless of whether the user has an OpenRouter API key, so users who
-    // only use the Zed cloud provider, DeepInfra, Together, etc. still get
-    // economic guardrails. The task is fire-and-forget.
-    economic_guardrails::spawn_public_catalog_fetch(client.http_client(), cx).detach();
-
-    // Re-spawn the public catalog fetch when the OpenRouter settings change
-    // (e.g. the user adjusts the threshold in the Economic Guardrails UI).
-    // This ensures users without an OpenRouter API key get live threshold
-    // updates without restarting. Users with an OpenRouter API key get live
-    // updates via the provider's own settings observer → fetch_models →
-    // update_expensive_model_denylist path.
-    //
-    // Guard: only re-fetch when the threshold or api_url actually changed,
-    // to avoid hitting OpenRouter on every unrelated settings edit.
-    let http_client_for_observer = client.http_client();
-    let mut last_threshold =
-        OpenRouterLanguageModelProvider::settings(cx).max_output_price_per_million_tokens;
-    let mut last_api_url = OpenRouterLanguageModelProvider::api_url(cx).to_string();
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let current_threshold =
-            OpenRouterLanguageModelProvider::settings(cx).max_output_price_per_million_tokens;
-        let current_api_url = OpenRouterLanguageModelProvider::api_url(cx).to_string();
-        if current_threshold == last_threshold && current_api_url == last_api_url {
-            return;
-        }
-        last_threshold = current_threshold;
-        last_api_url = current_api_url;
-        economic_guardrails::spawn_public_catalog_fetch(http_client_for_observer.clone(), cx)
-            .detach();
-    })
-    .detach();
 
     // Subscribe to extension store events to track LLM extension installations
     if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {

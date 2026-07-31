@@ -70,26 +70,6 @@ You can add custom models to the OpenRouter provider in settings:
 
 Custom model entries support fields such as `name`, `display_name`, `max_tokens`, `max_output_tokens`, `max_completion_tokens`, `supports_tools`, `supports_images`, and `mode`.
 
-### De-listing Expensive Models {#openrouter-price-filter}
-
-OpenRouter publishes per-model pricing on its `/models` endpoint. To protect against accidentally selecting a model that charges tens or hundreds of dollars per million output tokens, you can set a maximum output price (USD per million tokens). Models whose reported output price exceeds the threshold are de-listed.
-
-**Cross-provider coverage:** The pricing data is used to build a deny-list that applies across **all** providers (Zed cloud, OpenRouter, Anthropic, OpenAI, DeepInfra, Together, etc.), not just OpenRouter. The deny-list is matched by normalized model name, so an expensive model like `openai/o1-pro` ($600/M output) is hidden whether it surfaces through OpenRouter, the Zed cloud provider, or any other provider. Models with no reported price (such as `openrouter/auto`, which uses a sentinel `-1`) and models you explicitly list under `available_models` are always kept.
-
-**Settings UI:** Settings → Kask → Economic Guardrails. Toggle "De-list Expensive Models" and set the threshold in USD per million output tokens.
-
-```json [settings]
-{
-  "language_models": {
-    "open_router": {
-      "max_output_price_per_million_tokens": 5.0
-    }
-  }
-}
-```
-
-Set the value to `null` (or omit the key) to disable the filter and show every model OpenRouter offers.
-
 ### OpenRouter Provider Routing {#openrouter-provider-routing}
 
 You can control how OpenRouter routes a custom model request among upstream providers with the `provider` object on each model entry.

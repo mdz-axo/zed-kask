@@ -168,8 +168,6 @@ impl settings::Settings for AllLanguageModelSettings {
                     open_router.custom_headers,
                     open_router::RESERVED_HEADER_NAMES,
                 ),
-                max_output_price_per_million_tokens: open_router
-                    .max_output_price_per_million_tokens,
             },
             openai: OpenAiSettings {
                 api_url: openai.api_url.unwrap(),
