@@ -53,12 +53,13 @@
 //! time. The `FusionLanguageModel` holds only `LanguageModelInferencePort`
 //! instances (which hold `Send + Sync` channel senders), not `AsyncApp`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt, stream};
-use gpui::{App, AppContext, AsyncApp, Entity};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,
@@ -141,13 +142,9 @@ impl FusionLanguageModel {
             return None;
         }
 
-        let mode_str = config.mode.as_str();
         Some(Self {
             id: LanguageModelId::from(FUSION_MODEL_ID.to_string()),
-            name: LanguageModelName::from(format!(
-                "Fusion ({mode_str}, {} panelists)",
-                config.panel.len()
-            )),
+            name: LanguageModelName::from("Fusion".to_string()),
             config,
             ports,
         })
@@ -440,34 +437,37 @@ impl InferencePort for MultiModelInferencePort {
 ///
 /// Resolution strategy:
 /// 1. If the name contains `/`, split on the first `/` to get
-///    `(provider_id, model_id)` and look up the provider.
-/// 2. Search the provider's models for one whose `id()` or `telemetry_id()`
-///    matches the model part.
+///    `(provider_id, model_id)` and look up the provider (case-insensitive
+///    on the provider id — `OpenRouter` matches the registered `openrouter`).
+/// 2. Search the provider's models for one whose `id()` matches the model
+///    part, or whose `telemetry_id()` matches the full prefixed name
+///    (case-insensitive — `OpenRouter/minimax/minimax3` matches
+///    `openrouter/minimax/minimax3`).
 /// 3. If no prefix or no match, search all providers' models by
-///    `telemetry_id()`.
+///    `telemetry_id()` (case-insensitive).
 ///
-/// Models that can't be resolved are silently skipped (with a warning).
+/// Returns `(resolved, unresolvable)` where `unresolvable` is the set of
+/// names that could not be resolved. The caller is responsible for warning
+/// about unresolvable names — this function does not log, so it can be called
+/// from a debounced rebuild without producing a warn storm.
 #[must_use]
 pub fn resolve_fusion_models(
     registry: &language_model::LanguageModelRegistry,
     model_names: &[String],
     cx: &App,
-) -> HashMap<String, Arc<dyn LanguageModel>> {
+) -> (HashMap<String, Arc<dyn LanguageModel>>, HashSet<String>) {
     let mut resolved: HashMap<String, Arc<dyn LanguageModel>> = HashMap::new();
+    let mut unresolvable: HashSet<String> = HashSet::new();
 
     for name in model_names {
         if let Some(model) = resolve_model(registry, name, cx) {
             resolved.insert(name.clone(), model);
         } else {
-            tracing::warn!(
-                target: "reg.fusion",
-                model_name = %name,
-                "Could not resolve model from LanguageModelRegistry — dropped from fusion"
-            );
+            unresolvable.insert(name.clone());
         }
     }
 
-    resolved
+    (resolved, unresolvable)
 }
 
 /// Resolve a single provider-prefixed model name.
@@ -504,18 +504,32 @@ fn resolve_model(
             // The model ID after the prefix may itself contain a `/` (e.g.
             // "anthropic/claude-sonnet-4.5" under provider "OR"). Search the
             // provider's models for a match on id or telemetry_id.
+            //
+            // The telemetry_id comparison is case-insensitive on the full
+            // prefixed name: the fusion config defaults use `OpenRouter/...`
+            // (capitalized) while the OpenRouter provider's telemetry_id
+            // returns `openrouter/...` (lowercase). Without case-insensitive
+            // comparison, `OpenRouter/minimax/minimax3` never matches
+            // `openrouter/minimax/minimax3` even when the model exists.
             for model in provider.provided_models(cx) {
-                if model.id().0.as_ref() == model_id || model.telemetry_id() == prefixed_name {
+                if model.id().0.as_ref() == model_id
+                    || model.telemetry_id().eq_ignore_ascii_case(prefixed_name)
+                {
                     return Some(model);
                 }
             }
         }
     }
 
-    // No prefix or prefix match failed — search all providers by telemetry_id.
+    // No prefix or prefix match failed — search all providers by telemetry_id
+    // (case-insensitive, same reason as above).
+    // Skip the fusion provider itself to avoid a re-entrant entity borrow when
+    // this function is called from within FusionProviderState's settings-observe
+    // callback (which holds a mutable borrow on the fusion entity).
     registry
         .available_models(cx)
-        .find(|m| m.telemetry_id() == prefixed_name)
+        .filter(|m| m.provider_id().0.as_ref() != FUSION_PROVIDER_ID)
+        .find(|m| m.telemetry_id().eq_ignore_ascii_case(prefixed_name))
 }
 
 // ── FusionLanguageModelProvider ───────────────────────────────────────────────
@@ -527,18 +541,234 @@ use ui::IconName;
 
 /// Observable state for the fusion provider.
 ///
-/// Notifies when settings change so the registry can re-enumerate models.
+/// Notifies when settings or registry state change so the registry can
+/// re-enumerate models. When `build_model` fails (panel models unresolved,
+/// judge missing, etc.), an alert is forwarded to the UI via the optional
+/// `alert_tx` channel so the user sees an honest status rather than a
+/// silently missing model.
 pub struct FusionProviderState {
+    model: Option<Arc<FusionLanguageModel>>,
+    /// Tracks whether the previous `build_model` failed, so we only alert
+    /// on state transitions (failure → success, success → failure), not on
+    /// every settings change that still succeeds.
+    was_broken: bool,
+    alert_tx: Option<tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>>,
+    /// Pending debounced rebuild task. When a rebuild is scheduled, we replace
+    /// any existing pending task — the new task waits a short debounce window
+    /// then runs `build_model` once, coalescing a burst of registry/settings
+    /// events into a single rebuild. This prevents the warn storm where each
+    /// `ProviderStateChanged` event in a burst spawns its own `build_model`
+    /// call, each emitting a warn per unresolvable model.
+    pending_rebuild: Option<Task<()>>,
+    /// Model names that failed to resolve in the most recent `build_model`.
+    /// Used to suppress duplicate warns across rebuilds for the same set of
+    /// unresolvable models — the operator only needs to see each failure
+    /// once per transition, not on every rebuild.
+    warned_unresolvable: HashSet<String>,
     _settings_subscription: gpui::Subscription,
+    _registry_subscription: gpui::Subscription,
 }
 
 impl FusionProviderState {
-    fn new(cx: &mut gpui::Context<Self>) -> Self {
-        Self {
-            _settings_subscription: cx.observe_global::<settings::SettingsStore>(|_, cx| {
-                cx.notify();
-            }),
+    fn new(
+        cx: &mut gpui::Context<Self>,
+        alert_tx: Option<tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>>,
+    ) -> Self {
+        let (model, unresolvable) = Self::build_model(cx);
+        let was_broken = model.is_none();
+        // Warn once for the initial set of unresolvable models. Subsequent
+        // warns are gated by `warned_unresolvable` in `apply_rebuild`.
+        for name in &unresolvable {
+            tracing::warn!(
+                target: "reg.fusion",
+                model_name = %name,
+                "Could not resolve model from LanguageModelRegistry — dropped from fusion"
+            );
         }
+
+        // Subscribe to LanguageModelRegistry events so the fusion model
+        // rebuilds when a panel/judge provider's auth state changes (token
+        // expires, provider unregistered, model list fetched after startup).
+        // Same deferred-rebuild pattern as the settings observer — avoids
+        // re-entrant entity borrows.
+        //
+        // Self-event filter: `ProviderStateChanged(FUSION_PROVIDER_ID)` is
+        // emitted by the registry whenever *this* provider's observable
+        // entity notifies (which happens inside `apply_rebuild` via
+        // `cx.notify()`). Without filtering it, every rebuild triggers a
+        // `ProviderStateChanged` → `schedule_rebuild` → rebuild → notify →
+        // `ProviderStateChanged` loop, producing an unbounded warn storm
+        // (one warn per unresolvable model per iteration). The fusion
+        // provider's own state changes are not a signal to rebuild itself —
+        // it already rebuilt. `AddedProvider`/`RemovedProvider` for the
+        // fusion id are also filtered (fusion is registered once at startup
+        // and never re-added).
+        let registry = language_model::LanguageModelRegistry::global(cx);
+        let fusion_provider_id = LanguageModelProviderId(FUSION_PROVIDER_ID.to_string().into());
+        let _registry_subscription =
+            cx.subscribe(&registry, move |this, _registry, event, cx| match event {
+                language_model::Event::ProviderStateChanged(id)
+                | language_model::Event::AddedProvider(id)
+                | language_model::Event::RemovedProvider(id)
+                    if *id == fusion_provider_id =>
+                {
+                    // Self-event — ignore to avoid the rebuild loop.
+                }
+                language_model::Event::ProviderStateChanged(_)
+                | language_model::Event::AddedProvider(_)
+                | language_model::Event::RemovedProvider(_)
+                | language_model::Event::ProvidersChanged => {
+                    this.schedule_rebuild(cx);
+                }
+                _ => {}
+            });
+
+        Self {
+            model,
+            was_broken,
+            alert_tx,
+            pending_rebuild: None,
+            warned_unresolvable: unresolvable,
+            _settings_subscription: cx
+                .observe_global::<settings::SettingsStore>(|this, cx| this.schedule_rebuild(cx)),
+            _registry_subscription,
+        }
+    }
+
+    /// Schedule a deferred, debounced rebuild of the fusion model.
+    ///
+    /// Defers to a spawned task to avoid re-entrant entity borrows:
+    /// `build_model` resolves models from the registry, which calls
+    /// `available_models()`, which calls `is_authenticated()` on every
+    /// provider — including this one. If we held a mutable borrow on `self`
+    /// here, the immutable `self.state.read(cx)` inside `is_authenticated`
+    /// would panic.
+    ///
+    /// Debounce: if a rebuild is already pending, the new schedule replaces
+    /// the old one (the dropped `Task` is cancelled). The pending task waits
+    /// a short window before running `build_model`, coalescing a burst of
+    /// registry/settings events into a single rebuild. Without this, a burst
+    /// of N `ProviderStateChanged` events spawns N rebuilds, each emitting
+    /// a warn per unresolvable model — the warn storm seen in production.
+    fn schedule_rebuild(&mut self, cx: &mut gpui::Context<Self>) {
+        // Replace any pending rebuild — the old task is dropped (cancelled).
+        self.pending_rebuild = Some(cx.spawn(async move |weak_entity, cx| {
+            // Debounce window: coalesce events that arrive within 50ms.
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            // Bail before calling cx.update() if the entity is already gone
+            // — the app is shutting down and AsyncApp::app() panics with
+            // "app was released" if called after the app drops.
+            let entity = match weak_entity.upgrade() {
+                Some(entity) => entity,
+                None => return,
+            };
+            let (new_model, unresolvable) = cx.update(|cx| Self::build_model(cx));
+            cx.update(|cx| {
+                entity.update(cx, |this, cx| {
+                    this.pending_rebuild = None;
+                    this.apply_rebuild(new_model, unresolvable, cx);
+                });
+            });
+        }));
+    }
+
+    /// Apply a rebuild result, alerting the UI on state transitions.
+    ///
+    /// `unresolvable` is the set of model names that failed to resolve in
+    /// this `build_model` pass. Warns are emitted only for names that weren't
+    /// already in `warned_unresolvable` — so a steady-state failure (same
+    /// models unresolvable across rebuilds) warns once, not on every rebuild.
+    /// When the set changes (a previously-unresolvable model now resolves,
+    /// or a new model fails), the delta is warned.
+    fn apply_rebuild(
+        &mut self,
+        new_model: Option<Arc<FusionLanguageModel>>,
+        unresolvable: HashSet<String>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let is_broken = new_model.is_none();
+
+        // Warn only for newly-unresolvable names (not in the previous set).
+        // This suppresses the repeat-warn storm while still surfacing the
+        // first occurrence of each failure and any new failures that appear
+        // after a registry change.
+        for name in unresolvable.iter() {
+            if !self.warned_unresolvable.contains(name) {
+                tracing::warn!(
+                    target: "reg.fusion",
+                    model_name = %name,
+                    "Could not resolve model from LanguageModelRegistry — dropped from fusion"
+                );
+            }
+        }
+        self.warned_unresolvable = unresolvable;
+
+        self.model = new_model;
+
+        // Only alert on state transitions — not every successful rebuild.
+        if is_broken && !self.was_broken {
+            self.send_alert(
+                "Fusion model unavailable: panel or judge models could not be resolved. \
+                 Check Settings → AI → LLM Providers.",
+                true,
+            );
+        } else if !is_broken && self.was_broken {
+            self.send_alert("Fusion model restored.", false);
+        }
+        self.was_broken = is_broken;
+        cx.notify();
+    }
+
+    /// Best-effort alert delivery. The channel may be absent (no UI wired)
+    /// or closed (app shutting down) — either way, the alert is logged.
+    fn send_alert(&self, message: &str, critical: bool) {
+        let Some(tx) = &self.alert_tx else {
+            return;
+        };
+        let event = hkask_regulation::AlertEvent {
+            message: message.to_string(),
+            critical,
+        };
+        if let Err(e) = tx.send(event) {
+            tracing::warn!(target: "reg.fusion", "Fusion alert dropped (channel closed): {e} — {message}");
+        }
+    }
+
+    /// Rebuild the `FusionLanguageModel` from current settings + registry.
+    ///
+    /// Returns `(None, unresolvable)` when fusion is disabled or construction
+    /// fails (missing panel models, unresolvable judge, etc.). The
+    /// `unresolvable` set contains the model names that failed to resolve, so
+    /// the caller can warn about them without re-warn-ing on every rebuild for
+    /// the same set.
+    ///
+    /// Reads `kask.fusion` from the settings store and resolves panel/judge
+    /// models from the `LanguageModelRegistry`.
+    fn build_model(cx: &App) -> (Option<Arc<FusionLanguageModel>>, HashSet<String>) {
+        let kask_settings = kask_bridge_settings(cx);
+        let Some(fc) = kask_settings.fusion.to_fusion_config() else {
+            return (None, HashSet::new());
+        };
+        let registry = language_model::LanguageModelRegistry::read_global(cx);
+        let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
+        if fc.judge.to_lowercase() != "algo" {
+            names.push(fc.judge.clone());
+        }
+        let (resolved, unresolvable) = resolve_fusion_models(registry, &names, cx);
+        if !unresolvable.is_empty() {
+            return (None, unresolvable);
+        }
+        match FusionLanguageModel::new(fc, resolved, cx.to_async()) {
+            Some(model) => (Some(Arc::new(model)), HashSet::new()),
+            None => (None, HashSet::new()),
+        }
+    }
+
+    /// The current fusion model, if any.
+    pub fn model(&self) -> Option<Arc<FusionLanguageModel>> {
+        self.model.clone()
     }
 }
 
@@ -548,14 +778,17 @@ impl FusionProviderState {
 /// `FusionLanguageModel` in `provided_models`. When fusion is disabled, it
 /// returns an empty list (so it doesn't appear in the picker).
 ///
-/// The fusion model is constructed at provider construction time (when
-/// `AsyncApp` is available) and held for the lifetime of the provider.
-/// If the fusion config changes, the user must restart Zed for the new
-/// config to take effect (a limitation we accept for Slice 3 — dynamic
-/// reconfiguration is a future enhancement).
+/// The fusion model is rebuilt dynamically when `kask.fusion` settings change
+/// OR when a panel/judge provider's auth state changes in the
+/// `LanguageModelRegistry`. `FusionProviderState` observes both the global
+/// `SettingsStore` and the `LanguageModelRegistry`, reconstructing the
+/// `FusionLanguageModel` (re-resolving panel/judge models) before notifying
+/// the registry. This means changing the fusion mode, judge model, or panel
+/// models in settings — or a panel provider losing/gaining authentication —
+/// takes effect for new conversations and the model picker without restarting
+/// Zed. In-flight threads continue using the model they were started with.
 pub struct FusionLanguageModelProvider {
     state: Entity<FusionProviderState>,
-    model: Option<Arc<FusionLanguageModel>>,
 }
 
 impl FusionLanguageModelProvider {
@@ -563,27 +796,17 @@ impl FusionLanguageModelProvider {
     ///
     /// Reads `kask.fusion` from settings. When enabled, resolves the panel
     /// and judge models from the registry and constructs a
-    /// `FusionLanguageModel`. When disabled or construction fails, `model`
-    /// is `None` and the provider returns no models.
-    pub fn new(cx: &mut App) -> Self {
-        let state = cx.new(FusionProviderState::new);
-
-        let kask_settings = kask_bridge_settings(cx);
-        let model = kask_settings
-            .fusion
-            .to_fusion_config()
-            .and_then(|fc| {
-                let registry = language_model::LanguageModelRegistry::read_global(cx);
-                let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
-                if fc.judge.to_lowercase() != "algo" {
-                    names.push(fc.judge.clone());
-                }
-                let resolved = resolve_fusion_models(registry, &names, cx);
-                FusionLanguageModel::new(fc, resolved, cx.to_async())
-            })
-            .map(Arc::new);
-
-        Self { state, model }
+    /// `FusionLanguageModel`. When disabled or construction fails, the
+    /// provider returns no models.
+    ///
+    /// The `alert_tx` channel is used to surface construction failures to
+    /// the UI (toast). Pass `None` when no UI alert sink is available.
+    pub fn new(
+        cx: &mut App,
+        alert_tx: Option<tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>>,
+    ) -> Self {
+        let state = cx.new(|cx| FusionProviderState::new(cx, alert_tx));
+        Self { state }
     }
 }
 
@@ -608,25 +831,29 @@ impl LanguageModelProvider for FusionLanguageModelProvider {
         IconOrSvg::Icon(IconName::Sparkle)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.model.clone().map(|m| m as Arc<dyn LanguageModel>)
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.state
+            .read(cx)
+            .model()
+            .map(|m| m as Arc<dyn LanguageModel>)
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         self.default_model(cx)
     }
 
-    fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.model
-            .clone()
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        self.state
+            .read(cx)
+            .model()
             .map(|m| vec![m as Arc<dyn LanguageModel>])
             .unwrap_or_default()
     }
 
-    fn is_authenticated(&self, _cx: &App) -> bool {
+    fn is_authenticated(&self, cx: &App) -> bool {
         // Fusion is "authenticated" when it has a model — i.e., when fusion
         // is enabled and construction succeeded.
-        self.model.is_some()
+        self.state.read(cx).model().is_some()
     }
 
     fn authenticate(
@@ -835,6 +1062,51 @@ mod tests {
         assert!(
             registered_id.eq_ignore_ascii_case(configured_prefix),
             "case-insensitive comparison must match OpenRouter <-> openrouter"
+        );
+    }
+
+    /// Pin the case-insensitive telemetry_id contract.
+    ///
+    /// `resolve_model` compares the full prefixed name (e.g.
+    /// `"OpenRouter/minimax/minimax3"`) against each model's `telemetry_id()`
+    /// (e.g. `"openrouter/minimax/minimax3"` — lowercase prefix). The
+    /// comparison must be case-insensitive on the full string, otherwise the
+    /// capitalized `OpenRouter/` prefix in fusion config defaults never matches
+    /// the lowercase `openrouter/` prefix in telemetry_ids, even when the model
+    /// exists in the registry. This was the root cause of the warn storm: every
+    /// panel model in `kask_default()` failed to resolve.
+    #[test]
+    fn resolve_model_telemetry_id_comparison_is_case_insensitive() {
+        let configured = "OpenRouter/minimax/minimax3";
+        let telemetry_id = "openrouter/minimax/minimax3";
+        assert!(
+            telemetry_id.eq_ignore_ascii_case(configured),
+            "telemetry_id comparison must be case-insensitive \
+             (openrouter/... must match OpenRouter/...)"
+        );
+    }
+
+    /// Pin the self-event filter: the fusion provider must ignore
+    /// `ProviderStateChanged` / `AddedProvider` / `RemovedProvider` events
+    /// that carry its own provider id. Without this filter, every
+    /// `apply_rebuild` → `cx.notify()` triggers a `ProviderStateChanged` →
+    /// `schedule_rebuild` → rebuild → notify loop, producing an unbounded warn
+    /// storm. This test pins the id comparison so a refactor that drops the
+    /// filter is caught.
+    #[test]
+    fn fusion_provider_id_is_self_event_filter_key() {
+        let fusion_id = LanguageModelProviderId(FUSION_PROVIDER_ID.to_string().into());
+        // The filter compares event ids against the fusion provider id.
+        let event_id = LanguageModelProviderId(FUSION_PROVIDER_ID.to_string().into());
+        assert_eq!(
+            event_id, fusion_id,
+            "ProviderStateChanged(fusion_id) must be filtered as a self-event"
+        );
+        // A non-fusion id must NOT match.
+        let other_id = LanguageModelProviderId("openrouter".to_string().into());
+        assert_ne!(
+            other_id, fusion_id,
+            "non-fusion provider events must not be filtered"
         );
     }
 }

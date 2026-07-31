@@ -647,6 +647,26 @@ impl NativeAgent {
         })
     }
 
+    /// Build a `NativeAgent` connection — the shared spawn sequence used by
+    /// both `NativeAgentServer` and `CuratorAgentServer`. Each server clones
+    /// its `fs` + `thread_store` into the spawned task; this helper does the
+    /// `Templates::new()` -> `NativeAgent::new()` -> `NativeAgentConnection`
+    /// sequence so the two servers cannot drift. Callers may apply their
+    /// overlay (e.g. `set_curator_static_context`) on the returned agent
+    /// before wrapping it, but for the common case where no overlay is needed
+    /// this returns the connection ready to hand back to the agent picker.
+    pub fn build_connection(
+        thread_store: Entity<ThreadStore>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        cx.spawn(async move |cx| {
+            let templates = Templates::new();
+            let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
+            Ok(Rc::new(NativeAgentConnection(agent)) as Rc<dyn acp_thread::AgentConnection>)
+        })
+    }
+
     /// Kicks off a one-time scan of the global skills directory if one
     /// isn't already in progress and a watch isn't already active.
     ///
@@ -818,7 +838,7 @@ impl NativeAgent {
     ///
     /// The Zed Agent's coding instructions remain intact. The Curator
     /// gets all coding capabilities PLUS regulatory context and tools.
-    pub fn set_curator_static_context(&mut self, context: SharedString, _cx: &mut Context<Self>) {
+    pub fn set_curator_static_context(&mut self, context: SharedString) {
         self.curator_static_context = Some(context);
         self.register_curator_tools = true;
     }

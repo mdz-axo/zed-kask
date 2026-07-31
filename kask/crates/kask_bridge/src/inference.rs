@@ -74,6 +74,7 @@ impl LanguageModelInferencePort {
                             std::slice::from_ref(&override_name),
                             cx,
                         )
+                        .0
                         .into_values()
                         .next()
                     });

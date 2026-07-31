@@ -725,6 +725,9 @@ fn main() {
         let (alert_sink_tx, alert_sink_rx) =
             tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
         spawn_alert_toast_drainer(alert_sink_rx, cx);
+        // Clone the sender before it's moved into ToastAlertSink so the
+        // fusion provider can surface construction failures as toasts too.
+        let fusion_alert_tx = alert_sink_tx.clone();
         let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger)
@@ -1509,11 +1512,17 @@ fn main() {
                         let async_cx_for_closure = async_cx_for_fusion.clone();
                         cx.update(|cx| {
                             let model_registry = language_model::LanguageModelRegistry::read_global(cx);
-                            let resolved = kask_bridge::resolve_fusion_models(
+                            let (resolved, unresolvable) = kask_bridge::resolve_fusion_models(
                                 model_registry,
                                 &names,
                                 cx,
                             );
+                            for name in &unresolvable {
+                                log::warn!(
+                                    "hKask fusion: could not resolve model '{name}' \
+                                     from LanguageModelRegistry — dropped from fusion"
+                                );
+                            }
                             match kask_bridge::FusionLanguageModel::new(
                                 fc.clone(),
                                 resolved,
@@ -1551,7 +1560,7 @@ fn main() {
                 // deferred-task time.
                 cx.update(|cx| {
                     let fusion_provider =
-                        kask_bridge::FusionLanguageModelProvider::new(cx);
+                        kask_bridge::FusionLanguageModelProvider::new(cx, Some(fusion_alert_tx));
                     language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                         registry.register_provider(Arc::new(fusion_provider), cx);
                     });
@@ -1677,7 +1686,7 @@ fn main() {
                                         model_registry,
                                         &[kask_default.to_string()],
                                         cx,
-                                    ).into_values().next() {
+                                    ).0.into_values().next() {
                                         log::info!(
                                             "hKask inference using kask.models.default_model: {}",
                                             kask_default
@@ -1988,7 +1997,6 @@ fn main() {
                 .clone(),
         };
         copilot_chat::init(
-            app_state.fs.clone(),
             app_state.client.http_client(),
             copilot_chat_configuration,
             cx,
@@ -2262,11 +2270,22 @@ fn main() {
             }),
         };
 
+        let (first_window_tx, first_window_rx) = oneshot::channel::<()>();
+        let first_window_tx = Rc::new(RefCell::new(Some(first_window_tx)));
+        let _first_window_subscription = cx.observe_new::<MultiWorkspace>(move |_, _, _| {
+            if let Some(tx) = first_window_tx.borrow_mut().take() {
+                tx.send(()).ok();
+            }
+        });
+
+        let restore_finished = cx.background_spawn(restore_task).shared();
+
         cx.spawn({
             let db = workspace::WorkspaceDb::global(cx);
             let fs = app_state.fs.clone();
+            let restore_finished = restore_finished.clone();
             async move |_cx| {
-                restore_task.await;
+                restore_finished.await;
                 db.garbage_collect_workspaces(
                     fs.as_ref(),
                     &current_session_id,
@@ -2282,7 +2301,16 @@ fn main() {
         component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
+            let _first_window_subscription = _first_window_subscription;
+            let first_window_placed = first_window_rx.shared();
             while let Some(urls) = open_rx.next().await {
+                // On a macOS cold launch, `zed <path>` arrives here after startup already
+                // began restoring the session, so wait for a restored window to exist before
+                // matching. Otherwise this open sees no windows and spawns a redundant one (#61346).
+                futures::select_biased! {
+                    _ = restore_finished.clone() => {}
+                    _ = first_window_placed.clone() => {}
+                }
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
                         handle_open_request(request, app_state.clone(), cx);

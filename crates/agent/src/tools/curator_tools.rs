@@ -65,7 +65,7 @@ pub struct CuratorStatusTool;
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CuratorStatusInput {
-    /// When true, include per-domain variety counters in the response.
+    /// When true, include the per-domain variety deficit in the response.
     #[serde(default)]
     pub include_variety: bool,
 }
@@ -76,7 +76,10 @@ pub struct CuratorStatusOutput {
     pub regulation_effectiveness: Option<f64>,
     pub escalation_count: Option<usize>,
     pub critical_alerts: Option<usize>,
-    pub variety_counters: Option<Vec<(String, u64)>>,
+    /// Per-domain variety deficit (gap from set-point, not a raw counter).
+    /// Renamed from `variety_counters` — the value is a deficit, and calling
+    /// it a "counter" misled operators into reading it as variety tracked.
+    pub variety_deficit: Option<Vec<(String, u64)>>,
 }
 
 impl AgentTool for CuratorStatusTool {
@@ -110,50 +113,59 @@ impl AgentTool for CuratorStatusTool {
                 regulation_effectiveness: None,
                 escalation_count: None,
                 critical_alerts: None,
-                variety_counters: None,
+                variety_deficit: None,
             })?;
 
-            // If a metacognition provider is wired, read from it.
-            if let Some(provider) = provider {
-                if let Some(snapshot) = provider.health_snapshot_json().await {
-                    let effectiveness = snapshot
-                        .get("regulation_effectiveness")
-                        .and_then(|v| v.as_f64());
-                    let critical = snapshot
-                        .get("critical_alerts")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize);
-                    let deficit = snapshot.get("variety_deficit").and_then(|v| v.as_u64());
-                    // The metacognition loop's `compare` phase produces
-                    // `EscalationAlert`s when a threshold is breached; the
-                    // count is threaded through `HealthSnapshot` →
-                    // `BridgeMetacognitionProvider` → here. Zero means no
-                    // threshold was breached in the most recent cycle.
-                    let escalation_count = snapshot
-                        .get("escalation_count")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize);
-                    return Ok(CuratorStatusOutput {
-                        status: "ok".to_string(),
-                        regulation_effectiveness: effectiveness,
-                        escalation_count,
-                        critical_alerts: critical,
-                        variety_counters: if input.include_variety {
-                            deficit.map(|d| vec![("overall".to_string(), d)])
-                        } else {
-                            None
-                        },
-                    });
-                }
-            }
-
-            // No provider or no snapshot — return not available.
+            // Distinguish "provider not wired" from "provider wired but
+            // snapshot missing" — the two cases used to collapse to the same
+            // "not available" string, leaving operators unable to tell whether
+            // the regulation loop was unwired or just stale. Same class as the
+            // `.rules` "Process-global hooks need a startup-failure signal" trap.
+            let Some(provider) = provider else {
+                return Ok(CuratorStatusOutput {
+                    status: "provider not wired".to_string(),
+                    regulation_effectiveness: None,
+                    escalation_count: None,
+                    critical_alerts: None,
+                    variety_deficit: None,
+                });
+            };
+            let Some(snapshot) = provider.health_snapshot_json().await else {
+                return Ok(CuratorStatusOutput {
+                    status: "snapshot unavailable".to_string(),
+                    regulation_effectiveness: None,
+                    escalation_count: None,
+                    critical_alerts: None,
+                    variety_deficit: None,
+                });
+            };
+            let effectiveness = snapshot
+                .get("regulation_effectiveness")
+                .and_then(|v| v.as_f64());
+            let critical = snapshot
+                .get("critical_alerts")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let deficit = snapshot.get("variety_deficit").and_then(|v| v.as_u64());
+            // The metacognition loop's `compare` phase produces
+            // `EscalationAlert`s when a threshold is breached; the
+            // count is threaded through `HealthSnapshot` ->
+            // `BridgeMetacognitionProvider` -> here. Zero means no
+            // threshold was breached in the most recent cycle.
+            let escalation_count = snapshot
+                .get("escalation_count")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
             Ok(CuratorStatusOutput {
-                status: "not available".to_string(),
-                regulation_effectiveness: None,
-                escalation_count: None,
-                critical_alerts: None,
-                variety_counters: None,
+                status: "ok".to_string(),
+                regulation_effectiveness: effectiveness,
+                escalation_count,
+                critical_alerts: critical,
+                variety_deficit: if input.include_variety {
+                    deficit.map(|d| vec![("overall".to_string(), d)])
+                } else {
+                    None
+                },
             })
         })
     }
@@ -166,7 +178,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Regulation Effectiveness: {}\n\
              Escalations: {}\n\
              Critical Alerts: {}\n\
-             Variety Counters: {}",
+             Variety Deficit: {}",
             output.status,
             output
                 .regulation_effectiveness
@@ -181,7 +193,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "not available".to_string()),
             output
-                .variety_counters
+                .variety_deficit
                 .map(|v| {
                     v.iter()
                         .map(|(k, c)| format!("{k}: {c}"))

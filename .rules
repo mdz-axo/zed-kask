@@ -550,6 +550,17 @@ The `MultiModelInferencePort` (fusion) already resolves by name before
 calling the single-model port, so it passes `None` to avoid redundant
 resolution. Tests in `inference.rs` pin the propagation.
 
+## `LanguageModelProvider` registry subscriptions must filter self-events
+
+A `LanguageModelProvider` that subscribes to `LanguageModelRegistry` events
+must filter out `ProviderStateChanged`/`AddedProvider`/`RemovedProvider`
+events carrying its own provider id. The registry observes every provider's
+`LanguageModelProviderState` entity, so `cx.notify()` on that entity emits a
+`ProviderStateChanged` the provider's own subscription receives — a
+structural self-trigger loop, not a subscription bug. The fusion provider
+hit this as an unbounded warn storm (one warn per unresolvable panel model
+per loop iteration, hundreds of identical lines in the log).
+
 ## Trait-with-one-impl is speculative generality
 
 A `trait` with a single implementor in the same crate, where the implementor

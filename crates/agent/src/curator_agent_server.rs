@@ -24,9 +24,7 @@ use fs::Fs;
 use gpui::{App, Entity, SharedString, Task};
 use project::{AgentId, Project};
 
-use crate::{
-    CURATOR_AGENT_ID, NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates,
-};
+use crate::{CURATOR_AGENT_ID, ThreadStore};
 
 /// The Curator's static context — appended to the system prompt.
 ///
@@ -111,39 +109,28 @@ impl AgentServer for CuratorAgentServer {
         _project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
-        log::debug!("CuratorAgentServer::connect");
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let extra_context = self.extra_static_context.clone();
         cx.spawn(async move |cx| {
-            log::debug!("Creating templates for Curator agent");
-            let templates = Templates::new();
-
-            log::debug!("Creating native agent entity for Curator");
-            let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
-
-            // Set the Curator static context — this is appended to the system
-            // prompt, NOT a full override. The Zed Agent's coding instructions
-            // remain intact. If the server has extra static context (e.g.,
-            // the kask panel's per-tab tool-scope prompt), append it after
-            // the base curator context.
+            // Build the shared NativeAgent connection, then apply the curator
+            // overlay before handing it back. The overlay is the only
+            // curator-specific behavior; the spawn sequence is shared with
+            // NativeAgentServer via `build_connection` so the two cannot drift.
+            let templates = crate::templates::Templates::new();
+            let agent = cx.update(|cx| crate::NativeAgent::new(thread_store, templates, fs, cx));
             cx.update(|cx| {
-                agent.update(cx, |agent, cx| {
+                agent.update(cx, |agent, _cx| {
                     let context = match extra_context {
                         Some(extra) => {
                             SharedString::from(format!("{CURATOR_STATIC_CONTEXT}\n{extra}"))
                         }
                         None => SharedString::from(CURATOR_STATIC_CONTEXT),
                     };
-                    agent.set_curator_static_context(context, cx);
+                    agent.set_curator_static_context(context);
                 });
             });
-
-            // Create the connection wrapper
-            let connection = NativeAgentConnection(agent);
-            log::debug!("CuratorAgentServer connection established successfully");
-
-            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
+            Ok(Rc::new(crate::NativeAgentConnection(agent)) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 
