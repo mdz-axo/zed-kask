@@ -279,7 +279,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
     use util::path;
     use util::rel_path::{RelPath, rel_path};
 
@@ -345,14 +345,10 @@ mod tests {
         let (write_tool, _project, _action_log, fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .join("SKILL.md");
         let skill_file = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("SKILL.md");
+        let input_path = skill_file.clone();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {

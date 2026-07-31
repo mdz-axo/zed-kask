@@ -65,11 +65,9 @@ impl Visibility {
     }
 
     // F-SYN-003: the three `is_*` predicates were dead code
-    // (F-L1-005) and collided with the same-named predicates on
-    // `DataSovereigntyBoundary` (F-L4-001). Removed entirely. Use
+    // (F-L1-005). Removed entirely. Use
     // `match self { Visibility::Private => ..., ... }` at the
-    // call site, or import `DataSovereigntyBoundary::is_category_shared`
-    // when the predicate is category-scoped.
+    // call site.
 }
 
 impl std::fmt::Display for Visibility {

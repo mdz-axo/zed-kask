@@ -10,9 +10,8 @@ Foundation type system for the hKask agent platform. Provides canonical ID types
 | `error` | `InfrastructureError`, `McpErrorKind`, `DatabaseErrorKind` |
 | `event` | `NuEvent`, `NuEventSink` — Regulation event model |
 | `agent_registry` | `AgentDefinition`, `Charter`, `RegisteredAgent`, `UserProfile` |
-| `regulation` | `CircuitState`, `LedgerHealth`, `RegulationHealth` |
+| `regulation` | `LedgerHealth`, `RegulationHealth` |
 | `curator` | `CuratorDirective`, `CuratorHandle`, `CurationThresholdConfig` |
-| `curation` | `BoundaryClassification`, `DataSovereigntyBoundary` |
 | `observable_span` | `ObservableSpan` trait and domain span enums |
 | `macros` | Shared `enum_str_ops!` macro (canonical location) |
 | `visibility` | `Visibility`, `Confidence`, `Dimension` |

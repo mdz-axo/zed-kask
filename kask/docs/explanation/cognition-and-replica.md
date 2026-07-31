@@ -741,7 +741,7 @@ verified_against: >
   crates/hkask-memory/src/consolidation_service.rs:10-100 (ConsolidationService, consolidate, cleanup),
   crates/hkask-memory/src/recall_dedup.rs:10-57 (eav_hash, dedup_h_mems, BLAKE3),
   (ports.rs removed — EpisodicStoragePort/SemanticStoragePort were aspirational),
-  crates/hkask-mcp-server/src/server/tool_span.rs:78-84 (ExperienceCallback, record_experience trigger)
+  (ExperienceCallback removed — record_experience trigger was unwired)
 status: VERIFIED
 -->
 

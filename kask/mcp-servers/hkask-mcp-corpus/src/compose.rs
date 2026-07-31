@@ -531,5 +531,11 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
         return 2.0;
     }
     let similarity = dot / (norm_a * norm_b);
-    1.0 - similarity
+    // Clamp to [0, 2] — floating-point rounding can push similarity
+    // slightly above 1.0 (producing a small negative distance) or
+    // slightly below -1.0 (producing a distance slightly above 2.0).
+    // This is especially common with extreme f32 values (e.g. 1e37)
+    // where the f64 promotion doesn't fully eliminate rounding error.
+    let distance = 1.0 - similarity;
+    distance.clamp(0.0, 2.0)
 }

@@ -658,7 +658,7 @@ Domain crates **never** depend on zed-kask crates. MCP servers **never** link ze
 
 | Boundary | Enforcement | Principle |
 |----------|-------------|-----------|
-| Tool invocation | `CapabilityChecker` gating via `governed_tool` (D4 guard layer) | P4 |
+| Tool invocation | `capabilities_match` gating via `governed_tool` (D4 guard layer; enforcement in `hkask-mcp/src/runtime.rs`) | P4 |
 | Inference calls | `governed_inference` membrane with gas budget checks | P4 |
 | MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
 | Capability attenuation | Max depth limit, TTL expiry on tokens | P4 |

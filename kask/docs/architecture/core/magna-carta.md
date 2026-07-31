@@ -58,17 +58,13 @@ Grounded in the SOLID architecture principles[^solid]: true data ownership, fine
 
 Data sovereignty boundaries implement the principle of informational self-determination:[^westin-data]
 
-```rust
-pub struct DataSovereigntyBoundary {
-    pub sovereign_data: HashSet<DataCategory>,    // User controls
-    pub shared_data: HashSet<DataCategory>,       // Explicit consent required
-    pub public_data: HashSet<DataCategory>,       // No sovereignty claim
-    pub(crate) requires_affirmative_consent: bool,
-}
-```
+> **Note:** The `DataSovereigntyBoundary` struct that encoded this in Rust was
+> removed (zero consumers). The concept remains the architectural intent; the
+> `Visibility` enum (`Private`/`Shared`/`Public`) on each h_mem is the live
+> enforcement mechanism.
 
 **Default hKask Configuration:**
-- **Sovereign:** episodic_memory, personal_context, capability_tokens, ocap_boundaries
+- **Sovereign (Private):** episodic_memory, personal_context, capability_tokens, ocap_boundaries
 - **Shared:** semantic_memory, template_invocations
 - **Public:** template_registry
 
@@ -77,8 +73,8 @@ pub struct DataSovereigntyBoundary {
 | SOLID Invariant | hKask Implementation |
 |---|---|
 | True data ownership | SQLCipher-encrypted local store, `WebID`-scoped access |
-| Fine-grained access control | `DataSovereigntyBoundary` with per-category sovereign/shared/public |
-| No implicit sharing | `DataSovereigntyBoundary` per-category sovereign/shared/public gating (OUGHT: `SovereigntyChecker::can_access()` + `SovereigntyConsent` port — not yet implemented) |
+| Fine-grained access control | `Visibility` enum on each h_mem (Private/Shared/Public) |
+| No implicit sharing | Per-h_mem `Visibility` gating (OUGHT: `SovereigntyChecker::can_access()` + `SovereigntyConsent` port — not yet implemented) |
 | Interoperability & portability | Open template registry, standard export formats |
 
 ### Atomic Consent

@@ -11,9 +11,12 @@ mds_categories: [domain, trust]
 # hkask-capability — Reference
 
 `hkask-capability` implements the Object Capability (OCAP) layer for hKask. It
-defines `DelegationToken`, the `ToolPort` trait, and the `CapabilityChecker`
-that verifies tokens before tool invocation. Every tool call in the governed
-dispatch path requires a valid `DelegationToken` proving authorization.
+defines `DelegationToken`, the `ToolPort` trait, and the `capabilities_match`
+function that verifies tokens before tool invocation. Every tool call in the
+governed dispatch path requires a valid `DelegationToken` proving authorization.
+(Enforcement lives in `hkask-mcp/src/runtime.rs`; the former
+`CapabilityChecker` struct and `verify_delegation_token*` helpers in this
+crate were removed.)
 
 ## Source citations
 
@@ -29,9 +32,7 @@ dispatch path requires a valid `DelegationToken` proving authorization.
 | `ToolPort` trait | `kask/crates/hkask-capability/src/tool_port.rs:47` |
 | `ToolPortError` enum | `kask/crates/hkask-capability/src/tool_port.rs:9` |
 | `ToolInfo` struct | `kask/crates/hkask-capability/src/tool_port.rs:73` |
-| `CapabilityChecker` struct | `kask/crates/hkask-capability/src/verification/checker.rs:20` |
-| `verify_delegation_token_now` | `kask/crates/hkask-capability/src/verification/verify.rs:22` |
-| `verify_delegation_token` | `kask/crates/hkask-capability/src/verification/verify.rs:63` |
+| `capabilities_match` fn (enforcement) | `kask/crates/hkask-mcp/src/runtime.rs` |
 | `require_write_access` | `kask/crates/hkask-capability/src/verification/verify.rs:114` |
 | `require_read_access` | `kask/crates/hkask-capability/src/verification/verify.rs:140` |
 | `VerificationOutcome` enum | `kask/crates/hkask-capability/src/verification/types.rs:22` |
@@ -50,12 +51,11 @@ attenuation level, a max attenuation cap, a context nonce, and a list of
 caveats. The `DelegationTokenBuilder` (`token_types.rs:90`) constructs tokens
 with the required fields and signs them with an Ed25519 key via `sign()`.
 
-The `CapabilityChecker` (`verification/checker.rs:20`) verifies tokens. It
-holds an optional signing key, a set of trusted root public keys, and an
-`enforce_roots` flag. When `enforce_roots` is true, a token is accepted only
-if its embedded public key is in the trusted set. When false, the checker
-verifies only the self-signature, which is the mode used by pod-internal
-checkers where tokens are constructed locally.
+Token verification is performed by `capabilities_match` (in
+`hkask-mcp/src/runtime.rs`), which checks signature, expiry, and capability
+against the request. The former `CapabilityChecker` struct that held an
+optional signing key, trusted root public keys, and an `enforce_roots` flag
+was removed; the verification logic now lives in `hkask-mcp`.
 
 ```mermaid
 classDiagram
@@ -84,16 +84,6 @@ classDiagram
     class Caveat {
         +caveat_id: String
         +data: String
-    }
-    class CapabilityChecker {
-        -signing_key: Option~SigningKey~
-        -trusted_roots: Vec~Ed25519PublicKey~
-        -enforce_roots: bool
-        +verify(token) bool
-        +check(token, holder, ...) bool
-        +grant(...) DelegationToken
-        +grant_tool(name, from, to) DelegationToken
-        +attenuate(token, new_to, time) Option
     }
     class ToolPort {
         <<interface>>
@@ -128,14 +118,14 @@ classDiagram
     DelegationToken --> DelegationResource
     DelegationToken --> DelegationAction
     DelegationTokenBuilder ..> DelegationToken : creates
-    CapabilityChecker --> DelegationToken : verifies
+    capabilities_match --> DelegationToken : verifies
     ToolPort --> DelegationToken : requires
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-001
 verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/token_types.rs:58,90,50,40; kask/crates/hkask-capability/src/tool_port.rs:47,73; kask/crates/hkask-capability/src/verification/checker.rs:20; kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-capability/src/resources.rs:51,80
+verified_against: kask/crates/hkask-capability/src/token_types.rs:58,90,50,40; kask/crates/hkask-capability/src/tool_port.rs:47,73; kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-capability/src/resources.rs:51,80; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match)
 status: VERIFIED
 -->
 
@@ -159,31 +149,24 @@ which wraps zed's `McpRuntime` and enforces OCAP, gas, and span emission.
 
 ## Verification functions
 
-Four public functions in `verification/verify.rs` perform token verification:
+Two public functions in `verification/verify.rs` perform token verification:
 
-- `verify_delegation_token_now` (`verify.rs:22`) verifies a token against the
-  current time, checking signature, expiry, and capability. Returns a
-  `VerificationOutcome`.
-- `verify_delegation_token` (`verify.rs:63`) verifies a token against a
-  caller-provided timestamp, used in tests and replay scenarios. Returns a
-  `VerificationOutcome`.
 - `require_write_access` (`verify.rs:114`) returns an error if the token
   does not grant write-level access on the given store.
 - `require_read_access` (`verify.rs:140`) returns an error if the token does
   not grant read-level access on the given store.
 
-Note: `CapabilityChecker::verify` returns `bool` (signature + root check
-only). The structured `VerificationOutcome` is returned by the free functions
-`verify_delegation_token` and `verify_delegation_token_now`, which layer
-expiry and capability checks on top of the checker's `verify` and `check`
-methods.
+Note: the structured `VerificationOutcome` is produced by `capabilities_match`
+in `hkask-mcp/src/runtime.rs`. The former `verify_delegation_token` /
+`verify_delegation_token_now` free functions and the `CapabilityChecker` struct
+in this crate were removed; enforcement now lives in `hkask-mcp`.
 
 The `VerificationOutcome` enum (`verification/types.rs:22`) has five
 variants: `Valid`, `InvalidSignature`, `Expired`, `InsufficientAccess {
 resource_id, action }`, and `NoChecker`. The `InsufficientAccess` variant
 carries the `resource_id` and `action` that were denied. The `NoChecker`
-variant indicates that no `CapabilityChecker` was provided, which denies
-access by default.
+variant indicates that no checker was configured, which denies access by
+default.
 
 ## Resource and action model
 

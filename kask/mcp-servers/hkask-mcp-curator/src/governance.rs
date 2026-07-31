@@ -80,7 +80,7 @@ fn emit_escalation_event(
     }
 }
 
-/// List pending escalations (granular — no `GovernanceContext` required).
+/// List pending escalations.
 ///
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
 /// post: returns all currently pending escalation entries as EscalationResponse records
@@ -97,7 +97,7 @@ pub fn list_escalations_direct(
     Ok(entries.into_iter().map(EscalationResponse::from).collect())
 }
 
-/// Resolve an escalation by ID (granular — no `GovernanceContext` required).
+/// Resolve an escalation by ID.
 ///
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
 /// post: marks the escalation as resolved; emits a Regulation regulation record; Err if not found
@@ -132,7 +132,7 @@ pub fn resolve_direct(
     })
 }
 
-/// Dismiss an escalation by ID (granular — no `GovernanceContext` required).
+/// Dismiss an escalation by ID.
 ///
 /// expect: "The system enforces affirmative consent and capability boundaries for agent operations"
 /// post: marks the escalation as dismissed; emits a Regulation regulation record; Err if not found

@@ -23,7 +23,6 @@ granted to it.
 | `can_attenuate` method | `kask/crates/hkask-capability/src/token_types.rs:341` |
 | `attenuate` method | `kask/crates/hkask-capability/src/token_types.rs:352` |
 | `attenuate_with_expiry` method | `kask/crates/hkask-capability/src/token_types.rs:369` |
-| `CapabilityChecker::attenuate` | `kask/crates/hkask-capability/src/verification/checker.rs:243` |
 | `Caveat` struct | `kask/crates/hkask-capability/src/token_types.rs:40` |
 
 ## Procedure
@@ -35,13 +34,13 @@ flowchart TD
     C -- no --> D[Stop: limit reached]
     C -- yes --> E[Call attenuate or attenuate_with_expiry]
     E --> F[Child inherits caveats from parent]
-    F --> G[Verify child with CapabilityChecker]
+    F --> G[Verify child via capabilities_match]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-004
 verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/token_types.rs:58,341,352,369; kask/crates/hkask-capability/src/verification/checker.rs:243
+verified_against: kask/crates/hkask-capability/src/token_types.rs:58,341,352,369; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match)
 status: VERIFIED
 -->
 
@@ -61,17 +60,18 @@ incremented by 1, a 1-hour expiry, and a chained context nonce. Use
 (`token_types.rs:369`) if you need a custom TTL. The child inherits all
 caveats from the parent.
 
-Alternatively, if you have a `CapabilityChecker` with a signing key, call
-`checker.attenuate(token, new_to, current_time)` (`checker.rs:243`), which
-returns `Option<DelegationToken>` — `None` if the checker has no signing key
-or the attenuation limit is reached.
+Alternatively, if you need a checker-style helper, call `token.attenuate`
+directly (the former `CapabilityChecker::attenuate` helper at
+`checker.rs:243` was removed when `CapabilityChecker` was deleted).
 
 ### Step 3: Verify the child token
 
-Verify the attenuated child token with `CapabilityChecker::verify` or the
-free function `verify_delegation_token_now` before passing it to the
-sub-task. The child is strictly less powerful: its `attenuation_level` is
-higher, bringing it closer to the `max_attenuation` ceiling.
+Verify the attenuated child token via `capabilities_match` (in
+`hkask-mcp/src/runtime.rs`) before passing it to the sub-task. (The former
+`CapabilityChecker::verify` and `verify_delegation_token_now` helpers in
+`hkask-capability` were removed.) The child is strictly less powerful: its
+`attenuation_level` is higher, bringing it closer to the `max_attenuation`
+ceiling.
 
 ## See also
 
