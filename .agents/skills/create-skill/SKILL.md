@@ -219,4 +219,5 @@ were insufficient or the PDCA shape didn't emerge correctly from them.
 - The convergence block is mandatory for `category: skill` manifests. Use `convergence_mode: "cauchy"` with `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
 - The gas and rjoule blocks are mandatory. rjoule.cap must be > 0 if any step uses `action: select`.
 - The SKILL.md description must be ≤1024 bytes.
+- **`lisp.eval` is available for custom deterministic compute steps.** When a skill needs a convergence formula, scoring function, or data transformation that doesn't fit the built-in `compute_ref`s (`kata.convergence_check`, `kata.object_gap`, etc.), use `compute_ref: lisp.eval` with an inline Lisp form. No Rust change needed — the manifest is the unit of authorship. See the manifest's comment block for an example. Security: gated to `category: skill` manifests only.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

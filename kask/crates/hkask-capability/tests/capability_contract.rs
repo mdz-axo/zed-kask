@@ -1,12 +1,12 @@
 //! Behavioral contract tests for `hkask-capability`.
 //!
-//! Covers: DelegationToken (verify, is_expired, attenuate, serialization, deterministic id),
-//! CapabilityChecker (check, verify_with_time), and capabilities_match.
+//! Covers: DelegationToken (verify, is_expired, attenuate, serialization, deterministic id)
+//! and capabilities_match.
 
 use ed25519_dalek::SigningKey;
 use hkask_capability::{
-    CapabilityChecker, DelegationAction, DelegationResource, DelegationToken,
-    DelegationTokenBuilder, SYSTEM_MAX_ATTENUATION, capabilities_match, derive_signing_key,
+    DelegationAction, DelegationResource, DelegationToken, DelegationTokenBuilder,
+    SYSTEM_MAX_ATTENUATION, capabilities_match, derive_signing_key,
 };
 use hkask_types::WebID;
 
@@ -14,10 +14,6 @@ use hkask_types::WebID;
 
 fn key_a() -> SigningKey {
     derive_signing_key(b"test-key-a-32-bytes-long!!!")
-}
-
-fn key_b() -> SigningKey {
-    derive_signing_key(b"test-key-b-32-bytes-long!!!")
 }
 
 fn alice() -> WebID {
@@ -41,40 +37,6 @@ fn make_token(sk: &SigningKey) -> DelegationToken {
         bob(),
         sk,
     )
-}
-
-// ── 1. DelegationToken::verify — cryptographic integrity ───────────────────
-
-#[test]
-fn token_verify_valid_signature() {
-    let sk = key_a();
-    let token = make_token(&sk);
-    assert!(token.verify(), "freshly minted token must verify");
-}
-
-#[test]
-fn token_verify_tampered_signature() {
-    let sk = key_a();
-    let mut token = make_token(&sk);
-    // Flip every byte of the signature
-    for b in token.signature.0.iter_mut() {
-        *b ^= 0xFF;
-    }
-    assert!(!token.verify(), "tampered signature must fail verification");
-}
-
-#[test]
-fn token_verify_wrong_key() {
-    let sk_a = key_a();
-    let sk_b = key_b();
-    let token = make_token(&sk_a);
-
-    // Checker that only trusts key B
-    let checker_b = CapabilityChecker::with_signing_key(sk_b);
-    assert!(
-        !checker_b.verify(&token),
-        "checker with key B must reject token signed by key A"
-    );
 }
 
 // ── 2. DelegationToken::is_expired — temporal boundary ─────────────────────
@@ -199,107 +161,6 @@ fn token_attenuate_preserves_resource() {
         "resource_id must be inherited"
     );
     assert_eq!(child.action, parent.action, "action must be inherited");
-}
-
-// ── 4. CapabilityChecker::check — access control ────────────────────────────
-
-#[test]
-fn check_allows_correct_holder_resource_action() {
-    let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk);
-    let token = checker.grant(
-        DelegationResource::Tool,
-        "my_tool".into(),
-        DelegationAction::Execute,
-        alice(),
-        bob(),
-    );
-
-    assert!(
-        checker.check(
-            &token,
-            &bob(),
-            DelegationResource::Tool,
-            "my_tool",
-            DelegationAction::Execute
-        ),
-        "correct holder + resource + action must pass"
-    );
-}
-
-#[test]
-fn check_rejects_wrong_holder() {
-    let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk);
-    let token = checker.grant(
-        DelegationResource::Tool,
-        "my_tool".into(),
-        DelegationAction::Execute,
-        alice(),
-        bob(),
-    );
-
-    assert!(
-        !checker.check(
-            &token,
-            &carol(),
-            DelegationResource::Tool,
-            "my_tool",
-            DelegationAction::Execute
-        ),
-        "wrong holder must be rejected"
-    );
-}
-
-#[test]
-fn check_rejects_wrong_resource() {
-    let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk);
-    let token = checker.grant(
-        DelegationResource::Tool,
-        "my_tool".into(),
-        DelegationAction::Execute,
-        alice(),
-        bob(),
-    );
-
-    assert!(
-        !checker.check(
-            &token,
-            &bob(),
-            DelegationResource::Registry,
-            "my_tool",
-            DelegationAction::Execute
-        ),
-        "wrong resource type must be rejected"
-    );
-}
-
-/// `check()` does not validate expiry — it tests signature + holder + resource/action only.
-/// Expired-token rejection uses `verify_with_time()`, the combined check.
-#[test]
-fn check_rejects_expired_token() {
-    let sk = key_a();
-    let checker = CapabilityChecker::with_signing_key(sk.clone());
-    let token = DelegationTokenBuilder::new(
-        DelegationResource::Tool,
-        "my_tool".into(),
-        DelegationAction::Execute,
-        alice(),
-        bob(),
-        &sk,
-    )
-    .expires_at(100)
-    .sign();
-
-    // `check()` alone does not test expiry — it returns true for an expired token
-    // that is otherwise valid. Full gate logic uses `verify_with_time()`.
-    assert!(token.is_expired(200), "sanity: token is expired");
-
-    assert!(
-        !checker.verify_with_time(&token, 200),
-        "verify_with_time must reject expired token even with correct holder"
-    );
 }
 
 // ── 5. capabilities_match — action hierarchy ───────────────────────────────

@@ -62,6 +62,28 @@ steps:
       target_format: "{{ target_format | default('hkask') }}"
       mapping_rules: "{{ mapping_rules | default({}) }}"
 
+  # ── Deterministic compute: lisp.eval is available for custom logic ──
+  #
+  # In addition to the built-in compute_refs (kata.convergence_check,
+  # kata.object_gap, kata.process_gap, kata.hypotenuse, etc.), skill
+  # authors can use `compute_ref: lisp.eval` to write custom deterministic
+  # logic inline in the manifest — no Rust change needed. The sandboxed
+  # Lisp interpreter supports arithmetic, conditionals, list ops, and
+  # lambda. Example:
+  #
+  #   - ordinal: N
+  #     action: compute
+  #     compute_ref: lisp.eval
+  #     input_mapping:
+  #       form: "(if (< gap 0.1) 1 0)"
+  #       env:
+  #         gap: "{{ step_1_result.convergence_metric | default(1.0) }}"
+  #       max_steps: 10000
+  #       max_depth: 32
+  #
+  # Use cases: custom convergence formulas, weighted scoring, data
+  # transformation between steps, filtering findings by threshold.
+  # Security: gated to category: skill manifests only (human-reviewed).
   - ordinal: 2
     action: compute
     compute_ref: kata.convergence_check

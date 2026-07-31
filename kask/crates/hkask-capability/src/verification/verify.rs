@@ -66,6 +66,7 @@ pub fn require_read_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DelegationAction, DelegationResource};
     use ed25519_dalek::SigningKey;
     use hkask_types::WebID;
 

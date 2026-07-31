@@ -2,13 +2,11 @@
 //! hKask Capability — OCAP delegation token system
 //!
 //! Ed25519-signed delegation tokens with cryptographic attenuation.
-//! Two token kinds: **Loop authority** (ZST tokens in `tokens.rs`) prove loop-authorized operations;
-//! **Delegation** (`DelegationToken`) are Ed25519-signed tokens for inter-agent delegation.
+//! **Delegation** (`DelegationToken`) tokens are Ed25519-signed tokens for inter-agent delegation.
 
 pub mod auth;
 pub mod resources;
 pub mod token_types;
-pub mod tokens;
 pub mod tool_port;
 pub mod verification;
 
@@ -23,7 +21,7 @@ pub use token_types::{
 };
 pub use tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
 pub use verification::{
-    CapabilityChecker, TOKEN_ERR_EXPIRED, TOKEN_ERR_INVALID_SIGNATURE, TOKEN_ERR_NO_CHECKER,
-    VerificationOutcome, require_read_access, require_write_access, token_err_insufficient_access,
-    token_err_tool_access_denied, verify_delegation_token, verify_delegation_token_now,
+    TOKEN_ERR_EXPIRED, TOKEN_ERR_INVALID_SIGNATURE, TOKEN_ERR_NO_CHECKER, VerificationOutcome,
+    require_read_access, require_write_access, token_err_insufficient_access,
+    token_err_tool_access_denied,
 };

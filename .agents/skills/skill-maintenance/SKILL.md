@@ -110,7 +110,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 - `skill-maintenance-prose.j2`: Public. Output raw markdown only — no JSON, code fences, frontmatter, or structural sections.
 - `skill-maintenance-audit.j2`: Public. Every finding must cite a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path. Recommendations based solely on SKILL.md must be marked confidence: Hypothesis (Speculative) at maximum.
 - `skill-maintenance-coverage.j2`: Public. Every task pattern must appear in exactly one of: covered, uncovered, or partial. Do not recommend `ignore` for uncovered patterns with critical or high impact.
-
+- **`lisp.eval` is available for custom deterministic compute steps.** When auditing or building skill manifests, recommend `compute_ref: lisp.eval` for skills that need custom convergence formulas, scoring functions, or data transformations that don't fit the built-in `compute_ref`s. No Rust change needed — the manifest is the unit of authorship. Security: gated to `category: skill` manifests only.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 
 ## Canonical Action Set (ManifestExecutor)
