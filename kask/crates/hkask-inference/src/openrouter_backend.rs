@@ -421,13 +421,16 @@ impl OpenRouterBackend {
                     .map(|v| v * 1_000_000.0)?;
 
                 // Parse completion price (per-token → per-million).
+                // Symmetric with prompt price above: a model with an unparseable
+                // completion price is dropped rather than silently admitted as
+                // "free completion" (the previous `unwrap_or(0.0)` fabricated a
+                // $0 completion price for models with missing/null pricing).
                 let completion_price_per_m = model
                     .pricing
                     .as_ref()
                     .and_then(|p| p.completion.as_deref())
                     .and_then(|s| s.parse::<f64>().ok())
-                    .map(|v| v * 1_000_000.0)
-                    .unwrap_or(0.0);
+                    .map(|v| v * 1_000_000.0)?;
 
                 // Parse intelligence index from benchmarks.
                 let intelligence_index =

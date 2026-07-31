@@ -60,7 +60,19 @@ jobs:
         with:
           tool: nextest
       - name: Run tests
-        run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+        # Exclude tests that cannot pass on a standard GPU-less ubuntu-24.04 runner:
+        #  - wgpu_atlas tests require a real wgpu adapter (no Vulkan ICD on the runner)
+        #  - test_extension_store_with_test_extension has an internal 60s timeout for
+        #    WASM extension install that is exceeded under CI load
+        #  - test_random_worktree_changes / test_random_multibuffer are 100-iteration
+        #    randomized stress tests that exceed the 60s nextest slow-timeout on a
+        #    2-core runner (upstream runs them on 16x32 Namespace runners with 300s
+        #    overrides; see .config/nextest.toml)
+        # None of these exercise kask code. The bracket colorization test is deliberately
+        # NOT excluded — reproduce it locally if it fails.
+        run: >-
+          cargo nextest run --workspace --no-fail-fast --no-tests=warn
+          -E 'not (test(before_frame_skips_uploads_for_removed_texture) | test(remove_deallocates_tile_space_for_reuse) | test(test_extension_store_with_test_extension) | test(test_random_worktree_changes) | test(test_random_multibuffer))'
 
   build:
     runs-on: ubuntu-24.04

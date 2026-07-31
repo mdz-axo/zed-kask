@@ -1702,17 +1702,24 @@ pub struct KaskFusionSettingsContent {
     /// Comma-separated panel models (provider-prefixed). Empty defers to defaults.
     pub panel_models: Option<String>,
     /// Judge deliberation mode: `"synthesis"` | `"best-of-n"` | `"critique"` |
-    /// `"deliberation"` | `"pi"` | `"algo"`.
+    /// `"deliberation"` | `"pi"`. Note: `"algo"` is NOT a valid `mode` value
+    /// (`FusionMode` has no `Algo` variant; `mode = "algo"` silently coerces to
+    /// `Synthesis`). The algo judge is activated by setting `judge_model = "algo"`.
     pub mode: Option<String>,
-    /// Algo merge strategy when `mode == "algo"`: `"merge"` | `"vote"`.
+    /// Algo merge strategy when `judge_model == "algo"`: `"merge"` | `"vote"`.
+    /// Ignored when the judge is a real model name.
     pub algo_method: Option<String>,
     /// Comma-separated skill anchors (e.g. `"pragmatic-semantics,coding-guidelines"`).
     pub skills: Option<String>,
     /// Max rounds for `deliberation` mode.
     pub max_rounds: Option<u32>,
-    /// OpenRouter auto-discovery max prompt price per million tokens (USD).
+    /// Auto-discovery max prompt price per million tokens (USD).
+    /// Discovery queries Artificial Analysis; the field name is retained for
+    /// settings compatibility.
     pub openrouter_max_price: Option<f64>,
-    /// OpenRouter auto-discovery minimum intelligence index.
+    /// Auto-discovery minimum intelligence index.
+    /// Discovery queries Artificial Analysis; the field name is retained for
+    /// settings compatibility.
     pub openrouter_min_intelligence: Option<f64>,
     /// Coherence threshold (0.0–1.0) for measured convergence in deliberation mode.
     pub coherence_threshold: Option<f64>,

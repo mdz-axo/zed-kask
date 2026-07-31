@@ -639,7 +639,7 @@ fn main() {
         let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
             std::sync::Arc::new(hkask_regulation::LedgerSink::new(
                 regulation_ledger.clone(),
-                kask_runtime_handle,
+                kask_runtime_handle.clone(),
             ));
 
         // Alert email sink — outbound algedonic alert emails via MXroute.
@@ -656,7 +656,7 @@ fn main() {
         // only fires when ALL alert paths (live channel, archive, email) are
         // unavailable, which is a genuine operator-visible error.
         let alert_email_sink: Option<std::sync::Arc<dyn hkask_regulation::AlertEmailSink>> =
-            hkask_email::CuratorAlertEmailSink::try_from_env();
+            hkask_email::CuratorAlertEmailSink::try_from_env(kask_runtime_handle);
 
         let cybernetics_loop_inner =
             hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
@@ -1415,6 +1415,7 @@ fn main() {
                     let sink = hkask_email::CuratorAlertEmailSink::try_from_settings(
                         &kask_settings.curator.email.smtp_username,
                         &kask_settings.curator.email.alert_email,
+                        gpui_tokio::Tokio::handle_async(&*cx),
                     );
                     let cybernetics_loop_for_email = cybernetics_loop_for_panel_deferred.clone();
                     gpui_tokio::Tokio::spawn(cx, async move {
@@ -1436,8 +1437,8 @@ fn main() {
                     if let Some(mut fc) = fusion_config {
                         if kask_bridge::should_auto_discover(&kask_settings.fusion.panel_models) {
                             log::info!(
-                                "hKask fusion: auto-discovering panel models from OpenRouter \
-                                 (max_price=${}/M, min_ia={})",
+                                "hKask fusion: auto-discovering panel models from Artificial \
+                                 Analysis (max_price=${}/M, min_ia={})",
                                 kask_settings.fusion.openrouter_max_price,
                                 kask_settings.fusion.openrouter_min_intelligence
                             );

@@ -11,6 +11,7 @@
 //! - `ProviderId` — provider routing enum used by the training adapter router.
 //! - `fusion_orchestrator` — multi-model panel deliberation.
 //! - `openrouter_backend::FavoriteModel` — model favorites discovery.
+//! - `artificial_analysis` — independent benchmark data for fusion panel discovery.
 
 // Used via derive macros (serde/thiserror/async_trait) — invisible to unused_crate_dependencies lint
 #![allow(unused_crate_dependencies)]
@@ -35,6 +36,7 @@
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
 //! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
 
+pub mod artificial_analysis;
 pub mod chat_protocol;
 pub mod config;
 pub mod deepinfra_backend;

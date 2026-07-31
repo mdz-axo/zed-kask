@@ -139,16 +139,27 @@ pub async fn send_test_email(to: &str) -> EmailResult<()> {
 // ── Alert email sink (S3) ───────────────────────────────────────────────
 
 /// `AlertEmailSink` implementation that sends algedonic alerts via the
-/// curator's email channel. Non-blocking — spawns the async send internally
-/// so the cybernetics loop is never blocked.
+/// curator's email channel. Non-blocking — spawns the async send on the
+/// kask tokio runtime so the cybernetics loop is never blocked.
+///
+/// Stores a `tokio::runtime::Handle` rather than relying on the caller's
+/// thread having a tokio context active. This makes `send_alert_email` safe
+/// to call from any thread — the handle dispatches the spawn to the kask
+/// runtime regardless of the caller's executor.
 #[derive(Debug)]
 pub struct CuratorAlertEmailSink {
     alert_recipient: String,
+    tokio_handle: tokio::runtime::Handle,
 }
 
 impl CuratorAlertEmailSink {
     /// Create from env, returning `None` when no recipient is configured.
-    pub fn try_from_env() -> Option<Arc<dyn AlertEmailSink>> {
+    ///
+    /// `tokio_handle` is the kask tokio runtime handle (obtained via
+    /// `gpui_tokio::Tokio::handle(cx)` at the composition root). The handle
+    /// lets `send_alert_email` spawn the async send without relying on the
+    /// caller's thread having a tokio context active.
+    pub fn try_from_env(tokio_handle: tokio::runtime::Handle) -> Option<Arc<dyn AlertEmailSink>> {
         let recipient = std::env::var("HKASK_ALERT_EMAIL")
             .or_else(|_| std::env::var("HKASK_SMTP_USERNAME"))
             .ok()?;
@@ -157,14 +168,19 @@ impl CuratorAlertEmailSink {
         }
         Some(Arc::new(Self {
             alert_recipient: recipient,
+            tokio_handle,
         }))
     }
 
     /// Create from explicit settings, returning `None` when no recipient is
     /// configured. This is the primary constructor for the composition root.
+    ///
+    /// `tokio_handle` is the kask tokio runtime handle (obtained via
+    /// `gpui_tokio::Tokio::handle(cx)` at the composition root).
     pub fn try_from_settings(
         smtp_username: &str,
         alert_email: &str,
+        tokio_handle: tokio::runtime::Handle,
     ) -> Option<Arc<dyn AlertEmailSink>> {
         let recipient = if !alert_email.is_empty() {
             alert_email
@@ -175,6 +191,7 @@ impl CuratorAlertEmailSink {
         };
         Some(Arc::new(Self {
             alert_recipient: recipient.to_string(),
+            tokio_handle,
         }))
     }
 }
@@ -194,7 +211,7 @@ impl AlertEmailSink for CuratorAlertEmailSink {
         let body = format!(
             "<h2>Algedonic Alert</h2>\n<p><b>Domain:</b> {domain}</p>\n<p><b>Deficit:</b> {deficit} / {threshold}</p>\n<p><b>Message:</b> {message}</p>\n<p style='color:#8b949e;font-size:0.8rem'>Sent by the hKask Curator cybernetics loop</p>"
         );
-        tokio::spawn(async move {
+        self.tokio_handle.spawn(async move {
             if let Err(e) = send_email(&recipient, &subject, &body, EmailMode::Alert).await {
                 tracing::warn!(target: "reg.alert", error = %e, "Failed to send alert email");
             }
@@ -226,20 +243,66 @@ mod tests {
     }
 
     #[test]
+    fn try_from_env_returns_none_when_no_env_var() {
+        // Env vars are not set in the test environment (and the
+        // send_email_returns_not_configured test above removes them), so
+        // try_from_env should return None.
+        unsafe {
+            std::env::remove_var("HKASK_ALERT_EMAIL");
+            std::env::remove_var("HKASK_SMTP_USERNAME");
+        }
+        let handle = tokio::runtime::Handle::current();
+        assert!(CuratorAlertEmailSink::try_from_env(handle).is_none());
+    }
+
+    #[test]
+    fn try_from_env_uses_alert_email_when_set() {
+        unsafe {
+            std::env::set_var("HKASK_ALERT_EMAIL", "ops@example.com");
+        }
+        let handle = tokio::runtime::Handle::current();
+        let sink = CuratorAlertEmailSink::try_from_env(handle);
+        assert!(sink.is_some());
+        unsafe {
+            std::env::remove_var("HKASK_ALERT_EMAIL");
+        }
+    }
+
+    #[test]
+    fn try_from_env_falls_back_to_smtp_username() {
+        unsafe {
+            std::env::remove_var("HKASK_ALERT_EMAIL");
+            std::env::set_var("HKASK_SMTP_USERNAME", "curator@example.com");
+        }
+        let handle = tokio::runtime::Handle::current();
+        let sink = CuratorAlertEmailSink::try_from_env(handle);
+        assert!(sink.is_some());
+        unsafe {
+            std::env::remove_var("HKASK_SMTP_USERNAME");
+        }
+    }
+
+    #[test]
     fn try_from_settings_returns_none_when_both_empty() {
-        assert!(CuratorAlertEmailSink::try_from_settings("", "").is_none());
+        let handle = tokio::runtime::Handle::current();
+        assert!(CuratorAlertEmailSink::try_from_settings("", "", handle).is_none());
     }
 
     #[test]
     fn try_from_settings_uses_alert_email_when_set() {
-        let sink =
-            CuratorAlertEmailSink::try_from_settings("curator@example.com", "ops@example.com");
+        let handle = tokio::runtime::Handle::current();
+        let sink = CuratorAlertEmailSink::try_from_settings(
+            "curator@example.com",
+            "ops@example.com",
+            handle,
+        );
         assert!(sink.is_some());
     }
 
     #[test]
     fn try_from_settings_falls_back_to_smtp_username() {
-        let sink = CuratorAlertEmailSink::try_from_settings("curator@example.com", "");
+        let handle = tokio::runtime::Handle::current();
+        let sink = CuratorAlertEmailSink::try_from_settings("curator@example.com", "", handle);
         assert!(sink.is_some());
     }
 }

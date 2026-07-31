@@ -464,11 +464,18 @@ pub struct KaskFusionSettings {
     pub panel_models: String,
 
     /// Judge deliberation mode: `"synthesis"` | `"best-of-n"` | `"critique"` |
-    /// `"deliberation"` | `"pi"` | `"algo"`. When empty, defaults to `"synthesis"`.
+    /// `"deliberation"` | `"pi"`. When empty, defaults to `"synthesis"`.
+    ///
+    /// Note: `"algo"` is intentionally NOT a valid `mode` value — the
+    /// `FusionMode` enum has no `Algo` variant, so `mode = "algo"` silently
+    /// coerces to `Synthesis`. The algo judge is activated by setting
+    /// `judge_model = "algo"` (the Judge Model field), which short-circuits
+    /// `mode` entirely. See the fusion orchestrator's `judge == "algo"` branch.
     pub mode: String,
 
-    /// Algo merge strategy when `mode == "algo"`: `"merge"` | `"vote"`.
-    /// When empty, defaults to `"merge"`.
+    /// Algo merge strategy when `judge_model == "algo"`: `"merge"` | `"vote"`.
+    /// When empty, defaults to `"merge"`. Ignored when the judge is a real
+    /// model name (not `"algo"`).
     pub algo_method: String,
 
     /// Comma-separated skill anchors (e.g. `"pragmatic-semantics,coding-guidelines"`).
@@ -478,12 +485,16 @@ pub struct KaskFusionSettings {
     /// Max rounds for `deliberation` mode. Default 5.
     pub max_rounds: u32,
 
-    /// OpenRouter auto-discovery max prompt price per million tokens (USD).
-    /// Default 1.0. Used by Slice 4 to filter candidate panel models.
+    /// Auto-discovery max prompt price per million tokens (USD).
+    /// Default 1.0. Used by fusion auto-discovery to filter candidate panel
+    /// models. Discovery now queries Artificial Analysis (not OpenRouter); the
+    /// field name is retained for settings compatibility.
     pub openrouter_max_price: f64,
 
-    /// OpenRouter auto-discovery minimum intelligence index.
-    /// Default 40.0. Used by Slice 4 to filter candidate panel models.
+    /// Auto-discovery minimum intelligence index.
+    /// Default 40.0. Used by fusion auto-discovery to filter candidate panel
+    /// models. Discovery now queries Artificial Analysis (not OpenRouter); the
+    /// field name is retained for settings compatibility.
     pub openrouter_min_intelligence: f64,
 
     /// Coherence threshold (0.0–1.0) for measured convergence in deliberation

@@ -651,13 +651,27 @@ fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
 
 // ── Favorites Discovery ─────────────────────────────────────────────────────
 
-/// Discover "favorite" models from OpenRouter that pass the price and
+/// Discover "favorite" models from Artificial Analysis that pass the price and
 /// intelligence thresholds.
 ///
-/// This is a thin wrapper over `OpenRouterBackend::discover_favorites` that
-/// constructs the backend from the OpenRouter API key (env var or keychain).
-/// The `/v1/models` endpoint is public, so this works even without an API key
-/// — the key is only sent to personalize results.
+/// This is a thin wrapper over `hkask_inference::artificial_analysis::discover_favorites`.
+/// Artificial Analysis provides an independent Intelligence Index and pricing
+/// data via its `/api/v2/language/models/free` endpoint. The free tier (100
+/// req/day) includes the `artificial_analysis_intelligence_index` and
+/// `price_1m_input_tokens` fields needed for filtering.
+///
+/// We switched from OpenRouter's `/v1/models` endpoint because OpenRouter's
+/// server-side `supported_parameters` filter requires a model to advertise *all*
+/// of `temperature,top_p,structured_outputs,tools,reasoning`. Models that lack
+/// `reasoning` or `structured_outputs` (e.g. `z-ai/glm-5.2`, the kask default)
+/// are silently dropped before the client sees them — the filter meant to
+/// discover the default model was screening it out. Artificial Analysis scores
+/// models on a single intelligence axis without a supported-parameters gate.
+///
+/// The `openrouter_api_key` parameter is retained for API compatibility but is
+/// no longer used for discovery. The Artificial Analysis API key is read from
+/// the `ARTIFICIAL_ANALYSIS_API_KEY` env var; the free tier works without a key
+/// but sends the header when present to avoid anonymous rate limits.
 ///
 /// Returns provider-prefixed model IDs (e.g. `"OpenRouter/z-ai/glm-5.2"`) sorted by
 /// intelligence index descending. On any error, returns an empty vec.
@@ -665,43 +679,17 @@ fn kask_bridge_settings(cx: &App) -> crate::settings::KaskSettings {
 /// Used by the composition root to auto-populate the fusion panel when
 /// `kask.fusion.panel_models` is empty or set to `"auto"`.
 pub async fn discover_favorites(
-    openrouter_api_key: &str,
+    _openrouter_api_key: &str,
     max_price_per_m: f64,
     min_intelligence_index: f64,
 ) -> Vec<hkask_inference::openrouter_backend::FavoriteModel> {
-    use hkask_inference::config::InferenceConfig;
-    use hkask_inference::openrouter_backend::OpenRouterBackend;
-
-    // Construct a minimal config — only the OpenRouter fields matter for
-    // discovery. The base URL defaults to `https://openrouter.ai/api`.
-    let config = InferenceConfig {
-        openrouter_api_key: openrouter_api_key.to_string(),
-        ..Default::default()
-    };
-
-    let client = match config.build_client() {
-        Ok(c) => std::sync::Arc::new(c),
-        Err(e) => {
-            tracing::warn!(
-                target: "reg.fusion",
-                error = %e,
-                "Failed to build HTTP client for favorites discovery"
-            );
-            return Vec::new();
-        }
-    };
-
-    // OpenRouterBackend::new requires a non-empty API key, but the /v1/models
-    // endpoint is public. Use new_public so discovery works even without a key.
-    let backend = OpenRouterBackend::new_public(
-        &config.openrouter_base_url,
-        &config.openrouter_api_key,
-        client,
-    );
-
-    backend
-        .discover_favorites(max_price_per_m, min_intelligence_index)
-        .await
+    let aa_api_key = std::env::var("ARTIFICIAL_ANALYSIS_API_KEY").unwrap_or_default();
+    hkask_inference::artificial_analysis::discover_favorites(
+        &aa_api_key,
+        max_price_per_m,
+        min_intelligence_index,
+    )
+    .await
 }
 
 /// Check whether the fusion panel should use auto-discovery.

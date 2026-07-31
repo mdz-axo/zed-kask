@@ -30,8 +30,6 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["HTTP-Referer", "X-Title"];
 const MAX_OPEN_ROUTER_SESSION_ID_LENGTH: usize = 256;
 
-
-
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
     pub api_url: String,
@@ -1463,5 +1461,4 @@ mod tests {
             }
         }
     }
-
 }

@@ -6,6 +6,12 @@ use super::*;
 
 /// The fusion modes offered in the UI. Kept in sync with
 /// `hkask_types::fusion::FusionMode`'s serde renames.
+///
+/// Note: `algo` is intentionally NOT listed here. The `FusionMode` enum has
+/// no `Algo` variant — setting `mode = "algo"` silently falls back to
+/// `Synthesis`. The algo judge is activated by setting `judge_model = "algo"`
+/// (the Judge Model field), which short-circuits `mode` entirely. The algo
+/// merge strategy is then selected by the `algo_method` field below.
 const FUSION_MODES: &[(&str, &str)] = &[
     (
         "synthesis",
@@ -27,10 +33,11 @@ const FUSION_MODES: &[(&str, &str)] = &[
         "pi",
         "Plan-Implement — 2-phase: strategy plan → implementation plan",
     ),
-    ("algo", "Algo — deterministic JSON merge, no LLM judge call"),
 ];
 
-/// The algo merge strategies. Only meaningful when `mode == "algo"`.
+/// The algo merge strategies. Only meaningful when `judge_model == "algo"`
+/// (the Judge Model field). When the judge is a real model name, `algo_method`
+/// is ignored.
 const ALGO_METHODS: &[(&str, &str)] = &[
     ("merge", "Merge — recursive JSON union (2 panelists)"),
     ("vote", "Vote — majority vote (scales beyond 2 panelists)"),
@@ -168,7 +175,7 @@ pub(crate) fn render_fusion_page(
         .tab_index(0)
         .with_initial_text(openrouter_max_price)
         .with_placeholder("1.0")
-        .aria_label("OpenRouter Max Price")
+        .aria_label("Max Price")
         .confirm_on_focus_out()
         .on_confirm(move |value, _window, cx| {
             if let Some(text) = value
@@ -193,7 +200,7 @@ pub(crate) fn render_fusion_page(
             .tab_index(0)
             .with_initial_text(openrouter_min_intelligence)
             .with_placeholder("40.0")
-            .aria_label("OpenRouter Min Intelligence")
+            .aria_label("Min Intelligence")
             .confirm_on_focus_out()
             .on_confirm(move |value, _window, cx| {
                 if let Some(text) = value
@@ -343,7 +350,7 @@ pub(crate) fn render_fusion_page(
                 .child(Label::new("Judge Model"))
                 .child(
                     Label::new(
-                        "Provider-prefixed judge/fuser model (e.g. \"OpenRouter/z-ai/glm-5.2\"). \n                         Leave empty to use the kask default (OpenRouter/z-ai/glm-5.2).",
+                        "Provider-prefixed judge/fuser model (e.g. \"OpenRouter/z-ai/glm-5.2\"). \n                         Leave empty to use the kask default (OpenRouter/z-ai/glm-5.2). \n                         \n                         Set to \"algo\" to activate algo mode: the panel runs in \n                         parallel and responses are merged algorithmically with NO LLM \n                         judge call (zero judge cost). When judge is \"algo\", the \n                         Mode field below is ignored — the merge strategy is selected \n                         by the Algo Method field (merge or vote).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -370,9 +377,11 @@ pub(crate) fn render_fusion_page(
                 .gap_1()
                 .child(Label::new("Mode"))
                 .child(
-                    Label::new(mode_hint)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    Label::new(format!(
+                        "{mode_hint}\n\nIgnored when the Judge Model is set to \"algo\" — in algo mode, \n                         the Algo Method field (merge/vote) selects the merge strategy instead."
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .child(mode_input),
         )
@@ -382,9 +391,11 @@ pub(crate) fn render_fusion_page(
                 .gap_1()
                 .child(Label::new("Algo Method"))
                 .child(
-                    Label::new(format!("{algo_hint}\nOnly used when mode == \"algo\"."))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    Label::new(format!(
+                        "{algo_hint}\nOnly used when the Judge Model is \"algo\". Ignored when the \n                         judge is a real model name."
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .child(algo_method_input),
         )
@@ -420,12 +431,14 @@ pub(crate) fn render_fusion_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("OpenRouter Auto-Discovery Thresholds"))
+                .child(Label::new("Auto-Discovery Thresholds"))
                 .child(
                     Label::new(
                         "When the panel models field is empty or set to \"auto\", the panel \
-                         is populated from OpenRouter models passing both thresholds. \
-                         These gates also feed the default-model onboarding thresholds.",
+                         is populated from Artificial Analysis models passing both thresholds. \
+                         These gates also feed the default-model onboarding thresholds. \
+                         Set ARTIFICIAL_ANALYSIS_API_KEY to use the Pro tier (exposes \
+                         the OpenRouter model ID mapping); the free tier works without a key.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
