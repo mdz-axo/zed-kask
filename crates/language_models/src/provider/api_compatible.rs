@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use ::util::ResultExt;
 use anyhow::Result;
-use convert_case::{Case, Casing};
 use credentials_provider::CredentialsProvider;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, TaskExt, Window};
 use language_model::{ApiKeyState, AuthenticateError, EnvVar};
@@ -12,6 +11,24 @@ use ui_input::InputField;
 
 pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
     fn api_url(&self) -> &str;
+}
+
+/// zed-kask (D12): compute the API-key env var name for an OpenAI/Anthropic-compatible
+/// provider ID. The kask contract is `<ID uppercased, non-alphanumeric stripped>_API_KEY`
+/// (e.g. `DeepInfra` → `DEEPINFRA_API_KEY`, `fal.ai` → `FALAI_API_KEY`,
+/// `Together AI` → `TOGETHERAI_API_KEY`). Upstream uses `convert_case::Case::UpperSnake`,
+/// which splits `DeepInfra` → `DEEP_INFRA_API_KEY` and leaves `fal.ai`/`Together AI` as
+/// invalid env var names. The entire kask ecosystem (`.env` template, MCP servers,
+/// keystore, UI text, docs) uses the concatenated form, so the upstream computation
+/// never matches the env vars kask users set. See DIVERGENCE.md D12.
+pub fn api_key_env_var_name_for(id: &str) -> String {
+    format!(
+        "{}_API_KEY",
+        id.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_uppercase()
+    )
 }
 
 pub struct ApiCompatibleProviderState<S: ApiCompatibleProviderSettings> {
@@ -28,8 +45,8 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
         resolve_settings: for<'a> fn(&'a str, &'a App) -> Option<&'a S>,
         cx: &mut App,
     ) -> Entity<Self> {
-        let api_key_env_var_name: SharedString =
-            format!("{}_API_KEY", id).to_case(Case::UpperSnake).into();
+        // zed-kask (D12): see `api_key_env_var_name_for`.
+        let api_key_env_var_name: SharedString = api_key_env_var_name_for(&id).into();
         cx.new(|cx| {
             cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
                 let Some(settings) = resolve_settings(&this.id, cx).cloned() else {
@@ -294,5 +311,31 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                 )
                 .into_any()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::api_key_env_var_name_for;
+
+    /// D12: the env var name must match the kask `.env` contract (concatenated
+    /// alphanumeric uppercase), not upstream's `convert_case::UpperSnake` output.
+    #[test]
+    fn test_api_key_env_var_name_kask_contract() {
+        // Cases from settings.json `openai_compatible` / `anthropic_compatible`.
+        // The expected names match the kask `.env.example` template and every
+        // `std::env::var("DEEPINFRA_API_KEY")` call in the kask MCP servers.
+        assert_eq!(api_key_env_var_name_for("DeepInfra"), "DEEPINFRA_API_KEY");
+        assert_eq!(api_key_env_var_name_for("OpenRouter"), "OPENROUTER_API_KEY");
+        assert_eq!(api_key_env_var_name_for("fal.ai"), "FALAI_API_KEY");
+        assert_eq!(
+            api_key_env_var_name_for("Together AI"),
+            "TOGETHERAI_API_KEY"
+        );
+        assert_eq!(api_key_env_var_name_for("KiloCode"), "KILOCODE_API_KEY");
+        assert_eq!(api_key_env_var_name_for("Cline"), "CLINE_API_KEY");
+        // Lowercase IDs (used by some kask docs) must also resolve correctly.
+        assert_eq!(api_key_env_var_name_for("deepinfra"), "DEEPINFRA_API_KEY");
+        assert_eq!(api_key_env_var_name_for("openrouter"), "OPENROUTER_API_KEY");
     }
 }

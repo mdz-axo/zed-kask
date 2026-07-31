@@ -267,8 +267,23 @@ fn main() {
         }
     }
 
-    // `zed --printenv` Outputs environment variables as JSON to stdout
+    // `zed --printenv` Outputs environment variables as JSON to stdout.
+    // zed-kask: load the `.env` first so `printenv` reflects what the running
+    // app actually sees, not just the shell environment. Without this, `printenv`
+    // is useless for diagnosing `.env`-loading bugs (it would show the keys as
+    // absent even when the app loads them fine).
     if args.printenv {
+        let config_env = paths::config_dir().join(".env");
+        for env_path in [
+            config_env.as_path(),
+            std::path::Path::new(".env"),
+            std::path::Path::new("kask/.env"),
+        ] {
+            if env_path.is_file() {
+                let _ = dotenvy::from_path(env_path);
+                break;
+            }
+        }
         util::shell_env::print_env();
         return;
     }
@@ -296,18 +311,26 @@ fn main() {
     // dotenvy does NOT override existing env vars — if a key is already in
     // the process environment (e.g. from the shell), the file value is
     // ignored. This is the correct behavior: shell env > .env file.
+    //
+    // zed-kask: the log emission is deferred to after `zlog::init()` (below)
+    // because the logger is not yet initialized at this point — emitting
+    // `log::info!`/`log::warn!` here would be silently dropped, leaving
+    // operators with no signal that the `.env` loaded or failed. This is the
+    // "Process-global hooks set at runtime need a startup-failure signal" trap
+    // from `.rules`: a silent `.env` load failure looks identical to "no `.env`
+    // present". We capture the result and log it once the logger is ready.
     let config_env = paths::config_dir().join(".env");
+    let mut kask_env_load_result: Result<std::path::PathBuf, String> =
+        Err("no .env file found".to_string());
     for env_path in [
         config_env.as_path(),
         std::path::Path::new(".env"),
         std::path::Path::new("kask/.env"),
     ] {
         if env_path.is_file() {
-            if let Err(e) = dotenvy::from_path(env_path) {
-                log::warn!("Failed to load {}: {e}", env_path.display());
-            } else {
-                log::info!("Loaded environment from {}", env_path.display());
-            }
+            kask_env_load_result = dotenvy::from_path(env_path)
+                .map(|()| env_path.to_path_buf())
+                .map_err(|e| format!("{e}"));
             break;
         }
     }
@@ -346,6 +369,17 @@ fn main() {
         };
     }
     ztracing::init();
+
+    // zed-kask: emit the deferred `.env` load result now that the logger is ready.
+    // See the comment near the `.env` loading block above.
+    match &kask_env_load_result {
+        Ok(path) => log::info!("Loaded kask environment from {}", path.display()),
+        Err(reason) => log::warn!(
+            "No kask `.env` loaded: {reason}. API keys for inference providers \
+             (DEEPINFRA_API_KEY, OPENROUTER_API_KEY, etc.) must come from the shell \
+             environment or the keychain, or kask inference routing will not work."
+        ),
+    }
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -2244,6 +2278,45 @@ fn main() {
 // in the agent tool picker and available to zed's agent thread. The servers
 // are launched as stdio child processes by zed's ContextServerStore.
 
+/// Resolve an MCP server binary to an absolute path.
+///
+/// GUI-launched apps (Finder/Spotlight/Dock/.desktop) do not inherit the
+/// user's shell PATH, so a bare binary name like `hkask-mcp-codegraph`
+/// fails to spawn — the server lands in `ContextServerState::Error` and
+/// is unavailable to the agent. Resolution order:
+///
+/// 1. `HKASK_MCP_{ID}_BIN` env var (explicit operator override; previously
+///    advertised in error messages and docs but never implemented — this
+///    is the enforcement point for that advertised invariant).
+/// 2. Sibling of the running `zed-kask` binary (`current_exe().parent()`).
+///    In a standard install, `hkask-mcp-*` binaries live side-by-side with
+///    `zed-kask` in `~/.local/bin` (or `$INSTALL_DIR/bin`).
+/// 3. Bare binary name (last resort — relies on PATH; works for CLI
+///    launches, not GUI).
+///
+/// This respects the `.rules` trap "Advertised invariants need enforcement
+/// points" — the `HKASK_MCP_*_BIN` mechanism is now real, not fiction.
+fn resolve_mcp_binary(server_id: &str, binary: &str) -> String {
+    let env_var = format!(
+        "HKASK_MCP_{}_BIN",
+        server_id.to_uppercase().replace('-', "_")
+    );
+    if let Ok(path) = std::env::var(&env_var)
+        && !path.is_empty()
+    {
+        return path;
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join(binary);
+        if candidate.is_file() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    binary.to_string()
+}
+
 /// A ContextServerDescriptor for a built-in kask MCP server.
 ///
 /// Returns the binary path (`hkask-mcp-{id}`) and env vars (kask settings +
@@ -2302,7 +2375,7 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
             }
 
             Ok(context_server::ContextServerCommand {
-                path: binary.into(),
+                path: resolve_mcp_binary(&server_id, &binary).into(),
                 args: vec![],
                 env: Some(env_map),
                 timeout: None,
@@ -3730,5 +3803,51 @@ mod tests {
             message: "late alert".into(),
             critical: true,
         });
+    }
+
+    /// `resolve_mcp_binary` honors the `HKASK_MCP_{ID}_BIN` env var — the
+    /// advertised invariant that was previously fiction (error messages and
+    /// docs referenced it, but no resolution existed). This test pins the
+    /// env-var path so a future refactor cannot silently drop it.
+    ///
+    /// Respects the `.rules` trap "Advertised invariants need enforcement
+    /// points."
+    #[test]
+    fn resolve_mcp_binary_honors_env_var_override() {
+        // Use a non-existent path — env-var resolution returns it verbatim
+        // without checking existence (the operator asserted it exists).
+        let fake_path = "/tmp/hkask-mcp-codegraph-test-override";
+        // SAFETY: this test runs single-threaded; no other thread reads or writes
+        // `HKASK_MCP_CODEGRAPH_BIN` while this block executes.
+        unsafe {
+            std::env::set_var("HKASK_MCP_CODEGRAPH_BIN", fake_path);
+        }
+        let resolved = resolve_mcp_binary("codegraph", "hkask-mcp-codegraph");
+        // SAFETY: see above.
+        unsafe {
+            std::env::remove_var("HKASK_MCP_CODEGRAPH_BIN");
+        }
+        assert_eq!(
+            resolved, fake_path,
+            "HKASK_MCP_{{ID}}_BIN env var must take precedence over all other resolution paths"
+        );
+    }
+
+    /// When no env var is set and the binary is not found next to the running
+    /// exe, `resolve_mcp_binary` falls back to the bare name. This pins the
+    /// last-resort fallback so GUI launches without the binary installed
+    /// produce a clear "binary not found" error rather than a silent wrong path.
+    #[test]
+    fn resolve_mcp_binary_falls_back_to_bare_name() {
+        // SAFETY: this test runs single-threaded; no other thread reads or writes
+        // `HKASK_MCP_NONEXISTENT_BIN` while this block executes.
+        unsafe {
+            std::env::remove_var("HKASK_MCP_NONEXISTENT_BIN");
+        }
+        let resolved = resolve_mcp_binary("nonexistent", "hkask-mcp-nonexistent");
+        assert_eq!(
+            resolved, "hkask-mcp-nonexistent",
+            "bare binary name is the last-resort fallback when no env var and no sibling binary exists"
+        );
     }
 }

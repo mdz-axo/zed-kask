@@ -10,7 +10,7 @@
 > divergences are the D-seams listed below + the `[workspace.members]` /
 > `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
-## The divergence surface (D1–D10)
+## The divergence surface (D1–D12)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These
 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior
@@ -30,6 +30,7 @@ an hKask crate behind one of these seams instead.
 | D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` + `crates/settings_ui/src/pages/kask_page.rs` + `crates/settings_ui/src/page_data.rs` | `KaskSettings` struct + `"kask"` section in settings.json. Credentials in keychain under `kask://credentials/<key>` namespace (via `CredentialsProvider`). Settings UI page with sub-pages for each kask subsystem. |
 | D10 | Kask panel | `crates/kask_panel/` | Native GPUI center-pane `Item` (not a dock `Panel`). Tab strip (10 built-in MCP servers). Each tab hosts the agent panel's `ConversationView` with `Agent::Curator` — the `ConversationView` handles all rendering (messages, input, tool-call cards, scroll, retry, cancel, copy, markdown, streaming, mentions, drag-and-drop). The kask panel only adds the tab strip and tab-switch logic. Per-tab system prompt injected via `CuratorAgentServer::with_extra_static_context` (appended to `CURATOR_STATIC_CONTEXT`). `ToolInvoker` trait + `set_tool_invoker` hook remain for the per-server visualization views (kanban, portfolio, scenarios) which fetch data via direct MCP tool calls. `kask_panel::Toggle` / `ToggleFocus` actions. Deployed on demand via `kask_panel::init(cx)`. |
 | D11 | `time::format_description::parse` deprecation allow | `crates/git_ui/src/git_graph.rs` | Upstream `git_graph.rs` calls `time::format_description::parse`, which is `#[deprecated]` in `time 0.3.54+` (the version the workspace resolves to; lower versions break `plist`/`project`). Two call sites (`timestamp_format`, the commit-date formatter) carry `#[allow(deprecated)]` with a `// zed-kask:` pointer to this seam. Remove this seam when upstream migrates to `parse_borrowed`. |
+| D12 | OpenAI/Anthropic-compatible env var name | `crates/language_models/src/provider/api_compatible.rs` | Upstream computes the API-key env var name as `format!("{}_API_KEY", id).to_case(Case::UpperSnake)`, which splits `DeepInfra` → `DEEP_INFRA_API_KEY` and leaves `fal.ai`/`Together AI` as invalid env var names (`FAL.AI_API_KEY`, `TOGETHER_AI_API_KEY`). The entire kask ecosystem (`.env` template, MCP servers, keystore, UI text, docs) uses the concatenated alphanumeric form (`DEEPINFRA_API_KEY`, `FALAI_API_KEY`, `TOGETHERAI_API_KEY`), so the upstream computation never matches the env vars kask users set. The `// zed-kask:` block in `ApiCompatibleProviderState::new` strips non-alphanumerics and uppercases instead of using `convert_case`. `convert_case` was removed from `crates/language_models/Cargo.toml` (still used by other crates, so the workspace dep stays). Pinned by `test_api_key_env_var_name_kask_contract` in `api_compatible.rs`. |
 
 ## Other zed-kask-modified files (supporting D1–D10)
 

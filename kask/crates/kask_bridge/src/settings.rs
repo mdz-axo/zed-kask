@@ -452,7 +452,7 @@ pub struct KaskTrainingSettings {
 /// non-deterministic (the same anti-pattern as the inference-providers fix).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskFusionSettings {
-    /// Master toggle. When false, fusion is disabled.
+    /// Master toggle. When false, fusion is disabled. Default: `true`.
     pub enabled: bool,
 
     /// Judge/fuser model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.2"`).
@@ -506,7 +506,7 @@ pub struct KaskFusionSettings {
 impl Default for KaskFusionSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             judge_model: String::default(),
             panel_models: String::default(),
             mode: "synthesis".to_string(),
@@ -1417,6 +1417,10 @@ mod tests {
     #[test]
     fn fusion_settings_default_mode_and_algo_method() {
         let default = KaskFusionSettings::default();
+        assert!(
+            default.enabled,
+            "KaskFusionSettings::default() must return enabled: true — fusion is on by default"
+        );
         assert_eq!(default.mode, "synthesis");
         assert_eq!(default.algo_method, "merge");
         assert_eq!(default.max_rounds, 5);

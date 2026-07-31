@@ -27,7 +27,8 @@ pub(crate) fn render_economic_guardrails_page(
 ) -> AnyElement {
     let current = raw_max_output_price(cx);
     // Default threshold used when the user enables the filter but hasn't set a
-    // value yet. Matches the docs example in `docs/src/ai/use-a-gateway.md`.
+    // value yet. MUST match `OpenRouterSettingsContent::default()
+    // .max_output_price_per_million_tokens` (the single source of truth).
     const DEFAULT_THRESHOLD: f64 = 5.0;
     let enabled = current.is_some();
     let threshold_text = current

@@ -587,17 +587,30 @@ pub enum ZedDotDevAvailableProvider {
 }
 
 #[with_fallible_options]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenRouterAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
     /// Maximum output price (USD per million tokens) at which a model fetched
     /// from OpenRouter's `/models` endpoint is offered in the picker. Models
-    /// whose `pricing.completion` exceeds this value are de-listed. `None`
-    /// (the default) disables the filter. The Settings UI defaults to `5.0`
-    /// when the toggle is first enabled.
+    /// whose `pricing.completion` exceeds this value are de-listed. Defaults
+    /// to `5.0` (de-list models above $5/M output tokens). Set to `None` to
+    /// disable the filter. The single source of truth for the default value
+    /// is the `Default` impl below; the Settings UI constant
+    /// `DEFAULT_THRESHOLD` must match.
     pub max_output_price_per_million_tokens: Option<f64>,
+}
+
+impl Default for OpenRouterSettingsContent {
+    fn default() -> Self {
+        Self {
+            api_url: None,
+            available_models: None,
+            custom_headers: None,
+            max_output_price_per_million_tokens: Some(5.0),
+        }
+    }
 }
 
 #[with_fallible_options]
@@ -656,5 +669,26 @@ pub use language_model_core::ModelMode;
 impl MergeFrom for ModelMode {
     fn merge_from(&mut self, other: &Self) {
         *self = *other;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_router_settings_default_enables_economic_guardrail() {
+        // .rules trap: "Kask settings defaults must live in `Default` impls —
+        // the single source of truth." The economic guardrail (OpenRouter
+        // output-price de-listing) must be ON by default. Prior to this fix,
+        // the field derived `Default` as `None` (filter off) despite a doc
+        // comment claiming "Default: 5.0" — a doc-only assertion with no
+        // enforcing code. This test pins the default-on behavior.
+        let default = OpenRouterSettingsContent::default();
+        assert_eq!(
+            default.max_output_price_per_million_tokens,
+            Some(5.0),
+            "economic guardrail must be ON by default with threshold 5.0"
+        );
     }
 }
