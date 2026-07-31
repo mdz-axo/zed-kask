@@ -312,6 +312,27 @@ not capture `AsyncApp`. This applies to any `Send + Sync` trait (e.g.
 this the hard way — the first `ToastAlertSink` impl captured `AsyncApp` and
 failed to compile as `Send + Sync`.
 
+## `background_spawn` of tokio-dependent futures panics at poll time
+
+`cx.background_spawn(async move { ... })` schedules on GPUI's own
+thread-pool executor, which has no tokio reactor. Any future that drives
+`reqwest`, `tokio::time`, `tokio::process`, or `tokio::io` panics with
+"there is no reactor running, must be called from the context of a Tokio
+1.x runtime" when polled on the worker thread. The `let _guard =
+Tokio::handle_async(&*cx).enter();` pattern around `background_spawn` does
+NOT help — `enter()` sets a thread-local for the current scope, but the
+future is polled later on a different thread where the guard is gone. Use
+`gpui_tokio::Tokio::spawn(&*cx, async move { ... })` instead (returns
+`Task<Result<R, JoinError>>`; handle the `Err(JoinError)` arm). The
+`main.rs` comment block at the cybernetics-loop spawn documents this, but
+agents editing other files (MCP launchers, panel helpers, deferred-task
+additions) miss it. Before merging any kask change that adds a
+`background_spawn`, grep the future body for `reqwest`, `tokio::`, or any
+`await` on a tokio-backed client — if found, route through `Tokio::spawn`.
+Found in the fusion auto-discovery site: the `enter()` guard looked
+correct, the app panicked on every startup when fusion auto-discovery
+was enabled (the default).
+
 ## Kask MCP servers have two parallel launch paths by design
 
 Kask MCP servers (`hkask-mcp-{id}` binaries) are launched by two independent
@@ -493,36 +514,26 @@ agent `process_manifests`).
 
 ## `unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop
 
-Regulation loops (`EpisodicLoop`, `SemanticLoop`, `ConsolidationService`)
-read sense inputs via `unwrap_or(0)` on fallible storage queries. A DB outage
-returns 0, which the loop interprets as "no deviation from set-point" — the
-opposite of the truth. The loop sees no signal and suppresses its corrective
-action, producing a reinforcing loop instead of a corrective one. This
-generalizes the "Process-global hooks need a startup-failure signal" trap:
-every `unwrap_or` on a regulation signal is a missing failure signal.
+Regulation loops (`CyberneticsLoop`, `MetacognitionLoop`,
+`ConsolidationService`) read sense inputs from fallible storage queries.
+A DB outage that returns 0 via `unwrap_or(0)` is interpreted by the loop
+as "no deviation from set-point" — the opposite of the truth. The loop
+sees no signal and suppresses its corrective action, producing a
+reinforcing loop instead of a corrective one. This generalizes the
+"Process-global hooks need a startup-failure signal" trap: every
+`unwrap_or(0)` on a regulation signal is a missing failure signal.
 
-Verified swallowed-error sites (production, non-test) as of audit cycle 7:
-
-- `kask/crates/hkask-memory/src/episodic_loop.rs:108` —
-  `storage_usage(&perspective).unwrap_or(0)` feeds `SignalMetric::StorageUsage`.
-- `kask/crates/hkask-memory/src/semantic_loop.rs:217,221` —
-  `h_mem_count().unwrap_or(0)` and `low_confidence_count(threshold).unwrap_or(0)`
-  feed `SignalMetric::TripleCount` and the low-confidence signal.
-- `kask/crates/hkask-memory/src/consolidation_service.rs:109,113` —
-  `semantic_low_confidence_count` and `semantic_h_mem_count` return 0 on error,
-  masking the very deviation consolidation is supposed to act on.
-- `kask/crates/hkask-regulation/src/runtime.rs:305` —
-  `variety_for_domain` returns 0 when the domain is untracked AND when the
-  counter lookup fails; the two cases are indistinguishable to the caller.
-
-The fix is not always `tracing::warn!` — some of these are documented
-degradation (e.g. `consolidation_candidate_count` in `episodic.rs:394` is
-explicitly `post: returns 0 on error (graceful degradation)`). The trap is
-the *undocumented* `unwrap_or(0)` on a signal that a loop reads as a
-measurement. When you add a new sense input to a regulation loop, either
+The previously-cited sites have been fixed — `consolidation_service.rs`
+`semantic_low_confidence_count` / `semantic_h_mem_count` (L114, L132) now
+use explicit `match` + `tracing::warn!` ("signal stale, returning 0"),
+and `runtime.rs` `variety_for_domain` (L312) now emits `tracing::warn!`
+for untracked domains. The trap remains a forward-looking guideline for
+new sense inputs: when you add a sense input to a regulation loop, either
 propagate the error so the loop can mark the signal stale, or document the
 degradation in the doc comment and emit a `tracing::warn!` so an operator
 reading logs can distinguish "measured zero" from "failed to measure".
+Do not use `unwrap_or(0)` on a signal that a loop reads as a measurement
+unless the degradation is documented in the doc comment.
 
 ## `LanguageModelInferencePort` honors `model_override` via registry resolution
 

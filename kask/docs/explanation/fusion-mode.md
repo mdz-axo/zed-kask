@@ -326,7 +326,7 @@ The full `FusionConfig` shape (9 fields, YAML-clean):
 | `skills` | string[] | `[]` | Skill anchors to inject into the LLM judge. Ignored when `judge: algo`. |
 | `max_rounds` | u32 | `5` | Cap for `deliberation` mode. Ignored when `judge: algo`. |
 | `algo_method` | `merge` \| `vote` | `merge` | Algo merge strategy when `judge: algo`. Ignored when the judge is an LLM. |
-| `coherence_threshold` | number? | `None` | Optional coherence Γ threshold for advisory measured-convergence signal in `deliberation` mode. The judge verdict still wins. |
+| `coherence_threshold` | number? | `None` | Not yet implemented — the embedding source for ξ/Γ measurement was never wired. Setting this has no effect. |
 | `panel_sizing_enabled` | bool | `false` | When `true`, dispatch fewer panel models for simple/medium queries (1 for Simple, 2 for Medium, all for Complex). |
 | `pressure_adaptive_enabled` | bool | `false` | When `true`, reduce panel size under high latency pressure (degraded output beats hard failure). |
 

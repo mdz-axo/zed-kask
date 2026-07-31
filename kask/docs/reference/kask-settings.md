@@ -225,7 +225,7 @@ hardcoded model names.
 | `max_rounds` | `u32` | `5` | Max rounds for deliberation mode |
 | `openrouter_max_price` | `f64` | `1.0` | OpenRouter price filter |
 | `openrouter_min_intelligence` | `f64` | `40.0` | OpenRouter intelligence floor |
-| `coherence_threshold` | `Option<f64>` | `None` | Measured convergence threshold; `None` = disabled |
+| `coherence_threshold` | `Option<f64>` | `None` | Not yet implemented — setting has no effect |
 | `panel_sizing_enabled` | `bool` | `false` | Query-complexity-based panel sizing |
 | `pressure_adaptive_enabled` | `bool` | `false` | Substrate-aware degradation under latency pressure |
 

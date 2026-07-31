@@ -80,7 +80,7 @@ DEEPINFRA_API_KEY=your-key HKASK_CODEGRAPH_DB=/path/to/codegraph.db hkask-mcp-co
 - `hkask-codegraph` — Domain engine (search, traversal, analysis, context)
 - `hkask-mcp` — MCP server framework (`mcp_server!`, `execute_tool`, `run_server`)
 - `hkask-types` — `WebID`
-- `hkask-inference` — `EmbeddingRouter` for embedding generation
+- `hkask-inference` — `InferenceIpcClient` for embedding generation (routes through zed's `LanguageModelEmbeddingPort` via IPC bridge)
 - `rmcp` — MCP protocol
 - `minijinja` — Jinja2 templates for embedding prompts
 - `tracing` — Regulation event emission

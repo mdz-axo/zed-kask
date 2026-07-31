@@ -1444,15 +1444,33 @@ fn main() {
                             let or_api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
                             let max_price = kask_settings.fusion.openrouter_max_price;
                             let min_ia = kask_settings.fusion.openrouter_min_intelligence;
-                            let discovery_task = {
-                                let _tokio_guard = gpui_tokio::Tokio::handle_async(&*cx).enter();
-                                cx.background_spawn(async move {
+                            // Spawn discovery on the tokio runtime, not GPUI's
+                            // background thread pool. `discover_favorites`
+                            // drives a `reqwest::Client` which requires a tokio
+                            // reactor; `cx.background_spawn` schedules on GPUI's
+                            // own executor (no reactor) and panics with
+                            // "there is no reactor running". The `enter()` guard
+                            // around `background_spawn` does NOT help — the
+                            // guard is dropped before the future is polled on
+                            // the GPUI worker thread.
+                            let discovery_task = gpui_tokio::Tokio::spawn(
+                                &*cx,
+                                async move {
                                     kask_bridge::discover_favorites(&or_api_key, max_price, min_ia).await
-                                })
-                            };
+                                },
+                            );
                             let timeout = cx.background_executor().timer(std::time::Duration::from_secs(5));
                             let result = futures::select_biased! {
-                                favs = discovery_task.fuse() => favs,
+                                favs = discovery_task.fuse() => match favs {
+                                    Ok(favs) => favs,
+                                    Err(join_err) => {
+                                        log::warn!(
+                                            "hKask fusion: OpenRouter discovery task failed: {join_err} — \
+                                             falling back to kask_default panel"
+                                        );
+                                        Vec::new()
+                                    }
+                                },
                                 _ = timeout.fuse() => {
                                     log::warn!(
                                         "hKask fusion: OpenRouter discovery timed out after 5s — \
@@ -1873,6 +1891,18 @@ fn main() {
                 // consumers with different governance requirements; the
                 // parallel instances are by design, not a bug.
                 if !servers_to_start_clone.is_empty() {
+                    // The `enter()` guard is safe here because this code runs
+                    // on the GPUI **foreground** thread (inside `cx.spawn`),
+                    // which is single-threaded — the guard's thread-local
+                    // stays valid across `.await` points. `start_server_with_env`
+                    // uses `tokio::process::Command` and `tokio::spawn`, both
+                    // of which need the tokio context set on the current
+                    // thread. The loop also calls `mcp_env_with_credentials`
+                    // which needs `AsyncApp` (not `Send`), so the loop body
+                    // cannot be moved into `Tokio::spawn`. Do NOT move this
+                    // loop to `cx.background_spawn` — the `enter()` guard
+                    // would be dropped before the future is polled on the
+                    // worker thread (the fusion discovery trap, see .rules).
                     let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
                     let _tokio_guard = tokio_handle.enter();
                     let credential_urls = cx.update(|cx| {

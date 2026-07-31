@@ -340,7 +340,9 @@ pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, S
 
 /// Find the `InferenceProviderDescriptor` for an embedding model string by
 /// matching its provider prefix (case-insensitive) against `INFERENCE_PROVIDERS`.
-fn embedding_provider_descriptor(embedding_model: &str) -> Option<&'static InferenceProviderDescriptor> {
+fn embedding_provider_descriptor(
+    embedding_model: &str,
+) -> Option<&'static InferenceProviderDescriptor> {
     for provider in INFERENCE_PROVIDERS {
         let prefix = format!("{}/", provider.id);
         if embedding_model.len() >= prefix.len()
@@ -413,9 +415,13 @@ mod tests {
     fn resolve_embedding_credentials_deepinfra_with_key() {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: test-only env mutation, serialized by ENV_LOCK.
-        unsafe { std::env::set_var("DEEPINFRA_API_KEY", "test-key"); }
+        unsafe {
+            std::env::set_var("DEEPINFRA_API_KEY", "test-key");
+        }
         let result = resolve_embedding_credentials("DeepInfra/Qwen/Qwen3-Embedding-0.6B");
-        unsafe { std::env::remove_var("DEEPINFRA_API_KEY"); }
+        unsafe {
+            std::env::remove_var("DEEPINFRA_API_KEY");
+        }
         assert!(result.is_some(), "should resolve with key present");
         let (api_url, api_key) = result.unwrap();
         assert_eq!(api_url, "https://api.deepinfra.com/v1/openai");
@@ -425,16 +431,25 @@ mod tests {
     #[test]
     fn resolve_embedding_credentials_deepinfra_case_insensitive() {
         let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::set_var("DEEPINFRA_API_KEY", "test-key"); }
+        unsafe {
+            std::env::set_var("DEEPINFRA_API_KEY", "test-key");
+        }
         let result = resolve_embedding_credentials("deepinfra/Qwen/Qwen3-Embedding-0.6B");
-        unsafe { std::env::remove_var("DEEPINFRA_API_KEY"); }
-        assert!(result.is_some(), "lowercase prefix should match case-insensitively");
+        unsafe {
+            std::env::remove_var("DEEPINFRA_API_KEY");
+        }
+        assert!(
+            result.is_some(),
+            "lowercase prefix should match case-insensitively"
+        );
     }
 
     #[test]
     fn resolve_embedding_credentials_deepinfra_no_key() {
         let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("DEEPINFRA_API_KEY"); }
+        unsafe {
+            std::env::remove_var("DEEPINFRA_API_KEY");
+        }
         let result = resolve_embedding_credentials("DeepInfra/Qwen/Qwen3-Embedding-0.6B");
         assert!(result.is_none(), "should return None when key is missing");
     }
@@ -448,6 +463,9 @@ mod tests {
     #[test]
     fn resolve_embedding_credentials_no_prefix() {
         let result = resolve_embedding_credentials("Qwen/Qwen3-Embedding-0.6B");
-        assert!(result.is_none(), "bare model id without prefix should return None");
+        assert!(
+            result.is_none(),
+            "bare model id without prefix should return None"
+        );
     }
 }

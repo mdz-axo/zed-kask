@@ -54,6 +54,14 @@ pub struct RuntimeAlert {
 pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
     /// Send an alert email. Non-blocking — implementations should spawn
     /// async work rather than blocking the caller.
+    ///
+    /// Must be called from a tokio runtime context. The sole caller is
+    /// `CyberneticsLoop::tick()`, which runs inside `gpui_tokio::Tokio::spawn`.
+    /// Implementations that use bare `tokio::spawn` (e.g.
+    /// `CuratorAlertEmailSink`) rely on the caller's tokio context being
+    /// active. A non-tokio caller (e.g. a GPUI foreground callback) would
+    /// panic with "no reactor running" — route through
+    /// `gpui_tokio::Tokio::spawn(cx, ...)` instead.
     fn send_alert_email(&self, alert: &RuntimeAlert);
 }
 

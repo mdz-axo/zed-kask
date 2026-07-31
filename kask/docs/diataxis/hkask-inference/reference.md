@@ -25,18 +25,12 @@ servers immediately.
 |--------|----------|
 | `ProviderId` enum | `kask/crates/hkask-inference/src/config.rs:44` |
 | `InferenceConfig` struct | `kask/crates/hkask-inference/src/config.rs:192` |
-| `InferenceRouter` struct | `kask/crates/hkask-inference/src/inference_router/mod.rs:52` |
-| `ChatBackend` trait | `kask/crates/hkask-inference/src/inference_router/backend.rs:51` |
-| `VisionBackend` trait | `kask/crates/hkask-inference/src/inference_router/backend.rs:101` |
-| `EmbeddingRouter` | `kask/crates/hkask-inference/src/embedding_router.rs:16` |
+| `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs` |
+| `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs` |
+| `FusionOrchestrator` | `kask/crates/hkask-inference/src/fusion_orchestrator.rs` |
 | `DeepInfraBackend` | `kask/crates/hkask-inference/src/deepinfra_backend.rs:21` |
 | `FalBackend` | `kask/crates/hkask-inference/src/fal_backend.rs:26` |
 | `OpenRouterBackend` | `kask/crates/hkask-inference/src/openrouter_backend.rs:22` |
-| `TogetherBackend` | `kask/crates/hkask-inference/src/together_backend.rs:18` |
-| `RunpodBackend` | `kask/crates/hkask-inference/src/runpod_backend.rs:16` |
-| `KiloCodeBackend` | `kask/crates/hkask-inference/src/kilocode_backend.rs:28` |
-| `OllamaBackend` | `kask/crates/hkask-inference/src/ollama_backend.rs:51` |
-| `ClineBackend` | `kask/crates/hkask-inference/src/cline_backend.rs:23` |
 | `RouterModelEntry` | `kask/crates/hkask-inference/src/hkask_inference.rs:79` |
 
 ## Provider model
@@ -46,6 +40,12 @@ variant carries a serde rename tag (a two-letter serialization code) and a
 model-name prefix (registered in the `PREFIXES` const of `parse_from_model`).
 The `InferenceConfig` struct (`config.rs:192`) holds the base URLs and API
 keys for each provider, plus the `default_provider` field.
+
+Embedding generation is handled by `kask_bridge::LanguageModelEmbeddingPort`
+(in `kask/crates/kask_bridge/src/inference.rs`), which resolves credentials
+directly from the `INFERENCE_PROVIDERS` table + env var and makes raw
+`/embeddings` POSTs. The old `EmbeddingRouter` and `InferenceRouter` structs
+have been deleted — they were dead code, never constructed.
 
 ```mermaid
 classDiagram
@@ -80,45 +80,26 @@ classDiagram
         +default_model: String
         +fusion: Option~FusionConfig~
     }
-    class InferenceRouter {
+    class MediaRouter {
         -config: InferenceConfig
         -deepinfra: Option~DeepInfraBackend~
         -fal: Option~FalBackend~
-        -together: Option~TogetherBackend~
         -openrouter: Option~OpenRouterBackend~
-        -kilocode: Option~KiloCodeBackend~
-        -runpod: Option~RunpodBackend~
-        -ollama: Option~OllamaBackend~
-        -cline: Option~ClineBackend~
-        -embedding: EmbeddingRouter
-        -heal_error_cb: Option~HealCallback~
-        -governance: Option~InferenceGovernance~
     }
-    class ChatBackend {
-        <<interface>>
-        +generate(model, prompt, params) Result
-        +generate_stream(model, prompt, params) Stream
-        +generate_with_messages(model, messages) Result
-    }
-    class VisionBackend {
-        <<interface>>
-        +generate_vision(model, prompt, image) Result
-    }
-    class EmbeddingRouter {
-        +embed(text) Vec~f32~
+    class InferenceIpcClient {
+        +generate_with_model(model, prompt, params) Result
+        +media_generate(op, params) Result
     }
 
-    InferenceRouter --> InferenceConfig : holds
-    InferenceRouter --> ChatBackend : dispatches to
-    InferenceRouter --> VisionBackend : dispatches to
-    InferenceRouter --> EmbeddingRouter : owns
+    MediaRouter --> InferenceConfig : holds
+    InferenceIpcClient --> MediaRouter : falls back to
     InferenceConfig --> ProviderId : defaults to
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-INF-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-inference/src/config.rs:44,192; kask/crates/hkask-inference/src/inference_router/mod.rs:52-65; kask/crates/hkask-inference/src/inference_router/backend.rs:51,101; kask/crates/hkask-inference/src/embedding_router.rs:16
+verified_date: 2026-07-31
+verified_against: kask/crates/hkask-inference/src/config.rs:44,192; kask/crates/hkask-inference/src/media_router.rs; kask/crates/hkask-inference/src/inference_ipc_client.rs
 status: VERIFIED
 -->
 
