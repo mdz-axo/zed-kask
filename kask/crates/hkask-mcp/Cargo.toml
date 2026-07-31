@@ -22,13 +22,8 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 jsonschema = "0.28"
 
 [dev-dependencies]
-async-trait.workspace = true
-tempfile.workspace = true
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
-rcgen = "0.13"
-tokio-rustls = "0.26"
-rustls = { workspace = true }
 
 [[test]]
 name = "tool_input_fuzz"
