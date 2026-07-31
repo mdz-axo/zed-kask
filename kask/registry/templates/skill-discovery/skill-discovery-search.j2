@@ -40,7 +40,7 @@ Each catalog entry has:
 - `name` — skill identifier
 - `description` — what the skill does
 - `template_type` — KnowAct / WordAct / RenderAct
-- `lexicon_terms` — vocabulary signaling relevance
+- `description` — natural-language summary of the skill's purpose
 - `when_to_use` — trigger conditions
 
 ## Search Method
@@ -50,7 +50,7 @@ For each catalog skill, compute a **fit_score** in [0.0, 1.0] across three dimen
 | Dimension | Weight | Evaluation |
 |-----------|--------|------------|
 | **Capability match** | 0.50 | Does the skill's description address the gap's required capability? Direct = 1.0, adjacent = 0.5, unrelated = 0.0. |
-| **Lexicon overlap** | 0.25 | Does the gap description's terminology overlap with the skill's `lexicon_terms`? Strong = 1.0, moderate = 0.5, none = 0.0. |
+| **Description overlap** | 0.25 | Does the gap description's terminology overlap with the skill's `description`? Strong = 1.0, moderate = 0.5, none = 0.0. |
 | **Trigger relevance** | 0.25 | Would the gap's task pattern trigger this skill's `when_to_use` conditions? Yes = 1.0, maybe = 0.5, no = 0.0. |
 
 **Composite fit_score** = (capability × 0.50) + (lexicon × 0.25) + (trigger × 0.25).

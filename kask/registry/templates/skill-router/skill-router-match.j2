@@ -65,7 +65,7 @@ Each catalog entry has:
 - `name` — skill identifier
 - `description` — what the skill does
 - `template_type` — KnowAct / WordAct / RenderAct
-- `lexicon_terms` — vocabulary that signals skill relevance
+- `description` — natural-language summary that signals skill relevance
 - `when_to_use` — trigger conditions for the skill
 
 ## Matching Method
@@ -75,7 +75,7 @@ For each candidate skill, compute a **fit_score** in [0.0, 1.0] across three dim
 | Dimension | Weight | What to evaluate |
 |-----------|--------|------------------|
 | **Capability overlap** | 0.50 | Does the skill's description cover the task's core capability need? Full overlap = 1.0, partial = 0.5, none = 0.0. |
-| **Lexicon alignment** | 0.25 | Do the task description's key verbs/nouns overlap with the skill's `lexicon_terms`? Strong overlap = 1.0, moderate = 0.5, none = 0.0. |
+| **Description alignment** | 0.25 | Do the task description's key verbs/nouns overlap with the skill's `description`? Strong overlap = 1.0, moderate = 0.5, none = 0.0. |
 | **Trigger alignment** | 0.25 | Does the task match the skill's `when_to_use` trigger conditions? Direct match = 1.0, tangential = 0.5, no match = 0.0. |
 
 **Composite fit_score** = (capability × 0.50) + (lexicon × 0.25) + (trigger × 0.25).

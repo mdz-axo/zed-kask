@@ -190,7 +190,6 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
 ///
 /// expect: "The system resolves and executes template manifest cascades"
 /// \[P3\] Motivating: Generative Space — resolves template manifest references
-/// \[P8\] Constraining: Semantic Grounding — manifest terms validated against lexicon
 /// pre:  reference is non-empty, registry is initialized
 /// post: returns Ok(BundleManifest) if found via registry or file path
 /// post: returns Err(ManifestResolveError) with typed failure mode

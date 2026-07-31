@@ -41,11 +41,11 @@ You are a kask skill validator. Validate the scaffolded crate against all check 
 
 Validate:
 - R1: Template manifest structure (crate, version, description, templates array)
-- R2: Each template entry has id, name, path, type, lexicon_terms, description
+- R2: Each template entry has id, name, path, type, description
 - R3: template_type values are KnowAct/WordAct/FlowDef/RenderAct
-- R4: .j2 files have valid [inference] frontmatter (template_type, lexicon_terms, contract, energy_cap, visibility)
+- R4: .j2 files have valid [inference] frontmatter (template_type, contract, energy_cap, visibility)
 - R5: contract input/output fields are well-formed
-- R6: lexicon_terms non-empty and match across manifest and .j2 frontmatter
+- R6: template_type matches across manifest and .j2 frontmatter
 - R7: visibility is Public/Private/Shared and consistent
 - R8: energy_cap in 2048-8192 range
 - R9: generates_spans declared for executable templates

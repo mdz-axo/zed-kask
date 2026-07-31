@@ -10,7 +10,6 @@ pub struct RegistryEntry {
     pub id: String,
     pub template_type: TemplateType,
     pub name: String,
-    pub lexicon_terms: Vec<String>,
     pub description: String,
     pub source_path: String,
     pub required_capabilities: Vec<String>,

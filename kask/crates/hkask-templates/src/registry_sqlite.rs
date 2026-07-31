@@ -148,14 +148,6 @@ impl SqliteRegistry {
         for warning in &entry.validate() {
             tracing::warn!(target: "hkask.templates", "{}", warning);
         }
-        // F-07 fix: ill-formed lexicon terms are errors, not warnings.
-        let vocab_warnings = crate::vocabulary::validate_entry(&entry);
-        if !vocab_warnings.is_empty() {
-            return Err(TemplateError::Validation(format!(
-                "lexicon validation failed: {}",
-                vocab_warnings.join("; ")
-            )));
-        }
         let mut conn = self
             .pool
             .get()
@@ -210,10 +202,6 @@ impl SqliteRegistry {
             name,
             description: desc,
             source_path: sp,
-            // lexicon_terms are populated from YAML manifests at bootstrap,
-            // not persisted to SQLite. The table was deleted via essentialist
-            // reduction — no consumer queried by lexicon term.
-            lexicon_terms: Vec::new(),
             required_capabilities: query_column(
                 conn,
                 "SELECT capability FROM template_capabilities WHERE template_id = ?1",
@@ -251,7 +239,7 @@ impl SqliteRegistry {
         Self::row_to_entry(&conn, &row.0, row.1, row.2, row.3, row.4, row.5, row.6)
     }
 
-    /// Delete a template and all associated data (lexicon terms, capabilities, provenance).
+    /// Delete a template and all associated data (capabilities, provenance).
     /// Returns the entry if it existed, None otherwise.
     ///
     /// expect: "The system persists template registrations to SQLite"

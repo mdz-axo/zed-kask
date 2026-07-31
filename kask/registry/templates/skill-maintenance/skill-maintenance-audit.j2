@@ -58,7 +58,7 @@ A skill is stale if it exhibits any of these signals:
 | Vague or generic description | Description could apply to any skill, not this one specifically | Medium |
 | Magna Carta violations | Skill violates P1–P4 principles | High |
 | energy_cap out of range | energy_cap not in 2048–8192 range | Medium |
-| vocabulary terms missing | lexicon_terms not in workspace vocabulary | Medium |
+| template_type mismatch | template_type in manifest doesn't match .j2 frontmatter | Medium |
 | Deprecated patterns | Uses `todo!`, `unimplemented!`, `#[deprecated]`, or abandoned APIs | Medium |
 | Missing SKILL.md companion | SKILL.md absent from `.agents/skills/<name>/` | Low |
 | Regulation span mismatches | References `reg.*` spans not in defined namespace set | Low |

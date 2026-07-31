@@ -107,7 +107,6 @@ pub fn template_yaml_file(template_ref: &str) -> Option<&'static str> {
 ///   - id: <skill>/<template>
 ///     path: <file>.j2
 ///     type: WordAct|KnowAct|FlowDef|RenderAct
-///     lexicon_terms: [...]
 ///     description: ...
 /// ```
 /// The `crate` section is ignored — only `templates` are extracted into
@@ -126,8 +125,6 @@ struct SkillTemplateEntry {
     path: String,
     #[serde(rename = "type")]
     template_type: TemplateType,
-    #[serde(default)]
-    lexicon_terms: Vec<String>,
     #[serde(default)]
     description: String,
 }
@@ -247,9 +244,8 @@ impl Registry {
         Ok(())
     }
 
-    /// Register a template entry. Validates lexicon_terms against known vocabulary.
+    /// Register a template entry.
     ///
-    /// Unknown terms are logged as warnings (Warn mode).
     /// The registry performs declaration-consistency checks at registration time;
     /// OCAP enforcement at runtime is handled by `McpRuntime::invoke` / `ToolGovernance`
     /// in `hkask-mcp`.
@@ -258,7 +254,6 @@ impl Registry {
     /// \[P3\] Motivating: Generative Space — registers a template in the registry
     /// pre:  entry.id is non-empty, entry.template_type is valid
     /// post: entry inserted into templates map
-    /// post: returns Err(RegistryError) if lexicon_terms contain unknown terms
     pub fn register(
         &mut self,
         entry: RegistryEntry,
@@ -267,17 +262,6 @@ impl Registry {
         let warnings = entry.validate();
         for warning in &warnings {
             tracing::warn!(target: "hkask.templates", "Registration warning: {}", warning);
-        }
-
-        // Validate lexicon_terms format (F-07 fix: ill-formed terms like
-        // `Multi-Step` or `multi-step` are errors, not warnings — a typo
-        // should not silently register with a bad tag).
-        let vocab_warnings = crate::vocabulary::validate_entry(&entry);
-        if !vocab_warnings.is_empty() {
-            return Err(hkask_types::RegistryError::Other(format!(
-                "lexicon validation failed: {}",
-                vocab_warnings.join("; ")
-            )));
         }
 
         self.templates.insert(entry.id.clone(), entry);
@@ -483,7 +467,6 @@ impl Registry {
                             id: tmpl.id,
                             template_type: tmpl.template_type,
                             name,
-                            lexicon_terms: tmpl.lexicon_terms,
                             description: tmpl.description,
                             source_path: format!("registry/templates/{skill_name}/{}", tmpl.path),
                             required_capabilities: Vec::new(),
@@ -494,7 +477,7 @@ impl Registry {
                             tracing::warn!(
                                 target: "hkask.templates",
                                 error = %e,
-                                "Failed to register template entry — lexicon validation error"
+                                "Failed to register template entry"
                             );
                         }
                     }

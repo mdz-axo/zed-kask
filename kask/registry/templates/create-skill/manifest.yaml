@@ -7,11 +7,11 @@ crate:
   description: >
     Create a new kask skill as a complete registry crate: manifest.yaml +
     .j2 templates + process manifest (FlowDef with gas/rjoule/convergence
-    blocks) + SKILL.md companion. Overrides the built-in Zed create-skill,
+    blocks) + SKILL.md companion. Overrides the built-in Zed create-skill
     which only produces SKILL.md files. The kask-native version produces
     the full registry-first structure: template manifest with
     KnowAct/WordAct/FlowDef/RenderAct types, .j2 templates with [inference]
-    frontmatter (contract, lexicon_terms, energy_cap, visibility,
+    frontmatter (contract, energy_cap, visibility
     generates_spans), process manifest with canonical actions
     (select/populate/compute/execute/feedback/validate/retrieve/render/
     flowdef/loop/choice/abort/escalate), gas/rjoule budgets, convergence
@@ -29,7 +29,7 @@ templates:
     type: KnowAct
     description: >
       Capture the skill's purpose from the user's natural-language
-      description. Choose a name (lowercase, hyphenated, 2-40 chars,
+      description. Choose a name (lowercase, hyphenated, 2-40 chars
       verb-noun or noun-noun, no reserved prefixes). Identify the PDCA
       phases the skill will have (most follow the bug-hunt pattern: a
       phased pipeline with feedback loop closure). Identify which skills
@@ -47,9 +47,9 @@ templates:
       skill-maintenance-build for the mechanical scaffolding. Produces:
       (1) template manifest (kask/registry/templates/<name>/manifest.yaml)
       with crate metadata and template entries; (2) .j2 templates with
-      [inference] frontmatter (template_type, lexicon_terms, contract,
+      [inference] frontmatter (template_type, contract
       energy_cap, visibility, generates_spans); (3) process manifest
-      (kask/registry/manifests/<name>.yaml) with canonical actions,
+      (kask/registry/manifests/<name>.yaml) with canonical actions
       gas/rjoule/convergence blocks, OCAP capabilities; (4) SKILL.md
       companion (.agents/skills/<name>/SKILL.md) derived from the registry
       crate.
@@ -63,14 +63,14 @@ templates:
     description: >
       Validate the scaffolded crate against all check categories.
       Delegates to skill-maintenance-validate. Checks: R1-R12 (registry:
-      manifest structure, .j2 frontmatter, template_type, contract,
-      lexicon_terms, visibility, energy_cap, generates_spans, path
+      manifest structure, .j2 frontmatter, template_type, contract
+      visibility, energy_cap, generates_spans, path
       resolution, version pin, id namespacing); Z1-Z8 (companion: SKILL.md
-      frontmatter, name match, description quality, template table,
+      frontmatter, name match, description quality, template table
       constraints, consistency); X1-X4 (cross-artifact: template_refs
       resolve, ordinals sequential, names match, OCAP matches templates);
       E1-E10 (executor compliance: canonical actions only, gas/rjoule/
-      convergence blocks present, convergence_field resolvable,
+      convergence blocks present, convergence_field resolvable
       template_refs resolvable, error_handling present).
     generates_spans:
       - reg.create_skill.validate

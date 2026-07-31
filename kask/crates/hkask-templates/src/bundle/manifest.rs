@@ -24,7 +24,6 @@ use hkask_types::Visibility;
 pub struct BundleSkill {
     pub id: String,
     pub polarity: SkillPolarity,
-    pub lexicon_terms: Vec<String>,
     pub manifest_ref: String,
     pub content_hash: String,
 }
@@ -156,26 +155,6 @@ impl BundleManifest {
             errors.push(format!(
                 "Cascade depth exceeds matroshka limit ({} steps, max 7)",
                 self.steps.len()
-            ));
-        }
-        for skill in &self.skills {
-            if skill.lexicon_terms.len() > 10 {
-                errors.push(format!(
-                    "Skill '{}' has {} lexicon terms (max 10)",
-                    skill.id,
-                    skill.lexicon_terms.len()
-                ));
-            }
-        }
-        let all_terms: std::collections::HashSet<&str> = self
-            .skills
-            .iter()
-            .flat_map(|s| s.lexicon_terms.iter().map(|t| t.as_str()))
-            .collect();
-        if all_terms.len() > 30 {
-            warnings.push(format!(
-                "Bundle has {} unique lexicon terms (recommended max 30)",
-                all_terms.len()
             ));
         }
         // P1: No divergent + convergent in the same phase

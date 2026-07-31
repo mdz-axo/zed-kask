@@ -2236,7 +2236,7 @@ fn extract_contract_output(template_content: &str) -> Option<Value> {
     // - The frontmatter starts at the beginning of the file (optionally after
     //   leading Jinja comments `{# ... #}` and a `[inference]` marker line)
     //   and ends at the first `---` separator.
-    // - The frontmatter is YAML containing `template_type`, `lexicon_terms`,
+    // - The frontmatter is YAML containing `template_type`,
     //   `contract`, `energy_cap`, `visibility`, etc.
     // - The body after `---` is the Jinja2 template.
     //

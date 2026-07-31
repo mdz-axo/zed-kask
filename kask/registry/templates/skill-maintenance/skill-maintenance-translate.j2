@@ -45,7 +45,7 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 
 ## Translation Rules
 
-1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef/RenderAct), lexicon_terms, description.
+1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef/RenderAct), description.
 2. **Templates** — Produce one `.j2` file per classified step:
    - Cognitive steps → KnowAct `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
    - Workflow steps → WordAct (transformation) or FlowDef (dispatch/routing) `.j2` with same structure.
@@ -127,7 +127,6 @@ templates:
   - id: <skill-name>/<template-id>
     path: <template-id>.j2
     type: KnowAct | WordAct | FlowDef
-    lexicon_terms: [term, ...]
     description: <one-line>
 vocabulary_terms: [term, ...]
 ```
@@ -201,7 +200,7 @@ Respond with a JSON object:
 - `template_type` must be KnowAct, WordAct, FlowDef, or RenderAct — never Cognition, Prompt, or Process.
 - `visibility` must be Private, Public, or Shared.
 - `energy_cap` must be in 2048–8192 range.
-- `lexicon_terms` must exist in the vocabulary or be proposed as new terms.
+- `template_type` must be one of KnowAct, WordAct, FlowDef, RenderAct.
 - `contract.input` and `contract.output` must be structured JSON types.
 - Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate).
 - The process manifest must have a `gas:` block with `cap > 0`.

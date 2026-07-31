@@ -60,7 +60,6 @@ templates:
   - id: <skill-name>/<skill-name>-<verb>
     path: <skill-name>-<verb>.j2
     type: KnowAct
-    lexicon_terms: [<term1>, <term2>, ...]
     description: >
       <what this template produces at inference time>
 
@@ -71,7 +70,7 @@ vocabulary_terms:
 ```
 
 Generate at least one `.j2` template with:
-- `[inference]` frontmatter: template_type, lexicon_terms, contract (input/output typed fields, energy_cap, visibility)
+- `[inference]` frontmatter: template_type, contract (input/output typed fields, energy_cap, visibility)
 - Jinja2 body after `---`: system prompt with imperative instructions, {{ input_variable }} placeholders, JSON output schema
 
 Template types (Pattern A):
