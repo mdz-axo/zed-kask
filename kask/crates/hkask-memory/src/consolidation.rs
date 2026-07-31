@@ -21,8 +21,7 @@ use hkask_types::{ConsolidationOutcome, ConsolidationRequest};
 
 /// Consolidation Bridge — Episodic → Semantic
 ///
-/// One-way operation called from `EpisodicLoop::act()` when budget pressure
-/// requires freeing episodic storage.
+/// One-way operation called when budget pressure requires freeing episodic storage.
 pub struct ConsolidationBridge {
     episodic: Arc<EpisodicMemory>,
     semantic: Arc<SemanticMemory>,

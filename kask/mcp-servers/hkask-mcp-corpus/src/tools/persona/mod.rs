@@ -259,9 +259,8 @@ impl CorpusServer {
     /// **QA training output branch** — they use token-count chunking, LLM-based
     /// ontology tagging, INSTRUCTOR-method ontology-anchored embedding, and
     /// hallucination-guarded triple extraction. Both branches share the same
-    /// operations (declared via `ChunkingStrategy`, `EmbeddingStrategy`,
-    /// `TripleExtractionStrategy` traits) but use different implementations
-    /// appropriate for their output type.
+    /// chunking operation (declared via `ChunkingStrategy`) but use different
+    /// implementations appropriate for their output type.
     ///
     /// The centroid computation (mean vector over passages) is persona-specific
     /// and has no docproc equivalent.

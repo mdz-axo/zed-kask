@@ -34,8 +34,7 @@ pub use credentials::{load_dotenv, resolve_credential};
 pub use error::{McpError, McpToolError};
 pub use http_helpers::{api_get, api_put, classify_http_error};
 pub use tool_span::{
-    ExperienceCallback, ToolContext, ToolSpanGuard, execute_tool, execute_tool_semantic,
-    tool_internal_error,
+    ToolContext, ToolSpanGuard, execute_tool, execute_tool_semantic, tool_internal_error,
 };
 pub use transport::{run_stdio_server, run_stdio_server_with_preloaded};
 pub use validation::{

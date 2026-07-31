@@ -13,7 +13,6 @@ Given the following available templates and the user's raw prompt, select the mo
 ### {{ template.id }}
 - Type: {{ template.template_type }}
 - Description: {{ template.description }}
-- Lexicon terms: {{ template.lexicon_terms | join(', ') }}
 - Contract: {{ template.contract | tojson }}
 
 {% endfor %}
@@ -29,7 +28,7 @@ Given the following available templates and the user's raw prompt, select the mo
    - Process (FlowDef) → multi-step workflows, operations
    - Cognition (KnowAct) → thinking, learning, calibration
 
-2. Match lexicon terms to prompt vocabulary
+2. Match description to prompt vocabulary
 
 
 ## Output Format

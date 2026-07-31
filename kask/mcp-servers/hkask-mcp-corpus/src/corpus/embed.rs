@@ -24,11 +24,7 @@ mod types;
 pub use html::strip_html_tags;
 pub use ocr::ocr_pdf_bytes;
 pub use service::EmbedService;
-#[allow(unused_imports)]
-pub use strategies::{
-    ChunkingStrategy, EmbeddingStrategy, TripleExtraction, TripleExtractionStrategy,
-    WordCountChunker,
-};
+pub use strategies::WordCountChunker;
 pub use types::{
     ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
     EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig,

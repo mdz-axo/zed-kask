@@ -9,7 +9,7 @@
 //!
 //! `ChatTurn` is the single typed representation of that schema. It carries
 //! only the content fields; metadata (confidence, observed_at, id, etc.) is
-//! accessed from the enclosing `RecalledEpisode` or `HMem` directly.
+//! accessed from the enclosing `HMem` directly.
 //!
 //! Rendering — how a `ChatTurn` is formatted into a prompt string, a JSON
 //! object, or a role/content message — is each surface's responsibility

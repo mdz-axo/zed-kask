@@ -257,10 +257,7 @@ impl SemanticMemory {
         self.h_mem_store.insert(&h_mem)?;
         // Regulation: emit RegulationRecord for semantic write
         if let Some(sink) = &self.event_sink {
-            let span = Span::new(
-                crate::MEMORY_ENCODE_SPAN.clone(),
-                "semantic_stored",
-            );
+            let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "semantic_stored");
             let event = RegulationRecord::new(
                 h_mem.access.owner_webid,
                 span,
@@ -279,10 +276,7 @@ impl SemanticMemory {
         self.h_mem_store.insert(&h_mem)?;
         // Regulation: emit RegulationRecord for consolidation write
         if let Some(sink) = &self.event_sink {
-            let span = Span::new(
-                crate::MEMORY_ENCODE_SPAN.clone(),
-                "consolidated",
-            );
+            let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "consolidated");
             let event = RegulationRecord::new(
                 h_mem.access.owner_webid,
                 span,
@@ -933,7 +927,7 @@ impl SemanticMemory {
 
     /// Count semantic h_mems at or below a confidence threshold.
     ///
-    /// Used by `SemanticLoop::sense()` and `ConsolidationService`
+    /// Used by `ConsolidationService`
     /// for the consolidation trigger signal.
     ///
     /// expect: "I can recall deduplicated semantic h_mems with embedding similarity"
@@ -952,7 +946,7 @@ impl SemanticMemory {
     /// Returns up to `limit` h_mems with `confidence <= threshold`,
     /// ordered by confidence ascending then `valid_from` ascending.
     ///
-    /// Used by `SemanticLoop::act()` and `ConsolidationService`
+    /// Used by `ConsolidationService`
     /// for the consolidation trigger.
     ///
     /// expect: "I can recall deduplicated semantic h_mems with embedding similarity"

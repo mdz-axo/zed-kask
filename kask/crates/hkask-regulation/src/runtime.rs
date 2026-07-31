@@ -301,8 +301,27 @@ impl VarietyMonitor {
     /// \[P8\] Constraining: Semantic Grounding — pure measurement, no transformation
     /// pre:  domain is non-empty
     /// post: returns variety count, 0 if domain not tracked
+    ///
+    /// Degradation: an untracked domain is indistinguishable from a tracked
+    /// domain with zero variety to the caller (both yield 0). To keep the two
+    /// cases distinguishable to an operator reading logs, an untracked domain
+    /// emits a `tracing::warn!` naming the stale signal before returning 0.
+    /// A regulation loop that reads 0 here cannot tell whether the domain
+    /// genuinely has no variety or was never registered; the warn is the only
+    /// effector that surfaces the difference.
     pub fn variety_for_domain(&self, domain: &str) -> u64 {
-        self.counters.get(domain).map(|c| c.variety()).unwrap_or(0)
+        match self.counters.get(domain) {
+            Some(counter) => counter.variety(),
+            None => {
+                tracing::warn!(
+                    target: "hkask.regulation",
+                    domain = %domain,
+                    "variety_for_domain: domain is not tracked; returning 0 (stale signal — \
+                     indistinguishable from a tracked domain with zero variety)",
+                );
+                0
+            }
+        }
     }
 
     /// List all tracked domains.

@@ -12,26 +12,15 @@ pub mod chat_turn; // Typed projection of chat episode content
 pub mod consolidation; // Episodic → Semantic bridge
 pub mod consolidation_service;
 pub mod episodic; // Loop 2a
-pub mod episodic_loop;
-pub mod error;
-pub mod ports;
 pub mod recall_dedup;
 pub mod salience;
 pub mod semantic; // Loop 2b
-pub mod semantic_loop;
 
 pub use chat_turn::ChatTurn;
 pub use consolidation::ConsolidationBridge;
 pub use consolidation_service::ConsolidationService;
 pub use episodic::{EpisodicMemory, EpisodicMemoryError};
-pub use episodic_loop::EpisodicLoop;
-pub use error::MemoryPortError;
-pub use ports::{
-    EpisodicStoragePort, RecallRequest, RecalledEpisode, RecalledSemantic, SemanticStoragePort,
-    StorageRequest,
-};
 pub use semantic::{SemanticMemory, SemanticMemoryError};
-pub use semantic_loop::SemanticLoop;
 
 // ── Canonical span namespace (hoisted from 5 per-call .expect() sites) ──
 //
@@ -46,6 +35,8 @@ use std::sync::LazyLock;
 
 pub(crate) static MEMORY_ENCODE_SPAN: LazyLock<hkask_types::event::SpanNamespace> =
     LazyLock::new(|| {
-        hkask_types::event::SpanNamespace::try_from(hkask_types::regulation::RegulationSpan::MemoryEncode)
-            .expect("reg.memory.encode is in CANONICAL_NAMESPACES")
+        hkask_types::event::SpanNamespace::try_from(
+            hkask_types::regulation::RegulationSpan::MemoryEncode,
+        )
+        .expect("reg.memory.encode is in CANONICAL_NAMESPACES")
     });

@@ -7,12 +7,6 @@ use std::time::Instant;
 use super::error::McpToolError;
 use super::http_helpers::McpToolOutput;
 
-/// Error healing callback: (error_string, operation_name).
-type HealCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
-
-/// Experience recording callback: fires when a span finishes with "success" or "error".
-pub type ExperienceCallback = Box<dyn Fn(&str) + Send + Sync>;
-
 /// RAII guard — emits Regulation tool span on drop. Use `span.ok(output)` or `span.error(kind, output)`.
 pub struct ToolSpanGuard {
     tool_name: String,
@@ -21,10 +15,6 @@ pub struct ToolSpanGuard {
     emitted: bool,
     /// Domain ontology concept for type-aware feedback routing (e.g. "pko:ChangeOfStatus").
     ontology: Option<&'static str>,
-    /// Optional heal callback: (error_string, operation_name).
-    heal_error_cb: Option<HealCallback>,
-    /// Optional experience callback: fires on ok/error with "success"/"error".
-    experience_cb: Option<ExperienceCallback>,
 }
 
 impl ToolSpanGuard {
@@ -40,8 +30,6 @@ impl ToolSpanGuard {
             caller: *caller,
             emitted: false,
             ontology: None,
-            heal_error_cb: None,
-            experience_cb: None,
         }
     }
 
@@ -66,22 +54,6 @@ impl ToolSpanGuard {
         self
     }
 
-    /// Attach a self-healing callback for automatic error recovery.
-    #[must_use]
-    pub fn with_heal_cb(mut self, cb: HealCallback) -> Self {
-        self.heal_error_cb = Some(cb);
-        self
-    }
-
-    /// Attach an experience callback that fires when the span completes.
-    ///
-    /// The callback receives "success" or "error" based on how the span finishes.
-    #[must_use]
-    pub fn with_experience(mut self, cb: ExperienceCallback) -> Self {
-        self.experience_cb = Some(cb);
-        self
-    }
-
     /// Mark span as successful and return output.
     ///
     /// post: Regulation tool span emitted with "ok" status
@@ -98,9 +70,6 @@ impl ToolSpanGuard {
             Some(&self.caller),
             self.ontology,
         );
-        if let Some(ref cb) = self.experience_cb {
-            cb("success");
-        }
         output
     }
 
@@ -120,12 +89,6 @@ impl ToolSpanGuard {
             Some(&self.caller),
             self.ontology,
         );
-        if let Some(ref cb) = self.heal_error_cb {
-            cb(&output, &self.tool_name);
-        }
-        if let Some(ref cb) = self.experience_cb {
-            cb("error");
-        }
         output
     }
 

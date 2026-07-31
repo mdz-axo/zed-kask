@@ -16,8 +16,8 @@ pub mod server;
 // `"kata-kanban"`, and the two contradicted each other silently).
 
 pub use server::{
-    CapabilityTier, CredentialRequirement, ExperienceCallback, McpError, ServerContext,
-    ToolContext, api_get, api_put, execute_tool, load_dotenv, resolve_credential, run_stdio_server,
+    CapabilityTier, CredentialRequirement, McpError, ServerContext, ToolContext, api_get, api_put,
+    execute_tool, load_dotenv, resolve_credential, run_stdio_server,
     run_stdio_server_with_preloaded, tool_internal_error, validate_identifier, validate_path,
     validate_tool_url, validate_tool_url_permissive,
 };

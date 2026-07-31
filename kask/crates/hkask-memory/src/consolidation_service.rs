@@ -105,11 +105,41 @@ impl ConsolidationService {
         self.bridge.consolidation_candidate_count(perspective)
     }
 
+    /// Count semantic h_mems at or below a confidence threshold.
+    ///
+    /// Returns 0 on storage error as documented degradation — the
+    /// consolidation loop must not hard-fail on a transient DB error, but
+    /// the operator sees a `tracing::warn!` so a stale signal is
+    /// distinguishable from a measured zero.
     pub fn semantic_low_confidence_count(&self, threshold: f64) -> usize {
-        self.semantic.low_confidence_count(threshold).unwrap_or(0)
+        match self.semantic.low_confidence_count(threshold) {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.consolidation",
+                    %error,
+                    "semantic_low_confidence_count: signal stale, returning 0"
+                );
+                0
+            }
+        }
     }
 
+    /// Count all semantic h_mems.
+    ///
+    /// Returns 0 on storage error as documented degradation — see
+    /// `semantic_low_confidence_count` for the rationale.
     pub fn semantic_h_mem_count(&self) -> usize {
-        self.semantic.h_mem_count().unwrap_or(0)
+        match self.semantic.h_mem_count() {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.consolidation",
+                    %error,
+                    "semantic_h_mem_count: signal stale, returning 0"
+                );
+                0
+            }
+        }
     }
 }

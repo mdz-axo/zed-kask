@@ -14,7 +14,6 @@ pub mod energy_budget_management; // Loop 6 — energy budget registration/reser
 pub mod energy_estimator; // Loop 6 — tool cost estimation trait
 
 pub mod infra_span;
-pub mod meta_span;
 pub mod metacognition;
 pub mod qa_span;
 pub(crate) mod regulation_policy; // Loop 6 — per-metric regulation rules
