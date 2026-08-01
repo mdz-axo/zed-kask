@@ -10,18 +10,17 @@ pub mod token_types;
 pub mod tool_port;
 pub mod verification;
 
-pub use auth::{AuthContext, derive_signing_key, panel_default_token};
+pub use auth::{derive_signing_key, panel_default_token};
 pub use resources::{
     CapabilityParseError, CapabilitySpec, DelegationAction, DelegationResource, capabilities_match,
     capability_from_server_id,
 };
 pub use token_types::{
-    CapabilityError, DelegationToken, DelegationTokenBuilder, NoOpTokenRegistry,
-    SYSTEM_MAX_ATTENUATION, SYSTEM_MAX_RECURSION, TokenRegistry, TokenRegistryError,
+    CapabilityError, DelegationToken, DelegationTokenBuilder, SYSTEM_MAX_ATTENUATION,
+    SYSTEM_MAX_RECURSION, TokenRegistry, TokenRegistryError,
 };
 pub use tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
 pub use verification::{
     TOKEN_ERR_EXPIRED, TOKEN_ERR_INVALID_SIGNATURE, TOKEN_ERR_NO_CHECKER, VerificationOutcome,
-    require_read_access, require_write_access, token_err_insufficient_access,
-    token_err_tool_access_denied,
+    token_err_insufficient_access, token_err_tool_access_denied,
 };

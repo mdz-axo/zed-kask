@@ -46,9 +46,9 @@ backend. The schema is defined in SQL files under `src/sql/` and in inline
 | `reg_cursors` table (inline) | `kask/crates/hkask-storage/src/regulation_store.rs:98` |
 | `delegation_tokens` table (inline) | `kask/crates/hkask-storage/src/token_registry.rs:29` |
 | `escalations` table (inline) | `kask/crates/hkask-storage/src/escalation.rs:86` |
-| `EmbeddingStore` (impl EmbeddingPort) | `kask/crates/hkask-storage/src/embeddings.rs:629` |
-| `EscalationQueue` (impl EscalationPort) | `kask/crates/hkask-storage/src/escalation.rs:402` |
-| `RegulationArchive` (impl LedgerStoragePort) | `kask/crates/hkask-storage/src/regulation_store.rs:505` |
+| `EmbeddingStore` | `kask/crates/hkask-storage/src/embeddings.rs` |
+| `EscalationQueue` | `kask/crates/hkask-storage/src/escalation.rs:58` |
+| `RegulationArchive` (impl `RegulationSink`) | `kask/crates/hkask-storage/src/regulation_store.rs:508` |
 
 ## Entity relationship diagram
 
@@ -329,13 +329,11 @@ shown in the ERD above.
 
 ## Port trait implementors
 
-Three port traits from `hkask-types` are implemented in this crate:
+One port trait from `hkask-types` is implemented in this crate:
 
-- `EmbeddingPort` by `EmbeddingStore` at `embeddings.rs:629`.
-- `EscalationPort` by `EscalationQueue` at `escalation.rs:402`.
-- `LedgerStoragePort` by `RegulationArchive` at `regulation_store.rs:505`.
+- `RegulationSink` by `RegulationArchive` at `regulation_store.rs:508`.
 
-(`ConsentPort` / `ConsentStore` were removed — consent records are no longer persisted via this crate.)
+(`EmbeddingPort`, `EscalationPort`, and `LedgerStoragePort` were removed as speculative generality — each had a single implementor whose consumers already depended on the storage crate. Their methods are now inherent on `EmbeddingStore`, `EscalationQueue`, and `RegulationArchive`. `ConsentPort` / `ConsentStore` were removed earlier — consent records are no longer persisted via this crate.)
 
 ## See also
 

@@ -79,8 +79,8 @@ conflate detection (what changed) with response (what to do). Keeping them
 separate allows the metacognition loop to evaluate whether the responses
 are actually improving the system, which is the Good Regulator requirement.
 
-The `RuntimePolicy` trait (`runtime_policy.rs:47`) is a *separate* gate from
-the compute phase: it decides whether a *tool invocation* is allowed, blocked,
+`DefaultPolicy` (`runtime_policy.rs:49`) is a *separate* gate from
+the compute phase: its `check` method decides whether a *tool invocation* is allowed, blocked,
 requires human confirmation, or is logged — based on `ToolTaint`, untrusted
 input, and session action count. It does not consume `ProposedAction`; the
 `PolicyVerdict` enum (`runtime_policy.rs:14`) has variants `Allow`,
