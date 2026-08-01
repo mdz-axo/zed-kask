@@ -1,8 +1,8 @@
 ---
 title: "Skill, Template, and Bundle Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-07-29
-version: "0.32.1"
+last_updated: 2026-08-01
+version: "0.32.2"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -27,7 +27,7 @@ mds_categories: [domain, composition]
 ## Open issues in this registry (2026-07-29)
 
 - **SKILL.md derivation is not wired.** No `skill-translator` code or CLI command exists; the `skill-maintenance-reverse.j2` template is the only derivation path and must be invoked as a skill by an agent. Existing SKILL.md files may be hand-maintained (a P5.1 drift risk).
-- **Count reconciliation:** the filesystem has 87 registry manifests (45 category=skill, 42 non-skill). 75 template crates under `registry/templates/`; 44 SKILL.md directories under `.agents/skills/` (at the repo root, not under `kask/`). Of the 44 SKILL.md directories, `skill-router` has no FlowDef manifest (template-only, stateless `KnowAct`). Total catalogued below: 45 skills. Counts verified 2026-07-29 against the live filesystem.
+- **Count reconciliation:** the filesystem has 89 registry manifests (47 category=skill, 42 non-skill). 79 template crates under `registry/templates/`; 48 SKILL.md directories under `.agents/skills/` (at the repo root, not under `kask/`). Of the 48 SKILL.md directories, `skill-router` has no FlowDef manifest (template-only, stateless `KnowAct`). Total catalogued below: 47 skills. Counts verified 2026-08-01 against the live filesystem.
 
 ---
 

@@ -1,8 +1,8 @@
 ---
 title: "Passage Salience Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-07-29
-version: "0.31.1"
+last_updated: 2026-08-01
+version: "0.31.2"
 status: "Active"
 domain: "Application"
 mds_categories: [domain, composition]
@@ -198,7 +198,7 @@ true coefficient with error bounded by O(1/√K).
 
 ## 5. Integration
 
-> **Path correction (2026-07-29 audit):** The prior version cited `embed.rs` and `compose.rs` as the integration surfaces. The actual call site for `compute_salience_batch` is `kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs` (the corpus MCP server's `EmbedService::embed_corpus`), not `hkask-memory/src/embed.rs` (which does not exist). The `salience_min` retrieval filter in `compose.rs` is **not yet implemented** — grep of `hkask-memory/src/compose.rs` and `hkask-mcp-corpus` found no `salience_min` reference. §5.2 is retained as the intended (OUGHT) design.
+> **Path correction (2026-08-01 audit):** The prior version cited `embed.rs` and `compose.rs` as the integration surfaces. The actual call site for `compute_salience_batch` is `kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs` (the corpus MCP server's `EmbedService::embed_corpus`), not `hkask-memory/src/embed.rs` (which does not exist). The `salience_min` retrieval filter is **implemented** in `kask/mcp-servers/hkask-mcp-corpus/src/compose.rs:79` (struct field), `:278` (filter logic: `if salience < retrieval.salience_min { skip }`), and `:851` (doc). §5.2 is the live design.
 
 ### 5.1 Budget Gate (`hkask-mcp-corpus/src/corpus/embed/service.rs`)
 
@@ -220,13 +220,14 @@ indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
 Foundational rules (style guides, exemplars) bypass the budget gate — they
 always receive hMems regardless of salience score.
 
-### 5.2 Retrieval Filter (OUGHT — not yet implemented)
+### 5.2 Retrieval Filter (implemented)
 
-During prose composition, exemplar passages would be retrieved by KNN vector search
-and filtered by `salience_min`. Low-salience passages would be excluded from the
-few-shot context window. This filter is **not yet implemented** as of 2026-07-29 —
-grep of `hkask-memory/src/compose.rs` and `hkask-mcp-corpus` found no `salience_min`
-reference. Retained as the intended design.
+During prose composition, exemplar passages are retrieved by KNN vector search
+and filtered by `salience_min`. Low-salience passages are excluded from the
+few-shot context window. This filter is implemented in
+`kask/mcp-servers/hkask-mcp-corpus/src/compose.rs:79` (the `RetrievalConfig.salience_min`
+field, default `0.0`), with the filter logic at `compose.rs:278`
+(`if salience < retrieval.salience_min { skip }`).
 
 ---
 

@@ -3,7 +3,7 @@ title: "swarm-intelligence Skill — Design Document"
 audience: [zed-kask integrators, hKask architects, skill authors]
 last_updated: 2026-08-01
 version: "0.1.0"
-status: "Design converged; scaffold pending grill-me round"
+status: "Scaffolded; grill-me round pending"
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
 ---
@@ -638,15 +638,15 @@ PDCA shape or the convergence criterion.
 
 1. **Grill-me round.** Invoke the `grill-me` skill on this design document
    with the five-level escalation. Target: survive without `rewrite_needed`.
-   If a level surfaces a gap, fix the design and re-run.
-2. **Scaffold the registry crate.** If grill-me passes, invoke
-   `create-skill` (which delegates to `skill-maintenance-build`) to scaffold:
+   If a level surfaces a gap, fix the design and re-run. **Status: pending** —
+   the scaffold (step 2) was completed first to unblock operator use; the
+   grill-me round is the remaining quality gate.
+2. **Scaffold the registry crate.** ✅ **DONE** — the following exist:
    - `kask/registry/templates/swarm-intelligence/manifest.yaml`
-   - `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check}.j2`
-   - `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml`
+   - `kask/registry/templates/swarm-intelligence/swarm-*.j2`
    - `kask/registry/manifests/swarm-intelligence.yaml`
    - `.agents/skills/swarm-intelligence/SKILL.md`
 3. **Validate.** `skill-maintenance-validate` against R1-R12, Z1-Z8, X1-X4,
-   E1-E10.
+   E1-E10. **Status: pending**.
 4. **Fix U4 edge case** (empty `required_transforms` → vacuous satisfaction)
-   in the SENSE template during scaffolding.
+   in the SENSE template during scaffolding. **Status: pending**.

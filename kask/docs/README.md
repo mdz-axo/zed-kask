@@ -57,13 +57,12 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 ## Research
 
-Historical research reports, archived for reference.
+Historical research reports. Archived research has been removed from the active tree per `DOCUMENTATION_STANDARDS.md` §3 (lifecycle: Deprecated → Removed → git history is the archive of record). Recoverable via `git log --diff-filter=D -- kask/docs/research/archive/`.
 
 | Document | Description |
 |----------|-------------|
 | [`research/media-research/media-landscape.md`](research/media-research/media-landscape.md) | Media tools → models → provider endpoints. |
 | [`research/media-research/design-schema.md`](research/media-research/design-schema.md) | Media MCP server gallery schema. |
-| [`research/archive/`](research/archive/) | Archived research (LoRA, GPU providers, platform validation, philosophy). |
 
 ## Other
 
@@ -82,7 +81,7 @@ lifecycle definition.
 |----------|--------|-------------|
 | [`plans/kask-extensions-panel-and-skill-sharing.md`](plans/kask-extensions-panel-and-skill-sharing.md) | Active | Skill marketplace (visibility toggle, publish/install, Kask Extensions Panel). Phases 1–5 complete; Phases 6–7 partial. |
 | [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Active | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server + `swarm_panel`. v1 feature-complete (slices 1–7 + Xaman Ek); v2 local-cloud hybrid evolution unimplemented. |
-| [`plans/swarm-intelligence-skill-design.md`](plans/swarm-intelligence-skill-design.md) | Active | `swarm-intelligence` registry skill design — composition/configuration/operation of ABW agent swarms. Design converged; scaffold pending grill-me round. |
+| [`plans/swarm-intelligence-skill-design.md`](plans/swarm-intelligence-skill-design.md) | Active | `swarm-intelligence` registry skill design — composition/configuration/operation of ABW agent swarms. Scaffold complete; grill-me round pending. |
 
 ## QA
 

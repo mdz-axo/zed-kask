@@ -196,11 +196,43 @@ enum PanelMode {
 
 // ── View model ─────────────────────────────────────────────────────────────
 
-/// One row in the panel — either an ABW agent or an ABW swarm (workspace).
+/// One row in the panel — either an ABW agent, a local agent, or an ABW
+/// swarm (workspace). The `source` field on agents distinguishes cloud,
+/// local, and synced (exists in both).
 #[derive(Clone, Debug)]
 enum SwarmEntry {
     Agent(AgentCard),
     Swarm(SwarmCard),
+}
+
+/// Where an agent card lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AgentSource {
+    /// Exists only on ABW (cloud). Can be cloned to local.
+    Cloud,
+    /// Exists only in the local registry. Can be pushed to cloud.
+    Local,
+    /// Exists in both — synced via `cloud_id`. Changes can flow both
+    /// directions.
+    Synced,
+}
+
+impl AgentSource {
+    fn badge(&self) -> &'static str {
+        match self {
+            Self::Cloud => "☁",
+            Self::Local => "■",
+            Self::Synced => "⇅",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Cloud => "cloud",
+            Self::Local => "local",
+            Self::Synced => "synced",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -210,6 +242,9 @@ struct AgentCard {
     description: String,
     author: String,
     executions: u64,
+    /// Where this agent card lives: cloud (ABW only), local (local registry
+    /// only), or synced (both, linked by `cloud_id`).
+    source: AgentSource,
 }
 
 #[derive(Clone, Debug)]
@@ -559,7 +594,7 @@ impl SwarmPanel {
             return;
         };
 
-        self.in_flight = 2;
+        self.in_flight = 3;
         self.agents_error = None;
         self.swarms_error = None;
         cx.notify();
@@ -604,10 +639,11 @@ impl SwarmPanel {
                                                     .execution_stats
                                                     .and_then(|s| s.total_executions)
                                                     .unwrap_or(0),
+                                                source: AgentSource::Cloud,
                                             })
                                         })
                                         .collect::<Vec<_>>();
-                                    // Replace agent entries, keep swarm entries.
+                                    // Replace cloud agent entries, keep swarm + local entries.
                                     this.entries.retain(|e| matches!(e, SwarmEntry::Swarm(_)));
                                     this.entries.extend(agents);
                                     this.agents_error = None;

@@ -44,7 +44,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 | `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
 | `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, gas budgets | P9 |
 | `GasBudget` | `hkask-regulation` | Per-agent gas budget with cap, replenish rate, hold-settle pattern | P9 |
-| ~~`KaskCore`~~ (never implemented) | ~~`kask_bridge` (D8)~~ | The proposed in-process handle was never built as a singleton; the composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` adapters. See `zed-host-architecture-plan.md` §13.3. | P5 |
+
 
 ### 1.2 Kata-Kanban Domain
 
@@ -540,33 +540,11 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ---
 
-## KaskCore Composition Root (replaces the deleted AgentService specification)
+## Composition Root (replaces the deleted AgentService specification)
 
-> **Correction (2026-07-29 audit, grill-me challenged):** `KaskCore` was **never implemented** as a single struct. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` adapters — there is no `KaskCore` singleton. This section is retained as the *design specification* for the composition root's intent (grouped accessors, dependency direction, OCAP boundaries), but the `KaskCore::build(config)` API and the grouped accessor methods (`storage()`, `ledger()`, `templates()`, etc.) do not exist in code. The actual wiring is documented in `zed-host-architecture-plan.md` §13.3 (Composition root). Readers should treat the tables below as the *intended* surface, not a verifiable code reference.
->
-> **Supersedes:** the pre-fork `AgentService Specification` (incorporated from `docs/specifications/specs/MDS-agent-service.md`). The standalone `AgentService` orchestration layer, the `hkask-cli` `ReplState` wrapper, and the `hkask-api` `ApiState` wrapper are **deleted**. In zed-kask, the in-process composition root wires components directly via `kask_bridge` (D8) — `KaskCore` was the proposed grouping but was not built.
+> **Supersedes:** the pre-fork `AgentService Specification` (incorporated from `docs/specifications/specs/MDS-agent-service.md`). The standalone `AgentService` orchestration layer, the `hkask-cli` `ReplState` wrapper, and the `hkask-api` `ApiState` wrapper are **deleted**. The proposed `KaskCore` singleton was **never implemented** — the zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
 
-**Purpose:** `KaskCore` is the in-process handle that zed-kask surfaces (kask panel, `kask` admin CLI) and MCP servers use to reach hKask primitives. It owns shared infrastructure (storage, regulation, memory, templates, wallet primitives) and exposes them through a small interface. There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
-
-### Bounded Context
-
-`KaskCore` is the **single in-process source of truth** for shared hKask infrastructure inside zed-kask. **Boundary:** In-process only. MCP servers reach it via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach it via the guard layer (D4) and the in-process transport (D1–D3).
-
-### Public Surface (grouped by concern)
-
-| Group | Members | Notes |
-|-------|---------|-------|
-| **Construction** | `KaskCore::build(config)` | Assembles storage, regulation, memory, templates, wallet primitives, MCP runtime |
-| **Storage** | `storage()`, `spec_store()` | `hkask-storage` handles (SQLCipher-encrypted) |
-| **Regulation** | `ledger()`, `cybernetics()`, `loops()`, `energy()`, `tool_stats()` | `hkask-regulation` handles |
-| **Memory** | `build_per_agent_memory(db, sink)`, `per_agent_memory(agent)`, `consolidate_agent_memory(agent, request)`, `consolidation_status_for(agent)` | `hkask-memory` handles — single OCAP-gated, consent-checked consolidation entry point |
-| **Templates** | `templates()`, `manifest_executor()` | `hkask-templates` — skill execution (D1) |
-| **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-regulation::WalletManager` primitives (replaces deleted `hkask-wallet`) — no service layer; consumers compose directly. `gas_per_rjoule` conversion rate is configured via `WalletConfig` in `hkask-types`. |
-| **Identity** | `webid()` | WebID for the active user/curator data directory |
-| **Inference** | `inference_port()`, `gas_remaining()`, `gas_cap()` | `hkask-inference` — reads API keys via the `keyring` crate directly |
-| **Guard** | `governed_tool(webid)`, `guard_strategy()` | `hkask-guard` (D4) — Magna Carta floor in the inference path |
-
-**Design rationale:** `KaskCore` groups domain-coherent infrastructure into deep modules (Ousterhout). Cross-cutting concerns (gas, governed tool, per-agent memory consolidation) remain direct methods because they span multiple sub-systems or require coordination logic. The deleted `AgentService`'s nested sub-context structs (`InfraContext`, `GovernanceContext`, `StorageContext`) are absorbed into `KaskCore`'s grouped accessors — the daemon/Matrix/a2a fields that existed only for the deleted standalone surfaces are **removed**. The `RegulationContext` struct was also deleted in the 2026-07-25 cleanup.
+**Boundary:** In-process only. MCP servers reach hKask primitives via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach hKask through the guard layer (D4) and the in-process transport (D1–D3). There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
 
 ### Crate-to-Domain Mappings (surviving crates only)
 
@@ -665,15 +643,10 @@ Domain crates **never** depend on zed-kask crates. MCP servers **never** link ze
 
 ### Bootstrap Sequence
 
-1. `KaskCore::build(config)` assembles shared hKask infrastructure (storage, regulation, memory, templates, wallet primitives, MCP runtime).
-2. Sovereignty keys are resolved via the trimmed `hkask-keystore` using the `keyring` crate directly (D5 — not zed's `CredentialsProvider`).
-3. Per-agent memory is created via `KaskCore::build_per_agent_memory(db)`.
-4. Consolidation is routed through `KaskCore::consolidate_agent_memory(agent_name, request)` — the single OCAP-gated, consent-checked entry point.
-5. zed-kask surfaces (kask panel, `kask` admin CLI) hold a `KaskCore` handle directly.
-6. MCP servers receive a `KaskCore` handle via `kask_bridge` (D8).
+The composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly — there is no `KaskCore::build()` singleton. The actual wiring sequence is documented in `zed-host-architecture-plan.md` §13.3 (Composition root). Sovereignty keys are resolved via the trimmed `hkask-keystore` using the `keyring` crate directly (D5 — not zed's `CredentialsProvider`).
 
 > **Removed from the pre-fork bootstrap:** the `ReplState` (= `AgentService` + REPL fields) and `ApiState` (= `Arc<AgentService>` + HTTP fields) wrappers, the daemon handler, and the Matrix transport. None of these have successors in zed-kask — their jobs either moved to zed-kask surfaces (chat → agent panel) or were deleted (HTTP API, Matrix, daemon).
 
 ### Interface Equivalence
 
-The `kask` admin CLI, the curator MCP server, and zed-kask surfaces (kask panel) all use identical `KaskCore` accessors and the same `consolidate_agent_memory` entry point. All public methods are equivalent across surfaces — surface-specific state is composed at the surface, not threaded through `KaskCore`. The deleted `hkask-api` REST surface and `hkask-cli` REPL surface have no successors; their spec operations are absorbed by the in-process `kask` admin CLI and the curator MCP server.
+The `kask` admin CLI, the curator MCP server, and zed-kask surfaces (kask panel) all reach hKask primitives through the same `kask_bridge` (D8) port-trait adapters. Surface-specific state is composed at the surface, not threaded through a shared singleton. The deleted `hkask-api` REST surface and `hkask-cli` REPL surface have no successors; their spec operations are absorbed by the in-process `kask` admin CLI and the curator MCP server.
