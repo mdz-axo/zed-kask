@@ -55,6 +55,7 @@ members = [
     "crates/dev_container",
     "crates/kask_panel",
     "crates/kask_extensions_ui",
+    "crates/marketplace_ui_common",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
@@ -372,6 +373,7 @@ derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
 kask_panel = { path = "crates/kask_panel" }
 kask_extensions_ui = { path = "crates/kask_extensions_ui" }
+marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 diagnostics = { path = "crates/diagnostics" }
 dialoguer = { version = "0.12", default-features = false }

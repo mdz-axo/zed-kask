@@ -10966,9 +10966,9 @@ dependencies = [
  "hex",
  "http_client",
  "log",
+ "marketplace_ui_common",
  "serde_json",
  "sha2 0.10.9",
- "smallvec 1.15.2",
  "smol",
  "theme_settings",
  "tokio",
@@ -12369,6 +12369,18 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "marketplace_ui_common"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "settings",
+ "smallvec 1.15.2",
+ "theme_settings",
+ "ui",
 ]
 
 [[package]]

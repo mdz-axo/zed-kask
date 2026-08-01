@@ -8,6 +8,7 @@
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, App, Entity, KeyContext, TextStyle, Window, prelude::*, relative, rems};
+use settings::Settings;
 use smallvec::SmallVec;
 use theme_settings::ThemeSettings;
 use ui::prelude::*;
@@ -113,10 +114,7 @@ pub fn marketplace_text_input(editor: &Entity<Editor>, cx: &mut App) -> impl Int
 
 /// The empty-state row shown when a catalog page has no entries to list.
 /// Pass `failed = true` to prefix the message with a warning icon.
-pub fn marketplace_empty_state(
-    message: impl Into<SharedString>,
-    failed: bool,
-) -> impl IntoElement {
+pub fn marketplace_empty_state(message: impl Into<SharedString>, failed: bool) -> impl IntoElement {
     h_flex()
         .py_4()
         .gap_1p5()

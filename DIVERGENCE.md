@@ -47,7 +47,7 @@ primary divergence seams:
 - `crates/agent/src/templates.rs` — Agent Skills system-prompt section diverges (manifest-driven, not body-injection).
 - `crates/agent_ui/src/conversation_view/thread_view.rs` — `render_skill_loading_issues` only shows `LoadFailed` (description-length + catalog-budget issues disabled).
 - `crates/collab/src/api/kask_skills.rs` + `crates/collab/src/db/queries/kask_skills.rs` — kask skill marketplace API (upload/download/vote/unpublish).
-- `crates/kask_extensions_ui/` — kask skill marketplace UI (browse/install/uninstall/vote/publish). Marketplace URL decoupled from `server_url` via `HKASK_MARKETPLACE_URL` env var (default: `http://localhost:3000`); see `kask_marketplace_url()` in `publish.rs`.
+- `crates/kask_extensions_ui/` — kask skill marketplace UI (browse/install/uninstall/vote/publish). Marketplace URL resolution in `kask_marketplace_url()` (`publish.rs`): `HKASK_MARKETPLACE_URL` env var override → client `server_url` (self-hosted default) → `http://localhost:3000` (dev fallback). Card/search/empty-state chrome shared via `crates/marketplace_ui_common/`.
 - `crates/agent_skills/agent_skills.rs` — `global_skills_dir()` isolated to `paths::data_dir()/agents/skills/` (not shared `~/.agents/skills/`). One-time migration in `agent.rs::run_skills_scan` moves old skills to new location. `GLOBAL_SKILLS_DIR_DISPLAY` updated. `SkillSource::Global` and `load_marketplace_skills` docs updated.
 - `crates/settings_ui/src/pages/skills_visibility.rs` + `crates/settings_ui/src/pages/skills_setup.rs` — skill visibility + marketplace toggle UI.
 - `crates/zed/src/zed/open_listener.rs` — `zed-kask://` URL scheme parsing + tests.
@@ -73,6 +73,7 @@ Upstream merges never conflict with these paths.
 - `kask/mcp-servers/` — 10 MCP server crates (`hkask-mcp-{codegraph,companies,condenser,corpus,curator,kata-kanban,media,research,scenarios,training}`)
 - `crates/kask_panel` — zed-kask-side kask panel (D10)
 - `crates/kask_extensions_ui` — zed-kask-side kask skill marketplace UI
+- `crates/marketplace_ui_common` — shared catalog-page chrome (`MarketplaceCard`, search bar, empty state) extracted from the duplicated copies in `extensions_ui` (upstream, untouched) and `kask_extensions_ui`
 
 ## Governing invariant (§13.1)
 

@@ -1,33 +1,15 @@
-//! Authentication context and signing key derivation.
-
-use ed25519_dalek::SigningKey;
-use sha2::{Digest, Sha256};
+//! Minting helpers for in-process delegation tokens.
 
 use super::token_types::DelegationToken;
 
-/// Derive an Ed25519 signing key from arbitrary secret bytes.
-///
-/// \[NORMATIVE\] Hashes the input with SHA-256 to produce a 32-byte seed,
-/// then constructs a `SigningKey`. This allows existing HMAC-secret-based
-/// callers to migrate to Ed25519 without changing their secret management (P4 — Clear Boundaries).
-pub fn derive_signing_key(secret: &[u8]) -> SigningKey {
-    let seed: [u8; 32] = Sha256::digest(secret).into();
-    SigningKey::from_bytes(&seed)
-}
-
 /// Mint a delegation token for in-process tool invocation.
 ///
-/// The `McpRuntime` governance gate calls `token.verify()`, which checks the
-/// Ed25519 signature against the public key embedded in the token itself. The
-/// runtime does not verify the signer's identity against a trusted authority —
-/// any validly-signed token passes. This helper uses a static zeroed signing
-/// key, which is sufficient because the verification is self-referential.
-/// Threading a secret through the bridge to sign these tokens added complexity
-/// (env-var resolution, keychain reads, `OnceLock` injection) without adding
-/// security — the token's own public key is what gets verified, not the secret.
+/// Tokens are minted and consumed in-process (there is no untrusted transport
+/// boundary), so the token carries no signing material — the enforced gate is
+/// the capability match in `McpRuntime::invoke`, not cryptography.
 ///
 /// Callers that need a distinct `delegated_from`/`delegated_to` WebID can pass
-/// their own; the signing key is always the static default.
+/// their own.
 #[must_use]
 pub fn panel_default_token(
     resource: super::resources::DelegationResource,
@@ -36,14 +18,5 @@ pub fn panel_default_token(
     delegated_from: hkask_types::WebID,
     delegated_to: hkask_types::WebID,
 ) -> DelegationToken {
-    static SIGNING_KEY: std::sync::OnceLock<SigningKey> = std::sync::OnceLock::new();
-    let key = SIGNING_KEY.get_or_init(|| SigningKey::from_bytes(&[0u8; 32]));
-    DelegationToken::new(
-        resource,
-        resource_id,
-        action,
-        delegated_from,
-        delegated_to,
-        key,
-    )
+    DelegationToken::new(resource, resource_id, action, delegated_from, delegated_to)
 }

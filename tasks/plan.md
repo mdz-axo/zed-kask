@@ -126,14 +126,24 @@ Each is an independent essentialist deletion with a cargo-verified blast radius.
 - **Checkpoint C**: `cargo check --workspace`; hkask test suites green;
   DIVERGENCE.md updated for D3/D4/D6 wording.
 
-## Deferred (needs operator decision — NOT in this plan)
+## Deferred items — resolution
 
-- **LedgerObserver subscriber bus** (~100 lines in hkask-regulation): main.rs:620
-  comment claims registered observers "actually observe" ledger events; zero
-  production registrations exist. Either register one (curator status surface)
-  or delete `LedgerObserver` + bus + `LedgerSink`. Requires product decision.
-- **Upstreaming**: trusted_worktrees warn-and-skip, settings_store skip-if-unchanged,
-  terminal head/tail overlap fix — file upstream PRs; revert landed here in A2/A3.
+- **LedgerObserver subscriber bus: REMOVED.** Deleted `LedgerObserver` trait,
+  `DepletionSignal`, `BackpressureSignal` (hkask-types), the `subscribers`
+  field, `subscribe`/`subscribe_async`/`publish_event`/`emit_backpressure`,
+  `LedgerSink`, and `emit_critical_depletion` (hkask-regulation), plus the
+  `emit_backpressure` call in cybernetics_loop and 2 bus tests. The heal
+  callback survived as `run_heal_cb` (called on critical alerts). In its
+  place, the REAL observability path was closed: composition root now wires
+  `NoopEventSink` at startup and upgrades both the CyberneticsLoop and
+  McpRuntime governance sinks to `RegulationArchive` on the curator's pod.db
+  in the deferred post-login task (new `set_event_sink` setters on both, new
+  `open_curator_regulation_archive` bridge helper). The curator MCP server's
+  `reg_query`/`curator_algedonic_log` tools — previously reading a DB nothing
+  wrote to — now have a producer. Validation: 262 tests pass across
+  hkask-types/hkask-regulation/hkask-mcp/kask_bridge; `cargo check -p zed`
+  clean.
+- **Upstream PRs**: declined by operator.
 
 ## Keystore / sovereignty-token question (resolved)
 

@@ -22,18 +22,174 @@ use hkask_types::regulation::RegulationSpan;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use types::*;
 
 const SERVER_NAME: &str = "hkask-mcp-curator";
 
+/// The five stores the curator's tools read, all backed by the curator's
+/// sovereign `pod.db`. Grouped so the self-healing handle can swap the whole
+/// set atomically after a re-open.
+type CuratorStoreSet = (
+    Option<Arc<hkask_storage::EscalationQueue>>,
+    Option<Arc<hkask_storage::RegulationArchive>>,
+    Option<hkask_memory::EpisodicMemory>,
+    Option<Arc<hkask_memory::SemanticMemory>>,
+    Option<Arc<dyn hkask_capability::TokenRegistry>>,
+);
+
+/// Self-healing handle over the curator's sovereign `pod.db` — the MCP-side
+/// mirror of `CuratorStores` in `kask_bridge::memory`.
+///
+/// When the DB cannot be opened at startup (transient SQLCipher lock from a
+/// previous server instance, late-arriving passphrase), every tool call
+/// re-attempts the open via `get()`. A successful heal restores the curator's
+/// full tool surface mid-process — no server restart. Failure is never
+/// silent: construction failure logs `error!`, each failed heal attempt
+/// warns once per outage round (re-armed on heal), a successful heal logs
+/// `info!`.
+pub struct CuratorDb {
+    stores: RwLock<CuratorStoreSet>,
+    db_path: Option<String>,
+    passphrase: Option<String>,
+    heal_attempt_logged: AtomicBool,
+    /// Tests construct handles with no valid path — healing disabled.
+    heal_enabled: bool,
+}
+
+impl CuratorDb {
+    fn from_context(ctx: &hkask_mcp_server::server::ServerContext) -> Self {
+        let db_path = ctx
+            .credentials
+            .get("HKASK_CURATOR_DB")
+            .cloned()
+            .unwrap_or_else(|| {
+                let p = hkask_types::agent_paths::agent_pod_db("curator");
+                let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+                if let Some(parent) = resolved.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                resolved.to_string_lossy().to_string()
+            });
+        let passphrase = ctx.credentials.get("HKASK_DB_PASSPHRASE").cloned();
+        let heal_enabled = passphrase.is_some();
+        let stores = open_curator_stores(db_path.as_deref(), passphrase.as_deref());
+        let this = Self {
+            stores: RwLock::new(stores),
+            db_path: Some(db_path),
+            passphrase,
+            heal_attempt_logged: AtomicBool::new(false),
+            heal_enabled,
+        };
+        if !this.stores_available() {
+            tracing::error!(
+                target: "hkask.mcp.curator",
+                db_path = ?this.db_path,
+                passphrase_configured = this.passphrase.is_some(),
+                "Curator DB unavailable — ALL curator stores (escalations, \
+                 regulation archive, episodic, semantic, token registry) are \
+                 down. Every tool call re-attempts the open (self-healing); \
+                 check that no other process holds the SQLCipher lock and \
+                 that HKASK_DB_PASSPHRASE is set and matches the keychain."
+            );
+        }
+        this
+    }
+
+    /// Construct a handle over pre-built stores (tests) — healing disabled.
+    #[cfg(test)]
+    fn for_tests(stores: CuratorStoreSet) -> Self {
+        Self {
+            stores: RwLock::new(stores),
+            db_path: None,
+            passphrase: None,
+            heal_attempt_logged: AtomicBool::new(false),
+            heal_enabled: false,
+        }
+    }
+
+    /// Replace the stores (tests) — simulates an outage or a heal.
+    #[cfg(test)]
+    fn set_for_tests(&self, stores: CuratorStoreSet) {
+        if let Ok(mut guard) = self.stores.write() {
+            *guard = stores;
+        }
+    }
+
+    fn stores_available(&self) -> bool {
+        match self.stores.read() {
+            Ok(guard) => {
+                guard.0.is_some()
+                    && guard.1.is_some()
+                    && guard.2.is_some()
+                    && guard.3.is_some()
+                    && guard.4.is_some()
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Read the current store set, attempting a re-open when it's down.
+    fn get(&self) -> CuratorStoreSet {
+        if self.heal_enabled && !self.stores_available() {
+            self.try_heal();
+        }
+        match self.stores.read() {
+            Ok(guard) => guard.clone(),
+            Err(_) => (None, None, None, None, None),
+        }
+    }
+
+    fn try_heal(&self) {
+        let fresh = open_curator_stores(self.db_path.as_deref(), self.passphrase.as_deref());
+        let healed = fresh.0.is_some()
+            && fresh.1.is_some()
+            && fresh.2.is_some()
+            && fresh.3.is_some()
+            && fresh.4.is_some();
+        match self.stores.write() {
+            Ok(mut guard) => {
+                let was_down = guard.0.is_none()
+                    || guard.1.is_none()
+                    || guard.2.is_none()
+                    || guard.3.is_none()
+                    || guard.4.is_none();
+                if healed && was_down {
+                    *guard = fresh;
+                    tracing::info!(
+                        target: "hkask.mcp.curator",
+                        db_path = ?self.db_path,
+                        "Curator DB healed — curator stores restored"
+                    );
+                    self.heal_attempt_logged.store(false, Ordering::Relaxed);
+                } else if !healed && !self.heal_attempt_logged.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator",
+                        db_path = ?self.db_path,
+                        "Curator DB still unavailable after re-open attempt — \
+                         curator tools will keep returning permission_denied"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.curator",
+                    error = %e,
+                    "Curator DB stores lock poisoned — cannot attempt heal"
+                );
+            }
+        }
+    }
+}
+
 hkask_mcp_server::mcp_server!(
     pub struct CuratorServer {
-        escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
-        regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
-        episodic: Option<hkask_memory::EpisodicMemory>,
-        semantic: Option<Arc<hkask_memory::SemanticMemory>>,
-        token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>>,
+        /// Self-healing handle over the curator's sovereign `pod.db`. All
+        /// five stores are read through `db.get()` on every tool call so a
+        /// mid-process heal takes effect without a server restart.
+        db: Arc<CuratorDb>,
     }
 );
 

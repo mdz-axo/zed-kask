@@ -8,12 +8,11 @@ use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Context as _;
-use cloud_api_types::{ExtensionProvides, GetKaskSkillsResponse, KaskSkillMetadata};
+use cloud_api_types::{GetKaskSkillsResponse, KaskSkillMetadata};
 use editor::Editor;
-use extension_host::ExtensionStore;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, InteractiveElement, ParentElement, Render,
-    Styled, Task, UniformListScrollHandle, Window, actions, point, uniform_list,
+    App, Context, Entity, EventEmitter, Focusable, ParentElement, Render, Styled, Task,
+    UniformListScrollHandle, Window, actions, point, uniform_list,
 };
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
 use ui::{
@@ -22,7 +21,7 @@ use ui::{
 };
 use workspace::{
     Workspace,
-    item::{Item, ItemEvent, Settings},
+    item::{Item, ItemEvent},
 };
 
 actions!(
@@ -57,8 +56,7 @@ pub fn init(cx: &mut App) {
                 if let Some(existing) = existing {
                     workspace.activate_item(&existing, true, true, window, cx);
                 } else {
-                    let extensions_page =
-                        KaskExtensionsPage::new(workspace, None, None, window, cx);
+                    let extensions_page = KaskExtensionsPage::new(window, cx);
                     workspace.add_item_to_active_pane(
                         Box::new(extensions_page.clone()),
                         None,
@@ -99,7 +97,6 @@ pub enum KaskSkillStatus {
     Installing,
     Installed(Arc<str>),
     Removing,
-    Upgrading,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -111,15 +108,14 @@ enum ExtensionFilter {
 
 pub struct KaskExtensionsPage {
     list: UniformListScrollHandle,
-    is_fetching_extensions: bool,
+    is_fetching_skills: bool,
     fetch_failed: bool,
     filter: ExtensionFilter,
     // zed-kask: kask skill catalog entries (replaces remote_extension_entries)
     remote_skill_entries: Vec<KaskSkillMetadata>,
     filtered_remote_skill_indices: Vec<usize>,
     query_editor: Entity<Editor>,
-    query_contains_error: bool,
-    _subscriptions: [gpui::Subscription; 2],
+    _subscriptions: [gpui::Subscription; 1],
     skill_fetch_task: Option<Task<()>>,
     // zed-kask: track in-flight install/uninstall operations by skill id
     outstanding_operations: collections::BTreeMap<Arc<str>, KaskSkillStatus>,
@@ -132,35 +128,27 @@ pub struct KaskExtensionsPage {
 }
 
 impl KaskExtensionsPage {
-    pub fn new(
-        _workspace: &Workspace,
-        _provides_filter: Option<ExtensionProvides>,
-        _focus_skill_id: Option<&str>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Entity<Self> {
+    pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<Self> {
         cx.new(|cx| {
             let app_state = workspace::AppState::global(cx);
             let http_client = app_state.client.http_client();
             let fs = app_state.fs.clone();
 
-            // zed-kask: subscribe to ExtensionStore for dev-extension
-            // rebuild visibility (kept from the fork). The kask catalog is
-            // fetched separately via the kask skills API.
-            let store = ExtensionStore::global(cx);
-            let subscriptions = [
-                cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
-                cx.subscribe_in(
-                    &store,
-                    window,
-                    move |this, _, event, _window, cx| match event {
-                        extension_host::Event::ExtensionsUpdated => {
-                            this.fetch_kask_skills(cx);
-                        }
-                        _ => {}
-                    },
-                ),
-            ];
+            // zed-kask: re-fetch the catalog when the user's private info
+            // resolves (post-login) — the initial fetch at construction
+            // often runs before auth, when the marketplace base URL is
+            // still the localhost dev fallback.
+            let user_store = app_state.user_store.clone();
+            let subscriptions = [cx.subscribe_in(
+                &user_store,
+                window,
+                move |this: &mut Self, _, event, _window, cx| match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        this.fetch_kask_skills(cx);
+                    }
+                    _ => {}
+                },
+            )];
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
@@ -173,12 +161,11 @@ impl KaskExtensionsPage {
 
             let mut this = Self {
                 list: scroll_handle,
-                is_fetching_extensions: false,
+                is_fetching_skills: false,
                 fetch_failed: false,
                 filter: ExtensionFilter::All,
                 remote_skill_entries: Vec::new(),
                 filtered_remote_skill_indices: Vec::new(),
-                query_contains_error: false,
                 _subscriptions: subscriptions,
                 skill_fetch_task: None,
                 outstanding_operations: collections::BTreeMap::default(),
@@ -194,6 +181,7 @@ impl KaskExtensionsPage {
 
     fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter;
+        let query = self.search_query(cx).map(|q| q.to_lowercase());
         let indices: Vec<usize> = self
             .remote_skill_entries
             .iter()
@@ -207,6 +195,13 @@ impl KaskExtensionsPage {
                 ExtensionFilter::NotInstalled => {
                     let status = self.skill_status(&skill.id, cx);
                     matches!(status, KaskSkillStatus::NotInstalled)
+                }
+            })
+            .filter(|(_, skill)| match &query {
+                None => true,
+                Some(query) => {
+                    skill.id.to_lowercase().contains(query)
+                        || skill.manifest.description.to_lowercase().contains(query)
                 }
             })
             .map(|(ix, _)| ix)
@@ -233,7 +228,7 @@ impl KaskExtensionsPage {
             return;
         };
 
-        self.is_fetching_extensions = true;
+        self.is_fetching_skills = true;
         self.fetch_failed = false;
         cx.notify();
 
@@ -261,7 +256,7 @@ impl KaskExtensionsPage {
             .await;
 
             this.update(cx, |this, cx| {
-                this.is_fetching_extensions = false;
+                this.is_fetching_skills = false;
                 match result {
                     Ok(skills) => {
                         this.fetch_failed = false;
@@ -694,7 +689,7 @@ impl KaskExtensionsPage {
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> Div {
-        marketplace_search_bar(&self.query_editor, self.query_contains_error, cx)
+        marketplace_search_bar(&self.query_editor, false, cx)
     }
 
     fn on_query_change(
@@ -704,15 +699,15 @@ impl KaskExtensionsPage {
         cx: &mut Context<Self>,
     ) {
         if let editor::EditorEvent::Edited { .. } = event {
-            self.query_contains_error = false;
             self.refresh_search(cx);
         }
     }
 
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
-        // zed-kask: debounce the catalog fetch, then filter locally.
-        // The kask skills API returns the full catalog; search filtering
-        // happens client-side via `filter_extension_entries`.
+        // zed-kask: debounce search, then filter locally. The kask skills
+        // API returns the full catalog in one fetch; keystrokes must not
+        // re-hit the network (previously each debounced keystroke refetched
+        // the entire catalog from the collab server).
         self.skill_fetch_task = Some(cx.spawn(async move |this, cx| {
             let search = this
                 .update(cx, |this, cx| this.search_query(cx))
@@ -726,7 +721,6 @@ impl KaskExtensionsPage {
             };
 
             this.update(cx, |this, cx| {
-                this.fetch_kask_skills(cx);
                 this.filter_extension_entries(cx);
                 this.scroll_to_top(cx);
             })
@@ -746,7 +740,7 @@ impl KaskExtensionsPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let message = if self.is_fetching_extensions {
+        let message = if self.is_fetching_skills {
             "Loading kask skills…"
         } else if self.fetch_failed {
             "Failed to load kask skills. Please check your connection and try again."
