@@ -685,6 +685,18 @@ impl CuratorStores {
         stores.0.is_none() && stores.1.is_none()
     }
 
+    /// Read the current store availability WITHOUT attempting a heal — for
+    /// status reporting. A health probe must not have side effects: if the
+    /// probe itself triggered the re-open, the curator's status would flap
+    /// between "down" and "healing" on every poll and the warn-once signal
+    /// would be driven by the probe rather than by real traffic.
+    fn availability(&self) -> (bool, bool) {
+        match self.stores.read() {
+            Ok(guard) => (guard.0.is_some(), guard.1.is_some()),
+            Err(_) => (false, false),
+        }
+    }
+
     /// Read the current stores, attempting a re-open when they're down.
     ///
     /// The re-open is cheap when it keeps failing (SQLCipher open fails fast
@@ -1164,6 +1176,24 @@ impl MemoryPort for RealMemoryPort {
 }
 
 impl RealMemoryPort {
+    /// Memory-store health for the curator's status surface — the
+    /// self-awareness half of the self-healing work. The curator's
+    /// regulation loop reads this (via `BridgeMetacognitionProvider`) so it
+    /// can detect and escalate its own memory outage instead of waiting for
+    /// an operator to notice degraded recall.
+    ///
+    /// Side-effect-free: reads availability without triggering a heal, so
+    /// polling doesn't drive the re-open path.
+    pub fn memory_health_json(&self) -> serde_json::Value {
+        let (curator_episodic_up, curator_semantic_up) = self.curator_stores.availability();
+        let degraded = !curator_episodic_up || !curator_semantic_up;
+        serde_json::json!({
+            "curator_episodic": curator_episodic_up,
+            "curator_semantic": curator_semantic_up,
+            "degraded": degraded,
+        })
+    }
+
     /// Recall memory snippets from the **curator's** sovereign stores.
     ///
     /// This mirrors `recall_context` but reads from `curator_semantic` and

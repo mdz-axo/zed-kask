@@ -15,11 +15,26 @@ use serde_json::json;
 /// `MetacognitionLoop`.
 pub struct BridgeMetacognitionProvider {
     loop_: Arc<MetacognitionLoop>,
+    /// Memory-health probe — the curator's self-awareness of its own memory
+    /// outage. When set, the snapshot includes a `memory` section so the
+    /// curator (and `CuratorStatusTool` callers) can distinguish "regulation
+    /// healthy, memory down" from "all healthy". `None` pre-login or when
+    /// the real memory port failed to construct.
+    memory_port: Option<Arc<crate::memory::RealMemoryPort>>,
 }
 
 impl BridgeMetacognitionProvider {
     pub fn new(loop_: Arc<MetacognitionLoop>) -> Self {
-        Self { loop_ }
+        Self {
+            loop_,
+            memory_port: None,
+        }
+    }
+
+    /// Attach the memory-health probe (composition root, post-login).
+    pub fn with_memory_port(mut self, port: Arc<crate::memory::RealMemoryPort>) -> Self {
+        self.memory_port = Some(port);
+        self
     }
 }
 
@@ -29,7 +44,7 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
         // the thread briefly if the metacognition loop is mid-write, then
         // returns. Safe to call synchronously from `Task::ready`.
         let result = self.loop_.last_snapshot_blocking().map(|s| {
-            json!({
+            let mut snapshot = json!({
                 "timestamp": s.timestamp.to_rfc3339(),
                 "variety_deficit": s.variety_deficit,
                 "critical_alerts": s.critical_alerts,
@@ -40,7 +55,15 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "accepted": s.regulation_health.accepted,
                 "staged": s.regulation_health.staged,
                 "blocked": s.regulation_health.blocked,
-            })
+            });
+            // Merge the memory-health section — flat keys, so the merge is
+            // just inserting the `memory` object. A degraded curator memory
+            // store surfaces as `memory.degraded: true`, which the curator's
+            // regulation loop can escalate on.
+            if let Some(ref port) = self.memory_port {
+                snapshot["memory"] = port.memory_health_json();
+            }
+            snapshot
         });
         Task::ready(result)
     }

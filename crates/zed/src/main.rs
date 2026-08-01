@@ -736,6 +736,11 @@ fn main() {
         .detach();
         log::info!("Curator metacognition loop started (30s tick interval)");
 
+        // Hoisted for the deferred task: once the RealMemoryPort exists
+        // (post-login), the provider is re-set with the memory-health probe
+        // attached so the curator can see its own memory outage.
+        let metacognition_loop_for_deferred = metacognition_loop.clone();
+
         // Wire the metacognition provider so the CuratorStatusTool can read
         // health snapshots from the agent's tool surface.
         let provider = std::sync::Arc::new(
@@ -1149,6 +1154,25 @@ fn main() {
                                 log::info!(
                                     "hKask memory port upgraded to RealMemoryPort \
                                      (agent: {agent_name}, db: {db_path})"
+                                );
+
+                                // Re-set the metacognition provider with the
+                                // memory-health probe attached — the curator's
+                                // CuratorStatusTool now reports its own memory
+                                // outage (`memory.degraded`) alongside the
+                                // regulation health it already had. The early
+                                // provider (set pre-login, without the probe)
+                                // is replaced; `set_metacognition_provider` is
+                                // Mutex-based and re-settable.
+                                let provider_with_memory = std::sync::Arc::new(
+                                    kask_bridge::BridgeMetacognitionProvider::new(
+                                        metacognition_loop_for_deferred.clone(),
+                                    )
+                                    .with_memory_port(real_memory_typed.clone()),
+                                );
+                                agent::set_metacognition_provider(Some(provider_with_memory));
+                                log::info!(
+                                    "Curator metacognition provider upgraded with memory-health probe"
                                 );
 
                                 // Set env vars for the curator MCP server so it

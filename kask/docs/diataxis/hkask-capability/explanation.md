@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-07-31
+version: "0.3.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -10,119 +10,67 @@ mds_categories: [trust, curation]
 
 # hkask-capability — Explanation
 
-The OCAP layer exists to enforce the Magna Carta principle P4: Clear
-Boundaries. Every tool invocation requires a `DelegationToken` proving
-authorization. This design replaces ambient authority (where any code can
-call any tool) with capability-based authority (where access requires
-possession of an unforgeable token). The tradeoff is complexity: tokens must
-be constructed, verified, and attenuated. The benefit is that a compromised
-component cannot escalate beyond the capabilities it holds.
+The capability layer exists to make tool authority *explicit* at the
+dispatch membrane. Every governed tool invocation carries a
+`DelegationToken` declaring which resource and action the caller claims.
+`McpRuntime::invoke` checks that declaration against the actual call
+(capability match) and enforces gas budgets. This replaces ambient authority
+(any code can call any tool with no record of what it was allowed to call)
+with declared authority (every call names its claimed scope, and mismatches
+are denied and logged).
 
-## Source citations
+## What the gate is — and is not
 
-| Symbol | Location |
-|--------|----------|
-| `VerificationOutcome` enum | `kask/crates/hkask-capability/src/verification/types.rs:22` |
-| `capabilities_match` (enforcement) | `kask/crates/hkask-mcp/src/runtime.rs` |
-| `DelegationToken` struct | `kask/crates/hkask-capability/src/token_types.rs:58` |
-| `ToolPort` trait | `kask/crates/hkask-capability/src/tool_port.rs:47` |
-| `DelegationResource` enum | `kask/crates/hkask-capability/src/resources.rs:51` |
-| `DelegationAction` enum | `kask/crates/hkask-capability/src/resources.rs:80` |
-| `attenuation_level` field | `kask/crates/hkask-capability/src/token_types.rs:58` |
-| `max_attenuation` field | `kask/crates/hkask-capability/src/token_types.rs:58` |
+Tokens are minted and consumed **in-process** (`panel_default_token` at the
+composition root). There is no untrusted transport boundary — the caller and
+the gate are in the same address space. Two consequences follow:
 
-## Verification state machine
+1. **No cryptography.** Earlier versions signed tokens with Ed25519 and
+   verified the signature at invoke time. The verification was
+   self-referential (checked against the public key embedded in the token
+   itself, not a trusted authority), so it denied nothing a hostile caller
+   couldn't bypass — security theater per the "advertised invariants need
+   enforcement points" rule. The signature, public key, `verify()`,
+   `derive_signing_key`, and the minting-key threading were removed on
+   2026-07-31.
+2. **The gate is a consistency check, not a security boundary.** It catches
+   manifest/config bugs — a cascade step or panel view naming the wrong
+   tool, or a capability string that drifted from the tool's declared
+   requirement. It does not (and cannot) defend against a hostile caller
+   already executing inside the process; such a caller can mint any token.
 
-When a tool invocation arrives at the `ToolPort`, the `capabilities_match`
-function (in `hkask-mcp/src/runtime.rs`) verifies the attached
-`DelegationToken`. The verification produces a `VerificationOutcome`
-(`verification/types.rs:22`) with five possible states. The state machine
-below shows the transitions.
+If a genuine trust boundary is ever introduced (e.g. tokens crossing a
+network or process boundary to an untrusted verifier), cryptographic
+verification must be reintroduced *with a trusted root key set* — not the
+self-referential check that was removed.
+
+## The invoke pipeline
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Checking: invoke(server, tool, args, token)
-    Checking --> NoChecker: no checker configured
-    Checking --> InvalidSignature: signature or root check fails
-    Checking --> Expired: expires_at < now
-    Checking --> InsufficientAccess: holder or resource or action mismatch
-    Checking --> Valid: all checks pass
-    NoChecker --> [*]: deny (fail-closed)
-    InvalidSignature --> [*]: deny
-    Expired --> [*]: deny
-    InsufficientAccess --> [*]: deny
-    Valid --> [*]: forward to McpRuntime
+    [*] --> CapabilityMatch: invoke(server, tool, args, token)
+    CapabilityMatch --> Denied: token does not name this tool+action
+    CapabilityMatch --> GasReserve: match
+    GasReserve --> BudgetExceeded: insufficient gas
+    GasReserve --> Dispatch: reserved
+    Dispatch --> Settle: tool result (success or error)
+    Settle --> SpanEmit: persist reg.tool.* span
+    SpanEmit --> [*]
+    Denied --> [*]: CapabilityDenied
+    BudgetExceeded --> [*]: EnergyBudgetExceeded
 ```
 
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-DIA-CAP-002
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/verification/types.rs:22; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match); kask/crates/hkask-capability/src/tool_port.rs:47
-status: VERIFIED
--->
-
-The five outcomes map to two decisions: deny or forward. Four outcomes deny
-the call. Only `Valid` forwards the call to the underlying `McpRuntime`. The
-`NoChecker` outcome is a fail-closed default: if no checker is configured,
-access is denied rather than allowed.
-
-Note: enforcement is performed by `capabilities_match` in
-`hkask-mcp/src/runtime.rs`. The former `CapabilityChecker` struct and
-`verify_delegation_token` / `verify_delegation_token_now` helpers in
-`hkask-capability` were removed; the structured `VerificationOutcome` is
-still produced from `verification/types.rs`.
-
-## Why fail-closed
-
-The `NoChecker` variant exists because the checker is an optional
-dependency. A pod-internal checker may construct tokens locally and verify
-only the self-signature (`enforce_roots: false`). A boundary checker
-verifies against a trusted root set (`enforce_roots: true`). If neither is
-provided, the system denies access rather than allowing it.
-
-This implements the Magna Carta principle P2: Affirmative Consent. The
-default is deny. Access requires explicit, scoped, version-aware, and
-revocable consent. A missing checker is not implicit consent; it is the
-absence of consent, which denies access.
+The `TokenRegistry` SQL table (`hkask-storage`) records token issuance for
+consent audit — the curator MCP server's `list_tokens` tool reads it for
+transparency reporting and anomaly detection. The invoke gate does **not**
+consult it; a revocation recorded in the registry is an audit fact, not an
+authorization decision.
 
 ## Attenuation
 
 The `DelegationToken` carries an `attenuation_level` and a `max_attenuation`
-field (both at `token_types.rs:58`). When a token is delegated from one
-principal to another, the attenuation level increases. A token at
-`attenuation_level == max_attenuation` cannot be further delegated.
-
-This enforces the OCAP attenuation principle: a delegated capability is
-strictly less powerful than the original. A sub-task that receives a token
-cannot escalate beyond the scope granted to it, and it cannot re-delegate
-indefinitely. The `max_attenuation` cap prevents deep delegation chains
-that would make audit difficult.
-
-## Resource and action granularity
-
-The `DelegationResource` enum (`resources.rs:51`) has four variants: `Tool`,
-`Template`, `Registry`, and `Key`. The `DelegationAction` enum
-(`resources.rs:80`) has three variants: `Read`, `Write`, and `Execute`.
-
-This granularity is deliberate. A token scoped to `Tool` + `Execute` on a
-specific server ID authorizes calling that tool but not modifying the
-registry. A token scoped to `Key` + `Write` authorizes API key lifecycle
-management but not tool invocation. The separation prevents a token granted
-for one purpose from being used for another.
-
-## See also
-
-- [hkask-capability Reference](./reference.md): class diagram of the token,
-  checker, and ToolPort types.
-- [hkask-types Explanation](../hkask-types/explanation.md): how the guard
-  layer wraps the inference port in the composition root.
-- [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
-  P2 (Affirmative Consent), P4 (Clear Boundaries), P4.1 (Pod Boundary).
-- [`kask/docs/architecture/core/magna-carta.md`](../../architecture/core/magna-carta.md):
-  the four sovereignty principles.
-
----
-
-[^miller-ocap]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control.* Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model: access is granted by possession of an unforgeable capability token, and attenuation preserves safety.
-
-[^saltzer-1975]: Saltzer, J. H., & Schroeder, M. D. (1975). *The Protection of Information in Computer Systems.* Proceedings of the IEEE, 63(9), 1278-1308. <https://www.cs.virginia.edu/~evans/cs551/p10-saltzer.pdf>. The fail-closed default and least-privilege principle that the `NoChecker` outcome implements.
+field. When a token is delegated from one principal to another, the
+attenuation level increases; `SYSTEM_MAX_ATTENUATION` caps the chain depth.
+This is a structural bound (cascade depth, subgoal nesting) rather than a
+cryptographic one — it limits how deep delegation chains can grow so audit
+stays tractable.

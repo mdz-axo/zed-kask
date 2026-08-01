@@ -161,7 +161,7 @@ async fn upload_kask_skill(
             StatusCode::FORBIDDEN,
             format!(
                 "cannot upload to namespace '{}': authenticated user is '{}'",
-                key_source_user, user.github_login
+                key_source_user, user.username
             ),
             Default::default(),
         ))?
@@ -179,11 +179,17 @@ async fn upload_kask_skill(
         ))?
     };
 
+    // zed-kask: Only clone the body for the (small) manifest upload, which
+    // the immediate-index path re-parses below. Tarball bodies are passed
+    // through without a copy.
+    let is_manifest_upload = params.key.ends_with("/manifest.json");
+    let manifest_body = is_manifest_upload.then(|| body.clone());
+
     blob_store_client
         .put_object()
-        .bucket(bucket)
+        .bucket(&bucket)
         .key(&params.key)
-        .body(body.clone().into())
+        .body(body.into())
         .send()
         .await
         .map_err(|e| Error::Internal(anyhow::anyhow!("uploading kask skill to S3: {e}")))?;
@@ -193,7 +199,7 @@ async fn upload_kask_skill(
     // in the marketplace within seconds instead of waiting up to
     // KASK_SKILL_FETCH_INTERVAL for the periodic poll. The poll remains as
     // reconciliation for out-of-band S3 writes.
-    if params.key.ends_with("/manifest.json") {
+    if let Some(manifest_body) = manifest_body {
         let parts: Vec<&str> = params.key.split('/').collect();
         if let [
             "kask-skills",
@@ -205,7 +211,21 @@ async fn upload_kask_skill(
         {
             let index_result = async {
                 let manifest: cloud_api_types::KaskSkillManifest =
-                    serde_json::from_slice(&body).context("invalid manifest.json body")?;
+                    serde_json::from_slice(&manifest_body).context("invalid manifest.json body")?;
+
+                // Verify the tarball for this version actually exists before
+                // indexing — otherwise a manifest-only upload (client bug or
+                // reordering) creates a catalog entry whose install 404s.
+                blob_store_client
+                    .head_object()
+                    .bucket(&bucket)
+                    .key(format!(
+                        "kask-skills/{source_user}/{skill_name}/{version}/archive.tar.gz"
+                    ))
+                    .send()
+                    .await
+                    .context("tarball for this version has not been uploaded")?;
+
                 let now = time::OffsetDateTime::now_utc();
                 app.db
                     .insert_kask_skill_versions(&[

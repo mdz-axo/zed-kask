@@ -77,6 +77,12 @@ pub struct CuratorStatusOutput {
     /// Renamed from `variety_counters` — the value is a deficit, and calling
     /// it a "counter" misled operators into reading it as variety tracked.
     pub variety_deficit: Option<Vec<(String, u64)>>,
+    /// `true` when the curator's own memory stores (episodic/semantic in
+    /// `agents/curator/pod.db`) are down or partially down — the curator is
+    /// running without durable memory until the self-healing re-open
+    /// succeeds. `None` when the memory probe isn't wired (pre-login or
+    /// upstream Zed).
+    pub memory_degraded: Option<bool>,
 }
 
 impl AgentTool for CuratorStatusTool {
@@ -111,6 +117,7 @@ impl AgentTool for CuratorStatusTool {
                 escalation_count: None,
                 critical_alerts: None,
                 variety_deficit: None,
+                memory_degraded: None,
             })?;
 
             // Distinguish "provider not wired" from "provider wired but
@@ -125,6 +132,7 @@ impl AgentTool for CuratorStatusTool {
                     escalation_count: None,
                     critical_alerts: None,
                     variety_deficit: None,
+                    memory_degraded: None,
                 });
             };
             let Some(snapshot) = provider.health_snapshot_json().await else {
@@ -134,6 +142,7 @@ impl AgentTool for CuratorStatusTool {
                     escalation_count: None,
                     critical_alerts: None,
                     variety_deficit: None,
+                    memory_degraded: None,
                 });
             };
             let effectiveness = snapshot
@@ -153,8 +162,22 @@ impl AgentTool for CuratorStatusTool {
                 .get("escalation_count")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
+            let memory_degraded = snapshot
+                .get("memory")
+                .and_then(|m| m.get("degraded"))
+                .and_then(|d| d.as_bool());
+            // A degraded curator memory store is a health signal in its own
+            // right — surface it in `status` so a caller reading only the
+            // status line (not the structured fields) still sees it.
+            let status = if memory_degraded == Some(true) {
+                "ok (memory degraded — curator episodic/semantic store down, \
+                 self-healing re-open in progress)"
+                    .to_string()
+            } else {
+                "ok".to_string()
+            };
             Ok(CuratorStatusOutput {
-                status: "ok".to_string(),
+                status,
                 regulation_effectiveness: effectiveness,
                 escalation_count,
                 critical_alerts: critical,
@@ -163,6 +186,7 @@ impl AgentTool for CuratorStatusTool {
                 } else {
                     None
                 },
+                memory_degraded,
             })
         })
     }
@@ -175,7 +199,8 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Regulation Effectiveness: {}\n\
              Escalations: {}\n\
              Critical Alerts: {}\n\
-             Variety Deficit: {}",
+             Variety Deficit: {}\n\
+             Memory: {}",
             output.status,
             output
                 .regulation_effectiveness
@@ -198,6 +223,11 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                         .join(", ")
                 })
                 .unwrap_or_else(|| "not requested".to_string()),
+            match output.memory_degraded {
+                Some(true) => "DEGRADED — curator memory store down".to_string(),
+                Some(false) => "ok".to_string(),
+                None => "not monitored".to_string(),
+            },
         );
         language_model::LanguageModelToolResultContent::Text(text.into())
     }

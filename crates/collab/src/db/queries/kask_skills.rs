@@ -20,12 +20,6 @@ pub struct NewKaskSkillVersion {
 }
 
 impl Database {
-    /// zed-kask: Creates the kask skill marketplace tables/indexes if they
-    /// do not exist. Idempotent boot-time self-heal for self-hosted
-    /// deployments — upstream Zed applies schema out-of-band, which leaves
-    /// a fresh self-hosted collab server 500ing on `/api/kask-skills` with
-    /// no signal. Mirrors the `initialize_notification_kinds` pattern:
-    /// called from `setup_app_database` when the server serves API mode.
     /// zed-kask: Builds the CREATE TABLE IF NOT EXISTS statements for the
     /// kask skill marketplace. Pure statement construction, extracted for
     /// testability (a live-Database test requires the test-support harness).
@@ -195,6 +189,14 @@ impl Database {
         (tables, indexes)
     }
 
+    /// zed-kask: Creates the kask skill marketplace tables/indexes if they
+    /// do not exist. Idempotent boot-time self-heal for self-hosted
+    /// deployments — upstream Zed applies schema out-of-band, which leaves
+    /// a fresh self-hosted collab server 500ing on `/api/kask-skills` with
+    /// no signal. Mirrors the `initialize_notification_kinds` pattern:
+    /// called from `setup_app_database` at server startup (any serve mode,
+    /// so a split collab+API deployment sharing one database self-heals
+    /// regardless of which process starts first).
     pub async fn ensure_kask_skill_tables(&self) -> Result<()> {
         let backend = self.pool.get_database_backend();
         let (tables, indexes) = Self::kask_skill_table_statements();
@@ -620,8 +622,16 @@ mod tests {
             })
             .collect();
         assert!(table_names.iter().any(|s| s.contains("\"kask_skills\"")));
-        assert!(table_names.iter().any(|s| s.contains("\"kask_skill_versions\"")));
-        assert!(table_names.iter().any(|s| s.contains("\"kask_skill_votes\"")));
+        assert!(
+            table_names
+                .iter()
+                .any(|s| s.contains("\"kask_skill_versions\""))
+        );
+        assert!(
+            table_names
+                .iter()
+                .any(|s| s.contains("\"kask_skill_votes\""))
+        );
 
         // SQLite must render too (collab supports it via the `sqlite` feature).
         for t in &tables {
@@ -633,15 +643,11 @@ mod tests {
             .map(|i| i.to_string(PostgresQueryBuilder))
             .collect();
         assert!(
-            index_sql
-                .iter()
-                .all(|s| s.contains("IF NOT EXISTS")),
+            index_sql.iter().all(|s| s.contains("IF NOT EXISTS")),
             "CREATE INDEX must be idempotent: {index_sql:?}"
         );
-        assert!(
-            index_sql
-                .iter()
-                .any(|s| s.contains("index_kask_skills_source_user_skill_name") && s.contains("UNIQUE"))
-        );
+        assert!(index_sql.iter().any(
+            |s| s.contains("index_kask_skills_source_user_skill_name") && s.contains("UNIQUE")
+        ));
     }
 }

@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — How-to: Attenuate a Token for a Sub-task"
 audience: [developers]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-07-31
+version: "0.3.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [composition]
@@ -10,75 +10,49 @@ mds_categories: [composition]
 
 # hkask-capability — How-to: Attenuate a Token for a Sub-task
 
-This guide shows how to attenuate a `DelegationToken` when delegating to a
-sub-task. Attenuation ensures the sub-task cannot escalate beyond the scope
-granted to it.
-
-## Source citations
-
-| Symbol | Location |
-|--------|----------|
-| `DelegationToken` | `kask/crates/hkask-capability/src/token_types.rs:58` |
-| `DelegationTokenBuilder` | `kask/crates/hkask-capability/src/token_types.rs:90` |
-| `can_attenuate` method | `kask/crates/hkask-capability/src/token_types.rs:341` |
-| `attenuate` method | `kask/crates/hkask-capability/src/token_types.rs:352` |
-| `attenuate_with_expiry` method | `kask/crates/hkask-capability/src/token_types.rs:369` |
-| `Caveat` struct | `kask/crates/hkask-capability/src/token_types.rs:40` |
+This guide shows how to mark delegation depth on a `DelegationToken` when
+delegating to a sub-task. Attenuation is a structural bound — it keeps
+delegation chains shallow enough to audit.
 
 ## Procedure
 
 ```mermaid
 flowchart TD
-    A[Read parent token] --> B[Call can_attenuate]
-    B --> C{level < max_attenuation?}
-    C -- no --> D[Stop: limit reached]
-    C -- yes --> E[Call attenuate or attenuate_with_expiry]
-    E --> F[Child inherits caveats from parent]
-    F --> G[Verify child via capabilities_match]
+    A[Read parent token] --> B{level < max_attenuation?}
+    B -- no --> C[Stop: limit reached]
+    B -- yes --> D[Build child with incremented level]
+    D --> E[Pass child to sub-task]
 ```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-DIA-CAP-004
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/token_types.rs:58,341,352,369; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match)
-status: VERIFIED
--->
 
 ### Step 1: Check the attenuation limit
 
-Call `token.can_attenuate()` (`token_types.rs:341`). This returns `true` only
-if `attenuation_level < max_attenuation`. If it returns `false`, the token
-has reached its delegation depth limit and cannot be further delegated. Stop
-and report the error.
+Compare `token.attenuation_level` against `token.max_attenuation` (default
+`SYSTEM_MAX_ATTENUATION`, 7). If the level has reached the cap, do not
+re-delegate — report the depth limit instead.
 
-### Step 2: Attenuate the token
+### Step 2: Build the child token
 
-Call `token.attenuate(new_to, signing_key, current_time)`
-(`token_types.rs:352`) to produce a child token with `attenuation_level`
-incremented by 1, a 1-hour expiry, and a chained context nonce. Use
-`token.attenuate_with_expiry(new_to, signing_key, current_time, ttl)`
-(`token_types.rs:369`) if you need a custom TTL. The child inherits all
-caveats from the parent.
+Construct the child with the builder, carrying the parent's scope forward
+and incrementing the level:
 
-Alternatively, if you need a checker-style helper, call `token.attenuate`
-directly (the former `CapabilityChecker::attenuate` helper at
-`checker.rs:243` was removed when `CapabilityChecker` was deleted).
+```rust
+let child = DelegationTokenBuilder::new(
+    parent.resource,
+    parent.resource_id.clone(),
+    parent.action,
+    parent.delegated_to.clone(), // the holder becomes the issuer
+    subtask_webid,
+)
+.attenuation_level(parent.attenuation_level + 1)
+.context_nonce(parent.context_nonce.clone())
+.build();
+```
 
-### Step 3: Verify the child token
-
-Verify the attenuated child token via `capabilities_match` (in
-`hkask-mcp/src/runtime.rs`) before passing it to the sub-task. (The former
-`CapabilityChecker::verify` and `verify_delegation_token_now` helpers in
-`hkask-capability` were removed.) The child is strictly less powerful: its
-`attenuation_level` is higher, bringing it closer to the `max_attenuation`
-ceiling.
+The child inherits the parent's resource, action, and caveats; only the
+delegation chain (`from`/`to`) and the attenuation level change.
 
 ## See also
 
-- [hkask-capability Reference](./reference.md): class diagram of tokens.
+- [hkask-capability Reference](./reference.md): the token model.
 - [hkask-capability Tutorial](./tutorial.md): your first capability token.
 - [hkask-capability Explanation](./explanation.md): why attenuation exists.
-
----
-
-[^miller-ocap]: Miller, M. S. (2006). *Robust Composition.* <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The attenuation principle: a delegated capability is strictly less powerful than the original.

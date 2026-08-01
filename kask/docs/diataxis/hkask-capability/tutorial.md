@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Tutorial: Your First Capability Token"
-audience: [developers new to OCAP]
-last_updated: 2026-07-29
-version: "0.2.0"
+audience: [developers]
+last_updated: 2026-07-31
+version: "0.3.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [lifecycle]
@@ -10,62 +10,62 @@ mds_categories: [lifecycle]
 
 # hkask-capability — Tutorial: Your First Capability Token
 
-This tutorial walks through creating and verifying a `DelegationToken`. You
-will learn how the OCAP model grants access, how attenuation limits
-delegation depth, and how `capabilities_match` verifies tokens at the
-actuator boundary.
+This tutorial walks through creating a `DelegationToken` and invoking a
+tool through the governed membrane. You will learn how capability matching
+gates tool calls, how the action hierarchy (`Execute >= Write >= Read`)
+works, and how attenuation limits delegation depth.
 
 ## Learning path
 
 ```mermaid
 flowchart TD
-    A[Step 1: Build a token] --> B[Step 2: Verify the token]
-    B --> C[Step 3: Attempt insufficient access]
-    C --> D[Step 4: Attenuate and re-delegate]
+    A[Step 1: Build a token] --> B[Step 2: Invoke through the membrane]
+    B --> C[Step 3: Attempt a mismatched call]
+    C --> D[Step 4: Check expiry and attenuation]
 ```
 
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-DIA-CAP-003
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-capability/src/token_types.rs:58,90; kask/crates/hkask-mcp/src/runtime.rs (capabilities_match)
-status: VERIFIED
--->
+## Steps 1-2: Build a token and invoke
 
-## Steps 1-2: Build and verify a token
+Use `DelegationToken::new` (or `DelegationTokenBuilder`) with a
+`DelegationResource::Tool`, a `DelegationAction::Execute`, and a resource ID
+matching the target tool:
 
-Use `DelegationTokenBuilder` (`token_types.rs:90`) to construct a token
-with a `DelegationResource::Tool`, a `DelegationAction::Execute`, and a
-resource ID matching the target MCP server. Sign it with an Ed25519 key via
-`builder.sign()`.
+```rust
+let token = DelegationToken::new(
+    DelegationResource::Tool,
+    "web_search".into(),
+    DelegationAction::Execute,
+    WebID::from_persona(b"issuer"),
+    WebID::from_persona(b"holder"),
+);
+```
 
-Pass the token to `capabilities_match` (in `hkask-mcp/src/runtime.rs`) along with
-the holder WebID, resource, resource_id, and action. The function returns
-`VerificationOutcome::Valid` if the signature is correct, the token has not
-expired, and the resource and action match the request. (The former
-`verify_delegation_token_now` / `CapabilityChecker::verify` helpers in
-`hkask-capability` were removed; enforcement now lives in `hkask-mcp`.)
+Pass it to `McpRuntime::invoke` (the `ToolPort` impl). The membrane checks
+`token.is_valid_for(Tool, "web_search", Execute)` — an exact triple match —
+then reserves gas, dispatches, settles, and emits the `reg.tool.*` span.
+There is no signing step: tokens are in-process declarations, and the gate
+is the capability match, not cryptography.
 
-## Steps 3-4: Attempt insufficient access and attenuate
+## Step 3: Attempt a mismatched call
 
-Construct a token with `DelegationAction::Read` and attempt to invoke a
-tool that requires `Execute`. The verifier returns
-`VerificationOutcome::InsufficientAccess { resource_id, action }`. This is
-the fail-closed behavior: the token does not grant the requested access.
+Build a token naming a *different* tool (`"fs_read"`) and pass it to an
+invoke of `"web_search"`. The capability match fails and the call is denied
+with `ToolPortError::CapabilityDenied`. This is the gate's purpose: it
+catches wiring bugs — a cascade step or panel view that names the wrong
+tool — at the membrane rather than deep inside a server.
 
-Now attenuate the token: increase the `attenuation_level` field
-(`token_types.rs:58`) and re-delegate to a sub-task. The sub-task's token is
-strictly less powerful. When `attenuation_level` reaches `max_attenuation`,
-the token cannot be further delegated.
+## Step 4: Expiry and attenuation
+
+`builder.expires_at(ts)` sets an expiry; `token.is_expired(now)` reports it.
+`builder.attenuation_level(n)` marks delegation depth;
+`SYSTEM_MAX_ATTENUATION` (7) caps the chain so delegation graphs stay
+auditable.
 
 ## See also
 
-- [hkask-capability Reference](./reference.md): class diagram of tokens
-  and checkers.
-- [hkask-capability How-to](./how-to.md): attenuating a token for a
-  sub-task.
+- [hkask-capability Reference](./reference.md): the token model and the
+  invoke pipeline.
+- [hkask-capability Explanation](./explanation.md): why the gate is a
+  capability match and not a cryptographic check.
 - [hkask-types Reference](../hkask-types/reference.md): the `ToolPort`
   trait that requires tokens.
-
----
-
-[^miller-ocap]: Miller, M. S. (2006). *Robust Composition.* <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model that this tutorial demonstrates.
