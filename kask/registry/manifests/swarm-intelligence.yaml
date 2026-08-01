@@ -1,0 +1,316 @@
+# Swarm Intelligence Process Manifest
+# ℏKask v0.31.0 — Swarm composition as convergent PDCA
+# Decomposed into: SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE → LOOP
+#
+# Substrate ontology: Agent Bestiary World (ABW) swarm semantics. A swarm is
+# an ABW workspace with hired agents. Compound agents orchestrate via
+# execute_agent (text consult) and delegate_to_agent (full tool access, 1 cr
+# + tokens, delegation chains forbidden — delegates lose
+# delegate_to_agent/execute_agent). Gas: hire 5 cr, @mention 1 cr + tokens,
+# delegation 1 cr + tokens. Compound agents declare dependencies { required,
+# optional } and auto-hire their team. Thagard coherence scoring on
+# workspaces. (Source: kask/docs/plans/abw-swarm-intelligence.md §0, verified
+# live 2026-08-01.)
+#
+# Surface ontologies:
+#   - Onto4MAT (Kiesel et al. 2022): Team { hasAlignmentWithTeam,
+#     hasCohesionWithTeam, hasTeamSeparation, hasInfluence }, Agent {
+#     hasSpeed, hasHeading, hasEnergy, hasDistanceToGoal }, Formation.
+#   - Reynolds (1987) flocking: separation / alignment / cohesion.
+#   - PSO (Kennedy & Eberhart 1995): v ← ωv + c1·r1·(pbest−x) + c2·r2·(gbest−x).
+#   - ACO (Dorigo 1992): pheromone deposition / evaporation (stigmergy).
+#   - W3C SSN/SOSA: observable properties for swarm-state sensing.
+#   - Ashby requisite variety; cybernetic 5-property loop assessment.
+#
+# Feedback loop: SENSE consumes prior_iteration.next_focus (emitted by the
+# CONVERGE check when not converged) to direct the next iteration. The loop is
+# autopoietic at the heuristic layer (Maturana & Varela; Luhmann) — each
+# iteration's composition recommendation is a function of the prior measured
+# swarm state and prior heuristics, not external directives.
+#
+# Convergence: Cauchy criterion on the swarm-state distance d. d is a
+# composite of (1 - variety_coverage), (diversity_floor - diversity), and
+# (1 - loop_closure). d = 0 means the target condition is met on all three
+# axes. Algedonic override: a 402 or un-acknowledged curator dispatch
+# escalates regardless of d (the .rules "unwrap_or(0) on regulation-loop
+# sense inputs" trap enforced as a convergence invariant).
+
+manifest:
+  id: swarm-intelligence
+  category: skill
+  name: Swarm Intelligence
+  description: >
+    Convergent swarm-composition process for Agent Bestiary World (ABW) agent
+    swarms. Senses current swarm state against the Onto4MAT multi-agent
+    teaming ontology (alignment, cohesion, separation) and the ABW
+    workspace/wallet APIs; orients by classifying the gap (variety deficit,
+    coherence deficit, loop-break) via Ashby's requisite variety and PSO
+    cognitive/social balance; decides composition adjustments isomorphic to
+    PSO velocity tuning (c1/c2/omega), ACO pheromone deposition/evaporation,
+    and Reynolds separation/alignment/cohesion; acts via gated
+    swarm_update_swarm/swarm_delegate calls with a DispatchIntent consent
+    gate; checks by reconciling actual spend and curator data-sharing against
+    the algedonic channel; and converges via a Cauchy criterion on the
+    swarm-state distance metric. Anchored to Reynolds (1987) flocking,
+    Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT (Kiesel et al. 2022), W3C
+    SSN/SOSA, Thagard coherence, Ashby requisite variety, and the ABW
+    integration plan (zed-kask 2026-08-01). Composes pragmatic-cybernetics,
+    kata-improvement, and essentialist. Emits reg.swarm.* spans.
+  functional_role: flowdef
+  version: 0.1.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
+
+gas:
+  cap: 120000
+  cost_per_iteration: 150
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: swarm_id
+    type: string
+    required: true
+    description: >
+      The ABW workspace id (= swarm) to compose/steer. Resolved via
+      hkask-mcp-swarm's swarm_get_swarm.
+  - name: task
+    type: string
+    required: true
+    description: >
+      The target task the swarm must be composed for. Drives the
+      required_transforms set in the variety check.
+  - name: target_condition
+    type: object
+    required: false
+    description: >
+      Operator-specified target. Defaults: variety_coverage >= 0.9,
+      diversity >= 0.25, loop_closure = 1.0. Each field overrides a default.
+  - name: prior_iteration
+    type: object
+    required: false
+    description: >
+      Output of a previous swarm-intelligence iteration on the same swarm.
+      Closes the feedback loop: SENSE consumes prior_iteration.next_focus.
+
+# Fusion: omitted — defers to operator's global kask.fusion settings.
+# Recommended: mode "best-of-n" with skills: [pragmatic-cybernetics].
+# Model names are not hardcoded here because models evolve quickly (per
+# .rules "Manifests must not hardcode model names in the fusion block").
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      SENSE: Measure current swarm state. Fetch the workspace roster
+      (agents[], their accepts[]/produces[]/capabilities/dependencies) and
+      the wallet balance/transactions via hkask-mcp-swarm. Compute Onto4MAT
+      team properties: alignment (delegation-graph density from produces/
+      accepts overlap), cohesion (fraction of required dependencies
+      satisfied by hired agents), separation (distinct (agent_type, model,
+      temperature) tuples / agent count). Record required_transforms derived
+      from the task. Consumes prior_iteration.next_focus when present.
+      Vacuous-truth defaults: empty required_transforms → variety_coverage
+      1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0.
+    renderer: minijinja
+    template_ref: swarm-intelligence/swarm-sense
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      swarm_id: "{{ swarm_id }}"
+      task: "{{ task }}"
+      target_condition: "{{ target_condition | default({}) }}"
+      prior_iteration: "{{ prior_iteration | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      ORIENT: Classify the gap between sensed state and target condition into
+      one of three deficit classes (or on-target): (a) variety deficit —
+      required_transforms not covered by hired agents' accepts/produces;
+      (b) coherence deficit — Thagard coherence flat or declining, OR
+      diversity below floor (premature convergence, the PSO/ACO failure
+      mode); (c) loop-break — un-reconciled dispatches or un-acknowledged
+      curator data-sharing. Delegates to pragmatic-cybernetics for the
+      5-property assessment (polarity, delay, gain, closure, fidelity) when
+      the deficit is a loop-break. Classifies the coordination problem
+      (Axelrod): is this a cooperation problem (repeated interaction, shadow
+      of the future) or a division-of-labor problem (one-shot, complementary
+      capabilities)?
+    renderer: minijinja
+    template_ref: swarm-intelligence/swarm-orient
+    gas_cap: 4096
+    timeout_seconds: 90
+    input_mapping:
+      swarm_state: "{{ step_1_result }}"
+      task: "{{ task }}"
+      target_condition: "{{ target_condition | default({}) }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      DECIDE: Propose composition adjustments isomorphic to swarm-algorithm
+      tuning, mapped onto ABW's hire/fire/delegate vocabulary:
+        - Variety deficit → hire agents whose accepts/produces cover the
+          missing transforms (ACO pheromone deposition: strengthen the path
+          to the uncovered region).
+        - Coherence deficit + low diversity → hire a diverse agent (raise
+          PSO c1 cognitive / lower omega inertia — broaden the search);
+          fire a redundant duplicate (evaporate the over-deposited pheromone).
+        - Coherence deficit + high diversity but low alignment → hire/assign
+          a coordinator compound agent (raise PSO c2 social — pull toward
+          gbest; Reynolds alignment rule).
+        - Loop-break → do NOT change composition; emit a DispatchIntent
+          reconciliation repair (re-query /api/wallet/transactions for the
+          un-reconciled dispatch) and a curator-consent backfill.
+      Recommendations reference the ABW compound-agent dependencies model
+      (required/optional) and the no-delegation-chains invariant.
+    renderer: minijinja
+    template_ref: swarm-intelligence/swarm-decide
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      swarm_state: "{{ step_1_result }}"
+      orientation: "{{ step_2_result }}"
+      task: "{{ task }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      ACT: Emit the gated composition change. For each proposed hire/fire/
+      delegate, construct a DispatchIntent { swarm_id, task,
+      estimated_credits (from ABW dependencies cost estimate),
+      curator_involved (default false per plan §3.7), data_shared (derived
+      from the agents' accepts[] and the task) }. The consent gate is
+      mandatory: no swarm_update_swarm or swarm_delegate call is emitted
+      without a signed credits_authorized token. If the operator Aborts, the
+      phase records the abort reason and emits no spend. This phase enforces
+      the .rules "Advertised invariants need enforcement points" trap: the
+      consent gate must actually block, not just warn.
+    renderer: minijinja
+    template_ref: swarm-intelligence/swarm-act
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      decisions: "{{ step_3_result }}"
+      swarm_id: "{{ swarm_id }}"
+      task: "{{ task }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      CHECK: Re-measure the swarm state post-Act (re-fetch workspace +
+      wallet). Compute the convergence metric: composite swarm-state
+      distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor -
+      diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target
+      condition is met on all three axes. Emit next_focus: if variety is the
+      largest term, focus next iteration on hiring; if diversity, on
+      diversification; if loop_closure, on reconciliation. Also emit the
+      algedonic signal: any 402 / un-acknowledged curator dispatch is
+      surfaced as a loop-break regardless of d. Vacuous-truth default: zero
+      dispatches → loop_closure 1.0.
+    renderer: minijinja
+    template_ref: swarm-intelligence/swarm-check
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      pre_act_state: "{{ step_1_result }}"
+      act_result: "{{ step_4_result }}"
+      swarm_id: "{{ swarm_id }}"
+      target_condition: "{{ target_condition | default({}) }}"
+
+  - ordinal: 6
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion on the swarm-state distance d. Deterministic."
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter the swarm-intelligence cycle if convergence is not met. Routes
+      step_6_result.next_focus back to step 1 as prior_iteration.next_focus,
+      along with the prior CHECK's lessons_learned, closing the feedback loop.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_iteration:
+        lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
+        next_focus: "{{ step_6_result.next_focus | default('') }}"
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 2
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: swarm-intelligence/swarm-sense
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: swarm-intelligence/swarm-orient
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: swarm-intelligence/swarm-decide
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: swarm-intelligence/swarm-act
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: swarm-intelligence/swarm-check
+      gas_budget: 4096
+    - resource: manifest
+      action: execute
+      template_id: swarm-intelligence
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.swarm
+  telemetry_namespace: hkask.template.swarm-intelligence
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

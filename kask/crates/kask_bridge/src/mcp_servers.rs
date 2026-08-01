@@ -193,7 +193,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-swarm",
         description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
         credentials: Some(&["HKASK_ABW_API_KEY"]),
-        config_env: Some(&["HKASK_ABW_API_URL", "HKASK_ABW_MAX_CREDITS"]),
+        config_env: Some(&[
+            "HKASK_ABW_API_URL",
+            "HKASK_ABW_MAX_CREDITS",
+            "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
+        ]),
     },
     BuiltinMcpServer {
         id: "training",
@@ -549,5 +553,73 @@ mod tests {
         config_env.insert("KEY_B".to_string(), "val_b".to_string());
         let filtered = filter_config_env_for_server("nonexistent", &config_env);
         assert!(filtered.is_empty());
+    }
+
+    // The swarm server should only receive the ABW API key, not SMTP or
+    // inference keys. This pins the credential blast-radius reduction for
+    // the swarm server specifically — a future edit that widens the swarm
+    // `credentials` allowlist would not be caught by the generic
+    // `all_servers_have_credential_allowlist` test.
+    #[test]
+    fn swarm_credentials_only_include_abw_key() {
+        let all_credentials: Vec<(String, String)> = [
+            "HKASK_ABW_API_KEY",
+            "HKASK_EODHD_API_KEY",
+            "HKASK_FMP_API_KEY",
+            "HKASK_SMTP_PASSWORD",
+            "DEEPINFRA_API_KEY",
+            "OPENROUTER_API_KEY",
+        ]
+        .iter()
+        .map(|env| (env.to_string(), "url".to_string()))
+        .collect();
+        let filtered = filter_credentials_for_server("swarm", &all_credentials);
+        assert_eq!(
+            filtered.len(),
+            1,
+            "swarm server should only receive HKASK_ABW_API_KEY"
+        );
+        assert_eq!(filtered[0].0, "HKASK_ABW_API_KEY");
+        assert!(
+            !filtered.iter().any(|(k, _)| k == "HKASK_SMTP_PASSWORD"),
+            "swarm server must not receive SMTP credentials"
+        );
+        assert!(
+            !filtered.iter().any(|(k, _)| k == "DEEPINFRA_API_KEY"),
+            "swarm server must not receive inference keys"
+        );
+    }
+
+    // The swarm server should only receive ABW config env, not curator email
+    // config or codegraph DB paths. This pins the config-env blast-radius.
+    #[test]
+    fn swarm_config_env_excludes_unrelated_vars() {
+        let mut config_env = std::collections::HashMap::new();
+        config_env.insert(
+            "HKASK_ABW_API_URL".to_string(),
+            "https://abw.example".to_string(),
+        );
+        config_env.insert("HKASK_ABW_MAX_CREDITS".to_string(), "100".to_string());
+        config_env.insert(
+            "HKASK_ABW_CURATOR_CONSENT_DEFAULT".to_string(),
+            "true".to_string(),
+        );
+        config_env.insert(
+            "HKASK_SMTP_USERNAME".to_string(),
+            "ops@example.com".to_string(),
+        );
+        config_env.insert("HKASK_CODEGRAPH_DB".to_string(), "/path/to/db".to_string());
+        let filtered = filter_config_env_for_server("swarm", &config_env);
+        assert!(filtered.contains_key("HKASK_ABW_API_URL"));
+        assert!(filtered.contains_key("HKASK_ABW_MAX_CREDITS"));
+        assert!(filtered.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
+        assert!(
+            !filtered.contains_key("HKASK_SMTP_USERNAME"),
+            "swarm server must not receive curator email config"
+        );
+        assert!(
+            !filtered.contains_key("HKASK_CODEGRAPH_DB"),
+            "swarm server must not receive codegraph config"
+        );
     }
 }

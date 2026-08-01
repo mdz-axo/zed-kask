@@ -1681,6 +1681,9 @@ pub struct KaskScenariosSettingsContent {
 pub struct KaskSwarmSettingsContent {
     pub api_url: Option<String>,
     pub max_credits_per_dispatch: Option<u32>,
+    /// When `true`, Xaman Ek curator calls do not require a per-call consent
+    /// token. Default `false` (opt-in per call).
+    pub curator_consent_default: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

@@ -20,6 +20,7 @@ pub use panel_button::SwarmPanelButton;
 use std::ops::Range;
 use std::time::Duration;
 
+use anyhow::Result;
 use editor::Editor;
 use gpui::{
     App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle, Window,
@@ -34,7 +35,8 @@ use ui::{
 };
 use workspace::{
     Workspace,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, SerializableItem},
+    register_serializable_item,
 };
 
 actions!(
@@ -52,6 +54,7 @@ actions!(
 const SWARM_SERVER: &str = "swarm";
 
 pub fn init(cx: &mut App) {
+    register_serializable_item::<SwarmPanel>(cx);
     cx.observe_new(move |workspace: &mut Workspace, window, _cx| {
         let Some(_window) = window else {
             return;
@@ -191,6 +194,49 @@ fn extract_wallet_balance(output: &str) -> Option<i64> {
         .and_then(|b| b.as_i64())
 }
 
+/// Extract agent-name mentions from a Xaman Ek composition response. The
+/// curator recommends members in its `response` text and `in_progress` plan;
+/// we match `lowercase_with_underscores` tokens that look like agent names.
+/// Heuristic by design — the operator reviews before applying.
+fn extract_agent_mentions(content: &serde_json::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    // Prefer the structured plan when present.
+    if let Some(members) = content
+        .get("in_progress")
+        .and_then(|p| p.get("members"))
+        .and_then(|m| m.as_array())
+    {
+        for member in members {
+            if let Some(name) = member
+                .get("agent_id")
+                .and_then(|a| a.as_str())
+                .or_else(|| member.get("agent_name").and_then(|a| a.as_str()))
+            {
+                found.push(name.to_string());
+            }
+        }
+    }
+    if !found.is_empty() {
+        return found;
+    }
+    // Fall back to scanning the response text for agent-name-shaped tokens.
+    if let Some(text) = content.get("response").and_then(|r| r.as_str()) {
+        for token in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+            if token.len() > 3
+                && token.contains('_')
+                && token
+                    .chars()
+                    .all(|c| c.is_lowercase() || c.is_numeric() || c == '_')
+            {
+                found.push(token.to_string());
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
 // ── Panel ──────────────────────────────────────────────────────────────────
 
 pub struct SwarmPanel {
@@ -241,6 +287,16 @@ struct ComposeForm {
     agents: Entity<Editor>,
     status: Option<SharedString>,
     busy: bool,
+    /// Xaman Ek consultation: the operator's composition question.
+    xaman_query: Entity<Editor>,
+    /// The active Xaman Ek composition session id (continues across messages).
+    xaman_session: Option<String>,
+    /// The curator's latest response text.
+    xaman_response: Option<SharedString>,
+    /// Agent names Xaman Ek recommended (extracted from a composition plan),
+    /// offered as a one-click pre-fill of the agents field.
+    xaman_suggested_agents: Vec<String>,
+    xaman_busy: bool,
 }
 
 /// A hire awaiting operator consent. The gate holds the pre-flight estimate
@@ -309,6 +365,15 @@ impl SwarmPanel {
                 }),
                 status: None,
                 busy: false,
+                xaman_query: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text("Ask Xaman Ek to plan your team…", window, cx);
+                    e
+                }),
+                xaman_session: None,
+                xaman_response: None,
+                xaman_suggested_agents: Vec::new(),
+                xaman_busy: false,
             };
 
             let mut this = Self {
@@ -515,7 +580,11 @@ impl SwarmPanel {
                                     within_budget: content
                                         .get("within_budget")
                                         .and_then(|c| c.as_bool())
-                                        .unwrap_or(true),
+                                        .unwrap_or(false),
+                                    // Fallback mirrors `SwarmConfig::default().max_credits_per_dispatch`
+                                    // (50) — the server always sends this field, so the fallback
+                                    // only fires on a malformed response. Keep in sync with the
+                                    // server default if it changes.
                                     max_credits: content
                                         .get("max_credits_per_dispatch")
                                         .and_then(|c| c.as_u64())
@@ -807,6 +876,85 @@ impl SwarmPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// Consult Xaman Ek (composition_design session) from the Compose surface.
+    /// Continues the active session across messages so the operator can refine
+    /// the team iteratively, then surfaces any recommended agents for pre-fill.
+    fn ask_xaman(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.compose.xaman_response = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let message = self.compose.xaman_query.read(cx).text(cx);
+        if message.trim().is_empty() {
+            return;
+        }
+        self.compose.xaman_busy = true;
+        self.compose.xaman_response = None;
+        cx.notify();
+        let session_id = self.compose.xaman_session.clone();
+
+        cx.spawn(async move |this, cx| {
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_xaman",
+                    json!({
+                        "message": message.trim(),
+                        "session_type": "composition_design",
+                        "session_id": session_id,
+                    }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.compose.xaman_busy = false;
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.wallet_balance = Some(b);
+                        }
+                        let parsed = serde_json::from_str::<serde_json::Value>(&output)
+                            .ok()
+                            .and_then(|v| v.get("content").cloned().or(Some(v)));
+                        if let Some(content) = parsed {
+                            // Continue the session.
+                            if let Some(sid) = content.get("session_id").and_then(|s| s.as_str()) {
+                                this.compose.xaman_session = Some(sid.to_string());
+                            }
+                            if let Some(resp) = content.get("response").and_then(|r| r.as_str()) {
+                                this.compose.xaman_response = Some(resp.to_string().into());
+                            }
+                            // Extract recommended agent names from the response
+                            // text (Xaman Ek lists members by name) so the
+                            // operator can pre-fill the agents field.
+                            this.compose.xaman_suggested_agents = extract_agent_mentions(&content);
+                        }
+                    }
+                    Err(err) => {
+                        this.compose.xaman_response =
+                            Some(format!("Xaman Ek unavailable: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Pre-fill the agents field with Xaman Ek's recommended team.
+    fn apply_xaman_suggestions(&mut self, cx: &mut Context<Self>) {
+        if self.compose.xaman_suggested_agents.is_empty() {
+            return;
+        }
+        let joined = self.compose.xaman_suggested_agents.join(", ");
+        let agents_editor = self.compose.agents.clone();
+        agents_editor.update(cx, |editor, cx| {
+            editor.set_text(joined, cx);
+        });
+        cx.notify();
     }
 
     fn filter_entries(&mut self, cx: &mut Context<Self>) {
@@ -1506,6 +1654,48 @@ impl Item for SwarmPanel {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+impl SerializableItem for SwarmPanel {
+    fn serialized_item_kind() -> &'static str {
+        "SwarmPanel"
+    }
+
+    fn cleanup(
+        _workspace_id: workspace::WorkspaceId,
+        _alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: workspace::WeakEntity<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        // Stateless item — nothing to persist beyond the fact that it's open.
+        // The panel reconstructs its state from ABW on first render.
+        cx.spawn(async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| SwarmPanel::new(window, cx))
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        // Stateless item — nothing to persist beyond the fact that it's open.
+        None
     }
 }
 

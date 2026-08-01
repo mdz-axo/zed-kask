@@ -20236,12 +20236,14 @@ dependencies = [
 name = "swarm_panel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
  "editor",
  "gpui",
  "kask_panel",
  "log",
  "marketplace_ui_common",
+ "project",
  "serde",
  "serde_json",
  "ui",

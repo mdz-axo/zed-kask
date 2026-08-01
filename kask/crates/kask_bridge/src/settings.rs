@@ -420,6 +420,13 @@ pub struct KaskSwarmSettings {
     /// Per-dispatch credit ceiling for spend tools (the S3 budget gate).
     /// Dispatches estimated above this are refused before any credit is spent.
     pub max_credits_per_dispatch: u32,
+
+    /// Whether Xaman Ek curator calls may be initiated without a per-call
+    /// consent token (S5 policy). Default `false` — sending task content to
+    /// a third-party curator requires explicit opt-in per the plan's §3.7.
+    /// When `false`, `swarm_xaman` requires a `consent_token` (action "curate").
+    /// When `true`, the operator has globally opted in and the token is optional.
+    pub curator_consent_default: bool,
 }
 
 impl Default for KaskSwarmSettings {
@@ -427,6 +434,7 @@ impl Default for KaskSwarmSettings {
         Self {
             api_url: String::new(),
             max_credits_per_dispatch: 50,
+            curator_consent_default: false,
         }
     }
 }
@@ -852,6 +860,12 @@ impl KaskSettings {
                 self.swarm.max_credits_per_dispatch.to_string(),
             );
         }
+        if self.swarm.curator_consent_default != swarm_default.curator_consent_default {
+            env.insert(
+                "HKASK_ABW_CURATOR_CONSENT_DEFAULT".to_string(),
+                self.swarm.curator_consent_default.to_string(),
+            );
+        }
 
         // ── Training ──
         if !self.training.host.is_empty() {
@@ -1161,6 +1175,9 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
             max_credits_per_dispatch: c
                 .max_credits_per_dispatch
                 .unwrap_or(default.max_credits_per_dispatch),
+            curator_consent_default: c
+                .curator_consent_default
+                .unwrap_or(default.curator_consent_default),
         }
     }
 }
