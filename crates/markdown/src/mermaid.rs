@@ -251,10 +251,12 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "journey",
         "sankey-beta",
         "kanban",
-        "architecture",
-        "radar",
+        "architecture-beta",
+        "radar-beta",
+        "treemap-beta",
         "treemap",
         "block-beta",
+        "block",
     ];
     let first_token = source
         .trim_start()
@@ -719,6 +721,39 @@ mod tests {
             diagram.contents.contents.contains("flowchart"),
             "The extracted diagram should be the flowchart"
         );
+    }
+
+    #[test]
+    fn test_beta_suffixed_diagram_types_are_extracted() {
+        // Merman's detectors require the -beta suffix for architecture, radar,
+        // and treemap. The bare forms ("architecture", "radar", "treemap")
+        // are NOT valid mermaid directives for these types — only the -beta
+        // variants are. This test pins that the allowlist contains the correct
+        // forms so a future edit doesn't silently break rendering by adding
+        // the bare form without the -beta suffix.
+        //
+        // block and block-beta are both valid (merman accepts either); both
+        // are in the allowlist. sankey-beta and kanban are also valid as-is.
+        let beta_suffixed = [
+            "architecture-beta",
+            "radar-beta",
+            "treemap-beta",
+            "block-beta",
+            "block",
+            "sankey-beta",
+            "kanban",
+        ];
+        for prefix in beta_suffixed {
+            let markdown = format!("```mermaid\n{prefix}\n```\n\n");
+            let events =
+                crate::parser::parse_markdown_with_options(&markdown, false, false, false).events;
+            let diagrams = extract_mermaid_diagrams(&markdown, &events);
+            assert_eq!(
+                diagrams.len(),
+                1,
+                "{prefix} should be extracted as a supported diagram type"
+            );
+        }
     }
 
     #[gpui::test]

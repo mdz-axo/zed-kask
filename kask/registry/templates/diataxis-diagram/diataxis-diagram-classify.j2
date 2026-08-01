@@ -45,8 +45,22 @@ Choose the single most appropriate diagram type. Not everything is a flowchart.
 | An enum with lifecycle variants, state machine, status transitions | **state** | States and transitions are the domain, not an overlay |
 | Message passing, request/response chains, event propagation across services | **sequence** | Participants and message ordering are explicit |
 | Traits, structs, impl blocks — type hierarchies and composition | **class** | Inheritance and composition have dedicated UML syntax |
+| System topology, service boundaries, deployment architecture, data flow between services | **architecture** | Services, junctions, and ports model deployment shape |
+| Module boundaries, component composition, nested block structure | **block** | Columns/rows and nested blocks model structural decomposition |
+| Multi-dimensional capability assessment, metric profiles, comparative scoring | **radar** | Axes show per-dimension strength; curves compare entities |
+| Hierarchical quantity data, code-size-by-module, budget allocation, directory proportions | **treemap** | Nested rectangles encode quantity as area |
+| Weighted flow between stages — process, pipeline, budget, funnel, user journey | **sankey** | Edge width encodes flow magnitude; staged flow is first-class |
+| Task board, work items grouped by status, kata-kanban snapshots | **kanban** | Columns are statuses; tasks are cards with metadata |
+| Scheduled work, milestones, project timeline, phase dependencies | **gantt** | Time axis with bars shows duration and ordering |
+| Proportional breakdown, categorical distribution, market share | **pie** | Slices show parts of a whole |
+| Commit history, branch structure, merge/fork events in a repository | **gitgraph** | Branches and commits model version-control topology |
+| Hierarchical concept maps, taxonomy, org structure, idea decomposition | **mindmap** | Radial nesting shows parent-child relationships |
+| Chronological events, project phases, release history, biographical timeline | **timeline** | Time-ordered events with optional per-event metadata |
+| 2×2 strategic matrix, Wardley map, prioritization grid, scenario quadrants | **quadrant** | Two-axis placement reveals strategic positioning |
+| Quantitative x-y data, performance curves, benchmarks, metric trends | **xychart** | Cartesian axes plot numeric series |
+| User journey, experience mapping, satisfaction stages | **journey** | Ordered stages with sentiment scores |
 
-**Heuristic:** If you see states named like Pending/Active/Completed → use state. If you see arrows between services with messages → use sequence. If you see boxes with true/false branches → use flowchart. If you see CREATE TABLE → use erd.
+**Heuristics:** If you see states named like Pending/Active/Completed → use state. If you see arrows between services with messages → use sequence. If you see boxes with true/false branches → use flowchart. If you see CREATE TABLE → use erd. If you see service boundaries and deployment topology → use architecture. If you see weighted flow with quantities → use sankey. If you see a task board with status columns → use kanban. If you see hierarchical quantities (size per module) → use treemap. If you see multi-axis capability scoring → use radar.
 
 ## Diataxis Quadrant
 
@@ -67,7 +81,7 @@ Return a JSON object:
 
 ```json
 {
-  "diagram_type": "erd | flowchart | state | sequence | class",
+  "diagram_type": "erd | flowchart | state | sequence | class | architecture | block | radar | treemap | sankey | kanban | gantt | pie | gitgraph | mindmap | timeline | quadrant | xychart | journey",
   "diataxis_quadrant": "reference | explanation | how-to | tutorial",
   "source_files": ["path/to/schema.sql", ...],
   "rationale": "One sentence explaining why this type and quadrant were chosen."

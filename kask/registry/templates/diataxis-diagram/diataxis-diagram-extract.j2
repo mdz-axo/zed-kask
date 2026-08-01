@@ -144,6 +144,250 @@ From Rust traits, structs, and impl blocks:
 - Method parameter of type &Trait → `Caller ..> Trait : uses`
 
 **Multiplicity:** Label composition relationships: `A "1" o-- "0..*" B`.
+
+{% elif diagram_type == "architecture" %}
+### Architecture Diagram Extraction
+
+From deployment configs, service definitions, system topology docs:
+
+**Services:**
+- Each deployable service → `service name(icon)[Label]`
+- Icons: `disk`, `server`, `internet`, `database`, `queue`, `gateway`
+- Group services into logical boundaries: `group left` / `group right`
+
+**Junctions:**
+- Routing points where edges merge/split → `junction name in group`
+
+**Edges (ports):**
+- `serviceA:R --> L:serviceB` — right port of A to left port of B
+- Ports: `L` (left), `R` (right), `T` (top), `B` (bottom)
+- Bidirectional: `serviceA:R -- L:serviceB` (no arrowhead)
+- Reverse: `serviceA:R <-- L:serviceB`
+
+**Groups:**
+- `group left` / `group right` — logical or physical boundaries
+- Services placed in groups: `service disk(disk)[Disk] in left`
+
+{% elif diagram_type == "block" %}
+### Block Diagram Extraction
+
+From module structure, component composition, nested containers:
+
+**Blocks:**
+- Each component/module → `block_id["Label"]`
+- Nested blocks: `block_id { nested_id["Label"] }`
+- Columns: `columns 3` (fixed column count)
+
+**Edges:**
+- `blockA -- "label" --> blockB`
+- Arrow types: `-->`, `---`, `<-->`, `o--`, `--o`
+- Styled arrows: `blockArrow<"...">(right)`
+
+**Layout:**
+- `columns N` — fixed N-column grid
+- Without `columns`, blocks flow left-to-right and wrap
+
+{% elif diagram_type == "radar" %}
+### Radar Chart Extraction
+
+From multi-dimensional assessments, capability matrices, scoring rubrics:
+
+**Axes:**
+- Each evaluation dimension → one axis: `axis A, B, C, D`
+- Axis names should be short (≤ 20 chars)
+
+**Curves:**
+- Each scored entity → one curve: `curve c1{val_A, val_B, val_C, val_D}`
+- Values are numeric (0–100 or raw scores)
+- Multiple curves overlay for comparison
+
+**Optional:**
+- `title ...` — chart title
+- `axis A, B, C` — declare axes before curves
+
+{% elif diagram_type == "treemap" %}
+### Treemap Extraction
+
+From hierarchical quantity data, directory sizes, budget allocations:
+
+**Nodes:**
+- Root sections: `"Section 1"`
+- Nested leaves: `"Leaf 1.1": 12` (label: value)
+- Deeper nesting via indentation
+
+**Values:**
+- Each leaf must have a numeric value (area encodes quantity)
+- Sections without values are containers; leaves with values are rendered
+
+**Classes (optional):**
+- `"Leaf 1.2":::class1` — apply a CSS class
+- `classDef class1 fill:red,color:blue;` — define classes
+- Note: Zed auto-themes — avoid `classDef` per rendering constraints
+
+{% elif diagram_type == "sankey" %}
+### Sankey Extraction
+
+From weighted flow data, budget breakdowns, pipeline throughput, user journeys:
+
+**Nodes:**
+- Each stage/entity → a node label (labels ARE the IDs in sankey-beta)
+- At least 2 source-side and 1 sink-side node, OR a chain of ≥3 nodes
+
+**Edges:**
+- One row per edge: `source,target,value`
+- CSV format (no headers) after the `sankey-beta` directive
+- `%% source,target,value` comment as first data line for readability
+- Blank lines to group related flow stages visually
+
+**Weights:**
+- Every edge must have a numeric weight (stated by user or source, never invented)
+- Relative weights (unitless ratios) acceptable when no absolute numbers
+
+**Conservation:**
+- For mandatory-conservation domains (energy, material): inflow = outflow at every internal node
+- For none-conservation domains (user-journey, conversion): do not add loss branches to balance
+
+**Config (front-matter):**
+- `showValues: true`, `width`, `height`, `linkColor: source|target|gradient`
+
+{% elif diagram_type == "kanban" %}
+### Kanban Extraction
+
+From task lists, work items, board snapshots, kata-kanban state:
+
+**Columns:**
+- Each status → a column: `Todo` or `inprog[In progress]` or `[Done]`
+- Column ID (optional): `col_id[Column Label]`
+- Bracket-only: `[Column Label]` (no ID)
+
+**Tasks:**
+- Each task → a card under its column: `[Task title]` or `task_id[Task title]`
+- Metadata (optional): `@{ assigned: 'alice', priority: 'High' }`
+- Fields: `assigned`, `priority`, `ticket`, `icon`
+
+**Layout:**
+- Columns are top-level; tasks are indented under their column
+- No explicit edges — layout is columnar
+
+{% elif diagram_type == "gantt" %}
+### Gantt Extraction
+
+From project plans, schedules, milestone lists, phase dependencies:
+
+**Sections:**
+- `section SectionName` — group tasks
+- Tasks: `Task name :a1, 2024-01-01, 7d` (id, start, duration)
+- Dependencies: `Task name :after a1, 7d`
+- Milestones: `milestone Milestone name :m1, 2024-01-15, 0d`
+
+**Time format:**
+- Duration: `7d` (days), `2w` (weeks), `1m` (months)
+- Dates: `2024-01-01` (ISO)
+- Or relative: `crit` for critical path
+
+{% elif diagram_type == "pie" %}
+### Pie Chart Extraction
+
+From proportional data, categorical distributions, market share:
+
+**Title:**
+- `title Chart Title`
+
+**Slices:**
+- `"Label" : value` — one line per slice
+- Values are numeric (relative or absolute)
+- Labels should be short (≤ 30 chars)
+
+{% elif diagram_type == "gitgraph" %}
+### Git Graph Extraction
+
+From commit history, branch structure, merge/fork events:
+
+**Branches:**
+- `gitGraph` directive opens the diagram
+- `branch branchName` — create a branch
+- `commit` — add a commit to current branch
+- `commit id: "abc123"` — named commit
+- `commit tag: "v1.0"` — tagged commit
+
+**Merges:**
+- `merge branchName` — merge into current branch
+- `merge branchName id: "merge123"` — named merge commit
+
+**Checkout:**
+- `checkout branchName` — switch active branch
+
+{% elif diagram_type == "mindmap" %}
+### Mindmap Extraction
+
+From hierarchical concept maps, taxonomies, org structures:
+
+**Root:**
+- `mindmap` directive opens
+- `root((Root Label))` — central node
+
+**Nodes (by indentation level):**
+- Level 1: `  Node A`
+- Level 2: `    Node A1`
+- Shapes: `((circle))`, `[box]`, `)cloud(`, `((bang))`, `{{hex}}`
+- Indentation determines hierarchy (2 spaces per level)
+
+{% elif diagram_type == "timeline" %}
+### Timeline Extraction
+
+From chronological events, release history, project phases:
+
+**Time periods:**
+- `timeline` directive opens
+- `section Period Name` — group events
+- Events: `Event title : description`
+- Time labels: `2001 : Event` or `2001-06 : Event`
+
+{% elif diagram_type == "quadrant" %}
+### Quadrant Chart Extraction
+
+From 2×2 matrices, strategic positioning, prioritization grids:
+
+**Axes:**
+- `quadrantChart` directive opens
+- `x-axis Low --> High` — label x-axis
+- `y-axis Low --> High` — label y-axis
+- `quadrant-1 Label` — top-right
+- `quadrant-2 Label` — top-left
+- `quadrant-3 Label` — bottom-left
+- `quadrant-4 Label` — bottom-right
+
+**Points:**
+- `Entity: [x_val, y_val]` — place a point (0–100 scale)
+
+{% elif diagram_type == "xychart" %}
+### XY Chart Extraction
+
+From quantitative x-y data, performance curves, benchmarks:
+
+**Axes:**
+- `xychart-beta` directive opens
+- `x-axis "Label" [min, max]`
+- `y-axis "Label" [min, max]`
+
+**Series:**
+- `line [y1, y2, y3, ...]` — line plot (y-values, x is index)
+- `bar [y1, y2, y3, ...]` — bar plot
+- Values must be numeric
+
+{% elif diagram_type == "journey" %}
+### Journey Extraction
+
+From user journeys, experience maps, satisfaction stages:
+
+**Title:**
+- `journey` directive opens
+- `title Journey Title`
+
+**Sections:**
+- `section Phase Name`
+- Tasks: `Task name: 5` (score 0–5, 0=terrible, 5=great)
+- Tasks with participants: `Task name: 5: alice, bob`
 {% endif %}
 
 ## Output Format

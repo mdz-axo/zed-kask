@@ -96,5 +96,4 @@
 ## Remaining (out of scope — follow-up commit)
 
 - `.rules` / `GEMINI.md` fusion traps (3 entries) — retire in dedicated follow-up per "No drive-by additions"
-- Historical docs (`kask/docs/plans/`, `kask/docs/audits/`) — point-in-time records, left as-is
 - Operator settings migration — stale `kask-fusion/fusion` + AA-discovered favorites persist in user `settings.json` (manual cleanup)

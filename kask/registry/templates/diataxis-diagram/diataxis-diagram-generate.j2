@@ -148,6 +148,179 @@ Mermaid classDiagram reference: https://mermaid.js.org/syntax/classDiagram.html
 6. Group related types: `namespace Name { ... }`
 7. Method syntax: `+methodName(param Type) ReturnType`
 8. Field syntax: `+Type fieldName`
+
+{% elif diagram_type == "architecture" %}
+## Architecture Diagram Syntax Rules
+
+Mermaid architecture reference: https://mermaid.js.org/syntax/architecture.html
+
+1. Open with `architecture-beta`
+2. Services: `service name(icon)[Label]` — icons: `disk`, `server`, `internet`, `database`, `queue`, `gateway`
+3. Groups: `group left` / `group right` — place services in groups with `in left` / `in right`
+4. Junctions: `junction name in group` — routing points where edges merge/split
+5. Edges with ports: `serviceA:R --> L:serviceB` (ports: L, R, T, B)
+6. Edge types: `-->` (right), `<--` (left), `--` (bidirectional, no arrowhead)
+7. Junction edges: `juncC{group}:R --> L:juncR{group}`
+8. Labels ≤ 40 characters
+
+{% elif diagram_type == "block" %}
+## Block Diagram Syntax Rules
+
+Mermaid block reference: https://mermaid.js.org/syntax/block.html
+
+1. Open with `block-beta` (or `block` — both accepted)
+2. Column layout: `columns 3` (fixed N-column grid)
+3. Blocks: `block_id["Label"]` — alphanumeric IDs, labels ≤ 40 chars
+4. Nested blocks: `block_id { nested_id["Label"] }`
+5. Edges: `blockA -- "label" --> blockB`
+6. Arrow types: `-->`, `---`, `<-->`, `o--`, `--o`
+7. Styled arrows: `blockArrow<"...">(right)`
+8. Without `columns`, blocks flow left-to-right and wrap
+
+{% elif diagram_type == "radar" %}
+## Radar Chart Syntax Rules
+
+Mermaid radar reference: https://mermaid.js.org/syntax/radar.html
+
+1. Open with `radar-beta`
+2. Title (optional): `title Chart Title`
+3. Axes: `axis A, B, C, D` — declare all axes on one line, names ≤ 20 chars
+4. Curves: `curve c1{val_A, val_B, val_C, val_D}` — one per scored entity
+5. Values are numeric (0–100 or raw scores)
+6. Multiple curves overlay for comparison
+
+{% elif diagram_type == "treemap" %}
+## Treemap Syntax Rules
+
+Mermaid treemap reference: https://mermaid.js.org/syntax/treemap.html
+
+1. Open with `treemap-beta` (or `treemap` — both accepted)
+2. Root sections: `"Section 1"` — quoted labels
+3. Nested leaves: `"Leaf 1.1": 12` — label: value (numeric)
+4. Indentation determines hierarchy (2 spaces per level)
+5. Sections without values are containers; leaves with values render as rectangles
+6. Do NOT use `classDef` — Zed auto-themes (rendering constraint)
+
+{% elif diagram_type == "sankey" %}
+## Sankey Syntax Rules
+
+Mermaid sankey reference: https://mermaid.js.org/syntax/sankey.html
+
+1. Open with `sankey-beta`
+2. Front-matter config (optional): `showValues: true`, `width`, `height`, `linkColor: source|target|gradient`
+3. CSV edges (no header): `source,target,value` — one row per edge
+4. `%% source,target,value` comment as first data line for readability
+5. Node labels ARE the IDs (use the label string as both)
+6. Blank lines to group related flow stages visually
+7. Every edge must have a numeric weight — never invent weights
+8. For mandatory-conservation domains: verify inflow = outflow at every internal node
+
+{% elif diagram_type == "kanban" %}
+## Kanban Syntax Rules
+
+Mermaid kanban reference: https://mermaid.js.org/syntax/kanban.html
+
+1. Open with `kanban`
+2. Columns: `Todo` (bare), `col_id[Column Label]` (with ID), `[Column Label]` (bracket-only)
+3. Tasks (indented under column): `[Task title]` (no ID), `task_id[Task title]` (with ID)
+4. Metadata (optional): `@{ assigned: 'alice', priority: 'High' }`
+5. Fields: `assigned`, `priority`, `ticket`, `icon`
+6. No explicit edges — layout is columnar
+7. Labels ≤ 40 characters
+
+{% elif diagram_type == "gantt" %}
+## Gantt Syntax Rules
+
+Mermaid gantt reference: https://mermaid.js.org/syntax/gantt.html
+
+1. Open with `gantt`
+2. Title (optional): `title Project Timeline`
+3. Date format: `dateFormat YYYY-MM-DD`
+4. Sections: `section Phase Name`
+5. Tasks: `Task name :a1, 2024-01-01, 7d` (id, start, duration)
+6. Dependencies: `Task name :after a1, 7d`
+7. Milestones: `milestone Name :m1, 2024-01-15, 0d`
+8. Duration units: `7d` (days), `2w` (weeks), `1m` (months)
+9. Critical path: `crit` after task
+
+{% elif diagram_type == "pie" %}
+## Pie Chart Syntax Rules
+
+Mermaid pie reference: https://mermaid.js.org/syntax/pie.html
+
+1. Open with `pie`
+2. Title (optional): `title Distribution`
+3. Slices: `"Label" : value` — one line per slice, labels ≤ 30 chars
+4. Values are numeric (relative or absolute)
+
+{% elif diagram_type == "gitgraph" %}
+## Git Graph Syntax Rules
+
+Mermaid gitgraph reference: https://mermaid.js.org/syntax/gitgraph.html
+
+1. Open with `gitGraph`
+2. Branches: `branch branchName` — create and switch
+3. Commits: `commit` — add to current branch
+4. Named commits: `commit id: "abc123"`
+5. Tagged commits: `commit tag: "v1.0"`
+6. Merge: `merge branchName` — merge into current
+7. Checkout: `checkout branchName` — switch active
+
+{% elif diagram_type == "mindmap" %}
+## Mindmap Syntax Rules
+
+Mermaid mindmap reference: https://mermaid.js.org/syntax/mindmap.html
+
+1. Open with `mindmap`
+2. Root: `root((Root Label))`
+3. Nodes by indentation (2 spaces per level):
+   - Level 1: `  Node A`
+   - Level 2: `    Node A1`
+4. Shapes: `((circle))`, `[box]`, `)cloud(`, `((bang))`, `{{hex}}`
+5. Indentation determines hierarchy — no explicit edges
+
+{% elif diagram_type == "timeline" %}
+## Timeline Syntax Rules
+
+Mermaid timeline reference: https://mermaid.js.org/syntax/timeline.html
+
+1. Open with `timeline`
+2. Sections: `section Period Name`
+3. Events: `Event title : description`
+4. Time labels: `2001 : Event` or `2001-06 : Event`
+5. Multiple events per time label: `2001 : Event A : Event B`
+
+{% elif diagram_type == "quadrant" %}
+## Quadrant Chart Syntax Rules
+
+Mermaid quadrant reference: https://mermaid.js.org/syntax/quadrantChart.html
+
+1. Open with `quadrantChart`
+2. Axes: `x-axis Low --> High`, `y-axis Low --> High`
+3. Quadrant labels: `quadrant-1 Label` (top-right), `quadrant-2` (top-left), `quadrant-3` (bottom-left), `quadrant-4` (bottom-right)
+4. Points: `Entity: [x_val, y_val]` — 0–100 scale
+
+{% elif diagram_type == "xychart" %}
+## XY Chart Syntax Rules
+
+Mermaid xychart reference: https://mermaid.js.org/syntax/xychart.html
+
+1. Open with `xychart-beta`
+2. Axes: `x-axis "Label" [min, max]`, `y-axis "Label" [min, max]`
+3. Line series: `line [y1, y2, y3, ...]`
+4. Bar series: `bar [y1, y2, y3, ...]`
+5. Values must be numeric
+
+{% elif diagram_type == "journey" %}
+## Journey Syntax Rules
+
+Mermaid journey reference: https://mermaid.js.org/syntax/journey.html
+
+1. Open with `journey`
+2. Title (optional): `title User Journey`
+3. Sections: `section Phase Name`
+4. Tasks: `Task name: 5` — score 0–5 (0=terrible, 5=great)
+5. With participants: `Task name: 5: alice, bob`
 {% endif %}
 
 ## Constraints

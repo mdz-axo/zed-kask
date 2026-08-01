@@ -10,8 +10,10 @@ crate:
     Generate Mermaid diagrams from code using Diataxis methodology. Convergent
     PDCA loop: classify target and diagram type, extract entities from source,
     generate Mermaid syntax, evaluate against Diataxis quality criteria, iterate
-    until convergence. Three core types (ERD, flowchart, state) and two extended
-    (sequence, class). All diagrams render natively in Zed.
+    until convergence. Core types (ERD, flowchart, state, sequence, class) plus
+    extended types (architecture, block, radar, treemap, sankey, kanban, gantt,
+    pie, gitgraph, mindmap, timeline, quadrant, xychart, journey). All diagrams
+    render natively in Zed.
 
 templates:
   - id: diataxis-diagram/diataxis-diagram-classify
@@ -20,9 +22,11 @@ templates:
     type: KnowAct
     description: >
       Classify the target for diagram generation. Determine which Mermaid diagram
-      type is appropriate (ERD, flowchart, state, sequence, or class), which
-      Diataxis quadrant the diagram will serve, and which source files to read.
-      Produces a classification verdict with rationale.
+      type is appropriate (ERD, flowchart, state, sequence, class, architecture,
+      block, radar, treemap, sankey, kanban, gantt, pie, gitgraph, mindmap,
+      timeline, quadrant, xychart, or journey), which Diataxis quadrant the
+      diagram will serve, and which source files to read. Produces a
+      classification verdict with rationale.
     generates_spans:
       - reg.diataxis-diagram.classify
 
@@ -47,8 +51,13 @@ templates:
       Render extracted entities into valid Mermaid syntax. Apply type-specific
       conventions: Crow's Foot cardinality for ERD, node shapes for flowcharts,
       transition labels for state diagrams, block constructs for sequences,
-      interface markers for class diagrams. Accepts refinement directives from
-      the evaluate step for iterative improvement.
+      interface markers for class diagrams, service/junction notation for
+      architecture, column/row layout for block diagrams, axis/curve notation
+      for radar, hierarchical nesting for treemap, weighted CSV edges for
+      sankey, column/task notation for kanban, and standard syntax for gantt,
+      pie, gitgraph, mindmap, timeline, quadrant, xychart, and journey.
+      Accepts refinement directives from the evaluate step for iterative
+      improvement.
     generates_spans:
       - reg.diataxis-diagram.generate
 

@@ -932,9 +932,11 @@ impl LocalSwarmRuntime {
         Ok(result.output.content(text).to_string())
     }
 
-    /// Execute a local agent: scan input → call inference → scan output →
-    /// debit ledger. Returns the response text, model, token usage, and
-    /// remaining balance.
+    /// Execute a local agent: scan input → call inference → compute cost →
+    /// debit ledger → scan output. Returns the response text, model, token
+    /// usage, and remaining balance. The debit happens before the output
+    /// guard scan so a guard-quarantined result still costs credits (matching
+    /// ABW's "compute was spent" semantics).
     async fn delegate(
         &self,
         agent: &LocalAgentCard,
@@ -957,9 +959,9 @@ impl LocalSwarmRuntime {
         }
 
         // Check the ledger balance — the operator must have funded it.
-        // The cost is `credits_authorized` (the operator's declared budget for
-        // this call). We debit after the call completes, using actual token
-        // usage if available, capped at `credits_authorized`.
+        // The pre-inference check uses `credits_authorized` (the operator's
+        // declared budget). The actual debit after inference uses the real
+        // token-based cost, capped at `credits_authorized`.
         let balance = self.balance().ok_or_else(|| {
             SwarmError::Unavailable("ledger balance query failed — cannot verify funds".to_string())
         })?;
@@ -994,18 +996,26 @@ impl LocalSwarmRuntime {
                 message: format!("inference failed: {e}"),
             })?;
 
-        // Scan the output through the guard.
-        let output_text = self.scan_output(&result.text)?;
-
         // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
         // `execution_fee`), capped at `credits_authorized`.
         let tokens = i64::from(result.usage.total_tokens);
         let base_cost = std::cmp::max(1, tokens / 1000);
         let cost = std::cmp::min(base_cost, i64::from(credits_authorized));
 
-        // Debit the ledger.
+        // Debit the ledger immediately after inference succeeds — before the
+        // output guard scan. This matches ABW's "compute was spent" semantics:
+        // a guard-quarantined result still costs credits because the inference
+        // compute already happened. Moving the debit before `scan_output` (which
+        // uses `?` to return early) ensures the operator is charged even when
+        // the output is rejected for canary exfiltration or secret leakage.
         let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
         let new_balance = self.debit(cost, &reference)?;
+
+        // Scan the output through the guard. If this rejects (canary
+        // exfiltration, secret leakage), the debit has already happened — the
+        // compute was spent. The error propagates, but the operator's balance
+        // reflects the cost of the rejected call.
+        let output_text = self.scan_output(&result.text)?;
 
         Ok(LocalDelegateResult {
             agent_id: agent.agent_id.clone(),
@@ -1110,6 +1120,24 @@ fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
 /// authorizes the named agent; this is defense-in-depth against accidental
 /// cross-mention. Strips all leading `@` tokens (and intervening whitespace)
 /// so `@a @b do x` becomes `do x`.
+/// Sanitize an agent id for filesystem use. Only allows alphanumerics,
+/// dash, underscore, and dot — strips everything else. Returns `None` if
+/// the result is empty or only dots (which would be `.` or `..`, a path
+/// traversal). Used by `swarm_clone_to_local` to prevent path traversal via
+/// a malicious ABW response (`agent_id: "../../etc"`).
+fn sanitize_agent_id(id: &str) -> Option<String> {
+    let sanitized: String = id
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect();
+    // Reject empty or path-traversal-only results.
+    if sanitized.is_empty() || sanitized.chars().all(|c| c == '.') {
+        None
+    } else {
+        Some(sanitized)
+    }
+}
+
 fn strip_leading_mentions(task: &str) -> String {
     let mut remaining = task.trim_start();
     while remaining.starts_with('@') {
@@ -2699,6 +2727,18 @@ impl SwarmServer {
                 .and_then(|v| v.as_str())
                 .unwrap_or(&req.agent_name)
                 .to_string();
+            // Sanitize the agent_id for filesystem use — the ABW response is
+            // third-party data and could contain path traversal sequences
+            // (e.g. "../../etc"). Only allow alphanumerics, dash, underscore,
+            // and dot. If the sanitized id is empty, fall back to the
+            // operator-supplied agent_name (also sanitized).
+            let safe_agent_id = sanitize_agent_id(&agent_id)
+                .or_else(|| sanitize_agent_id(&req.agent_name))
+                .ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "agent_id from ABW contains no safe characters".to_string(),
+                    )
+                })?;
             let agent_type = abw_card
                 .get("agent_type")
                 .and_then(|v| v.as_str())
@@ -2763,7 +2803,7 @@ impl SwarmServer {
                 .and_then(|s| s.as_str())
                 .map(String::from);
             let local_card = LocalAgentCard {
-                agent_id: agent_id.clone(),
+                agent_id: safe_agent_id.clone(),
                 agent_type,
                 description,
                 accepts,
@@ -2778,7 +2818,7 @@ impl SwarmServer {
             };
             // Write the card to the local registry directory.
             let dir = self.client.config().local_agents_dir.clone();
-            let card_dir = std::path::Path::new(&dir).join(&agent_id);
+            let card_dir = std::path::Path::new(&dir).join(&safe_agent_id);
             std::fs::create_dir_all(&card_dir).map_err(|e| {
                 McpToolError::internal(format!(
                     "failed to create local agent dir {}: {e}",
@@ -2797,7 +2837,7 @@ impl SwarmServer {
                 .load()
                 .map_err(|e| McpToolError::internal(format!("failed to reload registry: {e}")))?;
             Ok(serde_json::json!({
-                "cloned": agent_id,
+                "cloned": safe_agent_id,
                 "cloud_id": req.agent_name,
                 "path": card_path.to_string_lossy(),
                 "synced": true,
@@ -3352,6 +3392,30 @@ mod tests {
     #[test]
     fn strip_leading_mentions_empty_when_only_mentions() {
         assert_eq!(strip_leading_mentions("@only_mention"), "");
+    }
+
+    // ── Path traversal sanitization (swarm_clone_to_local) ───────────────────
+
+    #[test]
+    fn sanitize_agent_id_strips_path_traversal() {
+        assert_eq!(
+            sanitize_agent_id("../../etc/passwd").as_deref(),
+            Some("...etcpasswd")
+        );
+        assert_eq!(sanitize_agent_id("..").as_deref(), None, "only dots → None");
+        assert_eq!(sanitize_agent_id(".").as_deref(), None, "single dot → None");
+        assert_eq!(sanitize_agent_id("").as_deref(), None, "empty → None");
+        assert_eq!(
+            sanitize_agent_id("normal_agent").as_deref(),
+            Some("normal_agent")
+        );
+        assert_eq!(sanitize_agent_id("agent-123").as_deref(), Some("agent-123"));
+        assert_eq!(
+            sanitize_agent_id("agent.test").as_deref(),
+            Some("agent.test")
+        );
+        // Path separators are stripped.
+        assert_eq!(sanitize_agent_id("a/b\\c").as_deref(), Some("abc"));
     }
 
     // ── Per-dispatch ceiling enforcement ─────────────────────────────────────
@@ -3965,10 +4029,10 @@ mod tests {
     #[tokio::test]
     async fn delegate_rejects_canary_in_output() {
         // If the model output contains the guard's canary token, the output
-        // scan must reject it. The debit does NOT happen — `scan_output` uses
-        // `?` which returns the error before the debit step. This differs from
-        // ABW (where a failed execution still costs credits) because the local
-        // path debits after the guard, not before.
+        // scan must reject it. The debit DOES happen — it occurs immediately
+        // after inference succeeds, before the output guard scan. This matches
+        // ABW's "compute was spent" semantics: a guard-quarantined result
+        // still costs credits because the inference compute already happened.
         let guard = hkask_guard::ContentGuard::mandatory(&hkask_guard::GuardConfig::default());
         let canary = guard.canary().as_str().to_string();
         // Build a runtime with a guard whose canary we know, and a stub that
@@ -3991,13 +4055,13 @@ mod tests {
             matches!(err, SwarmError::Unavailable(ref m) if m.contains("canary token detected")),
             "canary in output must be rejected, got {err:?}"
         );
-        // No debit — `scan_output` returns the error via `?` before the
-        // debit step. The compute was spent (inference ran) but the operator
-        // is not charged (the result was quarantined before billing).
+        // The debit happened before the guard scan — the compute was spent.
+        // 100 tokens → base_cost = max(1, 0) = 1. cost = min(1, 10) = 1.
+        // balance = 100 - 1 = 99.
         assert_eq!(
             runtime.balance(),
-            Some(100),
-            "no debit when output guard rejects (scan_output returns before debit)"
+            Some(99),
+            "debit happens before output guard rejects (compute was spent, matching ABW)"
         );
     }
 
