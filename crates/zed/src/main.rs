@@ -748,47 +748,25 @@ fn main() {
         agent::set_metacognition_provider(Some(provider));
         log::info!("Curator metacognition provider wired to CuratorStatusTool");
         let mcp_runtime_for_startup = mcp_runtime.clone();
-        let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
-            mcp_runtime,
-        ));
-        // D5: a2a_secret removed — OCAP token verification is self-referential
-        // (token.verify() checks the signature against the public key embedded
-        // in the token itself, not against a trusted authority). The secret was
-        // security theater. Token minting now uses `panel_default_token` with a
-        // static key. See tasks/todo.md "Essentialist audit — D5".
+        let tool_port = mcp_runtime;
+        // OCAP token verification is self-referential (token.verify() checks
+        // the signature against the public key embedded in the token itself,
+        // not against a trusted authority), so no secret is threaded through
+        // the bridge. Token minting uses `panel_default_token` with a static
+        // key. The capability-match gate in McpRuntime::invoke is what denies
+        // mismatched tool/resource declarations.
 
-        {
-            // D6 (early): Install a logging memory port now so the global hook
-            // is set before any thread completes a turn. The port starts as a
-            // no-op (BridgeMemoryPort wrapping LoggingMemoryPort) and is replaced
-            // with a real port once the Zed user resolves (see the deferred task
-            // after AppState::set_global). `set_memory_port` uses a Mutex (not
-            // OnceLock), so the upgrade is a simple second call.
-            //
-            // This is hoisted out of the model-dependent wiring block (now in
-            // the deferred task) so it is always installed, even when no default
-            // LanguageModel is configured yet.
-            let logging_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
-                std::sync::Arc::new(kask_bridge::LoggingMemoryPort::new());
-            let bridge_memory = std::sync::Arc::new(kask_bridge::BridgeMemoryPort::new(logging_memory));
-            agent::set_memory_port(Some(bridge_memory));
-            log::info!("hKask memory port wired (logging) — will upgrade when Zed user resolves");
-
-            // D5: Keystore uses the `keyring` crate directly for all
-            // sovereignty key reads/writes (synchronous OS keychain I/O).
-            // API keys for inference providers are handled by zed's own
-            // CredentialsProvider through the LanguageModelRegistry.
-
-            // D3: McpRuntime is constructed above (before the block) so it's
-            // available for both the manifest executor and the post-settings
-            // auto-launch.
-            //
-            // The model-dependent wiring (manifest executor, guard, panel) is
-            // deferred to after language_model::init() — see the block after
-            // language_models::init() below. The a2a_secret and logging memory
-            // port are wired here (early) because they don't depend on the
-            // language model registry.
-        }
+        // D5: Keystore uses the `keyring` crate directly for all keychain
+        // reads/writes (synchronous OS keychain I/O). API keys for inference
+        // providers are handled by zed's own CredentialsProvider through the
+        // LanguageModelRegistry.
+        //
+        // D3: McpRuntime is constructed above so it's available for both the
+        // manifest executor and the post-settings auto-launch. The
+        // model-dependent wiring (manifest executor, guard, panel) is
+        // deferred to after language_model::init(). The memory port is wired
+        // in the deferred task once the Zed user resolves (thread.rs no-ops
+        // when the hook is unset).
 
         if let Some(app_commit_sha) = app_commit_sha {
             AppCommitSha::set_global(app_commit_sha, cx);
@@ -2455,7 +2433,8 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 // ── D10: Kask panel adapters ───────────────────────────────────────────────
 //
 // This adapter implements kask_panel's ToolInvoker trait by delegating to the
-// bridge's BridgeToolPort. It's defined here (in the zed binary crate) because
+// McpRuntime (which implements ToolPort directly). It's defined here (in the
+// zed binary crate) because
 // kask_bridge can't depend on kask_panel (circular dependency), and the
 // composition root is the natural place for adapter construction.
 //
@@ -2464,9 +2443,9 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 // the per-server visualization views (KanbanBoardView, PortfolioDashboardView,
 // ScenariosView), which fetch data via direct MCP tool calls.
 
-/// Adapter implementing `kask_panel::ToolInvoker` via `BridgeToolPort`.
+/// Adapter implementing `kask_panel::ToolInvoker` via the `McpRuntime`.
 struct PanelToolInvoker {
-    tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
+    tool_port: std::sync::Arc<hkask_mcp::McpRuntime>,
     executor: gpui::BackgroundExecutor,
 }
 
@@ -2507,7 +2486,7 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
         &self,
         server: &str,
     ) -> gpui::Task<Result<Vec<kask_panel::ToolDescriptor>, String>> {
-        let runtime = self.tool_port.runtime_arc();
+        let runtime = self.tool_port.clone();
         let server = server.to_string();
         self.executor.spawn(async move {
             let servers = runtime.list_servers().await;

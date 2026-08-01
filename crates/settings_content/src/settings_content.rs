@@ -1498,10 +1498,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub curator: Option<KaskCuratorSettingsContent>,
 
-    /// Guard / regulation configuration.
-    #[serde(default)]
-    pub guard: Option<KaskGuardSettingsContent>,
-
     /// Memory consolidation and recall configuration.
     #[serde(default)]
     pub memory: Option<KaskMemorySettingsContent>,
@@ -1621,11 +1617,6 @@ pub struct KaskCuratorEmailSettingsContent {
     /// Digest interval in seconds (0 = disabled). Reserved for a future
     /// periodic digest sender; currently unused by the outbound-only sink.
     pub digest_interval_secs: Option<u64>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskGuardSettingsContent {
-    pub direct_chat_strategy: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

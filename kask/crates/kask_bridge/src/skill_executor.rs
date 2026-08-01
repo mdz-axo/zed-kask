@@ -46,7 +46,7 @@ impl BridgeManifestExecutor {
     /// Construct a new bridge manifest executor with a real ToolPort (D3 wired).
     ///
     /// `inference` is the bridge's `LanguageModelInferencePort` over zed's `LanguageModel`.
-    /// `tools` is the bridge's `BridgeToolPort` over hKask's `McpRuntime`.
+    /// `tools` is the bridge's `ToolPort` over hKask's `McpRuntime`.
     /// `registry_manifests_dir` should point to `kask/registry/manifests/`.
     /// `registry_templates_dir` should point to `kask/registry/templates/`.
     pub fn new(

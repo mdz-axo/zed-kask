@@ -18,7 +18,6 @@ mod mcp_servers;
 mod memory;
 mod settings;
 mod skill_executor;
-mod tool_port;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
@@ -53,16 +52,14 @@ pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BUILT_IN_MCP_SERVERS_PAIRS, BuiltinMcpServer,
     filter_config_env_for_server, filter_credentials_for_server, find_server,
 };
-pub use memory::{BridgeMemoryPort, LoggingMemoryPort, RealMemoryPort};
+pub use memory::{BridgeMemoryPort, RealMemoryPort};
 pub use settings::{
     KaskCodegraphSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
     KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings, KaskFusionSettings,
-    KaskGuardSettings, KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings,
-    KaskMemorySettings, KaskModelsSettings, KaskScenariosSettings, KaskSettings,
-    KaskTrainingSettings,
+    KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
+    KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskTrainingSettings,
 };
 pub use skill_executor::BridgeManifestExecutor;
-pub use tool_port::BridgeToolPort;
 
 mod metacognition_bridge;
 pub use metacognition_bridge::BridgeMetacognitionProvider;

@@ -1,17 +1,13 @@
 //! `MemoryPort` adapter — bridges zed's thread completion to hKask memory (D6).
 //!
-//! Two implementations:
-//!
-//! - `LoggingMemoryPort` — no-op placeholder. Logs the turn and returns `Ok(())`.
-//!   Used when `HKASK_DB_PATH` is not set (graceful degradation).
-//!
-//! - `RealMemoryPort` — full hKask memory stack. Stores completed turns into
-//!   episodic memory (Private, perspective = user WebID) and semantic memory
-//!   (Shared, for curator access). Embeds the user prompt for future retrieval.
-//!   Used when `HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE` are configured.
+//! `RealMemoryPort` — full hKask memory stack. Stores completed turns into
+//! episodic memory (Private, perspective = user WebID) and semantic memory
+//! (Shared, for curator access). Embeds the user prompt for future retrieval.
+//! Used when `HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE` are configured.
 //!
 //! The port is injected via a global hook (`agent::set_memory_port`) so the
-//! `agent` crate doesn't depend on `kask_bridge`.
+//! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
+//! wired (pre-login), the thread's ingest call site no-ops on `None`.
 
 use hkask_memory::{ConsolidationBridge, ConsolidationService, EpisodicMemory, SemanticMemory};
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
@@ -25,46 +21,6 @@ use std::time::Duration;
 use chrono::Utc;
 
 use crate::inference::LanguageModelEmbeddingPort;
-
-// ── Logging no-op (fallback when DB not configured) ────────────────────────
-
-/// Logging no-op `MemoryPort` implementation.
-///
-/// Logs the turn record at `info` level and returns `Ok(())`.
-/// Used when `HKASK_DB_PATH` is not set.
-pub struct LoggingMemoryPort;
-
-impl LoggingMemoryPort {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for LoggingMemoryPort {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MemoryPort for LoggingMemoryPort {
-    fn ingest_turn<'a>(
-        &'a self,
-        record: TurnRecord,
-    ) -> Pin<Box<dyn Future<Output = Result<(), MemoryError>> + Send + 'a>> {
-        Box::pin(async move {
-            tracing::info!(
-                target: "reg.memory",
-                thread_id = %record.thread_id,
-                model = %record.model,
-                prompt_len = record.user_input.len(),
-                response_len = record.agent_response.len(),
-                title = ?record.thread_title,
-                "Turn ingested into memory (logging no-op — HKASK_DB_PATH not set)"
-            );
-            Ok(())
-        })
-    }
-}
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
@@ -80,8 +36,8 @@ impl MemoryPort for LoggingMemoryPort {
 /// 3. An embedding of the user prompt — for future semantic retrieval and
 ///    context injection, stored in the user's `memory.db`.
 ///
-/// Construction requires a SQLCipher database path and passphrase. When
-/// these are not available, use `LoggingMemoryPort` instead.
+/// Construction requires a SQLCipher database path and passphrase. When these
+/// are not available, the port is simply not wired (the hook stays `None`).
 pub struct RealMemoryPort {
     episodic: Arc<EpisodicMemory>,
     semantic: Arc<SemanticMemory>,

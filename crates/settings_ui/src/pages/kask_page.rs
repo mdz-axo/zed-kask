@@ -5,7 +5,6 @@
 //! - MCP Servers (10 built-in servers + load toggles + `load_default` master toggle)
 //! - Curator (`always_on` toggle + `algedonic_threshold`)
 //! - Curator Email (MXroute SMTP config + keychain-backed password)
-//! - Guard / Regulation (`direct_chat_strategy`)
 //! - Memory (`consolidation_cadence_secs` + `confidence_floor`)
 //!
 //! API keys are stored in the OS keychain under the `kask://credentials/<key>`
@@ -23,13 +22,12 @@ mod condenser;
 mod curator;
 mod data_services;
 mod fusion;
-mod guard;
 mod inference_providers;
 pub(crate) use {
     codegraph::render_codegraph_page, companies::render_companies_page,
     condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
-    data_services::render_data_services_page, fusion::render_fusion_page, guard::render_guard_page,
+    data_services::render_data_services_page, fusion::render_fusion_page,
     inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
     media::render_media_page, memory::render_memory_page, models::render_models_page,
     scenarios::render_scenarios_page, training::render_training_page,
@@ -490,16 +488,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_curator_email_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Guard / Regulation".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.guard"),
-            description: Some("Configure the guard layer's direct-chat streaming strategy.".into()),
-            search_aliases: &["guard", "regulation", "strategy", "cascade"],
-            in_json: true,
-            files: USER,
-            render: render_guard_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Memory".into(),

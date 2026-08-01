@@ -1114,6 +1114,44 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_max_completion_tokens_from_api_becomes_request_budget() {
+        // zed-kask: OpenRouter reserves the model's full default output size
+        // against the key's credit limit when `max_tokens` is omitted, and
+        // rejects with 402 on limited keys. The models endpoint advertises
+        // `top_provider.max_completion_tokens`; it must flow through to the
+        // request as an explicit budget.
+        let entry = open_router::ModelEntry {
+            id: "anthropic/claude-haiku-4.5".into(),
+            name: "Anthropic: Claude Haiku 4.5".into(),
+            created: 0,
+            description: String::new(),
+            context_length: Some(200000),
+            supported_parameters: vec!["tools".into()],
+            architecture: None,
+            top_provider: Some(open_router::TopProvider {
+                max_completion_tokens: Some(64000),
+            }),
+        };
+        let models = open_router::parse_models_response_for_test(entry)
+            .await
+            .unwrap();
+        let model = &models[0];
+        assert_eq!(model.max_output_tokens(), Some(64000));
+
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let result = into_open_router(request, model, model.max_output_tokens()).unwrap();
+        assert_eq!(result.max_tokens, Some(64000));
+    }
+
+    #[gpui::test]
     async fn test_session_id_uses_thread_id() {
         let model = open_router::Model::new(
             "openai/gpt-4o",
