@@ -16,7 +16,7 @@ hKask is compiled into zed-kask as a set of native crates and in-process MCP ser
 
 | Guide | Topics | Domain Tier |
 |-------|-------|-------------|
-| [Sovereignty and OCAP](../diataxis/hkask-capability/explanation.md) | Object Capability MCP dispatch (DelegationToken, `McpRuntime::invoke` / `ToolGovernance` 6-step membrane, fail-closed semantics), capability token verification (`capabilities_match` in `hkask-mcp/src/runtime.rs`). | Core |
+| [Capability tokens and dispatch](../diataxis/hkask-capability/explanation.md) | Capability-token MCP dispatch (DelegationToken, `McpRuntime::invoke` / `ToolGovernance` membrane, capability-match gate + gas budgets; token signatures are NOT verified — in-process calls only). | Core |
 | [Cognition and Replica](cognition-and-replica.md) | Fusion system design recommendations (multi-model deliberation), scenario forecasting (Schwartz + Tetlock + Chermack pipeline), ν-event semantics (ObservableSpan, RegulationRecord, CANONICAL_NAMESPACES, decay-weighted replay), Companies MCP server (41 tools, DCF valuation, forecast feedback, portfolio ledger). | Core |
 | [Fusion Mode](fusion-mode.md) | The 5 LLM deliberation modes (synthesis, best-of-n, critique, deliberation, pi), the algo / no-judge path, per-skill manifest overrides, and how fusion is operated from the zed-kask agent panel. | Core |
 | [Skills and Composition](skills-and-composition.md) | Skill anatomy (two-zone model), manifest authoring, the `BridgeManifestExecutor` (D1) execution path, skill bundles, and how MCP servers register as in-process builtins inside the editor. | Core |

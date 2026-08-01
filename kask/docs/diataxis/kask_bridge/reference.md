@@ -119,22 +119,20 @@ status: VERIFIED
 
 ## Bridge adapters
 
-Three bridge adapters implement hKask port traits against zed types:
+Two bridge adapters implement hKask port traits against zed types:
 
-- `BridgeToolPort` (`tool_port.rs:25`) implements hKask's `ToolPort` by
-  wrapping zed's `McpRuntime`. The `McpRuntime` launches one copy of each
-  kask MCP server for governed dispatch (OCAP token verification, gas/rjoule
-  budgeting, `reg.tool.*` span emission).
 - `BridgeManifestExecutor` (`skill_executor.rs:30`) implements zed's
   `SkillManifestExecutor` by delegating to hKask's `ManifestExecutor`. It
   holds an `Arc<dyn InferencePort>` (the `GuardedInferencePort`), an
-  `Arc<dyn ToolPort>` (the `BridgeToolPort`), the `a2a_secret` for OCAP
-  token minting, and a `tokio::runtime::Handle` that is entered around
-  manifest execution so `tokio::time::timeout` has a reactor.
+  `Arc<dyn ToolPort>` (the `McpRuntime` itself — it implements `ToolPort`
+  directly, with capability-match gating, gas/rjoule budgeting, and
+  `reg.tool.*` span emission), and a `tokio::runtime::Handle` that is
+  entered around manifest execution so `tokio::time::timeout` has a
+  reactor.
 - `BridgeMemoryPort` (`memory.rs:1474`) implements zed's `ThreadMemoryPort`
   by delegating to hKask's `MemoryPort`. It wraps an `Arc<dyn MemoryPort>`
-  — either a `LoggingMemoryPort` (startup, no DB) or a `RealMemoryPort`
-  (after the zed user resolves).
+  — a `RealMemoryPort`, wired once the zed user resolves (before that the
+  hook is `None` and turn ingest no-ops).
 
 The `LanguageModelInferencePort` (`inference.rs:46`, trait impl at `:246`)
 implements hKask's `InferencePort` by wrapping zed's `LanguageModel`. It

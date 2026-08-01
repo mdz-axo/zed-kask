@@ -746,7 +746,7 @@ Server startup can fail with `McpError` before reaching the MCP handshake:
 | Storage driver error | `McpError::Storage` — server fails to start |
 | Transport (rmcp) error | `McpError::Transport` — server fails to start |
 
-`HKASK_WEBID` unset is **not** a startup failure — the server starts with an anonymous WebID and emits a `reg.memory` warning. Capability denials are not a startup concept in the current API; OCAP gating happens per-tool-invocation via `DelegationToken` verification in `McpRuntime::invoke`, not at server boot.
+`HKASK_WEBID` unset is **not** a startup failure — the server starts with an anonymous WebID and emits a `reg.memory` warning. Capability denials are not a startup concept in the current API; capability matching happens per-tool-invocation in `McpRuntime::invoke`, not at server boot.
 
 ### Step 6: Register as an In-Process Builtin
 

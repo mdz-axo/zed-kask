@@ -138,7 +138,7 @@ and loopback for user-curated URL lists (e.g. RSS subscriptions).
 The `load_dotenv` function (`credentials.rs:18`) loads environment variables
 from the nearest `.env` file without mutating the process environment. The
 `resolve_credential` function (`credentials.rs:54`) routes known credential
-names (e.g. `HKASK_DB_PASSPHRASE`, `HKASK_OCAP_SECRET`) through the proper
+names (e.g. `HKASK_DB_PASSPHRASE`) through the proper
 hkask keystore resolvers; for unrecognized names, it falls back to keychain
 lookup by env var name and then environment variable lookup.
 
