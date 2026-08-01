@@ -79,6 +79,7 @@ zed_credentials_provider.workspace = true
 ed25519-dalek.workspace = true
 kask_panel.workspace = true
 kask_extensions_ui.workspace = true
+swarm_panel.workspace = true
 agent_settings.workspace = true
 agent_skills.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }

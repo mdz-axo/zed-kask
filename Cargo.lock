@@ -25934,6 +25934,7 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "svg_preview",
+ "swarm_panel",
  "sysinfo 0.37.2",
  "system_specs",
  "tab_switcher",

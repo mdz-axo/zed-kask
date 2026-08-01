@@ -47,6 +47,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Git Panel", git_panel::ToggleFocus),
         MenuItem::action("Kask Panel", kask_panel::Toggle),
         MenuItem::action("Kask Extensions", kask_extensions_ui::Toggle),
+        MenuItem::action("Agent Swarm", swarm_panel::Toggle),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),

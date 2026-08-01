@@ -2008,6 +2008,7 @@ fn main() {
         );
         kask_panel::init(cx);
         kask_extensions_ui::init(cx);
+        swarm_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         // D1/D3/D4/D10/D12: Model-dependent kask wiring now runs in the

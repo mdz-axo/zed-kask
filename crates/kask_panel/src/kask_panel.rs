@@ -123,6 +123,13 @@ pub(crate) fn kanban_tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
     tool_invoker()
 }
 
+/// Access the global tool invoker for external consumers (e.g. the
+/// `swarm_panel` crate), which fetch data through the same governed MCP tool
+/// path as the per-server visualization views.
+pub fn shared_tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
+    tool_invoker()
+}
+
 /// The per-tab system prompt injected via `static_context`.
 ///
 /// This is appended to the curator's system prompt (which already includes

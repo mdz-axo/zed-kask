@@ -159,6 +159,11 @@ impl SwarmClient {
         Self { http, config }
     }
 
+    /// Read-only access to the resolved config (for budget-gate checks).
+    fn config(&self) -> &SwarmConfig {
+        &self.config
+    }
+
     fn url(&self, path: &str) -> String {
         format!(
             "{}/api{}",
@@ -238,6 +243,43 @@ impl SwarmClient {
         self.send(self.http.post(self.url(path)).json(payload))
             .await
     }
+
+    /// Fetch the operator's current wallet balance (the algedonic sense input).
+    /// Returns `None` when unauthenticated (catalogue-only mode). A query
+    /// failure emits a warning and returns `None` rather than fabricating a
+    /// balance — the `.rules` trap about `unwrap_or(0)` on regulation signals:
+    /// a failed measurement must be distinguishable from a measured zero.
+    async fn wallet_balance(&self) -> Option<i64> {
+        if !self.is_authenticated() {
+            return None;
+        }
+        match self.get("/wallet").await {
+            Ok(v) => v.get("balance").and_then(|b| b.as_i64()),
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    "wallet balance query failed ({e}) — treating signal as stale, not zero"
+                );
+                None
+            }
+        }
+    }
+
+    /// Attach the current wallet balance to a tool response under a `wallet`
+    /// key, so the algedonic signal rides every tool's return path instead of
+    /// requiring a separate poll. No-op when unauthenticated or the balance
+    /// query fails (the response is still useful without it).
+    async fn with_wallet(&self, mut value: serde_json::Value) -> serde_json::Value {
+        if let Some(balance) = self.wallet_balance().await
+            && let Some(obj) = value.as_object_mut()
+        {
+            obj.insert(
+                "wallet".to_string(),
+                serde_json::json!({ "balance": balance }),
+            );
+        }
+        value
+    }
 }
 
 /// Inspect a 200-response body for ABW's embedded upstream-error pattern.
@@ -309,6 +351,12 @@ pub struct CurateRequest {
     pub message: String,
     /// Existing session ID to continue a curator conversation. Optional.
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HireCostRequest {
+    /// Agent name (e.g. "social_media_studio").
+    pub agent_name: String,
 }
 
 // ── Server struct ──────────────────────────────────────────────────────────
@@ -446,10 +494,13 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
-            Ok(serde_json::json!({
-                "agent_name": req.agent_name,
-                "result": data,
-            }))
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "agent_name": req.agent_name,
+                    "result": data,
+                }))
+                .await)
         })
         .await
     }
@@ -505,11 +556,68 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
-            Ok(serde_json::json!({
-                "session_id": session_id,
-                "response": data.get("response"),
-                "ready_to_create": data.get("ready_to_create"),
-            }))
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "session_id": session_id,
+                    "response": data.get("response"),
+                    "ready_to_create": data.get("ready_to_create"),
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Pre-flight cost estimate for hiring an agent + its dependency team.
+    ///
+    /// This is the consent gate's data source: read-only, spends nothing, and
+    /// returns the credit total the operator would authorize before a hire.
+    #[tool(
+        description = "Estimate the credit cost of hiring an Agent Bestiary World agent (including its required/optional dependency team). Read-only pre-flight for the cost/consent gate — spends nothing. Requires API key."
+    )]
+    pub async fn swarm_hire_cost(&self, parameters: Parameters<HireCostRequest>) -> String {
+        execute_tool_semantic(self, "swarm_hire_cost", Some("dublin-core"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+
+            let data = self
+                .client
+                .get(&format!("/agents/{}/dependencies", req.agent_name))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            let total = data
+                .get("total_hire_cost")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
+
+            // Enforce the S3 budget gate at the estimate stage: surface when
+            // the hire would exceed the configured per-dispatch ceiling so the
+            // operator sees it before the consent prompt, not after a spend.
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let within_budget = total <= u64::from(ceiling);
+
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "agent_name": req.agent_name,
+                    "has_dependencies": data.get("has_dependencies"),
+                    "required": data.get("required"),
+                    "optional": data.get("optional"),
+                    "required_cost": data.get("required_cost"),
+                    "optional_cost": data.get("optional_cost"),
+                    "total_hire_cost": total,
+                    "max_credits_per_dispatch": ceiling,
+                    "within_budget": within_budget,
+                }))
+                .await)
         })
         .await
     }
@@ -603,6 +711,20 @@ mod tests {
         assert_eq!(c.api_base_url, "https://agent-bestiary.world");
         assert!(!c.curator_consent_default);
         assert!(c.api_key.is_none());
+    }
+
+    // The algedonic wallet signal must never be fabricated. When the server is
+    // unauthenticated, `wallet_balance` returns `None` (no key → no wallet),
+    // and `with_wallet` leaves the response untouched rather than inserting a
+    // zero. This pins the `.rules` trap: a missing measurement is
+    // distinguishable from a measured zero balance.
+    #[tokio::test]
+    async fn wallet_envelope_absent_when_unauthenticated() {
+        let client = SwarmClient::new(reqwest::Client::new(), SwarmConfig::default());
+        assert!(client.wallet_balance().await.is_none());
+        let out = client.with_wallet(serde_json::json!({"ok": true})).await;
+        assert!(out.get("wallet").is_none());
+        assert_eq!(out.get("ok").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]

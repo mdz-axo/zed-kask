@@ -373,7 +373,8 @@ proposal below is retained for the audit trail.
 No MCP server emits `reg.guard.*` when a tool is called without the
 required capability. The Phase 2.3 contract is therefore weakened to
 "structured error, no panic" until OCAP is wired. **Filed as RR-0022**
-(`kask/security/regressions/RR-0022.yaml`, status: `proposed`):
+(`kask/security/backlog/RR-0022.yaml`, status: `proposed` — moved out of the
+enforced regressions directory in the 2026-08-01 prune):
 
 ```yaml
 id: RR-0022
