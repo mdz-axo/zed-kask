@@ -1,0 +1,19 @@
+id: RR-0038
+title: "Unknown MCP server id must receive no credentials or config env (fail-closed)"
+surface: mcp
+cwe: CWE-284
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/kask_bridge/src/mcp_servers.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: medium
+detection:
+  kind: cargo-test
+  pattern: "unknown_server_gets_no_credentials"
+  include: "crates/kask_bridge/src/mcp_servers.rs"
+mitigation: "filter_credentials_for_server and filter_config_env_for_server return empty for unknown server ids and emit tracing::warn!(target: reg.mcp) naming the id — previously a typo'd or future server id silently received ALL credentials (fail-open, pinned by a test asserting the permissive behavior). The known-server credentials: None (receives-all) arm is unchanged. Both production call sites pass ids from BUILT_IN_MCP_SERVERS, so fail-closed breaks no live path."
+source: "Cycle 3 kali-audit — credential-scoping review (defense layers 4/6)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

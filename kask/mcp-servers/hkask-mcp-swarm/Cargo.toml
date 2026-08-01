@@ -1,0 +1,29 @@
+[package]
+name = "hkask-mcp-swarm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent swarm MCP server — Agent Bestiary World catalogue, workspaces, and Xaman Ek curator"
+
+[lib]
+name = "hkask_mcp_swarm"
+path = "src/hkask_mcp_swarm.rs"
+
+[[bin]]
+name = "hkask-mcp-swarm"
+path = "src/main.rs"
+
+[dependencies]
+hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
+hkask-types = { path = "../../crates/hkask-types" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

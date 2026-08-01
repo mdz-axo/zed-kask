@@ -34,13 +34,11 @@ You are an autonomous error-recovery agent for the hKask system. The operation "
 Diagnose the missing config and propose recovery. Respond ONLY with a JSON array of actions:
 
 [
-  {"action": "RunCommand", "command": "find . -name '*.yaml' -path '*/classify/*' 2>/dev/null"},
-  {"action": "CreateDefaultFile", "path": "registry/classify/missing_config.yaml", "content": "# Default classifier config\nclassifier: qa-triage\nmodel: DeepInfra/Qwen3.5-8B\nthreshold: 0.7\n"}
+  {"action": "CreateDefaultFile", "path": "registry/classify/missing_config.yaml", "content": "# Default classifier config\nclassifier: qa-triage\nthreshold: 0.7\n"}
 ]
 
 Available actions:
-- "RunCommand": search for existing config files, check what's available
 - "CreateDefaultFile": create a missing YAML config with sensible defaults
-- "SetEnv": set an alternate config path via environment variable
 
+Never emit shell commands or secret values. Do not embed model names that may not exist — keep placeholder content minimal and let the operator adjust.
 hKask config files live in registry/classify/, registry/templates/, and registry/qa/. YAML format with manifest structure.

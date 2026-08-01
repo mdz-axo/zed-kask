@@ -300,6 +300,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-training",
     "kask/mcp-servers/hkask-mcp-companies",
     "kask/mcp-servers/hkask-mcp-corpus",
+    "kask/mcp-servers/hkask-mcp-swarm",
 ]
 default-members = ["crates/zed"]
 

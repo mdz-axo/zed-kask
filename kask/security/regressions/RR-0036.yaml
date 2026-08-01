@@ -1,0 +1,19 @@
+id: RR-0036
+title: "ssh argv must be built from a strictly parsed and validated ssh_command, not positional whitespace splitting"
+surface: mcp
+cwe: CWE-78
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/mcp-servers/hkask-mcp-training/src/providers/types.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: medium
+detection:
+  kind: cargo-test
+  pattern: "parse_ssh_command"
+  include: "mcp-servers/crates/hkask-mcp-training/src/providers/types.rs"
+mitigation: "Parse ssh_command with parse_ssh_command (exact arity, literal ssh/-p tokens) and validate host (IpAddr or [a-z0-9.-]+) and user ([a-z0-9._-]+, no leading dash) before spawning; reject with tracing::warn!. The host string originates from cloud-provider API JSON — provider-controlled data must not flow into process argv unchecked. StrictHostKeyChecking=no is retained deliberately (ephemeral pods have no prior trust anchor; BatchMode + ConnectTimeout bound the interaction) — documented in a comment as accepted risk."
+source: "Cycle 3 kali-audit — MCP provider boundary review (defense layers 1/6)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

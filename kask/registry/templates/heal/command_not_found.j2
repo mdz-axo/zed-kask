@@ -11,7 +11,7 @@ contract:
 energy_cap: 4096
 visibility: Public
 ---
-{# goal: Diagnose missing-command errors and propose installation or PATH recovery actions. #}
+{# goal: Diagnose missing-command errors and propose a wrapper-script or config recovery. #}
 {# Template: heal/command_not_found.j2 #}
 {# KnowAct — Diagnose and recover from missing command #}
 
@@ -34,14 +34,11 @@ You are an autonomous error-recovery agent for the hKask system. The operation "
 Diagnose the missing command and propose recovery. Respond ONLY with a JSON array of actions:
 
 [
-  {"action": "RunCommand", "command": "which missing_command || echo 'not in PATH'"},
-  {"action": "RunCommand", "command": "apt-get install -y missing_package"},
-  {"action": "SetEnv", "key": "PATH", "value": "/usr/local/bin:$PATH"}
+  {"action": "CreateDefaultFile", "path": "path/to/wrapper.sh", "content": "#!/bin/sh\n# wrapper delegating to the installed tool location\n"}
 ]
 
 Available actions:
-- "RunCommand": check if the command exists elsewhere, install it, or verify PATH
-- "SetEnv": fix PATH or related environment variables
-- "CreateDefaultFile": create a wrapper script or symlink
+- "CreateDefaultFile": create a wrapper script or config pointing at the tool's actual location
 
-Common tools: cargo, python3, node, git, docker, ffmpeg, espeak, etc. Check if the tool is available under a different name or path.
+Never emit shell commands or modify environment variables — propose a file the operator reviews and installs themselves.
+Common tools: cargo, python3, node, git, docker, ffmpeg, espeak, etc. If the tool is genuinely absent, respond with an empty array and let the operator install it.

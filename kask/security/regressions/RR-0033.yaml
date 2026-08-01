@@ -1,0 +1,19 @@
+id: RR-0033
+title: "prev_step_N_result snapshot must carry the Source taint label (FIDES closure break — RR-0026 class)"
+surface: code
+cwe: CWE-20
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-templates/src/executor.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: medium
+detection:
+  kind: cargo-test
+  pattern: "loop_snapshot_propagates_source_taint_to_prev_key"
+  include: "crates/hkask-templates/src/executor.rs"
+mitigation: "When the refinement loop snapshots step_N_result to prev_step_N_result, copy the taint label alongside the value — context.insert is taint-blind, so an unlabeled prev_ key lets Source-tainted refinement input reach Sink tools unchecked. Same closure-break class as RR-0026/RR-0027."
+source: "Cycle 3 kali-audit — IFC label-coverage review (defense layer 5)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

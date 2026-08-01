@@ -1,0 +1,19 @@
+id: RR-0035
+title: "Provider response bodies must be redacted and capped before embedding in InferenceError"
+surface: code
+cwe: CWE-209
+owasp_llm_2025: LLM07
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-inference/src/openai_compat.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: medium
+detection:
+  kind: cargo-test
+  pattern: "sanitize_error_body_redacts_authorization_bearer_token"
+  include: "crates/hkask-inference/src/openai_compat.rs"
+mitigation: "Route all provider error bodies (status-error branch and both JSON-parse branches) through sanitize_error_body, which redacts secret-shaped tokens (Authorization:, Bearer, sk-, api_key) and caps at 200 chars with a total-length suffix. Error strings cross the IPC bridge into MCP errors and logs before any guard scan — raw bodies could leak echoed credentials or grow unbounded."
+source: "Cycle 3 kali-audit — error-channel leakage review (defense layer 7)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

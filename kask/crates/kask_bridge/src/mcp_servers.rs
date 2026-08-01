@@ -189,6 +189,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         ]),
     },
     BuiltinMcpServer {
+        id: "swarm",
+        binary: "hkask-mcp-swarm",
+        description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
+        credentials: Some(&["HKASK_ABW_API_KEY"]),
+        config_env: Some(&["HKASK_ABW_API_URL", "HKASK_ABW_MAX_CREDITS"]),
+    },
+    BuiltinMcpServer {
         id: "training",
         binary: "hkask-mcp-training",
         description: "Training — LoRA training configuration and audit",
@@ -225,6 +232,7 @@ pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
     "media",
     "research",
     "scenarios",
+    "swarm",
     "training",
 ];
 
@@ -249,6 +257,10 @@ pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
     ("media", "Media — image generation and media workflows"),
     ("research", "Research — web research and paper search"),
     ("scenarios", "Scenarios — scenario planning and forecasting"),
+    (
+        "swarm",
+        "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
+    ),
     (
         "training",
         "Training — LoRA training configuration and audit",

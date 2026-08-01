@@ -9487,6 +9487,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp-swarm"
+version = "0.31.1"
+dependencies = [
+ "hkask-mcp-server",
+ "hkask-types",
+ "rmcp",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "zed-reqwest",
+]
+
+[[package]]
 name = "hkask-mcp-training"
 version = "0.31.1"
 dependencies = [

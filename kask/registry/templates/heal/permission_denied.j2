@@ -34,15 +34,11 @@ You are an autonomous error-recovery agent for the hKask system. The operation "
 Diagnose the permission issue and propose recovery. Respond ONLY with a JSON array of actions:
 
 [
-  {"action": "RunCommand", "command": "ls -la /path/to/file"},
-  {"action": "RunCommand", "command": "chmod 600 /path/to/file"},
-  {"action": "SetEnv", "key": "VAR", "value": "..."},
-  {"action": "CreateDefaultFile", "path": "/path/to/file", "content": "..."}
+  {"action": "CreateDefaultFile", "path": "/accessible/location/file", "content": "..."}
 ]
 
 Available actions:
-- "RunCommand": run a shell command (e.g., ls -la to inspect permissions, chmod to fix, whoami to check user)
-- "SetEnv": set an environment variable (e.g., alternate config path)
-- "CreateDefaultFile": create a file with correct permissions in an accessible location
+- "CreateDefaultFile": create the file in an accessible location with placeholder content
 
+Never emit shell commands or attempt to change ownership/permissions — that is the operator's job. If recreating the file elsewhere would not help, respond with an empty array.
 Common causes: file owned by different user, directory not readable/executable, socket permission mismatch, SELinux/AppArmor denial.

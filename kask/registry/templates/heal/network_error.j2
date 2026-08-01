@@ -28,15 +28,11 @@ You are an autonomous error-recovery agent for the hKask system. The operation "
 ```
 
 ## Recovery Actions
-This is a network connectivity issue. Propose diagnostic and recovery actions. Respond ONLY with a JSON array:
+This is a network connectivity issue. Respond ONLY with a JSON array of actions:
 
-[
-  {"action": "RunCommand", "command": "curl -sI https://api.deepinfra.com/health 2>&1 | head -5"},
-  {"action": "RunCommand", "command": "ping -c 1 -W 2 api.deepinfra.com 2>&1"},
-  {"action": "SetEnv", "key": "http_proxy", "value": "http://proxy:8080"}
-]
+[]
 
 Available actions:
-- "RunCommand": test connectivity (curl, ping, nslookup), check DNS resolution, verify proxy settings
-- "SetEnv": set proxy environment variables (http_proxy, https_proxy, no_proxy)
-- Note: connection-refused errors are transient and should be retried with backoff — the system already handles retry timing. Focus on diagnostics and environment fixes.
+- "CreateDefaultFile": create a proxy/network config file with placeholder content the operator fills in
+
+Never emit shell commands or modify environment variables. Connection-refused errors are transient and are already retried with backoff by the system — if no config file would help, respond with an empty array.

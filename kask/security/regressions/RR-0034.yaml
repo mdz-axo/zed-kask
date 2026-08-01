@@ -1,0 +1,19 @@
+id: RR-0034
+title: "Sub-cascade step result must inherit the sub-cascade final result's taint label (FIDES closure break — RR-0026 class)"
+surface: code
+cwe: CWE-20
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-templates/src/executor.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: medium
+detection:
+  kind: cargo-test
+  pattern: "sub_cascade_final_result_taint_labels_parent_step_key"
+  include: "crates/hkask-templates/src/executor.rs"
+mitigation: "When execute_flowdef inserts the sub-cascade's result as the parent's step_N_result, copy the label from the sub-cascade's highest-ordinal step result (ordinal-keyed, like extract_final_step_result — never HashMap .last()). taint_labels is Arc-shared with the sub-execution, so Source labels set inside the sub-cascade persist; only the parent's new step key needed labeling."
+source: "Cycle 3 kali-audit — IFC label-coverage review (defense layer 5)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
