@@ -10,9 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::App;
-use language_model::{
-    LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
-};
+use language_model::{LanguageModel, LanguageModelProviderId, LanguageModelRegistry};
 
 /// Resolve provider-prefixed model names from the `LanguageModelRegistry`.
 ///

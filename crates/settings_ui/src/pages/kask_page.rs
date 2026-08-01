@@ -21,16 +21,14 @@ mod companies;
 mod condenser;
 mod curator;
 mod data_services;
-mod fusion;
 mod inference_providers;
 pub(crate) use {
     codegraph::render_codegraph_page, companies::render_companies_page,
     condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
-    data_services::render_data_services_page, fusion::render_fusion_page,
-    inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
-    media::render_media_page, memory::render_memory_page, models::render_models_page,
-    scenarios::render_scenarios_page, training::render_training_page,
+    data_services::render_data_services_page, inference_providers::render_inference_providers_page,
+    mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
+    models::render_models_page, scenarios::render_scenarios_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -328,24 +326,6 @@ pub(crate) fn kask_string_input(
                                 kask.training.get_or_insert_default().cache_dir =
                                     Some(parsed.clone());
                             }
-                            ("fusion", "judge_model") => {
-                                kask.fusion.get_or_insert_default().judge_model =
-                                    Some(parsed.clone());
-                            }
-                            ("fusion", "panel_models") => {
-                                kask.fusion.get_or_insert_default().panel_models =
-                                    Some(parsed.clone());
-                            }
-                            ("fusion", "mode") => {
-                                kask.fusion.get_or_insert_default().mode = Some(parsed.clone());
-                            }
-                            ("fusion", "algo_method") => {
-                                kask.fusion.get_or_insert_default().algo_method =
-                                    Some(parsed.clone());
-                            }
-                            ("fusion", "skills") => {
-                                kask.fusion.get_or_insert_default().skills = Some(parsed.clone());
-                            }
                             ("models", "default_model") => {
                                 kask.models.get_or_insert_default().default_model =
                                     Some(parsed.clone());
@@ -606,30 +586,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_models_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Fusion".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.fusion"),
-            description: Some(
-                "Configure multi-model fusion inference: judge, panel, deliberation mode, \
-                 and skill anchors. When enabled, the Curator and kask panel route inference \
-                 through a panel of models judged by the configured judge model."
-                    .into(),
-            ),
-            search_aliases: &[
-                "fusion",
-                "judge",
-                "panel",
-                "multi-model",
-                "deliberation",
-                "synthesis",
-                "best-of-n",
-                "critique",
-            ],
-            in_json: true,
-            files: USER,
-            render: render_fusion_page,
         }),
     ];
 

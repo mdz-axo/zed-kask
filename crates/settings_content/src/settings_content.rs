@@ -1534,10 +1534,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub training: Option<KaskTrainingSettingsContent>,
 
-    /// Multi-model fusion inference configuration.
-    #[serde(default)]
-    pub fusion: Option<KaskFusionSettingsContent>,
-
     /// Kask-wide model configuration: default inference model, embedding model,
     /// and classifier model. These are provider-prefixed strings (e.g.
     /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
@@ -1711,45 +1707,6 @@ pub struct KaskTrainingSettingsContent {
     pub cache_dir: Option<String>,
 }
 
-/// Multi-model fusion inference configuration (the `"kask.fusion"` section).
-///
-/// When enabled, the Curator and the kask panel route inference through a
-/// panel of models judged by `judge_model` according to `mode`. See
-/// `hkask_types::fusion::FusionConfig` for the runtime type.
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskFusionSettingsContent {
-    /// Master toggle. When `false`, fusion is disabled even if other fields are set.
-    pub enabled: Option<bool>,
-    /// Judge/fuser model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.2"`).
-    pub judge_model: Option<String>,
-    /// Comma-separated panel models (provider-prefixed). Empty defers to defaults.
-    pub panel_models: Option<String>,
-    /// Judge deliberation mode: `"synthesis"` | `"best-of-n"` | `"critique"` |
-    /// `"deliberation"` | `"pi"`. Note: `"algo"` is NOT a valid `mode` value
-    /// (`FusionMode` has no `Algo` variant; `mode = "algo"` silently coerces to
-    /// `Synthesis`). The algo judge is activated by setting `judge_model = "algo"`.
-    pub mode: Option<String>,
-    /// Algo merge strategy when `judge_model == "algo"`: `"merge"` | `"vote"`.
-    /// Ignored when the judge is a real model name.
-    pub algo_method: Option<String>,
-    /// Comma-separated skill anchors (e.g. `"pragmatic-semantics,coding-guidelines"`).
-    pub skills: Option<String>,
-    /// Max rounds for `deliberation` mode.
-    pub max_rounds: Option<u32>,
-    /// Auto-discovery max prompt price per million tokens (USD).
-    /// Discovery queries Artificial Analysis.
-    pub discovery_max_price: Option<f64>,
-    /// Auto-discovery minimum AA Intelligence Index.
-    /// Discovery queries Artificial Analysis.
-    pub discovery_min_intelligence: Option<f64>,
-    /// Coherence threshold (0.0–1.0) for measured convergence in deliberation mode.
-    pub coherence_threshold: Option<f64>,
-    /// Enable query-complexity-based panel sizing.
-    pub panel_sizing_enabled: Option<bool>,
-    /// Enable substrate-aware degradation under high latency pressure.
-    pub pressure_adaptive_enabled: Option<bool>,
-}
-
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).
 ///
 /// These fields let the user override the kask defaults for the primary
@@ -1761,7 +1718,7 @@ pub struct KaskFusionSettingsContent {
 pub struct KaskModelsSettingsContent {
     /// Default inference model for kask subsystems (provider-prefixed).
     /// When set, overrides the kask default for the Curator, skill cascade,
-    /// and kask panel inference (unless fusion is enabled, which takes precedence).
+    /// and kask panel inference.
     pub default_model: Option<String>,
     /// Embedding model for corpus indexing and memory semantic recall
     /// (provider-prefixed). When empty, falls back to the corpus MCP server's

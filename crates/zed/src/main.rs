@@ -720,9 +720,6 @@ fn main() {
         let (alert_sink_tx, alert_sink_rx) =
             tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
         spawn_alert_toast_drainer(alert_sink_rx, cx);
-        // Clone the sender before it's moved into ToastAlertSink so the
-        // fusion provider can surface construction failures as toasts too.
-        let fusion_alert_tx = alert_sink_tx.clone();
         let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger)
@@ -1311,18 +1308,7 @@ fn main() {
                 // startup — the "Process-global hooks set at runtime need a
                 // startup-failure signal" trap from .rules.
                 //
-                // The fusion discovery is async (Artificial Analysis HTTP
-                // call with a 5s timeout) and must run outside cx.update (which holds the
-                // app borrow and can't pump the foreground executor). The
-                // rest is synchronous GPUI mutation and runs inside cx.update.
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
-                let fusion_config = kask_settings.fusion.to_fusion_config();
-                let async_cx_for_fusion = cx.clone();
-                // Capture whether fusion is configured before `fusion_config` is
-                // consumed by the `if let Some(mut fc)` block below. Used later
-                // to decide whether to write auto-favorites even when the fusion
-                // model itself fails to construct.
-                let fusion_configured = fusion_config.is_some();
 
                 // Lazily wire the alert email sink now that kask settings have
                 // loaded. The non-secret email fields are set as process env
@@ -1433,175 +1419,6 @@ fn main() {
                     );
                 }
 
-                // Fusion auto-discovery (async, outside cx.update).
-                let mut discovered_favorites: Vec<kask_bridge::FavoriteModel> = Vec::new();
-                let fusion_model: Option<Arc<dyn language_model::LanguageModel>> =
-                    if let Some(mut fc) = fusion_config {
-                        if kask_bridge::should_auto_discover(&kask_settings.fusion.panel_models) {
-                            log::info!(
-                                "hKask fusion: auto-discovering panel models from Artificial \
-                                 Analysis (max_price=${}/M, min_ia={})",
-                                kask_settings.fusion.discovery_max_price,
-                                kask_settings.fusion.discovery_min_intelligence
-                            );
-                            let max_price = kask_settings.fusion.discovery_max_price;
-                            let min_ia = kask_settings.fusion.discovery_min_intelligence;
-                            // Spawn discovery on the tokio runtime, not GPUI's
-                            // background thread pool. `discover_favorites`
-                            // drives a `reqwest::Client` which requires a tokio
-                            // reactor; `cx.background_spawn` schedules on GPUI's
-                            // own executor (no reactor) and panics with
-                            // "there is no reactor running". The `enter()` guard
-                            // around `background_spawn` does NOT help — the
-                            // guard is dropped before the future is polled on
-                            // the GPUI worker thread.
-                            let discovery_task = gpui_tokio::Tokio::spawn(
-                                &*cx,
-                                async move {
-                                    kask_bridge::discover_favorites(max_price, min_ia).await
-                                },
-                            );
-                            let timeout = cx.background_executor().timer(std::time::Duration::from_secs(5));
-                            let result = futures::select_biased! {
-                                favs = discovery_task.fuse() => match favs {
-                                    Ok(favs) => favs,
-                                    Err(join_err) => {
-                                        log::warn!(
-                                            "hKask fusion: Artificial Analysis discovery task failed: {join_err} — \
-                                             falling back to kask_default panel"
-                                        );
-                                        Vec::new()
-                                    }
-                                },
-                                _ = timeout.fuse() => {
-                                    log::warn!(
-                                        "hKask fusion: Artificial Analysis discovery timed out after 5s — \
-                                         falling back to kask_default panel"
-                                    );
-                                    Vec::new()
-                                }
-                            };
-                            if !result.is_empty() {
-                                let panel_names: Vec<String> = result.iter()
-                                    .map(|f| f.prefixed_id.clone())
-                                    .collect();
-                                log::info!(
-                                    "hKask fusion: discovered {} favorites — {:?}",
-                                    panel_names.len(),
-                                    panel_names
-                                );
-                                if let Some(panel) = hkask_types::fusion::NonEmptyVec::from_vec(panel_names) {
-                                    fc.panel = panel;
-                                }
-                                discovered_favorites = result;
-                            } else {
-                                log::info!(
-                                    "hKask fusion: no favorites discovered — using kask_default panel"
-                                );
-                            }
-                        }
-
-                        // Resolve fusion panel/judge models and construct the
-                        // FusionLanguageModel. This needs the model registry,
-                        // so it runs inside cx.update.
-                        let mut names = fc.panel.iter().cloned().collect::<Vec<_>>();
-                        if fc.judge.to_lowercase() != "algo" {
-                            names.push(fc.judge.clone());
-                        }
-                        let async_cx_for_closure = async_cx_for_fusion.clone();
-                        cx.update(|cx| {
-                            let model_registry = language_model::LanguageModelRegistry::read_global(cx);
-                            let (resolved, unresolvable) = kask_bridge::resolve_fusion_models(
-                                model_registry,
-                                &names,
-                                cx,
-                            );
-                            for name in &unresolvable {
-                                log::warn!(
-                                    "hKask fusion: could not resolve model '{name}' \
-                                     from LanguageModelRegistry — dropped from fusion"
-                                );
-                            }
-                            match kask_bridge::FusionLanguageModel::new(
-                                fc.clone(),
-                                resolved,
-                                async_cx_for_closure.clone(),
-                            ) {
-                                Some(m) => {
-                                    log::info!(
-                                        "hKask fusion enabled — mode: {}, judge: {}, panel: {:?}",
-                                        fc.mode.as_str(),
-                                        fc.judge,
-                                        fc.panel.iter().collect::<Vec<_>>()
-                                    );
-                                    Some(Arc::new(m) as Arc<dyn language_model::LanguageModel>)
-                                }
-                                None => {
-                                    log::warn!(
-                                        "hKask fusion config present but construction failed — falling back to single model"
-                                    );
-                                    None
-                                }
-                            }
-                        })
-                    } else {
-                        log::info!("hKask fusion disabled (kask.fusion.enabled = false)");
-                        None
-                    };
-
-                // Register the fusion provider so it appears in the agent
-                // panel's model picker. This is decoupled from `default_model()`
-                // resolution: the fusion provider's `provided_models` returns
-                // empty when fusion is disabled, so registering it
-                // unconditionally is safe. Gating this on
-                // `default_model().is_some()` meant the fusion model never
-                // appeared in the picker when no default model was resolved at
-                // deferred-task time.
-                cx.update(|cx| {
-                    let fusion_provider =
-                        kask_bridge::FusionLanguageModelProvider::new(cx, Some(fusion_alert_tx));
-                    language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                        registry.register_provider(Arc::new(fusion_provider), cx);
-                    });
-                    log::info!("Kask fusion language model provider registered");
-                });
-
-                // Auto-favorite: when fusion is configured (enabled in
-                // settings), add the fusion model and any discovered
-                // Artificial Analysis favorites to `agent.favorite_models` so they
-                // appear in the agent panel's model picker favorites cycle
-                // (CycleFavoriteModels action). This is decoupled from
-                // `fusion_model` construction success: discovered favorites
-                // should appear in the picker even if the fusion model itself
-                // failed to construct (e.g. because the OpenRouter provider
-                // hadn't fetched its model list yet at startup). The user can
-                // still cycle to the discovered models and select them
-                // manually. `add_favorite_model` is idempotent — entries
-                // already present are not duplicated. This is best-effort:
-                // settings write failures are logged but do not block startup.
-                if fusion_configured {
-                    cx.update(|cx| {
-                        let fs = app_state_for_deferred.fs.clone();
-                        let mut selections = kask_bridge::favorite_model_selections(&discovered_favorites);
-                        selections.push(kask_bridge::fusion_model_selection());
-                        let favorite_count = selections.len();
-                        let discovered_count = discovered_favorites.len();
-                        let fusion_constructed = fusion_model.is_some();
-                        settings::update_settings_file(fs, cx, move |settings, _| {
-                            let agent = settings.agent.get_or_insert_default();
-                            for selection in &selections {
-                                agent.add_favorite_model(selection.clone());
-                            }
-                        });
-                        log::info!(
-                            "hKask fusion: auto-favorited {} model(s) (fusion + {} discovered); fusion model {}",
-                            favorite_count,
-                            discovered_count,
-                            if fusion_constructed { "constructed" } else { "NOT constructed — favorites still written" },
-                        );
-                    });
-                }
-
                 // Sync model-dependent wiring (inside cx.update).
                 cx.update(|cx| {
                     let model_registry = language_model::LanguageModelRegistry::read_global(cx);
@@ -1676,29 +1493,31 @@ fn main() {
                             );
                         }
 
-                        let inference_model: Arc<dyn language_model::LanguageModel> =
-                            fusion_model.clone().unwrap_or_else(|| {
-                                let kask_default = kask_settings.models.effective_default_model();
-                                if kask_default != kask_bridge::KaskModelsSettings::DEFAULT_INFERENCE_MODEL {
-                                    if let Some(model) = kask_bridge::resolve_fusion_models(
-                                        model_registry,
-                                        &[kask_default.to_string()],
-                                        cx,
-                                    ).0.into_values().next() {
-                                        log::info!(
-                                            "hKask inference using kask.models.default_model: {}",
-                                            kask_default
-                                        );
-                                        return model;
-                                    }
+                        let inference_model: Arc<dyn language_model::LanguageModel> = {
+                            let kask_default = kask_settings.models.effective_default_model();
+                            if kask_default != kask_bridge::KaskModelsSettings::DEFAULT_INFERENCE_MODEL {
+                                if let Some(model) = kask_bridge::resolve_model_names(
+                                    model_registry,
+                                    &[kask_default.to_string()],
+                                    cx,
+                                ).0.into_values().next() {
+                                    log::info!(
+                                        "hKask inference using kask.models.default_model: {}",
+                                        kask_default
+                                    );
+                                    model
+                                } else {
                                     log::warn!(
                                         "kask.models.default_model '{}' could not be resolved \
                                          from LanguageModelRegistry — falling back to zed default",
                                         kask_default
                                     );
+                                    configured.model.clone()
                                 }
+                            } else {
                                 configured.model.clone()
-                            });
+                            }
+                        };
 
                         let (inference_port, inference_task) =
                             kask_bridge::LanguageModelInferencePort::new(
@@ -1718,7 +1537,7 @@ fn main() {
 
                         // Start the inference IPC server so MCP server child processes
                         // can route inference through zed's LanguageModelRegistry (with
-                        // fusion, guard, and zed's configured API keys) instead of
+                        // guard and zed's configured API keys) instead of
                         // constructing their own MediaRouter with separate keys.
                         //
                         // The media router is a hKask `MediaRouter` used for
@@ -1885,7 +1704,7 @@ fn main() {
                     // cannot be moved into `Tokio::spawn`. Do NOT move this
                     // loop to `cx.background_spawn` — the `enter()` guard
                     // would be dropped before the future is polled on the
-                    // worker thread (the fusion discovery trap, see .rules).
+                    // worker thread (see .rules).
                     let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
                     let _tokio_guard = tokio_handle.enter();
                     let credential_urls = cx.update(|cx| {

@@ -12,10 +12,10 @@ use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCodegraphSettingsContent, KaskCompaniesSettingsContent, KaskCondenserSettingsContent,
     KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
-    KaskDataServiceSettingsContent, KaskFusionSettingsContent,
-    KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
-    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskScenariosSettingsContent,
-    KaskSettingsContent, KaskSwarmSettingsContent, KaskTrainingSettingsContent,
+    KaskDataServiceSettingsContent, KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent,
+    KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
+    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
+    KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -68,9 +68,6 @@ pub struct KaskSettings {
 
     /// Training MCP server configuration.
     pub training: KaskTrainingSettings,
-
-    /// Multi-model fusion inference configuration.
-    pub fusion: KaskFusionSettings,
 
     /// Kask-wide model configuration: default, embedding, and classifier models.
     pub models: KaskModelsSettings,
@@ -508,7 +505,7 @@ pub struct KaskTrainingSettings {
 ///
 /// Provider-prefixed model names that override the kask built-in defaults.
 /// When a field is empty, kask falls back to its default model selection
-/// (typically the zed `agent.default_model` or the fusion judge model).
+/// (typically the zed `agent.default_model`).
 ///
 /// **Two-layer default design (intentional):** `default_model`, `embedding_model`,
 /// and `classifier_model` default to empty strings in `Default`. When empty, the
@@ -520,7 +517,7 @@ pub struct KaskTrainingSettings {
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).
     /// When set, overrides the kask default for Curator, skill cascade, and
-    /// kask panel inference (unless fusion is enabled, which takes precedence).
+    /// kask panel inference.
     pub default_model: String,
 
     /// Embedding model for corpus indexing and memory semantic recall
@@ -541,7 +538,7 @@ impl KaskModelsSettings {
     pub const DEFAULT_EMBEDDING_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
 
     /// The kask default classifier model.
-    pub const DEFAULT_CLASSIFIER_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
+    pub const DEFAULT_CLASSIFIER_MODEL: &'static str = "DeepInfra/deepseek-ai/deepseek-v4-flash";
 
     /// Resolve the effective default inference model, falling back to the
     /// kask default when the setting is empty.
@@ -1140,7 +1137,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
-            fusion: c.fusion.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
             inference_providers: c
                 .inference_providers
@@ -1339,20 +1335,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fusion_settings_default_mode_and_algo_method() {
-        let default = KaskFusionSettings::default();
-        assert!(
-            default.enabled,
-            "KaskFusionSettings::default() must return enabled: true — fusion is on by default"
-        );
-        assert_eq!(default.mode, "synthesis");
-        assert_eq!(default.algo_method, "merge");
-        assert_eq!(default.max_rounds, 5);
-        assert_eq!(default.discovery_max_price, 2.0);
-        assert_eq!(default.discovery_min_intelligence, 40.0);
-    }
-
     // The absent-subsection path: when a user has a `kask` section but omits a
     // subsection, `From` hits `.unwrap_or_default()`. This test verifies ALL
     // subsections produce their intended defaults through that path.
@@ -1367,8 +1349,6 @@ mod tests {
         assert!(settings.condenser.auto_compress_tool_results);
         assert_eq!(settings.condenser.profile, "normal");
         assert_eq!(settings.corpus.embedding_dim, 1024);
-        assert_eq!(settings.fusion.mode, "synthesis");
-        assert_eq!(settings.fusion.max_rounds, 5);
     }
 
     // The present-but-null-field path: when a subsection is present but a field

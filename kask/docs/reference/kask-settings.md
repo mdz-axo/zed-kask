@@ -249,7 +249,7 @@ constants.
 |-------|------|---------|-------------------|
 | `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `"openrouter/z-ai/glm-5.2"` |
 | `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"openrouter/z-ai/glm-5.2"` |
-| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"openrouter/z-ai/glm-5.2"` |
+| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"DeepInfra/deepseek-ai/deepseek-v4-flash"` |
 
 ## Keychain Architecture
 

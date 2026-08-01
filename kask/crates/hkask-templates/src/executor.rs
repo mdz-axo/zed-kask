@@ -1168,7 +1168,7 @@ impl ManifestExecutor {
 
         let (prompt, raw_template_content) = self.render_step_template_with_raw(step, &context)?;
 
-        let mut params = self.default_params.clone();
+        let params = self.default_params.clone();
 
         // Resolve the output schema for this step. If a schema is available
         // (from step.output_schema or the template's contract.output frontmatter),
