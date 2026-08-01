@@ -30,7 +30,6 @@ use serde_json::Value;
 pub struct BridgeManifestExecutor {
     inference: Arc<dyn InferencePort>,
     tools: Arc<dyn hkask_capability::ToolPort>,
-    a2a_secret: Vec<u8>,
     /// Path to the hKask registry manifests directory.
     registry_manifests_dir: PathBuf,
     /// Path to the hKask registry templates directory (for Jinja2 template resolution).
@@ -53,7 +52,6 @@ impl BridgeManifestExecutor {
     pub fn new(
         inference: Arc<dyn InferencePort>,
         tools: Arc<dyn hkask_capability::ToolPort>,
-        a2a_secret: Vec<u8>,
         registry_manifests_dir: PathBuf,
         registry_templates_dir: PathBuf,
         tokio_handle: tokio::runtime::Handle,
@@ -61,7 +59,6 @@ impl BridgeManifestExecutor {
         Self {
             inference,
             tools,
-            a2a_secret,
             registry_manifests_dir,
             registry_templates_dir,
             tokio_handle,
@@ -208,7 +205,6 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             self.inference.clone(),
             self.tools.clone(),
             hkask_types::template::LLMParameters::default(),
-            self.a2a_secret.clone(),
         )
         .with_template_base_path(self.registry_templates_dir.clone());
 

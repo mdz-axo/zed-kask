@@ -751,31 +751,11 @@ fn main() {
         let tool_port = std::sync::Arc::new(kask_bridge::BridgeToolPort::new(
             mcp_runtime,
         ));
-        // D5: a2a_secret for OCAP delegation token minting.
-        // Resolved via the `keyring` crate (synchronous OS keychain I/O).
-        //
-        // Hoisted out of the deferred task's model-dependent wiring block so
-        // it's in scope for both the early logging-memory wiring and the
-        // deferred model-dependent wiring.
-        //
-        // When the secret cannot be resolved (no env var, no keychain entry),
-        // `unwrap_or_default()` produces an empty Vec. Downstream OCAP token
-        // minting then falls back to a zeroed Ed25519 key (warned per-invocation
-        // in `PanelToolInvoker::invoke_tool`), which means every tool
-        // invocation's signature is publicly predictable. Surface this at
-        // startup so the operator can set `HKASK_A2A_SECRET` before relying on
-        // governed tool invocation — the per-invocation warning is too late.
-        let a2a_secret = hkask_keystore::keychain::resolve_a2a_secret()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|e| {
-                log::warn!(
-                    "hKask a2a_secret not resolved ({}). OCAP delegation tokens will be \
-                     signed with a zeroed key — set HKASK_A2A_SECRET or store the secret \
-                     in the OS keychain before relying on governed tool invocation.",
-                    e
-                );
-                Vec::new()
-            });
+        // D5: a2a_secret removed — OCAP token verification is self-referential
+        // (token.verify() checks the signature against the public key embedded
+        // in the token itself, not against a trusted authority). The secret was
+        // security theater. Token minting now uses `panel_default_token` with a
+        // static key. See tasks/todo.md "Essentialist audit — D5".
 
         {
             // D6 (early): Install a logging memory port now so the global hook
@@ -1048,7 +1028,6 @@ fn main() {
             // signal" trap in .rules — these OnceLock-based hooks must be
             // wired from the deferred task, not from startup.
             let tool_port_for_deferred = tool_port;
-            let a2a_secret_for_deferred = a2a_secret;
             let cybernetics_loop_for_panel_deferred = cybernetics_loop_for_panel;
             let _panel_regulation_ledger_deferred = panel_regulation_ledger;
             let app_state_for_deferred = app_state.clone();
@@ -1618,7 +1597,6 @@ fn main() {
                     // port is swapped in and curator turns route through it.
                     let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
                         tool_port: tool_port_for_deferred.clone(),
-                        a2a_secret: a2a_secret_for_deferred.clone(),
                         executor: cx.background_executor().clone(),
                     });
                     kask_panel::set_tool_invoker(Some(panel_tool_invoker));
@@ -1773,7 +1751,6 @@ fn main() {
                             kask_bridge::BridgeManifestExecutor::new(
                                 guarded_inference,
                                 tool_port_as_dyn,
-                                a2a_secret_for_deferred.clone(),
                                 registry_manifests_dir,
                                 registry_templates_dir,
                                 gpui_tokio::Tokio::handle(cx),
@@ -1805,7 +1782,6 @@ fn main() {
 
                         let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
                             tool_port: tool_port_for_deferred.clone(),
-                            a2a_secret: a2a_secret_for_deferred.clone(),
                             executor: cx.background_executor().clone(),
                         });
                         kask_panel::set_tool_invoker(Some(panel_tool_invoker));
@@ -2513,7 +2489,6 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
 /// Adapter implementing `kask_panel::ToolInvoker` via `BridgeToolPort`.
 struct PanelToolInvoker {
     tool_port: std::sync::Arc<kask_bridge::BridgeToolPort>,
-    a2a_secret: Vec<u8>,
     executor: gpui::BackgroundExecutor,
 }
 
@@ -2524,26 +2499,18 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
         tool: &str,
         args: serde_json::Value,
     ) -> gpui::Task<Result<String, String>> {
-        use hkask_capability::{DelegationAction, DelegationResource, DelegationToken, ToolPort};
+        use hkask_capability::{
+            DelegationAction, DelegationResource, ToolPort, panel_default_token,
+        };
         use hkask_types::WebID;
 
-        let secret_bytes: [u8; 32] = self
-            .a2a_secret
-            .get(..32)
-            .and_then(|s| s.try_into().ok())
-            .unwrap_or_else(|| {
-                log::warn!("a2a_secret too short for Ed25519 — using zeroed key");
-                [0u8; 32]
-            });
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
         let webid = WebID::from_persona(b"kask-panel");
-        let token = DelegationToken::new(
+        let token = panel_default_token(
             DelegationResource::Tool,
             tool.to_string(),
             DelegationAction::Execute,
             webid,
             webid,
-            &signing_key,
         );
 
         let tool_port = self.tool_port.clone();

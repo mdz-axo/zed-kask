@@ -852,14 +852,6 @@ impl RegulationLoop for CyberneticsLoop {
                 .filter(|(_, s)| s.remaining.0 == 0 && s.hard_limit)
                 .collect();
 
-            // G10: Wallet-backed budget exhaustion
-            let wallet_exhausted = self
-                .gas_budget_manager
-                .read()
-                .await
-                .wallet_exhausted_agents()
-                .await;
-
             let alert_entries: Vec<(String, String)> = gas_exhausted
                 .iter()
                 .map(|(agent, status)| {
@@ -871,12 +863,6 @@ impl RegulationLoop for CyberneticsLoop {
                         ),
                     )
                 })
-                .chain(wallet_exhausted.iter().map(|agent| {
-                    (
-                        format!("wallet_budget:{agent}"),
-                        format!("Agent {agent} wallet balance exhausted"),
-                    )
-                }))
                 .collect();
 
             for (domain, message) in &alert_entries {

@@ -57,14 +57,6 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
             let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()?;
             Ok(passphrase.to_string())
         }
-        "HKASK_OCAP_SECRET" => {
-            let bytes = hkask_keystore::keychain::get_or_create_ocap_secret()?;
-            Ok(hex::encode(&*bytes))
-        }
-        "HKASK_A2A_SECRET" => {
-            let bytes = hkask_keystore::keychain::resolve_a2a_secret()?;
-            Ok(hex::encode(&*bytes))
-        }
 
         _ => {
             // Unrecognized credential — try keychain, then env var.

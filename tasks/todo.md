@@ -153,3 +153,43 @@ Begin removing the OCAP/a2a sovereignty-secret surface. Start with the
 Replace the OCAP token minting in `PanelToolInvoker` with a no-op token
 (since verification is theater anyway) or remove the token parameter entirely
 if `McpRuntime::invoke` can be called without governance for the panel path.
+
+## Completed — D5 OCAP/a2a seam removal
+
+- [x] Added `panel_default_token` helper to `hkask-capability/src/auth.rs` —
+      mints a `DelegationToken` with a static zeroed key (verification is
+      self-referential, so the key doesn't matter).
+- [x] Removed `a2a_secret` field from `PanelToolInvoker` in `main.rs` —
+      replaced token minting with `panel_default_token`.
+- [x] Removed `a2a_secret` resolution from `main.rs` startup (the
+      `hkask_keystore::keychain::resolve_a2a_secret()` call + warn).
+- [x] Removed `a2a_secret` field from `BridgeManifestExecutor` in
+      `kask_bridge/src/skill_executor.rs`.
+- [x] Removed `a2a_secret` field from `ManifestExecutor` in
+      `hkask-templates/src/executor.rs` — replaced token minting with
+      `panel_default_token`.
+- [x] Removed `a2a_secret` field from `ServiceConfig` in
+      `hkask-services-core/src/config.rs` (was stored but never read).
+- [x] Removed `HKASK_OCAP_SECRET` / `HKASK_A2A_SECRET` resolution from
+      `hkask-mcp-server/src/server/credentials.rs`.
+- [x] Added diagnostic log to `open_router.rs` — logs key prefix (12 chars)
+      + source (env_var vs keychain) at every `stream_completion` call.
+- [x] All tests pass: hkask-capability (13), hkask-templates (30+115),
+      kask_bridge (19), hkask-services-core (92), hkask-mcp-server (4).
+- [x] Full workspace compiles clean.
+- [x] `cargo build -p zed` succeeds.
+
+### Remaining D5 cleanup (deferred)
+
+The dead sovereignty-secret functions still exist in `hkask-keystore/src/keychain.rs`
+(`resolve_a2a_secret`, `get_or_create_ocap_secret`, `resolve_secret_chain`,
+`resolve_treasury_key`, `resolve_wallet_seed`, `sign_wallet_bytes`) and
+`hkask-keystore/src/master_key.rs` (`derive_all_internal_secrets`,
+`derive_sub_key`, `InternalSecrets`). These are now unreferenced from zed-kask
+but still referenced from `hkask-keystore`'s own tests. Remove them in a
+follow-up commit after verifying no MCP server still calls them.
+
+### Next seam to audit
+
+D8 (Bridge + adapters) — the largest seam. Enumerate every adapter in
+`kask/crates/kask_bridge/` and run the essentialist deletion test on each.

@@ -35,11 +35,6 @@ impl FlatEnergyEstimator {
     pub fn new() -> Self {
         Self { cost: 10 }
     }
-
-    #[must_use]
-    pub fn with_cost(cost: u64) -> Self {
-        Self { cost }
-    }
 }
 
 impl Default for FlatEnergyEstimator {

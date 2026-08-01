@@ -87,9 +87,6 @@ pub struct ServiceConfig {
     /// must also be set.
     pub db_provider: DbProvider,
 
-    /// Secret for the A2A root authority and manifest delegation tokens.
-    pub a2a_secret: Vec<u8>,
-
     /// Inference configuration for the multi-provider router.
     pub inference_config: InferenceConfig,
 
@@ -166,17 +163,6 @@ impl ServiceConfig {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_USER_NAME.to_string());
 
-        // Resolve secrets from keystore. If keystore resolution fails,
-        // fall back to empty secrets (in-memory mode will be used).
-        let a2a_secret = hkask_keystore::keychain::resolve_a2a_secret()
-            .map_err(|e| ServiceError::Domain {
-                kind: ErrorKind::BadRequest,
-                domain: DomainKind::Infrastructure,
-                source: Some(Box::new(e)),
-                message: "Failed to resolve A2A secret".into(),
-            })?
-            .to_vec();
-
         let db_passphrase =
             hkask_keystore::keychain::resolve_db_passphrase_string().map_err(|e| {
                 ServiceError::Domain {
@@ -196,7 +182,6 @@ impl ServiceConfig {
             db_path,
             db_passphrase,
             db_provider,
-            a2a_secret,
             default_model,
             inference_config,
             reg_threshold: DEFAULT_REG_THRESHOLD,
@@ -218,10 +203,10 @@ impl ServiceConfig {
     /// which derives identity from the Zed login).
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  a2a_secret, db_passphrase, and user_name must be non-empty
+    /// pre:  db_passphrase and user_name must be non-empty
     /// post: returns ServiceConfig with provided secrets and env-derived or default values
     #[must_use]
-    pub fn from_secrets(a2a_secret: String, db_passphrase: String, user_name: String) -> Self {
+    pub fn from_secrets(db_passphrase: String, user_name: String) -> Self {
         let data_dir = resolve_data_dir();
         let db_path = std::env::var("HKASK_DB_PATH")
             .unwrap_or_else(|_| data_dir.join(DEFAULT_DB_PATH).to_string_lossy().to_string());
@@ -237,7 +222,6 @@ impl ServiceConfig {
             db_path,
             db_passphrase,
             db_provider: parse_db_provider(&std::env::var("HKASK_DB_PROVIDER").unwrap_or_default()),
-            a2a_secret: a2a_secret.into_bytes(),
             inference_config: inference_config.clone(),
             reg_threshold: DEFAULT_REG_THRESHOLD,
             energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
@@ -266,7 +250,6 @@ impl ServiceConfig {
             db_path: ":memory:".to_string(),
             db_passphrase: String::new(),
             db_provider: DbProvider::Sqlite,
-            a2a_secret: vec![0u8; 32],
             inference_config: inference_config.clone(),
             reg_threshold: DEFAULT_REG_THRESHOLD,
             energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
@@ -377,7 +360,6 @@ mod tests {
 
     fn sqlite_config(path: &str) -> ServiceConfig {
         let mut config = ServiceConfig::from_secrets(
-            "test-a2a-secret".to_string(),
             "test-db-passphrase".to_string(),
             TEST_USER_NAME.to_string(),
         );

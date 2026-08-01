@@ -41,7 +41,6 @@ fn make_executor() -> ManifestExecutor {
         Arc::new(NoopInference),
         Arc::new(NoopToolPort),
         LLMParameters::default(),
-        vec![0u8; 32],
     )
 }
 

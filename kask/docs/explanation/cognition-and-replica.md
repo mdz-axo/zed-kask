@@ -263,7 +263,7 @@ Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 248 namespac
 
 #### How ν-Events Feed the Regulation Homeostatic Loop
 
-The Regulation loop is sense → compare → compute → act → verify. ν-events enter at sense — they are the afferent signals. `CyberneticsLoop::sense()` reads via pluggable `Sensor` implementations: `EnergyBudgetSensor`, `VarietySensor`, `WalletKeyHealthSensor`. Each sensor queries the ν-event store for relevant events and produces `Signal` values with metrics and set-points.
+The Regulation loop is sense → compare → compute → act → verify. ν-events enter at sense — they are the afferent signals. `CyberneticsLoop::sense()` reads via pluggable `Sensor` implementations: `EnergyBudgetSensor`, `VarietySensor`. Each sensor queries the ν-event store for relevant events and produces `Signal` values with metrics and set-points.
 
 In the compare phase, signals are measured against set-points to produce `Deviation` values with direction (`AboveSetPoint` / `BelowSetPoint`). In compute, deviations map to `RegulatoryAction` with action types like `Calibrate`, `Escalate`, `Throttle`, `Notify`. In act, actions are executed. In verify_impact, the `ImpactReport` records whether actions were effective.
 

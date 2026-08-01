@@ -50,7 +50,7 @@ use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
 use crate::load_manifest_from_yaml;
 use crate::ports::{Result, TemplateError};
 use crate::template_renderer::{TemplateRenderer, render_minijinja};
-use hkask_capability::{DelegationAction, DelegationResource, DelegationToken};
+use hkask_capability::{DelegationAction, DelegationResource};
 use hkask_capability::{ToolPort, ToolPortError};
 use hkask_guard::{SpotlightMode, Spotlighter};
 use hkask_regulation::SkillFeedbackSpan;
@@ -63,7 +63,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
-use zeroize::Zeroizing;
 
 /// Error healing callback: (error_string, operation_name).
 type HealCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
@@ -129,8 +128,6 @@ pub struct ManifestExecutor {
     tools: Arc<dyn ToolPort>,
     /// Default LLM parameters for inference calls
     default_params: LLMParameters,
-    /// Secret for minting delegation tokens. Zeroized on drop.
-    a2a_secret: Zeroizing<Vec<u8>>,
     /// Base filesystem path for resolving template_ref values.
     /// When `step.renderer == "minijinja"`, `step.template_ref` is resolved
     /// relative to this path. Defaults to `registry/templates/`.
@@ -157,19 +154,17 @@ impl ManifestExecutor {
     /// expect: "The system resolves and executes template manifest cascades"
     /// \[P3\] Motivating: Generative Space — executor for template manifest cascades
     /// \[P4\] Constraining: Clear Boundaries — requires A2A secret for delegation
-    /// pre:  inference and mcp are initialized, a2a_secret is non-empty
+    /// pre:  inference and mcp are initialized
     /// post: returns ManifestExecutor with default template_base_path
     pub fn new(
         inference: Arc<dyn InferencePort>,
         tools: Arc<dyn ToolPort>,
         default_params: LLMParameters,
-        a2a_secret: Vec<u8>,
     ) -> Self {
         Self {
             inference,
             tools,
             default_params,
-            a2a_secret: Zeroizing::new(a2a_secret),
             template_renderer: TemplateRenderer::new(std::path::PathBuf::from(
                 crate::template_renderer::DEFAULT_TEMPLATE_BASE_PATH,
             )),
@@ -479,18 +474,13 @@ impl ManifestExecutor {
             }
         }
 
-        let secret_bytes: [u8; 32] = self.a2a_secret[..32]
-            .try_into()
-            .map_err(|_| TemplateError::Manifest("A2A secret must be at least 32 bytes".into()))?;
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
         let executor_webid = WebID::from_persona(b"manifest-executor");
-        let token = DelegationToken::new(
+        let token = hkask_capability::panel_default_token(
             DelegationResource::Tool,
             tool_name.to_string(),
             DelegationAction::Execute,
             executor_webid,
             executor_webid,
-            &signing_key,
         );
 
         let result = self
@@ -3447,8 +3437,7 @@ mod tests {
     fn test_executor_with_taint(taint: Vec<(&str, ToolTaint)>) -> ManifestExecutor {
         let inference = Arc::new(StubInferencePort);
         let tools = Arc::new(StubToolPort);
-        let executor =
-            ManifestExecutor::new(inference, tools, LLMParameters::default(), vec![0u8; 32]);
+        let executor = ManifestExecutor::new(inference, tools, LLMParameters::default());
         // Populate taint_labels directly.
         let mut labels = executor.taint_labels.lock().expect("taint mutex");
         for (key, taint) in taint {
