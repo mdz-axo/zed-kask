@@ -378,7 +378,6 @@ All Kask documentation lives **inside zed-kask** under `kask/docs/`:
 - `kask/docs/architecture/` — this plan (`zed-host-architecture-plan.md`), the four-pattern architecture, principles, ADRs.
 - `kask/docs/reference/` — reference documentation (MCP servers, settings, regulation spans, skills).
 - `kask/docs/explanation/` — explanation documentation (cognition, skills, training).
-- `kask/docs/plans/` — build plans for major features.
 - `kask/docs/qa/` — QA strategy and per-tool contracts.
 - `kask/docs/diataxis/` — per-crate Diataxis documentation set.
 - `DIVERGENCE.md` stays at the zed-kask **repo root** (the fork's headline doc, referenced on every sync) and points into `kask/docs/` for detail.

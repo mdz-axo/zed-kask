@@ -21,9 +21,6 @@ tools, governed by the kask MCP runtime (OCAP capability gating, gas budgeting,
 `hkask.mcp.swarm` telemetry targets). It is the substrate for the **Agent Swarm panel**
 (`crates/swarm_panel`) and the **`swarm-intelligence` skill**.
 
-> **Integration plan:** [`docs/plans/abw-swarm-intelligence.md`](../../plans/abw-swarm-intelligence.md)
-> **Audits:** [`docs/audits/abw-swarm-kali-audit.md`](../../audits/abw-swarm-kali-audit.md) (security), [`docs/audits/abw-swarm-bug-hunt.md`](../../audits/abw-swarm-bug-hunt.md)
-
 ## The three surfaces
 
 The server's tools map onto the three things an operator does with ABW:

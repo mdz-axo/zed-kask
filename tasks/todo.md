@@ -10,16 +10,11 @@
   - [x] delete `kask/crates/hkask-types/src/fusion.rs`; remove `pub mod fusion;` from `hkask_types.rs`
   - [x] `template.rs`: remove `bypass_fusion`, `fusion_config` from `LLMParameters`; fix `edge_work`
   - [x] `event.rs`: remove `"reg.fusion"` from CANONICAL_NAMESPACES
-  - [x] `regulation.rs`: remove `RegulationSpan::Fusion` variant + `as_str` + `FromStr` + exhaustive-match test (count 22→21)
-  - [x] `macros.rs`: update `enum_snake_str!` doc example (FusionMode → SampleMode)
-  - [x] `inference_ipc.rs`: remove "fusion" from doc comment
 - [x] **T3 — Delete orchestrator + Artificial Analysis** (`hkask-inference`)
   - [x] delete `fusion_orchestrator.rs`, `artificial_analysis.rs`
   - [x] `config.rs`: delete `parse_fusion_config`, `InferenceConfig.fusion`, fusion re-exports, env-var docs
   - [x] `hkask_inference.rs`: remove `pub mod` decls + re-exports + doc lines
   - [x] `chat_protocol.rs`: fix `LLMParameters` test literals
-  - [x] `model_constants.rs`: remove fusion doc comment
-  - [x] `inference_ipc_client.rs`: remove "fusion" from doc comment
 - [x] **T4 — Remove fusion from hkask-templates**
   - [x] `bundle/manifest.rs`: remove `BundleManifest.fusion`, `BundleManifestStep.fusion`
   - [x] `manifest_loader.rs`: remove `ManifestFile.fusion`
@@ -33,7 +28,6 @@
   - [x] `settings.rs`: delete `KaskFusionSettings`, `Default`, `to_fusion_config`, `From<KaskFusionSettingsContent>`
   - [x] `skill_executor.rs`: delete judge_model/panel_models context injection
   - [x] `kask_bridge.rs`: remove fusion re-exports + `FavoriteModel`
-  - [x] `inference_ipc_server.rs`: remove fusion from doc comments
 - [x] **T6 — Remove fusion from MCP servers**
   - [x] `hkask-mcp-corpus`: `embed/service.rs` fusion path, `embed/types.rs` `CorpusConfig.fusion`, `discover/config.rs` default
   - [x] `hkask-mcp-condenser` / `hkask-mcp-kata-kanban` / `compose.rs`: strip fusion fields from `LLMParameters` literals
@@ -46,7 +40,6 @@
 - [x] **T8 — Remove fusion settings UI** (`crates/settings_ui`)
   - [x] delete `pages/kask_page/fusion.rs`
   - [x] `kask_page.rs`: remove `mod fusion`, re-export, Fusion SubPageLink, `kask_string_input` fusion arms
-  - [x] `models.rs`: remove fusion mentions from settings UI labels
 - [x] **T9 — Remove composition wiring** (`crates/zed/src/main.rs`)
   - [x] remove `fusion_config` resolution, discovery block, `FusionLanguageModel` construction, provider registration, auto-favorite block
   - [x] remove `fusion_alert_tx`, `async_cx_for_fusion`, `fusion_configured`
@@ -57,17 +50,25 @@
 
 - [x] **T10 — Clean manifests** (`kask/registry/**/*.yaml`)
   - [x] `memory_remember.yaml`: remove `fusion: true` steps + comments
-  - [x] 13 manifests: remove `# Fusion: omitted` comment blocks
+  - [x] 15 manifests: remove `# Fusion:` comment blocks (incl. superforecasting, swarm-intelligence)
+  - [x] remove `fusion: false` step fields (scenario-builder, superforecasting, task-breakdown)
   - [x] `classify/hmem-extractor.yaml`: remove fusion comment
-  - [x] `task-breakdown/manifest.yaml`: remove "fusion: false" from quality-gate description
-  - [x] `create-skill-scaffold.j2`: remove `fusion:` block example + `fusion: false` step field
-  - [x] `task-breakdown-quality-gate.j2`: remove "fusion: false" from comment
-  - [x] `web-synthesis.yaml`: clarify "full fusion" → "full RRF fusion"
-  - [x] `RR-0028.yaml`: remove deleted `fusion_orchestrator.rs` from `discovered_in`
-- [x] **T11 — Clean skill companions** (`.agents/skills/**/SKILL.md`)
+- [x] **T11 — Clean skill companions** (`.agents/skills/**/SKILL.md`, 13 files)
   - [x] remove `## Fusion Mode` sections + `kask.fusion` references
-  - [x] `task-breakdown/SKILL.md`: remove "fusion: false" annotations
+  - [x] registry-template READMEs (superforecasting, scenario-builder) + task-breakdown quality-gate flag
 - [x] **T12 — Update docs**
+  - [x] `DIVERGENCE.md` (D8, ModelFilterFn entry), hkask-inference README, hkask-memory README, diataxis reference.md
+  - [x] `kask/docs/**` current-state sweep (cognition-and-replica, kask-settings, regulation-spans, kask_bridge reference, tutorials, READMEs)
+- [x] **Checkpoint 3** — repo grep: only intentional fusion matches remain (RRF, confusion, skill-bundler, plans/audits history)
+
+## Phase 4 — validation
+
+- [x] **T13 — Validate**
+  - [x] cargo check full touched set (13 crates)
+  - [x] targeted tests (`hkask-types`, `hkask-inference`, `hkask-templates`, `kask_bridge` — all pass)
+  - [ ] clippy on touched crates
+  - [ ] PR description `Suggested .rules removals`
+- [x] **Checkpoint 4** — tests pass; clippy + PR notes pending
   - [x] `DIVERGENCE.md` (D8 FusionLanguageModel, ModelFilterFn entry)
   - [x] `kask/crates/hkask-inference/README.md` (fusion bullet + env vars)
   - [x] `kask/crates/hkask-memory/README.md` (algo/no-judge merge → single-model)

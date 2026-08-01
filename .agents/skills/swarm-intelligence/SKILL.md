@@ -19,8 +19,7 @@ tokens, **delegation chains forbidden** — delegates lose
 `delegate_to_agent`/`execute_agent`). Gas: hire 5 cr, @mention 1 cr + tokens,
 delegation 1 cr + tokens. Compound agents declare `dependencies { required,
 optional }` and auto-hire their team. Thagard coherence scoring on
-workspaces. (Source: `kask/docs/plans/abw-swarm-intelligence.md` §0, verified
-live 2026-08-01.)
+workspaces. (Verified live 2026-08-01.)
 
 ## Surface ontologies
 
@@ -111,4 +110,3 @@ templates, the registry wins.
 - Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check}.j2`
 - Reference: `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml`
 - Process manifest: `kask/registry/manifests/swarm-intelligence.yaml`
-- Design document: `kask/docs/plans/swarm-intelligence-skill-design.md`
