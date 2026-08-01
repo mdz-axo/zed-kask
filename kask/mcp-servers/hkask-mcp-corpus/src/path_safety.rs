@@ -2,9 +2,19 @@
 //! OWASP LLM06). This server is launched per-project via ContextServerStore
 //! with no governance membrane, so containment is enforced here: every
 //! caller-supplied path must resolve (after canonicalization, which also
-//! collapses symlink escapes) under the process current working directory —
-//! the project root the server was launched for. Absolute paths like
-//! `/etc/passwd` and traversals like `../../escape` are rejected.
+//! collapses symlink escapes) under the process current working directory.
+//!
+//! Launch-path note: the per-project ContextServerStore spawn sets cwd to the
+//! project root (crates/project/src/context_server_store.rs passes root_path),
+//! so containment is anchored to the project there. The app-global McpRuntime
+//! spawn sets no cwd — the child inherits zed's cwd, and containment anchors
+//! to that. In CLI usage (zed started from the project dir) both coincide;
+//! a desktop-launched zed anchors the governed path to the launch cwd. That
+//! is fail-safe (still confined to a directory the operator chose to launch
+//! from) but is not the project root — corpus tools invoked through the
+//! governed path should be given explicit paths within the launch cwd. In
+//! both cases, absolute paths like `/etc/passwd` and traversals like
+//! `../../escape` are rejected.
 
 use hkask_mcp_server::server::McpToolError;
 use std::path::{Path, PathBuf};

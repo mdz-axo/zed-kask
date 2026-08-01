@@ -7,6 +7,11 @@
 //! Originally extracted from `hkask-mcp-corpus/src/json_extract.rs` (RR-0017)
 //! so all LLM-output parsers use the same secure primitive instead of
 //! duplicating the vulnerable `find('{')`…`rfind('}')` pattern.
+//!
+//! Contract: extraction returns the FIRST balanced top-level object — which,
+//! in an injection attempt, may be the injected one. Callers must
+//! schema-validate the result; this primitive guarantees single-object
+//! extraction, not that the object is the intended one.
 
 /// Strip markdown code fences from LLM JSON responses.
 ///

@@ -1526,6 +1526,10 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub scenarios: Option<KaskScenariosSettingsContent>,
 
+    /// Swarm (Agent Bestiary World) MCP server configuration.
+    #[serde(default)]
+    pub swarm: Option<KaskSwarmSettingsContent>,
+
     /// Training MCP server configuration.
     #[serde(default)]
     pub training: Option<KaskTrainingSettingsContent>,
@@ -1671,6 +1675,12 @@ pub struct KaskMediaSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskScenariosSettingsContent {
     pub data_dir: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskSwarmSettingsContent {
+    pub api_url: Option<String>,
+    pub max_credits_per_dispatch: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

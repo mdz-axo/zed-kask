@@ -20,7 +20,8 @@
 //! Supersedes `hkask-mcp-markitdown`, `hkask-mcp-doc-knowledge`, and `hkask-mcp-replica`.
 //!
 //! Server struct in lib.rs, tool methods in tools/ module.
-//! Helpers in helpers.rs (math/text) and json_extract.rs (LLM JSON parsing).
+//! Helpers in helpers.rs (math/text); LLM JSON parsing comes from
+//! `hkask_types::json_extract` (re-exported below).
 
 #![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 

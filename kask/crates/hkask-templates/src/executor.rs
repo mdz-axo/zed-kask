@@ -1319,6 +1319,14 @@ impl ManifestExecutor {
         }
 
         let populated = self.render_step_template(step, &context)?;
+        // Rendered output interpolates context values into a string — if any
+        // binding fed by this step's input_mapping was Source-tainted, the
+        // rendered artifact is derived from Source data and must carry the
+        // label, or a downstream $ref to it bypasses check_untrusted_input
+        // (which gates on labels, not content).
+        if let Some(ref mapping) = step.input_mapping {
+            self.propagate_taint_for_binding(mapping, &format!("step_{}_populated", step.ordinal));
+        }
         context.insert(
             format!("step_{}_populated", step.ordinal),
             Value::String(populated),
@@ -1356,6 +1364,14 @@ impl ManifestExecutor {
         }
 
         let rendered = self.render_step_template(step, &context)?;
+        // Rendered output interpolates context values into a string — if any
+        // binding fed by this step's input_mapping was Source-tainted, the
+        // rendered artifact is derived from Source data and must carry the
+        // label, or a downstream $ref to it bypasses check_untrusted_input
+        // (which gates on labels, not content).
+        if let Some(ref mapping) = step.input_mapping {
+            self.propagate_taint_for_binding(mapping, &format!("step_{}_result", step.ordinal));
+        }
         context.insert(
             format!("step_{}_result", step.ordinal),
             Value::String(rendered),
@@ -1499,16 +1515,7 @@ impl ManifestExecutor {
         // label; copy the label of the sub-cascade's final step result (the
         // same ordinal key extract_final_step_result picked) so a Source-
         // tainted sub-result doesn't enter the parent context unlabeled.
-        let final_step_key = sub_result
-            .keys()
-            .filter_map(|key| {
-                key.strip_prefix("step_")
-                    .and_then(|rest| rest.strip_suffix("_result"))
-                    .and_then(|n| n.parse::<u32>().ok())
-                    .map(|ordinal| (ordinal, key))
-            })
-            .max_by_key(|(ordinal, _)| *ordinal)
-            .map(|(_, key)| key.clone());
+        let final_step_key = extract_final_step_entry(&sub_result).map(|(key, _)| key);
         if let Some(ref final_key) = final_step_key {
             let label = self
                 .taint_labels
@@ -2345,17 +2352,26 @@ impl ManifestExecutor {
 /// Used by `execute_flowdef` to extract the sub-cascade's final result without
 /// merging the full sub-context back into the parent.
 fn extract_final_step_result(context: &HashMap<String, Value>) -> Value {
+    extract_final_step_entry(context)
+        .map(|(_, value)| value)
+        .unwrap_or(Value::Null)
+}
+
+/// The ordinal-keyed selector behind `extract_final_step_result`, returning
+/// the key as well so callers that need to copy the key's taint label don't
+/// re-implement the ordinal parse (the `.rules` trap this guards against
+/// exists because this logic was once re-implemented at multiple sites).
+fn extract_final_step_entry(context: &HashMap<String, Value>) -> Option<(String, Value)> {
     context
         .iter()
         .filter_map(|(key, value)| {
             key.strip_prefix("step_")
                 .and_then(|rest| rest.strip_suffix("_result"))
                 .and_then(|n| n.parse::<u32>().ok())
-                .map(|ordinal| (ordinal, value))
+                .map(|ordinal| (ordinal, key, value))
         })
-        .max_by_key(|(ordinal, _)| *ordinal)
-        .map(|(_, v)| v.clone())
-        .unwrap_or(Value::Null)
+        .max_by_key(|(ordinal, _, _)| *ordinal)
+        .map(|(_, key, value)| (key.clone(), value.clone()))
 }
 
 /// Parse a JSON response from an inference call.
@@ -3716,6 +3732,15 @@ mod tests {
         assert_eq!(
             result.get("step_2_populated").and_then(|v| v.as_str()),
             Some("untrusted external content"),
+        );
+        // The rendered output is derived from Source-tainted bindings, so it
+        // must carry the label too — check_untrusted_input gates on labels,
+        // not content, so an unlabeled rendered artifact would bypass the
+        // Source→Sink block when a later step binds it by $ref.
+        assert_eq!(
+            labels.get("step_2_populated").copied(),
+            Some(ToolTaint::Source),
+            "rendered/populated output derived from Source bindings must inherit the label"
         );
     }
 

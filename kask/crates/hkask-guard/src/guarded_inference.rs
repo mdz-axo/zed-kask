@@ -86,6 +86,10 @@ impl<'a> Stream for GuardedStream<'a> {
                     // text and the sanitized text; the *stored* assistant
                     // message should be reconstructed from the sanitized
                     // version. This is a known tradeoff — see ART-1 note.
+                    // The reasoning channel inherits the same replace-not-append
+                    // semantics: a delta-concatenating consumer ends up with
+                    // raw + sanitized reasoning, and storage must reconstruct
+                    // from the sanitized version.
                     std::task::Poll::Ready(Some(Ok(InferenceStreamChunk {
                         text_delta: if text_modified {
                             sanitized

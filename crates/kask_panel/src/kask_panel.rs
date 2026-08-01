@@ -585,7 +585,7 @@ mod tests {
     #[test]
     fn tab_strip_has_one_tab_per_builtin_server() {
         // The tab strip must have exactly one tab per built-in MCP server.
-        assert_eq!(BUILT_IN_MCP_SERVERS.len(), 10);
+        assert_eq!(BUILT_IN_MCP_SERVERS.len(), 11);
     }
 
     // ── server_description ─────────────────────────────────────────────

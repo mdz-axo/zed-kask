@@ -194,10 +194,15 @@ fn peer_is_owner(stream: &tokio::net::UnixStream) -> bool {
 
 #[cfg(not(target_os = "linux"))]
 fn peer_is_owner(_stream: &tokio::net::UnixStream) -> bool {
-    tracing::warn!(
-        target: "reg.inference",
-        "Inference IPC peer-credential check unavailable on this platform — relying on filesystem permissions"
-    );
+    // Warn once, not per connection — an accept loop would otherwise emit a
+    // warn storm for a platform property that never changes at runtime.
+    static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+    WARN_ONCE.call_once(|| {
+        tracing::warn!(
+            target: "reg.inference",
+            "Inference IPC peer-credential check unavailable on this platform — relying on filesystem permissions"
+        );
+    });
     true
 }
 

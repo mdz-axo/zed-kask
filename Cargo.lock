@@ -20233,6 +20233,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "swarm_panel"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+ "kask_panel",
+ "log",
+ "marketplace_ui_common",
+ "serde",
+ "serde_json",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "swash"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"

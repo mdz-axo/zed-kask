@@ -115,6 +115,7 @@ pub static DATA_SERVICE_CREDENTIALS: &[(&str, &str)] = &[
     ("HKASK_SERPAPI_API_KEY", "serpapi"),
     ("HKASK_FIRECRAWL_API_KEY", "firecrawl"),
     ("HKASK_BROWSERBASE_API_KEY", "browserbase"),
+    ("HKASK_ABW_API_KEY", "hkask_abw_api_key"),
     ("RUNPOD_API_KEY", "runpod"),
     ("RUNPOD_TEMPLATE_ID", "runpod_template_id"),
     ("NEBIUS_PROJECT_ID", "nebius_project_id"),

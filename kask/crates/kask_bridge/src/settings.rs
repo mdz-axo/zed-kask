@@ -15,7 +15,7 @@ use settings_content::{
     KaskDataServiceSettingsContent, KaskFusionSettingsContent,
     KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
     KaskMemorySettingsContent, KaskModelsSettingsContent, KaskScenariosSettingsContent,
-    KaskSettingsContent, KaskTrainingSettingsContent,
+    KaskSettingsContent, KaskSwarmSettingsContent, KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -33,7 +33,7 @@ use collections::HashMap;
 /// deserializes `SettingsContent` and converts via `From`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, RegisterSetting)]
 pub struct KaskSettings {
-    /// MCP server configuration — which of the 10 built-in servers to load.
+    /// MCP server configuration — which of the 11 built-in servers to load.
     pub mcp: KaskMcpSettings,
 
     /// Data service toggles (non-secret — API keys are in the keychain).
@@ -62,6 +62,9 @@ pub struct KaskSettings {
 
     /// Scenarios MCP server configuration.
     pub scenarios: KaskScenariosSettings,
+
+    /// Swarm (Agent Bestiary World) MCP server configuration.
+    pub swarm: KaskSwarmSettings,
 
     /// Training MCP server configuration.
     pub training: KaskTrainingSettings,
@@ -401,6 +404,31 @@ pub struct KaskMediaSettings {
 pub struct KaskScenariosSettings {
     /// Data directory for scenario persistence. When empty, uses in-memory.
     pub data_dir: String,
+}
+
+/// Swarm (Agent Bestiary World) MCP server configuration.
+///
+/// The API key is a secret — it lives in the keychain under
+/// `kask://credentials/hkask_abw_api_key`, injected as `HKASK_ABW_API_KEY`.
+/// Only non-secret config lives here.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct KaskSwarmSettings {
+    /// ABW API base URL override. When empty, uses the default
+    /// (`https://agent-bestiary.world`).
+    pub api_url: String,
+
+    /// Per-dispatch credit ceiling for spend tools (the S3 budget gate).
+    /// Dispatches estimated above this are refused before any credit is spent.
+    pub max_credits_per_dispatch: u32,
+}
+
+impl Default for KaskSwarmSettings {
+    fn default() -> Self {
+        Self {
+            api_url: String::new(),
+            max_credits_per_dispatch: 50,
+        }
+    }
 }
 
 /// Training MCP server configuration.
@@ -811,6 +839,20 @@ impl KaskSettings {
             );
         }
 
+        // ── Swarm (ABW) ──
+        // The API key is a credential (injected by `mcp_env_with_credentials`
+        // from the keychain), not config — only non-secret fields are here.
+        if !self.swarm.api_url.is_empty() {
+            env.insert("HKASK_ABW_API_URL".to_string(), self.swarm.api_url.clone());
+        }
+        let swarm_default = KaskSwarmSettings::default();
+        if self.swarm.max_credits_per_dispatch != swarm_default.max_credits_per_dispatch {
+            env.insert(
+                "HKASK_ABW_MAX_CREDITS".to_string(),
+                self.swarm.max_credits_per_dispatch.to_string(),
+            );
+        }
+
         // ── Training ──
         if !self.training.host.is_empty() {
             env.insert(
@@ -1111,6 +1153,18 @@ impl From<KaskScenariosSettingsContent> for KaskScenariosSettings {
     }
 }
 
+impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
+    fn from(c: KaskSwarmSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
+            api_url: c.api_url.unwrap_or(default.api_url),
+            max_credits_per_dispatch: c
+                .max_credits_per_dispatch
+                .unwrap_or(default.max_credits_per_dispatch),
+        }
+    }
+}
+
 impl From<KaskTrainingSettingsContent> for KaskTrainingSettings {
     fn from(c: KaskTrainingSettingsContent) -> Self {
         let default = Self::default();
@@ -1190,6 +1244,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
             media: c.media.map(Into::into).unwrap_or_default(),
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
+            swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
             fusion: c.fusion.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
@@ -1501,6 +1556,39 @@ mod tests {
         assert_eq!(
             env.get("HKASK_EMBEDDING_DIM").map(String::as_str),
             Some("2048")
+        );
+    }
+
+    // Swarm settings: `Default` is the single source of truth — default
+    // settings emit no swarm env vars; a non-default credit ceiling emits
+    // `HKASK_ABW_MAX_CREDITS`; the API key is never in `mcp_env()` (it is a
+    // keychain credential, injected by `mcp_env_with_credentials`).
+    #[test]
+    fn swarm_settings_default_emits_no_env() {
+        let settings = KaskSettings::default();
+        let env = settings.mcp_env();
+        assert!(!env.contains_key("HKASK_ABW_API_URL"));
+        assert!(!env.contains_key("HKASK_ABW_MAX_CREDITS"));
+        assert!(
+            !env.contains_key("HKASK_ABW_API_KEY"),
+            "the ABW API key is a credential, not config — it must never appear in mcp_env()"
+        );
+        assert_eq!(settings.swarm.max_credits_per_dispatch, 50);
+    }
+
+    #[test]
+    fn swarm_settings_non_default_emits_env() {
+        let mut settings = KaskSettings::default();
+        settings.swarm.max_credits_per_dispatch = 100;
+        settings.swarm.api_url = "https://staging.agent-bestiary.world".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_ABW_MAX_CREDITS").map(String::as_str),
+            Some("100")
+        );
+        assert_eq!(
+            env.get("HKASK_ABW_API_URL").map(String::as_str),
+            Some("https://staging.agent-bestiary.world")
         );
     }
 
