@@ -28,7 +28,7 @@ steps:
   - ordinal: 1
     action: execute
     description: >
-      Search all providers with full fusion and reranking.
+      Search all providers with full RRF fusion and reranking.
     renderer: null
     template_ref: null
     mcp: hkask-mcp-research

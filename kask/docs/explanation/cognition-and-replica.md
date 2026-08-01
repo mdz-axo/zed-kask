@@ -180,7 +180,6 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the 
 |---------|-----------|--------|
 | `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 11 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph` routes through `ToolSubsystem::Other` (no dedicated variant). |
 | `Inference` | `reg.inference` | LLM request/response |
-| `Fusion` | `reg.fusion` | Multi-model fusion deliberation (panel dispatch + judge orchestration) |
 | `AgentPod` | `reg.pod` | Pod lifecycle events |
 | `Gas` | `reg.gas` | Energy consumption tracking |
 | `Curation` | `reg.curation` | Registry sync, pod sync, directive issuance |
@@ -189,7 +188,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the 
 
 The `SpanKind` enum at `event.rs` provides typed construction for common spans, eliminating string typos: `ToolInvoked`, `ToolCompleted`, `ToolError`, `GasReserved`, `GasSettled`, `GasDepleted`, `CurationDirectiveAcknowledged`, `CurationEscalation`, `AgentPodRegistered`, `AgentPodActivated`, `AgentPodDeactivated`, `VarietyAlgedonicAlert`, `DepositCredited`, and the v0.31.0 regulation spans (`ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`).
 
-Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 248 namespace strings spanning architecture seams, chat, CI, classification, condenser, consent, consolidation, contracts, curation, cybernetics, deploy, gas, guard, healing, inference, fusion, kata, MCP media, memory, multi-agent, platform metrics (11 spans for PaaP/DORA/SPACE/Loyalty), QA, regulation, semantic, skills, SLOs, sovereignty, specs, storage, tools, variety, wallet, well, pipeline, supply chain, runtime posture, attack taxonomy, LoRA training, template, and training providers.
+Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 248 namespace strings spanning architecture seams, chat, CI, classification, condenser, consent, consolidation, contracts, curation, cybernetics, deploy, gas, guard, healing, inference, kata, MCP media, memory, multi-agent, platform metrics (11 spans for PaaP/DORA/SPACE/Loyalty), QA, regulation, semantic, skills, SLOs, sovereignty, specs, storage, tools, variety, wallet, well, pipeline, supply chain, runtime posture, attack taxonomy, LoRA training, template, and training providers.
 
 #### How ν-Events Feed the Regulation Homeostatic Loop
 
@@ -228,8 +227,8 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-003
 verified_date: 2026-07-29
-verified_against: crates/hkask-types/src/event.rs (RegulationRecord, Span, SpanNamespace, CANONICAL_NAMESPACES — 243 entries), crates/hkask-types/src/regulation.rs (RegulationSpan enum with Fusion variant), crates/hkask-types/src/observable_span.rs (ObservableSpan trait), crates/hkask-regulation/src/cybernetics_loop.rs (CyberneticsLoop::sense, Sensor implementations)
-status: VERIFIED (v3 — corrected CANONICAL_NAMESPACES count to 243 per 2026-08-01 audit; added Fusion variant to RegulationSpan table; fixed WeightedEvent/DecayConfig file path to ports/regulation.rs; removed stale hkask-memory/src/lib.rs reference)
+verified_against: crates/hkask-types/src/event.rs (RegulationRecord, Span, SpanNamespace, CANONICAL_NAMESPACES — 243 entries), crates/hkask-types/src/regulation.rs (RegulationSpan enum), crates/hkask-types/src/observable_span.rs (ObservableSpan trait), crates/hkask-regulation/src/cybernetics_loop.rs (CyberneticsLoop::sense, Sensor implementations)
+status: VERIFIED (v3 — corrected CANONICAL_NAMESPACES count to 243 per 2026-08-01 audit; fixed WeightedEvent/DecayConfig file path to ports/regulation.rs; removed stale hkask-memory/src/lib.rs reference)
 -->
 
 ### Implications
@@ -693,17 +692,16 @@ status: VERIFIED
 | Regulation span emission sequence (inlined in `regulation-and-loops.md`) | Regulation span emission for memory encode spans (DIAG-TO-004) |
 
 
-### Memory Remember — Algo / No-Judge Template Cascade
+### Memory Remember — Template Cascade
 
 *Inlined from `docs/diagrams/flowchart-memory-remember.md`*
 
 
-# Memory Remember — Algo / No-Judge Template Cascade
+# Memory Remember — Template Cascade
 
-FlowDef manifest for agent memory formation. Three-step cascade with algo /
-no-judge rendering on every step. The `operation-selector.j2` classifies and
-routes to episodic or semantic extraction. The fusion panel renders the same
-template in parallel; outputs are merged via `merge_json_values()`.
+FlowDef manifest for agent memory formation. Three-step cascade. The
+`operation-selector.j2` classifies and routes to episodic or semantic
+extraction; each step runs a single-model extraction pass.
 
 Related: `registry/manifests/memory_remember.yaml`, `crates/hkask-templates/src/executor.rs`
 
@@ -713,47 +711,25 @@ flowchart TD
     OS{operation-selector.j2\nClassify + Route}
     EP["remember-episodic.j2\nFirst-Person Extraction"]
     SE["remember-semantic.j2\nThird-Person Extraction"]
-    MAE["Panel Model 1\nQwen3-235B-A22B"]
-    MBE["Panel Model 2\nGemma 4"]
-    MAS["Panel Model 1\nQwen3-235B-A22B"]
-    MBS["Panel Model 2\nGemma 4"]
-    ME["merge_json_values\nUnion + Dedup"]
-    MS["merge_json_values\nUnion + Dedup"]
     EM[("Episodic Memory\nPrivate, Agent-Scoped")]
     SM[("Semantic Memory\nShared, Cross-Agent")]
 
     OP --> OS
     OS -->|episodic| EP
     OS -->|semantic| SE
-
-    EP --> MAE
-    EP --> MBE
-    MAE --> ME
-    MBE --> ME
-    ME --> EM
-
-    SE --> MAS
-    SE --> MBS
-    MAS --> MS
-    MBS --> MS
-    MS --> SM
+    EP --> EM
+    SE --> SM
 
     subgraph "Step 1: Classify"
         OS
     end
 
-    subgraph "Step 2: Episodic (fusion: true)"
+    subgraph "Step 2: Episodic Extraction"
         EP
-        MAE
-        MBE
-        ME
     end
 
-    subgraph "Step 3: Semantic (fusion: true)"
+    subgraph "Step 3: Semantic Extraction"
         SE
-        MAS
-        MBS
-        MS
     end
 ```
 <!-- DIAGRAM_ALIGNMENT
@@ -771,38 +747,29 @@ status: VERIFIED
 
 # Classification-to-Memory Sequence
 
-Full flow from source text through algo / no-judge classification, guard scanning,
-integration, and shared memory storage. All guard checks are mandatory;
-the algo / no-judge path (`judge: algo`) runs the fusion panel in parallel and
-merges responses algorithmically — no LLM judge call.
+Full flow from source text through single-model classification, guard scanning,
+integration, and shared memory storage. All guard checks are mandatory.
 
-Related: `crates/hkask-inference/src/fusion_orchestrator.rs` (algo_merge)
+Related: `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 
 ```mermaid
 sequenceDiagram
     participant S as Source
     participant G as ContentGuard
-    participant MA as Panel Model 1 (Qwen3-235B)
-    participant MB as Panel Model 2 (Gemma 4)
-    participant I as Merge Integrator
+    participant M as Model (Qwen3-235B)
+    participant I as Integrator
     participant Regulation as Regulation Spans
-    participant M as Shared Memory
+    participant Memory as Shared Memory
 
     S->>G: scan_input(text)
     alt blocked
         G-->>Regulation: reg.guard.violation (input_refused)
         G-->>S: Refuse
     else passed
-        par Parallel Classification
-            MA->>MA: extract_triples_one(text)
-            MA-->>I: TripleExtraction A
-        and
-            MB->>MB: extract_triples_one(text)
-            MB-->>I: TripleExtraction B
-        end
+        M->>M: extract_triples_one(text)
+        M-->>I: TripleExtraction
 
-        I->>I: algo_merge(panel_responses)
-        I->>I: algo-style merge (union, dedup, annotate)
+        I->>I: normalize (dedup, annotate)
 
         I->>G: scan_output(merged)
         alt secrets detected
@@ -812,7 +779,7 @@ sequenceDiagram
             G-->>I: Pass
         end
 
-        I->>M: store_passage_h_mems()
+        I->>Memory: store_passage_h_mems()
     end
 ```
 <!-- DIAGRAM_ALIGNMENT
@@ -823,52 +790,45 @@ status: VERIFIED
 -->
 
 
-### Algo / No-Judge Classification Flow
+### Classification Flow
 
 *Inlined from `docs/diagrams/flowchart-algo-classification.md`*
 
 
-# Algo / No-Judge Classification Flow
+# Classification Flow
 
-How classification operates via the algo / no-judge fusion path (`judge: algo`).
-The fusion panel runs in parallel; `algo_merge()` folds the panelists' JSON
-extractions into a single result (union, dedup, diverging fields annotated
-`[A:... B:...]`) — no LLM judge call.
+How classification operates as a single-model extraction: the model's JSON
+extraction is normalized (dedup, diverging fields annotated) before the guard
+output scan and storage.
 
-Related: `crates/hkask-inference/src/fusion_orchestrator.rs` (algo_merge), `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
+Related: `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 
 ```mermaid
 flowchart TD
     S([Source Text])
     G{Guard Input Scan}
     R[Refuse + Regulation Alert]
-    P1[Panel Model 1\nKC/qwen3-235b]
-    P2[Panel Model 2\nDI/gemma-4]
-    R1[Response 1 (JSON)]
-    R2[Response 2 (JSON)]
-    I[algo_merge]
+    P[Model\nKC/qwen3-235b]
+    R1[Response (JSON)]
+    I[Normalize (dedup, annotate)]
     GO{Guard Output Scan}
     RS[Strip Secrets\n+ Regulation Alert]
     ST[Store in Shared Memory]
     M[Memory]
 
     S --> G
-    G -->|pass| P1
-    G -->|pass| P2
+    G -->|pass| P
     G -->|block| R
-    P1 --> R1
-    P2 --> R2
+    P --> R1
     R1 --> I
-    R2 --> I
     I --> GO
     GO -->|pass| ST
     GO -->|violation| RS
     RS --> ST
     ST --> M
 
-    subgraph "Fusion Panel (parallel)"
-        P1
-        P2
+    subgraph "Single-Model Extraction"
+        P
     end
 
     subgraph "Epistemic Integration"

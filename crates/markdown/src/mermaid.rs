@@ -250,6 +250,11 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "xychart-beta",
         "journey",
         "sankey-beta",
+        "kanban",
+        "architecture",
+        "radar",
+        "treemap",
+        "block-beta",
     ];
     let first_token = source
         .trim_start()
@@ -698,7 +703,7 @@ mod tests {
     fn test_unsupported_diagram_types_are_skipped() {
         let markdown = concat!(
             "```mermaid\nrequirementDiagram\n```\n\n",
-            "```mermaid\nblock-beta\n```\n\n",
+            "```mermaid\npacket\n```\n\n",
             "```mermaid\nflowchart TD\n    A --> B\n```",
         );
         let events =
@@ -707,7 +712,7 @@ mod tests {
         assert_eq!(
             diagrams.len(),
             1,
-            "Only the flowchart should be extracted; requirementDiagram and block should be skipped"
+            "Only the flowchart should be extracted; requirementDiagram and packet should be skipped"
         );
         let diagram = diagrams.values().next().unwrap();
         assert!(

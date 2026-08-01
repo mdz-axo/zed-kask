@@ -676,7 +676,11 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
             return (None, None, None, None, None);
         }
     };
-    let embedding_store = hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), 1024);
+    let embedding_dim = hkask_storage::embedding_dim();
+    let embedding_store =
+        hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), embedding_dim);
+    let embedding_store =
+        hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), embedding_dim);
     let escalation_queue = match hkask_storage::EscalationQueue::from_driver(Arc::clone(&driver)) {
         Ok(q) => Some(Arc::new(q)),
         Err(e) => {

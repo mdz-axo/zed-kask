@@ -87,8 +87,7 @@ impl CorpusServer {
 
             let k = top_k.unwrap_or(5).clamp(1, 50);
 
-            let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
-                .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string());
+            let model_name = hkask_inference::model_constants::embedding_model();
 
             let query_embedding = match self
                 .inference_router

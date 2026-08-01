@@ -430,10 +430,9 @@ impl CodeGraphServer {
             self.ensure_indexed()?;
 
             // Resolve the embedding model and dimension.
-            let model = req.model.unwrap_or_else(|| {
-                std::env::var("HKASK_EMBEDDING_MODEL")
-                    .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string())
-            });
+            let model = req
+                .model
+                .unwrap_or_else(|| hkask_inference::model_constants::embedding_model());
             let dim: usize = std::env::var("HKASK_EMBEDDING_DIM")
                 .ok()
                 .and_then(|v| v.parse().ok())

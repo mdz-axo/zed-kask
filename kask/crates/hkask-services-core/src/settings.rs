@@ -60,7 +60,9 @@ pub struct HkaskSettings {
 }
 
 fn default_embedding_model() -> String {
-    "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string()
+    // Single source of truth: hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.
+    // Do not duplicate the model id here — resolve via the canonical constant.
+    hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
 
 fn default_classifier_model() -> String {
@@ -70,7 +72,9 @@ fn default_classifier_model() -> String {
 }
 
 fn default_ocr_model() -> String {
-    "RunPod/kask-ocr".to_string()
+    // Single source of truth: hkask_inference::model_constants::DEFAULT_OCR_MODEL.
+    // Do not duplicate the model id here — resolve via the canonical constant.
+    hkask_inference::model_constants::DEFAULT_OCR_MODEL.to_string()
 }
 
 fn default_chunk_max_tokens() -> usize {

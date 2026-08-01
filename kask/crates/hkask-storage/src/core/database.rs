@@ -19,8 +19,8 @@ use thiserror::Error;
 use crate::database::driver::DatabaseDriver;
 
 /// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
-pub(crate) const DEFAULT_EMBEDDING_DIM: usize = 1024;
-pub(crate) fn embedding_dim() -> usize {
+pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
+pub fn embedding_dim() -> usize {
     std::env::var("HKASK_EMBEDDING_DIM")
         .ok()
         .and_then(|s| s.parse().ok())

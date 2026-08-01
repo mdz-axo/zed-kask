@@ -10,7 +10,8 @@ pub mod database;
 pub mod security;
 
 pub use database::{
-    Database, DatabaseError, check_passphrase, open_database, open_or_repair, open_postgres,
+    DEFAULT_EMBEDDING_DIM, Database, DatabaseError, check_passphrase, embedding_dim, open_database,
+    open_or_repair, open_postgres,
 };
 pub use security::sanitize_path;
 pub use store_macros::DatabaseDriverTrait;

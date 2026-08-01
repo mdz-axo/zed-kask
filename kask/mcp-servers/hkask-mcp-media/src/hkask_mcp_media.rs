@@ -49,21 +49,24 @@ use sha2::Digest;
 
 /// Default open-weight models for media processing.
 /// All can be overridden via environment variables.
+///
+/// The default values are `const` references to the single source of truth in
+/// `hkask_inference::model_constants` — do not duplicate the model ids here.
 pub mod models {
     /// Default TTS model: Qwen3-TTS (Apache 2.0) via fal.ai
-    pub const TTS_DEFAULT: &str = "fal.ai/qwen-3-tts";
+    pub const TTS_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_TTS_MODEL;
     pub const TTS_ENV: &str = "HKASK_MEDIA_TTS_MODEL";
 
     /// Default STT model: fal.ai Wizper (optimized Whisper v3)
-    pub const STT_DEFAULT: &str = "fal.ai/wizper";
+    pub const STT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_STT_MODEL;
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
 
     /// Default vision model: Qwen3-VL (Apache 2.0) via KiloCode
-    pub const VISION_DEFAULT: &str = "KiloCode/qwen/qwen3-vl-235b-a22b-instruct";
+    pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
 
     /// Default image generation model: FLUX.2 \[dev\] (open-source) via fal.ai
-    pub const IMAGE_GEN_DEFAULT: &str = "fal.ai/flux-2";
+    pub const IMAGE_GEN_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL;
     pub const IMAGE_GEN_ENV: &str = "HKASK_MEDIA_IMAGE_GEN_MODEL";
 
     /// Resolve a model name from env var or default.

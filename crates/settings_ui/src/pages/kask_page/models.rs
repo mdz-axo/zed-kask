@@ -22,7 +22,7 @@ pub(crate) fn render_models_page(
     let default_model_input = kask_string_input(
         "kask-models-default",
         "Default Inference Model",
-        "openrouter/z-ai/glm-5.2",
+        "OpenRouter/z-ai/glm-5.2",
         default_model,
         "models",
         "default_model",
@@ -30,7 +30,7 @@ pub(crate) fn render_models_page(
     let embedding_model_input = kask_string_input(
         "kask-models-embedding",
         "Embedding Model",
-        "openrouter/z-ai/glm-5.2",
+        "DeepInfra/Qwen/Qwen3-Embedding-0.6B",
         embedding_model,
         "models",
         "embedding_model",

@@ -222,8 +222,8 @@ constants.
 
 | Field | Type | Default | Effective fallback |
 |-------|------|---------|-------------------|
-| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `"openrouter/z-ai/glm-5.2"` |
-| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"openrouter/z-ai/glm-5.2"` |
+| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `"OpenRouter/z-ai/glm-5.2"` |
+| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` |
 | `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"DeepInfra/deepseek-ai/deepseek-v4-flash"` |
 
 ## Keychain Architecture

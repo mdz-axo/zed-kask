@@ -47,9 +47,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_CODEGRAPH_DB",
             "HKASK_EMBEDDING_DIM",
             "HKASK_EMBEDDING_MODEL",
-            "HKASK_DEFAULT_MODEL",
-            "HKASK_CLASSIFIER_MODEL",
-            "HKASK_TEMPLATE_ROOT",
         ]),
     },
     BuiltinMcpServer {
@@ -68,9 +65,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
             "HKASK_TRANSACTIONS_DIR",
-            "HKASK_DEFAULT_MODEL",
-            "HKASK_EMBEDDING_MODEL",
-            "HKASK_CLASSIFIER_MODEL",
         ]),
     },
     BuiltinMcpServer {
@@ -82,7 +76,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_CONDENSER_PERSONA_KEYWORDS",
             "HKASK_CONDENSE_SALIENCY_WINDOW",
             "HKASK_DEFAULT_MODEL",
-            "HKASK_EMBEDDING_MODEL",
         ]),
     },
     BuiltinMcpServer {
@@ -101,6 +94,20 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_TEMPLATE_ROOT",
             "HKASK_DEFAULT_MODEL",
             "HKASK_CLASSIFIER_MODEL",
+            // QA model override — read by qa.rs, falls back to HKASK_DEFAULT_MODEL.
+            "HKASK_QA_MODEL",
+            // Model cache TTL — read by model_cache.rs, falls back to 4h default.
+            "HKASK_MODEL_CACHE_TTL_SECS",
+            // fal.ai docres toggle — read by decimation.rs, falls back to false.
+            "HKASK_USE_FAL_DOCRES",
+            // Content guard toggle — read by semantic/mod.rs, defaults to true.
+            "HKASK_ENABLE_CONTENT_GUARD",
+            // OCR triage thresholds — read by ocr/config.rs, fall back to TriageConfig::default().
+            "HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN",
+            "HKASK_OCR_TRIAGE_MIN_IMAGE_PT",
+            "HKASK_OCR_TRIAGE_FULL_PAGE_PT",
+            "HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT",
+            "HKASK_OCR_TRIAGE_TUNEABLE",
         ]),
     },
     BuiltinMcpServer {
@@ -116,9 +123,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_AUTHORIZED_EMAILS",
             "HKASK_INBOX_POLL_INTERVAL_SECS",
             "HKASK_DIGEST_INTERVAL_SECS",
-            "HKASK_DEFAULT_MODEL",
-            "HKASK_EMBEDDING_MODEL",
-            "HKASK_CLASSIFIER_MODEL",
             // Curator DB path — injected by the deferred task after
             // provisioning, so the curator MCP server reads from the same
             // `agents/curator/pod.db` the agent writes curator copies to.
@@ -143,8 +147,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Kata Kanban — improvement kata board",
         credentials: Some(&[]),
         config_env: Some(&[
-            "HKASK_DEFAULT_MODEL",
-            "HKASK_EMBEDDING_MODEL",
             // kata-kanban resolves its DB path via `resolve_under_data_dir`,
             // so it needs the data dir to match the parent process.
             "HKASK_DATA_DIR",
@@ -154,13 +156,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — image generation and media workflows",
-        credentials: Some(&["FALAI_API_KEY"]),
+        credentials: Some(&["FALAI_API_KEY", "DEEPINFRA_API_KEY", "TOGETHERAI_API_KEY"]),
         config_env: Some(&[
             "HKASK_MEDIA_TTS_MODEL",
             "HKASK_MEDIA_STT_MODEL",
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_IMAGE_GEN_MODEL",
-            "HKASK_DEFAULT_MODEL",
         ]),
     },
     BuiltinMcpServer {
@@ -175,18 +176,19 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_FIRECRAWL_API_KEY",
             "HKASK_BROWSERBASE_API_KEY",
         ]),
-        config_env: Some(&["HKASK_DEFAULT_MODEL", "HKASK_EMBEDDING_MODEL"]),
+        config_env: Some(&[
+            // Web cache tunables — read by hkask_mcp_research.rs via ctx.credentials,
+            // fall back to DEFAULT_CACHE_TTL_SECS / DEFAULT_CACHE_MAX_ENTRIES.
+            "HKASK_WEB_CACHE_TTL_SECS",
+            "HKASK_WEB_CACHE_MAX_ENTRIES",
+        ]),
     },
     BuiltinMcpServer {
         id: "scenarios",
         binary: "hkask-mcp-scenarios",
         description: "Scenarios — scenario planning and forecasting",
         credentials: Some(&[]),
-        config_env: Some(&[
-            "HKASK_SCENARIOS_DATA",
-            "HKASK_DEFAULT_MODEL",
-            "HKASK_EMBEDDING_MODEL",
-        ]),
+        config_env: Some(&["HKASK_SCENARIOS_DATA"]),
     },
     BuiltinMcpServer {
         id: "swarm",
@@ -226,8 +228,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_TRAINING_HOST",
             "HKASK_TRAINING_CACHE_DIR",
             "HKASK_TEMPLATE_ROOT",
-            "HKASK_DEFAULT_MODEL",
-            "HKASK_EMBEDDING_MODEL",
             // training resolves its DB path via `resolve_under_data_dir`,
             // so it needs the data dir to match the parent process.
             "HKASK_DATA_DIR",

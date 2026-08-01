@@ -509,10 +509,11 @@ pub struct KaskTrainingSettings {
 ///
 /// **Two-layer default design (intentional):** `default_model`, `embedding_model`,
 /// and `classifier_model` default to empty strings in `Default`. When empty, the
-/// `effective_*` methods fall back to the `DEFAULT_*_MODEL` constants. This lets
-/// users override individual models in settings.json while keeping the kask
-/// built-in defaults as the fallback. Do not merge these layers — the constants
-/// are the kask opinion, the settings fields are the user override.
+/// `effective_*` methods fall back to the `DEFAULT_*_MODEL` constants, which are
+/// themselves `const` references to the single source of truth in
+/// `hkask_inference::model_constants`. This lets users override individual models
+/// in settings.json while keeping the kask built-in defaults as the fallback.
+/// Do not duplicate the model ids anywhere else — `model_constants` is canonical.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"openrouter/z-ai/glm-5.2"`).
@@ -532,13 +533,25 @@ pub struct KaskModelsSettings {
 
 impl KaskModelsSettings {
     /// The kask default inference model.
-    pub const DEFAULT_INFERENCE_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
+    ///
+    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL`.
+    /// Re-exported here so callers within kask_bridge don't need a direct dep on
+    /// hkask-inference for this constant, but the value is not duplicated — it
+    /// is a `const` reference to the canonical definition.
+    pub const DEFAULT_INFERENCE_MODEL: &'static str =
+        hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
 
     /// The kask default embedding model.
-    pub const DEFAULT_EMBEDDING_MODEL: &'static str = "openrouter/z-ai/glm-5.2";
+    ///
+    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL`.
+    pub const DEFAULT_EMBEDDING_MODEL: &'static str =
+        hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL;
 
     /// The kask default classifier model.
-    pub const DEFAULT_CLASSIFIER_MODEL: &'static str = "DeepInfra/deepseek-ai/deepseek-v4-flash";
+    ///
+    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL`.
+    pub const DEFAULT_CLASSIFIER_MODEL: &'static str =
+        hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL;
 
     /// Resolve the effective default inference model, falling back to the
     /// kask default when the setting is empty.

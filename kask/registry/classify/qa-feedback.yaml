@@ -1,7 +1,7 @@
 # QA Feedback Classifier — defers to the canonical classifier model.
 # Used by: feedback loop — correction passages and mutant-to-fuzz suggestions
 # Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
-#   (canonical: DI/Qwen/Qwen3-235B-A22B-Instruct-2507, 22B active MoE).
+#   (canonical: DI/deepseek-ai/deepseek-v4-flash).
 #   The `model:` field below is intentionally empty; ClassifierConfig::from_def
 #   fills it from the canonical path and strips the DI/ router prefix.
 # Provider: DeepInfra (cloud API, OpenAI-compatible)

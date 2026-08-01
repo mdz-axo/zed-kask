@@ -110,8 +110,6 @@ fn resolve_model(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Document the case-insensitive provider-id contract.
     ///
     /// Config uses `"OpenRouter/..."` (capitalized) while zed's

@@ -26,7 +26,7 @@ Three things sit between the user and a model:
 
 1. **Skills** — PDCA loops that compose Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation. Where other systems give you a prompt, Kask gives you a *process*.
 2. **MCP servers** — built-in Model Context Protocol servers (research, memory, codegraph, media, filesystem, regulation, …) exposed as tools through `rmcp`.
-3. **Inference routing** — one router across multiple providers, with fusion, circuit breakers, and per-call gas accounting.
+3. **Inference routing** — one router across multiple providers, with circuit breakers and per-call gas accounting.
 
 Everything else in Kask — the pod, wallet, ledger, regulation, keystore — exists to keep the user's local session **sovereign**: per-pod encrypted storage, OCAP dual gate, visibility gating.
 

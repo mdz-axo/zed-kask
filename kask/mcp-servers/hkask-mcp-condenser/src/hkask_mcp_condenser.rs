@@ -554,10 +554,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
                 let default_model = ctx
                     .credentials
-                    .get("INFERENCE_MODEL")
+                    .get("HKASK_DEFAULT_MODEL")
                     .cloned()
-                    .or_else(|| std::env::var("INFERENCE_MODEL").ok())
-                    .unwrap_or_else(|| "google/gemma-4-26B-A4B-it".to_string());
+                    .or_else(|| std::env::var("HKASK_DEFAULT_MODEL").ok())
+                    .unwrap_or_else(|| {
+                        hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL.to_string()
+                    });
 
                 // Persona keywords: configurable via env var (comma-separated).
                 // Falls back to generic condensation terms if not set.

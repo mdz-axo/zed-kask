@@ -459,8 +459,7 @@ impl CorpusServer {
             // Phase 4: Re-embed consolidated chunks
             let mut embedded_count = 0usize;
             if !reembed_texts.is_empty() {
-                let emb_model = std::env::var("HKASK_EMBEDDING_MODEL")
-                    .unwrap_or_else(|_| "DeepInfra/Qwen/Qwen3-Embedding-0.6B".to_string());
+                let emb_model = hkask_inference::model_constants::embedding_model();
 
                 for batch in reembed_texts.chunks(50) {
                     let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
