@@ -191,6 +191,11 @@ async fn setup_app_database(config: &Config) -> Result<()> {
 
     db.initialize_notification_kinds().await?;
 
+    // zed-kask: self-heal the kask skill marketplace tables for self-hosted
+    // deployments (upstream applies schema out-of-band; a fresh self-hosted
+    // server would otherwise 500 on `/api/kask-skills` with no signal).
+    db.ensure_kask_skill_tables().await?;
+
     Ok(())
 }
 

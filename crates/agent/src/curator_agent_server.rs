@@ -71,6 +71,10 @@ pub struct CuratorAgentServer {
     fs: Arc<dyn Fs>,
     thread_store: Entity<ThreadStore>,
     extra_static_context: Option<SharedString>,
+    /// Per-tab MCP server scope — when set, `connect` applies
+    /// `NativeAgent::set_mcp_server_scope`, filtering the thread's
+    /// context-server tools to this server only.
+    mcp_server_scope: Option<SharedString>,
 }
 
 impl CuratorAgentServer {
@@ -79,6 +83,7 @@ impl CuratorAgentServer {
             fs,
             thread_store,
             extra_static_context: None,
+            mcp_server_scope: None,
         }
     }
 
@@ -90,6 +95,16 @@ impl CuratorAgentServer {
     /// its regulatory role AND the per-tab tool scope.
     pub fn with_extra_static_context(mut self, context: SharedString) -> Self {
         self.extra_static_context = Some(context);
+        self
+    }
+
+    /// Restrict new sessions' MCP tools to one server — the enforcement
+    /// half of the per-tab scoping (the prompt is the declaration half).
+    ///
+    /// The name must match the server's `ContextServerId` (e.g.
+    /// `"companies"`). Kask panel passes the tab's server id.
+    pub fn with_mcp_server_scope(mut self, server: SharedString) -> Self {
+        self.mcp_server_scope = Some(server);
         self
     }
 }
@@ -112,6 +127,7 @@ impl AgentServer for CuratorAgentServer {
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let extra_context = self.extra_static_context.clone();
+        let mcp_server_scope = self.mcp_server_scope.clone();
         cx.spawn(async move |cx| {
             // Build the shared NativeAgent connection, then apply the curator
             // overlay before handing it back. The overlay is the only
@@ -128,6 +144,9 @@ impl AgentServer for CuratorAgentServer {
                         None => SharedString::from(CURATOR_STATIC_CONTEXT),
                     };
                     agent.set_curator_static_context(context);
+                    if let Some(scope) = mcp_server_scope {
+                        agent.set_mcp_server_scope(scope);
+                    }
                 });
             });
             Ok(Rc::new(crate::NativeAgentConnection(agent)) as Rc<dyn acp_thread::AgentConnection>)

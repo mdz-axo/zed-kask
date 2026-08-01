@@ -123,7 +123,7 @@ impl TokenRegistry for TokenRegistryStore {
              (id, resource, resource_id, action, delegated_from, delegated_to,
               signature_hex, public_key_hex, expires_at, attenuation_level,
               max_attenuation, context_nonce, issued_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', '', ?9, ?10, ?11, ?12, unixepoch())",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, unixepoch())",
                 &[
                     DbValue::Text(token.id.clone()),
                     DbValue::Text(resource_str.to_string()),
@@ -131,6 +131,8 @@ impl TokenRegistry for TokenRegistryStore {
                     DbValue::Text(action_str.to_string()),
                     DbValue::Text(token.delegated_from.to_string()),
                     DbValue::Text(token.delegated_to.to_string()),
+                    DbValue::Text(String::new()), // signature_hex — legacy column, no crypto material
+                    DbValue::Text(String::new()), // public_key_hex — legacy column, no crypto material
                     token.expires_at.map_or(DbValue::Null, DbValue::Integer),
                     DbValue::Integer(token.attenuation_level as i64),
                     DbValue::Integer(token.max_attenuation as i64),
@@ -231,7 +233,6 @@ mod tests {
     use crate::database::sqlite::SqliteDriver;
     use hkask_capability::DelegationAction;
     use hkask_capability::DelegationResource;
-    use hkask_capability::token_types::TokenSignature;
     use hkask_types::WebID;
     use std::sync::Arc;
 
@@ -252,8 +253,6 @@ mod tests {
             action: DelegationAction::Execute,
             delegated_from: from,
             delegated_to: to,
-            signature: TokenSignature([0u8; 64]),
-            public_key: hkask_types::Ed25519PublicKey([0u8; 32]),
             expires_at: None,
             attenuation_level: 0,
             max_attenuation: 7,

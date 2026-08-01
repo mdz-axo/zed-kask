@@ -2426,6 +2426,45 @@ mod tests {
         assert_eq!(shared.len(), 1, "shared semantic copy present");
     }
 
+    /// Dual-perspective recall pin: the user's `recall_context` must surface
+    /// the user's own first-person record of a CURATOR conversation (it
+    /// happened to the user), while the curator's record stays sovereign to
+    /// the curator's DB — queried only via `recall_context_curator`.
+    #[tokio::test]
+    async fn user_recall_finds_user_perspective_of_curator_turn() {
+        let port = in_memory_port();
+        port.ingest_turn(TurnRecord {
+            thread_id: "dual-recall-test".to_string(),
+            user_input: "unique_zebra_keyword status?".to_string(),
+            agent_response: "nominal".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        })
+        .await
+        .expect("ingest succeeds");
+
+        // User-side recall surfaces the user's record of the curator turn.
+        let user_snippets = port
+            .recall_context("unique_zebra_keyword", 5)
+            .await
+            .expect("user recall succeeds");
+        assert!(
+            !user_snippets.is_empty(),
+            "user recall must find the user's record of the curator conversation"
+        );
+
+        // Curator-side recall surfaces the curator's own record.
+        let curator_snippets = port
+            .recall_context_curator("unique_zebra_keyword", 5)
+            .await
+            .expect("curator recall succeeds");
+        assert!(
+            !curator_snippets.is_empty(),
+            "curator recall must find the curator's record of the same conversation"
+        );
+    }
+
     /// Self-healing pin: when the curator stores are down, `get()` returns
     /// `None`s without healing (heal disabled in tests), and after
     /// `set_for_tests` restores them, subsequent reads see the healed

@@ -126,6 +126,30 @@ Each is an independent essentialist deletion with a cargo-verified blast radius.
 - **Checkpoint C**: `cargo check --workspace`; hkask test suites green;
   DIVERGENCE.md updated for D3/D4/D6 wording.
 
+## Follow-up simplifications (2026-07-31, second round)
+
+- **Token ceremony collapse (item #1): COMPLETE.** `DelegationToken` is now a
+  plain in-process capability struct — `signature`/`public_key` fields,
+  `verify()`/`verify_cryptographic()`, `derive_signing_key`, `TokenSignature`,
+  the `SigningPayload`, base64 serialization, attenuation-chain crypto, and
+  the Kani tamper-detection harnesses all deleted. `panel_default_token`
+  mints directly (no static zeroed key). Registry persistence
+  (`token_registry.rs`) writes empty strings to the legacy
+  signature_hex/public_key_hex columns (schema unchanged — no migration).
+  `with_heal_cb`/`HealCallback` on `RegulationLedger` deleted (zero prod
+  callers). Cargo.toml: ed25519-dalek, base64, uuid deps dropped;
+  crate description updated. Contract tests rewritten to pin the
+  capability-match gate (is_valid_for, allows_*, deterministic id).
+- **Hook-collapse (item #2): COMPLETE.** `set_tool_router` and
+  `set_metacognition_provider` converted from OnceLock + "already set" warn
+  ceremony to plain re-settable Mutex hooks, matching the other 4 kask hooks.
+- **Docs (item #4): COMPLETE.** DIVERGENCE.md + .rules D1–D10 → D1–D13;
+  `.rules` GuardedStream trap marked RESOLVED.
+- Validation: 1084 tests pass across hkask-capability/hkask-storage/
+  hkask-regulation/hkask-mcp/hkask-templates/agent; workspace check clean.
+  Also landed: `mcp_server_in_scope` free function (operator's per-tab MCP
+  scoping pin test needed the helper extracted).
+
 ## Deferred items — resolution
 
 - **LedgerObserver subscriber bus: REMOVED.** Deleted `LedgerObserver` trait,

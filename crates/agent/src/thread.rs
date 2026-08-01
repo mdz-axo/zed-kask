@@ -1363,6 +1363,11 @@ pub struct Thread {
     /// curator's sovereign DB, and by the context injector dispatch (D11) to
     /// select the correct per-agent recall store.
     agent_id: Option<AgentId>,
+    /// When set, `enabled_tools` filters context-server (MCP) tools to only
+    /// the named server — the kask panel's per-tab scoping enforcement.
+    /// `None` (upstream Zed and non-kask threads) means all servers pass.
+    /// The name matches the server's `ContextServerId` (e.g. `"companies"`).
+    mcp_server_scope: Option<SharedString>,
     /// Tool results that are delivered asynchronously, after the immediate
     /// tool-result slot has been flushed. The outer turn loop drains completed
     /// entries at the top of each iteration and injects them as a synthetic
@@ -1527,6 +1532,7 @@ impl Thread {
             system_prompt_override: None,
             agent_static_context: None,
             agent_id: None,
+            mcp_server_scope: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -1926,6 +1932,7 @@ impl Thread {
             system_prompt_override: None,
             agent_static_context: None,
             agent_id: None,
+            mcp_server_scope: None,
             deferred_tool_results: Vec::new(),
         }
     }
@@ -2159,6 +2166,18 @@ impl Thread {
     /// (Zed Agent) and for subagent threads that inherit from their parent.
     pub fn agent_id(&self) -> Option<&AgentId> {
         self.agent_id.as_ref()
+    }
+
+    /// Restrict this thread's context-server (MCP) tools to a single server.
+    ///
+    /// Used by the kask panel's per-tab scoping: each tab's thread exposes
+    /// only the tools of the MCP server the tab is scoped to, so the
+    /// session-header instruction ("use only the `{server}` server's tools")
+    /// is enforced rather than advisory. `None` (the default) disables the
+    /// filter — upstream Zed threads are unaffected.
+    pub fn set_mcp_server_scope(&mut self, server: Option<SharedString>, cx: &mut Context<Self>) {
+        self.mcp_server_scope = server;
+        cx.notify();
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
@@ -4713,6 +4732,11 @@ impl Thread {
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+            // Kask panel per-tab scoping: when the thread is scoped to a
+            // specific MCP server, skip all other servers' tools.
+            if !mcp_server_in_scope(self.mcp_server_scope.as_deref(), server_id.0.as_ref()) {
+                continue;
+            }
             for (tool_name, tool) in server_tools {
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
                     let tool_name: SharedString =
@@ -5499,6 +5523,15 @@ fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) 
 /// tools list, the model name, the date, the user's global AGENTS.md, the
 /// sandboxing flag, and the platform flags. Stable across Rust versions
 /// (SHA-256, not `DefaultHasher`).
+/// Whether a context-server id passes the kask panel's per-tab MCP scope.
+/// `None` (upstream Zed and non-kask threads) passes every server; `Some`
+/// passes only the exact server id (case-sensitive — server ids are
+/// registry keys, not display names). Extracted as a free function so the
+/// contract is testable without constructing a `Thread`.
+fn mcp_server_in_scope(scope: Option<&str>, server_id: &str) -> bool {
+    scope.is_none_or(|s| s == server_id)
+}
+
 fn system_prompt_digest(
     project: &ProjectContext,
     available_tools: &[SharedString],
@@ -7800,6 +7833,28 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    // ── Kask panel per-tab MCP scoping ──────────────────────────────────
+
+    /// The scoping contract: no scope = all servers pass; a scope passes
+    /// only its exact server id. This pins the enforcement half of the kask
+    /// panel's per-tab tool scoping — the per-tab prompt declares "only the
+    /// `{server}` server's tools are available", and this predicate is what
+    /// makes that true in `enabled_tools`.
+    #[test]
+    fn mcp_server_scope_filters_to_named_server() {
+        // No scope — upstream Zed behavior, everything passes.
+        assert!(mcp_server_in_scope(None, "companies"));
+        assert!(mcp_server_in_scope(None, "curator"));
+        assert!(mcp_server_in_scope(None, "anything-else"));
+
+        // Scoped — exact match only.
+        assert!(mcp_server_in_scope(Some("companies"), "companies"));
+        assert!(!mcp_server_in_scope(Some("companies"), "curator"));
+        assert!(!mcp_server_in_scope(Some("companies"), "Companies")); // case-sensitive
+        assert!(!mcp_server_in_scope(Some("companies"), "company"));
+        assert!(!mcp_server_in_scope(Some("kata-kanban"), "kata_kanban"));
+    }
 
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
         cx.update(|cx| {

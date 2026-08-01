@@ -136,9 +136,10 @@ fn per_tab_system_prompt(server: &str) -> SharedString {
          You are operating in the kask panel, scoped to the `{server}` MCP server.\n\
          {description}\n\
          \n\
-         Use only the `{server}` server's tools for this conversation. The user \
-         can switch tabs to talk to a different server's tool scope — each tab \
-         is an independent conversation with its own history.\n"
+         Only the `{server}` server's tools are available in this conversation —\n\
+         the thread's MCP tool set is filtered to this server. The user can\n\
+         switch tabs to talk to a different server's tool scope — each tab is\n\
+         an independent conversation with its own history.\n"
     )
     .into()
 }
@@ -248,7 +249,8 @@ impl KaskPanel {
         // appended after it.
         let agent_server = Rc::new(
             agent::CuratorAgentServer::new(self.fs.clone(), thread_store)
-                .with_extra_static_context(per_tab_system_prompt(server)),
+                .with_extra_static_context(per_tab_system_prompt(server))
+                .with_mcp_server_scope(server.into()),
         );
 
         // Per-tab connection store — see the `connection_stores` field docs.

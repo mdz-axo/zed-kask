@@ -183,10 +183,59 @@ async fn upload_kask_skill(
         .put_object()
         .bucket(bucket)
         .key(&params.key)
-        .body(body.into())
+        .body(body.clone().into())
         .send()
         .await
         .map_err(|e| Error::Internal(anyhow::anyhow!("uploading kask skill to S3: {e}")))?;
+
+    // zed-kask: A manifest.json upload means a complete publish (tarball +
+    // manifest). Upsert the catalog row immediately so the skill is visible
+    // in the marketplace within seconds instead of waiting up to
+    // KASK_SKILL_FETCH_INTERVAL for the periodic poll. The poll remains as
+    // reconciliation for out-of-band S3 writes.
+    if params.key.ends_with("/manifest.json") {
+        let parts: Vec<&str> = params.key.split('/').collect();
+        if let [
+            "kask-skills",
+            source_user,
+            skill_name,
+            version,
+            "manifest.json",
+        ] = parts.as_slice()
+        {
+            let index_result = async {
+                let manifest: cloud_api_types::KaskSkillManifest =
+                    serde_json::from_slice(&body).context("invalid manifest.json body")?;
+                let now = time::OffsetDateTime::now_utc();
+                app.db
+                    .insert_kask_skill_versions(&[
+                        crate::db::queries::kask_skills::NewKaskSkillVersion {
+                            source_user: source_user.to_string(),
+                            skill_name: skill_name.to_string(),
+                            version: version.to_string(),
+                            description: manifest.description,
+                            dependencies: manifest.dependencies,
+                            tarball_sha256: manifest.tarball_sha256,
+                            published_at: time::PrimitiveDateTime::new(now.date(), now.time()),
+                        },
+                    ])
+                    .await
+            }
+            .await;
+            if let Err(err) = index_result {
+                // The upload itself succeeded — the next poll will reconcile.
+                // Degrading to a warn keeps publish usable if the immediate
+                // index fails transiently (e.g. DB reconnect).
+                log::warn!(
+                    "failed to index kask skill '{}' version '{}' immediately: {err:#}. \
+                     The periodic poll will pick it up within {:?}.",
+                    params.key,
+                    version,
+                    KASK_SKILL_FETCH_INTERVAL
+                );
+            }
+        }
+    }
 
     Ok(StatusCode::CREATED)
 }
@@ -262,11 +311,22 @@ const KASK_SKILL_FETCH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 pub fn fetch_kask_skills_from_blob_store_periodically(app_state: Arc<AppState>) {
     let Some(blob_store_client) = app_state.blob_store_client.clone() else {
-        log::info!("no blob store client");
+        // zed-kask: warn (not info) — an unconfigured blob store disables
+        // the entire skill marketplace, and an operator must be able to
+        // distinguish "not configured" from "configured but broken".
+        log::warn!(
+            "kask skill marketplace disabled: blob store not configured. \
+             Set BLOB_STORE_URL, BLOB_STORE_REGION, BLOB_STORE_ACCESS_KEY, \
+             BLOB_STORE_SECRET_KEY, and BLOB_STORE_BUCKET to enable \
+             /api/kask-skills upload/download and catalog indexing."
+        );
         return;
     };
     let Some(blob_store_bucket) = app_state.config.blob_store_bucket.clone() else {
-        log::info!("no blob store bucket");
+        log::warn!(
+            "kask skill marketplace disabled: BLOB_STORE_BUCKET not set. \
+             /api/kask-skills upload/download and catalog indexing will not work."
+        );
         return;
     };
 
