@@ -1013,7 +1013,7 @@ impl SwarmServer {
                     // not zero. The `.rules` trap: a failed measurement must be
                     // distinguishable from a measured zero.
                     tracing::warn!(
-                        target: "reg.swarm",
+                        target: "hkask.mcp.swarm",
                         agent = %req.agent_name,
                         "swarm_hire_cost: ABW response missing total_hire_cost field — cost unknown"
                     );
@@ -1163,7 +1163,7 @@ impl SwarmServer {
                 Some(cost) => cost,
                 None => {
                     tracing::warn!(
-                        target: "reg.swarm",
+                        target: "hkask.mcp.swarm",
                         agent = %req.agent_name,
                         "swarm_hire: ABW re-verify response missing total_hire_cost — cost unknown"
                     );
@@ -1604,7 +1604,7 @@ impl SwarmServer {
                     Some(c) => c,
                     None => {
                         tracing::warn!(
-                            target: "reg.swarm",
+                            target: "hkask.mcp.swarm",
                             agent = %agent,
                             "swarm_create_swarm: ABW re-verify missing total_hire_cost — cost unknown"
                         );

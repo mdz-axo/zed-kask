@@ -25,7 +25,7 @@ use workspace::{
 };
 
 actions!(
-    kask_extensions,
+    kask_extensions_ui,
     [
         /// Deploys a new Kask Extensions page if none is open, else focuses the
         /// existing one. Used by the View menu entry and the status bar button.

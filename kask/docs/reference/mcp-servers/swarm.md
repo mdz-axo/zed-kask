@@ -18,7 +18,7 @@ mds_categories: [composition, trust, lifecycle, curation]
 The swarm server exposes Agent Bestiary World's agent catalogue, workspaces
 ("swarms"), agent authoring, team composition, and the Xaman Ek curator as MCP
 tools, governed by the kask MCP runtime (OCAP capability gating, gas budgeting,
-`reg.swarm.*` spans). It is the substrate for the **Agent Swarm panel**
+`hkask.mcp.swarm` telemetry targets). It is the substrate for the **Agent Swarm panel**
 (`crates/swarm_panel`) and the **`swarm-intelligence` skill**.
 
 > **Integration plan:** [`docs/plans/abw-swarm-intelligence.md`](../../plans/abw-swarm-intelligence.md)

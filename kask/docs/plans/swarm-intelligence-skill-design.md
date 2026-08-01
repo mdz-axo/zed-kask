@@ -194,7 +194,7 @@ manifest:
     Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT (Kiesel et al. 2022), W3C
     SSN/SOSA, Thagard coherence, Ashby requisite variety, and the ABW
     integration plan (zed-kask 2026-08-01). Composes pragmatic-cybernetics,
-    kata-improvement, and essentialist. Emits reg.swarm.* spans.
+    kata-improvement, and essentialist. Emits reg.skill.swarm-intelligence.* spans.
   functional_role: flowdef
   version: 0.1.0
   editor: curator-or-human-admin
@@ -438,7 +438,7 @@ ocap:
 
 ledger:
   emit_spans: true
-  span_namespace: reg.swarm
+  span_namespace: reg.skill.swarm-intelligence
   telemetry_namespace: hkask.template.swarm-intelligence
   variety_monitoring: true
   algedonic_threshold: 100
