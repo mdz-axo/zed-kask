@@ -196,7 +196,7 @@ impl RealMemoryPort {
 
         let curator_consolidation = RwLock::new(build_curator_consolidation(
             consolidation_cadence_secs,
-            &curator_stores,
+            &curator_stores.get(),
         ));
 
         Ok(Self {
@@ -919,7 +919,7 @@ impl MemoryPort for RealMemoryPort {
                 if needs_rebuild && self.consolidation_cadence_secs > 0 {
                     let rebuilt = build_curator_consolidation(
                         self.consolidation_cadence_secs,
-                        &self.curator_stores,
+                        &(curator_episodic.clone(), curator_semantic.clone()),
                     );
                     if let Ok(mut guard) = self.curator_consolidation.write()
                         && guard.is_none()

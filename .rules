@@ -250,7 +250,7 @@ times across audit cycles 3–6.
 `DIVERGENCE.md` defines the divergence surface: everything under `kask/` is
 ours; everything else tracks upstream Zed and is only touched via the named
 D-seams. When you find a problem in an upstream file (anything outside
-`kask/` and outside the D1–D10 seams), do not "fix" it speculatively —
+`kask/` and outside the D1–D13 seams), do not "fix" it speculatively —
 renaming, reformatting, or "correcting" upstream files creates merge noise
 and risks silent breakage on the next upstream merge. Push the fix into a
 `kask/` crate behind a D-seam instead. If an upstream edit is genuinely
@@ -585,6 +585,10 @@ startup-failure signal" generalizes: every advertised invariant needs an
 enforcement point, or the doc must say "not yet enforced."
 
 ## `GuardedStream` is post-hoc redaction, not real-time blocking
+
+**RESOLVED 2026-07-31** — DIVERGENCE.md D4 now documents this explicitly
+("Output scanning is post-hoc redaction of the stored stream, not real-time
+blocking"). The trap is retired; kept here for historical context.
 
 `GuardedStream` redacts streaming output *after* the stream completes — the
 leaked text has already been forwarded to the consumer in real-time chunks.

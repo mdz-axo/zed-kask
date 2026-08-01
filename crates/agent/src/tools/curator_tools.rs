@@ -30,26 +30,23 @@ pub trait MetacognitionProvider: Send + Sync {
 }
 
 /// Global hook for the metacognition provider.
-static METACOGNITION_PROVIDER: std::sync::OnceLock<Option<Arc<dyn MetacognitionProvider>>> =
-    std::sync::OnceLock::new();
+static METACOGNITION_PROVIDER: std::sync::Mutex<Option<Arc<dyn MetacognitionProvider>>> =
+    std::sync::Mutex::new(None);
 
 /// Set the global metacognition provider (composition root).
 ///
-/// Uses `OnceLock` — a second call is silently dropped. The warn names the
-/// hook so operators can detect a stale provider remaining active.
+/// Re-settable — later calls replace the earlier provider.
 pub fn set_metacognition_provider(provider: Option<Arc<dyn MetacognitionProvider>>) {
-    if let Err(prev) = METACOGNITION_PROVIDER.set(provider) {
-        log::warn!(
-            "set_metacognition_provider: hook already set — second wiring attempt dropped. \
-             The previously-wired provider remains active. \
-             Remediation: restart the app to re-wire from a clean process."
-        );
-        let _ = prev;
-    }
+    *METACOGNITION_PROVIDER
+        .lock()
+        .expect("METACOGNITION_PROVIDER poisoned") = provider;
 }
 
-fn metacognition_provider() -> Option<&'static Arc<dyn MetacognitionProvider>> {
-    METACOGNITION_PROVIDER.get().and_then(|opt| opt.as_ref())
+fn metacognition_provider() -> Option<Arc<dyn MetacognitionProvider>> {
+    METACOGNITION_PROVIDER
+        .lock()
+        .expect("METACOGNITION_PROVIDER poisoned")
+        .clone()
 }
 
 // ── Curator Status Tool ─────────────────────────────────────────────────────
@@ -106,7 +103,7 @@ impl AgentTool for CuratorStatusTool {
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let provider = metacognition_provider().cloned();
+        let provider = metacognition_provider();
         cx.background_executor().spawn(async move {
             let input = input.recv().await.map_err(|_| CuratorStatusOutput {
                 status: "error: invalid input".to_string(),

@@ -3064,29 +3064,21 @@ pub(crate) fn thread_condenser() -> Option<Arc<dyn ThreadCondenser>> {
 /// Global hook for the tool router. When set, `Thread::enabled_tools`
 /// applies the router as a final filter after profile and feature-flag
 /// checks. When `None` (upstream Zed), all enabled tools pass through (I2).
-static TOOL_ROUTER: std::sync::OnceLock<Option<Arc<dyn crate::tool_router::ToolRouter>>> =
-    std::sync::OnceLock::new();
+static TOOL_ROUTER: std::sync::Mutex<Option<Arc<dyn crate::tool_router::ToolRouter>>> =
+    std::sync::Mutex::new(None);
 
 /// Set the global tool router.
 ///
-/// Uses `OnceLock` — a second call is silently dropped. The warn names the
-/// hook so operators can detect a stale router remaining active.
+/// Re-settable — later calls replace the earlier router.
 pub fn set_tool_router(router: Option<Arc<dyn crate::tool_router::ToolRouter>>) {
-    if let Err(prev) = TOOL_ROUTER.set(router) {
-        log::warn!(
-            "set_tool_router: hook already set — second wiring attempt dropped. \
-             The previously-wired router remains active. \
-             Remediation: restart the app to re-wire from a clean process."
-        );
-        let _ = prev;
-    }
+    *TOOL_ROUTER.lock().expect("TOOL_ROUTER poisoned") = router;
 }
 
 /// Get the global tool router, if set. Returns `None` when no router has
 /// been configured (upstream Zed — I2). hKask's composition root calls
 /// `set_tool_router(Some(Arc::new(LazyToolRouter::new())))` to enable it.
-pub(crate) fn tool_router() -> Option<&'static Arc<dyn crate::tool_router::ToolRouter>> {
-    TOOL_ROUTER.get().and_then(|opt| opt.as_ref())
+pub(crate) fn tool_router() -> Option<Arc<dyn crate::tool_router::ToolRouter>> {
+    TOOL_ROUTER.lock().expect("TOOL_ROUTER poisoned").clone()
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

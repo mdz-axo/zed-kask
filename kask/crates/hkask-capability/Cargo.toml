@@ -3,7 +3,7 @@ name = "hkask-capability"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "OCAP delegation token system with Ed25519-signed cryptographic attenuation"
+description = "In-process capability tokens for inter-agent delegation"
 
 
 [lib]
@@ -13,13 +13,10 @@ path = "src/hkask_capability.rs"
 hkask-types = { path = "../hkask-types" }
 serde.workspace = true
 serde_json.workspace = true
-ed25519-dalek.workspace = true
 sha2.workspace = true
 hex.workspace = true
-base64.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

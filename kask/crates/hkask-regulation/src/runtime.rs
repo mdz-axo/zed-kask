@@ -40,9 +40,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing;
 
-/// Error healing callback: (error_string, operation_name).
-type HealCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
 // ── Skill feedback span storage ───────────────────────────────────────────
 // Stores individual reg.skill.<id>.outcome and reg.skill.<id>.operator_feedback
 // span payloads so skills can query their own prior feedback (self-improvement
@@ -425,8 +422,6 @@ impl RegState {
 #[derive(Clone)]
 pub struct RegulationLedger {
     state: Arc<RwLock<RegState>>,
-    /// Optional heal callback: (error_string, operation_name).
-    heal_error_cb: Option<HealCallback>,
 }
 
 impl RegulationLedger {
@@ -440,35 +435,6 @@ impl RegulationLedger {
     pub fn with_threshold(threshold: u64) -> Self {
         Self {
             state: Arc::new(RwLock::new(RegState::new(threshold))),
-            heal_error_cb: None,
-        }
-    }
-
-    /// Attach a self-healing callback for automatic error recovery on depletion.
-    ///
-    /// expect: "The system provides configurable error recovery for homeostatic self-regulation"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — heal callback closes the recovery loop
-    /// \[P4\] Constraining: Clear Boundaries — callback is user-owned, Regulation does not self-modify
-    /// pre:  cb is valid
-    /// post: RegulationLedger with heal callback configured
-    pub fn with_heal_cb(mut self, cb: HealCallback) -> Self {
-        self.heal_error_cb = Some(cb);
-        self
-    }
-
-    /// Run the heal callback (if configured) for a critical alert.
-    fn run_heal_cb(&self, alert: &RuntimeAlert) {
-        if let Some(ref cb) = self.heal_error_cb {
-            let usage_ratio = if alert.threshold > 0 {
-                alert.deficit as f64 / alert.threshold as f64
-            } else {
-                1.0
-            };
-            let msg = format!(
-                "Regulation variety depletion: deficit={} threshold={} usage_ratio={:.2}",
-                alert.deficit, alert.threshold, usage_ratio
-            );
-            cb(&msg, "reg.depletion");
         }
     }
 
@@ -787,12 +753,6 @@ impl RegulationLedger {
             mgr.check_outcome(domain, success_rate, total_ops).cloned()
         };
 
-        if let Some(ref a) = alert
-            && a.severity == crate::algedonic::AlertSeverity::Critical
-        {
-            self.run_heal_cb(a);
-        }
-
         alert
     }
 
@@ -847,13 +807,6 @@ impl RegulationLedger {
             let mut mgr = state.algedonic.write();
             mgr.check(&counter, domain).cloned()
         };
-
-        // Run the heal callback (if configured) on critical alerts.
-        if let Some(ref alert) = alert
-            && alert.severity == crate::algedonic::AlertSeverity::Critical
-        {
-            self.run_heal_cb(alert);
-        }
 
         alert
     }

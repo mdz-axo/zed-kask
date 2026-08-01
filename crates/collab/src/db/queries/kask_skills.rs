@@ -1,7 +1,7 @@
 use anyhow::Context;
 use cloud_api_types::{KaskSkillManifest, KaskSkillMetadata};
 use collections::HashMap;
-use sea_orm::sea_query::{Expr, IntoCondition};
+use sea_orm::sea_query::{Expr, Index, IntoCondition, Table};
 
 use super::*;
 use crate::Error;

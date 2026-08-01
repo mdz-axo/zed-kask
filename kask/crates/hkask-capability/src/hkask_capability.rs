@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
-//! hKask Capability — OCAP delegation token system
+//! hKask Capability — in-process capability tokens for inter-agent delegation.
 //!
-//! Ed25519-signed delegation tokens with cryptographic attenuation.
-//! **Delegation** (`DelegationToken`) tokens are Ed25519-signed tokens for inter-agent delegation.
+//! A `DelegationToken` declares "holder X may perform action Y on resource Z".
+//! Tokens are minted and consumed in-process; the enforced gate is the
+//! capability match in `McpRuntime::invoke`, not cryptography.
 
 pub mod auth;
 pub mod resources;

@@ -98,7 +98,7 @@ impl Default for CapabilityAwareValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_capability::{DelegationAction, DelegationResource, derive_signing_key};
+    use hkask_capability::{DelegationAction, DelegationResource};
     use hkask_types::WebID;
 
     fn make_token(
@@ -108,14 +108,7 @@ mod tests {
     ) -> DelegationToken {
         let from = WebID::from_persona(b"issuer");
         let to = WebID::from_persona(b"holder");
-        DelegationToken::new(
-            resource,
-            resource_id.into(),
-            action,
-            from,
-            to,
-            &derive_signing_key(b"test-secret-32-bytes-long!!"),
-        )
+        DelegationToken::new(resource, resource_id.into(), action, from, to)
     }
 
     // [P3] Motivating: Generative Space — validates empty capability requirement set

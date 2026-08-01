@@ -83,17 +83,30 @@ impl CuratorDb {
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled,
         };
-        if !this.stores_available() {
-            tracing::error!(
-                target: "hkask.mcp.curator",
-                db_path = ?this.db_path,
-                passphrase_configured = this.passphrase.is_some(),
-                "Curator DB unavailable — ALL curator stores (escalations, \
-                 regulation archive, episodic, semantic, token registry) are \
-                 down. Every tool call re-attempts the open (self-healing); \
-                 check that no other process holds the SQLCipher lock and \
-                 that HKASK_DB_PASSPHRASE is set and matches the keychain."
-            );
+        if Self::db_level_down_from(&this.stores) {
+            if this.heal_enabled {
+                tracing::error!(
+                    target: "hkask.mcp.curator",
+                    db_path = ?this.db_path,
+                    "Curator DB unavailable — ALL curator stores (escalations, \
+                     regulation archive, episodic, semantic, token registry) \
+                     are down. Every tool call re-attempts the open \
+                     (self-healing); check that no other process holds the \
+                     SQLCipher lock and that HKASK_DB_PASSPHRASE matches the \
+                     keychain."
+                );
+            } else {
+                // No passphrase — healing can't succeed, so say so rather
+                // than promising re-attempts that will never happen.
+                tracing::error!(
+                    target: "hkask.mcp.curator",
+                    db_path = ?this.db_path,
+                    "Curator DB unavailable and HKASK_DB_PASSPHRASE is not \
+                     set — curator stores will stay down until the server is \
+                     restarted with the passphrase configured. Set \
+                     HKASK_DB_PASSPHRASE (keychain-provisioned) and relaunch."
+                );
+            }
         }
         this
     }
@@ -120,22 +133,29 @@ impl CuratorDb {
         }
     }
 
-    fn stores_available(&self) -> bool {
-        match self.stores.read() {
-            Ok(guard) => {
-                guard.0.is_some()
-                    && guard.1.is_some()
-                    && guard.2.is_some()
-                    && guard.3.is_some()
-                    && guard.4.is_some()
-            }
-            Err(_) => false,
+    /// True when the DB-open level failed (all five stores `None`) — the
+    /// case a re-open can fix. Partial degradation (a per-store `from_driver`
+    /// failure leaving some stores `Some`) is NOT healable by re-open and
+    /// must not churn re-opens on every tool call.
+    fn db_level_down(stores: &CuratorStoreSet) -> bool {
+        stores.0.is_none()
+            && stores.1.is_none()
+            && stores.2.is_none()
+            && stores.3.is_none()
+            && stores.4.is_none()
+    }
+
+    fn db_level_down_from(stores: &RwLock<CuratorStoreSet>) -> bool {
+        match stores.read() {
+            Ok(guard) => Self::db_level_down(&guard),
+            Err(_) => true,
         }
     }
 
-    /// Read the current store set, attempting a re-open when it's down.
+    /// Read the current store set, attempting a re-open when the DB-level
+    /// open has failed.
     fn get(&self) -> CuratorStoreSet {
-        if self.heal_enabled && !self.stores_available() {
+        if self.heal_enabled && Self::db_level_down_from(&self.stores) {
             self.try_heal();
         }
         match self.stores.read() {
@@ -146,19 +166,11 @@ impl CuratorDb {
 
     fn try_heal(&self) {
         let fresh = open_curator_stores(self.db_path.as_deref(), self.passphrase.as_deref());
-        let healed = fresh.0.is_some()
-            && fresh.1.is_some()
-            && fresh.2.is_some()
-            && fresh.3.is_some()
-            && fresh.4.is_some();
+        let fresh_ok = !Self::db_level_down(&fresh);
         match self.stores.write() {
             Ok(mut guard) => {
-                let was_down = guard.0.is_none()
-                    || guard.1.is_none()
-                    || guard.2.is_none()
-                    || guard.3.is_none()
-                    || guard.4.is_none();
-                if healed && was_down {
+                let was_down = Self::db_level_down(&guard);
+                if fresh_ok && was_down {
                     *guard = fresh;
                     tracing::info!(
                         target: "hkask.mcp.curator",
@@ -166,7 +178,7 @@ impl CuratorDb {
                         "Curator DB healed — curator stores restored"
                     );
                     self.heal_attempt_logged.store(false, Ordering::Relaxed);
-                } else if !healed && !self.heal_attempt_logged.swap(true, Ordering::Relaxed) {
+                } else if !fresh_ok && !self.heal_attempt_logged.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
                         target: "hkask.mcp.curator",
                         db_path = ?self.db_path,
