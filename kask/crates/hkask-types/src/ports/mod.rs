@@ -23,6 +23,4 @@ pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, MemorySnippet, Turn
 pub use registry::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
-pub use regulation::{
-    BackpressureSignal, ConsolidationOutcome, ConsolidationRequest, DepletionSignal, LedgerObserver,
-};
+pub use regulation::{ConsolidationOutcome, ConsolidationRequest};

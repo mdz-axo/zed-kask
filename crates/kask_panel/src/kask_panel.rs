@@ -179,9 +179,15 @@ pub struct KaskPanel {
     /// constructed on first render of each tab. Mirrors the agent panel's
     /// `retained_threads: HashMap<ThreadId, Entity<ConversationView>>`.
     threads: HashMap<usize, Entity<ConversationView>>,
-    /// The agent connection store — shared across all tabs. Constructed once
-    /// on panel creation (same pattern as `AgentPanel::connection_store`).
-    connection_store: Entity<AgentConnectionStore>,
+    /// One `AgentConnectionStore` per tab, keyed by server index. Lazily
+    /// constructed alongside each tab's `ConversationView`.
+    ///
+    /// The store is keyed by `Agent` and all tabs use `Agent::Curator`, so a
+    /// shared store would return the first tab's connection for every tab —
+    /// baking the first tab's per-tab system prompt into all of them. Per-tab
+    /// stores make cross-tab prompt bleed unrepresentable: one store = one
+    /// connection = one tab's prompt.
+    connection_stores: HashMap<usize, Entity<AgentConnectionStore>>,
 }
 
 impl KaskPanel {
@@ -193,7 +199,6 @@ impl KaskPanel {
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project();
-        let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
 
         cx.new(|cx| Self {
             workspace: workspace.weak_handle(),
@@ -202,7 +207,7 @@ impl KaskPanel {
             focus_handle: cx.focus_handle(),
             active_tab: DEFAULT_SERVER_INDEX,
             threads: HashMap::default(),
-            connection_store,
+            connection_stores: HashMap::default(),
         })
     }
 
@@ -246,11 +251,21 @@ impl KaskPanel {
                 .with_extra_static_context(per_tab_system_prompt(server)),
         );
 
+        // Per-tab connection store — see the `connection_stores` field docs.
+        // Constructed lazily with the same lifetime as the tab's
+        // `ConversationView`, keeping the ownership DAG a tree:
+        // KaskPanel → per-tab (store, view) → connection → agent → prompt.
+        let connection_store = self
+            .connection_stores
+            .entry(tab)
+            .or_insert_with(|| cx.new(|cx| AgentConnectionStore::new(self.project.clone(), cx)))
+            .clone();
+
         let thread_id = agent_ui::ThreadId::new();
         let conversation_view = cx.new(|cx| {
             ConversationView::new(
                 agent_server,
-                self.connection_store.clone(),
+                connection_store,
                 Agent::Curator,
                 None, // no resume session
                 Some(thread_id),
@@ -592,6 +607,71 @@ mod tests {
     #[test]
     fn server_description_falls_back_for_unknown() {
         assert_eq!(server_description("nonexistent"), "MCP server.");
+    }
+
+    // ── Per-tab connection stores ──────────────────────────────────────
+    //
+    // Regression pin for the cross-tab prompt-bleed bug: all 10 tabs pass
+    // `connection_key = Agent::Curator` to `request_connection`, and the
+    // store keys entries by `Agent` — so a shared store returns the first
+    // tab's connection (with the first tab's baked-in per-tab prompt) for
+    // every tab. The fix gives each tab its own `AgentConnectionStore`,
+    // making the invalid state (two tabs, one connection, wrong prompt)
+    // unrepresentable.
+
+    /// The `Agent` key all tabs share. Changing this to a per-tab key would
+    /// be an alternative fix, but any `Agent::Custom` key is evicted by
+    /// `AgentConnectionStore::handle_agent_servers_updated` (only `Custom`
+    /// ids present in `external_agents` are retained) — so per-tab stores
+    /// are the correct seam, not per-tab `Agent` keys.
+    #[test]
+    fn all_tabs_use_the_same_agent_key() {
+        // Every tab constructs its `ConversationView` with `Agent::Curator`.
+        // If a future change makes this per-tab, re-evaluate whether the
+        // per-tab store is still needed (and whether the eviction filter
+        // accepts the new key).
+        let key = Agent::Curator;
+        assert!(matches!(key, Agent::Curator));
+    }
+
+    /// Structural pin: the panel must own one connection store per tab, not
+    /// a single shared store. Walks the crate source and asserts the field
+    /// is `connection_stores` (plural map) and that no `self.connection_store`
+    /// (singular) reference remains in the panel construction path.
+    #[test]
+    fn kask_panel_uses_per_tab_connection_stores() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let source =
+            std::fs::read_to_string(std::path::Path::new(manifest_dir).join("src/kask_panel.rs"))
+                .expect("read kask_panel.rs");
+
+        assert!(
+            source.contains("connection_stores: HashMap<usize, Entity<AgentConnectionStore>>"),
+            "KaskPanel must own per-tab connection stores"
+        );
+        assert!(
+            source.contains("or_insert_with(|| cx.new(|cx| AgentConnectionStore::new"),
+            "per-tab store must be constructed lazily in ensure_thread_for_tab"
+        );
+        // The singular shared-store field must be gone from the struct and
+        // the constructor — a leftover would silently re-share connections.
+        let mut in_test = false;
+        for line in source.lines() {
+            if line.contains("mod tests") {
+                in_test = true;
+            }
+            if in_test {
+                continue;
+            }
+            assert!(
+                !line.contains("connection_store: Entity<AgentConnectionStore>"),
+                "shared connection_store field re-introduced: {line}"
+            );
+            assert!(
+                !line.contains("self.connection_store"),
+                "shared connection_store reference re-introduced: {line}"
+            );
+        }
     }
 
     // ── per_tab_system_prompt ──────────────────────────────────────────

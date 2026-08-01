@@ -50,7 +50,7 @@ use crate::types::loops::{
     RegulationLoop, RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
 };
 use crate::types::loops::{BudgetOption, RegulationData};
-use hkask_types::BackpressureSignal;
+
 use hkask_types::CuratorDirective;
 use hkask_types::WebID;
 use hkask_types::event::{CyclePhase, RegulationRecord, RegulationSink, Span, SpanKind};
@@ -222,6 +222,15 @@ impl CyberneticsLoop {
         sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
     ) {
         self.alert_email_sink = sink;
+    }
+
+    /// Replace the regulation event sink after construction.
+    ///
+    /// Used by the composition root to upgrade from `NoopEventSink` to a
+    /// durable `RegulationArchive` once the curator DB passphrase resolves
+    /// (post-login deferred task).
+    pub fn set_event_sink(&mut self, sink: Arc<dyn RegulationSink>) {
+        self.event_sink = Some(sink);
     }
 
     /// Wire the direct curator directive channel: Curation → Cybernetics.
@@ -978,23 +987,6 @@ impl RegulationLoop for CyberneticsLoop {
             }
         }
         // Note: Auto-draw from Well is now synchronous — handled in WalletManager::spend().
-        let has_energy_depletion = actions
-            .iter()
-            .any(|a| a.parameters.reason == "energy_budget_low");
-        if has_energy_depletion {
-            let ledger = self.ledger.read().await;
-            let worst_ratio = actions
-                .iter()
-                .filter_map(|a| a.parameters.data.remaining_ratio())
-                .fold(1.0, f64::min);
-            ledger
-                .emit_backpressure(BackpressureSignal {
-                    source: LoopId::Cybernetics,
-                    reason: "energy_budget_depletion".into(),
-                    severity: 1.0 - worst_ratio,
-                })
-                .await;
-        }
         if actions.len() > self.max_iterations as usize {
             tracing::warn!(target: "reg.cybernetics", action_count = actions.len(), max_iterations = self.max_iterations, "Cascade detected: action count exceeds max_iterations");
         }

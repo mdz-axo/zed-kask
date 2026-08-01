@@ -1,10 +1,52 @@
 # Divergence Slimming + Seam Simplification — Plan
 
-Date: 2026-07-31
-Methodology: essentialist G1/G2/G3 deletion tests, grill-me adversarial challenge,
-hypothesis-framer (hypothesis: most non-D-seam upstream edits are ritual — null:
-each carries load), idiomatic-rust (compiler-verified blast radius via cargo check),
-task-breakdown (this document).
+Date: 2026-07-31 · Status: **COMPLETE** (all slices landed; tests green)
+
+## Outcome summary
+
+- **Phase A (reverts)**: all 4 non-essential `default.json` default groups reverted
+  (rust-analyzer off, auto-install toml/csv/jinja, Jinja globs, bash/yaml/taplo LSPs);
+  settings_store write-skip reverted (upstream candidate); 7 files restored
+  byte-identical to merge-base (trusted_worktrees, acp_diff, alacritty, 2 CI
+  actions, 2 CI workflows); OpenRouter key-prefix logging + visibility bumps
+  reverted (kept only the D13 `max_output_tokens` plumbing).
+- **Phase B (docs)**: DIVERGENCE.md updated — D3/D4/D5/D6 rewritten post-removal,
+  D13 stale log reference removed, 11 previously undocumented seams listed.
+- **Phase C (seam simplification)**: C1 self-referential `token.verify()` gate
+  removed (runtime.rs); C2 partially descoped — `AuthContext`, `verify.rs`
+  require_*_access, and `NoOpTokenRegistry` deleted, but `TokenRegistry`/
+  `TokenRegistryStore` KEPT (live consumer: curator `list_tokens` consent audit
+  — the audit's "zero consumers" claim was wrong); C3 `BridgeToolPort` collapsed
+  (McpRuntime passed directly); C4 `LoggingMemoryPort` + early wiring deleted;
+  C5 duplicate condenser/tool-invoker wiring in main.rs deleted; C6
+  `direct_chat_strategy` knob + Guard settings page deleted.
+- **Deferred**: LedgerObserver subscriber bus (needs operator decision);
+  upstream PRs for trusted_worktrees/settings_store/head-tail fixes.
+
+## Keystore / sovereignty-token verdicts (confirmed)
+
+1. Sovereignty-token removal: complete (19c5ca5f80 + C1 residue removed).
+2. Keystore duplication: absent — hkask-keystore uses `keyring` directly
+   everywhere; no injection seam, no parallel CredentialsProvider path.
+   D5 row rewritten to reflect this.
+
+## Validation
+
+- `cargo check`: zed, kask_bridge, hkask-mcp, hkask-capability, settings_content,
+  settings_ui, language_models — all clean.
+- `cargo nextest`: 762 agent + 148 bridge/capability/mcp/settings_content +
+  71 settings/auto_update/kask_panel — all pass.
+- Upstream diff audit: `default.json` shows only telemetry/auto_update/
+  credentials_url; settings_store shows only the auto_update test pin.
+
+## Methodology notes (grill-me self-challenge outcomes)
+
+- The sub-agent audit claimed TokenRegistry had "zero production consumers" —
+  grep proved it wrong (curator MCP `list_tokens`). Corrected before deletion.
+- An E0004 in remote_connection during test builds was a stale-artifact flake;
+  not reproducible after rebuild, unrelated to the changes.
+- Working-tree edits were committed incrementally by the operator during the
+  session (commits f5ed02574e…7edd0e7cc8); content verified equivalent to plan.
 
 ## Hypothesis (H1) and null (H0)
 

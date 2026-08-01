@@ -52,7 +52,7 @@ pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BUILT_IN_MCP_SERVERS_PAIRS, BuiltinMcpServer,
     filter_config_env_for_server, filter_credentials_for_server, find_server,
 };
-pub use memory::{BridgeMemoryPort, RealMemoryPort};
+pub use memory::{BridgeMemoryPort, RealMemoryPort, open_curator_regulation_archive};
 pub use settings::{
     KaskCodegraphSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
     KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings, KaskFusionSettings,

@@ -1,4 +1,3 @@
-mod components;
 mod panel_button;
 mod publish;
 
@@ -10,13 +9,13 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Context as _;
 use cloud_api_types::{ExtensionProvides, GetKaskSkillsResponse, KaskSkillMetadata};
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::Editor;
 use extension_host::ExtensionStore;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, InteractiveElement, KeyContext, ParentElement,
-    Render, Styled, Task, TextStyle, UniformListScrollHandle, Window, actions, point, uniform_list,
+    App, Context, Entity, EventEmitter, Focusable, InteractiveElement, ParentElement, Render,
+    Styled, Task, UniformListScrollHandle, Window, actions, point, uniform_list,
 };
-use theme_settings::ThemeSettings;
+use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
 use ui::{
     ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
     ToggleButtonSimple, WithScrollbar, prelude::*,
@@ -25,8 +24,6 @@ use workspace::{
     Workspace,
     item::{Item, ItemEvent, Settings},
 };
-
-use crate::components::ExtensionCard;
 
 actions!(
     kask_extensions,
@@ -313,7 +310,7 @@ impl KaskExtensionsPage {
         range: Range<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<ExtensionCard> {
+    ) -> Vec<MarketplaceCard> {
         let mut cards = Vec::new();
         for ix in range {
             if ix >= self.filtered_remote_skill_indices.len() {
@@ -332,7 +329,7 @@ impl KaskExtensionsPage {
         &mut self,
         skill: KaskSkillMetadata,
         cx: &mut Context<Self>,
-    ) -> ExtensionCard {
+    ) -> MarketplaceCard {
         let status = self.skill_status(&skill.id, cx);
         let skill_id = skill.id.clone();
         let skill_id_for_uninstall = skill.id.clone();
@@ -342,7 +339,7 @@ impl KaskExtensionsPage {
         let fs = self.fs.clone();
         let marketplace_dir = agent_skills::global_skills_dir().join("_marketplace");
 
-        ExtensionCard::new().child(
+        MarketplaceCard::new().child(
             h_flex()
                 .w_full()
                 .gap_2()
@@ -697,60 +694,7 @@ impl KaskExtensionsPage {
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> Div {
-        let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("BufferSearchBar");
-
-        let editor_border = if self.query_contains_error {
-            Color::Error.color(cx)
-        } else {
-            cx.theme().colors().border
-        };
-
-        h_flex()
-            .key_context(key_context)
-            .h_8()
-            .min_w(rems_from_px(384.))
-            .flex_1()
-            .pl_1p5()
-            .pr_2()
-            .gap_2()
-            .border_1()
-            .border_color(editor_border)
-            .rounded_md()
-            .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
-            .child(self.render_text_input(&self.query_editor, cx))
-    }
-
-    fn render_text_input(
-        &self,
-        editor: &Entity<Editor>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: if editor.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                cx.theme().colors().text
-            },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
-            ..Default::default()
-        };
-
-        EditorElement::new(
-            editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        marketplace_search_bar(&self.query_editor, self.query_contains_error, cx)
     }
 
     fn on_query_change(
@@ -832,17 +776,7 @@ impl KaskExtensionsPage {
             }
         };
 
-        h_flex()
-            .py_4()
-            .gap_1p5()
-            .when(self.fetch_failed, |this| {
-                this.child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-            })
-            .child(Label::new(message))
+        marketplace_empty_state(message, self.fetch_failed)
     }
 }
 

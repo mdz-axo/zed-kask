@@ -570,6 +570,58 @@ impl RealMemoryPort {
 /// mirroring the user agent's episodic loop. The semantic store is the
 /// curator-accessible shared copy that `curator_memory_recall` and
 /// `curator_semantic_search` read from.
+/// Resolve the curator's sovereign `pod.db` path (same resolution as
+/// `open_curator_stores`): `HKASK_CURATOR_DB` if set, else
+/// `agents/curator/pod.db` under the hKask data dir.
+pub fn curator_db_path() -> String {
+    std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
+        let p = hkask_types::agent_paths::agent_pod_db("curator");
+        let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+        if let Some(parent) = resolved.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        resolved.to_string_lossy().to_string()
+    })
+}
+
+/// Open a `RegulationArchive` (durable regulation-span store) on the curator's
+/// sovereign `pod.db` — the same DB the curator MCP server's `reg_query` and
+/// `curator_algedonic_log` tools read. Returns `None` on any failure; the
+/// caller degrades to `NoopEventSink` with a warn.
+pub fn open_curator_regulation_archive(
+    passphrase: &str,
+) -> Option<Arc<hkask_storage::RegulationArchive>> {
+    let db_path = curator_db_path();
+    let db = match Database::open(&db_path, passphrase) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.storage",
+                error = %e,
+                db_path = %db_path,
+                "Failed to open curator DB for regulation archive"
+            );
+            return None;
+        }
+    };
+    let pool = match db.sqlite_pool() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(target: "reg.storage", error = %e, "Failed to get SQLite pool for regulation archive");
+            return None;
+        }
+    };
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> =
+        Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
+    match hkask_storage::RegulationArchive::from_driver(driver) {
+        Ok(archive) => Some(Arc::new(archive)),
+        Err(e) => {
+            tracing::warn!(target: "reg.storage", error = %e, "Failed to init RegulationArchive schema");
+            None
+        }
+    }
+}
+
 fn open_curator_stores(
     passphrase: &str,
     embedding_dim: usize,

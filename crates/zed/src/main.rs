@@ -612,17 +612,21 @@ fn main() {
         // Server auto-launch happens after settings::init() (below) so we
         // can read KaskSettings to determine which servers to load.
         //
-        // The regulation system (CyberneticsLoop, RegulationLedger, gas budgets,
-        // OCAP verification) is wired here so all tool invocations are
-        // governed. The CyberneticsLoop runs sense→compare→compute→act
-        // cycles on background tasks; the RegulationLedger tracks variety
-        // and algedonic alerts; the FlatEnergyEstimator provides conservative
-        // per-call gas costs; the LedgerSink forwards Regulation spans from
-        // the MCP runtime and the CyberneticsLoop into the ledger's
-        // subscriber bus so registered `LedgerObserver`s (e.g. the Curator
-        // status surface) actually observe them. Replacing the previous
-        // NoopEventSink is what closes the S3 monitoring path — without it,
-        // every emitted span was silently discarded.
+        // The regulation system (CyberneticsLoop, RegulationLedger, gas budgets)
+        // is wired here so all tool invocations are governed. The CyberneticsLoop
+        // runs sense→compare→compute→act cycles on background tasks; the
+        // RegulationLedger tracks variety and algedonic alerts; the
+        // FlatEnergyEstimator provides conservative per-call gas costs.
+        //
+        // The event sink starts as `NoopEventSink` — the durable
+        // `RegulationArchive` (on the curator's pod.db, the same DB the
+        // curator MCP server's `reg_query`/`curator_algedonic_log` tools
+        // read) requires the DB passphrase, which only resolves after the
+        // Zed user logs in. The deferred task upgrades both sinks
+        // (cybernetics loop + MCP runtime governance) once provisioning
+        // completes. Spans emitted before the upgrade are dropped — the
+        // same degradation the previous LedgerSink had (it broadcast to a
+        // subscriber bus with zero subscribers).
         let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
             hkask_regulation::RegulationLedger::default(),
         ));
@@ -631,16 +635,8 @@ fn main() {
         // MetacognitionLoop receives them. This closes the feedback loop.
         let (alert_tx, alert_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        // The event sink must be constructed before the CyberneticsLoop so
-        // both the loop and the MCP runtime share one sink. `LedgerSink::new`
-        // takes the tokio handle explicitly — the GPUI foreground thread is
-        // NOT inside a tokio reactor context, so `Handle::current()` would
-        // panic here. We pass the kask tokio handle captured above instead.
         let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
-            std::sync::Arc::new(hkask_regulation::LedgerSink::new(
-                regulation_ledger.clone(),
-                kask_runtime_handle.clone(),
-            ));
+            std::sync::Arc::new(hkask_regulation::NoopEventSink);
 
         // Alert email sink — outbound algedonic alert emails via MXroute.
         //
@@ -1085,6 +1081,29 @@ fn main() {
                         // Clone for the IPC server (the other copy goes to
                         // RealMemoryPort below).
                         embedding_port_for_ipc = Some(embedding_port.clone());
+
+                        // Upgrade the regulation event sinks to the durable
+                        // `RegulationArchive` on the curator's pod.db — the same
+                        // DB the curator MCP server's `reg_query` and
+                        // `curator_algedonic_log` tools read. Before this,
+                        // both sinks are `NoopEventSink` (spans dropped).
+                        match kask_bridge::open_curator_regulation_archive(&passphrase) {
+                            Some(archive) => {
+                                let sink: std::sync::Arc<dyn hkask_types::RegulationSink> = archive;
+                                mcp_runtime_for_deferred.set_event_sink(sink.clone());
+                                {
+                                    let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
+                                    loop_guard.set_event_sink(sink);
+                                }
+                                log::info!("hKask regulation archive wired — regulation spans now persist to curator pod.db");
+                            }
+                            None => {
+                                log::warn!(
+                                    "hKask regulation archive unavailable — regulation spans will be dropped. \
+                                     Remediation: ensure the curator pod.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
+                                );
+                            }
+                        }
 
                         match kask_bridge::RealMemoryPort::new(
                             &db_path,

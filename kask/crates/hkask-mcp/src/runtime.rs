@@ -177,7 +177,7 @@ fn resolve_mcp_binary(server_id: &str, command: &str) -> String {
 #[derive(Clone)]
 struct ToolGovernance {
     cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
-    event_sink: Arc<dyn hkask_types::RegulationSink>,
+    event_sink: Arc<std::sync::RwLock<Arc<dyn hkask_types::RegulationSink>>>,
     estimator: FlatEnergyEstimator,
 }
 
@@ -221,10 +221,23 @@ impl McpRuntime {
     ) -> Self {
         self.governance = Some(ToolGovernance {
             cybernetics,
-            event_sink,
+            event_sink: Arc::new(std::sync::RwLock::new(event_sink)),
             estimator,
         });
         self
+    }
+
+    /// Replace the governance event sink after construction.
+    ///
+    /// Used by the composition root to upgrade from `NoopEventSink` to a
+    /// durable `RegulationArchive` once the curator DB passphrase resolves
+    /// (post-login deferred task). No-op when governance is not configured.
+    pub fn set_event_sink(&self, sink: Arc<dyn hkask_types::RegulationSink>) {
+        if let Some(governance) = &self.governance
+            && let Ok(mut guard) = governance.event_sink.write()
+        {
+            *guard = sink;
+        }
     }
 
     /// Register an MCP server (metadata only, no live connection).
@@ -505,7 +518,13 @@ impl hkask_capability::ToolPort for McpRuntime {
             // Skipped when governance is not configured (tests, lightweight embedders).
             if let Some(governance) = &self.governance {
                 let cyber = &governance.cybernetics;
-                let sink = &governance.event_sink;
+                // Clone the current sink out of the lock — the composition
+                // root can swap it post-construction (deferred DB upgrade).
+                let sink = governance
+                    .event_sink
+                    .read()
+                    .map(|guard| guard.clone())
+                    .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
                 let est = &governance.estimator;
                 let agent = token.delegated_to;
                 // Capability match: the token must declare authority for this
