@@ -1347,6 +1347,11 @@ pub struct Thread {
     /// in the system-prompt digest (I1). `None` when no `ContextInjector` is set
     /// or when it returns `None` (I2 — upstream Zed compatibility).
     static_context: Option<SharedString>,
+    /// Whether `inject_static_context` has been attempted this session. Without
+    /// this, an empty recall result (`None`) leaves `static_context` as `None`,
+    /// and the `is_none()` guard re-queries the memory store on every turn —
+    /// a redundant SQLite + embedding query per turn for zero benefit.
+    static_context_loaded: bool,
     /// When set, overrides the default system prompt template. Used by the
     /// Curator agent to inject its own persona/system prompt instead of the
     /// default Zed Agent prompt. When `None`, the standard `system_prompt.hbs`
@@ -1529,6 +1534,7 @@ impl Thread {
             cached_system_prompt: None,
             cached_filtered_context: None,
             static_context: None,
+            static_context_loaded: false,
             system_prompt_override: None,
             agent_static_context: None,
             agent_id: None,
@@ -1929,6 +1935,7 @@ impl Thread {
             cached_system_prompt: None,
             cached_filtered_context: None,
             static_context: None,
+            static_context_loaded: false,
             system_prompt_override: None,
             agent_static_context: None,
             agent_id: None,
@@ -3080,8 +3087,13 @@ impl Thread {
             // async because the underlying memory recall may need to await on
             // the GPUI or tokio executor. The result is cached on `Thread` for
             // the rest of the session.
-            if this
-                .read_with(cx, |this, _| this.static_context.is_none())
+            //
+            // We guard on `static_context_loaded` (not `static_context.is_none()`)
+            // because `inject_static_context` returns `None` for an empty recall
+            // result — without the flag, every turn would re-query the memory
+            // store and get the same empty answer.
+            if !this
+                .read_with(cx, |this, _| this.static_context_loaded)
                 .unwrap_or(false)
             {
                 let agent_id = this
@@ -3095,8 +3107,13 @@ impl Thread {
                         let static_context = injector.inject_static_context(&thread_id).await;
                         this.update(cx, |this, _cx| {
                             this.static_context = static_context.map(SharedString::from);
+                            this.static_context_loaded = true;
                         })?;
+                    } else {
+                        this.update(cx, |this, _cx| this.static_context_loaded = true)?;
                     }
+                } else {
+                    this.update(cx, |this, _cx| this.static_context_loaded = true)?;
                 }
             }
 

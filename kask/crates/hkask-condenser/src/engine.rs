@@ -19,7 +19,7 @@
 //!
 //! ## Regulation Spans
 //!
-//! The `tracing::info!` calls with `target: "reg.condenser"` are diagnostic
+//! The `tracing::debug!` calls with `target: "reg.condenser"` are diagnostic
 //! logging for human inspection, NOT cybernetic feedback signals. The
 //! actual feedback channel is the daemon's `store_experience` call in the
 //! MCP server layer. See the condenser README for details.
@@ -99,8 +99,9 @@ impl CondenserEngine {
         let start = Instant::now();
 
         // Diagnostic Regulation span — see module docs: these are diagnostic-only,
-        // not cybernetic feedback signals.
-        tracing::info!(target: "reg.condenser", operation = "compress", algorithm = %algorithm_name, category = %cat.label(), tool_name = %tool_name, ontology_tier = %tier_label, "REG");
+        // not cybernetic feedback signals. Emitted at `debug` to avoid log spam
+        // (one pair of spans per tool-result compression).
+        tracing::debug!(target: "reg.condenser", operation = "compress", algorithm = %algorithm_name, category = %cat.label(), tool_name = %tool_name, ontology_tier = %tier_label, "REG");
 
         let (compressed_content, health_signals) =
             algo.compress(output, self.profile, cat, Some(&ontology_anchor));
@@ -149,7 +150,7 @@ impl CondenserEngine {
         }
 
         // Diagnostic Regulation span
-        tracing::info!(target: "reg.condenser", operation = "compression_ratio", algorithm = %algorithm_name, category = %cat.label(), reduction_pct = %format!("{:.1}", reduction_pct), original_bytes = original_bytes, compressed_bytes = compressed_bytes, latency_ms = start.elapsed().as_millis(), "REG");
+        tracing::debug!(target: "reg.condenser", operation = "compression_ratio", algorithm = %algorithm_name, category = %cat.label(), reduction_pct = %format!("{:.1}", reduction_pct), original_bytes = original_bytes, compressed_bytes = compressed_bytes, latency_ms = start.elapsed().as_millis(), "REG");
 
         CompressedOutput {
             content: compressed_content,
@@ -346,7 +347,7 @@ impl CondenserEngine {
         }
 
         // Diagnostic Regulation span — see module docs.
-        tracing::info!(target: "reg.condenser", operation = "health", total_compressions = stats.total_compressions, health_signal_count = signals.len(), "REG");
+        tracing::debug!(target: "reg.condenser", operation = "health", total_compressions = stats.total_compressions, health_signal_count = signals.len(), "REG");
 
         signals
     }

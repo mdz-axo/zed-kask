@@ -431,6 +431,16 @@ pub struct KaskSwarmSettings {
 
 impl Default for KaskSwarmSettings {
     fn default() -> Self {
+        // These defaults MUST stay in sync with `SwarmConfig::default()` in
+        // `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. The bridge
+        // emits env vars (`HKASK_ABW_*`) from this `Default` via `mcp_env()`;
+        // the server reads them in `SwarmConfig::from_env`. The two `Default`
+        // impls are deliberately separate (the server crate does not depend on
+        // the bridge crate) to avoid a circular dependency — the duplication is
+        // the seam between them. If you change a default here, change it there
+        // too, and update the `swarm_settings_default_emits_no_env` test below.
+        // Note: `default_agent_model` is server-only (operator env var, not
+        // settings-file) — it has no counterpart here.
         Self {
             api_url: String::new(),
             max_credits_per_dispatch: 50,

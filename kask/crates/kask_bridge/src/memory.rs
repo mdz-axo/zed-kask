@@ -1456,7 +1456,7 @@ impl RealMemoryPort {
         let touched = candidates.len();
         let snippets: Vec<MemorySnippet> = candidates.into_iter().map(|c| c.snippet).collect();
 
-        tracing::info!(
+        tracing::debug!(
             target: "reg.memory",
             query_len = query.len(),
             recalled = snippets.len(),
@@ -1592,7 +1592,7 @@ impl RealMemoryPort {
         let touched = candidates.len();
         let snippets: Vec<MemorySnippet> = candidates.into_iter().map(|c| c.snippet).collect();
 
-        tracing::info!(
+        tracing::debug!(
             target: "reg.memory",
             thread_id_len = thread_id.len(),
             recalled = snippets.len(),

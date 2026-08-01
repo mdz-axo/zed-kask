@@ -308,8 +308,12 @@ impl MetacognitionLoop {
 
     /// Act on the snapshot and alerts — log, drain incoming CyberneticsLoop alerts.
     async fn act(&self, snapshot: &HealthSnapshot, alerts: &[EscalationAlert]) {
-        // Log the health snapshot
-        tracing::info!(
+        // Log the health snapshot at `debug`. This tick fires every 30s
+        // regardless of activity; the structured snapshot is diagnostic, not
+        // an actionable signal. Actionable alerts (critical alerts, threshold
+        // breaches) are surfaced to the operator via the `ToastAlertSink`,
+        // which dispatches them as GPUI toasts independent of log level.
+        tracing::debug!(
             target: "reg.curator.metacognition",
             variety_deficit = snapshot.variety_deficit,
             critical_alerts = snapshot.critical_alerts,

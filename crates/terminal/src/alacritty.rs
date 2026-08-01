@@ -91,12 +91,17 @@ impl PtySender {
     }
 
     pub(super) fn resize(&self, bounds: TerminalBounds) {
-        if let Err(error) = self
+        if let Err(_error) = self
             .notifier
             .0
             .send(Msg::Resize(window_size_from_terminal_bounds(bounds)))
         {
-            log::error!("failed to resize alacritty pty: {error}");
+            // The PTY event loop exits before the Terminal entity is dropped
+            // (child exit, EOF, drain_on_exit), closing the channel. Subsequent
+            // resize ticks hit a dead channel — expected post-exit noise, not an
+            // error. The term-grid resize (terminal.rs) runs unconditionally and
+            // is the only resize that matters once the PTY is gone.
+            log::debug!("skipped resize on closed alacritty pty channel");
         }
     }
 

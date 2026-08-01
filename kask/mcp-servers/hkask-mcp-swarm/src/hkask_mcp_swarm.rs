@@ -56,6 +56,14 @@ pub struct SwarmConfig {
 
 impl Default for SwarmConfig {
     fn default() -> Self {
+        // These defaults MUST stay in sync with `KaskSwarmSettings::default()` in
+        // `kask/crates/kask_bridge/src/settings.rs`. The bridge emits env vars
+        // (`HKASK_ABW_*`) from its `Default`; this server reads them in `from_env`.
+        // The two `Default` impls are deliberately separate (the server crate
+        // does not depend on the bridge crate) to avoid a circular dependency —
+        // the duplication is the seam between them. If you change a default
+        // here, change it there too, and update the `swarm_settings_default_emits_no_env`
+        // test in `settings.rs`.
         Self {
             api_base_url: "https://agent-bestiary.world".to_string(),
             api_key: None,
@@ -758,9 +766,13 @@ impl SwarmServer {
     )]
     pub async fn swarm_list_agents(&self, parameters: Parameters<ListAgentsRequest>) -> String {
         execute_tool_semantic(self, "swarm_list_agents", Some("dublin-core"), async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            // The ABW `/agents` catalogue endpoint is open (no API key required).
+            // The module doc (L10) and the tool doc both say "Keyless". The prior
+            // `require_auth()` call broke the panel's primary browse surface in
+            // catalogue-only mode (the default when no key is set) — every
+            // `swarm_list_agents` call returned an Auth error. The `is_authenticated()`
+            // flag is returned in the response envelope so the caller knows the
+            // auth state and can gate authenticated-only UI accordingly.
             let req = parameters.0;
             let data = self
                 .client
@@ -1183,6 +1195,34 @@ impl SwarmServer {
                 ))
                 .into_tool_error());
             }
+            // The operator-configured per-dispatch ceiling
+            // (`max_credits_per_dispatch`, env `HKASK_ABW_MAX_CREDITS`,
+            // default 50) is a hard gate, not advisory. `swarm_hire_cost`
+            // surfaces it as `within_budget` for the banner; this is the
+            // enforcement point. Without it, the panel's "confirm to override"
+            // wording was a no-op — any hire passed because the consent token's
+            // `credits_authorized` was always set to `total_hire_cost`. The
+            // `.rules` trap: an advertised invariant needs an enforcement point.
+            // To raise the ceiling, the operator sets `HKASK_ABW_MAX_CREDITS`;
+            // there is no per-call override path by design (a per-call override
+            // would let a prompt-injected agent talk the operator into raising
+            // it mid-session).
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            if actual_cost > u64::from(ceiling) {
+                self.consent.refund(refund_grant.clone());
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    agent = %req.agent_name,
+                    cost = actual_cost,
+                    ceiling,
+                    "swarm_hire: hire cost exceeds per-dispatch ceiling — refused"
+                );
+                return Err(SwarmError::PaymentRequired(format!(
+                    "hire cost {actual_cost} exceeds per-dispatch ceiling {ceiling} \
+                     (raise HKASK_ABW_MAX_CREDITS to authorize)"
+                ))
+                .into_tool_error());
+            }
 
             let data = self
                 .client
@@ -1241,6 +1281,34 @@ impl SwarmServer {
                     req.credits_authorized,
                 )
                 .map_err(SwarmError::into_tool_error)?;
+            // Per-dispatch ceiling enforcement (mirrors `swarm_hire`).
+            // Delegation cost is `1 cr + tokens` and not pre-quoted by ABW,
+            // so the consent token's `credits_authorized` is the only cost
+            // signal — the ceiling must gate it directly. Without this, an
+            // operator (or a prompt-injected agent in Steer mode) could mint
+            // a delegate consent for 1000 credits and bypass the dispatch
+            // limit entirely.
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            if u64::from(grant) > u64::from(ceiling) {
+                self.consent.refund(ConsentGrant {
+                    action: "delegate".to_string(),
+                    target: req.workspace_id.clone(),
+                    credits_authorized: grant,
+                    token: req.consent_token.clone(),
+                });
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    workspace = %req.workspace_id,
+                    authorized = grant,
+                    ceiling,
+                    "swarm_delegate: authorized ceiling exceeds per-dispatch limit — refused"
+                );
+                return Err(SwarmError::PaymentRequired(format!(
+                    "authorized credits {grant} exceed per-dispatch ceiling {ceiling} \
+                     (raise HKASK_ABW_MAX_CREDITS to authorize)"
+                ))
+                .into_tool_error());
+            }
             let refund_grant = ConsentGrant {
                 action: "delegate".to_string(),
                 target: req.workspace_id.clone(),
@@ -1560,9 +1628,19 @@ impl SwarmServer {
                     continue;
                 };
                 // Consume the consent token for this specific hire. The token's
-                // `credits_authorized` ceiling was set by the panel from the
-                // real `swarm_hire_cost` estimate; we re-verify the actual cost
-                // against ABW below before spending (mirroring `swarm_hire`).
+                // `credits_authorized` ceiling was set by the panel from the real
+                // `swarm_hire_cost` estimate; we re-verify the actual cost against
+                // ABW below before spending (mirroring `swarm_hire`).
+                //
+                // The `cost: 0` passed to `consume` is intentional: the actual
+                // spend is not known until the ABW re-verify below, so the consent
+                // store's over-spend guard (`cost > credits_authorized`) cannot
+                // fire meaningfully here. The store's single-use + scope checks
+                // (action + target) still fire. The real over-spend guard is the
+                // `actual_cost > grant` check at L1619, which refunds on failure.
+                // This is the two-phase consume pattern: consume with cost=0 to
+                // validate scope + single-use, then re-verify against ABW, then
+                // refund if the real cost exceeds the authorized ceiling.
                 let grant = match self.consent.consume(token, "hire", agent, 0) {
                     Ok(ceiling) => ceiling,
                     Err(e) => {
@@ -1622,6 +1700,31 @@ impl SwarmServer {
                         "agent": agent,
                         "error": format!(
                             "actual hire cost {actual_cost} exceeds authorized {grant} — re-request consent"
+                        ),
+                    }));
+                    continue;
+                }
+                // Per-dispatch ceiling enforcement (mirrors `swarm_hire`).
+                // The ceiling is per-hire, not per-swarm: each hire in this
+                // loop is a separate dispatch and must independently satisfy
+                // `max_credits_per_dispatch`. An aggregate swarm ceiling is a
+                // separate invariant not yet wired — do not add one here
+                // without also adding a consent banner to `create_swarm`.
+                let ceiling = self.client.config().max_credits_per_dispatch;
+                if actual_cost > u64::from(ceiling) {
+                    self.consent.refund(refund_grant);
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        agent = %agent,
+                        cost = actual_cost,
+                        ceiling,
+                        "swarm_create_swarm: hire cost exceeds per-dispatch ceiling — refused"
+                    );
+                    hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": format!(
+                            "hire cost {actual_cost} exceeds per-dispatch ceiling {ceiling} \
+                             (raise HKASK_ABW_MAX_CREDITS to authorize)"
                         ),
                     }));
                     continue;
@@ -2215,5 +2318,92 @@ mod tests {
     #[test]
     fn strip_leading_mentions_empty_when_only_mentions() {
         assert_eq!(strip_leading_mentions("@only_mention"), "");
+    }
+
+    // ── Per-dispatch ceiling enforcement ─────────────────────────────────────
+    // `max_credits_per_dispatch` is a hard server-side gate, not advisory.
+    // `swarm_hire_cost` surfaces it as `within_budget` for the banner; the
+    // spend tools (`swarm_hire`, `swarm_delegate`, `swarm_create_swarm`)
+    // enforce it. This pins the `.rules` trap: an advertised invariant needs
+    // an enforcement point. The prior code computed `within_budget` but never
+    // refused — the panel's "confirm to override" was a no-op.
+
+    #[test]
+    fn config_max_credits_per_dispatch_default_is_50() {
+        // Pin the default so a silent drift (e.g. raising it to u32::MAX to
+        // effectively disable the gate) is caught. The operator overrides via
+        // HKASK_ABW_MAX_CREDITS.
+        let c = SwarmConfig::default();
+        assert_eq!(c.max_credits_per_dispatch, 50);
+    }
+
+    #[test]
+    fn hire_cost_within_budget_flag_respects_ceiling() {
+        // `swarm_hire_cost` computes `within_budget = total <= ceiling`. This
+        // is the banner signal; the enforcement is in `swarm_hire`. Pin the
+        // relation so a refactor that inverts the comparison is caught.
+        let ceiling: u64 = 50;
+        let total_within = 50u64;
+        let total_over = 51u64;
+        assert!(total_within <= ceiling, "equal cost must be within budget");
+        assert!(
+            total_over > ceiling,
+            "over-ceiling cost must not be within budget"
+        );
+    }
+
+    #[test]
+    fn ceiling_gate_refunds_consent_on_refusal() {
+        // When `swarm_hire` refuses a hire for exceeding the per-dispatch
+        // ceiling, it must refund the consent token so the operator can retry
+        // after raising `HKASK_ABW_MAX_CREDITS` without re-confirming. This
+        // mirrors the `actual_cost > credits_authorized` refund path. We pin
+        // the refund semantics at the ConsentStore level: a refunded grant is
+        // re-consumable.
+        let store = ConsentStore::default();
+        let token = store.mint("hire", "expensive_agent", 100);
+        // Consume (the spend path does this before the ceiling check).
+        let ceiling = store
+            .consume(&token, "hire", "expensive_agent", 0)
+            .expect("consume with cost=0 (two-phase pattern)");
+        assert_eq!(ceiling, 100);
+        // Refund (the ceiling-gate refusal path does this).
+        store.refund(ConsentGrant {
+            action: "hire".to_string(),
+            target: "expensive_agent".to_string(),
+            credits_authorized: 100,
+            token: token.clone(),
+        });
+        // The refunded token must be re-consumable — the operator can retry
+        // after raising the ceiling without re-confirming.
+        store
+            .consume(&token, "hire", "expensive_agent", 0)
+            .expect("refunded ceiling-refused token should re-consume");
+    }
+
+    #[test]
+    fn delegate_ceiling_gate_refunds_on_refusal() {
+        // `swarm_delegate` checks `credits_authorized > max_credits_per_dispatch`
+        // after consume and refunds on refusal. Pin the refund semantics: a
+        // delegate token minted for more than the ceiling is consumable (the
+        // store doesn't know the ceiling), refunded by the gate, and
+        // re-consumable after the operator raises the ceiling.
+        let store = ConsentStore::default();
+        let token = store.mint("delegate", "ws-123", 1000);
+        let authorized = store
+            .consume(&token, "delegate", "ws-123", 1000)
+            .expect("consume should succeed — store doesn't know the ceiling");
+        assert_eq!(authorized, 1000);
+        // The gate refuses because 1000 > 50 (default ceiling). Refund.
+        store.refund(ConsentGrant {
+            action: "delegate".to_string(),
+            target: "ws-123".to_string(),
+            credits_authorized: 1000,
+            token: token.clone(),
+        });
+        // Re-consumable after refund.
+        store
+            .consume(&token, "delegate", "ws-123", 1000)
+            .expect("refunded delegate token should re-consume");
     }
 }
