@@ -96,10 +96,7 @@ impl PtySender {
             .0
             .send(Msg::Resize(window_size_from_terminal_bounds(bounds)))
         {
-            // The IO thread has exited (PTY process gone, terminal being
-            // torn down). Closed-channel here is expected during shutdown,
-            // not actionable — matches `shutdown`'s severity below.
-            log::debug!("alacritty pty resize dropped (channel closed): {error}");
+            log::error!("failed to resize alacritty pty: {error}");
         }
     }
 

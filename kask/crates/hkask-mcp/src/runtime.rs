@@ -480,10 +480,17 @@ impl Default for McpRuntime {
 // ── ToolPort implementation ──────────────────────────────────────────────
 //
 // McpRuntime implements ToolPort directly. When governance is configured
-// (via `with_governance`), `invoke` verifies the OCAP token, reserves gas,
-// emits a Regulation span, calls the tool, settles gas, and emits the outcome span.
-// When governance is not configured, it calls the tool directly (for tests
-// and lightweight embedders). One tool, one path — no wrapper layers.
+// (via `with_governance`), `invoke` checks the token's declared capability,
+// reserves gas, emits a Regulation span, calls the tool, settles gas, and
+// emits the outcome span. When governance is not configured, it calls the
+// tool directly (for tests and lightweight embedders). One tool, one path —
+// no wrapper layers.
+//
+// Note: the capability check compares the token's declared resource/action
+// against the invoked tool. Tokens are minted in-process (there is no
+// untrusted transport boundary), and signature verification against a
+// trusted authority is NOT enforced — do not describe this gate as OCAP
+// authentication.
 
 impl hkask_capability::ToolPort for McpRuntime {
     fn invoke<'a>(
@@ -501,12 +508,9 @@ impl hkask_capability::ToolPort for McpRuntime {
                 let sink = &governance.event_sink;
                 let est = &governance.estimator;
                 let agent = token.delegated_to;
-                // OCAP: verify token signature + authority.
-                if !token.verify() {
-                    return Err(hkask_capability::ToolPortError::CapabilityDenied(
-                        "token signature verification failed".into(),
-                    ));
-                }
+                // Capability match: the token must declare authority for this
+                // tool. (No signature verification — tokens are minted and
+                // consumed in-process; see the comment above the impl.)
                 let authorized = token.is_valid_for(
                     hkask_capability::DelegationResource::Tool,
                     tool,

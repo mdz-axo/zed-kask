@@ -567,18 +567,7 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        let new_text = update(old_text.clone(), cx.clone())?;
-
-                        // Skip the write and global update if the content
-                        // didn't change. This prevents feedback loops where
-                        // a SettingsStore observer calls update_settings_file,
-                        // which writes (even unchanged content), which
-                        // triggers set_user_settings, which fires the
-                        // observer again — causing cursor flashing / UI
-                        // re-render storms.
-                        if new_text == old_text {
-                            return Ok(());
-                        }
+                        let new_text = update(old_text, cx.clone())?;
 
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {

@@ -1764,28 +1764,6 @@ fn main() {
                         } else {
                             log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
                         }
-
-                        let condenser_settings = &kask_settings.condenser;
-                        if condenser_settings.auto_compress_tool_results {
-                            let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
-                                &condenser_settings.profile,
-                                condenser_settings.auto_compress_tool_results,
-                            ));
-                            agent::set_thread_condenser(Some(condenser));
-                            log::info!(
-                                "hKask thread condenser wired — tool results will be compressed (profile: {})",
-                                condenser_settings.profile
-                            );
-                        } else {
-                            log::info!("hKask tool result compression disabled (kask.condenser.auto_compress_tool_results = false)");
-                        }
-
-                        let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
-                            tool_port: tool_port_for_deferred.clone(),
-                            executor: cx.background_executor().clone(),
-                        });
-                        kask_panel::set_tool_invoker(Some(panel_tool_invoker));
-                        log::info!("Kask panel tool invoker wired");
                     } else {
                         // Body injection is disabled in zed-kask: with no manifest
                         // executor wired, the `skill` tool returns the no-op envelope

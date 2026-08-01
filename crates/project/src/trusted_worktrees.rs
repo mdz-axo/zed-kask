@@ -316,22 +316,14 @@ impl TrustedWorktreesStore {
                     }
                 }
                 PathTrust::AbsPath(abs_path) => {
-                    // Upstream zed uses a `debug_assert!` here, which panics in
-                    // debug builds when a remote peer sends a relative path
-                    // (e.g. "version"). In a debug build that blocks QA, so we
-                    // upgrade it to a runtime check: log and skip non-absolute
-                    // paths instead of panicking. The downstream
-                    // `find_worktree_in_store` would fail to match anyway.
-                    if !util::paths::is_absolute(
-                        &abs_path.to_string_lossy(),
-                        worktree_store.read(cx).path_style(),
-                    ) {
-                        log::warn!(
-                            "Ignoring non-absolute trusted path {abs_path:?} on path style {:?}",
+                    debug_assert!(
+                        util::paths::is_absolute(
+                            &abs_path.to_string_lossy(),
                             worktree_store.read(cx).path_style()
-                        );
-                        continue;
-                    }
+                        ),
+                        "Cannot trust non-absolute path {abs_path:?} on path style {style:?}",
+                        style = worktree_store.read(cx).path_style()
+                    );
                     if let Some((worktree_id, is_file)) =
                         find_worktree_in_store(worktree_store.read(cx), abs_path, cx)
                     {

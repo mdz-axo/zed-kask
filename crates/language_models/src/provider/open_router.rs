@@ -163,11 +163,11 @@ impl OpenRouterLanguageModelProvider {
         Self { http_client, state }
     }
 
-    pub(crate) fn settings(cx: &App) -> &OpenRouterSettings {
+    fn settings(cx: &App) -> &OpenRouterSettings {
         &crate::AllLanguageModelSettings::get_global(cx).open_router
     }
 
-    pub(crate) fn api_url(cx: &App) -> SharedString {
+    fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             OPEN_ROUTER_API_URL.into()
@@ -225,6 +225,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
+                max_output_tokens: model.max_output_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode: model.mode.unwrap_or_default(),
@@ -297,20 +298,13 @@ impl OpenRouterLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers, is_from_env) =
-            self.state.read_with(cx, |state, cx| {
-                let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-                let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
-                    .custom_headers
-                    .clone();
-                let is_from_env = state.api_key_state.is_from_env_var();
-                (
-                    state.api_key_state.key(&api_url),
-                    api_url,
-                    extra_headers,
-                    is_from_env,
-                )
-            });
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenRouterLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
 
         async move {
             let Some(api_key) = api_key else {
@@ -318,13 +312,6 @@ impl OpenRouterLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            // zed-kask: log key prefix + source for diagnosis (first 12 chars only —
-            // not enough to recover the key, enough to distinguish which key is in use).
-            log::info!(
-                "OpenRouter stream_completion: key_prefix={:.12}... source={}",
-                api_key.as_ref(),
-                if is_from_env { "env_var" } else { "keychain" }
-            );
             let request = open_router::stream_completion(
                 http_client.as_ref(),
                 &api_url,

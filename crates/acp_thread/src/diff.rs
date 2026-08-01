@@ -34,7 +34,7 @@ impl Diff {
                 let language = language_registry
                     .load_language_for_file_path(Path::new(&path))
                     .await
-                    .log_with_level(log::Level::Debug);
+                    .log_err();
 
                 buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
                 buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;

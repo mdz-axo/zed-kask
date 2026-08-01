@@ -76,6 +76,7 @@ pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     #[serde(default)]
@@ -109,6 +110,7 @@ impl Model {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
+            max_output_tokens: None,
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
@@ -129,7 +131,7 @@ impl Model {
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
-        None
+        self.max_output_tokens
     }
 
     pub fn supports_tool_calls(&self) -> bool {
@@ -473,6 +475,14 @@ pub struct ModelEntry {
     pub supported_parameters: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<ModelArchitecture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_provider: Option<TopProvider>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct TopProvider {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -599,6 +609,62 @@ pub async fn list_models(
     parse_models_response(response).await
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub async fn parse_models_response_for_test(
+    entry: ModelEntry,
+) -> Result<Vec<Model>, OpenRouterError> {
+    Ok(vec![model_from_entry(entry)])
+}
+
+fn model_from_entry(entry: ModelEntry) -> Model {
+    Model {
+        name: entry.id,
+        // OpenRouter returns display names in the format "provider_name: model_name".
+        // When displayed in the UI, these names can get truncated from the right.
+        // Since users typically already know the provider, we extract just the model name
+        // portion (after the colon) to create a more concise and user-friendly label
+        // for the model dropdown in the agent panel.
+        display_name: Some(
+            entry
+                .name
+                .split(':')
+                .next_back()
+                .unwrap_or(&entry.name)
+                .trim()
+                .to_string(),
+        ),
+        max_tokens: entry.context_length.unwrap_or(2000000),
+        // zed-kask: send the provider's advertised completion cap as the
+        // output budget. When `max_tokens` is omitted, OpenRouter reserves
+        // the model's full default output size against the key's credit
+        // limit before dispatching, and rejects with 402 on limited keys
+        // even for trivial prompts. An explicit budget prices the request
+        // at what a turn actually needs.
+        max_output_tokens: entry
+            .top_provider
+            .and_then(|provider| provider.max_completion_tokens),
+        supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
+        supports_images: Some(
+            entry
+                .architecture
+                .as_ref()
+                .map(|arch| arch.input_modalities.contains(&"image".to_string()))
+                .unwrap_or(false),
+        ),
+        mode: if entry
+            .supported_parameters
+            .contains(&"reasoning".to_string())
+        {
+            ModelMode::Thinking {
+                budget_tokens: Some(4_096),
+            }
+        } else {
+            ModelMode::Default
+        },
+        provider: None,
+    }
+}
+
 /// Parse the response from either `/models` or `/models/user` into a list of
 /// `Model`s.
 async fn parse_models_response(
@@ -615,47 +681,7 @@ async fn parse_models_response(
         let response: ListModelsResponse =
             serde_json::from_str(&body).map_err(OpenRouterError::DeserializeResponse)?;
 
-        let models = response
-            .data
-            .into_iter()
-            .map(|entry| Model {
-                name: entry.id,
-                // OpenRouter returns display names in the format "provider_name: model_name".
-                // When displayed in the UI, these names can get truncated from the right.
-                // Since users typically already know the provider, we extract just the model name
-                // portion (after the colon) to create a more concise and user-friendly label
-                // for the model dropdown in the agent panel.
-                display_name: Some(
-                    entry
-                        .name
-                        .split(':')
-                        .next_back()
-                        .unwrap_or(&entry.name)
-                        .trim()
-                        .to_string(),
-                ),
-                max_tokens: entry.context_length.unwrap_or(2000000),
-                supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
-                supports_images: Some(
-                    entry
-                        .architecture
-                        .as_ref()
-                        .map(|arch| arch.input_modalities.contains(&"image".to_string()))
-                        .unwrap_or(false),
-                ),
-                mode: if entry
-                    .supported_parameters
-                    .contains(&"reasoning".to_string())
-                {
-                    ModelMode::Thinking {
-                        budget_tokens: Some(4_096),
-                    }
-                } else {
-                    ModelMode::Default
-                },
-                provider: None,
-            })
-            .collect();
+        let models = response.data.into_iter().map(model_from_entry).collect();
 
         Ok(models)
     } else {
