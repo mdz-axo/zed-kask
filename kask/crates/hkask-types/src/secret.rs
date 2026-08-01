@@ -87,20 +87,8 @@ impl SecretRef {
 /// from the same master key. This ensures that a compromise of one
 /// derived secret does not compromise the others or the master key.
 pub mod derivation_contexts {
-    /// A2A (Agent-to-Agent Protocol) HMAC signing secret.
-    pub const A2A_SECRET: &str = "hkask:a2a-secret";
-
-    /// OCAP capability token signing secret.
-    pub const OCAP_SECRET: &str = "hkask:ocap-secret";
-
     /// Master key environment variable name.
     pub const MASTER_KEY_ENV: &str = "HKASK_MASTER_KEY";
-
-    /// Hedera treasury keypair derivation context.
-    pub const TREASURY_HEDERA: &str = "hkask:treasury-hedera";
-
-    /// Wallet seed for HD derivation, deposit references, and API key signing.
-    pub const WALLET_SEED: &str = "hkask:wallet-seed";
 }
 
 /// A `Vec<u8>` wrapper that zeroizes its contents on drop.

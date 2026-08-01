@@ -584,18 +584,7 @@ exists). The `.rules` trap "Process-global hooks set at runtime need a
 startup-failure signal" generalizes: every advertised invariant needs an
 enforcement point, or the doc must say "not yet enforced."
 
-## `GuardedStream` is post-hoc redaction, not real-time blocking
 
-**RESOLVED 2026-07-31** — DIVERGENCE.md D4 now documents this explicitly
-("Output scanning is post-hoc redaction of the stored stream, not real-time
-blocking"). The trap is retired; kept here for historical context.
-
-`GuardedStream` redacts streaming output *after* the stream completes — the
-leaked text has already been forwarded to the consumer in real-time chunks.
-The redaction chunk (`finish_reason: "redacted"`) sanitizes the *stored*
-version, not the *displayed* version. Do not assume streaming output scanning
-provides real-time blocking; it is post-hoc redaction, not pre-emission
-filtering.
 
 ## `input_mapping` bindings must propagate taint before `context.insert`
 

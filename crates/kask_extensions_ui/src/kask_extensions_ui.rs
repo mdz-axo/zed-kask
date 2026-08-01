@@ -109,7 +109,10 @@ enum ExtensionFilter {
 pub struct KaskExtensionsPage {
     list: UniformListScrollHandle,
     is_fetching_skills: bool,
-    fetch_failed: bool,
+    // zed-kask: summary of the last fetch failure, shown in the empty state
+    // so the user sees the real cause (e.g. server-side marketplace not
+    // configured) instead of a generic "check your connection".
+    fetch_error: Option<SharedString>,
     filter: ExtensionFilter,
     // zed-kask: kask skill catalog entries (replaces remote_extension_entries)
     remote_skill_entries: Vec<KaskSkillMetadata>,
@@ -162,7 +165,7 @@ impl KaskExtensionsPage {
             let mut this = Self {
                 list: scroll_handle,
                 is_fetching_skills: false,
-                fetch_failed: false,
+                fetch_error: None,
                 filter: ExtensionFilter::All,
                 remote_skill_entries: Vec::new(),
                 filtered_remote_skill_indices: Vec::new(),
@@ -229,7 +232,7 @@ impl KaskExtensionsPage {
         };
 
         self.is_fetching_skills = true;
-        self.fetch_failed = false;
+        self.fetch_error = None;
         cx.notify();
 
         let url = crate::publish::kask_marketplace_url(&http_client, "/api/kask-skills", &[]);
@@ -243,7 +246,11 @@ impl KaskExtensionsPage {
                 futures::AsyncReadExt::read_to_end(response.body_mut(), &mut body)
                     .await
                     .context("error reading kask skills response")?;
-                if response.status().is_client_error() {
+                // zed-kask: surface the server's response body for both 4xx
+                // and 5xx — the collab server returns actionable error text
+                // (e.g. marketplace-not-configured 501s) that the user should
+                // see, not a JSON parse failure.
+                if response.status().is_client_error() || response.status().is_server_error() {
                     let text = String::from_utf8_lossy(body.as_slice());
                     anyhow::bail!(
                         "status error {}, response: {text:?}",
@@ -259,17 +266,22 @@ impl KaskExtensionsPage {
                 this.is_fetching_skills = false;
                 match result {
                     Ok(skills) => {
-                        this.fetch_failed = false;
+                        this.fetch_error = None;
                         this.remote_skill_entries = skills;
                         this.filter_extension_entries(cx);
                     }
                     Err(err) => {
-                        this.fetch_failed = true;
+                        // The root cause is the actionable line — the outer
+                        // anyhow context ("error reading kask skills
+                        // response") is the least informative fragment.
+                        let root_cause = err
+                            .chain()
+                            .last()
+                            .map(|cause| cause.to_string())
+                            .unwrap_or_else(|| format!("{err:#}"));
+                        this.fetch_error = Some(root_cause.into());
                         this.filter_extension_entries(cx);
-                        log::warn!(
-                            "kask-extensions: failed to fetch skill catalog: {err:#}. \
-                             Remediation: check network connectivity and server availability."
-                        );
+                        log::warn!("kask-extensions: failed to fetch skill catalog: {err:#}.");
                     }
                 }
                 cx.notify();
@@ -740,10 +752,10 @@ impl KaskExtensionsPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let message = if self.is_fetching_skills {
-            "Loading kask skills…"
-        } else if self.fetch_failed {
-            "Failed to load kask skills. Please check your connection and try again."
+        let message: SharedString = if self.is_fetching_skills {
+            "Loading kask skills…".into()
+        } else if let Some(fetch_error) = &self.fetch_error {
+            format!("Failed to load kask skills: {fetch_error}").into()
         } else {
             match self.filter {
                 ExtensionFilter::All => {
@@ -768,9 +780,10 @@ impl KaskExtensionsPage {
                     }
                 }
             }
+            .into()
         };
 
-        marketplace_empty_state(message, self.fetch_failed)
+        marketplace_empty_state(message, self.fetch_error.is_some())
     }
 }
 

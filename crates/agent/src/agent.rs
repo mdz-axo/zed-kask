@@ -4349,6 +4349,7 @@ mod internal_tests {
 
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
+    use agent_servers::AgentServer;
     use agent_settings::COMPACTION_PROMPT;
     use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, SkillVisibility};
     use fs::FakeFs;
@@ -7560,6 +7561,81 @@ mod internal_tests {
                 .map(|entry| (entry.id.clone(), entry.title.to_string()))
                 .collect::<Vec<_>>()
         })
+    }
+
+    /// End-to-end pin for the kask panel's per-tab scoping: two
+    /// `CuratorAgentServer`s built with different per-tab scopes and
+    /// prompts must produce two connections whose sessions carry the
+    /// matching scope and static context — the runtime chain the original
+    /// bug broke (companies tab showing the curator-scoped header with all
+    /// MCP tools reachable).
+    #[gpui::test]
+    async fn test_curator_sessions_carry_per_tab_scope_and_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+
+        for (server, expected_fragment) in [("companies", "companies"), ("curator", "curator")] {
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let server_struct = CuratorAgentServer::new(fs.clone(), thread_store)
+                .with_extra_static_context(format!("scoped to {server}").into())
+                .with_mcp_server_scope(server.into());
+            let connection = cx
+                .update(|cx| {
+                    server_struct.connect(
+                        agent_servers::AgentServerDelegate::new(
+                            project.read(cx).agent_server_store().clone(),
+                            None,
+                            None,
+                        ),
+                        project.clone(),
+                        cx,
+                    )
+                })
+                .await
+                .expect("connect");
+            let acp_thread = cx
+                .update(|cx| {
+                    connection.clone().new_session(
+                        project.clone(),
+                        PathList::new(&[Path::new("/a")]),
+                        cx,
+                    )
+                })
+                .await
+                .expect("new_session");
+
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let agent = connection
+                .downcast::<NativeAgentConnection>()
+                .expect("curator connection is NativeAgentConnection");
+            let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+
+            cx.update(|cx| {
+                thread.read_with(cx, |thread, _cx| {
+                    // The scope matches the tab's server.
+                    assert_eq!(
+                        thread.mcp_server_scope().map(|s| s.as_ref()),
+                        Some(server),
+                        "session scope must match the tab's server"
+                    );
+                    // The static context carries the per-tab prompt
+                    // (appended to the curator base context).
+                    let static_context = thread
+                        .agent_static_context()
+                        .expect("curator static context set");
+                    assert!(
+                        static_context.contains(expected_fragment),
+                        "static context must mention the tab's server, got: {static_context}"
+                    );
+                    assert!(
+                        static_context.contains("Curator Role"),
+                        "curator base context must be present"
+                    );
+                });
+            });
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {

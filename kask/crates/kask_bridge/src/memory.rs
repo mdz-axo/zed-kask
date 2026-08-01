@@ -2495,6 +2495,34 @@ mod tests {
         );
     }
 
+    /// Memory-health probe pin: reports both curator stores up when healthy,
+    /// degraded when either is down, and — critically — does NOT trigger a
+    /// heal (a status read must be side-effect-free, or the probe would
+    /// drive the re-open path and flap the warn-once signal).
+    #[tokio::test]
+    async fn memory_health_json_reports_degraded_without_healing() {
+        let port = in_memory_port();
+
+        let healthy = port.memory_health_json();
+        assert_eq!(healthy["curator_episodic"], true);
+        assert_eq!(healthy["curator_semantic"], true);
+        assert_eq!(healthy["degraded"], false);
+
+        // Simulate an outage. Healing is disabled in test handles, so if the
+        // probe attempted a heal it would fail — the point is it must not
+        // attempt one at all.
+        port.curator_stores.set_for_tests(None, None);
+        let degraded = port.memory_health_json();
+        assert_eq!(degraded["curator_episodic"], false);
+        assert_eq!(degraded["curator_semantic"], false);
+        assert_eq!(degraded["degraded"], true);
+
+        // Stores still down after the probe — the probe didn't heal.
+        let (episodic, semantic) = port.curator_stores.get();
+        assert!(episodic.is_none());
+        assert!(semantic.is_none());
+    }
+
     /// Self-healing pin: when the curator stores are down, `get()` returns
     /// `None`s without healing (heal disabled in tests), and after
     /// `set_for_tests` restores them, subsequent reads see the healed

@@ -7,7 +7,6 @@
 use hkask_keystore::{
     encryption::{EncryptionError, EncryptionService, derive_key},
     keychain::resolve_db_passphrase,
-    master_key::{InternalSecrets, derive_all_internal_secrets_with_version},
 };
 
 // ---------------------------------------------------------------------------
@@ -173,84 +172,6 @@ fn resolve_db_passphrase_from_env() {
     }
     let passphrase = resolve_db_passphrase().expect("resolve from env");
     assert_eq!(&*passphrase, b"test-db-passphrase");
-}
-
-// ---------------------------------------------------------------------------
-// 6. derive_all_internal_secrets field independence
-// ---------------------------------------------------------------------------
-
-#[test]
-fn internal_secrets_all_fields_present() {
-    let secrets: InternalSecrets =
-        derive_all_internal_secrets_with_version("field-presence-test", 1);
-
-    // master_key_hex is 64 hex chars for 32 bytes
-    assert!(
-        !secrets.master_key_hex.is_empty(),
-        "master_key_hex must be non-empty"
-    );
-    assert_eq!(
-        secrets.master_key_hex.len(),
-        64,
-        "master_key_hex must be 64 hex chars (32 bytes)"
-    );
-    assert!(
-        secrets
-            .master_key_hex
-            .chars()
-            .all(|c| c.is_ascii_hexdigit()),
-        "master_key_hex must be valid hex"
-    );
-
-    // a2a_secret
-    assert!(
-        !secrets.a2a_secret.is_empty(),
-        "a2a_secret must be non-empty"
-    );
-    assert_eq!(
-        secrets.a2a_secret.len(),
-        64,
-        "a2a_secret must be 64 hex chars (32 bytes)"
-    );
-    assert!(
-        secrets.a2a_secret.chars().all(|c| c.is_ascii_hexdigit()),
-        "a2a_secret must be valid hex"
-    );
-
-    // ocap_secret
-    assert!(
-        !secrets.ocap_secret.is_empty(),
-        "ocap_secret must be non-empty"
-    );
-    assert_eq!(
-        secrets.ocap_secret.len(),
-        64,
-        "ocap_secret must be 64 hex chars (32 bytes)"
-    );
-    assert!(
-        secrets.ocap_secret.chars().all(|c| c.is_ascii_hexdigit()),
-        "ocap_secret must be valid hex"
-    );
-}
-
-#[test]
-fn internal_secrets_fields_distinct() {
-    let secrets: InternalSecrets =
-        derive_all_internal_secrets_with_version("distinct-fields-test", 1);
-
-    // Signing authorities remain distinct from each other and from the master key.
-    assert_ne!(
-        secrets.a2a_secret, secrets.ocap_secret,
-        "a2a_secret must differ from ocap_secret"
-    );
-    assert_ne!(
-        secrets.a2a_secret, secrets.master_key_hex,
-        "a2a_secret must differ from master_key_hex"
-    );
-    assert_ne!(
-        secrets.ocap_secret, secrets.master_key_hex,
-        "ocap_secret must differ from master_key_hex"
-    );
 }
 
 // ---------------------------------------------------------------------------

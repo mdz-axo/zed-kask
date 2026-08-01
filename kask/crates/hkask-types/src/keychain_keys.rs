@@ -29,9 +29,6 @@
 //! A future enhancement could maintain a separate keychain entry listing all
 //! known pod/agent names (a "keychain index") to enable prefix-free discovery.
 
-/// Keychain key for the A2A communication secret.
-pub const KEY_A2A_SECRET: &str = "a2a-secret";
-
 /// Keychain key for the database passphrase.
 pub const KEY_DB_PASSPHRASE: &str = "hkask-db-passphrase";
 
@@ -83,9 +80,6 @@ pub const KEY_OAUTH_GITHUB_CLIENT_ID: &str = "hkask-oauth-github-client-id";
 
 /// Keychain key for the OAuth GitHub client secret.
 pub const KEY_OAUTH_GITHUB_CLIENT_SECRET: &str = "hkask-oauth-github-client-secret";
-
-/// Keychain key for the OCAP capability token signing secret.
-pub const KEY_OCAP_SECRET: &str = "ocap-secret";
 
 /// Keychain key for the capability probe (internal diagnostics).
 pub const KEY_CAPABILITY_PROBE: &str = "__hkask_capability_probe__";

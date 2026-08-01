@@ -26,4 +26,3 @@ pub mod version_file;
 pub use encryption::derive_key;
 pub use error::KeystoreError;
 pub use keychain::{Keychain, KeychainError, resolve};
-pub use master_key::derive_all_internal_secrets_with_version;

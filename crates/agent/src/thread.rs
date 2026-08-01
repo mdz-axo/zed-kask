@@ -2180,6 +2180,19 @@ impl Thread {
         cx.notify();
     }
 
+    /// The agent-set static context (e.g., the curator overlay's combined
+    /// base + per-tab prompt), if any. Distinct from the memory-injected
+    /// `static_context` — this is the agent's own contribution.
+    pub fn agent_static_context(&self) -> Option<&SharedString> {
+        self.agent_static_context.as_ref()
+    }
+
+    /// The MCP server this thread is scoped to, if any. `None` for upstream
+    /// Zed threads and non-kask threads (all servers pass `enabled_tools`).
+    pub fn mcp_server_scope(&self) -> Option<&SharedString> {
+        self.mcp_server_scope.as_ref()
+    }
+
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
         self.model = ThreadModel::Ready(model.clone());

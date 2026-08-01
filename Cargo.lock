@@ -9186,7 +9186,6 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "dirs 6.0.0",
- "ed25519-dalek",
  "hex",
  "hkask-types",
  "hmac 0.12.1",
@@ -9602,7 +9601,6 @@ dependencies = [
 name = "hkask-templates"
 version = "0.31.1"
 dependencies = [
- "ed25519-dalek",
  "hkask-capability",
  "hkask-forecast",
  "hkask-guard",

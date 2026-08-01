@@ -747,13 +747,9 @@ impl RegulationLedger {
             return None;
         }
 
-        let alert = {
-            let state = self.state.write().await;
-            let mut mgr = state.algedonic.write();
-            mgr.check_outcome(domain, success_rate, total_ops).cloned()
-        };
-
-        alert
+        let state = self.state.write().await;
+        let mut mgr = state.algedonic.write();
+        mgr.check_outcome(domain, success_rate, total_ops).cloned()
     }
 
     /// Get outcome success rate for a domain.
@@ -802,13 +798,9 @@ impl RegulationLedger {
                 .unwrap_or_else(VarietyTracker::new)
         };
 
-        let alert = {
-            let state = self.state.write().await;
-            let mut mgr = state.algedonic.write();
-            mgr.check(&counter, domain).cloned()
-        };
-
-        alert
+        let state = self.state.write().await;
+        let mut mgr = state.algedonic.write();
+        mgr.check(&counter, domain).cloned()
     }
 
     /// Calibrate the variety threshold for a domain.

@@ -58,7 +58,7 @@ async fn download_kask_skill(
     else {
         Err(Error::Http(
             StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
+            KASK_MARKETPLACE_NOT_CONFIGURED.into(),
             Default::default(),
         ))?
     };
@@ -174,7 +174,7 @@ async fn upload_kask_skill(
     else {
         Err(Error::Http(
             StatusCode::NOT_IMPLEMENTED,
-            "blob store not configured".into(),
+            KASK_MARKETPLACE_NOT_CONFIGURED.into(),
             Default::default(),
         ))?
     };
@@ -328,6 +328,13 @@ async fn delete_kask_skill(
 
 const KASK_SKILL_DOWNLOAD_URL_LIFETIME: Duration = Duration::from_secs(3 * 60);
 const KASK_SKILL_FETCH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// zed-kask: 501 body for blob-store-unconfigured responses. Actionable for
+/// both audiences that see it: the server operator (production env vars) and
+/// the local dev who hits it from the client panel (bootstrap + foreman).
+const KASK_MARKETPLACE_NOT_CONFIGURED: &str = "kask marketplace not configured on this server: \
+     BLOB_STORE_* unset (local dev: script/bootstrap && foreman start; \
+     production: set BLOB_STORE_URL/REGION/ACCESS_KEY/SECRET_KEY/BUCKET)";
 
 pub fn fetch_kask_skills_from_blob_store_periodically(app_state: Arc<AppState>) {
     let Some(blob_store_client) = app_state.blob_store_client.clone() else {

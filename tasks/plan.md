@@ -126,6 +126,28 @@ Each is an independent essentialist deletion with a cargo-verified blast radius.
 - **Checkpoint C**: `cargo check --workspace`; hkask test suites green;
   DIVERGENCE.md updated for D3/D4/D6 wording.
 
+## Loose-end sweep (2026-07-31, third round)
+
+- **Docs sweep**: 12 files updated — mcp-servers/README + companies.md
+  (governance section now says capability-match, not OCAP/signature),
+  kask_bridge/reference.md (BridgeToolPort/a2a_secret/LoggingMemoryPort
+  references removed), hkask-capability reference/explanation/tutorial/
+  how-to rewritten for the post-collapse token model, hkask-storage/
+  hkask-types/hkask-mcp-server references fixed, explanation/README index
+  row updated. `.rules` GuardedStream trap deleted (resolved in D4).
+- **Keystore dead surface**: `get_or_create_ocap_secret`, `resolve_a2a_secret`,
+  `resolve_secret_chain`, `resolve_treasury_key`, `resolve_wallet_seed`,
+  `sign_wallet_bytes`, `InternalSecrets` + `derive_all_internal_secrets*`,
+  `MASTER_KEY_SALT`, `CURRENT_KEY_VERSION`, `KEY_A2A_SECRET`, `KEY_OCAP_SECRET`,
+  `A2A_SECRET`/`OCAP_SECRET`/`TREASURY_HEDERA`/`WALLET_SEED` derivation
+  contexts — all removed (zero production consumers). Kept: `resolve()`,
+  `resolve_db_passphrase{,_string}`, `Keychain`, encryption, `derive_sub_key`
+  (live via `SecretRef::Derived` in the DB provisioning path).
+  `ed25519-dalek` dropped from hkask-keystore + hkask-templates Cargo.tomls.
+- Validation: workspace check clean (0 errors); 311 + 89 tests pass across
+  keystore/types/capability/storage/templates/regulation.
+- RuleFrontmatter: kept (operator confirmed always used).
+
 ## Follow-up simplifications (2026-07-31, second round)
 
 - **Token ceremony collapse (item #1): COMPLETE.** `DelegationToken` is now a
