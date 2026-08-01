@@ -276,7 +276,13 @@ pub fn filter_credentials_for_server(
     credentials: &[(String, String)],
 ) -> Vec<(String, String)> {
     let Some(server) = find_server(server_id) else {
-        return credentials.to_vec();
+        // Fail closed: an unknown server id receives no credentials.
+        tracing::warn!(
+            target: "reg.mcp",
+            server_id = %server_id,
+            "Unknown MCP server id — no credentials will be injected"
+        );
+        return Vec::new();
     };
     match server.credentials {
         Some(allowlist) => credentials
@@ -303,7 +309,13 @@ pub fn filter_config_env_for_server(
     config_env: &std::collections::HashMap<String, String>,
 ) -> std::collections::HashMap<String, String> {
     let Some(server) = find_server(server_id) else {
-        return config_env.clone();
+        // Fail closed: an unknown server id receives no config env.
+        tracing::warn!(
+            target: "reg.mcp",
+            server_id = %server_id,
+            "Unknown MCP server id — no config env will be injected"
+        );
+        return std::collections::HashMap::new();
     };
     match server.config_env {
         Some(allowlist) => config_env
@@ -447,15 +459,15 @@ mod tests {
         );
     }
 
-    // Unknown server IDs get all credentials (backward-compatible).
+    // Unknown server IDs fail closed: no credentials are injected.
     #[test]
-    fn unknown_server_gets_all_credentials() {
+    fn unknown_server_gets_no_credentials() {
         let credentials = vec![
             ("KEY_A".to_string(), "url_a".to_string()),
             ("KEY_B".to_string(), "url_b".to_string()),
         ];
         let filtered = filter_credentials_for_server("nonexistent", &credentials);
-        assert_eq!(filtered.len(), 2);
+        assert!(filtered.is_empty());
     }
 
     // The codegraph server should not receive the curator's email config.
@@ -517,13 +529,13 @@ mod tests {
         );
     }
 
-    // Unknown server IDs get all config env (backward-compatible).
+    // Unknown server IDs fail closed: no config env is injected.
     #[test]
-    fn unknown_server_gets_all_config_env() {
+    fn unknown_server_gets_no_config_env() {
         let mut config_env = std::collections::HashMap::new();
         config_env.insert("KEY_A".to_string(), "val_a".to_string());
         config_env.insert("KEY_B".to_string(), "val_b".to_string());
         let filtered = filter_config_env_for_server("nonexistent", &config_env);
-        assert_eq!(filtered.len(), 2);
+        assert!(filtered.is_empty());
     }
 }

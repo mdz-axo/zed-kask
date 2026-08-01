@@ -24,6 +24,68 @@ use hkask_types::template::LLMParameters;
 use hkask_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
 use reqwest::Client;
 
+/// Maximum length of a provider response body embedded in an error string.
+const ERROR_BODY_MAX_CHARS: usize = 200;
+
+/// Secret-shaped prefixes that a provider error page or proxy debug dump may
+/// echo back (CWE-209). Redaction is a simple prefix scan, not a parser:
+/// defense-in-depth before the body reaches IPC/log sinks.
+const SECRET_PREFIXES: &[&str] = &["Authorization:", "Bearer ", "sk-", "api_key"];
+
+/// Sanitizes a raw provider response body before embedding it in an error
+/// string: redacts secret-shaped substrings (prefix through the end of the
+/// whitespace-delimited token) and truncates to [`ERROR_BODY_MAX_CHARS`]
+/// (char-boundary safe) with a total-length suffix.
+fn sanitize_error_body(body: &str) -> String {
+    let redacted = redact_secret_tokens(body);
+    let total_bytes = body.len();
+    if redacted.chars().count() <= ERROR_BODY_MAX_CHARS {
+        redacted
+    } else {
+        let boundary = redacted
+            .char_indices()
+            .nth(ERROR_BODY_MAX_CHARS)
+            .map(|(index, _)| index)
+            .unwrap_or(redacted.len());
+        format!("{}… ({} bytes total)", &redacted[..boundary], total_bytes)
+    }
+}
+
+fn redact_secret_tokens(body: &str) -> String {
+    // Case-insensitive byte-index scan; prefixes are ASCII so byte matching is exact.
+    let lower = body.to_ascii_lowercase();
+    let mut output = String::with_capacity(body.len());
+    let mut cursor = 0;
+    while cursor < body.len() {
+        let match_at = SECRET_PREFIXES
+            .iter()
+            .filter_map(|prefix| lower[cursor..].find(prefix).map(|offset| cursor + offset))
+            .min();
+        match match_at {
+            Some(start) => {
+                output.push_str(&body[cursor..start]);
+                output.push_str("[REDACTED]");
+                let prefix_len = SECRET_PREFIXES
+                    .iter()
+                    .filter(|prefix| lower[start..].starts_with(**prefix))
+                    .map(|prefix| prefix.len())
+                    .max()
+                    .unwrap_or(0);
+                let token_start = start + prefix_len;
+                cursor = body[token_start..]
+                    .find(char::is_whitespace)
+                    .map(|offset| token_start + offset)
+                    .unwrap_or(body.len());
+            }
+            None => {
+                output.push_str(&body[cursor..]);
+                break;
+            }
+        }
+    }
+    output
+}
+
 /// Parameterized OpenAI-compatible chat completion.
 ///
 /// `base_url` is the provider API root (the `chat_path` is appended to it).
@@ -75,7 +137,9 @@ pub async fn openai_compatible_generate(
         let error_text = response.text().await.unwrap_or_default();
         return Err(InferenceError::Connection(format!(
             "{} status {}: {}",
-            provider_code, status, error_text
+            provider_code,
+            status,
+            sanitize_error_body(&error_text)
         )));
     }
 
@@ -88,14 +152,11 @@ pub async fn openai_compatible_generate(
         .map_err(|e| InferenceError::Connection(format!("{} body read: {}", provider_code, e)))?;
 
     let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-        let preview = if body.len() > 500 {
-            format!("{}...", &body[..500])
-        } else {
-            body.clone()
-        };
         InferenceError::Json(format!(
             "{} JSON parse: {} | body: {}",
-            provider_code, e, preview
+            provider_code,
+            e,
+            sanitize_error_body(&body)
         ))
     })?;
 
@@ -169,7 +230,9 @@ pub async fn openai_compatible_generate_messages(
         let error_text = response.text().await.unwrap_or_default();
         return Err(InferenceError::Connection(format!(
             "{} status {}: {}",
-            provider_code, status, error_text
+            provider_code,
+            status,
+            sanitize_error_body(&error_text)
         )));
     }
 
@@ -179,14 +242,11 @@ pub async fn openai_compatible_generate_messages(
         .map_err(|e| InferenceError::Connection(format!("{} body read: {}", provider_code, e)))?;
 
     let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-        let preview = if body.len() > 500 {
-            format!("{}...", &body[..500])
-        } else {
-            body.clone()
-        };
         InferenceError::Json(format!(
             "{} JSON parse: {} | body: {}",
-            provider_code, e, preview
+            provider_code,
+            e,
+            sanitize_error_body(&body)
         ))
     })?;
 
@@ -201,4 +261,48 @@ pub async fn openai_compatible_generate_messages(
         provider_code
     );
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_error_body_redacts_authorization_bearer_token() {
+        let body = "upstream failed. Authorization: Bearer sk-testkey123 was rejected";
+        let sanitized = sanitize_error_body(body);
+        assert!(!sanitized.contains("sk-testkey123"), "{sanitized}");
+        assert!(sanitized.contains("[REDACTED]"), "{sanitized}");
+    }
+
+    #[test]
+    fn sanitize_error_body_redacts_common_secret_prefixes() {
+        let body = "key sk-abc123XYZ rejected; api_key=hunter2";
+        let sanitized = sanitize_error_body(body);
+        assert!(!sanitized.contains("abc123XYZ"), "{sanitized}");
+        assert!(!sanitized.contains("hunter2"), "{sanitized}");
+    }
+
+    #[test]
+    fn sanitize_error_body_truncates_long_body_and_reports_total() {
+        let body = "x".repeat(1000);
+        let sanitized = sanitize_error_body(&body);
+        assert!(sanitized.contains("(1000 bytes total)"), "{sanitized}");
+        // 200 chars of body + ellipsis + suffix.
+        assert!(sanitized.chars().count() < 240, "{sanitized}");
+    }
+
+    #[test]
+    fn sanitize_error_body_passes_short_clean_body_through() {
+        let body = "model not found";
+        assert_eq!(sanitize_error_body(body), body);
+    }
+
+    #[test]
+    fn sanitize_error_body_truncates_on_char_boundary() {
+        // 250 multi-byte chars: byte-based slicing would panic mid-char.
+        let body = "é".repeat(250);
+        let sanitized = sanitize_error_body(&body);
+        assert!(sanitized.starts_with(&"é".repeat(ERROR_BODY_MAX_CHARS)));
+    }
 }

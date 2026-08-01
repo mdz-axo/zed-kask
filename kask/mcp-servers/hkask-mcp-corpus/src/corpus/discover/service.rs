@@ -9,7 +9,6 @@ use hkask_capability::DelegationToken;
 use hkask_capability::ToolPort;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use hkask_types::InferencePort;
-use std::path::PathBuf;
 
 use super::cache::download_and_cache;
 use super::config::{augment_corpus_yaml, generate_corpus_yaml};
@@ -42,8 +41,19 @@ impl DiscoveryService {
             .output_dir
             .clone()
             .unwrap_or_else(|| format!("./{}", author_slug));
-        let output_path = PathBuf::from(&output_dir);
-        let cache_dir = PathBuf::from(&req.cache_dir);
+        // Contain caller-supplied directories under the project root (same
+        // membrane as the tool layer — this service is reachable from MCP
+        // tool calls with LLM-controlled arguments).
+        let contain = |path: &str| {
+            crate::path_safety::contain_for_write(path).map_err(|e| ServiceError::Domain {
+                domain: DomainKind::Wallet,
+                kind: ErrorKind::BadRequest,
+                source: None,
+                message: e.to_string(),
+            })
+        };
+        let output_path = contain(&output_dir)?;
+        let cache_dir = contain(&req.cache_dir)?;
 
         // Ensure output and cache directories exist
         std::fs::create_dir_all(&output_path).map_err(|e| {

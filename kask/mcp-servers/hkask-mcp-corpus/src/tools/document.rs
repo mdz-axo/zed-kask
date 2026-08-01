@@ -875,6 +875,7 @@ impl CorpusServer {
         execute_tool(self, "corpus_convert", async {
             hkask_mcp_server::validate_path("path", path, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let path = crate::path_safety::contain_for_read(path)?;
             let output = output.ok_or_else(|| {
                 McpToolError::invalid_argument(
                     "'output' directory is required when 'path' is a directory",
@@ -882,18 +883,20 @@ impl CorpusServer {
             })?;
             hkask_mcp_server::validate_path("output", output, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let output = crate::path_safety::contain_for_write(output)?;
 
-            let output_dir = std::path::Path::new(output);
+            let output_dir = output.as_path();
             std::fs::create_dir_all(output_dir).map_err(|e| {
                 McpToolError::internal(format!(
                     "Failed to create output directory '{}': {}",
-                    output, e
+                    output_dir.display(),
+                    e
                 ))
             })?;
 
-            let mut sources = std::fs::read_dir(path)
+            let mut sources = std::fs::read_dir(&path)
                 .map_err(|e| {
-                    McpToolError::internal(format!("Failed to read directory '{}': {}", path, e))
+                    McpToolError::internal(format!("Failed to read directory '{}': {}", path.display(), e))
                 })?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())
@@ -904,7 +907,7 @@ impl CorpusServer {
             if sources.is_empty() {
                 return Err(McpToolError::invalid_argument(format!(
                     "Directory '{}' contains no supported documents",
-                    path
+                    path.display()
                 )));
             }
 
@@ -988,14 +991,18 @@ impl CorpusServer {
         execute_tool(self, "corpus_chunk", async {
             hkask_mcp_server::validate_path("input_dir", input_dir, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let input_dir = crate::path_safety::contain_for_read(input_dir)?;
             let output = output.ok_or_else(|| {
                 McpToolError::invalid_argument("'output' is required with 'input_dir'")
             })?;
             hkask_mcp_server::validate_path("output", output, 4096)
                 .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let output_path = crate::path_safety::contain_for_write(output)?;
 
-            let mut sources = std::fs::read_dir(input_dir)
-                .map_err(|e| McpToolError::internal(format!("Failed to read '{input_dir}': {e}")))?
+            let mut sources = std::fs::read_dir(&input_dir)
+                .map_err(|e| {
+                    McpToolError::internal(format!("Failed to read '{}': {e}", input_dir.display()))
+                })?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())
                 .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "txt"))
@@ -1003,11 +1010,11 @@ impl CorpusServer {
             sources.sort();
             if sources.is_empty() {
                 return Err(McpToolError::invalid_argument(format!(
-                    "Directory '{input_dir}' contains no .txt files"
+                    "Directory '{}' contains no .txt files",
+                    input_dir.display()
                 )));
             }
 
-            let output_path = std::path::Path::new(output);
             if let Some(parent) = output_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
                     McpToolError::internal(format!("Failed to create '{}': {e}", parent.display()))
@@ -1087,7 +1094,7 @@ impl CorpusServer {
             writer.flush().map_err(|e| {
                 McpToolError::internal(format!("Failed to flush '{}': {e}", temp_path.display()))
             })?;
-            std::fs::rename(&temp_path, output_path).map_err(|e| {
+            std::fs::rename(&temp_path, &output_path).map_err(|e| {
                 McpToolError::internal(format!(
                     "Failed to publish '{}' as '{}': {e}",
                     temp_path.display(),
@@ -1096,8 +1103,8 @@ impl CorpusServer {
             })?;
 
             Ok(json!({
-                "input_dir": input_dir,
-                "output": output,
+                "input_dir": input_dir.display().to_string(),
+                "output": output_path.display().to_string(),
                 "total_documents": sources.len(),
                 "total_chunks": total_chunks,
                 "indexed": indexed,

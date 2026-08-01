@@ -701,7 +701,7 @@ mod tests {
         });
         let result = read_response_line(&mut receiver).await;
         assert!(
-            matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData),
+            matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::InvalidData),
             "expected InvalidData error, got {result:?}"
         );
         // The writer may fail with BrokenPipe once the receiver is dropped;

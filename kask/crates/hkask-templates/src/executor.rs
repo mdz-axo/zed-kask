@@ -65,9 +65,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// Error healing callback: (error_string, operation_name).
-type HealCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
 /// Extract the PDCA feedback phase from a template_ref string.
 ///
 /// Template refs look like "sankey-flow/sankey-classify" or
@@ -133,8 +130,7 @@ pub struct ManifestExecutor {
     /// When `step.renderer == "minijinja"`, `step.template_ref` is resolved
     /// relative to this path. Defaults to `registry/templates/`.
     template_renderer: TemplateRenderer,
-    /// Optional heal callback: (error_string, operation_name).
-    heal_error_cb: Option<HealCallback>,
+
     /// Spotlighter for transforming untrusted tool outputs (Layer 2 defense).
     /// Applied to every MCP tool result before it enters the LLM context.
     /// Source: Microsoft Research arXiv:2403.14720
@@ -169,7 +165,7 @@ impl ManifestExecutor {
             template_renderer: TemplateRenderer::new(std::path::PathBuf::from(
                 crate::template_renderer::DEFAULT_TEMPLATE_BASE_PATH,
             )),
-            heal_error_cb: None,
+
             spotlighter: Spotlighter::new(SpotlightMode::Delimit),
             runtime_policy: None,
             taint_labels: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -181,12 +177,6 @@ impl ManifestExecutor {
     #[must_use]
     pub fn with_template_base_path(mut self, path: std::path::PathBuf) -> Self {
         self.template_renderer = TemplateRenderer::new(path);
-        self
-    }
-
-    /// Attach a self-healing callback for automatic error recovery.
-    pub fn with_heal_cb(mut self, cb: HealCallback) -> Self {
-        self.heal_error_cb = Some(cb);
         self
     }
 
@@ -839,6 +829,22 @@ impl ManifestExecutor {
                             let key = format!("step_{}_result", step.ordinal);
                             if let Some(val) = context.get(&key) {
                                 let prev_key = format!("prev_{}", key);
+                                // The snapshot copies the value, so it must
+                                // also copy the taint label — otherwise a
+                                // Source-tainted artifact silently loses its
+                                // label when referenced as prev_step_N_result.
+                                let label = self
+                                    .taint_labels
+                                    .lock()
+                                    .expect("taint_labels mutex poisoned")
+                                    .get(&key)
+                                    .copied();
+                                if let Some(label) = label {
+                                    self.taint_labels
+                                        .lock()
+                                        .expect("taint_labels mutex poisoned")
+                                        .insert(prev_key.clone(), label);
+                                }
                                 context.insert(prev_key, val.clone());
                             }
                         }
@@ -1482,9 +1488,39 @@ impl ManifestExecutor {
         // parent's original keys (preserving any updates the sub-cascade made
         // to those keys) plus the step result.
         let mut parent_context = HashMap::new();
-        for (k, v) in sub_result {
-            if parent_keys.contains(&k) {
-                parent_context.insert(k, v);
+        for (k, v) in &sub_result {
+            if parent_keys.contains(k) {
+                parent_context.insert(k.clone(), v.clone());
+            }
+        }
+        // Taint labels live in the Arc-shared map, so labels the sub-cascade
+        // set on parent keys persist — no copy needed for those. The new
+        // step_{ordinal}_result key, however, is inserted below without a
+        // label; copy the label of the sub-cascade's final step result (the
+        // same ordinal key extract_final_step_result picked) so a Source-
+        // tainted sub-result doesn't enter the parent context unlabeled.
+        let final_step_key = sub_result
+            .keys()
+            .filter_map(|key| {
+                key.strip_prefix("step_")
+                    .and_then(|rest| rest.strip_suffix("_result"))
+                    .and_then(|n| n.parse::<u32>().ok())
+                    .map(|ordinal| (ordinal, key))
+            })
+            .max_by_key(|(ordinal, _)| *ordinal)
+            .map(|(_, key)| key.clone());
+        if let Some(ref final_key) = final_step_key {
+            let label = self
+                .taint_labels
+                .lock()
+                .expect("taint_labels mutex poisoned")
+                .get(final_key)
+                .copied();
+            if let Some(label) = label {
+                self.taint_labels
+                    .lock()
+                    .expect("taint_labels mutex poisoned")
+                    .insert(format!("step_{}_result", step.ordinal), label);
             }
         }
         parent_context.insert(format!("step_{}_result", step.ordinal), result_value);
@@ -3680,6 +3716,187 @@ mod tests {
         assert_eq!(
             result.get("step_2_populated").and_then(|v| v.as_str()),
             Some("untrusted external content"),
+        );
+    }
+
+    /// Tool port stub that reports a Source-tainted tool and returns a fixed
+    /// payload. Used by the sub-cascade taint test to get a Source label into
+    /// the shared taint map via the real execute_tool_invoke path.
+    struct SourceToolPort;
+
+    impl hkask_capability::ToolPort for SourceToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: Value,
+            _token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async { Ok(serde_json::json!("untrusted sub-cascade output")) })
+        }
+
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async {
+                Some(hkask_capability::ToolInfo {
+                    name: "read".to_string(),
+                    description: "Source tool stub".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "hkask-mcp-stub".to_string(),
+                    required_capability: None,
+                    taint: ToolTaint::Source,
+                })
+            })
+        }
+
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec!["read".to_string()] })
+        }
+    }
+
+    /// RR-0028: the refinement-loop snapshot copies `step_N_result` values to
+    /// `prev_step_N_result` keys — it must also copy the taint label, otherwise
+    /// a Source-tainted artifact referenced as `prev_step_N_result` bypasses
+    /// the FIDES Source→Sink block.
+    #[tokio::test]
+    async fn loop_snapshot_propagates_source_taint_to_prev_key() {
+        let executor = test_executor_with_taint(vec![]);
+
+        // Manifest: a render step produces step_1_result, then a loop step
+        // re-enters the cascade. On re-entry the executor snapshots
+        // step_1_result to prev_step_1_result — the label must follow.
+        // convergence threshold 0.0 makes the cascade exit after the first
+        // loop pass (any quality reading meets the threshold), so step_1
+        // executes exactly twice.
+        let manifest_yaml = r#"
+manifest:
+  id: taint-loop-snapshot-test
+steps:
+  - ordinal: 1
+    action: render
+    description: produce the artifact
+    template_ref: "artifact"
+  - ordinal: 2
+    action: loop
+    description: re-enter for one refinement pass
+    input_mapping:
+      loop_target: "1"
+convergence:
+  max_iterations: 5
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest =
+            load_manifest_from_yaml(manifest_yaml).expect("test manifest YAML must parse");
+
+        // Seed the label the same way execute_tool_invoke does for Source
+        // tools — the render action doesn't label results itself.
+        executor
+            .taint_labels
+            .lock()
+            .expect("taint mutex")
+            .insert("step_1_result".to_string(), ToolTaint::Source);
+
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("cascade with one loop pass should succeed");
+
+        assert!(
+            result.contains_key("prev_step_1_result"),
+            "the loop snapshot must produce prev_step_1_result"
+        );
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("prev_step_1_result").copied(),
+            Some(ToolTaint::Source),
+            "the prev_step_N_result snapshot must carry the Source label (RR-0028)"
+        );
+    }
+
+    /// RR-0029: when a sub-cascade's final step result is Source-tainted, the
+    /// `step_{ordinal}_result` inserted into the parent context must carry the
+    /// same label. The sub-cascade runs on the same executor, so labels are in
+    /// the shared map — the fix copies the final-step label onto the parent's
+    /// new step key instead of inserting the value unlabeled.
+    #[tokio::test]
+    async fn sub_cascade_final_result_taint_labels_parent_step_key() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(SourceToolPort),
+            LLMParameters::default(),
+        );
+
+        // Sub-manifest: a single execute step invoking the Source tool — this
+        // labels step_1_result as Source in the shared taint map.
+        let tmp = std::env::temp_dir().join("hkask-flowdef-taint-test");
+        std::fs::create_dir_all(&tmp).expect("create temp template dir");
+        std::fs::write(
+            tmp.join("taint-sub.yaml"),
+            r#"
+manifest:
+  id: taint-sub-test
+steps:
+  - ordinal: 1
+    action: execute
+    description: read untrusted data
+    mcp: "hkask-mcp-stub/read"
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#,
+        )
+        .expect("write sub-manifest");
+        let executor = executor.with_template_base_path(tmp.clone());
+
+        let step = BundleManifestStep {
+            ordinal: 7,
+            action: "flowdef".to_string(),
+            description: "run the tainting sub-cascade".to_string(),
+            renderer: None,
+            template_ref: Some("taint-sub".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: None,
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            fusion: None,
+        };
+
+        let (parent_context, _gas, _rjoule) = executor
+            .execute_flowdef(&step, HashMap::new(), 100, 100.0)
+            .await
+            .expect("sub-cascade with a Source tool should succeed");
+
+        let step_result = parent_context
+            .get("step_7_result")
+            .and_then(|v| v.as_str())
+            .expect("the parent's step key holds the sub-cascade's final result");
+        assert!(
+            step_result.contains("untrusted sub-cascade output"),
+            "the parent's step key holds the sub-cascade's final result \
+             (spotlight-wrapped for Source tools): {step_result}"
+        );
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("step_7_result").copied(),
+            Some(ToolTaint::Source),
+            "the parent's step_7_result must inherit the sub-cascade's final-result \
+             Source label (RR-0029) — without the copy, a Source-tainted sub-result \
+             enters the parent context unlabeled and bypasses the Source→Sink block"
         );
     }
 }
