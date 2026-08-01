@@ -1679,11 +1679,30 @@ pub struct KaskScenariosSettingsContent {
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskSwarmSettingsContent {
+    /// Which backend to route to. Default `abw` (v1). `local` routes to
+    /// zed-kask's local substrate crates (v2 §15).
+    pub mode: Option<SwarmModeContent>,
     pub api_url: Option<String>,
     pub max_credits_per_dispatch: Option<u32>,
     /// When `true`, Xaman Ek curator calls do not require a per-call consent
     /// token. Default `false` (opt-in per call).
     pub curator_consent_default: Option<bool>,
+    /// Directory containing local agent cards (`<id>/agent_card.json`),
+    /// read in `local` mode. When empty, uses the default
+    /// `agents/local/curated`.
+    pub local_agents_dir: Option<String>,
+}
+
+/// Mirror of `SwarmModeConfig` in the bridge crate, kept separate to avoid a
+/// circular dependency. The two enums MUST stay in sync.
+#[derive(Debug, PartialEq, Eq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "lowercase")]
+pub enum SwarmModeContent {
+    /// Route to Agent Bestiary World (v1 behavior).
+    #[default]
+    Abw,
+    /// Route to local substrate crates (v2, §15).
+    Local,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

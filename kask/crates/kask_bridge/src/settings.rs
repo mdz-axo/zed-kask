@@ -413,6 +413,10 @@ pub struct KaskScenariosSettings {
 /// Only non-secret config lives here.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskSwarmSettings {
+    /// Which backend to route to (v2 §15). Default `Abw` (v1 behavior).
+    /// `Local` routes to zed-kask's local substrate crates.
+    pub mode: SwarmModeConfig,
+
     /// ABW API base URL override. When empty, uses the default
     /// (`https://agent-bestiary.world`).
     pub api_url: String,
@@ -427,24 +431,68 @@ pub struct KaskSwarmSettings {
     /// When `false`, `swarm_xaman` requires a `consent_token` (action "curate").
     /// When `true`, the operator has globally opted in and the token is optional.
     pub curator_consent_default: bool,
+
+    /// Directory containing local agent cards (`<id>/agent_card.json`),
+    /// read by `LocalAgentRegistry` in `Local` mode. When empty, uses the
+    /// default `agents/local/curated`.
+    pub local_agents_dir: String,
+}
+
+/// Mirror of `SwarmMode` in the server crate, kept separate to avoid a
+/// circular dependency (the bridge crate does not depend on the server
+/// crate). The two enums MUST stay in sync — see the `Default` impl comment
+/// on `KaskSwarmSettings`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SwarmModeConfig {
+    /// Route to Agent Bestiary World (v1 behavior).
+    Abw,
+    /// Route to local substrate crates (v2, §15).
+    Local,
+}
+
+impl Default for SwarmModeConfig {
+    fn default() -> Self {
+        Self::Abw
+    }
+}
+
+impl std::fmt::Display for SwarmModeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Abw => write!(f, "abw"),
+            Self::Local => write!(f, "local"),
+        }
+    }
+}
+
+impl From<settings_content::SwarmModeContent> for SwarmModeConfig {
+    fn from(c: settings_content::SwarmModeContent) -> Self {
+        match c {
+            settings_content::SwarmModeContent::Abw => Self::Abw,
+            settings_content::SwarmModeContent::Local => Self::Local,
+        }
+    }
 }
 
 impl Default for KaskSwarmSettings {
     fn default() -> Self {
         // These defaults MUST stay in sync with `SwarmConfig::default()` in
         // `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. The bridge
-        // emits env vars (`HKASK_ABW_*`) from this `Default` via `mcp_env()`;
-        // the server reads them in `SwarmConfig::from_env`. The two `Default`
-        // impls are deliberately separate (the server crate does not depend on
-        // the bridge crate) to avoid a circular dependency — the duplication is
+        // emits env vars (`HKASK_ABW_*` / `HKASK_SWARM_*`) from this `Default` via `mcp_env()`;
+        // the server reads them in `SwarmConfig::from_env`. The two `Default` impls
+        // are deliberately separate (the server crate does not depend on the
+        // bridge crate) to avoid a circular dependency — the duplication is
         // the seam between them. If you change a default here, change it there
         // too, and update the `swarm_settings_default_emits_no_env` test below.
         // Note: `default_agent_model` is server-only (operator env var, not
         // settings-file) — it has no counterpart here.
         Self {
+            mode: SwarmModeConfig::default(),
             api_url: String::new(),
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
+            local_agents_dir: String::new(),
         }
     }
 }
@@ -857,13 +905,16 @@ impl KaskSettings {
             );
         }
 
-        // ── Swarm (ABW) ──
+        // ── Swarm (ABW + Local) ──
         // The API key is a credential (injected by `mcp_env_with_credentials`
         // from the keychain), not config — only non-secret fields are here.
+        let swarm_default = KaskSwarmSettings::default();
+        if self.swarm.mode != swarm_default.mode {
+            env.insert("HKASK_SWARM_MODE".to_string(), self.swarm.mode.to_string());
+        }
         if !self.swarm.api_url.is_empty() {
             env.insert("HKASK_ABW_API_URL".to_string(), self.swarm.api_url.clone());
         }
-        let swarm_default = KaskSwarmSettings::default();
         if self.swarm.max_credits_per_dispatch != swarm_default.max_credits_per_dispatch {
             env.insert(
                 "HKASK_ABW_MAX_CREDITS".to_string(),
@@ -874,6 +925,12 @@ impl KaskSettings {
             env.insert(
                 "HKASK_ABW_CURATOR_CONSENT_DEFAULT".to_string(),
                 self.swarm.curator_consent_default.to_string(),
+            );
+        }
+        if !self.swarm.local_agents_dir.is_empty() {
+            env.insert(
+                "HKASK_LOCAL_AGENTS_DIR".to_string(),
+                self.swarm.local_agents_dir.clone(),
             );
         }
 
@@ -1181,6 +1238,7 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
     fn from(c: KaskSwarmSettingsContent) -> Self {
         let default = Self::default();
         Self {
+            mode: c.mode.map(Into::into).unwrap_or(default.mode),
             api_url: c.api_url.unwrap_or(default.api_url),
             max_credits_per_dispatch: c
                 .max_credits_per_dispatch
@@ -1188,6 +1246,7 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
             curator_consent_default: c
                 .curator_consent_default
                 .unwrap_or(default.curator_consent_default),
+            local_agents_dir: c.local_agents_dir.unwrap_or(default.local_agents_dir),
         }
     }
 }
@@ -1597,21 +1656,30 @@ mod tests {
         assert!(!env.contains_key("HKASK_ABW_API_URL"));
         assert!(!env.contains_key("HKASK_ABW_MAX_CREDITS"));
         assert!(!env.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
+        assert!(!env.contains_key("HKASK_SWARM_MODE"));
+        assert!(!env.contains_key("HKASK_LOCAL_AGENTS_DIR"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
             "the ABW API key is a credential, not config — it must never appear in mcp_env()"
         );
         assert_eq!(settings.swarm.max_credits_per_dispatch, 50);
         assert!(!settings.swarm.curator_consent_default);
+        assert_eq!(settings.swarm.mode, SwarmModeConfig::Abw);
     }
 
     #[test]
     fn swarm_settings_non_default_emits_env() {
         let mut settings = KaskSettings::default();
+        settings.swarm.mode = SwarmModeConfig::Local;
         settings.swarm.max_credits_per_dispatch = 100;
         settings.swarm.api_url = "https://staging.agent-bestiary.world".to_string();
         settings.swarm.curator_consent_default = true;
+        settings.swarm.local_agents_dir = "/custom/agents/dir".to_string();
         let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_SWARM_MODE").map(String::as_str),
+            Some("local")
+        );
         assert_eq!(
             env.get("HKASK_ABW_MAX_CREDITS").map(String::as_str),
             Some("100")
@@ -1624,6 +1692,10 @@ mod tests {
             env.get("HKASK_ABW_CURATOR_CONSENT_DEFAULT")
                 .map(String::as_str),
             Some("true")
+        );
+        assert_eq!(
+            env.get("HKASK_LOCAL_AGENTS_DIR").map(String::as_str),
+            Some("/custom/agents/dir")
         );
     }
 

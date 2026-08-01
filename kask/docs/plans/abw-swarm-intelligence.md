@@ -3,7 +3,7 @@ title: "Agent Bestiary World (ABW) Swarm Intelligence — Integration Plan"
 audience: [zed-kask integrators, hKask architects, ABW partnership]
 last_updated: 2026-08-01
 version: "0.9.1"
-status: "Slices 1–7 + Xaman Ek integration built and verified live; three audits complete (§12 self-audit, panel interaction audit, kali security audit) with all critical/high/medium findings remediated. Feature-complete for v1; remaining items are enhancements and ABW-side unknowns, not gaps."
+status: "v1 feature-complete (slices 1–7 + Xaman Ek). v2 local-cloud hybrid evolution plan below (§15+) incorporates fermi source analysis, local orchestration substrate, and metacircular Lisp policy layer. v2 slices unimplemented."
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
 ---
@@ -703,3 +703,580 @@ if ABW publishes a standards-compliant OAuth 2.0 authorization-server surface
 (`/well-known/oauth-authorization-server`), at which point zed's existing
 context-server OAuth (`crates/context_server/src/oauth.rs`) handles it with no
 new code.
+
+---
+
+## 15. v2 Evolution — Local Swarm Mode (2026-08-01)
+
+> **One-line frame:** Add a `Local` mode to `hkask-mcp-swarm` backed by
+> zed-kask's existing substrate crates (`hkask-ledger`, `hkask-inference`,
+> `hkask-guard`). Two new MCP tools: `swarm_fund_local` (operator funds the
+> local ledger) and `swarm_delegate_local` (call a local agent). No hire
+> abstraction, no consent tokens, no workspace ids, no PSO/ACO math, no
+> separate `local-swarm` skill, no `swarm_evolve` tool. The existing
+> `swarm-intelligence` skill becomes mode-aware. The operator steers the
+> swarm via the existing Steer conversation; the registry grows as they
+> add or clone agents. That is the evolution path — honest, minimal, and
+> set-point-compliant.
+
+### 15.0 What changed since v1
+
+v1 (slices 1–7) built `hkask-mcp-swarm` as a thin reqwest wrapper to ABW's
+REST API with a local consent gate (`ConsentStore`) and budget ceiling. The
+panel (`SwarmPanel`) browses ABW agents/swarms and hosts a Steer-mode
+`ConversationView` that invokes the `swarm-intelligence` skill.
+
+**What the fermi source analysis revealed (2026-08-01 deep-research task):**
+
+1. **fermi's orchestration is cloud-only.** Agent registry, executors, gas,
+   wallet, composition strategist, observability, and the five feedback loops
+   all run on ABW's servers. The only local piece fermi offers is
+   `simops_narrator_local` (a single demo agent with `min_provider_class:
+   local`). There is no local swarm runtime.
+
+2. **zed-kask already has every substrate crate a local orchestrator needs** —
+   they are production libraries, not stubs:
+   - `hkask-lisp` — sandboxed Lisp interpreter (JSON-native, bounded, no `eval`,
+     `#![forbid(unsafe_code)]`), designed for "deterministic recursive
+     predicates, structural invariant checks, and capability-tree walks in
+     manifests without an LLM round-trip" (per its README).
+   - `hkask-ledger` — double-entry accounting ledger (`Ledger::from_driver`,
+     `ensure_account`, `commit`, `balance`, `query`), immutable transactions,
+     SQLite-backed.
+   - `hkask-inference` — multi-provider router (`resolve_inference_port`),
+     IPC bridge to zed's models, supports Ollama/DeepInfra/Together/OpenRouter.
+   - `hkask-memory` — semantic + episodic memory pipelines, SQLite-local.
+   - `hkask-guard` — content safety guard, OWASP LLM Top 10 aligned.
+   - `hkask-templates` — manifest executor that already wires
+     lisp+guard+regulation+forecast.
+
+3. **Xaman Ek is a navigator, not a runtime orchestrator.** Verified from
+   `agents/curated/xaman_ek/agent_card.json`: it is a system-tier compound
+   meta-agent that holds the complete ontology of all 89 agents, operates in
+   Spotlight mode (quick questions) and Session mode (persistent working
+   sessions for `agent_design`, `composition_design`, `app_design`,
+   `workspace_help`). It is a meta-MoE that routes users to the right entry
+   point. It does *not* run the orchestration loop — that is the strategist's
+   role (`cohere_and_coordinate` or `moe_router_strategist`). zed-kask uses
+   Xaman Ek as the swarm's composition designer and diagnostician, not as the
+   local orchestrator.
+
+4. **Capabilities are set at the agent level, not the swarm level.** Verified
+   from `src/agent_backend/agent_card.rs`: each `AgentCard` carries its own
+   `AgentCapabilities { executor, mcp_tools, skills, model, model_ladder,
+   min_tier, capability_gates, min_provider_class, fermi_contract,
+   output_contract, model_params }` plus `accepts`/`produces` ports. The
+   swarm has no capability field; its effective capabilities are the union of
+   its members' capabilities, filtered by the strategist's routing. Goals are
+   set on the workspace/composition (`mission` + `strategist`).
+
+### 15.1 Abstractions that were considered and rejected
+
+An earlier draft of this plan proposed mirroring ABW's full orchestration
+surface locally: hire, consent tokens, workspace ids, a separate `local-swarm`
+skill, PSO/ACO/Reynolds tuning as Lisp forms, a `swarm_evolve` tool, agent
+sync/clone tools, and a `Hybrid` routing mode. Each was subjected to the
+deletion test and rejected. The rejections are recorded here so a future
+reviewer doesn't re-litigate them.
+
+#### 15.1.1 Hire abstraction — rejected
+
+**Proposed:** `swarm_hire_local` mirroring ABW's `POST /workspaces/{id}/hire`.
+
+**Why rejected:** In ABW, hire does three real things: adds the agent to a
+persistent multi-tenant roster, auto-pulls `dependencies.required`, and charges
+a 5cr signing bonus (ABW's commercial model — agent owners get royalties). The
+roster matters on ABW because the workspace is a social/commercial object:
+coherence scoring runs over the roster, @mention routing only routes to hired
+agents.
+
+Locally, hire does much less. The "roster" is just the set of agents in the
+registry (already loaded at startup). The signing bonus is artificial — you're
+calling your own local Ollama. Dependency auto-pull can be done lazily on first
+delegate. There's no @mention routing layer — you're calling `hkask-inference`
+directly.
+
+**Deletion test:** Delete `swarm_hire_local`. Complexity reappears as "read the
+registry" (already done) + lazy dep resolution in `swarm_delegate_local`. The
+`swarm-intelligence` skill's Sense phase reads the registry + call history
+instead of a hire-created roster — a different sense input, not a missing one.
+
+**Verdict:** The hire abstraction does not survive the deletion test in local
+mode. The team is emergent from the call pattern, not a pre-declared roster.
+
+#### 15.1.2 Consent tokens on local tools — rejected
+
+**Proposed:** `swarm_delegate_local` requires a `consent_token` from
+`swarm_request_consent`, minted/consumed/refunded via the existing
+`ConsentStore`.
+
+**Why rejected:** The consent gate exists for ABW because you're spending real
+money on a third-party service and a prompt-injected agent could rack up
+charges. Locally, you're calling your own Ollama with credits you funded
+yourself. The threat model is different: the adversary is not "agent spends
+your money" but "agent wastes your compute" — and the budget ceiling
+(`credits_authorized`) handles that without the token ceremony.
+
+**Verdict:** Local tools take `credits_authorized` and check it against the
+ledger balance + the per-dispatch ceiling. No `ConsentStore`, no
+mint/consume/refund, no single-use tokens. The `ConsentStore` stays for ABW
+mode; local mode uses a 3-line balance check.
+
+#### 15.1.3 Separate `local-swarm` kask-skill — rejected
+
+**Proposed:** A new `local-swarm` skill manifest with its own PDCA phases,
+twin to `swarm-intelligence`.
+
+**Why rejected:** The PDCA structure (SENSE → ORIENT → DECIDE → ACT → CHECK →
+CONVERGE) is identical. The only difference is data source (local registry vs
+ABW REST) and tool names (`swarm_delegate_local` vs `swarm_delegate`). That's a
+mode parameter, not a different skill. Two skills means two manifests to
+maintain, two convergence criteria, two sets of Lisp forms.
+
+**Verdict:** Make `swarm-intelligence` mode-aware: the Sense template branches
+on `{{ mode }}` to call `swarm_list_local_agents` or `swarm_get_swarm`; the Act
+template branches to emit `swarm_delegate_local` or `swarm_delegate`. The Lisp
+compute steps (capability-gap detection, deficit classification) are
+mode-agnostic — they operate on whatever state Shape Sense provides. One skill,
+one manifest, one convergence criterion.
+
+#### 15.1.4 PSO/ACO/Reynolds tuning as Lisp forms — rejected
+
+**Proposed:** Encoding PSO velocity updates, ACO pheromone deposition, and
+Reynolds flocking as `lisp.eval` compute steps.
+
+**Why rejected:** The actual composition decision is: "the swarm lacks a
+sentiment analyzer; find an agent that produces `sentiment`." That's a
+set-difference operation, not a velocity update. PSO/ACO/Reynolds is narrative
+overlay on what is fundamentally a capability-gap lookup. Expressing it in
+`hkask-lisp` (which has no floating-point random, no vector ops) requires
+manually unrolling scalar math and hardcoding randomness — complexity that
+produces the same answer as a set-difference.
+
+**Verdict:** The Lisp steps do what Lisp is good at: recursive list operations
+over the capability tree (set-difference, assoc lookups, dependency-closure
+walks). The "which agent fills this gap" decision is either a simple lookup
+(agent whose `produces` contains the missing capability) or an LLM judgment
+(the template asks the model). No PSO coefficients, no ACO pheromones, no
+Reynolds vectors. The `swarm-patterns.yaml` reference doc can describe the
+patterns in prose for the LLM's benefit, but the Lisp doesn't implement them as
+numerical algorithms.
+
+#### 15.1.5 `swarm_evolve` tool + self-improvement Σ-pathway — rejected
+
+**Proposed:** A `swarm_evolve` MCP tool that invokes the `self-improvement`
+skill's Σ-pathway to mutate the `local-swarm` manifest's Lisp forms, improving
+orchestration policy over time.
+
+**Why rejected:** The improvement signal is "swarm-state distance `d`
+decreased" — but `d` is a composite metric, not a naturally-occurring signal.
+If `d` doesn't decrease, is it because the Lisp form is bad, the metric is
+bad, or the agent roster is wrong? The signal is too entangled with the metric
+definition. And the mutation target (Lisp forms inside YAML) is fragile — one
+syntax error breaks the whole skill.
+
+More fundamentally: the self-improvement loop optimizes the wrong variable. The
+actual lever for swarm quality is *which agents are on the team and what tasks
+they're given*, not *the coefficients of the composition algorithm*. The
+operator looks at the delegation results and says "try X instead" — that's
+the Steer-mode conversation, and it takes seconds. Automating that judgment via
+a Σ-pathway is high-cost for a decision the operator can make faster.
+
+**Verdict:** The "evolving self-learning" aspect is: the operator steers the
+swarm via the Steer conversation, `swarm-intelligence` adapts per-invocation
+based on current state, and the local agent registry grows as the operator
+adds/clones agents. If the operator wants automated self-improvement on a
+specific aspect, they invoke the `self-improvement` skill manually. No
+dedicated `swarm_evolve` tool.
+
+#### 15.1.6 `swarm_sync_agents` + `swarm_clone_agent` as MCP tools — rejected
+
+**Proposed:** A sync tool that fetches ABW cards and merges with local cards,
+plus a clone tool that downloads an ABW card and writes it locally.
+
+**Why rejected:** Sync is a registry-load operation — `LocalAgentRegistry::
+load` reads the local directory, and optionally fetches ABW cards via the
+existing `swarm_list_agents` tool. That's a few lines in the registry, not a
+separate MCP tool. Clone is a file-write: download JSON, set
+`min_provider_class: local`, write to `agents/local/curated/<id>/agent_card
+.json`. The panel can do this with a button click; it doesn't need to be an
+MCP tool with a consent gate.
+
+**Verdict:** The registry merges local + ABW at load time. The panel has a
+"Clone to Local" button that writes the file. No sync tool, no clone tool.
+
+#### 15.1.7 `swarm_measure` as a separate tool — rejected
+
+**Proposed:** A `swarm_measure` tool that reads registry + call history +
+ledger and computes Onto4MAT metrics.
+
+**Why rejected:** This is what the `swarm-intelligence` skill's SENSE phase
+does — it's a template that reads state and computes metrics. Making it a
+separate MCP tool means the skill calls the tool which reads the state which
+the skill then interprets. That's an extra hop. The skill should read state
+directly (via `swarm_list_local_agents` + the ledger balance) and compute
+metrics in its own Lisp/template step.
+
+**Verdict:** The SENSE template reads `swarm_list_local_agents` + ledger
+balance directly. The Lisp step computes metrics from that data. No
+`swarm_measure` wrapper.
+
+#### 15.1.8 `Hybrid` mode routing — rejected
+
+**Proposed:** A `Hybrid` mode where the server routes per-agent by
+`min_provider_class` — local agents to `hkask-inference`, cloud agents to ABW.
+
+**Why rejected:** The routing layer needs to read the agent card, check the
+field, and dispatch — plus handle fallback, retry, and health checks. The
+operator already knows which agents are local and which are cloud. They call
+`swarm_delegate` (ABW) or `swarm_delegate_local` (local) explicitly. The
+routing is a decision that's easy for the operator and hard for the server to
+get right.
+
+**Verdict:** Two modes: `Abw` and `Local`. Both tool sets are available in
+either mode (the operator can call `swarm_delegate_local` in `Abw` mode if
+they want to mix). The operator does the routing by choosing the tool. If
+explicit mixing proves tedious, `Hybrid` routing can be added later — but it's
+a convenience, not a necessity.
+
+#### 15.1.9 `workspace_id` on local tools — rejected
+
+**Proposed:** `swarm_delegate_local(workspace_id, agent_name, task, ...)`
+mirroring ABW's parameter shape.
+
+**Why rejected:** In ABW, `workspace_id` is a real multi-tenant cloud object
+with a roster, wallet, git files, and chat history. Locally, what is a
+"workspace"? It's the current session — implicit in the MCP server's process
+lifetime. Passing `workspace_id` locally is ABW ceremony leaking into local
+mode.
+
+**Verdict:** Local tools don't take `workspace_id`. The "workspace" is the
+session. If the operator wants to separate local swarm contexts, they run
+separate MCP server instances (or a session-id is added later if needed).
+
+### 15.2 What survives the deletion test
+
+| Component | Survives | Why |
+|---|---|---|
+| `SwarmConfig.mode` (`Abw` \| `Local`) | Yes | The mode switch controls which tool set the panel/skill uses. One field, clear semantics. |
+| `LocalAgentRegistry` | Yes | Reads agent cards from a local directory; needed by `swarm_delegate_local` to resolve the card. |
+| `swarm_fund_local(credits)` | Yes | The ledger must be operator-funded (§15.4 constraint); this is the funding primitive. |
+| `swarm_delegate_local(agent_name, task, credits_authorized)` | Yes | The single local execution primitive. Lazy dep resolution, `hkask-inference`, `hkask-guard`, ledger debit. No hire, no consent token, no workspace_id. |
+| `swarm-intelligence` skill (mode-aware) | Yes | One skill, templates branch on `{{ mode }}`. Simple Lisp for capability-gap detection, not PSO. |
+| Panel "Clone to Local" button | Yes | A file-write in the panel, not an MCP tool. |
+| `hkask-ledger` (existing crate) | Yes | Over-spec'd for local use but the call-site overhead is low (one `Posting` per debit) and it gives audit history for free. |
+
+### 15.3 The simplified model
+
+```mermaid
+graph TD
+    subgraph "SwarmConfig.mode"
+        D{abw or local?}
+    end
+
+    subgraph "abw mode (v1, unchanged)"
+        E[swarm_hire → ABW REST]
+        F[swarm_delegate → ABW @mention]
+        G[ABW ledger + gas + consent gate]
+    end
+
+    subgraph "local mode (v2)"
+        H[swarm_fund_local → hkask-ledger deposit]
+        I[swarm_delegate_local → hkask-inference]
+        J[hkask-ledger debit per call]
+        K[hkask-guard scan]
+        L[LocalAgentRegistry reads agents/local/curated/]
+    end
+
+    subgraph "Policy layer (one skill, mode-aware)"
+        M[swarm-intelligence skill]
+        M -->|sense: {{ mode }} == local| L
+        M -->|sense: {{ mode }} == abw| swarm_get_swarm
+        M -->|act: {{ mode }} == local| I
+        M -->|act: {{ mode }} == abw| F
+    end
+
+    subgraph "Navigator"
+        P[Xaman Ek — composition_design + diagnostics]
+    end
+
+    D -->|abw| E
+    D -->|local| H
+    D -->|local| I
+    P --> M
+```
+
+**The agent store** is the `LocalAgentRegistry`. It reads agent cards from
+`agents/local/curated/*/agent_card.json` (mirroring fermi's format). In `Abw`
+mode, the existing `swarm_list_agents` tool fetches ABW cards. The panel shows
+both, with a `source` badge. A "Clone to Local" button in the panel writes an
+ABW card to the local directory with `min_provider_class: local` set.
+
+**The mode is per-session** (`SwarmConfig.mode`), not per-dispatch. Both tool
+sets are available in either mode — the operator calls `swarm_delegate_local`
+in `Abw` mode if they want to mix. No `Hybrid` routing layer.
+
+### 15.4 Set-point check
+
+The set-point: capabilities are kask-skills (YAML manifests + PDCA) or MCP
+servers/tools. A local orchestrator must be expressible as one of these, not a
+new substrate.
+
+| v2 component | Set-point compliance |
+|---|---|
+| `swarm_fund_local`, `swarm_delegate_local` tools | `fits` — 2 MCP tools on the existing `hkask-mcp-swarm` server |
+| `LocalAgentRegistry` (struct inside the server crate) | `fits` — a library type backing the MCP tools, not a new crate |
+| `swarm-intelligence` skill (mode-aware, updated) | `fits` — an existing kask-skill with a `{{ mode }}` branch in its templates |
+| Panel "Clone to Local" button | `fits` — panel UI, not a new substrate |
+| Local ledger, inference, guard | `fits` — existing library crates, not new substrates |
+| Orchestration logic in Rust inside the server | `rejected` — the policy is the `swarm-intelligence` skill |
+| New `hkask-mcp-evolve` server | `rejected` — no `swarm_evolve` tool |
+| Separate `local-swarm` skill | `rejected` — `swarm-intelligence` is mode-aware |
+
+### 15.5 Build sequence (vertical slices, v2)
+
+Each slice is independently shippable, set-point-compliant, and reversible by
+config change (not code revert).
+
+#### Slice 8 — `SwarmConfig.mode` + `LocalAgentRegistry`
+
+**What:**
+- Add `mode: SwarmMode` enum (`Abw`, `Local`) to `SwarmConfig`,
+  `KaskSwarmSettings`, and `KaskSwarmSettingsContent`. Default `Abw` (v1
+  behavior preserved).
+- Add `LocalAgentRegistry` struct inside `hkask-mcp-swarm` that reads agent
+  cards from a local directory (`agents/local/curated/`), mirroring fermi's
+  `AgentRegistry::load_from_directory`. No execution yet — catalogue only.
+- Add `hkask-ledger` and `hkask-inference` as dependencies of
+  `hkask-mcp-swarm` (wired in Slice 9).
+- Update `KaskSwarmSettings::default()` and `SwarmConfig::default()` in sync
+  (the existing `.rules` trap on the two-Default seam).
+- Update `mcp_env()` to emit `HKASK_SWARM_MODE` and `HKASK_LOCAL_AGENTS_DIR`.
+
+**Falsifier:** If `LocalAgentRegistry` is never read by any subsequent tool or
+skill, it is dead surface area (the `.rules` "Trait-with-one-impl" trap). Test:
+after Slice 9, grep for `LocalAgentRegistry` reads; zero reads outside the
+constructor = revert.
+
+**Reverses by:** Setting `mode: "abw"` — local tools become unreachable.
+
+#### Slice 9 — `swarm_fund_local` + `swarm_delegate_local`
+
+**What:**
+- Add `swarm_fund_local(credits)` MCP tool — operator deposits local credits
+  into the ledger via `Ledger::ensure_account` + `Ledger::commit`. **Critical:**
+  the local ledger must be operator-funded, not auto-replenished (see §15.6). If
+  unfunded, `swarm_delegate_local` returns `PaymentRequired` — the same error
+  ABW returns.
+- Add `swarm_delegate_local(agent_name, task, credits_authorized)` MCP tool:
+  1. Look up the agent card in `LocalAgentRegistry`. If not found, error.
+  2. Resolve `dependencies.required` lazily — if the agent is compound,
+     recursively delegate to each required dep (bounded depth, no cycles).
+  3. Check `credits_authorized` against ledger balance + per-dispatch ceiling.
+     No consent token — the balance check is the gate.
+  4. Call `hkask-inference::resolve_inference_port()` with the agent's model +
+     system prompt. Route to Ollama / cloud provider per the card's
+     `model_ladder`.
+  5. Run the response through `hkask-guard` for I/O safety.
+  6. Debit the ledger per token via `Ledger::commit` (one `Posting` per call).
+  7. Return the result + ledger balance (algedonic signal).
+- No `workspace_id` parameter. The "workspace" is the session.
+- No consent token. The `credits_authorized` + balance check is the gate.
+
+**Falsifier:** Run `swarm_delegate_local` with a local 8B model and measure
+(a) does it complete without ABW? (b) is the ledger debit correct? (c) does
+the guard catch an injection attempt? If any fails, the local path is not
+viable and the server stays ABW-only.
+
+**Reverses by:** Setting `mode: "abw"`.
+
+**Cybernetic loop:** Corrective. Balance check → debit → guard scan → if guard
+fails, the debit stands (the compute was spent) but the result is quarantined.
+Delay: one tool call. Closure: ledger commit.
+
+#### Slice 10 — `swarm-intelligence` skill becomes mode-aware
+
+**What:**
+- Update the `swarm-intelligence` skill's templates to branch on `{{ mode }}`:
+  - **Sense:** If `{{ mode }} == "local"`, read `swarm_list_local_agents` +
+    ledger balance. If `{{ mode }} == "abw"`, read `swarm_get_swarm` + ABW
+    wallet. Compute Onto4MAT metrics (alignment, cohesion, separation) from
+    whichever state shape is provided. The Lisp step does set-difference over
+    `accepts`/`produces` ports — mode-agnostic.
+  - **Orient:** Classify deficit (variety / coherence / loop-break). Same logic
+    for both modes — the deficit classes are defined over the metrics, not the
+    data source.
+  - **Decide:** If `{{ mode }} == "local"`, emit `swarm_delegate_local` calls.
+    If `{{ mode }} == "abw"`, emit `swarm_delegate` calls (with consent tokens).
+  - **Act:** Emit the gated tool calls. In local mode, the gate is the
+    `credits_authorized` + balance check. In ABW mode, the gate is the consent
+    token (v1 behavior).
+  - **Check:** Re-read state, compute swarm-state distance, emit `next_focus`.
+- The `swarm-patterns.yaml` reference doc keeps its prose description of
+  PSO/ACO/Reynolds for the LLM's benefit, but the Lisp steps do not implement
+  them as numerical algorithms — they do set-difference and assoc lookups.
+
+**Falsifier:** Run the `swarm-intelligence` skill in `Local` mode on a local
+workspace with 3 agents and a task requiring a 4th. Does Sense correctly
+compute Onto4MAT metrics from the local registry? Does Decide emit a
+`swarm_delegate_local` that closes the variety gap? If the Lisp forms cannot
+express the capability-tree walk (e.g. `hkask-lisp` lacks a needed builtin), the
+skill degrades to LLM-only — measure LLM token cost with vs. without the Lisp
+steps. If Lisp saves >50% tokens, it earns its substrate.
+
+**Reverses by:** Setting `mode: "abw"` — the skill's ABW templates are
+unchanged.
+
+#### Slice 11 — Panel: local agents + "Clone to Local" button
+
+**What:**
+- Update `SwarmPanel` Browse tab to show local agents (from
+  `LocalAgentRegistry`) alongside ABW agents, with a `source` badge (`local`,
+  `abw`).
+- Add a "Clone to Local" button on ABW agent cards: downloads the card JSON,
+  sets `min_provider_class: local`, writes to
+  `agents/local/curated/<id>/agent_card.json`. This is a panel file-write, not
+  an MCP tool.
+- Update the Steer-mode system prompt to describe the local tools
+  (`swarm_fund_local`, `swarm_delegate_local`) and the mode toggle.
+
+**Falsifier:** Clone an ABW agent, verify it appears in the local list, verify
+`swarm_delegate_local` can run it. If the cloned card lacks `system_prompt`
+(because ABW's `GET /api/agents` doesn't return it), the clone is incomplete —
+the operator must author the prompt manually. Document this limitation.
+
+**Reverses by:** Setting `mode: "abw"` — the local list is hidden.
+
+### 15.6 Strongest objection (grill-me)
+
+**The local economy is synthetic, so the gas signal is a broken feedback loop.**
+
+ABW's gas charge is a real corrective signal (low balance → user tops up →
+behavior changes). A local ledger with synthetic credits has no external
+correction — the agent can spend "credits" that cost nothing, so the budget gate
+becomes advisory, not corrective. This is the Ashby variety argument: the local
+system lacks the variety of the real economy.
+
+**Mitigation:** the local ledger's `balance` must be *operator-funded* (the
+operator deposits real credits at startup via `swarm_fund_local`), not
+auto-replenished. If the operator never funds it, `swarm_delegate_local`
+returns `PaymentRequired` — the same error ABW returns. This preserves the
+corrective signal. Without this, the local swarm is a toy.
+
+**This is the single most important constraint in the v2 evolution path: the
+local ledger must be funded, not synthetic.**
+
+### 15.7 Xaman Ek's role in v2
+
+Xaman Ek is the **composition designer and diagnostician**, not the runtime
+orchestrator. In v2:
+
+1. **Composition design.** The operator invokes `swarm_xaman` in Session mode
+   (`composition_design`) to design a swarm team. Xaman Ek proposes the fleet
+   from the synced agent store; the `swarm-intelligence` skill executes it.
+2. **Diagnostics.** When the swarm underperforms, the operator asks Xaman Ek
+   (via `swarm_xaman`) to diagnose *which of the five feedback loops is broken*
+   before adjusting. Xaman Ek's prompt encodes the five loops as a diagnostic
+   checklist.
+3. **Ontology sync.** When a new local agent card or kask-skill is added, the
+   local Xaman Ek card must be updated in the same commit. A stale local Xaman
+   Ek is a navigation hazard.
+
+Xaman Ek is NOT the local orchestrator. The local orchestrator is the
+`swarm-intelligence` skill (mode-aware). Xaman Ek designs the team; the skill
+runs it.
+
+### 15.8 What NOT to do (essentialist rejections)
+
+Already covered in §15.1. Summary:
+
+| Proposal | Rejection reason |
+|---|---|
+| `swarm_hire_local` | Hire abstraction doesn't survive deletion test locally — team is emergent from call pattern |
+| Consent tokens on local tools | Threat model is compute waste, not money spend — balance check suffices |
+| Separate `local-swarm` skill | `swarm-intelligence` with a `{{ mode }}` branch is one skill, not two |
+| PSO/ACO/Reynolds as Lisp forms | The decision is a set-difference, not a velocity update |
+| `swarm_evolve` tool | Optimizes the wrong variable (algorithm coefficients, not team composition) |
+| `swarm_sync_agents` / `swarm_clone_agent` tools | Registry-load + panel file-write, not MCP tools |
+| `swarm_measure` tool | The SENSE template reads state directly |
+| `Hybrid` routing mode | Operator chooses the tool explicitly — no routing layer needed |
+| `workspace_id` on local tools | The workspace is the session, not a cloud object |
+| Port fermi's `tool_executor.rs` | Duplicates `hkask-templates` + `hkask-inference` |
+| Port fermi's `gas.rs` + wallet schema | Duplicates `hkask-ledger` |
+| Build a new local ADM | `hkask-memory` exists |
+| Add a new Lisp interpreter with `eval` | `hkask-lisp` exists and deliberately omits `eval` |
+| Write orchestration logic in Rust inside the server | Violates set-point (non-skill, non-MCP substrate) |
+
+### 15.9 `.rules` traps applicable to v2
+
+- **Kask settings defaults must live in `Default` impls** — `SwarmConfig.mode`
+  and `KaskSwarmSettings.mode` must default to `Abw` in both `Default` impls,
+  in sync (the existing two-Default seam trap).
+- **Process-global hooks need a startup-failure signal** — if `mode: Local`
+  but `agents/local/curated/` is empty, `log::warn!` at startup, not silently
+  run with zero agents.
+- **Advertised invariants need enforcement points** — the balance check on
+  `swarm_delegate_local` must actually block, not just warn.
+- **`unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop**
+  — `swarm_delegate_local` must not return `0` for ledger balance on a DB
+  error; it must surface the error (the local ledger is a regulation signal).
+- **Lazy-load caches must distinguish not-loaded from loaded-empty** — the
+  `LocalAgentRegistry` cache must use `Option<Option<Vec>>` or a `loaded` flag,
+  not `Option<Vec>` (the existing `Thread::static_context` trap).
+- **Trait-with-one-impl is speculative generality** — `LocalAgentRegistry`
+  must have ≥2 readers (`swarm_delegate_local` and the `swarm-intelligence`
+  skill's SENSE phase) before it earns its substrate.
+
+### 15.10 Suggested `.rules` additions (for reviewer consideration)
+
+> ## Local swarm ledger must be operator-funded, not synthetic
+>
+> A local orchestration ledger that auto-replenishes credits has no external
+corrective signal — the gas charge becomes advisory, not corrective, and the
+> budget gate is a no-op (Ashby variety: the local system lacks the real
+> economy's variety). The local ledger's `balance` must be operator-funded via
+> a `swarm_fund_local` tool at startup. If unfunded, the local swarm returns
+> `PaymentRequired` on delegate — the same error ABW returns. This preserves
+> the corrective loop: low balance → operator tops up → behavior changes. A
+> synthetic ledger is a toy; a funded ledger is a real economy with a different
+> settlement layer. Generalizes the "Process-global hooks need a startup-
+> failure signal" trap: an unfunded ledger that silently allows spends is a
+> missing failure signal.
+
+### 15.11 Open questions for v2
+
+1. **`hkask-lisp` builtin coverage** — does it have the builtins needed for
+   capability-tree walks (recursive `assoc`, set-difference via `filter` +
+   `not` + `member`)? The README lists `car`/`cdr`/`cons`/`list`/`length`/
+   `nth`/`reverse`/`assoc` + arithmetic + `if`/`let`/`lambda`/`define`/`begin`/
+   `and`/`or`/`not`. `member` is not listed — if missing, set-difference needs
+   a manual recursive walk. Test in Slice 10.
+2. **Local model quality** — `hkask-guard` on an 8B local model may false-
+   positive on benign outputs. Test in Slice 9.
+3. **ABW agent card cloning** — does ABW's `GET /api/agents` return the full
+   card including `system_prompt`? If not, cloned local agents lack the prompt
+   and need manual authoring. Verify against the v1-verified `GET /api/agents`
+   response.
+4. **Lazy dependency resolution depth** — `swarm_delegate_local` resolves
+   `dependencies.required` recursively. What is the max depth? fermi forbids
+   delegation chains (delegates lose `delegate_to_agent`/`execute_agent`).
+   Local mode should enforce the same invariant: a local delegate to a compound
+   agent resolves its required deps, but those deps do not themselves delegate.
+   Bounded depth = 2. Test in Slice 9.
+
+### 15.12 References (v2)
+
+- fermi source analysis: this section (§15.0) and the deep-research task
+  deliverable (D1–D4).
+- `hkask-lisp` README: `kask/crates/hkask-lisp/README.md` — sandboxed Lisp
+  interpreter design.
+- `hkask-ledger`: `kask/crates/hkask-ledger/src/hkask_ledger.rs` — double-entry
+  ledger, `Ledger::from_driver`, `commit`, `balance`.
+- `hkask-inference`: `kask/crates/hkask-inference/src/hkask_inference.rs` —
+  `resolve_inference_port`, IPC bridge.
+- `swarm-intelligence` skill: `kask/registry/templates/swarm-intelligence/
+  manifest.yaml` — composition reasoning (becomes mode-aware in Slice 10).
+- Xaman Ek agent card: `agents/curated/xaman_ek/agent_card.json` (fetched
+  2026-08-01) — navigator, session modes, five-loop diagnostic.
+- Ren et al. self-induced update operator: arXiv:2607.13104 (cited in
+  `self-improvement` skill — invoked manually if needed, no dedicated tool).

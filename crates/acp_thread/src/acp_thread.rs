@@ -2137,7 +2137,15 @@ struct StreamingTextBuffer {
 impl StreamingTextBuffer {
     /// The number of milliseconds between each timer tick, controlling how quickly
     /// text is revealed.
-    const TASK_UPDATE_MS: u64 = 16;
+    //
+    // zed-kask: increased from 16ms (60fps) to 50ms (20fps) to reduce render
+    // pressure on the GPUI foreground thread. At 60fps, the streaming text
+    // reveal timer saturates the foreground thread with Markdown re-renders,
+    // starving the BlinkManager's 500ms timer and causing irregular cursor
+    // flashing. 20fps is still smooth for text reveal (the human eye can't
+    // perceive text appearing at >20fps) but reduces render pressure by 3x.
+    // See DIVERGENCE.md D14.
+    const TASK_UPDATE_MS: u64 = 50;
     /// The time in milliseconds to reveal the entire pending text.
     const REVEAL_TARGET: f32 = 200.0;
 }
@@ -10192,6 +10200,22 @@ mod tests {
             thread.read_with(cx, |t, _| t.status()),
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
+        );
+    }
+
+    /// D14: the streaming text reveal timer interval must be 50ms, not the
+    /// upstream 16ms. At 16ms (60fps) the timer saturates the GPUI foreground
+    /// thread with Markdown re-renders during streaming, starving the
+    /// BlinkManager's 500ms timer and causing irregular cursor flashing.
+    /// 50ms (20fps) is still smooth for text reveal but reduces render
+    /// pressure by 3x.
+    #[test]
+    fn test_streaming_reveal_timer_interval_kask_contract() {
+        assert_eq!(
+            StreamingTextBuffer::TASK_UPDATE_MS,
+            50,
+            "D14: TASK_UPDATE_MS must be 50ms (20fps), not upstream's 16ms (60fps). \
+             See DIVERGENCE.md D14."
         );
     }
 }

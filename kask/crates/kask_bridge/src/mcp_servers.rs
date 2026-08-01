@@ -198,6 +198,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_ABW_MAX_CREDITS",
             "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
             "HKASK_ABW_DEFAULT_AGENT_MODEL",
+            "HKASK_SWARM_MODE",
+            "HKASK_LOCAL_AGENTS_DIR",
+            "HKASK_SWARM_LEDGER_PATH",
         ]),
     },
     BuiltinMcpServer {
@@ -609,6 +612,11 @@ mod tests {
             "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
             "claude-haiku-4-5-20251001".to_string(),
         );
+        config_env.insert("HKASK_SWARM_MODE".to_string(), "local".to_string());
+        config_env.insert(
+            "HKASK_LOCAL_AGENTS_DIR".to_string(),
+            "/custom/dir".to_string(),
+        );
         config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "ops@example.com".to_string(),
@@ -619,6 +627,8 @@ mod tests {
         assert!(filtered.contains_key("HKASK_ABW_MAX_CREDITS"));
         assert!(filtered.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
         assert!(filtered.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
+        assert!(filtered.contains_key("HKASK_SWARM_MODE"));
+        assert!(filtered.contains_key("HKASK_LOCAL_AGENTS_DIR"));
         assert!(
             !filtered.contains_key("HKASK_SMTP_USERNAME"),
             "swarm server must not receive curator email config"

@@ -21,7 +21,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Supersedes:** The previous 9-category DDMVSS. All MDS references in the codebase should be updated.
 
-**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 10 MCP servers are listed in the architecture plan §2.2/§2.4. (Corrected 2026-07-29 from a stale "29 surviving crates" claim — verified by `ls kask/crates/`.)
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 11 MCP servers are listed in the architecture plan §2.2/§2.4. (Corrected 2026-07-29 from a stale "29 surviving crates" claim — verified by `ls kask/crates/`.)
 
 **Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
@@ -585,7 +585,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `WalletManager` uses it for gas/rJoule conversion; wallet types live in `hkask-types` |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
-| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 10 MCP servers |
+| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-condenser` | Curation | Context condensation |
 | ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |
@@ -601,7 +601,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | ~~`hkask-services-context`~~ (folded) | Lifecycle | `ContextService`, contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; guards were dead code |
 | ~~`hkask-services-compose`~~ (folded) | Composition | Template composition — folded into `hkask-mcp-corpus` |
 | `kask_bridge` | Composition | D8 — in-process bridge exposing `KaskCore` to MCP servers and zed-kask surfaces |
-| 10 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training |
+| 11 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training |
 
 > **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (→ in-process wallet primitives), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
 
@@ -613,7 +613,7 @@ graph TD
     subgraph BRIDGE["kask_bridge D8"]
         ADAPT["Port adapters"]
     end
-    subgraph MCP["10 MCP servers"]
+    subgraph MCP["11 MCP servers"]
         MSRV[servers]
     end
     subgraph HKASK["hKask domain crates"]

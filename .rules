@@ -265,7 +265,7 @@ times across audit cycles 3–6.
 `DIVERGENCE.md` defines the divergence surface: everything under `kask/` is
 ours; everything else tracks upstream Zed and is only touched via the named
 D-seams. When you find a problem in an upstream file (anything outside
-`kask/` and outside the D1–D13 seams), do not "fix" it speculatively —
+`kask/` and outside the D1–D14 seams), do not "fix" it speculatively —
 renaming, reformatting, or "correcting" upstream files creates merge noise
 and risks silent breakage on the next upstream merge. Push the fix into a
 `kask/` crate behind a D-seam instead. If an upstream edit is genuinely
