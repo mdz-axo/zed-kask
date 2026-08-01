@@ -105,6 +105,16 @@ enum SwarmFilter {
     Agents,
 }
 
+/// The three surfaces of the panel: browsing existing agents/swarms, authoring
+/// a new agent, and composing agents into a swarm. Sharing (extensions) is
+/// represented by the browse surface's discovery role.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum PanelMode {
+    Browse,
+    Author,
+    Compose,
+}
+
 // ── View model ─────────────────────────────────────────────────────────────
 
 /// One row in the panel — either an ABW agent or an ABW swarm (workspace).
@@ -199,6 +209,38 @@ pub struct SwarmPanel {
     /// In-flight consent prompt for a hire action: the agent being considered
     /// plus its pre-flight cost estimate. `Some` renders the consent banner.
     pending_hire: Option<PendingHire>,
+    /// The workspace (swarm) id new hires target. Defaults to the first
+    /// workspace once swarms load; selectable when there are several.
+    selected_workspace: Option<String>,
+    /// A spend currently in flight (after consent), shown as a busy state.
+    spend_in_flight: Option<String>,
+    /// Which surface is active: browse, author, or compose.
+    mode: PanelMode,
+    /// Authoring form state.
+    author: AuthorForm,
+    /// Composition form state.
+    compose: ComposeForm,
+}
+
+/// State for the agent-authoring surface.
+struct AuthorForm {
+    name: Entity<Editor>,
+    description: Entity<Editor>,
+    system_prompt: Entity<Editor>,
+    agent_type: String,
+    /// Result of the last create attempt (success id or error).
+    status: Option<SharedString>,
+    busy: bool,
+}
+
+/// State for the swarm-composition surface.
+struct ComposeForm {
+    name: Entity<Editor>,
+    mission: Entity<Editor>,
+    /// Agent names to hire, comma-separated (kept as a single-line editor for v1).
+    agents: Entity<Editor>,
+    status: Option<SharedString>,
+    busy: bool,
 }
 
 /// A hire awaiting operator consent. The gate holds the pre-flight estimate
@@ -225,6 +267,50 @@ impl SwarmPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
+            let author = AuthorForm {
+                name: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text("agent_name (lowercase_with_underscores)", window, cx);
+                    e
+                }),
+                description: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text("One-sentence description", window, cx);
+                    e
+                }),
+                system_prompt: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text("System prompt — the agent's instructions", window, cx);
+                    e
+                }),
+                agent_type: "research".to_string(),
+                status: None,
+                busy: false,
+            };
+            let compose = ComposeForm {
+                name: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text("Swarm name", window, cx);
+                    e
+                }),
+                mission: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text("Mission (optional)", window, cx);
+                    e
+                }),
+                agents: cx.new(|cx| {
+                    let mut e = Editor::single_line(window, cx);
+                    e.set_placeholder_text(
+                        "Agents to hire, comma-separated (optional)",
+                        window,
+                        cx,
+                    );
+                    e
+                }),
+                status: None,
+                busy: false,
+            };
+
             let mut this = Self {
                 list: scroll_handle,
                 is_fetching: false,
@@ -237,6 +323,11 @@ impl SwarmPanel {
                 search_task: None,
                 wallet_balance: None,
                 pending_hire: None,
+                selected_workspace: None,
+                spend_in_flight: None,
+                mode: PanelMode::Browse,
+                author,
+                compose,
             };
             this.fetch_all(cx);
             this
@@ -347,6 +438,16 @@ impl SwarmPanel {
                             let mut swarms = swarms;
                             swarms.extend(this.entries.drain(..));
                             this.entries = swarms;
+                            // Default the hire target to the first swarm if unset.
+                            if this.selected_workspace.is_none() {
+                                this.selected_workspace =
+                                    this.entries.iter().find_map(|e| match e {
+                                        SwarmEntry::Swarm(s) if !s.id.is_empty() => {
+                                            Some(s.id.clone())
+                                        }
+                                        _ => None,
+                                    });
+                            }
                             this.filter_entries(cx);
                         }
                         Err(err) => {
@@ -440,20 +541,112 @@ impl SwarmPanel {
         .detach();
     }
 
-    /// Operator authorized the hire. v1: the spend tool is not yet built, so
-    /// this records the consent decision and clears the gate. When the v2
-    /// `swarm_hire` tool lands, it will require this authorization to proceed.
+    /// Operator authorized the hire. Mint a single-use consent token via
+    /// `swarm_request_consent`, then invoke the gated `swarm_hire` spend tool
+    /// with it. The token is action-scoped ("hire") and target-scoped (the
+    /// agent name), so it cannot be replayed for a different agent or spend.
     fn confirm_hire(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.pending_hire.take() {
-            log::info!(
-                "swarm-panel: operator authorized hire of '{}' for up to {} credits (gate passed)",
-                pending.agent_name,
-                pending.total_hire_cost
-            );
-            // TODO(slice 5): invoke `swarm_hire` with a signed
-            // `credits_authorized` token derived from this consent.
-        }
+        let Some(pending) = self.pending_hire.take() else {
+            return;
+        };
+        let Some(workspace_id) = self.selected_workspace.clone() else {
+            self.fetch_error =
+                Some("No swarm selected to hire into. Create a workspace on ABW first.".into());
+            cx.notify();
+            return;
+        };
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.fetch_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+
+        let agent_name = pending.agent_name.clone();
+        let credits = pending.total_hire_cost as u32;
+        self.spend_in_flight = Some(agent_name.clone());
         cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            // Step 1: mint the consent token (records the operator's authorization).
+            let consent = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_request_consent",
+                    json!({
+                        "action": "hire",
+                        "target": agent_name,
+                        "credits_authorized": credits,
+                    }),
+                )
+                .await;
+
+            let token = match consent {
+                Ok(output) => {
+                    let parsed: Option<serde_json::Value> = serde_json::from_str(&output)
+                        .ok()
+                        .and_then(|v: serde_json::Value| v.get("content").cloned().or(Some(v)));
+                    parsed.and_then(|c| {
+                        c.get("consent_token")
+                            .and_then(|t| t.as_str())
+                            .map(str::to_string)
+                    })
+                }
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.spend_in_flight = None;
+                        this.fetch_error = Some(format!("Consent failed: {err}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+
+            let Some(token) = token else {
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    this.fetch_error = Some("Consent did not return a token.".into());
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+
+            // Step 2: invoke the gated spend tool with the consent token.
+            let hire = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_hire",
+                    json!({
+                        "workspace_id": workspace_id,
+                        "agent_name": agent_name,
+                        "include_optional": false,
+                        "consent_token": token,
+                        "credits_authorized": credits,
+                    }),
+                )
+                .await;
+
+            this.update(cx, |this, cx| {
+                this.spend_in_flight = None;
+                match hire {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.wallet_balance = Some(b);
+                        }
+                        log::info!("swarm-panel: hired '{agent_name}' into {workspace_id}");
+                        // Refresh so the new hire appears in the swarm roster.
+                        this.fetch_all(cx);
+                    }
+                    Err(err) => {
+                        this.fetch_error = Some(format!("Hire failed: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Operator declined the hire — clear the gate without spending.
@@ -465,6 +658,155 @@ impl SwarmPanel {
             );
         }
         cx.notify();
+    }
+
+    fn set_mode(&mut self, mode: PanelMode, cx: &mut Context<Self>) {
+        self.mode = mode;
+        cx.notify();
+    }
+
+    /// Create a new agent from the authoring form.
+    fn create_agent(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.author.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let name = self.author.name.read(cx).text(cx);
+        let description = self.author.description.read(cx).text(cx);
+        let system_prompt = self.author.system_prompt.read(cx).text(cx);
+        if name.trim().is_empty() || system_prompt.trim().is_empty() {
+            self.author.status = Some("Name and system prompt are required.".into());
+            cx.notify();
+            return;
+        }
+        let agent_type = self.author.agent_type.clone();
+        self.author.busy = true;
+        self.author.status = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_create_agent",
+                    json!({
+                        "agent_name": name.trim(),
+                        "agent_type": agent_type,
+                        "system_prompt": system_prompt.trim(),
+                        "description": description.trim(),
+                    }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.author.busy = false;
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.wallet_balance = Some(b);
+                        }
+                        this.author.status =
+                            Some(format!("Agent '{}' created.", name.trim()).into());
+                        // Refresh so the new agent appears in browse.
+                        this.fetch_all(cx);
+                    }
+                    Err(err) => {
+                        this.author.status = Some(format!("Create failed: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Create a new swarm from the compose form, hiring any listed agents.
+    fn create_swarm(&mut self, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.compose.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let name = self.compose.name.read(cx).text(cx);
+        if name.trim().is_empty() {
+            self.compose.status = Some("Swarm name is required.".into());
+            cx.notify();
+            return;
+        }
+        let mission = self.compose.mission.read(cx).text(cx);
+        let agents_raw = self.compose.agents.read(cx).text(cx);
+        let agents: Vec<String> = agents_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        self.compose.busy = true;
+        self.compose.status = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            // Mint a consent token per agent to hire (each hire is gated).
+            let mut consent_tokens = Vec::new();
+            for agent in &agents {
+                match invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_request_consent",
+                        json!({ "action": "hire", "target": agent, "credits_authorized": 5 }),
+                    )
+                    .await
+                {
+                    Ok(output) => {
+                        let token = serde_json::from_str::<serde_json::Value>(&output)
+                            .ok()
+                            .and_then(|v| v.get("content").cloned().or(Some(v)))
+                            .and_then(|c| {
+                                c.get("consent_token")
+                                    .and_then(|t| t.as_str())
+                                    .map(str::to_string)
+                            });
+                        if let Some(t) = token {
+                            consent_tokens.push(t);
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_create_swarm",
+                    json!({
+                        "name": name.trim(),
+                        "mission": if mission.trim().is_empty() { None } else { Some(mission.trim()) },
+                        "agents": agents,
+                        "consent_tokens": consent_tokens,
+                    }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.compose.busy = false;
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.wallet_balance = Some(b);
+                        }
+                        this.compose.status =
+                            Some(format!("Swarm '{}' created.", name.trim()).into());
+                        this.fetch_all(cx);
+                    }
+                    Err(err) => {
+                        this.compose.status = Some(format!("Create failed: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn filter_entries(&mut self, cx: &mut Context<Self>) {
@@ -573,10 +915,17 @@ impl SwarmPanel {
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("hire-{agent_name}")),
-                                        "Hire…",
+                                        if self.spend_in_flight.as_deref()
+                                            == Some(agent_name.as_str())
+                                        {
+                                            "Hiring…"
+                                        } else {
+                                            "Hire…"
+                                        },
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
+                                    .disabled(self.spend_in_flight.is_some())
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
                                             this.begin_hire(agent_name.clone(), cx);
@@ -624,6 +973,176 @@ impl SwarmPanel {
 
     fn render_search(&self, cx: &mut Context<Self>) -> Div {
         marketplace_search_bar(&self.query_editor, false, cx)
+    }
+
+    /// The agent-authoring surface: name, description, system prompt, create.
+    fn render_author(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border = cx.theme().colors().border;
+        v_flex()
+            .w_full()
+            .gap_3()
+            .p_4()
+            .child(Headline::new("Author an Agent").size(HeadlineSize::Small))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Name")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .child(self.author.name.clone()),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Description")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .child(self.author.description.clone()),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("System prompt")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .child(self.author.system_prompt.clone()),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Button::new(
+                            "create-agent",
+                            if self.author.busy {
+                                "Creating…"
+                            } else {
+                                "Create Agent"
+                            },
+                        )
+                        .style(ButtonStyle::Filled)
+                        .disabled(self.author.busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.create_agent(cx);
+                        })),
+                    )
+                    .when_some(self.author.status.clone(), |this, status| {
+                        this.child(
+                            Label::new(status)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
+            )
+    }
+
+    /// The swarm-composition surface: name, mission, agents, create.
+    fn render_compose(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border = cx.theme().colors().border;
+        v_flex()
+            .w_full()
+            .gap_3()
+            .p_4()
+            .child(Headline::new("Compose a Swarm").size(HeadlineSize::Small))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Name")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .child(self.compose.name.clone()),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Mission")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .child(self.compose.mission.clone()),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Agents to hire (comma-separated)")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .child(self.compose.agents.clone()),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Button::new(
+                            "create-swarm",
+                            if self.compose.busy {
+                                "Creating…"
+                            } else {
+                                "Create Swarm"
+                            },
+                        )
+                        .style(ButtonStyle::Filled)
+                        .disabled(self.compose.busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.create_swarm(cx);
+                        })),
+                    )
+                    .when_some(self.compose.status.clone(), |this, status| {
+                        this.child(
+                            Label::new(status)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
+            )
     }
 
     fn on_query_change(
@@ -831,74 +1350,130 @@ impl Render for SwarmPanel {
                             }),
                     )
                     .children(self.render_consent_banner(cx))
+                    // The three surfaces: Browse (discovery/sharing), Author
+                    // (agents), Compose (swarms).
                     .child(
-                        h_flex()
-                            .w_full()
-                            .flex_wrap()
-                            .gap_2()
-                            .child(self.render_search(cx))
-                            .child(
-                                div().child(
-                                    ToggleButtonGroup::single_row(
-                                        "swarm-filter-buttons",
-                                        [
-                                            ToggleButtonSimple::new(
-                                                "All",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.filter = SwarmFilter::All;
-                                                    this.filter_entries(cx);
-                                                    this.scroll_to_top(cx);
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Swarms",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.filter = SwarmFilter::Swarms;
-                                                    this.filter_entries(cx);
-                                                    this.scroll_to_top(cx);
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Agents",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.filter = SwarmFilter::Agents;
-                                                    this.filter_entries(cx);
-                                                    this.scroll_to_top(cx);
-                                                }),
-                                            ),
-                                        ],
-                                    )
-                                    .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
-                                    .label_size(LabelSize::Default)
-                                    .auto_width()
-                                    .selected_index(match self.filter {
-                                        SwarmFilter::All => 0,
-                                        SwarmFilter::Swarms => 1,
-                                        SwarmFilter::Agents => 2,
-                                    })
-                                    .into_any_element(),
-                                ),
-                            ),
-                    ),
-            )
-            .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                let count = self.filtered_entry_indices.len();
-
-                if count == 0 {
-                    this.child(self.render_empty_state(cx)).into_any_element()
-                } else {
-                    let scroll_handle = &self.list;
-                    this.child(
-                        uniform_list("swarm-entries", count, cx.processor(Self::render_entries))
-                            .flex_grow_1()
-                            .pb_4()
-                            .track_scroll(scroll_handle),
+                        div().child(
+                            ToggleButtonGroup::single_row(
+                                "swarm-mode-buttons",
+                                [
+                                    ToggleButtonSimple::new(
+                                        "Browse",
+                                        cx.listener(|this, _event, _, cx| {
+                                            this.set_mode(PanelMode::Browse, cx);
+                                        }),
+                                    ),
+                                    ToggleButtonSimple::new(
+                                        "Author",
+                                        cx.listener(|this, _event, _, cx| {
+                                            this.set_mode(PanelMode::Author, cx);
+                                        }),
+                                    ),
+                                    ToggleButtonSimple::new(
+                                        "Compose",
+                                        cx.listener(|this, _event, _, cx| {
+                                            this.set_mode(PanelMode::Compose, cx);
+                                        }),
+                                    ),
+                                ],
+                            )
+                            .style(ToggleButtonGroupStyle::Outlined)
+                            .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                            .label_size(LabelSize::Default)
+                            .auto_width()
+                            .selected_index(match self.mode {
+                                PanelMode::Browse => 0,
+                                PanelMode::Author => 1,
+                                PanelMode::Compose => 2,
+                            })
+                            .into_any_element(),
+                        ),
                     )
-                    .vertical_scrollbar_for(scroll_handle, window, cx)
-                    .into_any_element()
-                }
-            }))
+                    .when(self.mode == PanelMode::Browse, |this| {
+                        this.child(
+                            h_flex()
+                                .w_full()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(self.render_search(cx))
+                                .child(
+                                    div().child(
+                                        ToggleButtonGroup::single_row(
+                                            "swarm-filter-buttons",
+                                            [
+                                                ToggleButtonSimple::new(
+                                                    "All",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.filter = SwarmFilter::All;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
+                                                ToggleButtonSimple::new(
+                                                    "Swarms",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.filter = SwarmFilter::Swarms;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
+                                                ToggleButtonSimple::new(
+                                                    "Agents",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.filter = SwarmFilter::Agents;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
+                                            ],
+                                        )
+                                        .style(ToggleButtonGroupStyle::Outlined)
+                                        .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                                        .label_size(LabelSize::Default)
+                                        .auto_width()
+                                        .selected_index(match self.filter {
+                                            SwarmFilter::All => 0,
+                                            SwarmFilter::Swarms => 1,
+                                            SwarmFilter::Agents => 2,
+                                        })
+                                        .into_any_element(),
+                                    ),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                v_flex()
+                    .px_4()
+                    .size_full()
+                    .overflow_y_hidden()
+                    .map(|this| match self.mode {
+                        PanelMode::Author => this.child(self.render_author(cx)).into_any_element(),
+                        PanelMode::Compose => {
+                            this.child(self.render_compose(cx)).into_any_element()
+                        }
+                        PanelMode::Browse => {
+                            let count = self.filtered_entry_indices.len();
+                            if count == 0 {
+                                this.child(self.render_empty_state(cx)).into_any_element()
+                            } else {
+                                let scroll_handle = &self.list;
+                                this.child(
+                                    uniform_list(
+                                        "swarm-entries",
+                                        count,
+                                        cx.processor(Self::render_entries),
+                                    )
+                                    .flex_grow_1()
+                                    .pb_4()
+                                    .track_scroll(scroll_handle),
+                                )
+                                .vertical_scrollbar_for(scroll_handle, window, cx)
+                                .into_any_element()
+                            }
+                        }
+                    }),
+            )
     }
 }
 
@@ -946,7 +1521,19 @@ mod tests {
         // These strings must match the #[tool] fn names in
         // `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
         assert_eq!(SWARM_SERVER, "swarm");
-        for tool in ["swarm_list_agents", "swarm_get_swarm", "swarm_hire_cost"] {
+        for tool in [
+            "swarm_list_agents",
+            "swarm_get_swarm",
+            "swarm_hire_cost",
+            "swarm_request_consent",
+            "swarm_hire",
+            "swarm_delegate",
+            "swarm_run_status",
+            "swarm_generate_prompt",
+            "swarm_generate_ontology",
+            "swarm_create_agent",
+            "swarm_create_swarm",
+        ] {
             assert!(tool.starts_with("swarm_"));
         }
     }

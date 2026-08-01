@@ -100,6 +100,23 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
     hkask_memory::salience::compute_salience_batch(&all_tags)
 }
 
+/// Parse an LLM tagging response into validated OntologyTags.
+///
+/// This is the tagging pipeline's trust boundary (RR-0016): raw LLM text is
+/// guard-scanned, JSON-extracted, deserialized, and normalized through
+/// `validate_ontology_tags` before it can become a `TaggedChunk`. Extracted
+/// as a named function so the pipeline shape (scan → extract → parse →
+/// validate) is directly testable — a refactor that drops the validation
+/// step fails the test, not just a grep.
+fn parse_and_validate_tags(response_text: &str) -> Option<OntologyTags> {
+    let output_scan = GUARD.scan_output(response_text);
+    let content = output_scan.output.content(response_text);
+    let cleaned = extract_json_from_response(content);
+    serde_json::from_str::<OntologyTags>(&cleaned)
+        .map(validate_ontology_tags)
+        .ok()
+}
+
 /// Validate and normalize LLM-extracted ontology tags before they enter the
 /// corpus. This is the security-critical boundary between untrusted LLM output
 /// and the trusted `TaggedChunk` record.
@@ -299,17 +316,9 @@ impl CorpusServer {
                         }
                     };
 
-                    let parse_result = if let Some(response) = response {
-                        // Got a response — parse it
-                        let output_scan = GUARD.scan_output(&response.text);
-                        let content = output_scan.output.content(&response.text);
-                        let cleaned = extract_json_from_response(content);
-                        serde_json::from_str::<OntologyTags>(&cleaned)
-                            .map(validate_ontology_tags)
-                            .ok()
-                    } else {
-                        None
-                    };
+                    let parse_result = response
+                        .as_ref()
+                        .and_then(|resp| parse_and_validate_tags(&resp.text));
 
                     if let Some(tags) = parse_result {
                         let mut results = results.lock().unwrap();
@@ -546,6 +555,27 @@ mod tests {
         };
         let out = validate_ontology_tags(tags);
         assert_eq!(out.dimensions, vec!["who".to_string(), "what".to_string()]);
+    }
+
+    /// RR-0016: the tagging pipeline's parse path must route LLM output
+    /// through validation — an LLM response with out-of-allowlist dimensions
+    /// must come out normalized, proving scan → extract → parse → validate
+    /// is the pipeline shape (not just that the validator exists somewhere
+    /// in the file).
+    #[test]
+    fn parse_and_validate_tags_normalizes_llm_response() {
+        let response = "Here are the tags:\n{\"dimensions\": [\"what\", \"bogus-dimension\"], \"dc_type\": \"bibo:Document\", \"dc_subject\": [], \"ontology_tags\": {}, \"expertise_level\": \"analyst\"}";
+        let tags = parse_and_validate_tags(response).expect("valid JSON should parse");
+        assert_eq!(
+            tags.dimensions,
+            vec!["what".to_string()],
+            "out-of-allowlist dimensions must be filtered on the parse path"
+        );
+    }
+
+    #[test]
+    fn parse_and_validate_tags_rejects_unparseable_response() {
+        assert!(parse_and_validate_tags("no json here at all").is_none());
     }
 
     #[test]

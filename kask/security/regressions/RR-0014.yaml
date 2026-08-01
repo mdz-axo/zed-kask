@@ -10,8 +10,8 @@ discovered_by: kali-audit
 discovered_at: 2026-07-17
 severity: high
 detection:
-  kind: grep
-  pattern: 'check_canary\('
+  kind: cargo-test
+  pattern: "scan_output_fails_and_redacts_canary"
   include: "crates/hkask-guard/src/pipeline.rs"
 mitigation: "Call check_canary() inside scan_output() to detect system prompt exfiltration in every model output."
 source: "https://www.toxsec.com/p/canary-tokens-for-prompt-injection — OWASP LLM07:2025"

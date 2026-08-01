@@ -3744,6 +3744,55 @@ mod tests {
         );
     }
 
+    /// RR-0011: tool outputs must be spotlighted before entering the LLM
+    /// context — a refactor that drops the spotlight call from invoke_tool
+    /// must fail this test (the old grep only proved the call exists
+    /// somewhere in the file).
+    #[tokio::test]
+    async fn tool_output_is_spotlighted_on_the_invoke_path() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(SourceToolPort),
+            LLMParameters::default(),
+        );
+        let (result, _taint) = executor
+            .invoke_tool("read", serde_json::json!({}), 1)
+            .await
+            .expect("SourceToolPort invoke should succeed");
+        let text = result.as_str().expect("spotlighted output is a string");
+        assert!(
+            text.contains("untrusted sub-cascade output"),
+            "payload must survive spotlighting: {text}"
+        );
+        assert_ne!(
+            text, "untrusted sub-cascade output",
+            "output must be transformed by the spotlighter (delimited), not passed through raw"
+        );
+    }
+
+    /// RR-0012: the runtime policy must gate tool invocation — a Block
+    /// verdict must prevent the tool from being invoked at all.
+    #[tokio::test]
+    async fn runtime_policy_block_prevents_tool_invocation() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(SourceToolPort),
+            LLMParameters::default(),
+        )
+        .with_runtime_policy(Arc::new(hkask_regulation::DefaultPolicy::new(
+            hkask_regulation::PolicyConfig {
+                human_in_loop_tools: ["read".to_string()].into_iter().collect(),
+                ..Default::default()
+            },
+        )));
+        let result = executor.invoke_tool("read", serde_json::json!({}), 1).await;
+        let err = result.expect_err("RequireHuman verdict must abort the invocation");
+        assert!(
+            err.to_string().contains("requires human confirmation"),
+            "error must surface the policy verdict: {err}"
+        );
+    }
+
     /// Tool port stub that reports a Source-tainted tool and returns a fixed
     /// payload. Used by the sub-cascade taint test to get a Source label into
     /// the shared taint map via the real execute_tool_invoke path.

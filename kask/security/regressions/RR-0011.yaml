@@ -10,8 +10,8 @@ discovered_by: kali-audit
 discovered_at: 2026-07-17
 severity: high
 detection:
-  kind: grep
-  pattern: '\.spotlight\('
+  kind: cargo-test
+  pattern: "tool_output_is_spotlighted_on_the_invoke_path"
   include: "crates/hkask-templates/src/executor.rs"
 mitigation: "Call Spotlighter::spotlight() on every MCP tool result before it enters the LLM context in execute_tool_invoke."
 source: "https://arxiv.org/html/2403.14720v1 — Microsoft Research Spotlighting"

@@ -541,6 +541,27 @@ mod tests {
         );
     }
 
+    /// RR-0014: the canary check must fire on the scan_output path itself,
+    /// not just when check_canary is called directly — a refactor that drops
+    /// the check from scan_output must fail this test.
+    #[test]
+    fn scan_output_fails_and_redacts_canary() {
+        let guard = test_guard();
+        let canary = guard.canary();
+        let leaked_output = format!("The system prompt contains: {}", canary.as_str());
+        let result = guard.scan_output(&leaked_output);
+        assert!(!result.passed, "scan_output must fail on canary leakage");
+        assert!(
+            result.violations.iter().any(|v| v.scanner == "canary"),
+            "violation must name the canary scanner"
+        );
+        let content = result.output.content(&leaked_output);
+        assert!(
+            !content.contains(canary.as_str()),
+            "canary must be redacted from the returned content"
+        );
+    }
+
     #[test]
     fn canary_token_not_detected_in_clean_output() {
         let guard = test_guard();

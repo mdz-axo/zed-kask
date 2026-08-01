@@ -94,6 +94,107 @@ impl SwarmConfig {
     }
 }
 
+// ── Consent gate ───────────────────────────────────────────────────────────
+
+/// An operator's authorization to spend credits on a specific action. Minted
+/// by `swarm_request_consent` (which the panel calls after the operator
+/// confirms), consumed by the spend tools. Single-use and action-scoped so a
+/// consent for one hire cannot be replayed for a different agent or a second
+/// spend — the enforcement point for the cost/consent gate.
+#[derive(Debug, Clone)]
+pub struct ConsentGrant {
+    /// The action this consent authorizes (e.g. "hire", "delegate").
+    pub action: String,
+    /// The target (agent name for hire, workspace id for delegate).
+    pub target: String,
+    /// The credit ceiling the operator authorized.
+    pub credits_authorized: u32,
+    /// The opaque token the spend tool must present.
+    pub token: String,
+}
+
+/// Store of active consent grants, keyed by token. In-memory and per-server-
+/// process: a grant does not survive a server restart, which is the correct
+/// behavior (consent is session-scoped, not durable).
+#[derive(Debug, Default)]
+pub struct ConsentStore {
+    grants: std::sync::Mutex<std::collections::HashMap<String, ConsentGrant>>,
+}
+
+impl ConsentStore {
+    /// Mint a consent token for an action+target and record the grant.
+    /// Returns the token the panel shows the operator and the spend tool
+    /// must present.
+    fn mint(&self, action: &str, target: &str, credits_authorized: u32) -> String {
+        let token = format!(
+            "hkask-consent-{:016x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+                ^ (fnv1a(action, target) as u128)
+        );
+        let grant = ConsentGrant {
+            action: action.to_string(),
+            target: target.to_string(),
+            credits_authorized,
+            token: token.clone(),
+        };
+        self.grants
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(token.clone(), grant);
+        token
+    }
+
+    /// Consume a consent token, validating it authorizes `action` on `target`
+    /// for at least `cost` credits. Single-use: a successful consume removes
+    /// the grant so it cannot be replayed. Returns the authorized ceiling.
+    fn consume(
+        &self,
+        token: &str,
+        action: &str,
+        target: &str,
+        cost: u32,
+    ) -> Result<u32, SwarmError> {
+        let grant = self
+            .grants
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(token)
+            .ok_or_else(|| {
+                SwarmError::ConsentDenied("unknown or already-used consent token".into())
+            })?;
+
+        if grant.action != action || grant.target != target {
+            return Err(SwarmError::ConsentDenied(format!(
+                "consent token scope mismatch: token is for {} on '{}', not {} on '{}'",
+                grant.action, grant.target, action, target
+            )));
+        }
+        if cost > grant.credits_authorized {
+            return Err(SwarmError::ConsentDenied(format!(
+                "cost {cost} exceeds authorized ceiling {}",
+                grant.credits_authorized
+            )));
+        }
+        Ok(grant.credits_authorized)
+    }
+}
+
+/// A tiny FNV-1a hash so consent tokens are not trivially guessable from the
+/// timestamp alone. Not cryptographic — the token's value is its unguessability
+/// combined with single-use consumption, not secrecy against a motivated
+/// attacker with process access.
+fn fnv1a(action: &str, target: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in action.bytes().chain(target.bytes()) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 // ── Error type ─────────────────────────────────────────────────────────────
 
 /// Errors from the ABW swarm client. Maps ABW HTTP errors AND body-embedded
@@ -123,6 +224,12 @@ pub enum SwarmError {
     /// Serde parse failure on a known endpoint — possible API drift (S4).
     #[error("ABW API version mismatch: {0}")]
     ApiVersionMismatch(String),
+    /// A spend tool was invoked without a valid consent token. The gate is
+    /// the enforcement point — this is a hard refusal, not a warning.
+    #[error(
+        "ABW spend refused: {0}. Obtain operator consent via the swarm panel (Hire… → Confirm) and retry with the issued consent token."
+    )]
+    ConsentDenied(String),
     /// Network/transport failure.
     #[error("ABW request failed: {0}")]
     Unavailable(String),
@@ -139,6 +246,7 @@ impl SwarmError {
             Self::RateLimited(m) => McpToolError::rate_limited(m),
             Self::CuratorUnavailable(m) => McpToolError::unavailable(m),
             Self::ApiVersionMismatch(m) => McpToolError::internal(m),
+            Self::ConsentDenied(m) => McpToolError::permission_denied(m),
             Self::Unavailable(m) => McpToolError::unavailable(m),
         }
     }
@@ -359,11 +467,116 @@ pub struct HireCostRequest {
     pub agent_name: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RequestConsentRequest {
+    /// The action to authorize: "hire" or "delegate".
+    pub action: String,
+    /// The target: agent name (hire) or workspace id (delegate).
+    pub target: String,
+    /// The credit ceiling the operator is authorizing.
+    pub credits_authorized: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HireRequest {
+    /// Workspace (swarm) id to hire into.
+    pub workspace_id: String,
+    /// Agent name to hire.
+    pub agent_name: String,
+    /// Whether to also hire the agent's optional dependency team.
+    pub include_optional: Option<bool>,
+    /// The consent token from `swarm_request_consent` (action "hire",
+    /// target = agent_name). Required — the spend is refused without it.
+    pub consent_token: String,
+    /// The credit cost the operator authorized (from `swarm_hire_cost`).
+    pub credits_authorized: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DelegateRequest {
+    /// Workspace (swarm) id containing the agent.
+    pub workspace_id: String,
+    /// Agent name to delegate to (the @mention target).
+    pub agent_name: String,
+    /// The task for the agent.
+    pub task: String,
+    /// The consent token from `swarm_request_consent` (action "delegate",
+    /// target = workspace_id). Required.
+    pub consent_token: String,
+    /// The credit cost the operator authorized.
+    pub credits_authorized: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SwarmRunRequest {
+    /// Workspace (swarm) id to read the run status from.
+    pub workspace_id: String,
+    /// Max messages to return. Default 50.
+    pub limit: Option<usize>,
+}
+
+// ── Authoring & composition ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GeneratePromptRequest {
+    /// Natural-language description of what the agent should do.
+    pub description: String,
+    /// Agent name (lowercase_with_underscores).
+    pub agent_name: String,
+    /// Agent type (e.g. "research", "creative", "meta").
+    pub agent_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GenerateOntologyRequest {
+    /// Natural-language description of the agent's knowledge domain.
+    pub domain_description: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateAgentRequest {
+    /// Agent name (lowercase_with_underscores) — becomes the system identifier.
+    pub agent_name: String,
+    /// Agent type (e.g. "research", "creative", "meta").
+    pub agent_type: String,
+    /// The agent's system prompt (its instructions).
+    pub system_prompt: String,
+    /// One-sentence description for the catalogue.
+    pub description: String,
+    /// Model id. Default: claude-haiku-4-5-20251001 (fast, cheap).
+    pub model: Option<String>,
+    /// Temperature (0.1–0.3 factual, 0.5–0.8 creative). Default 0.3.
+    pub temperature: Option<f64>,
+    /// Tags for catalogue discovery.
+    pub tags: Option<Vec<String>>,
+    /// Sample queries to help users understand what to ask.
+    pub sample_queries: Option<Vec<String>>,
+    /// Required dependency agent names (for compound agents).
+    pub dependencies_required: Option<Vec<String>>,
+    /// Optional dependency agent names (for compound agents).
+    pub dependencies_optional: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateSwarmRequest {
+    /// Workspace (swarm) name.
+    pub name: String,
+    /// Mission / description. Optional.
+    pub mission: Option<String>,
+    /// Agent names to hire into the new swarm. Each hire is consent-gated
+    /// separately — pass `consent_tokens` aligned with `agents`.
+    pub agents: Option<Vec<String>>,
+    /// Consent tokens for the hires (action "hire", target = agent name).
+    /// Required when `agents` is non-empty; the swarm itself is free to create.
+    pub consent_tokens: Option<Vec<String>>,
+}
+
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
     pub struct SwarmServer {
         pub client: std::sync::Arc<SwarmClient>,
+        pub consent: std::sync::Arc<ConsentStore>,
     }
 );
 
@@ -621,9 +834,397 @@ impl SwarmServer {
         })
         .await
     }
-}
 
-// ── Tool handler registration ──────────────────────────────────────────────
+    /// Mint a consent token after the operator confirms a spend in the panel.
+    ///
+    /// The panel calls this when the operator clicks Confirm; the returned
+    /// token must be presented to the spend tool. Read-only against ABW — it
+    /// only records the operator's authorization locally.
+    #[tool(
+        description = "Record operator consent for a credit spend and return a single-use consent token. Called by the swarm panel after the operator confirms. The token must be passed to swarm_hire/swarm_delegate."
+    )]
+    pub async fn swarm_request_consent(
+        &self,
+        parameters: Parameters<RequestConsentRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_request_consent", Some("pko"), async {
+            let req = parameters.0;
+            if req.action.trim().is_empty() || req.target.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "action and target must be non-empty".to_string(),
+                ));
+            }
+            if req.credits_authorized == 0 {
+                return Err(McpToolError::invalid_argument(
+                    "credits_authorized must be > 0".to_string(),
+                ));
+            }
+            let token = self
+                .consent
+                .mint(&req.action, &req.target, req.credits_authorized);
+            Ok(serde_json::json!({
+                "consent_token": token,
+                "action": req.action,
+                "target": req.target,
+                "credits_authorized": req.credits_authorized,
+            }))
+        })
+        .await
+    }
+
+    /// Hire an agent into a workspace (spends credits). Consent-gated.
+    #[tool(
+        description = "Hire an Agent Bestiary World agent into a workspace (swarm). Spends credits — requires a consent_token from swarm_request_consent (action 'hire', target = agent_name)."
+    )]
+    pub async fn swarm_hire(&self, parameters: Parameters<HireRequest>) -> String {
+        execute_tool_semantic(self, "swarm_hire", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+
+            // The consent gate is the enforcement point: consume the token
+            // (single-use) and verify it authorizes this exact hire.
+            self.consent
+                .consume(
+                    &req.consent_token,
+                    "hire",
+                    &req.agent_name,
+                    req.credits_authorized,
+                )
+                .map_err(SwarmError::into_tool_error)?;
+
+            let data = self
+                .client
+                .post(
+                    &format!("/workspaces/{}/hire", req.workspace_id),
+                    &serde_json::json!({
+                        "agent_id": req.agent_name,
+                        "include_optional": req.include_optional.unwrap_or(false),
+                    }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "hired": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "credits_authorized": req.credits_authorized,
+                    "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Delegate a task to an agent in a workspace (spends credits). Consent-gated.
+    #[tool(
+        description = "Delegate a task to an agent in an Agent Bestiary World workspace via @mention (full tool access, gas-charged). Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = workspace_id)."
+    )]
+    pub async fn swarm_delegate(&self, parameters: Parameters<DelegateRequest>) -> String {
+        execute_tool_semantic(self, "swarm_delegate", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty()
+                || req.agent_name.trim().is_empty()
+                || req.task.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id, agent_name, and task must be non-empty".to_string(),
+                ));
+            }
+
+            self.consent
+                .consume(
+                    &req.consent_token,
+                    "delegate",
+                    &req.workspace_id,
+                    req.credits_authorized,
+                )
+                .map_err(SwarmError::into_tool_error)?;
+
+            // ABW delegation is an @mention message in the workspace chat.
+            let data = self
+                .client
+                .post(
+                    &format!("/workspaces/{}/messages", req.workspace_id),
+                    &serde_json::json!({ "content": format!("@{} {}", req.agent_name, req.task) }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "delegated_to": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "credits_authorized": req.credits_authorized,
+                    "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Read a workspace's run status (recent messages / agent activity).
+    #[tool(
+        description = "Read an Agent Bestiary World workspace's recent run status: the latest chat messages and agent activity. Read-only. Requires API key."
+    )]
+    pub async fn swarm_run_status(&self, parameters: Parameters<SwarmRunRequest>) -> String {
+        execute_tool_semantic(self, "swarm_run_status", Some("dublin-core"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let limit = req.limit.unwrap_or(50);
+            let data = self
+                .client
+                .get(&format!(
+                    "/workspaces/{}/messages?limit={limit}",
+                    req.workspace_id
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": req.workspace_id,
+                    "messages": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Generate a system prompt for a new agent from a description.
+    #[tool(
+        description = "Generate an ABW system prompt for a new agent from a natural-language description. Authoring aid — read-only, spends nothing. Requires API key."
+    )]
+    pub async fn swarm_generate_prompt(
+        &self,
+        parameters: Parameters<GeneratePromptRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_generate_prompt", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            let data = self
+                .client
+                .post(
+                    "/agents/generate-prompt",
+                    &serde_json::json!({
+                        "description": req.description,
+                        "agent_name": req.agent_name,
+                        "agent_type": req.agent_type.unwrap_or_else(|| "research".to_string()),
+                    }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(data)
+        })
+        .await
+    }
+
+    /// Generate a seed ontology (entity-relationship model) for a domain.
+    #[tool(
+        description = "Generate a seed ontology (Mermaid ER diagram) for an agent's knowledge domain. Authoring aid — read-only. Requires API key."
+    )]
+    pub async fn swarm_generate_ontology(
+        &self,
+        parameters: Parameters<GenerateOntologyRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_generate_ontology", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            let data = self
+                .client
+                .post(
+                    "/agents/generate-ontology",
+                    &serde_json::json!({ "domain_description": req.domain_description }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(data)
+        })
+        .await
+    }
+
+    /// Create a new agent on ABW. This is the authoring surface.
+    #[tool(
+        description = "Create a new Agent Bestiary World agent from a name, system prompt, and config. The agent appears in your library (draft) and can be hired into swarms. Requires API key."
+    )]
+    pub async fn swarm_create_agent(&self, parameters: Parameters<CreateAgentRequest>) -> String {
+        execute_tool_semantic(self, "swarm_create_agent", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and system_prompt must be non-empty".to_string(),
+                ));
+            }
+
+            let mut card = serde_json::json!({
+                "agent_name": req.agent_name,
+                "agent_type": req.agent_type,
+                "system_prompt": req.system_prompt,
+                "capabilities": {
+                    "executor": "llm",
+                    "model": req.model.unwrap_or_else(|| "claude-haiku-4-5-20251001".to_string()),
+                    "temperature": req.temperature.unwrap_or(0.3),
+                    "provider": "anthropic",
+                    "mcp_tools": [],
+                    "skills": [],
+                },
+                "metadata": {
+                    "description": req.description,
+                    "tags": req.tags.unwrap_or_default(),
+                    "sample_queries": req.sample_queries.unwrap_or_default(),
+                },
+            });
+            // Compound agents declare their dependency team.
+            if req.dependencies_required.is_some() || req.dependencies_optional.is_some() {
+                card["dependencies"] = serde_json::json!({
+                    "required": req.dependencies_required.unwrap_or_default(),
+                    "optional": req.dependencies_optional.unwrap_or_default(),
+                });
+            }
+
+            let data = self
+                .client
+                .post("/agents", &card)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            Ok(self.client.with_wallet(data).await)
+        })
+        .await
+    }
+
+    /// Create a new swarm (workspace) and optionally hire agents into it.
+    #[tool(
+        description = "Create a new Agent Bestiary World swarm (workspace) with a name and mission. Optionally hire agents into it (each hire is consent-gated via consent_tokens). This is the composition surface. Requires API key."
+    )]
+    pub async fn swarm_create_swarm(&self, parameters: Parameters<CreateSwarmRequest>) -> String {
+        execute_tool_semantic(self, "swarm_create_swarm", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+
+            // Create the workspace (free).
+            // ABW slugs allow only lowercase letters, digits, and underscores.
+            let slug_base: String = req
+                .name
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect();
+            let slug = format!(
+                "{}_{}",
+                slug_base.trim_matches('_'),
+                &std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis().to_string())
+                    .unwrap_or_default()[..4]
+            );
+            let team = self
+                .client
+                .post(
+                    "/teams",
+                    &serde_json::json!({
+                        "name": req.name,
+                        "slug": slug,
+                        "description": req.mission,
+                        "mission": req.mission,
+                    }),
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            let workspace_id = team
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    SwarmError::ApiVersionMismatch("team create returned no id".to_string())
+                        .into_tool_error()
+                })?;
+
+            // Hire the requested agents, each gated by its own consent token.
+            let agents = req.agents.unwrap_or_default();
+            let tokens = req.consent_tokens.unwrap_or_default();
+            let mut hired = Vec::new();
+            let mut hire_errors = Vec::new();
+            for (ix, agent) in agents.iter().enumerate() {
+                let Some(token) = tokens.get(ix) else {
+                    hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": "no consent token provided for this hire",
+                    }));
+                    continue;
+                };
+                // Consume the consent token for this specific hire.
+                if let Err(e) = self.consent.consume(token, "hire", agent, 5) {
+                    hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": e.to_string(),
+                    }));
+                    continue;
+                }
+                match self
+                    .client
+                    .post(
+                        &format!("/workspaces/{workspace_id}/hire"),
+                        &serde_json::json!({ "agent_id": agent, "include_optional": false }),
+                    )
+                    .await
+                {
+                    Ok(_) => hired.push(agent.clone()),
+                    Err(e) => hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": e.to_string(),
+                    })),
+                }
+            }
+
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": workspace_id,
+                    "name": req.name,
+                    "hired": hired,
+                    "hire_errors": hire_errors,
+                }))
+                .await)
+        })
+        .await
+    }
+}
 
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for SwarmServer {}
@@ -648,6 +1249,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             Ok(SwarmServer::new(
                 ctx.webid,
                 std::sync::Arc::new(SwarmClient::new(reqwest::Client::new(), config)),
+                std::sync::Arc::new(ConsentStore::default()),
             ))
         },
         vec![CredentialRequirement::optional(
@@ -694,6 +1296,65 @@ mod tests {
     fn embedded_error_ignores_clean_payload() {
         let v = serde_json::json!({"response": "The bestiary is a living ecology of AI agents."});
         assert!(detect_embedded_error(&v).is_none());
+    }
+
+    // ── Consent gate ───────────────────────────────────────────────────────
+    // The gate is the enforcement point for the cost/consent invariant: a
+    // spend tool must refuse without a valid, in-scope, sufficient consent
+    // token, and a token must be single-use (no replay).
+
+    #[test]
+    fn consent_consume_succeeds_for_valid_in_scope_token() {
+        let store = ConsentStore::default();
+        let token = store.mint("hire", "style_transfer", 20);
+        let authorized = store
+            .consume(&token, "hire", "style_transfer", 20)
+            .expect("valid token should consume");
+        assert_eq!(authorized, 20);
+    }
+
+    #[test]
+    fn consent_consume_rejects_unknown_token() {
+        let store = ConsentStore::default();
+        let result = store.consume("hkask-consent-bogus", "hire", "style_transfer", 20);
+        assert!(matches!(result, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    #[test]
+    fn consent_consume_rejects_replay() {
+        let store = ConsentStore::default();
+        let token = store.mint("hire", "style_transfer", 20);
+        store
+            .consume(&token, "hire", "style_transfer", 20)
+            .expect("first consume");
+        let replay = store.consume(&token, "hire", "style_transfer", 20);
+        assert!(matches!(replay, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    #[test]
+    fn consent_consume_rejects_scope_mismatch() {
+        let store = ConsentStore::default();
+        // Consent for one agent must not authorize a different agent.
+        let token = store.mint("hire", "style_transfer", 20);
+        let wrong_agent = store.consume(&token, "hire", "watermark", 20);
+        assert!(matches!(wrong_agent, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    #[test]
+    fn consent_consume_rejects_action_mismatch() {
+        let store = ConsentStore::default();
+        // Consent for a hire must not authorize a delegate.
+        let token = store.mint("hire", "style_transfer", 20);
+        let wrong_action = store.consume(&token, "delegate", "style_transfer", 20);
+        assert!(matches!(wrong_action, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    #[test]
+    fn consent_consume_rejects_over_spend() {
+        let store = ConsentStore::default();
+        let token = store.mint("hire", "style_transfer", 10);
+        let over = store.consume(&token, "hire", "style_transfer", 20);
+        assert!(matches!(over, Err(SwarmError::ConsentDenied(_))));
     }
 
     #[test]

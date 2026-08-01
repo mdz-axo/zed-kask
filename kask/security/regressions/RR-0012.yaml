@@ -10,8 +10,8 @@ discovered_by: kali-audit
 discovered_at: 2026-07-17
 severity: high
 detection:
-  kind: grep
-  pattern: 'policy\.check\('
+  kind: cargo-test
+  pattern: "runtime_policy_block_prevents_tool_invocation"
   include: "crates/hkask-templates/src/executor.rs"
 mitigation: "Call DefaultPolicy::check() before every MCP tool invocation in execute_tool_invoke. Block, require human, or log based on the verdict."
 source: "https://arxiv.org/html/2509.23864v1 — AgentGuard runtime verification"

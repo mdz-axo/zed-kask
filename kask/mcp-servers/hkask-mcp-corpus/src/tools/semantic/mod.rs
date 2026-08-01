@@ -62,7 +62,7 @@ pub(crate) static INPUT_GUARD_ENABLED: std::sync::LazyLock<bool> = std::sync::La
 // make them available within this module via the module path.
 pub(crate) use ontology_io::read_ontology_tags;
 pub(crate) use qa::configured_qa_model;
-pub(crate) use triples::predicate_to_dimension;
+pub(crate) use triples::{predicate_to_dimension, triple_confidence};
 
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
@@ -764,63 +764,42 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             .unwrap_or(0.8);
                         let dimension = predicate_to_dimension(predicate);
 
-                        // Gap 5: Hallucination verification — check if subject and
-                        // object strings appear in the chunk text. Skip the check
-                        // for abstract-namespace predicates (golem/eso/fibo/pko)
-                        // where interpretive concepts are expected. Cap at 0.5
-                        // (not 0.3 — too aggressive).
-                        //
-                        // M4 fix: the bypass only applies if the predicate's
-                        // namespace was actually tagged for this chunk. Without
-                        // this cross-check, the LLM could emit any `golem:`/
-                        // `eso:`/`fibo:`/`pko:` predicate to bypass the guard
-                        // for chunks where that ontology was never detected —
-                        // allowing hallucinated triples to enter the knowledge
-                        // graph at full LLM-reported confidence.
-                        let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
-                        let is_abstract_ns = matches!(
-                            pred_ns.as_str(),
-                            "golem" | "eso" | "fibo" | "pko" | "epistemic" | "omc" | "other"
+                        let confidence = triple_confidence(
+                            subject,
+                            predicate,
+                            &object,
+                            raw_confidence,
+                            &chunk_text,
+                            &chunk_namespaces,
                         );
-                        let namespace_tagged =
-                            !chunk_namespaces.is_empty() && chunk_namespaces.contains(&pred_ns);
-                        let is_abstract = is_abstract_ns && namespace_tagged;
-                        let confidence = if is_abstract {
-                            raw_confidence
-                        } else {
-                            let text_lower = chunk_text.to_lowercase();
-                            let subj_clean = subject
-                                .strip_prefix("doc:")
-                                .unwrap_or(subject)
-                                .to_lowercase();
-                            let subj_in_text =
-                                !subj_clean.is_empty() && text_lower.contains(&subj_clean);
-                            let obj_str = match &object {
-                                serde_json::Value::String(s) => s.to_lowercase(),
-                                _ => String::new(),
-                            };
-                            let obj_in_text = obj_str.is_empty() || text_lower.contains(&obj_str);
-                            if (!subj_in_text || !obj_in_text) && raw_confidence > 0.5 {
-                                let reason = if is_abstract_ns && !namespace_tagged {
-                                    format!(
-                                        "abstract namespace '{}' not in chunk ontology tags {:?} — confidence capped at 0.5",
-                                        pred_ns, chunk_namespaces
-                                    )
-                                } else {
-                                    "Triple subject/object not found in chunk text — confidence capped at 0.5".to_string()
-                                };
-                                tracing::warn!(
-                                    target: "hkask.mcp.docproc.triples",
-                                    entity = %entity_ref,
-                                    subject = %subject,
-                                    predicate = %predicate,
-                                    "{reason}"
-                                );
-                                0.5
+                        if confidence < raw_confidence {
+                            let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
+                            let reason = if !chunk_namespaces.contains(&pred_ns)
+                                && matches!(
+                                    pred_ns.as_str(),
+                                    "golem"
+                                        | "eso"
+                                        | "fibo"
+                                        | "pko"
+                                        | "epistemic"
+                                        | "omc"
+                                        | "other"
+                                ) {
+                                format!(
+                                    "abstract namespace '{}' not in chunk ontology tags {:?} — confidence capped at 0.5",
+                                    pred_ns, chunk_namespaces
+                                )
                             } else {
-                                raw_confidence
-                            }
-                        };
+                                "Triple subject/object not found in chunk text — confidence capped at 0.5".to_string()
+                            };
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.triples",
+                                entity = %entity_ref,
+                                subject = %subject,
+                                predicate = %predicate,
+                                "{reason}"
+                            );
+                        }
 
                         // Store subject + object in value so build_prompts can format
                         // triples as "subject --predicate--> object" with confidence.
