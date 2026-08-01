@@ -52,14 +52,6 @@ Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Converg
 | `idiomatic-lisp-design.j2` | KnowAct | Propose idiomatic Lisp solutions with code examples. Apply homoiconicity, metacircular evaluation, data-as-program patterns, hygienic macros, and proper use of special forms. Reference CLHS, SRFI, and ecosystem best practices.  |
 | `idiomatic-lisp-challenge.j2` | KnowAct | Adversarial review of a Lisp design proposal. Find gaps, test edge cases (tail-call depth, multiple-values, restarts, macro hygiene), challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives. Few-shot: if the critique score is below threshold, loop back to design with concrete targets.  |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **critique mode** (draft →
-challenge → refine) to match Lisp design review. Model names are not hardcoded
-in the manifest because models evolve quickly; the operator configures the
-panel via `kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
-
 ## Constraints
 
 - `idiomatic-lisp-inquiry.j2`: Public.

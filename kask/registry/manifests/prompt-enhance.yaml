@@ -83,10 +83,6 @@ inputs:
     required: false
     description: 'Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any.'
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "critique" with skills: [essentialist, grill-me].
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   # ─── PHASE 1: CLASSIFY ───
   # Classify prompt type, validate effort tier, resolve output format,

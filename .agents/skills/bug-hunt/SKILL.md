@@ -96,20 +96,6 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 | `bug-hunt-report.j2` | KnowAct | Compile charter, oracle, and taxonomy results into a structured JSON bug report. v0.31.0: emits `lessons_learned` and `pattern_signatures` fields that the next expedition's charter consumes to close the feedback loop. |
 | `bug-hunt-expedition.j2` | KnowAct | Legacy monolithic expedition template (v0.30.0). Retained for backward compatibility. Prefer the decomposed pipeline. v0.31.0: divergence from the decomposed pipeline is documented in-place (missing crate_model, prior_expedition consumption, dynamic pattern expansion, missing-tests detection, algedonic escalation, reproducibility axis, citation enforcement, lessons_learned/pattern_signatures outputs, composite convergence metric). |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **best-of-n mode** —
-pick the best diagnosis from multiple models. Model names are not hardcoded
-in the manifest because models evolve quickly; the operator configures the
-panel via `kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
-
-- **Judge:** `deepseek-v4-pro`
-- **Panel:** `Kimi2.7`, `Qwen3.7 Max`, `GLM5.2`
-- **Mode:** `best-of-n`
-- **Fused skill:** `pragmatic-cybernetics`
-- **Max rounds:** 3
-
 ## Constraints
 
 - `bug-hunt-charter.j2`: Public. Beizer category selection must be justified against the `crate_model`, not generic prevalence. When `prior_expedition` is present, the charter MUST consume it — silent ignoring is a feedback-loop violation.

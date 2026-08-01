@@ -67,14 +67,6 @@ The convergence check consumes `primary_result` (assess), `delete_result`, and `
 | `deep-module-delete.j2` | `KnowAct` | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
 | `deep-module-design.j2` | `KnowAct` | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **synthesis mode** —
-compose module assessments. Model names are not hardcoded in the manifest
-because models evolve quickly; the operator configures the panel via
-`kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.

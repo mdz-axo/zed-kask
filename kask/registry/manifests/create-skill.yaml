@@ -83,10 +83,6 @@ inputs:
       prior_validation_failures.fix_suggestions to direct the next
       iteration. When absent, the creation runs as a first pass.
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "best-of-n" with skills: [skill-maintenance].
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   - ordinal: 1
     action: select

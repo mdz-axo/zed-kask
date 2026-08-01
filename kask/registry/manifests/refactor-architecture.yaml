@@ -76,10 +76,6 @@ inputs:
     type: string
     required: false
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "pi" with skills: [essentialist, deep-module].
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   # === DISCOVER PHASE (folded from improve-codebase-architecture) ===
   - ordinal: 1

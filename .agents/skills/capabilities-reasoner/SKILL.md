@@ -198,7 +198,6 @@ given query, because they can disagree:
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
 - The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [^mirage-2023], not a capability finding.
-- **Fusion configuration is NOT hardcoded in the manifest.** The manifest omits the `fusion` block; the skill inherits the operator's global `kask.fusion` settings. Recommended operator configuration: `mode: "algo"`, `algo_method: "merge"` (deterministic JSON union, no LLM judge call — ideal for structured capability verdicts). Model names are deliberately excluded from templates because models evolve quickly; the operator configures the panel via `kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 
 ## References

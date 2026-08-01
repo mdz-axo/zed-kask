@@ -45,16 +45,6 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 | `falsifiability-discriminate.j2` | KnowAct | Platt discriminating-test design. Design tests that rule out at least one hypothesis (not one-test-per-hypothesis), build the coverage matrix, flag irreducible pairs, rank by elimination power, present for user review. |
 | `falsifiability-eliminate.j2` | KnowAct | Apply observations, eliminate hypotheses whose predictions fail (hard, not probabilistic), corroborate survivors (never confirm), record the auditable falsification log, compute the verdict. |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **critique mode** (draft
-hypotheses → panel attacks testability and counterfactual soundness → revise)
-to match the eliminative loop. Model names are not hardcoded in the manifest
-because models evolve quickly; the operator configures the panel via
-`kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
-stage's attack.
-
 ## Composition
 
 This skill is designed as a **delegation target**, mirroring the architectural

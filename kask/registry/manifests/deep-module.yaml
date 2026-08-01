@@ -63,10 +63,6 @@ inputs:
     type: object
     required: false
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "synthesis" with skills: [deep-module].
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   - ordinal: 1
     action: select

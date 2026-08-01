@@ -1,6 +1,6 @@
 //! Core Regulation (Cybernetic Nervous System) types for hKask
 //!
-//! Core spans: reg.tool.*, reg.inference.*, reg.fusion.*, reg.agent_pod.*,
+//! Core spans: reg.tool.*, reg.inference.*, reg.agent_pod.*,
 //! reg.gas.*, reg.curation.*, reg.heal.*, reg.memory.encode.*
 //!
 //! Domain-specific spans have moved to their respective domain crates.
@@ -110,10 +110,6 @@ pub enum RegulationSpan {
     Tool { subsystem: ToolSubsystem },
     /// LLM inference request/response.
     Inference,
-    /// Multi-model fusion deliberation (panel dispatch + judge orchestration).
-    /// Distinct from `Inference` so fusion rounds, convergence, and panel/judge
-    /// cost are independently observable (PRINCIPLES.md §9.1).
-    Fusion,
     /// Agent pod lifecycle events.
     AgentPod,
     /// Gas (energy) consumption tracking.
@@ -252,7 +248,6 @@ impl RegulationSpan {
                 ToolSubsystem::Other => "reg.tool",
             },
             RegulationSpan::Inference => "reg.inference",
-            RegulationSpan::Fusion => "reg.fusion",
             RegulationSpan::AgentPod => "reg.pod",
             RegulationSpan::Gas => "reg.gas",
             RegulationSpan::Curation => "reg.curation",
@@ -335,7 +330,6 @@ impl std::str::FromStr for RegulationSpan {
                 subsystem: ToolSubsystem::Curator,
             }),
             "reg.inference" => Ok(RegulationSpan::Inference),
-            "reg.fusion" => Ok(RegulationSpan::Fusion),
             "reg.pod" => Ok(RegulationSpan::AgentPod),
             "reg.gas" => Ok(RegulationSpan::Gas),
             "reg.curation" => Ok(RegulationSpan::Curation),
@@ -477,7 +471,6 @@ mod reg_span_tests {
                 subsystem: ToolSubsystem::Curator,
             },
             RegulationSpan::Inference,
-            RegulationSpan::Fusion,
             RegulationSpan::AgentPod,
             RegulationSpan::Gas,
             RegulationSpan::Curation,
@@ -506,11 +499,11 @@ mod reg_span_tests {
                 variant, s, parsed
             );
         }
-        // Assert count matches enum variant count (8 core + 14 specific ToolSubsystem = 22).
+        // Assert count matches enum variant count (7 core + 14 specific ToolSubsystem = 21).
         // If this fails, a new RegulationSpan variant was added without updating this test.
         assert!(
-            all_variants.len() == 22,
-            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 22)",
+            all_variants.len() == 21,
+            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 21)",
             all_variants.len()
         );
     }

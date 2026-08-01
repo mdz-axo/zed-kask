@@ -106,15 +106,6 @@ Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
 | `lean-prover-refute.j2` | KnowAct | Adversarial review of a proof attempt. Search for counterexamples, identify failed paths, challenge assumptions, test edge cases. |
 | `lean-prover-erase.j2` | KnowAct | Reason about proof irrelevance and erasure. Classify the proof's universe, check the Prop/Type boundary, assess computational content. |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **critique mode**
-(construct → refute → refine) to match proof review. Model names are not
-hardcoded in the manifest because models evolve quickly; the operator
-configures the panel via `kask.fusion.panel_models` or
-`HKASK_FUSION_PANEL_MODELS`.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.

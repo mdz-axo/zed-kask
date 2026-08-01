@@ -44,15 +44,6 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 | `diagnose-instrument.j2` | `KnowAct` | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
 | `diagnose-fix.j2` | `KnowAct` | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **critique mode** (draft →
-panel critiques → revise) to match the diagnosis loop. Model names are not
-hardcoded in the manifest because models evolve quickly; the operator
-configures the panel via `kask.fusion.panel_models` or
-`HKASK_FUSION_PANEL_MODELS`.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility

@@ -106,22 +106,6 @@ escalation.
 | `idiomatic-rust-design.j2` | KnowAct | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler-suggested vs LLM-originated. |
 | `idiomatic-rust-challenge.j2` | KnowAct | Adversarial review of a Rust design proposal, grounded by find_references (blast radius), diagnostics (compile verification), and clippy (idiomatic lints). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **critique mode** (draft →
-panel critiques → revise) to match the design review loop, with skills:
-`[coding-guidelines, deep-module]`. Model names are not hardcoded in the
-manifest because models evolve quickly; the operator configures the panel via
-`kask.fusion.panel_models` or `HKASK_FUSION_PANEL_MODELS`.
-
-**Optional Rust specialist model**: a Rust-specialized model (e.g.,
-`strand-rust-coder` via Ollama, a Qwen2.5-Coder-14B fine-tune on 191K Rust
-examples) may be included in the fusion panel for the design phase. Its
-strengths in code generation, test generation, and refactoring complement the
-LSP tools — it can generate candidate code while rust-analyzer verifies types.
-Configure via `kask.fusion.panel_models`. Do not hardcode in the manifest.
-
 ## Constraints
 
 - `idiomatic-rust-inquiry.j2`: Public.

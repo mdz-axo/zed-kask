@@ -96,10 +96,6 @@ inputs:
       when not converged) to direct the next iteration. When absent, the
       hunt runs as a first pass with no prior context.
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "best-of-n" with skills: [pragmatic-cybernetics].
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   - ordinal: 1
     action: select

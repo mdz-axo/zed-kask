@@ -59,10 +59,6 @@ inputs:
     type: boolean
     required: false
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "critique" with skills: [pragmatic-cybernetics].
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   - ordinal: 1
     action: select

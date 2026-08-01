@@ -33,14 +33,6 @@
 # Feedback loop: register accepts prior_iteration (capability_lessons,
 # verdict_signatures, next_registry_focus) and consumes it to refine the
 # registry. Convergence emits next_registry_focus when not converged.
-#
-# Fusion: this manifest deliberately omits the `fusion` block. The skill
-# inherits the operator's global `kask.fusion` settings. Recommended operator
-# configuration: mode "algo", algo_method "merge" (deterministic JSON union,
-# no LLM judge call — ideal for structured capability verdicts). Model names
-# are NOT hardcoded in this manifest because models evolve quickly; the
-# operator configures the panel via `kask.fusion.panel_models` or the
-# `HKASK_FUSION_PANEL_MODELS` env var.
 
 manifest:
   id: capabilities-reasoner

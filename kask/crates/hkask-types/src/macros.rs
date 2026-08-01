@@ -44,7 +44,7 @@ macro_rules! enum_str_ops {
 /// # Example
 ///
 /// ```ignore
-/// enum_snake_str!(FusionMode, {
+/// enum_snake_str!(SampleMode, {
 ///     BestOfN => "best-of-n",
 ///     Synthesis => "synthesis",
 /// });

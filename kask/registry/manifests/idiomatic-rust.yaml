@@ -97,14 +97,6 @@ inputs:
       When absent, the challenge phase operates on LLM reasoning alone.
     required: false
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "critique" with skills: [coding-guidelines, deep-module].
-# Model names are not hardcoded here because models evolve quickly.
-# Optional: a Rust-specialized model (e.g., strand-rust-coder via Ollama)
-# may be included in the fusion panel for the design phase — its strengths
-# in code generation and refactoring complement the LSP tools. Configure
-# via kask.fusion.panel_models.
-
 steps:
   - ordinal: 1
     action: select

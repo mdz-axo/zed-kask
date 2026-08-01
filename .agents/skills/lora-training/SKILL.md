@@ -249,16 +249,6 @@ Do not create alternate finding shapes. A recommendation never overwrites
 | `audit-config.j2` | `KnowAct` | Audit declared artifacts with phase-aware gates, states, evidence kinds, normalized findings, separate readiness, algedonic `refuse_escalation` for safety-boundary violations, mechanical no-fiction enforcement rejecting findings with null `config_path`/`line`, and G-R1 runtime alert assessment from `runtime_metrics` when supplied. |
 | `report.j2` | `KnowAct` | Preserve findings losslessly; report readiness and contract gaps; propose only evidence-backed pending regressions with `surface: training`. |
 
-## Fusion Mode
-
-The skill is a linear PDCA flow — preflight-dataset → select-method →
-audit-config → report → loop — not a fused multi-template synthesis. The
-loop step routes `convergence_metric`, `blockers`, `gate_results_summary`,
-and `converged` back to select-method as `prior_iteration`, closing the
-feedback loop mechanically. Convergence is detected deterministically via
-the Cauchy criterion — the iterates have stopped moving. No LLM
-convergence-check template is used.
-
 ## Constraints
 
 - The process manifest, registry manifest, and these four `.j2` templates are

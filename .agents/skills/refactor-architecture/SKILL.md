@@ -106,16 +106,6 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 | `ra-strangle.j2` | KnowAct | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
 | `ra-verify.j2` | KnowAct | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **pi mode** (Plan-Implement)
-— Phase 1 synthesizes strategy (explore, candidates, deepen), Phase 2
-synthesizes execution plan (audit, strangle, verify). Model names are not
-hardcoded in the manifest because models evolve quickly; the operator
-configures the panel via `kask.fusion.panel_models` or
-`HKASK_FUSION_PANEL_MODELS`.
-
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.

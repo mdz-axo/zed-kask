@@ -97,13 +97,6 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 | `task-breakdown-quality-gate.j2` | KnowAct | Independent quality gate (fusion: false) — evaluates the plan WITHOUT self-assessment bias, distinct from the producer-coupled evaluate step. v0.31.0: receives `context_summary` for independent project-specific convention checking. Scores the six criteria independently, flags compensation masking (any criterion > 0.30 forces `gate_pass: false`), and detects bias deltas vs the producer's self-assessment. Mirrors superforecasting's forecast-quality-gate separation of concerns. |
 | `task-breakdown-write-plan.j2` | KnowAct | ACT phase — finalize the plan into `tasks/plan.md` (overview, architecture decisions, phased task list with checkpoints, risks, open questions) and `tasks/todo.md` (checklist-style task list), with a `pko_anchors` map giving each element a PKO process-axis identity. v0.31.0: includes a Refinement History section in `plan.md` documenting what was refined across PDCA iterations, making the loop visible in the artifact. The `plan.md` document itself carries DC+BIBO state metadata. Create the `tasks/` directory if absent. |
 
-## Fusion Mode
-
-- Steps 1–3, 6 (plan, decompose, evaluate, write-plan): `fusion: true` (default) — producer-coupled, may carry context across iterations.
-- Step 4 (quality-gate): `fusion: false` — independent evaluation, no self-assessment bias. Re-derives every score from the plan itself; uses `evaluation_result` only for bias detection.
-- Step 5 (convergence): `fusion: false` — computes the metric from the independent gate's scores, not the producer's self-assessment.
-- Step 7 (loop): explicitly routes `refinement_directives` back to decompose (step 2) and carries `prior_metric` forward for the materiality guard.
-
 ## Constraints
 
 - `task-breakdown-plan.j2`: Public. Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output. `prior_outcome` and `prior_operator_feedback` calibrate but do not override evidence-based decomposition principles.

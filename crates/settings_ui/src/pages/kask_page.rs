@@ -250,7 +250,7 @@ pub(crate) fn delete_credential(
 
 // ---------------------------------------------------------------------------
 // Shared input helper (used by codegraph, companies, corpus, media, scenarios,
-// training, models, fusion sub-modules)
+// training, models sub-modules)
 // ---------------------------------------------------------------------------
 
 /// Build a settings input field that writes a string value to the kask settings

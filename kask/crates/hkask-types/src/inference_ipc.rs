@@ -3,7 +3,7 @@
 //! When zed-kask launches MCP server child processes, it passes a Unix socket
 //! path via the `HKASK_INFERENCE_SOCKET` env var. The MCP server connects to
 //! this socket and sends inference requests as JSON-RPC messages. Zed handles
-//! the requests using its own `LanguageModelRegistry` (with fusion, guard, and
+//! the requests using its own `LanguageModelRegistry` (with guard, and
 //! zed's configured API keys), eliminating the need for MCP servers to have
 //! their own API keys.
 //!

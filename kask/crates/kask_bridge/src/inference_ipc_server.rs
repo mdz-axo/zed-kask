@@ -5,7 +5,7 @@
 //! server listening on it, and passes the socket path to the child process
 //! via the `HKASK_INFERENCE_SOCKET` env var. The MCP server connects and
 //! sends inference requests; this server dispatches them to zed's
-//! `InferencePort` (which uses `LanguageModelRegistry` with fusion, guard,
+//! `InferencePort` (which uses `LanguageModelRegistry` with guard,
 //! and zed's configured API keys).
 //!
 //! ## Architecture
@@ -14,7 +14,7 @@
 //! zed process
 //!   ├── InferenceIpcServer (Unix socket listener)
 //!   │     └── dispatches to Arc<dyn InferencePort>
-//!   │           └── GuardedInferencePort → FusionLanguageModel → zed's LanguageModelRegistry
+//!   │           └── GuardedInferencePort → zed's LanguageModelRegistry
 //!   │
 //!   └── spawns MCP server child process
 //!         └── InferenceIpcClient (connects to the socket)

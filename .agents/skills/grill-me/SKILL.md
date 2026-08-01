@@ -55,15 +55,6 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 | `grill-me-assess.j2` | KnowAct | Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations.  |
 | `grill-me-escalate.j2` | KnowAct | Decide whether to escalate difficulty, hold, or re-probe based on answer quality ratio.  |
 
-## Fusion Mode
-
-This skill inherits the operator's global `kask.fusion` settings (the manifest
-omits the `fusion` block). Recommended configuration: **deliberation mode**
-(multi-round follow-ups) to match Socratic interrogation. Model names are not
-hardcoded in the manifest because models evolve quickly; the operator
-configures the panel via `kask.fusion.panel_models` or
-`HKASK_FUSION_PANEL_MODELS`.
-
 ## Constraints
 
 - `grill-me-round.j2`: Public.
