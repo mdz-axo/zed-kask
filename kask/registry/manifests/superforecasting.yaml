@@ -68,10 +68,6 @@ inputs:
     required: false
     description: Signed calibration bias from a Brier-scored calibration curve (positive = overconfident). Fed to the step-13 compute to close the learning loop. Defaults to 0.0 (no adjustment).
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "synthesis" with skills: [superforecasting], max_rounds: 5.
-# Model names are not hardcoded here because models evolve quickly.
-
 steps:
   - ordinal: 1
     action: select
@@ -109,7 +105,6 @@ steps:
     timeout_seconds: 5
     input_mapping:
       questions: "{{ step_2_result.sub_questions | default([]) }}"
-    fusion: false
 
   - ordinal: 4
     action: select
@@ -140,7 +135,6 @@ steps:
       base_rate: "{{ step_4_result.starting_probability | default(0.5) }}"
       inside_estimate: "{{ step_3_result.calibrated | default(0.5) }}"
       reference_count: "{{ step_4_result.base_rates | default([]) | length }}"
-    fusion: false
 
   - ordinal: 6
     action: select
@@ -223,7 +217,6 @@ steps:
       prior: "{{ step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5)) }}"
       evidence_likelihood: "{{ step_9_result.evidence_likelihood | default(0.5) }}"
       evidence_base_rate: "{{ step_9_result.evidence_base_rate | default(0.5) }}"
-    fusion: false
 
   - ordinal: 11
     action: select
@@ -278,7 +271,6 @@ steps:
       calibration_result: "{{ step_12_result }}"
       record_result: "{{ step_13_result }}"
       synthesis_output: "{{ step_11_result }}"
-    fusion: false
 
   - ordinal: 15
     action: compute
@@ -309,7 +301,6 @@ steps:
     input_mapping:
       prior: "{{ step_12_result.final_probability | default(0.5) }}"
       overconfidence_bias: "{{ overconfidence_bias | default(0.0) }}"
-    fusion: false
 
   - ordinal: 17
     action: loop

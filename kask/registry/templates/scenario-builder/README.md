@@ -79,19 +79,6 @@ The pipeline requires template render permissions for all 7 templates plus manif
 | Validation failure | Abort |
 | Capability denied | Escalate to Curator |
 
-,## Fusion Mode
-
-This skill supports **fusion mode** via the `fusion: true` field in the flow
-manifest. When fusion is globally enabled (env vars or `/fusion on`), all
-analysis steps route through a multi-model panel — either with LLM judge
-synthesis or the **algo / no-judge** path (`judge: algo`) for deterministic
-JSON merge without an LLM judge call.
-
-The quality gate (step 5) and convergence check (step 7) have `fusion: false`
-set explicitly — deterministic rubric evaluations use single-model inference.
-
-See the superforecasting README for full fusion configuration details.
-
 ## Future Enhancements
 
 - [ ] Conditional loop target based on `gate_findings` (restart at forces/axes if coverage fails, narratives if divergence fails)

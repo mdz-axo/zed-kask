@@ -45,8 +45,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document | Description |
 |----------|-------------|
 | [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md) | Skill anatomy, invocation, composition. |
-| [`explanation/fusion-mode.md`](explanation/fusion-mode.md) | Multi-model deliberation engine. |
-| [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md) | Fusion design, scenario forecasting, Companies server. |
+| [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md) | Scenario forecasting, ν-event semantics, Companies server. |
 | [`explanation/companies-mcp.md`](explanation/companies-mcp.md) | Companies MCP server design. |
 | [`explanation/forecasting-and-scenarios.md`](explanation/forecasting-and-scenarios.md) | Forecasting across skill, library, and scenarios layers. |
 | [`explanation/ontology-anchored-embedding.md`](explanation/ontology-anchored-embedding.md) | Tag→embed corpus pipeline. |

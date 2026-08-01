@@ -20,7 +20,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` (settings.rs:35) has 15 subsections:
+`KaskSettings` (settings.rs:35) has 14 subsections:
 
 | Field | Type | Default source |
 |-------|------|---------------|
@@ -36,7 +36,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
 | `swarm` | `KaskSwarmSettings` | `Default` |
 | `training` | `KaskTrainingSettings` | derived `Default` |
-| `fusion` | `KaskFusionSettings` | `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
 | `inference_providers` | `KaskInferenceProvidersSettings` | derived `Default` (all false) |
 
@@ -215,30 +214,6 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-
 | `host` | `String` | `""` | `"deepinfra"`, `"nebius"`, or `"runpod"`; empty = auto-detect from API keys |
 | `cache_dir` | `String` | `""` | Dataset pipeline cache; empty = agent adapters directory |
 
-## Fusion (`KaskFusionSettings`)
-
-Multi-model fusion inference configuration. Mirrors `hkask_types::FusionConfig`
-but lives in the non-secret settings layer so users can edit it in the settings
-UI. Two-layer default design (intentional): `judge_model` and `panel_models`
-default to empty strings in `Default`. When empty, `to_fusion_config()` falls
-back to `FusionConfig::kask_default()`, which reads env vars and falls back to
-hardcoded model names.
-
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `enabled` | `bool` | `false` | Master toggle |
-| `judge_model` | `String` | `""` | Empty = `FusionConfig::kask_default()` |
-| `panel_models` | `String` | `""` | Comma-separated; empty = kask default |
-| `mode` | `String` | `"synthesis"` | `synthesis`/`best-of-n`/`critique`/`deliberation`/`pi`/`algo` |
-| `algo_method` | `String` | `"merge"` | `merge`/`vote` (only when `mode == "algo"`) |
-| `skills` | `String` | `""` | Comma-separated skill anchors (e.g., `"pragmatic-semantics,coding-guidelines"`) |
-| `max_rounds` | `u32` | `5` | Max rounds for deliberation mode |
-| `discovery_max_price` | `f64` | `2.0` | Max input price ($/M tokens) for AA discovery |
-| `discovery_min_intelligence` | `f64` | `40.0` | Min AA Intelligence Index for discovery |
-| `coherence_threshold` | `Option<f64>` | `None` | Not yet implemented — setting has no effect |
-| `panel_sizing_enabled` | `bool` | `false` | Query-complexity-based panel sizing |
-| `pressure_adaptive_enabled` | `bool` | `false` | Substrate-aware degradation under latency pressure |
-
 ## Models (`KaskModelsSettings`)
 
 Kask-wide model configuration. Two-layer default design: fields default to
@@ -357,18 +332,6 @@ environment. Shell env vars take precedence over keychain values.
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `KILOCODE_API_KEY` | KiloCode |
 | `CLINE_API_KEY` | Cline |
-
-### Fusion
-
-| Env Var | Service | Default |
-|---------|--------|---------|
-| `HKASK_FUSION_JUDGE_MODEL` | Fusion judge model | `OpenRouter/z-ai/glm-5.2` |
-| `HKASK_FUSION_PANEL_MODELS` | Comma-separated panel models | `OpenRouter/z-ai/glm-5.2,OpenRouter/qwen/qwen3-235b-a22b,OpenRouter/minimax/minimax3` |
-| `HKASK_FUSION_MODE` | Deliberation mode | `synthesis` |
-| `HKASK_FUSION_SKILLS` | Skill anchors | none |
-| `HKASK_FUSION_MAX_ROUNDS` | Max rounds (deliberation) | `5` |
-| `HKASK_FUSION_ALGO_METHOD` | Algo merge strategy | `merge` |
-| `HKASK_FUSION_DISABLED` | Force-disable (`1`) | unset |
 
 ### Curator Email
 

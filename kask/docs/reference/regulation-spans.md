@@ -70,7 +70,6 @@ Core spans used across 2+ crates. This is the foundational enum implementing `Ob
 |---|---|---|---|
 | `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP tool invocation | Any MCP server dispatches a tool call. Subsystem identifies which server |
 | `Inference` | `reg.inference` | LLM inference request/response | GovernedInference prepares/executes/checks an inference call |
-| `Fusion` | `reg.fusion` | Multi-model fusion deliberation | FusionOrchestrator dispatches panel + judge (distinct from `Inference` so fusion rounds, convergence, and panel/judge cost are independently observable) |
 | `AgentPod` | `reg.pod` | Agent pod lifecycle events | Pod registration, activation, deactivation |
 | `Gas` | `reg.gas` | Gas (energy/budget) consumption | Gas reserved, settled, or depleted for any operation |
 | `Curation` | `reg.curation` | Curation loop operations | Registry sync, pod sync, directive issuance |

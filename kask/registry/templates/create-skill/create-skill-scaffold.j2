@@ -163,17 +163,6 @@ inputs:
     description: >
       Output of a previous iteration. Closes the feedback loop.
 
-fusion:
-  judge: deepseek-v4-pro
-  panel:
-    - Kimi2.7
-    - Qwen3.7 Max
-    - GLM5.2
-  mode: best-of-n
-  skills:
-    - <delegate skill>
-  max_rounds: 3
-
 steps:
   - ordinal: 1
     action: select
@@ -197,7 +186,6 @@ steps:
     timeout_seconds: 30
     input_mapping:
       primary_result: "{{ step_(N-1)_result }}"
-    fusion: false
   - ordinal: N+1
     action: loop
     description: >

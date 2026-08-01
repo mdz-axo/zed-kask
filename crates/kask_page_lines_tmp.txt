@@ -1,0 +1,596 @@
+ L0001: //! Kask settings page — the `"kask"` section's UI surface (D9a UI).
+  L0002: //!
+   L0003: //! Top-level "Kask" page with sub-page links to:
+    L0004: //! - Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles)
+L0005: //! - MCP Servers (10 built-in servers + load toggles + `load_default` master toggle)
+ L0006: //! - Curator (`always_on` toggle + `algedonic_threshold`)
+  L0007: //! - Curator Email (MXroute SMTP config + keychain-backed password)
+   L0008: //! - Memory (`consolidation_cadence_secs` + `confidence_floor`)
+    L0009: //!
+L0010: //! API keys are stored in the OS keychain under the `kask://credentials/<key>`
+ L0011: //! namespace (see `kask_bridge::secrets::KASK_CREDENTIAL_NAMESPACE`), not in
+  L0012: //! settings.json. The non-secret toggles and numeric config live in the `"kask"`
+   L0013: //! section of settings.json via `KaskSettingsContent`.
+    L0014: //!
+L0015: //! This file is the module root: it holds the top-level `kask_page()` function,
+ L0016: //! the shared credential-cache helpers, shared constants, and `mod` declarations
+  L0017: //! for the per-sub-page render modules under `kask_page/`.
+   L0018: 
+    L0019: mod codegraph;
+L0020: mod companies;
+ L0021: mod condenser;
+  L0022: mod curator;
+   L0023: mod data_services;
+    L0024: mod inference_providers;
+L0025: pub(crate) use {
+ L0026:     codegraph::render_codegraph_page, companies::render_companies_page,
+  L0027:     condenser::render_condenser_page, corpus::render_corpus_page,
+   L0028:     curator::render_curator_email_page, curator::render_curator_page,
+    L0029:     data_services::render_data_services_page, inference_providers::render_inference_providers_page,
+L0030:     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
+ L0031:     models::render_models_page, scenarios::render_scenarios_page, training::render_training_page,
+  L0032: };
+   L0033: mod corpus;
+    L0034: mod mcp_servers;
+L0035: mod media;
+ L0036: mod memory;
+  L0037: mod models;
+   L0038: mod scenarios;
+    L0039: mod training;
+L0040: 
+ L0041: use std::sync::{Arc, Mutex};
+  L0042: 
+   L0043: use collections::HashSet;
+    L0044: use credentials_provider::CredentialsProvider;
+L0045: use gpui::{ReadGlobal as _, ScrollHandle, Task, prelude::*};
+ L0046: use settings::SettingsStore;
+  L0047: use ui::{
+   L0048:     Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
+    L0049:     prelude::*,
+L0050: };
+ L0051: use util::ResultExt as _;
+  L0052: use zed_credentials_provider as zed_credentials;
+   L0053: 
+    L0054: use crate::SettingsWindow;
+L0055: use crate::components::{SettingsInputField, SettingsSectionHeader};
+ L0056: use crate::{SettingsPage, SettingsPageItem, SubPageLink, USER};
+  L0057: 
+   L0058: /// The URL prefix for kask-namespaced credentials in the keychain.
+    L0059: /// Re-exported from `kask_bridge` so there's a single source of truth.
+L0060: pub(crate) use kask_bridge::KASK_CREDENTIAL_NAMESPACE;
+ L0061: 
+  L0062: /// Session-level cache of credential URLs written during this session.
+   L0063: /// The keychain read is async, so we can't check it synchronously on render.
+    L0064: /// Instead, we track URLs we've written and treat them as "configured" until
+L0065: /// the process exits. This avoids the input field reappearing after the user
+ L0066: /// enters a key.
+  L0067: pub(crate) static RECENTLY_WRITTEN_CREDENTIALS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+   L0068: 
+    L0069: /// Check if a credential URL was written during this session.
+L0070: pub(crate) fn was_recently_written(url: &str) -> bool {
+ L0071:     RECENTLY_WRITTEN_CREDENTIALS
+  L0072:         .lock()
+   L0073:         .map(|opt| opt.as_ref().is_some_and(|set| set.contains(url)))
+    L0074:         .unwrap_or(false)
+L0075: }
+ L0076: 
+  L0077: /// Mark a credential URL as written during this session.
+   L0078: pub(crate) fn mark_recently_written(url: &str) {
+    L0079:     if let Ok(mut guard) = RECENTLY_WRITTEN_CREDENTIALS.lock() {
+L0080:         guard
+ L0081:             .get_or_insert_with(HashSet::default)
+  L0082:             .insert(url.to_string());
+   L0083:     }
+    L0084: }
+L0085: 
+ L0086: /// Remove a credential URL from the session cache (after deletion).
+  L0087: pub(crate) fn unmark_recently_written(url: &str) {
+   L0088:     if let Ok(mut guard) = RECENTLY_WRITTEN_CREDENTIALS.lock() {
+    L0089:         if let Some(set) = guard.as_mut() {
+L0090:             set.remove(url);
+ L0091:         }
+  L0092:     }
+   L0093: }
+    L0094: 
+L0095: /// The built-in kask MCP servers (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
+ L0096: /// Re-bound here as `(&str, &str)` for the settings UI's `(id, description)` pattern.
+  L0097: pub(crate) const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS;
+   L0098: 
+    L0099: /// Data service descriptors: (key, label, dashboard_url, env_var).
+L0100: /// The `key` is the credential key in the keychain (`kask://credentials/<key>`).
+ L0101: /// The `env_var` is what MCP servers read (checked synchronously for "configured" status).
+  L0102: pub(crate) const DATA_SERVICES: &[(&str, &str, &str, &str)] = &[
+   L0103:     (
+    L0104:         "eodhd",
+L0105:         "EODHD",
+ L0106:         "https://eodhd.com/dashboard",
+  L0107:         "HKASK_EODHD_API_KEY",
+   L0108:     ),
+    L0109:     (
+L0110:         "fmp",
+ L0111:         "FMP (Financial Modeling Prep)",
+  L0112:         "https://site.financialmodelingprep.com/developer/docs",
+   L0113:         "HKASK_FMP_API_KEY",
+    L0114:     ),
+L0115:     (
+ L0116:         "exa",
+  L0117:         "Exa",
+   L0118:         "https://dashboard.exa.ai/api-keys",
+    L0119:         "HKASK_EXA_API_KEY",
+L0120:     ),
+ L0121:     (
+  L0122:         "tavily",
+   L0123:         "Tavily",
+    L0124:         "https://app.tavily.com/api-key",
+L0125:         "HKASK_TAVILY_API_KEY",
+ L0126:     ),
+  L0127:     (
+   L0128:         "brave",
+    L0129:         "Brave Search",
+L0130:         "https://api.search.brave.com/app/subscriptions",
+ L0131:         "HKASK_BRAVE_API_KEY",
+  L0132:     ),
+   L0133:     (
+    L0134:         "serpapi",
+L0135:         "SerpAPI (Google Search)",
+ L0136:         "https://serpapi.com/dashboard",
+  L0137:         "HKASK_SERPAPI_API_KEY",
+   L0138:     ),
+    L0139:     (
+L0140:         "firecrawl",
+ L0141:         "Firecrawl (web scraping)",
+  L0142:         "https://firecrawl.dev/",
+   L0143:         "HKASK_FIRECRAWL_API_KEY",
+    L0144:     ),
+L0145:     (
+ L0146:         "browserbase",
+  L0147:         "Browserbase (headless browser)",
+   L0148:         "https://browserbase.com/",
+    L0149:         "HKASK_BROWSERBASE_API_KEY",
+L0150:     ),
+ L0151:     (
+  L0152:         "runpod",
+   L0153:         "RunPod (GPU cloud for training)",
+    L0154:         "https://runpod.io/",
+L0155:         "RUNPOD_API_KEY",
+ L0156:     ),
+  L0157:     (
+   L0158:         "runpod_s3_access_key",
+    L0159:         "RunPod S3 Access Key (adapter storage)",
+L0160:         "https://runpod.io/",
+ L0161:         "RUNPOD_S3_ACCESS_KEY",
+  L0162:     ),
+   L0163:     (
+    L0164:         "runpod_s3_secret",
+L0165:         "RunPod S3 Secret (adapter storage)",
+ L0166:         "https://runpod.io/",
+  L0167:         "RUNPOD_S3_SECRET",
+   L0168:     ),
+    L0169:     (
+L0170:         "nebius_project_id",
+ L0171:         "Nebius Project ID (GPU cloud for training)",
+  L0172:         "https://nebius.com/",
+   L0173:         "NEBIUS_PROJECT_ID",
+    L0174:     ),
+L0175:     (
+ L0176:         "nebius_subnet_id",
+  L0177:         "Nebius Subnet ID",
+   L0178:         "https://nebius.com/",
+    L0179:         "NEBIUS_SUBNET_ID",
+L0180:     ),
+ L0181:     (
+  L0182:         "hf_token",
+   L0183:         "HuggingFace Token",
+    L0184:         "https://huggingface.co/settings/tokens",
+L0185:         "HF_TOKEN",
+ L0186:     ),
+  L0187: ];
+   L0188: 
+    L0189: // ---------------------------------------------------------------------------
+L0190: // Shared credential helpers (used by data_services, inference_providers,
+ L0191: // and curator sub-modules)
+  L0192: // ---------------------------------------------------------------------------
+   L0193: 
+    L0194: /// Check whether a credential is available — either in the keychain or via env var.
+L0195: ///
+ L0196: /// The keychain read is async, so we can't block on it here. We check the env var
+  L0197: /// synchronously (instant) and the session-level cache of recently-written URLs.
+   L0198: pub(crate) fn has_credential(
+    L0199:     _provider: &Arc<dyn CredentialsProvider>,
+L0200:     url: &str,
+ L0201:     env_var: &str,
+  L0202: ) -> bool {
+   L0203:     // Env-var check is synchronous and instant.
+    L0204:     if std::env::var(env_var).is_ok() {
+L0205:         return true;
+ L0206:     }
+  L0207:     // Check the session cache for keys written via the settings UI.
+   L0208:     if was_recently_written(url) {
+    L0209:         return true;
+L0210:     }
+ L0211:     false
+  L0212: }
+   L0213: 
+    L0214: pub(crate) fn write_credential(
+L0215:     provider: &Arc<dyn CredentialsProvider>,
+ L0216:     url: &str,
+  L0217:     value: &str,
+   L0218:     cx: &mut App,
+    L0219: ) -> Task<()> {
+L0220:     let provider = provider.clone();
+ L0221:     let url = url.to_string();
+  L0222:     let value = value.to_string();
+   L0223:     // Mark as written immediately so the UI shows "Configured" on next render.
+    L0224:     // The keychain write is async; the session cache bridges the gap.
+L0225:     // `refresh_windows` triggers a re-render so the "Configured" card appears.
+ L0226:     mark_recently_written(&url);
+  L0227:     cx.refresh_windows();
+   L0228:     cx.spawn(async move |cx| {
+    L0229:         let _ = provider
+L0230:             .write_credentials(&url, "kask", value.as_bytes(), cx)
+ L0231:             .await
+  L0232:             .log_err();
+   L0233:     })
+    L0234: }
+L0235: 
+ L0236: pub(crate) fn delete_credential(
+  L0237:     provider: &Arc<dyn CredentialsProvider>,
+   L0238:     url: &str,
+    L0239:     cx: &mut App,
+L0240: ) -> Task<()> {
+ L0241:     let provider = provider.clone();
+  L0242:     let url = url.to_string();
+   L0243:     // Remove from session cache so the UI shows the input field again.
+    L0244:     unmark_recently_written(&url);
+L0245:     cx.refresh_windows();
+ L0246:     cx.spawn(async move |cx| {
+  L0247:         let _ = provider.delete_credentials(&url, cx).await.log_err();
+   L0248:     })
+    L0249: }
+L0250: 
+ L0251: // ---------------------------------------------------------------------------
+  L0252: // Shared input helper (used by codegraph, companies, corpus, media, scenarios,
+   L0253: // training, models sub-modules)
+    L0254: // ---------------------------------------------------------------------------
+L0255: 
+ L0256: /// Build a settings input field that writes a string value to the kask settings
+  L0257: /// at the given JSON path. Used by MCP server config pages for simple text/number
+   L0258: /// fields that map to env vars.
+    L0259: pub(crate) fn kask_string_input(
+L0260:     field_id: &'static str,
+ L0261:     label: &'static str,
+  L0262:     placeholder: &'static str,
+   L0263:     initial: String,
+    L0264:     struct_name: &'static str,
+L0265:     field_name: &'static str,
+ L0266: ) -> SettingsInputField {
+  L0267:     SettingsInputField::new(field_id)
+   L0268:         .tab_index(0)
+    L0269:         .with_initial_text(initial)
+L0270:         .with_placeholder(placeholder)
+ L0271:         .aria_label(label)
+  L0272:         .confirm_on_focus_out()
+   L0273:         .on_confirm(move |value, _window, cx| {
+    L0274:             if let Some(text) = value {
+L0275:                 let parsed = text.trim().to_string();
+ L0276:                 SettingsStore::global(cx).update_settings_file(
+  L0277:                     <dyn fs::Fs>::global(cx),
+   L0278:                     move |settings, _| {
+    L0279:                         let kask = settings.kask.get_or_insert_default();
+L0280:                         match (struct_name, field_name) {
+ L0281:                             ("codegraph", "db_path") => {
+  L0282:                                 kask.codegraph.get_or_insert_default().db_path =
+   L0283:                                     Some(parsed.clone());
+    L0284:                             }
+L0285:                             ("companies", "chronic_staleness_days") => {
+ L0286:                                 if let Ok(v) = parsed.parse::<u32>() {
+  L0287:                                     kask.companies
+   L0288:                                         .get_or_insert_default()
+    L0289:                                         .chronic_staleness_days = Some(v);
+L0290:                                 }
+ L0291:                             }
+  L0292:                             ("companies", "fermi_defaults") => {
+   L0293:                                 kask.companies.get_or_insert_default().fermi_defaults =
+    L0294:                                     Some(parsed.clone());
+L0295:                             }
+ L0296:                             ("corpus", "embedding_model") => {
+  L0297:                                 kask.corpus.get_or_insert_default().embedding_model =
+   L0298:                                     Some(parsed.clone());
+    L0299:                             }
+L0300:                             ("corpus", "template_root") => {
+ L0301:                                 kask.corpus.get_or_insert_default().template_root =
+  L0302:                                     Some(parsed.clone());
+   L0303:                             }
+    L0304:                             ("media", "tts_model") => {
+L0305:                                 kask.media.get_or_insert_default().tts_model = Some(parsed.clone());
+ L0306:                             }
+  L0307:                             ("media", "stt_model") => {
+   L0308:                                 kask.media.get_or_insert_default().stt_model = Some(parsed.clone());
+    L0309:                             }
+L0310:                             ("media", "vision_model") => {
+ L0311:                                 kask.media.get_or_insert_default().vision_model =
+  L0312:                                     Some(parsed.clone());
+   L0313:                             }
+    L0314:                             ("media", "image_gen_model") => {
+L0315:                                 kask.media.get_or_insert_default().image_gen_model =
+ L0316:                                     Some(parsed.clone());
+  L0317:                             }
+   L0318:                             ("scenarios", "data_dir") => {
+    L0319:                                 kask.scenarios.get_or_insert_default().data_dir =
+L0320:                                     Some(parsed.clone());
+ L0321:                             }
+  L0322:                             ("training", "host") => {
+   L0323:                                 kask.training.get_or_insert_default().host = Some(parsed.clone());
+    L0324:                             }
+L0325:                             ("training", "cache_dir") => {
+ L0326:                                 kask.training.get_or_insert_default().cache_dir =
+  L0327:                                     Some(parsed.clone());
+   L0328:                             }
+    L0329:                             ("models", "default_model") => {
+L0330:                                 kask.models.get_or_insert_default().default_model =
+ L0331:                                     Some(parsed.clone());
+  L0332:                             }
+   L0333:                             ("models", "embedding_model") => {
+    L0334:                                 kask.models.get_or_insert_default().embedding_model =
+L0335:                                     Some(parsed.clone());
+ L0336:                             }
+  L0337:                             ("models", "classifier_model") => {
+   L0338:                                 kask.models.get_or_insert_default().classifier_model =
+    L0339:                                     Some(parsed.clone());
+L0340:                             }
+ L0341:                             _ => {}
+  L0342:                         }
+   L0343:                     },
+    L0344:                 );
+L0345:             }
+ L0346:         })
+  L0347: }
+   L0348: 
+    L0349: // ---------------------------------------------------------------------------
+L0350: // Shared settings reader (used by all render_* sub-modules)
+ L0351: // ---------------------------------------------------------------------------
+  L0352: 
+   L0353: /// Read the raw `KaskSettingsContent` from the user settings file.
+    L0354: pub(crate) fn raw_kask_settings(cx: &App) -> Option<settings::KaskSettingsContent> {
+L0355:     SettingsStore::global(cx)
+ L0356:         .raw_user_settings()
+  L0357:         .and_then(|user| user.content.kask.clone())
+   L0358: }
+    L0359: 
+L0360: // ---------------------------------------------------------------------------
+ L0361: // Top-level Kask page
+  L0362: // ---------------------------------------------------------------------------
+   L0363: 
+    L0364: pub(crate) fn kask_page() -> SettingsPage {
+L0365:     let items: Vec<SettingsPageItem> = vec![
+ L0366:         SettingsPageItem::SectionHeader("Kask"),
+  L0367:         SettingsPageItem::SubPageLink(SubPageLink {
+   L0368:             title: "Data Services".into(),
+    L0369:             r#type: Default::default(),
+L0370:             json_path: Some("kask.data_services"),
+ L0371:             description: Some(
+  L0372:                 "Configure API keys for data services (EODHD, FMP, Exa, Tavily, Brave, \
+   L0373:                  RunPod, Nebius, HuggingFace). Keys are stored in the system keychain, \
+    L0374:                  not in settings.json."
+L0375:                     .into(),
+ L0376:             ),
+  L0377:             search_aliases: &[
+   L0378:                 "api key",
+    L0379:                 "brave",
+L0380:                 "browserbase",
+ L0381:                 "data service",
+  L0382:                 "eodhd",
+   L0383:                 "exa",
+    L0384:                 "firecrawl",
+L0385:                 "fmp",
+ L0386:                 "financial modeling prep",
+  L0387:                 "huggingface",
+   L0388:                 "keychain",
+    L0389:                 "nebius",
+L0390:                 "runpod",
+ L0391:                 "serpapi",
+  L0392:                 "tavily",
+   L0393:             ],
+    L0394:             in_json: false,
+L0395:             files: USER,
+ L0396:             render: render_data_services_page,
+  L0397:         }),
+   L0398:         SettingsPageItem::SubPageLink(SubPageLink {
+    L0399:             title: "Inference Providers".into(),
+L0400:             r#type: Default::default(),
+ L0401:             json_path: Some("kask.inference_providers"),
+  L0402:             description: Some(
+   L0403:                 "Configure API keys for OpenAI-compatible inference providers \
+    L0404:                  (DeepInfra, fal.ai, Together, OpenRouter, KiloCode, Cline). \
+L0405:                  When enabled, each provider appears in Settings → AI → LLM Providers \
+ L0406:                  and in the agent model picker."
+  L0407:                     .into(),
+   L0408:             ),
+    L0409:             search_aliases: &[
+L0410:                 "inference",
+ L0411:                 "provider",
+  L0412:                 "deepinfra",
+   L0413:                 "fal",
+    L0414:                 "together",
+L0415:                 "openrouter",
+ L0416:                 "kilocode",
+  L0417:                 "cline",
+   L0418:                 "llm",
+    L0419:                 "model",
+L0420:             ],
+ L0421:             in_json: true,
+  L0422:             files: USER,
+   L0423:             render: render_inference_providers_page,
+    L0424:         }),
+L0425:         SettingsPageItem::SubPageLink(SubPageLink {
+ L0426:             title: "MCP Servers".into(),
+  L0427:             r#type: Default::default(),
+   L0428:             json_path: Some("kask.mcp"),
+    L0429:             description: Some(
+L0430:                 "Toggle which of the 10 built-in kask MCP servers are loaded.".into(),
+ L0431:             ),
+  L0432:             search_aliases: &["mcp", "model context protocol", "server", "tool"],
+   L0433:             in_json: true,
+    L0434:             files: USER,
+L0435:             render: render_mcp_servers_page,
+ L0436:         }),
+  L0437:         SettingsPageItem::SubPageLink(SubPageLink {
+   L0438:             title: "Curator".into(),
+    L0439:             r#type: Default::default(),
+L0440:             json_path: Some("kask.curator"),
+ L0441:             description: Some(
+  L0442:                 "Configure the Curator agent: always-on regulation and algedonic threshold.".into(),
+   L0443:             ),
+    L0444:             search_aliases: &["algedonic", "curator", "regulation"],
+L0445:             in_json: true,
+ L0446:             files: USER,
+  L0447:             render: render_curator_page,
+   L0448:         }),
+    L0449:         SettingsPageItem::SubPageLink(SubPageLink {
+L0450:             title: "Curator Email".into(),
+ L0451:             r#type: Default::default(),
+  L0452:             json_path: Some("kask.curator.email"),
+   L0453:             description: Some(
+    L0454:                 "Configure outbound algedonic alert email via MXroute. The SMTP \
+L0455:                  password is stored in the system keychain; non-secret fields live \
+ L0456:                  in settings.json. When unconfigured, the alert sink falls back \
+  L0457:                  to log-only."
+   L0458:                     .into(),
+    L0459:             ),
+L0460:             search_aliases: &[
+ L0461:                 "alert",
+  L0462:                 "curator",
+   L0463:                 "email",
+    L0464:                 "imap",
+L0465:                 "mxroute",
+ L0466:                 "smtp",
+  L0467:             ],
+   L0468:             in_json: true,
+    L0469:             files: USER,
+L0470:             render: render_curator_email_page,
+ L0471:         }),
+  L0472:         SettingsPageItem::SubPageLink(SubPageLink {
+   L0473:             title: "Memory".into(),
+    L0474:             r#type: Default::default(),
+L0475:             json_path: Some("kask.memory"),
+ L0476:             description: Some(
+  L0477:                 "Configure memory consolidation, recall, and context injection.".into(),
+   L0478:             ),
+    L0479:             search_aliases: &["consolidation", "confidence", "memory", "recall", "inject"],
+L0480:             in_json: true,
+ L0481:             files: USER,
+  L0482:             render: render_memory_page,
+   L0483:         }),
+    L0484:         SettingsPageItem::SubPageLink(SubPageLink {
+L0485:             title: "Condenser".into(),
+ L0486:             r#type: Default::default(),
+  L0487:             json_path: Some("kask.condenser"),
+   L0488:             description: Some(
+    L0489:                 "Configure context condensation: compression profile, tool result compression, and saliency.".into(),
+L0490:             ),
+ L0491:             search_aliases: &["condenser", "compress", "profile", "saliency"],
+  L0492:             in_json: true,
+   L0493:             files: USER,
+    L0494:             render: render_condenser_page,
+L0495:         }),
+ L0496:         SettingsPageItem::SubPageLink(SubPageLink {
+  L0497:             title: "Codegraph".into(),
+   L0498:             r#type: Default::default(),
+    L0499:             json_path: Some("kask.codegraph"),
+L0500:             description: Some(
+ L0501:                 "Configure the codegraph MCP server: database path for code structure storage.".into(),
+  L0502:             ),
+   L0503:             search_aliases: &["codegraph", "graph", "code structure"],
+    L0504:             in_json: true,
+L0505:             files: USER,
+ L0506:             render: render_codegraph_page,
+  L0507:         }),
+   L0508:         SettingsPageItem::SubPageLink(SubPageLink {
+    L0509:             title: "Companies".into(),
+L0510:             r#type: Default::default(),
+ L0511:             json_path: Some("kask.companies"),
+  L0512:             description: Some(
+   L0513:                 "Configure the companies MCP server: superforecasting staleness and Fermi defaults.".into(),
+    L0514:             ),
+L0515:             search_aliases: &["companies", "fermi", "staleness", "superforecasting"],
+ L0516:             in_json: true,
+  L0517:             files: USER,
+   L0518:             render: render_companies_page,
+    L0519:         }),
+L0520:         SettingsPageItem::SubPageLink(SubPageLink {
+ L0521:             title: "Corpus".into(),
+  L0522:             r#type: Default::default(),
+   L0523:             json_path: Some("kask.corpus"),
+    L0524:             description: Some(
+L0525:                 "Configure the corpus MCP server: embedding model, OCR pipeline, and template root.".into(),
+ L0526:             ),
+  L0527:             search_aliases: &["corpus", "embedding", "ocr", "template"],
+   L0528:             in_json: true,
+    L0529:             files: USER,
+L0530:             render: render_corpus_page,
+ L0531:         }),
+  L0532:         SettingsPageItem::SubPageLink(SubPageLink {
+   L0533:             title: "Media".into(),
+    L0534:             r#type: Default::default(),
+L0535:             json_path: Some("kask.media"),
+ L0536:             description: Some(
+  L0537:                 "Configure the media MCP server: TTS, STT, vision, and image generation models.".into(),
+   L0538:             ),
+    L0539:             search_aliases: &["media", "tts", "stt", "vision", "image generation"],
+L0540:             in_json: true,
+ L0541:             files: USER,
+  L0542:             render: render_media_page,
+   L0543:         }),
+    L0544:         SettingsPageItem::SubPageLink(SubPageLink {
+L0545:             title: "Scenarios".into(),
+ L0546:             r#type: Default::default(),
+  L0547:             json_path: Some("kask.scenarios"),
+   L0548:             description: Some(
+    L0549:                 "Configure the scenarios MCP server: data directory for scenario persistence.".into(),
+L0550:             ),
+ L0551:             search_aliases: &["scenarios", "wardley", "planning"],
+  L0552:             in_json: true,
+   L0553:             files: USER,
+    L0554:             render: render_scenarios_page,
+L0555:         }),
+ L0556:         SettingsPageItem::SubPageLink(SubPageLink {
+  L0557:             title: "Training".into(),
+   L0558:             r#type: Default::default(),
+    L0559:             json_path: Some("kask.training"),
+L0560:             description: Some(
+ L0561:                 "Configure the training MCP server: host selection and cache directory.".into(),
+  L0562:             ),
+   L0563:             search_aliases: &["training", "lora", "host", "cache"],
+    L0564:             in_json: true,
+L0565:             files: USER,
+ L0566:             render: render_training_page,
+  L0567:         }),
+   L0568:         SettingsPageItem::SubPageLink(SubPageLink {
+    L0569:             title: "Models".into(),
+L0570:             r#type: Default::default(),
+ L0571:             json_path: Some("kask.models"),
+  L0572:             description: Some(
+   L0573:                 "Configure kask-wide model defaults: default inference model, \
+    L0574:                  embedding model for corpus/memory, and classifier model for \
+L0575:                  guard/regulation. These are provider-prefixed strings (e.g. \
+ L0576:                  \"openrouter/z-ai/glm-5.2\") that override the kask built-in defaults."
+  L0577:                     .into(),
+   L0578:             ),
+    L0579:             search_aliases: &[
+L0580:                 "model",
+ L0581:                 "default model",
+  L0582:                 "embedding model",
+   L0583:                 "classifier model",
+    L0584:                 "inference model",
+L0585:             ],
+ L0586:             in_json: true,
+  L0587:             files: USER,
+   L0588:             render: render_models_page,
+    L0589:         }),
+L0590:     ];
+ L0591: 
+  L0592:     SettingsPage {
+   L0593:         title: "Kask",
+    L0594:         items: items.into_boxed_slice(),
+L0595:     }
+ L0596: }

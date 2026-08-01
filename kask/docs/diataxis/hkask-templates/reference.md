@@ -55,7 +55,7 @@ a `manifest.yaml` file. It contains a list of `BundleSkill` entries, a list of
 `BundleComplementarity` relations. Each step references a Jinja2 template via
 `template_ref`, declares its `action`, `phase`, `input_mapping`,
 `output_schema`, optional `compute_ref` (deterministic math primitive),
-`condition`, and `fusion` override.
+and `condition`.
 
 ```mermaid
 classDiagram

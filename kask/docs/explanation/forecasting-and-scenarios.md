@@ -87,7 +87,7 @@ The scenarios server uses a binomial event-tree model (MAIA methodology):
 │  Natural-language Tetlock pipeline (8 stages + gate +        │
 │  convergence). LLM reasoning: triage judgment, hypothesis     │
 │  generation, counterfactual analysis, dragonfly synthesis,   │
-│  calibration, record, quality gate. PDCA loop + fusion panel.  │
+│  calibration, record, quality gate. PDCA loop + quality gate.  │
 └──────────────────────────────────────────────────────────────┘
                           │  documents the formulas
                           │  it relies on (conformance contract)

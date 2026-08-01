@@ -54,7 +54,7 @@ Chat inference is not handled here — it routes through the IPC bridge
 (`InferenceIpcClient`) to zed's `LanguageModelRegistry`. Model-name
 prefix parsing (`ProviderId::parse_from_model`, `config.rs:84`) and the
 fail-fast `looks_like_prefix` check (`config.rs:126`) are still used by
-the IPC client and fusion orchestrator for routing chat requests.
+the IPC client for routing chat requests.
 
 ## See also
 

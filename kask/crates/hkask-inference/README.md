@@ -8,7 +8,6 @@ Multi-provider inference router for hKask — DeepInfra, Together AI, fal.ai, Op
 - **Model selection** — fuzzy search, prefix-based routing (`DI/`, `FA/`, `TG/`, `OR/`, `KC/`, `OM/`, `CL/`, `RP/`)
 - **Provider ID parsing** — `ProviderId` with model name resolution
 - **Prompt validation** — never-panics input validation
-- **Multi-model fusion** — provider-agnostic panel+judge deliberation (algo/LLM judge)
 
 ## Configuration
 
@@ -24,7 +23,3 @@ Multi-provider inference router for hKask — DeepInfra, Together AI, fal.ai, Op
 | `RUNPOD_TEMPLATE_ID` | RunPod serverless template ID (alternative to `RUNPOD_BASE_URL`) |
 | `HKASK_DEFAULT_MODEL` | Default model (e.g., `KC/z-ai/glm-5.2`) |
 | `HKASK_DEFAULT_PROVIDER` | Default provider code (DI, FA, TG, OR, KC, OM, CL; default: DI) |
-| `HKASK_FUSION_JUDGE_MODEL` | Fusion judge model (or `algo` for no-LLM merge) |
-| `HKASK_FUSION_PANEL_MODELS` | Comma-separated fusion panel models |
-| `HKASK_FUSION_MODE` | Fusion mode: synthesis, best-of-n, critique, deliberation, pi |
-| `HKASK_FUSION_DISABLED` | Set to `1` to disable fusion |

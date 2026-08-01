@@ -14,8 +14,8 @@ mds_categories: [domain, composition, trust]
 between zed-kask and hKask. It connects zed's internal types to hKask's port
 traits. Every integration seam (D1 through D10) passes through this crate. It
 defines `KaskSettings`, `BridgeManifestExecutor`, `BridgeMemoryPort`,
-`LanguageModelInferencePort`, `FusionLanguageModel`, and the settings structs
-that configure the kask subsystem. `McpRuntime` is passed directly as the
+`LanguageModelInferencePort`, and the settings structs that configure the kask
+subsystem. `McpRuntime` is passed directly as the
 `ToolPort` (the former `BridgeToolPort` adapter was collapsed in the
 2026-07-31 simplification pass — see `tasks/plan.md` C3).
 
@@ -34,9 +34,7 @@ that configure the kask subsystem. `McpRuntime` is passed directly as the
 | `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1615` |
 | `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:52` |
 | `InferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:281` |
-| `FusionLanguageModel` | `kask/crates/kask_bridge/src/fusion_model.rs:87` |
-| `FusionProviderState` | `kask/crates/kask_bridge/src/fusion_model.rs:549` |
-| `resolve_fusion_models` | `kask/crates/kask_bridge/src/fusion_model.rs:454` |
+| `resolve_model_names` | `kask/crates/kask_bridge/src/model_resolution.rs` |
 | `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22` |
 | `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:212` |
 
@@ -58,7 +56,6 @@ classDiagram
         +curator: KaskCuratorSettings
         +memory: KaskMemorySettings
         +condenser: KaskCondenserSettings
-        +fusion: KaskFusionSettings
         +models: KaskModelsSettings
         +inference_providers: KaskInferenceProvidersSettings
     }
@@ -95,9 +92,6 @@ classDiagram
     class BridgeMemoryPort {
         +inner: Arc~MemoryPort~
     }
-    class FusionLanguageModel {
-        +ports: HashMap~String,Arc~LanguageModelInferencePort~~
-    }
 
     KaskSettings --> KaskMcpSettings
     KaskSettings --> KaskInferenceProvidersSettings
@@ -108,7 +102,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-001
 verified_date: 2026-08-01
-verified_against: kask/crates/kask_bridge/src/settings.rs:35,89,143,247,281; kask/crates/kask_bridge/src/skill_executor.rs:30; kask/crates/kask_bridge/src/memory.rs:42,1615; kask/crates/kask_bridge/src/fusion_model.rs:87
+verified_against: kask/crates/kask_bridge/src/settings.rs:35,89,143,247,281; kask/crates/kask_bridge/src/skill_executor.rs:30; kask/crates/kask_bridge/src/memory.rs:42,1615
 status: VERIFIED
 -->
 
@@ -140,9 +134,7 @@ holds only a `tokio::sync::mpsc::UnboundedSender` — the actual inference
 call happens on the GPUI foreground executor via a spawned task that owns
 the `AsyncApp`. This channel pattern solves the GPUI/tokio `Send`+`Sync`
 boundary: the sender is `Send + Sync`, the receiver task is not, and the
-two never cross threads. The `FusionLanguageModel` (`fusion_model.rs:87`)
-wraps multiple `LanguageModelInferencePort` instances for multi-model
-deliberation.
+two never cross threads.
 
 ## See also
 

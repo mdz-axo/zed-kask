@@ -19,8 +19,7 @@
 /// → this constant). Registry YAMLs in `registry/classify/` leave their
 /// `model:` field empty to defer to this path; `ClassifierConfig::from_def`
 /// strips the `DeepInfra/` router prefix before sending the raw id to the provider.
-/// Fusion orchestration (algo or LLM judge) merges panel outputs; see
-/// `fusion_orchestrator`.
+/// Default classifier model for h_mem extraction and section-type classification.
 pub const DEFAULT_CLASSIFIER_MODEL: &str = "DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507";
 
 /// Default embedding model.

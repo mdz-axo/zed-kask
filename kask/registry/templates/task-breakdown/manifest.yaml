@@ -66,7 +66,7 @@ templates:
     path: task-breakdown-quality-gate.j2
     type: KnowAct
     description: >
-      Independent quality gate (fusion: false) — evaluates the plan WITHOUT
+      Independent quality gate — evaluates the plan WITHOUT
       self-assessment bias, distinct from the producer-coupled evaluate step. v0.31.0:
       receives context_summary for independent project-specific convention checking.
       Scores the six criteria independently, flags compensation masking, and detects

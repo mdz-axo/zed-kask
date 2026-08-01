@@ -5,7 +5,7 @@
 //! an MCP server child process, it passes a Unix socket path via the
 //! `HKASK_INFERENCE_SOCKET` env var. The MCP server constructs an
 //! `InferenceIpcClient` instead of an `InferenceRouter`, and all inference
-//! calls are routed back to zed's `LanguageModelRegistry` (with fusion, guard,
+//! calls are routed back to zed's `LanguageModelRegistry` (with guard,
 //! and zed's configured API keys).
 //!
 //! ## Protocol

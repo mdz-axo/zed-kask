@@ -108,7 +108,6 @@ steps:
     input_mapping:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
       scenarios: "{{ step_4_result.scenarios | default([]) }}"
-    fusion: false
 
   - ordinal: 6
     action: select

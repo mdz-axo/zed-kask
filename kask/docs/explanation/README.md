@@ -12,13 +12,12 @@ mds_categories: [domain, curation]
 
 Background, context, and reasoning for hKask's design as it runs in-process inside zed-kask. "This design exists because…"
 
-hKask is compiled into zed-kask as a set of native crates and in-process MCP servers; the standalone `kask` CLI, HTTP API server, Matrix transport, and daemon process have been removed. The documents below describe the systems that survive that consolidation — Regulation, OCAP, skills, fusion, MCP servers — and how they plug into zed-kask's editor, agent panel, and inference path. For the canonical integration map, see [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (seams D1–D14).
+hKask is compiled into zed-kask as a set of native crates and in-process MCP servers; the standalone `kask` CLI, HTTP API server, Matrix transport, and daemon process have been removed. The documents below describe the systems that survive that consolidation — Regulation, OCAP, skills, MCP servers — and how they plug into zed-kask's editor, agent panel, and inference path. For the canonical integration map, see [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (seams D1–D14).
 
 | Guide | Topics | Domain Tier |
 |-------|-------|-------------|
 | [Capability tokens and dispatch](../diataxis/hkask-capability/explanation.md) | Capability-token MCP dispatch (DelegationToken, `McpRuntime::invoke` / `ToolGovernance` membrane, capability-match gate + gas budgets; token signatures are NOT verified — in-process calls only). | Core |
-| [Cognition and Replica](cognition-and-replica.md) | Fusion system design recommendations (multi-model deliberation), scenario forecasting (Schwartz + Tetlock + Chermack pipeline), ν-event semantics (ObservableSpan, RegulationRecord, CANONICAL_NAMESPACES, decay-weighted replay), Companies MCP server (41 tools, DCF valuation, forecast feedback, portfolio ledger). | Core |
-| [Fusion Mode](fusion-mode.md) | The 5 LLM deliberation modes (synthesis, best-of-n, critique, deliberation, pi), the algo / no-judge path, per-skill manifest overrides, and how fusion is operated from the zed-kask agent panel. | Core |
+| [Cognition and Replica](cognition-and-replica.md) | Scenario forecasting (Schwartz + Tetlock + Chermack pipeline), ν-event semantics (ObservableSpan, RegulationRecord, CANONICAL_NAMESPACES, decay-weighted replay), Companies MCP server (41 tools, DCF valuation, forecast feedback, portfolio ledger). | Core |
 | [Skills and Composition](skills-and-composition.md) | Skill anatomy (two-zone model), manifest authoring, the `BridgeManifestExecutor` (D1) execution path, skill bundles, and how MCP servers register as in-process builtins inside the editor. | Core |
 | [Companies MCP Server](companies-mcp.md) | How-to procedures for company valuation, forecasting, and portfolio analysis against the in-process companies MCP server. | Domain supplement |
 | [Forecasting and Scenarios](forecasting-and-scenarios.md) | Three-layer forecasting architecture and the scenario planning pipeline. | Domain supplement |

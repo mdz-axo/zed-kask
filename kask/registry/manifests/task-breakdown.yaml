@@ -175,7 +175,7 @@ steps:
   - ordinal: 4
     action: select
     description: >
-      QUALITY-GATE — independent evaluation of the plan (fusion: false, deterministic
+      QUALITY-GATE — independent evaluation of the plan (deterministic
       rubric, no self-assessment bias). Scores the six criteria independently of the
       producer-coupled evaluate step and flags compensation masking. Mirrors
       superforecasting's forecast-quality-gate separation of concerns. v0.31.0:
@@ -190,7 +190,6 @@ steps:
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
       evaluation_result: "{{ step_3_result }}"
       context_summary: "{{ step_1_result.context_summary | default('') }}"
-    fusion: false
 
   - ordinal: 5
     action: compute

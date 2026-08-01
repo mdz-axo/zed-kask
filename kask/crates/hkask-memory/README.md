@@ -32,21 +32,17 @@ resets — t goes back to 0, R = 1.0.
 
 Two separate Jinja2 templates for hMem extraction from agent operations.
 
-### Algo / No-Judge Merge
+### Single-Model Extraction
 
-Classification runs the fusion panel in parallel — every panelist receives
-the same few-shot prompt, and their extractions are merged algorithmically via
-the fusion orchestrator's `algo_merge()` (union, case-insensitive dedup,
-diverging fields annotated `[A:... B:...]`). This is the **algo / no-judge**
-path — a family of deterministic merge strategies with zero LLM judge calls.
-The current method is a recursive JSON merge; the architecture anticipates
-additional methods (e.g., set intersection, vote/tally) as future sub-selectors
-on the `algo` judge value. No separate merge function — the fusion system
-handles it. See `docs/how-to/fusion-mode.md`.
+Classification runs the configured classifier model — each passage receives
+the same few-shot prompt, and extractions are merged into the corpus. The
+classifier model is configured via `HkaskSettings::classifier_model()` (env
+var `HKASK_CLASSIFIER_MODEL`), falling back to the registry's default
+classifier config.
 
 | Setting | Env Var | Default |
 |---|---|---|
-| Panel models | `HKASK_FUSION_PANEL_MODELS` env var or `fusion:` block in corpus.yaml | `KC/qwen/qwen3-235b-a22b-2507`, `DI/google/gemma-4-E4B-it` |
+| Classifier model | `HKASK_CLASSIFIER_MODEL` | `DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507` |
 
 ### Content Safety
 
@@ -56,13 +52,8 @@ secret leakage detection are always active at every classification call.
 
 ### Memory Templates
 
-Templates invoked via `memory_remember.yaml` FlowDef manifest with `fusion: true`
-on each step and manifest-level `fusion: { judge: algo, panel: [...] }`. The
-fusion orchestrator dispatches both panel models in parallel and merges JSON
-outputs via `merge_json_values` (recursive union, case-insensitive dedup,
-diverging strings annotated `[A:... B:...]`). This is the algo / no-judge path —
-a deterministic, zero-cost merge with no LLM judge call, and the current method
-in a family of extensible algorithmic merge strategies.
+Templates invoked via `memory_remember.yaml` FlowDef manifest. Each step
+runs single-model extraction through the configured classifier model.
 
 | Template | Memory Type | Perspective | Extraction Focus |
 |----------|-------------|-------------|-----------------|

@@ -1,17 +1,15 @@
 # File: registry/manifests/memory_remember.yaml
-# Memory encoding workflow — extracts hMems from agent operations using
-# the algo / no-judge fusion path for epistemic integrity.
+# Memory encoding workflow — extracts hMems from agent operations.
 #
-# P3.1 Social Generativity: memory extraction uses the algo judge (judge: "algo")
-# which runs the fusion panel in parallel and merges the panelists' JSON outputs
-# algorithmically — no LLM judge call. Both viewpoints are preserved: agreed
-# items unified, divergent items annotated [A:... B:...].
+# P3.1 Social Generativity: memory extraction runs the classification and
+# extraction steps over the agent operation; both episodic (first-person)
+# and semantic (perspective-free) viewpoints are preserved.
 
 manifest:
   id: process/memory/remember
   category: pipeline
   name: Memory Remember
-  description: Extracts episodic and semantic hMems from agent operations using the algo / no-judge fusion path
+  description: Extracts episodic and semantic hMems from agent operations
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin
@@ -27,29 +25,21 @@ rjoule:
   alert_threshold: 0.8
   hard_limit: true
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: judge "algo", algo_method "merge" (deterministic JSON union,
-# no LLM judge call). Model names are not hardcoded here because models
-# evolve quickly; the operator configures the panel via kask.fusion.panel_models.
-
 steps:
   - ordinal: 1
     action: select
     description: Classify operation and route to episodic or semantic extraction
     template_ref: memory/templates/remember
     renderer: minijinja
-    fusion: true
 
   - ordinal: 2
     action: select
     description: Extract episodic hMems (first-person, agent perspective)
     template_ref: memory/templates/remember-episodic
     renderer: minijinja
-    fusion: true
 
   - ordinal: 3
     action: select
     description: Extract semantic hMems (third-person, perspective-free)
     template_ref: memory/templates/remember-semantic
     renderer: minijinja
-    fusion: true

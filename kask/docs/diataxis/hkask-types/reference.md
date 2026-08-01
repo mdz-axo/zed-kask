@@ -79,7 +79,6 @@ classDiagram
 
     InferencePort <|.. LanguageModelInferencePort
     InferencePort <|.. GuardedInferencePort
-    InferencePort <|.. MultiModelInferencePort
     MemoryPort <|.. RealMemoryPort
     RegulationSink <|.. RegulationArchive
     SkillRegistryIndex <|.. Registry
@@ -112,11 +111,9 @@ explicit `ChatMessage` array). All return `Pin<Box<dyn Future + Send>>`. The
 companion types `ModelEntry`, `InferenceStreamChunk`, `InferenceResult`,
 `ChatMessage`, and `ChatToolDefinition` live in the same file and
 `ports/inference_types.rs`. Implementors: `LanguageModelInferencePort` in
-`kask_bridge/src/inference.rs:281` (wraps zed's `LanguageModel`),
-`MultiModelInferencePort` in `kask_bridge/src/fusion_model.rs:331` (Fusion
-multi-provider), and `GuardedInferencePort` in
-`hkask-guard/src/guarded_inference.rs:168` (decorator that adds content
-scanning).
+`kask_bridge/src/inference.rs:281` (wraps zed's `LanguageModel`) and
+`GuardedInferencePort` in `hkask-guard/src/guarded_inference.rs:168` (decorator
+that adds content scanning).
 
 ### Memory cluster
 

@@ -5,7 +5,7 @@ cwe: CWE-1336
 owasp_llm_2025: LLM02
 atlas_tactic: AML.TA0005
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-templates/src/executor.rs, kask/crates/hkask-inference/src/fusion_orchestrator.rs, kask/mcp-servers/hkask-mcp-corpus/src/runtime/classify_impl.rs
+discovered_in: kask/crates/hkask-templates/src/executor.rs, kask/mcp-servers/hkask-mcp-corpus/src/runtime/classify_impl.rs
 discovered_by: kali-audit
 discovered_at: 2026-07-31
 severity: high

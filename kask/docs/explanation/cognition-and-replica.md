@@ -1,5 +1,5 @@
 ---
-title: "Cognition and Replica — Fusion Design, Scenario Forecasting, Nu-Event Semantics, Companies Server"
+title: "Cognition and Replica — Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-08-01
 version: "0.33.0"
@@ -10,83 +10,13 @@ mds_categories: [domain, composition, lifecycle, curation]
 
 # Cognition and Replica
 
-This document consolidates four topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts inside zed-kask. The fusion system design recommendations govern multi-model deliberation quality. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
+This document consolidates three topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts inside zed-kask. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
 
-All four subsystems run in-process inside zed-kask: fusion is driven by `FusionLanguageModel` in `kask_bridge/src/fusion_model.rs` (a zed `LanguageModel` that delegates to `fusion_orchestrator::orchestrate`, wired through the guard layer D4 over the D8 `LanguageModelInferencePort` seam), the scenarios and companies MCP servers are registered as builtin in-process MCP servers (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D14 integration seams.
-
----
-
-## 1. Fusion System Design Recommendations
-
-### Statement
-
-The fusion system enables multi-model deliberation: N panel models generate perspectives, a judge model synthesizes them into a single output. This design exists because single-model outputs are subject to the blind spots of one model; multi-model deliberation with a judge produces higher-quality outputs for generative analysis tasks. The recommendations below were derived through a structured design process using pragmatic-laziness, essentialist, grill-me, and coding-guidelines skills, and each recommendation is marked ADD, DON'T, or DEFER based on whether it adds capability or merely adds complexity.
-
-### Evidence
-
-The fusion system is configured per-manifest via a `FusionConfig` block with 9 fields. The executor sets `params.fusion_config` from `manifest.fusion`, the router checks `params.fusion_config` before falling back to global config, and the orchestrator dispatches to panel + judge. The per-manifest fusion config was verified end-to-end with 6 tests (3 router-level, 3 executor-level) covering the manifest → executor → router → orchestrator routing path.
-
-Five design questions were evaluated:
-
-**Q1: Should per-manifest FusionConfig support partial inheritance?** (Should `judge: null` mean "inherit global judge" while overriding only the panel?) — **DON'T.** The current all-or-nothing config is simpler. Partial inheritance adds a new concept (field-level null = inherit) that increases total system action. If a skill wants to inherit the global judge but customize the panel, the manifest author can read the global env vars and copy the values. Deletion test: delete partial inheritance → nothing breaks → do not add it.
-
-**Q2: Should "fusion mode" be a first-class manifest concept?** (Should there be a top-level `fusion_mode: synthesis | critique | deliberation | best-of-n | pi | disabled` shorthand?) — **DON'T.** The `fusion:` block already IS the concept. Adding a shorthand `fusion_mode: synthesis` would duplicate what `fusion: { mode: synthesis }` already does. Two ways to say the same thing is more total action, not less. The full `FusionConfig` block is already minimal (9 fields, YAML-clean).
-
-**Q3: How does the algo / no-judge path relate to fusion?** — The algo / no-judge path (`judge: "algo"`) **is** a fusion path. Setting the judge to `"algo"` routes panel responses through a deterministic, algorithmic merge instead of an LLM judge call. No separate `FusionMode` variant, no new `FusionConfig` fields — the existing 5-field config with a special judge value. The judge IS the strategy. The corpus pipeline routes through the same fusion orchestrator. The architecture anticipates additional algo / no-judge methods beyond the current recursive JSON merge (e.g., set intersection, vote/tally, schema-validated merge), to be added as sub-selectors on the `algo` judge value when needed.
-
-**Q4: Should the scenario-builder quality gate skip implications when it fails?** — **ADD (implemented).** The `condition:` field already exists on `BundleManifestStep`. Adding `condition: "step_5_result.gate_pass"` to the implications step is zero new code — it uses an existing primitive. This is the path of least action: no new mechanism, just wiring an existing one. One-line change to one manifest, ~5000 gas saved per failed gate iteration.
-
-**Q5: Should the superforecasting loop target be conditional?** (Should the loop restart at different steps depending on what the convergence check diagnoses?) — **DEFER.** The current fixed `loop_target: 2` (Fermi) is simpler. Conditional loop targets require the flow engine to evaluate conditions on the loop step, which is a new mechanism. The PDCA loop + `max_iterations` + `on_not_reached: escalate` handles the edge cases. Revisit if measured iteration waste justifies the complexity.
-
-#### Follow-up Verifications
-
-**Custom-judge unavailability:** `call_judge()` calls `router.resolve(judge_model)` → if the model's provider is not configured, returns `Err(InferenceError::Connection)` → the orchestrator propagates this → the executor receives `TemplateError::Inference(e)` → the flow engine treats it as a step failure. If panel models succeed but the judge fails, the panel results are lost — a fusion run without a judge is meaningless. Graceful error handling is already in place.
-
-**Fusion for other skills:** Skills with generative analysis (diagnosis, design, critique) are effort hotspots where fusion's multi-model deliberation adds the most value per unit of cost. Skills with deterministic rubric evaluation are NOT hotspots — fusion adds noise without adding signal.
-
-| Skill type | Fusion benefit | Examples |
-|------------|---------------|----------|
-| Generative analysis | High — diverse perspectives improve quality | diagnose, metacognition, refactor-architecture, bug-hunt, idiomatic-rust, deep-module |
-| Deterministic rubric | Low — rubric evaluation does not benefit from multiple opinions | goal-analysis, skill-maintenance (validate sub-op) |
-| Interactive/dialogue | Medium — depends on use case | kata-coaching, grill-me, improv, essentialist |
-| Infrastructure | None — not agent-facing | qa-*, regulation-gas-tracking, bootstrap-sequence, dispatch |
-
-#### Dead Field Cleanup
-
-`improvement_ratio` exists in 49 manifests. ALL use `improvement_gate: threshold_only`, which means the field is never consulted by the executor's `check_convergence()` function. This is a Prohibition #3 violation (hidden parameter — the field is declared but unused). Recommendation: DELETE from all 49 manifests — the executor ignores it when `improvement_gate: threshold_only`.
-
-### Diagram
-
-```mermaid
-flowchart TD
-    MANIFEST["manifest.yaml\nfusion: { mode, panel, judge, ... }"]
-    EXEC["ManifestExecutor\nsets params.fusion_config"]
-    GUARD["GuardedInferencePort\n(D4) wraps LanguageModelInferencePort\n(D8) — scan_input / scan_output\nat every LLM boundary"]
-    ROUTER["LanguageModelInferencePort\nresolves fusion_config before\nglobal LanguageModelRegistry"]
-    ORCH["FusionOrchestrator"]
-    PANEL["Panel Models\n(N parallel)"]
-    JUDGE["Judge Model\nsynthesis"]
-    OUTPUT["Fused output"]
-
-    MANIFEST --> EXEC --> GUARD --> ROUTER --> ORCH
-    ORCH -->|"dispatch N models"| PANEL
-    PANEL -->|"N perspectives"| JUDGE
-    JUDGE -->|"synthesis"| OUTPUT
-```
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-COG-001
-verified_date: 2026-07-29
-verified_against: crates/hkask-types/src/fusion.rs (FusionConfig, FusionMode, FusionSkill), kask/crates/kask_bridge/src/inference_port.rs (LanguageModelInferencePort over zed LanguageModel, D8), kask/crates/hkask-guard/src/guarded_inference.rs (GuardedInferencePort wraps InferencePort, D4)
-status: VERIFIED (v3 — verified_against corrected to fusion.rs; hkask-memory/src/lib.rs reference removed as stale)
--->
-
-### Implications
-
-The fusion design recommendations are an exercise in essentialist discipline — most proposed additions fail the deletion test. The system already has the concepts it needs (the `fusion:` block, the `condition:` field); adding shorthands, unified abstractions, or conditional routing would increase complexity without adding capability. The one addition that passed (Q4: conditional skip of implications on gate failure) is a one-line configuration change using an existing primitive — zero new code. This is the loom-and-thread philosophy applied to feature design: the loom (existing Rust primitives) constrains what the thread (YAML configuration) can express, and the right answer is usually to use the existing primitive rather than add a new one.
+All three subsystems run in-process inside zed-kask: the scenarios and companies MCP servers are registered as builtin in-process MCP servers (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D14 integration seams.
 
 ---
 
-## 2. Scenario Forecasting and Planning
+## 1. Scenario Forecasting and Planning
 
 ### Statement
 
@@ -202,7 +132,7 @@ The conversational design of `scenario_frame` is noteworthy — it applies hKask
 
 ---
 
-## 3. Nu-Event Semantics
+## 2. Nu-Event Semantics
 
 ### Statement
 
@@ -308,7 +238,7 @@ The ν-event design is the Good Regulator theorem applied to observability: the 
 
 ---
 
-## 4. Companies MCP Server — Investment Research
+## 3. Companies MCP Server — Investment Research
 
 ### Statement
 

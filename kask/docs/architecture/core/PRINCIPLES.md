@@ -185,7 +185,6 @@ These six spans are the same for every skill, regardless of domain. The typed en
 |--------|--------|-------|--------|-----------------|
 | Tool dispatch (all MCP servers) | `reg.tool.*` | ~206 (one per tool method, counted via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/` on 2026-08-01) | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |
 | Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge`, wrapped by `GuardedInferencePort` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
-| Fusion (multi-model deliberation — MCP-server-internal to `hkask-inference`; not exposed to in-process surfaces) | `reg.fusion` | 9 | ✅ orchestrate + per-round/mode events (convergence verdict, swap-revote, algo method) | `Fusion` |
 | Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
 | Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
 | Backup | `reg.backup` | 22 | ✅ snapshot/restore/verify/prune/delete_blob | `Backup` |

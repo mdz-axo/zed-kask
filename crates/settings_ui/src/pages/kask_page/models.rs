@@ -61,9 +61,7 @@ pub(crate) fn render_models_page(
                     Label::new(
                         "Kask-wide model configuration. These provider-prefixed model \
                          names (e.g. \"openrouter/z-ai/glm-5.2\") override the kask \
-                         defaults for inference, embedding, and classification. When \
-                         fusion is enabled, the fusion judge model takes precedence \
-                         for inference.",
+                         defaults for inference, embedding, and classification.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -78,8 +76,7 @@ pub(crate) fn render_models_page(
                     Label::new(
                         "Provider-prefixed model for the Curator, skill cascade, and \
                          kask panel inference. Leave empty to use the kask default \
-                         (openrouter/z-ai/glm-5.2). When fusion is enabled, the fusion \
-                         judge model takes precedence.",
+                         (openrouter/z-ai/glm-5.2).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

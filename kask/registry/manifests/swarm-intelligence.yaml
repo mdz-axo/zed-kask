@@ -107,11 +107,6 @@ inputs:
       Output of a previous swarm-intelligence iteration on the same swarm.
       Closes the feedback loop: SENSE consumes prior_iteration.next_focus.
 
-# Fusion: omitted — defers to operator's global kask.fusion settings.
-# Recommended: mode "best-of-n" with skills: [pragmatic-cybernetics].
-# Model names are not hardcoded here because models evolve quickly (per
-# .rules "Manifests must not hardcode model names in the fusion block").
-
 steps:
   - ordinal: 1
     action: select

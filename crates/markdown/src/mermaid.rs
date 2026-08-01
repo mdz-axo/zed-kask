@@ -697,7 +697,7 @@ mod tests {
     #[test]
     fn test_unsupported_diagram_types_are_skipped() {
         let markdown = concat!(
-            "```mermaid\nsankey-beta\n```\n\n",
+            "```mermaid\nrequirementDiagram\n```\n\n",
             "```mermaid\nblock-beta\n```\n\n",
             "```mermaid\nflowchart TD\n    A --> B\n```",
         );
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(
             diagrams.len(),
             1,
-            "Only the flowchart should be extracted; sankey and block should be skipped"
+            "Only the flowchart should be extracted; requirementDiagram and block should be skipped"
         );
         let diagram = diagrams.values().next().unwrap();
         assert!(

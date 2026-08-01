@@ -18,12 +18,6 @@
 #   topic, concepts, entities, relationships, primary_dimension, quality_flags
 # These become metadata triples in the embedding store, enabling semantic
 # queries beyond string-matching.
-#
-# Multi-model via fusion config (in corpus config YAML):
-# When the corpus config has a `fusion:` block with `judge: algo`, the
-# corpus pipeline routes triple extraction through the fusion orchestrator.
-# Panel models run in parallel; JSON responses are merged algorithmically
-# (union, case-insensitive dedup, diverging fields annotated [A:... B:...]).
 classifier:
   name: triple-extractor
   model: ""

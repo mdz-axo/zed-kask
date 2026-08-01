@@ -27,7 +27,6 @@ servers immediately.
 | `InferenceConfig` struct | `kask/crates/hkask-inference/src/config.rs:192` |
 | `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs` |
 | `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs` |
-| `FusionOrchestrator` | `kask/crates/hkask-inference/src/fusion_orchestrator.rs` |
 | `DeepInfraBackend` | `kask/crates/hkask-inference/src/deepinfra_backend.rs:21` |
 | `FalBackend` | `kask/crates/hkask-inference/src/fal_backend.rs:26` |
 | `OpenRouterBackend` | `kask/crates/hkask-inference/src/openrouter_backend.rs:22` |
@@ -78,7 +77,6 @@ classDiagram
         +cline_api_key: String
         +runpod_* : String
         +default_model: String
-        +fusion: Option~FusionConfig~
     }
     class MediaRouter {
         -config: InferenceConfig
@@ -133,8 +131,6 @@ API keys or base URLs are configured).
 - [hkask-inference How-to](./how-to.md): configuring a new provider.
 - [hkask-types Reference](../hkask-types/reference.md): the `InferencePort`
   trait that wraps this router in the bridge layer.
-- [`kask/docs/explanation/fusion-mode.md`](../../explanation/fusion-mode.md):
-  multi-model deliberation that uses this router.
 
 ---
 
