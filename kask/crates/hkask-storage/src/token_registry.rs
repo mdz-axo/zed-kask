@@ -60,8 +60,6 @@ impl TokenRegistryStore {
         let action_str: String = row.get_str_named("action")?.to_string();
         let from_str: String = row.get_str_named("delegated_from")?.to_string();
         let to_str: String = row.get_str_named("delegated_to")?.to_string();
-        let sig_hex: String = row.get_str_named("signature_hex")?.to_string();
-        let pk_hex: String = row.get_str_named("public_key_hex")?.to_string();
         let expires_at: Option<i64> = match row.get_named("expires_at")? {
             DbValue::Null => None,
             v => Some(v.as_int()?),
@@ -87,25 +85,6 @@ impl TokenRegistryStore {
             ))
         })?;
 
-        let signature = {
-            let bytes = hex::decode(&sig_hex).map_err(|e| {
-                crate::database::types::DbError::Database(format!("invalid signature hex: {e}"))
-            })?;
-            let mut arr = [0u8; 64];
-            let len = bytes.len().min(64);
-            arr[..len].copy_from_slice(&bytes[..len]);
-            hkask_capability::token_types::TokenSignature(arr)
-        };
-        let public_key = {
-            let bytes = hex::decode(&pk_hex).map_err(|e| {
-                crate::database::types::DbError::Database(format!("invalid public key hex: {e}"))
-            })?;
-            let mut arr = [0u8; 32];
-            let len = bytes.len().min(32);
-            arr[..len].copy_from_slice(&bytes[..len]);
-            hkask_types::Ed25519PublicKey(arr)
-        };
-
         let from_wid: WebID = from_str.parse().map_err(|e| {
             crate::database::types::DbError::Database(format!(
                 "invalid delegated_from WebID '{from_str}': {e}"
@@ -124,8 +103,6 @@ impl TokenRegistryStore {
             action,
             delegated_from: from_wid,
             delegated_to: to_wid,
-            signature,
-            public_key,
             expires_at,
             attenuation_level: attenuation_level as u8,
             max_attenuation: max_attenuation as u8,
@@ -137,8 +114,6 @@ impl TokenRegistryStore {
 
 impl TokenRegistry for TokenRegistryStore {
     fn store(&self, token: &DelegationToken) -> Result<(), TokenRegistryError> {
-        let sig_hex = hex::encode(token.signature.0);
-        let pk_hex = hex::encode(token.public_key.0);
         let resource_str = token.resource.as_str();
         let action_str = token.action.as_str();
 
@@ -148,7 +123,7 @@ impl TokenRegistry for TokenRegistryStore {
              (id, resource, resource_id, action, delegated_from, delegated_to,
               signature_hex, public_key_hex, expires_at, attenuation_level,
               max_attenuation, context_nonce, issued_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, unixepoch())",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', '', ?9, ?10, ?11, ?12, unixepoch())",
                 &[
                     DbValue::Text(token.id.clone()),
                     DbValue::Text(resource_str.to_string()),
@@ -156,8 +131,6 @@ impl TokenRegistry for TokenRegistryStore {
                     DbValue::Text(action_str.to_string()),
                     DbValue::Text(token.delegated_from.to_string()),
                     DbValue::Text(token.delegated_to.to_string()),
-                    DbValue::Text(sig_hex),
-                    DbValue::Text(pk_hex),
                     token.expires_at.map_or(DbValue::Null, DbValue::Integer),
                     DbValue::Integer(token.attenuation_level as i64),
                     DbValue::Integer(token.max_attenuation as i64),

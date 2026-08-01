@@ -18,8 +18,8 @@
 
 #![cfg(test)]
 
-use hkask_mcp_curator::CuratorServer;
 use hkask_mcp_curator::types::*;
+use hkask_mcp_curator::{CuratorDb, CuratorServer};
 use hkask_storage::EscalationQueue;
 use hkask_storage::RegulationArchive;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -31,7 +31,10 @@ use std::sync::Arc;
 /// Build a CuratorServer with no stores — every store-backed tool returns
 /// permission_denied. This is the OCAP-denial fixture.
 fn make_server_no_stores() -> CuratorServer {
-    CuratorServer::new(WebID::new(), None, None, None, None, None)
+    CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::for_tests((None, None, None, None, None))),
+    )
 }
 
 /// Build a CuratorServer with an in-memory EscalationQueue and
@@ -47,11 +50,13 @@ fn make_server_with_stores() -> CuratorServer {
     );
     CuratorServer::new(
         WebID::new(),
-        Some(escalation_queue),
-        Some(regulation_store),
-        None,
-        None,
-        None,
+        Arc::new(CuratorDb::for_tests((
+            Some(escalation_queue),
+            Some(regulation_store),
+            None,
+            None,
+            None,
+        ))),
     )
 }
 
@@ -62,6 +67,76 @@ fn parse(out: &str) -> serde_json::Value {
         content.clone()
     } else {
         v
+    }
+}
+
+// ── Self-healing ────────────────────────────────────────────────────────────
+
+mod self_healing {
+    use super::*;
+
+    /// Regression pin for the self-healing curator DB: when the stores are
+    /// down, tools return permission_denied; after the stores heal
+    /// (simulated via `set_for_tests`), the same server instance serves the
+    /// tool without a restart.
+    #[tokio::test]
+    async fn tools_recover_after_stores_heal() {
+        let db = Arc::new(CuratorDb::for_tests((None, None, None, None, None)));
+        let server = CuratorServer::new(WebID::new(), db.clone());
+
+        // Down: permission_denied.
+        let out = server
+            .curator_escalations(params::<PingRequest>(serde_json::json!({})))
+            .await;
+        assert_error_kind(&out, "permission_denied");
+
+        // Heal.
+        let escalation_queue = Arc::new(
+            EscalationQueue::from_driver(SqliteDriver::in_memory_driver())
+                .expect("escalation queue"),
+        );
+        db.set_for_tests((Some(escalation_queue), None, None, None, None));
+
+        // Same server instance now serves the tool.
+        let out = server
+            .curator_escalations(params::<PingRequest>(serde_json::json!({})))
+            .await;
+        let v = parse(&out);
+        assert_eq!(v.get("count").and_then(|c| c.as_u64()), Some(0));
+    }
+
+    /// Ping reports per-store availability so an operator (or the curator
+    /// itself) can distinguish "server up, stores down" from "server down".
+    #[tokio::test]
+    async fn ping_reports_stores_down_then_up() {
+        let db = Arc::new(CuratorDb::for_tests((None, None, None, None, None)));
+        let server = CuratorServer::new(WebID::new(), db.clone());
+
+        let out = server
+            .curator_ping(params::<PingRequest>(serde_json::json!({})))
+            .await;
+        let v = parse(&out);
+        let stores = v.get("stores").expect("stores field");
+        assert_eq!(
+            stores.get("escalation_queue").and_then(|s| s.as_bool()),
+            Some(false)
+        );
+
+        let escalation_queue = Arc::new(
+            EscalationQueue::from_driver(SqliteDriver::in_memory_driver())
+                .expect("escalation queue"),
+        );
+        db.set_for_tests((Some(escalation_queue), None, None, None, None));
+
+        let out = server
+            .curator_ping(params::<PingRequest>(serde_json::json!({})))
+            .await;
+        let v = parse(&out);
+        let stores = v.get("stores").expect("stores field");
+        assert_eq!(
+            stores.get("escalation_queue").and_then(|s| s.as_bool()),
+            Some(true)
+        );
     }
 }
 

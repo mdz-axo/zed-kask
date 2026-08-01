@@ -259,7 +259,6 @@ pub enum TokenRegistryError {
 /// and anomaly detection). Note: revocation is a *recording* surface — the
 /// in-process capability-match gate in `McpRuntime::invoke` does not consult
 /// the registry. Do not describe this as an authorization gate.
-#[cfg_attr(feature = "async-trait", async_trait::async_trait)]
 pub trait TokenRegistry: Send + Sync {
     /// Record an issued token.
     fn store(&self, token: &DelegationToken) -> Result<(), TokenRegistryError>;

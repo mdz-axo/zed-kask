@@ -677,7 +677,15 @@ impl CuratorStores {
         }
     }
 
-    /// Read the current stores, attempting a re-open when they're `None`.
+    /// True when the DB-open level failed (both stores `None`) — the case a
+    /// re-open can fix. Partial degradation (one store `Some`, the other
+    /// `None` from a per-store init failure) is NOT healable by re-open and
+    /// must not churn re-opens on every access.
+    fn db_level_down(stores: &CuratorStorePair) -> bool {
+        stores.0.is_none() && stores.1.is_none()
+    }
+
+    /// Read the current stores, attempting a re-open when they're down.
     ///
     /// The re-open is cheap when it keeps failing (SQLCipher open fails fast
     /// on a locked/absent DB) and runs at most once per call. Callers get a
@@ -685,14 +693,14 @@ impl CuratorStores {
     /// next turn.
     fn get(&self) -> CuratorStorePair {
         let needs_heal = match self.stores.read() {
-            Ok(guard) => guard.0.is_none() || guard.1.is_none(),
+            Ok(guard) => Self::db_level_down(&guard),
             Err(_) => true, // poisoned — attempt re-open to rebuild state
         };
         if needs_heal && self.heal_enabled {
             self.try_heal();
         }
         match self.stores.read() {
-            Ok(guard) => guard.clone(),
+            Ok(guard) => (*guard).clone(),
             Err(_) => (None, None),
         }
     }
@@ -701,17 +709,16 @@ impl CuratorStores {
     /// and logs the heal; on failure, warns once per attempt round.
     fn try_heal(&self) {
         let fresh = open_curator_stores(&self.passphrase, self.embedding_dim);
-        let healed = fresh.0.is_some() && fresh.1.is_some();
+        let fresh_ok = !Self::db_level_down(&fresh);
         let replaced = match self.stores.write() {
             Ok(mut guard) => {
-                let was_down = guard.0.is_none() || guard.1.is_none();
-                if healed && was_down {
+                let was_down = Self::db_level_down(&guard);
+                if fresh_ok && was_down {
                     *guard = fresh;
                     true
-                } else if healed {
-                    // Already healed by a concurrent caller — drop our copy.
-                    false
                 } else {
+                    // Already healed by a concurrent caller, or the re-open
+                    // failed — drop our copy.
                     false
                 }
             }
@@ -732,7 +739,7 @@ impl CuratorStores {
             );
             self.heal_attempt_logged
                 .store(false, std::sync::atomic::Ordering::Relaxed);
-        } else if !healed {
+        } else if !fresh_ok {
             // One warn per attempt round; the flag resets on a successful
             // heal so a later outage re-arms the signal.
             if !self
@@ -750,26 +757,26 @@ impl CuratorStores {
     }
 }
 
-/// Build the curator consolidation service from the current curator stores.
-/// Returns `None` when the cadence is zero (consolidation disabled) or the
-/// stores are unavailable. Called at construction and after a heal.
+/// Build the curator consolidation service from an already-resolved store
+/// pair. Returns `None` when the cadence is zero (consolidation disabled) or
+/// either store is unavailable. Called at construction and after a heal.
 fn build_curator_consolidation(
     consolidation_cadence_secs: u64,
-    curator_stores: &CuratorStores,
+    stores: &CuratorStorePair,
 ) -> Option<Arc<ConsolidationService>> {
     if consolidation_cadence_secs == 0 {
         return None;
     }
-    let (Some(curator_episodic), Some(curator_semantic)) = curator_stores.get() else {
+    let (Some(curator_episodic), Some(curator_semantic)) = stores else {
         return None;
     };
     let bridge = Arc::new(ConsolidationBridge::new(
-        Arc::clone(&curator_episodic),
-        Arc::clone(&curator_semantic),
+        Arc::clone(curator_episodic),
+        Arc::clone(curator_semantic),
     ));
     Some(Arc::new(ConsolidationService::new(
         bridge,
-        Arc::clone(&curator_semantic),
+        Arc::clone(curator_semantic),
     )))
 }
 

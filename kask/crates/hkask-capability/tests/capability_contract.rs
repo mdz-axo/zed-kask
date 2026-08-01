@@ -1,20 +1,15 @@
 //! Behavioral contract tests for `hkask-capability`.
 //!
-//! Covers: DelegationToken (verify, is_expired, attenuate, serialization, deterministic id)
+//! Covers: DelegationToken (is_expired, is_valid_for, allows_*, deterministic id)
 //! and capabilities_match.
 
-use ed25519_dalek::SigningKey;
 use hkask_capability::{
     DelegationAction, DelegationResource, DelegationToken, DelegationTokenBuilder,
-    SYSTEM_MAX_ATTENUATION, capabilities_match, derive_signing_key,
+    SYSTEM_MAX_ATTENUATION, capabilities_match,
 };
 use hkask_types::WebID;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-fn key_a() -> SigningKey {
-    derive_signing_key(b"test-key-a-32-bytes-long!!!")
-}
 
 fn alice() -> WebID {
     WebID::from_persona(b"alice")
@@ -24,35 +19,28 @@ fn bob() -> WebID {
     WebID::from_persona(b"bob")
 }
 
-fn carol() -> WebID {
-    WebID::from_persona(b"carol")
-}
-
-fn make_token(sk: &SigningKey) -> DelegationToken {
+fn make_token() -> DelegationToken {
     DelegationToken::new(
         DelegationResource::Tool,
         "test_tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-        sk,
     )
 }
 
-// ── 2. DelegationToken::is_expired — temporal boundary ─────────────────────
+// ── DelegationToken::is_expired — temporal boundary ─────────────────────
 
 #[test]
 fn token_not_expired_when_no_expiry() {
-    let sk = key_a();
     let token = DelegationTokenBuilder::new(
         DelegationResource::Tool,
         "tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-        &sk,
     )
-    .sign(); // no expires_at set → None
+    .build(); // no expires_at set → None
     assert!(!token.is_expired(0), "token with no expiry never expires");
     assert!(
         !token.is_expired(i64::MAX),
@@ -62,17 +50,15 @@ fn token_not_expired_when_no_expiry() {
 
 #[test]
 fn token_expired_after_expiry_time() {
-    let sk = key_a();
     let token = DelegationTokenBuilder::new(
         DelegationResource::Tool,
         "tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-        &sk,
     )
     .expires_at(1000)
-    .sign();
+    .build();
     assert!(
         token.is_expired(1001),
         "token must be expired when current_time > expires_at"
@@ -81,17 +67,15 @@ fn token_expired_after_expiry_time() {
 
 #[test]
 fn token_not_expired_before_expiry() {
-    let sk = key_a();
     let token = DelegationTokenBuilder::new(
         DelegationResource::Tool,
         "tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-        &sk,
     )
     .expires_at(1000)
-    .sign();
+    .build();
     assert!(
         !token.is_expired(999),
         "token must not be expired before expiry"
@@ -102,68 +86,56 @@ fn token_not_expired_before_expiry() {
     );
 }
 
-// ── 3. DelegationToken::attenuate — attenuation chain ──────────────────────
+// ── DelegationToken::is_valid_for — the capability-match gate ───────────
 
 #[test]
-fn token_attenuate_increments_level() {
-    let sk = key_a();
-    let parent = make_token(&sk);
-    assert_eq!(parent.attenuation_level, 0);
+fn is_valid_for_matches_exact_triple() {
+    let token = make_token();
+    assert!(token.is_valid_for(
+        DelegationResource::Tool,
+        "test_tool",
+        DelegationAction::Execute
+    ));
+    assert!(!token.is_valid_for(
+        DelegationResource::Tool,
+        "other_tool",
+        DelegationAction::Execute
+    ));
+    assert!(!token.is_valid_for(
+        DelegationResource::Tool,
+        "test_tool",
+        DelegationAction::Read
+    ));
+    assert!(!token.is_valid_for(
+        DelegationResource::Registry,
+        "test_tool",
+        DelegationAction::Execute
+    ));
+}
 
-    let child = parent
-        .attenuate(carol(), &sk, 0)
-        .expect("attenuation should succeed");
-    assert_eq!(
-        child.attenuation_level, 1,
-        "child level must be parent level + 1"
-    );
+// ── DelegationToken::allows_* — action hierarchy ────────────────────────
+
+#[test]
+fn execute_allows_read_and_write() {
+    let token = make_token(); // Execute
+    assert!(token.allows_read());
+    assert!(token.allows_write());
 }
 
 #[test]
-fn token_cannot_attenuate_beyond_max() {
-    let sk = key_a();
-    let parent = DelegationTokenBuilder::new(
+fn read_allows_only_read() {
+    let token = DelegationToken::new(
         DelegationResource::Tool,
-        "tool".into(),
-        DelegationAction::Execute,
+        "t".into(),
+        DelegationAction::Read,
         alice(),
         bob(),
-        &sk,
-    )
-    .attenuation(SYSTEM_MAX_ATTENUATION, SYSTEM_MAX_ATTENUATION)
-    .sign();
-
-    assert!(
-        !parent.can_attenuate(),
-        "token at max attenuation cannot be further attenuated"
     );
-    let child = parent.attenuate(carol(), &sk, 0);
-    assert!(
-        child.is_none(),
-        "attenuate must return None when at max level"
-    );
+    assert!(token.allows_read());
+    assert!(!token.allows_write());
 }
 
-#[test]
-fn token_attenuate_preserves_resource() {
-    let sk = key_a();
-    let parent = make_token(&sk);
-    let child = parent
-        .attenuate(carol(), &sk, 0)
-        .expect("attenuation should succeed");
-
-    assert_eq!(
-        child.resource, parent.resource,
-        "resource type must be inherited"
-    );
-    assert_eq!(
-        child.resource_id, parent.resource_id,
-        "resource_id must be inherited"
-    );
-    assert_eq!(child.action, parent.action, "action must be inherited");
-}
-
-// ── 5. capabilities_match — action hierarchy ───────────────────────────────
+// ── capabilities_match — action hierarchy ───────────────────────────────
 
 #[test]
 fn execute_permits_write() {
@@ -191,39 +163,16 @@ fn domain_mismatch_fails() {
     ));
 }
 
-// ── 6. DelegationToken::from_base64 / to_base64 — serialization ────────────
-
-#[test]
-fn base64_roundtrip_preserves_token() {
-    let sk = key_a();
-    let token = make_token(&sk);
-    let encoded = token.to_base64().expect("to_base64 must succeed");
-    let decoded = DelegationToken::from_base64(&encoded).expect("from_base64 must succeed");
-    assert_eq!(
-        token.fingerprint(),
-        decoded.fingerprint(),
-        "roundtrip must preserve fingerprint"
-    );
-}
-
-#[test]
-fn base64_rejects_invalid_input() {
-    let result = DelegationToken::from_base64("!!! not valid base64 !!!");
-    assert!(result.is_err(), "garbage input must produce error");
-}
-
-// ── 7. Deterministic id — same params → same fingerprint ────────────────────
+// ── Deterministic id — same params → same id ────────────────────────────
 
 #[test]
 fn token_id_deterministic() {
-    let sk = key_a();
     let t1 = DelegationToken::new(
         DelegationResource::Tool,
         "my_tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-        &sk,
     );
     let t2 = DelegationToken::new(
         DelegationResource::Tool,
@@ -231,12 +180,41 @@ fn token_id_deterministic() {
         DelegationAction::Execute,
         alice(),
         bob(),
-        &sk,
     );
     assert_eq!(t1.id, t2.id, "same params must produce same token id");
-    assert_eq!(
-        t1.fingerprint(),
-        t2.fingerprint(),
-        "same params must produce same fingerprint"
+}
+
+#[test]
+fn token_id_varies_with_params() {
+    let t1 = make_token();
+    let t2 = DelegationToken::new(
+        DelegationResource::Tool,
+        "different_tool".into(),
+        DelegationAction::Execute,
+        alice(),
+        bob(),
     );
+    assert_ne!(
+        t1.id, t2.id,
+        "different resource_id must produce different id"
+    );
+}
+
+// ── Builder defaults ────────────────────────────────────────────────────
+
+#[test]
+fn builder_defaults() {
+    let token = DelegationTokenBuilder::new(
+        DelegationResource::Tool,
+        "tool".into(),
+        DelegationAction::Execute,
+        alice(),
+        bob(),
+    )
+    .build();
+    assert_eq!(token.attenuation_level, 0);
+    assert_eq!(token.max_attenuation, SYSTEM_MAX_ATTENUATION);
+    assert!(token.context_nonce.is_empty());
+    assert!(token.caveats.is_empty());
+    assert!(token.expires_at.is_none());
 }

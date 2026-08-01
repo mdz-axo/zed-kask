@@ -35,7 +35,7 @@ const SERVER_NAME: &str = "hkask-mcp-curator";
 type CuratorStoreSet = (
     Option<Arc<hkask_storage::EscalationQueue>>,
     Option<Arc<hkask_storage::RegulationArchive>>,
-    Option<hkask_memory::EpisodicMemory>,
+    Option<Arc<hkask_memory::EpisodicMemory>>,
     Option<Arc<hkask_memory::SemanticMemory>>,
     Option<Arc<dyn hkask_capability::TokenRegistry>>,
 );
@@ -75,7 +75,7 @@ impl CuratorDb {
             });
         let passphrase = ctx.credentials.get("HKASK_DB_PASSPHRASE").cloned();
         let heal_enabled = passphrase.is_some();
-        let stores = open_curator_stores(db_path.as_deref(), passphrase.as_deref());
+        let stores = open_curator_stores(Some(db_path.as_str()), passphrase.as_deref());
         let this = Self {
             stores: RwLock::new(stores),
             db_path: Some(db_path),
@@ -98,9 +98,11 @@ impl CuratorDb {
         this
     }
 
-    /// Construct a handle over pre-built stores (tests) — healing disabled.
-    #[cfg(test)]
-    fn for_tests(stores: CuratorStoreSet) -> Self {
+    /// Construct a handle over pre-built stores — healing disabled. Used by
+    /// the qa_contract integration tests (compiled as a separate crate, so
+    /// `#[cfg(test)]` doesn't reach them).
+    #[doc(hidden)]
+    pub fn for_tests(stores: CuratorStoreSet) -> Self {
         Self {
             stores: RwLock::new(stores),
             db_path: None,
@@ -110,9 +112,9 @@ impl CuratorDb {
         }
     }
 
-    /// Replace the stores (tests) — simulates an outage or a heal.
-    #[cfg(test)]
-    fn set_for_tests(&self, stores: CuratorStoreSet) {
+    /// Replace the stores — simulates an outage or a heal. Test-only.
+    #[doc(hidden)]
+    pub fn set_for_tests(&self, stores: CuratorStoreSet) {
         if let Ok(mut guard) = self.stores.write() {
             *guard = stores;
         }
@@ -137,7 +139,7 @@ impl CuratorDb {
             self.try_heal();
         }
         match self.stores.read() {
-            Ok(guard) => guard.clone(),
+            Ok(guard) => (*guard).clone(),
             Err(_) => (None, None, None, None, None),
         }
     }
@@ -200,15 +202,18 @@ impl CuratorServer {
     #[tool(description = "Liveness check")]
     pub async fn curator_ping(&self, Parameters(_req): Parameters<PingRequest>) -> String {
         execute_tool(self, "curator_ping", async {
+            let (escalation_queue, regulation_store, episodic, semantic, token_registry) =
+                self.db.get();
             Ok(json!({
                 "status": "ok",
                 "server": SERVER_NAME,
                 "curator_webid": self.webid.to_string(),
                 "stores": {
-                    "escalation_queue": self.escalation_queue.is_some(),
-                    "regulation_store": self.regulation_store.is_some(),
-                    "episodic": self.episodic.is_some(),
-                    "semantic": self.semantic.is_some(),
+                    "escalation_queue": escalation_queue.is_some(),
+                    "regulation_store": regulation_store.is_some(),
+                    "episodic": episodic.is_some(),
+                    "semantic": semantic.is_some(),
+                    "token_registry": token_registry.is_some(),
                 }
             }))
         })
@@ -220,7 +225,8 @@ impl CuratorServer {
     #[tool(description = "List all pending escalations requiring review")]
     pub async fn curator_escalations(&self, Parameters(_req): Parameters<PingRequest>) -> String {
         execute_tool(self, "curator_escalations", async {
-            let Some(ref queue) = self.escalation_queue else {
+            let (escalation_queue, ..) = self.db.get();
+            let Some(ref queue) = escalation_queue else {
                 return Err(McpToolError::permission_denied(
                     "EscalationQueue not available",
                 ));
@@ -259,12 +265,13 @@ impl CuratorServer {
         Parameters(req): Parameters<EscalationResolveRequest>,
     ) -> String {
         execute_tool(self, "curator_escalation_resolve", async {
-            let Some(ref queue) = self.escalation_queue else {
+            let (escalation_queue, regulation_store, ..) = self.db.get();
+            let Some(ref queue) = escalation_queue else {
                 return Err(McpToolError::permission_denied(
                     "EscalationQueue not available",
                 ));
             };
-            let Some(ref events_store) = self.regulation_store else {
+            let Some(ref events_store) = regulation_store else {
                 return Err(McpToolError::permission_denied(
                     "RegulationArchive not available",
                 ));
@@ -285,12 +292,13 @@ impl CuratorServer {
         Parameters(req): Parameters<EscalationDismissRequest>,
     ) -> String {
         execute_tool(self, "curator_escalation_dismiss", async {
-            let Some(ref queue) = self.escalation_queue else {
+            let (escalation_queue, regulation_store, ..) = self.db.get();
+            let Some(ref queue) = escalation_queue else {
                 return Err(McpToolError::permission_denied(
                     "EscalationQueue not available",
                 ));
             };
-            let Some(ref events_store) = self.regulation_store else {
+            let Some(ref events_store) = regulation_store else {
                 return Err(McpToolError::permission_denied(
                     "RegulationArchive not available",
                 ));
@@ -342,7 +350,8 @@ impl CuratorServer {
         Parameters(req): Parameters<SemanticSearchRequest>,
     ) -> String {
         execute_tool(self, "curator_semantic_search", async {
-            let Some(ref semantic) = self.semantic else {
+            let (.., semantic, _) = self.db.get();
+            let Some(ref semantic) = semantic else {
                 return Err(McpToolError::permission_denied("SemanticMemory not available"));
             };
             match semantic.query_deduped(&req.query) {
@@ -372,11 +381,12 @@ impl CuratorServer {
         Parameters(req): Parameters<MemoryRecallRequest>,
     ) -> String {
         execute_tool(self, "curator_memory_recall", async {
+            let (.., episodic, semantic, _) = self.db.get();
             let memory_type = req.memory_type.as_deref().unwrap_or("both");
             let mut result = json!({});
 
             if memory_type == "episodic" || memory_type == "both" {
-                if let Some(ref ep) = self.episodic {
+                if let Some(ref ep) = episodic {
                     match ep.query_for_deduped(&req.entity, self.webid) {
                         Ok(h_mems) => {
                             let s: Vec<serde_json::Value> = h_mems
@@ -400,7 +410,7 @@ impl CuratorServer {
                 }
             }
             if memory_type == "semantic" || memory_type == "both" {
-                if let Some(ref sem) = self.semantic {
+                if let Some(ref sem) = semantic {
                     match sem.query_deduped(&req.entity) {
                         Ok(h_mems) => {
                             let s: Vec<serde_json::Value> = h_mems
@@ -435,7 +445,8 @@ impl CuratorServer {
         Parameters(req): Parameters<AlgedonicLogRequest>,
     ) -> String {
         execute_tool(self, "curator_algedonic_log", async {
-            let Some(ref store) = self.regulation_store else {
+            let (_, regulation_store, ..) = self.db.get();
+            let Some(ref store) = regulation_store else {
                 return Err(McpToolError::permission_denied(
                     "RegulationArchive not available",
                 ));
@@ -472,7 +483,8 @@ impl CuratorServer {
     )]
     pub async fn reg_query(&self, Parameters(req): Parameters<RegQueryRequest>) -> String {
         execute_tool(self, "reg_query", async {
-            let Some(ref store) = self.regulation_store else {
+            let (_, regulation_store, ..) = self.db.get();
+            let Some(ref store) = regulation_store else {
                 return Err(McpToolError::permission_denied(
                     "RegulationArchive not available",
                 ));
@@ -532,7 +544,8 @@ impl CuratorServer {
     )]
     pub async fn list_tokens(&self, Parameters(req): Parameters<TokenListRequest>) -> String {
         execute_tool(self, "list_tokens", async {
-            let Some(ref registry) = self.token_registry else {
+            let (.., token_registry) = self.db.get();
+            let Some(ref registry) = token_registry else {
                 return Err(McpToolError::permission_denied(
                     "TokenRegistry not available",
                 ));
@@ -589,16 +602,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         SERVER_NAME,
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::server::ServerContext| {
-            let (escalation_queue, regulation_store, episodic, semantic, token_registry) =
-                open_curator_stores(&ctx);
-            Ok(CuratorServer::new(
-                ctx.webid,
-                escalation_queue,
-                regulation_store,
-                episodic,
-                semantic,
-                token_registry,
-            ))
+            let db = Arc::new(CuratorDb::from_context(&ctx));
+            Ok(CuratorServer::new(ctx.webid, db))
         },
         vec![
             hkask_mcp_server::CredentialRequirement::optional(
@@ -614,46 +619,28 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-#[allow(clippy::type_complexity)]
-fn open_curator_stores(
-    ctx: &hkask_mcp_server::server::ServerContext,
-) -> (
-    Option<Arc<hkask_storage::EscalationQueue>>,
-    Option<Arc<hkask_storage::RegulationArchive>>,
-    Option<hkask_memory::EpisodicMemory>,
-    Option<Arc<hkask_memory::SemanticMemory>>,
-    Option<Arc<dyn hkask_capability::TokenRegistry>>,
-) {
-    let curator_db_path = ctx
-        .credentials
-        .get("HKASK_CURATOR_DB")
-        .cloned()
-        .unwrap_or_else(|| {
-            let p = hkask_types::agent_paths::agent_pod_db("curator");
-            let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
-            if let Some(parent) = resolved.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            resolved.to_string_lossy().to_string()
-        });
-
-    let db = match ctx.credentials.get("HKASK_DB_PASSPHRASE") {
-        Some(pw) => match hkask_storage::open_or_repair(&curator_db_path, pw) {
-            Ok(db) => Some(db),
-            Err(e) => {
-                tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator DB");
-                None
-            }
-        },
-        None => {
-            tracing::warn!(target: "hkask.mcp.curator", "HKASK_DB_PASSPHRASE not set");
-            None
-        }
+/// Open the curator's sovereign `pod.db` and construct all five stores from
+/// a single shared driver. Called at construction and on every heal attempt.
+/// All-or-nothing on the DB-open steps (a failure before store construction
+/// returns all `None`s); per-store `from_driver` failures degrade only that
+/// store, matching the prior behavior.
+fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> CuratorStoreSet {
+    let Some(db_path) = db_path else {
+        tracing::warn!(target: "hkask.mcp.curator", "Curator DB path not resolved");
+        return (None, None, None, None, None);
     };
-    let Some(db) = db else {
+    let Some(passphrase) = passphrase else {
+        tracing::warn!(target: "hkask.mcp.curator", "HKASK_DB_PASSPHRASE not set");
         return (None, None, None, None, None);
     };
 
+    let db = match hkask_storage::open_or_repair(db_path, passphrase) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator DB");
+            return (None, None, None, None, None);
+        }
+    };
     let pool = match db.sqlite_pool() {
         Ok(p) => p,
         Err(e) => {
@@ -694,7 +681,7 @@ fn open_curator_stores(
         }
     };
     // RegulationArchive schema initialized by from_driver().
-    let episodic = hkask_memory::EpisodicMemory::new(h_mem_store);
+    let episodic = Arc::new(hkask_memory::EpisodicMemory::new(h_mem_store));
     let semantic = Arc::new(hkask_memory::SemanticMemory::new(
         h_mem_store2,
         embedding_store,
