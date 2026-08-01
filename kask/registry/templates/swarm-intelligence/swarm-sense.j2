@@ -1,0 +1,158 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    swarm_id: string
+    task: string
+    target_condition: object|null
+    prior_iteration: object|null
+  output:
+    workspace_roster: object
+    wallet_state: object
+    required_transforms: array
+    covered_transforms: array
+    variety_coverage: number
+    diversity: number
+    alignment: number
+    cohesion: number
+    separation: number
+    trivial_task: boolean
+    next_focus_hint: string
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: swarm-intelligence/swarm-sense.j2 #}
+{# Functional Role: KnowAct — Sense current swarm state #}
+{# Produces: swarm_state #}
+{# Phase 1 — SENSE (CHECK: measure current swarm state against Onto4MAT + ABW) #}
+{# hKask v0.31.0 — Swarm Intelligence #}
+{#
+  Measure the current swarm state. The state is sensed against two substrates:
+  (1) the ABW workspace/wallet APIs (the ground truth of who is hired and
+  what was spent), and (2) the Onto4MAT multi-agent teaming ontology (the
+  measurable team properties: alignment, cohesion, separation).
+
+  Feedback loop: when prior_iteration is present, consume its next_focus to
+  direct this sensing pass rather than measuring everything uniformly.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a swarm-state sensing analyst. Measure the current state of the ABW swarm against the Onto4MAT multi-agent teaming ontology and the ABW workspace/wallet APIs.
+
+## Swarm ID
+{{ swarm_id }}
+
+## Task
+{{ task }}
+
+{% if target_condition and target_condition | length > 0 %}
+## Target Condition (operator-specified overrides)
+```json
+{{ target_condition | tojson }}
+```
+{% else %}
+## Target Condition (defaults)
+- variety_coverage >= 0.9
+- diversity >= 0.25
+- loop_closure = 1.0
+{% endif %}
+
+{% if prior_iteration and prior_iteration | length > 0 %}
+## Prior Iteration Feedback (loop closure)
+
+This is iteration N+1. The previous iteration produced:
+```json
+{{ prior_iteration | tojson }}
+```
+
+- **next_focus**: if present, this is the convergence check's directed focus
+  for the next iteration. Prioritize sensing the axis it names.
+- **lessons_learned**: distill into 1-3 concrete adjustments to what you measure.
+{% else %}
+## Prior Iteration Feedback
+No prior iteration — this is a first pass. Measure all axes uniformly.
+{% endif %}
+
+## Step 1 — Fetch ABW Workspace State
+
+Via the hkask-mcp-swarm tools (the agent orchestrates these calls between
+template invocations in a Zed session; in pure FlowDef execution the
+workspace_roster should be pre-populated):
+
+- `swarm_get_swarm` with swarm_id → workspace roster: `agents[]` each with
+  `{ agent_id, agent_name, agent_type, accepts[], produces[], description,
+  capabilities { executor, mcp_tools[], model, temperature }, dependencies
+  { required[], optional[] }, total_executions }`.
+- `swarm_get_swarm` wallet read (or the wallet envelope in the response) →
+  `{ balance, transactions[] }`.
+
+Record the raw workspace_roster and wallet_state.
+
+## Step 2 — Derive required_transforms from the task
+
+From the natural-language task, derive the set of input→output transforms the
+swarm must cover. Each transform is a (input_type, output_type) pair. This is
+the one LLM-judged step in the loop; the CHECK phase measures against it
+deterministically.
+
+If the task implies no transforms (trivial), set required_transforms = [] and
+trivial_task = true.
+
+## Step 3 — Compute Onto4MAT Team Properties
+
+Map the ABW roster onto Onto4MAT (Kiesel et al. 2022) team properties:
+
+- **alignment** (Reynolds alignment rule; Onto4MAT hasAlignmentWithTeam):
+  the delegation-graph density — fraction of agents whose `produces[]`
+  overlaps another hired agent's `accepts[]`. High alignment = the swarm can
+  hand work off internally.
+- **cohesion** (Reynolds cohesion rule; Onto4MAT hasCohesionWithTeam):
+  fraction of the workspace's declared `dependencies { required[] }` that are
+  satisfied by hired agents. High cohesion = the swarm is self-sufficient.
+- **separation** (Reynolds separation rule; Onto4MAT hasTeamSeparation):
+  distinct `(agent_type, model, temperature)` tuples / agent count. High
+  separation = the swarm is diverse (not a monoculture). This is the
+  anti-premature-convergence signal.
+
+## Step 4 — Compute variety_coverage
+
+```
+variety_coverage = |required_transforms ∩ covered_transforms| / |required_transforms|
+```
+
+where `covered_transforms` = the set of (input_type, output_type) pairs
+covered by some hired agent's (accepts[], produces[]).
+
+Vacuous-truth defaults (MANDATORY — these prevent 0/0 from breaking the metric):
+- If `required_transforms` is empty: `variety_coverage = 1.0` and
+  `trivial_task = true`.
+- If `required_transforms` is non-empty AND the swarm is empty
+  (`agents = []`): `variety_coverage = 0.0` (nothing is covered).
+
+## Step 5 — Compute diversity
+
+```
+diversity = |distinct (agent_type, model) tuples| / |agents|
+```
+
+Vacuous-truth default: if `agents = []`, `diversity = 0.0` (an empty swarm
+has zero diversity — it fails the floor by definition, driving the first hire).
+
+## Step 6 — Record next_focus_hint
+
+If prior_iteration.next_focus is present, echo it. Otherwise, if any axis is
+below target, name the axis with the largest deficit as the hint.
+
+## Output
+
+Produce a JSON object with: workspace_roster, wallet_state,
+required_transforms, covered_transforms, variety_coverage, diversity,
+alignment, cohesion, separation, trivial_task, next_focus_hint,
+delegate_notes.

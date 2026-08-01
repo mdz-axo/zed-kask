@@ -1,0 +1,142 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    pre_act_state: object
+    act_result: object
+    swarm_id: string
+    target_condition: object|null
+  output:
+    post_act_state: object
+    variety_coverage: number
+    diversity: number
+    loop_closure: number
+    convergence_metric: number
+    next_focus: string
+    algedonic_signal: object|null
+    lessons_learned: array
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: swarm-intelligence/swarm-check.j2 #}
+{# Functional Role: KnowAct — Re-measure, compute d, emit next_focus + algedonic #}
+{# Produces: check_result #}
+{# Phase 5 — CHECK (CHECK: re-measure + convergence metric + algedonic) #}
+{# hKask v0.31.0 — Swarm Intelligence #}
+{#
+  Re-measure the swarm state post-Act and compute the convergence metric.
+  The metric is a composite swarm-state distance d. The algedonic override
+  is mandatory: a 402 or un-acknowledged curator dispatch escalates
+  regardless of d (.rules "unwrap_or(0) on regulation-loop sense inputs"
+  trap enforced as a convergence invariant).
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a swarm-convergence analyst. Re-measure the swarm state post-Act and compute the convergence metric.
+
+## Pre-Act State (from SENSE)
+```json
+{{ pre_act_state | tojson }}
+```
+
+## Act Result (from ACT)
+```json
+{{ act_result | tojson }}
+```
+
+## Swarm ID
+{{ swarm_id }}
+
+{% if target_condition and target_condition | length > 0 %}
+## Target Condition
+```json
+{{ target_condition | tojson }}
+```
+{% else %}
+## Target Condition (defaults)
+- variety_coverage >= 0.9
+- diversity >= 0.25
+- loop_closure = 1.0
+{% endif %}
+
+## Step 1 — Re-measure the swarm state post-Act
+
+Re-fetch the workspace roster and wallet via hkask-mcp-swarm (the agent
+orchestrates these calls). Recompute variety_coverage, diversity, alignment,
+cohesion, separation exactly as in SENSE, against the post-Act roster.
+
+## Step 2 — Compute loop_closure
+
+```
+loop_closure = (reconciled_dispatches / total_dispatches)
+             AND (acknowledged_curator_dispatches / curator_dispatches)
+```
+
+where:
+- `total_dispatches` = count of emitted_calls from ACT.
+- `reconciled_dispatches` = count of emitted_calls whose estimated_credits
+  matches an entry in /api/wallet/transactions (within tolerance).
+- `curator_dispatches` = count of emitted_calls with curator_involved = true.
+- `acknowledged_curator_dispatches` = count of those with a consent record.
+
+Vacuous-truth default: if `total_dispatches = 0`, `loop_closure = 1.0`
+(vacuously satisfied — no dispatch is un-reconciled). This prevents a
+freshly composed swarm that has not yet dispatched from being falsely flagged
+as a loop-break.
+
+## Step 3 — Compute the convergence metric (swarm-state distance)
+
+```
+d = sqrt( (1 - variety_coverage)^2
+        + max(0, diversity_floor - diversity)^2
+        + (1 - loop_closure)^2 )
+```
+
+with `diversity_floor = 0.25` (or the operator-specified override).
+
+`d = 0` means the target condition is met on all three axes. Record
+convergence_metric = d.
+
+## Step 4 — Algedonic override
+
+Check for algedonic signals that override convergence:
+- Any 402 (PaymentRequired) from the ABW API during the Act or re-fetch.
+- Any un-acknowledged curator dispatch (curator_involved = true with no
+  consent record).
+
+If either is present, set algedonic_signal = { type, detail } and the loop
+MUST NOT claim convergence regardless of d. This is the .rules
+"unwrap_or(0) on regulation-loop sense inputs" trap enforced as a
+convergence invariant: a broken algedonic channel is never read as "no
+deviation."
+
+If neither is present, algedonic_signal = null.
+
+## Step 5 — Emit next_focus
+
+Determine which axis contributes the largest term to d:
+- `(1 - variety_coverage)` largest → next_focus = "hiring" (cover transforms)
+- `max(0, diversity_floor - diversity)` largest → next_focus = "diversification"
+- `(1 - loop_closure)` largest → next_focus = "reconciliation"
+
+If algedonic_signal is non-null, next_focus = "algedonic_repair" regardless
+of d's decomposition.
+
+## Step 6 — Lessons learned
+
+Distill 1-3 concrete lessons for the next iteration's SENSE pass. These close
+the autopoietic loop (the next iteration's composition recommendation is a
+function of these findings).
+
+## Output
+
+Produce a JSON object with: post_act_state, variety_coverage, diversity,
+loop_closure, convergence_metric, next_focus, algedonic_signal (object or
+null), lessons_learned (array), delegate_notes.

@@ -1,0 +1,150 @@
+# Template crate manifest for swarm-intelligence skill
+# hKask v0.31.0
+# Decomposed into: SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE
+#
+# Substrate ontology: Agent Bestiary World (ABW) swarm semantics — a swarm is
+# an ABW workspace with hired agents; compound agents orchestrate via
+# execute_agent / delegate_to_agent (delegation chains forbidden); gas is
+# hire 5cr / @mention 1cr / delegation 1cr+tokens; Thagard coherence scoring.
+#
+# Surface ontologies:
+#   - Onto4MAT (Kiesel et al. 2022): Team { alignment, cohesion, separation,
+#     influence }, Agent { speed, heading, energy, distanceToGoal }, Formation.
+#   - Reynolds (1987) flocking: separation / alignment / cohesion as three
+#     local rules sufficient for emergent flocking.
+#   - PSO (Kennedy & Eberhart 1995): velocity update v ← ωv + c1·r1·(pbest−x)
+#     + c2·r2·(gbest−x); c1 cognitive, c2 social, ω inertia.
+#   - ACO (Dorigo 1992): pheromone deposition (strengthen good paths) /
+#     evaporation (forget stale paths) as stigmergy.
+#   - W3C SSN/SOSA: observable properties for swarm-state sensing.
+#   - Ashby requisite variety; cybernetic 5-property loop assessment.
+#
+# Feedback loop: SENSE consumes prior_iteration.next_focus (emitted by the
+# CONVERGE check when not converged) to direct the next iteration. The loop is
+# autopoietic at the heuristic layer — each iteration's composition
+# recommendation is a function of the prior measured swarm state.
+
+crate:
+  name: swarm-intelligence
+  version: "0.31.0"
+  description: >
+    Convergent swarm-composition process for Agent Bestiary World (ABW) agent
+    swarms. Senses current swarm state against the Onto4MAT multi-agent
+    teaming ontology (alignment, cohesion, separation) and the ABW
+    workspace/wallet APIs; orients by classifying the gap (variety deficit,
+    coherence deficit, loop-break) via Ashby's requisite variety and PSO
+    cognitive/social balance; decides composition adjustments isomorphic to
+    PSO velocity tuning (c1/c2/omega), ACO pheromone deposition/evaporation,
+    and Reynolds separation/alignment/cohesion; acts via gated
+    swarm_update_swarm/swarm_delegate calls with a DispatchIntent consent
+    gate; checks by reconciling actual spend and curator data-sharing against
+    the algedonic channel; and converges via a Cauchy criterion on the
+    swarm-state distance metric. Anchored to Reynolds (1987) flocking,
+    Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT (Kiesel et al. 2022), W3C
+    SSN/SOSA, Thagard coherence, Ashby requisite variety, and the ABW
+    integration plan (zed-kask 2026-08-01). Composes pragmatic-cybernetics,
+    kata-improvement, and essentialist. Emits reg.swarm.* spans. Any userpod
+    may invoke this skill.
+
+templates:
+  - id: swarm-intelligence/swarm-sense
+    name: "Sense current swarm state against Onto4MAT + ABW workspace/wallet"
+    path: swarm-sense.j2
+    type: KnowAct
+    description: >
+      Measure the current swarm state. Fetch the ABW workspace roster
+      (agents[], accepts[], produces[], capabilities, dependencies) and the
+      wallet balance/transactions via hkask-mcp-swarm. Compute Onto4MAT team
+      properties: alignment (delegation-graph density from produces/accepts
+      overlap), cohesion (fraction of required dependencies satisfied),
+      separation (distinct (agent_type, model, temperature) tuples / agent
+      count). Derive required_transforms from the task. Consumes
+      prior_iteration.next_focus when present (feedback loop closure).
+      Vacuous-truth defaults: empty required_transforms → variety_coverage
+      1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0.
+    generates_spans:
+      - reg.swarm.sense
+
+  - id: swarm-intelligence/swarm-orient
+    name: "Classify gap: variety deficit | coherence deficit | loop-break"
+    path: swarm-orient.j2
+    type: KnowAct
+    description: >
+      Classify the gap between sensed state and target condition into one of
+      three deficit classes (or on-target): (a) variety deficit —
+      required_transforms not covered; (b) coherence deficit — Thagard
+      coherence flat/declining OR diversity below floor (premature
+      convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled
+      dispatches or un-acknowledged curator data-sharing. Delegates to
+      pragmatic-cybernetics for the 5-property assessment (polarity, delay,
+      gain, closure, fidelity) when the deficit is a loop-break. Classifies
+      the coordination problem (Axelrod): cooperation (repeated, shadow of
+      the future) vs division-of-labor (one-shot, complementary capabilities).
+    generates_spans:
+      - reg.swarm.orient
+
+  - id: swarm-intelligence/swarm-decide
+    name: "Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning"
+    path: swarm-decide.j2
+    type: KnowAct
+    description: >
+      Propose composition adjustments mapped onto ABW's hire/fire/delegate
+      vocabulary, isomorphic to swarm-algorithm tuning: variety deficit → hire
+      agents covering missing transforms (ACO pheromone deposition);
+      coherence + low diversity → hire diverse agent (raise PSO c1, lower
+      omega) and fire redundant duplicates (ACO evaporation); coherence +
+      high diversity + low alignment → assign coordinator compound agent
+      (raise PSO c2, Reynolds alignment); loop-break → emit reconciliation
+      repair, not a composition change. Respects the no-delegation-chains
+      invariant (delegates lose delegate_to_agent/execute_agent). References
+      swarm-patterns.yaml for the tuning palette.
+    generates_spans:
+      - reg.swarm.decide
+
+  - id: swarm-intelligence/swarm-act
+    name: "Emit gated swarm_update_swarm / swarm_delegate with DispatchIntent"
+    path: swarm-act.j2
+    type: KnowAct
+    description: >
+      Emit the gated composition change. For each proposed hire/fire/
+      delegate, construct a DispatchIntent { swarm_id, task,
+      estimated_credits (from ABW dependencies cost estimate),
+      curator_involved (default false), data_shared (derived from accepts[]
+      and task) }. The consent gate is mandatory: no swarm_update_swarm or
+      swarm_delegate call is emitted without a signed credits_authorized
+      token. If the operator Aborts, record the abort reason and emit no
+      spend. Enforces the .rules "Advertised invariants need enforcement
+      points" trap: the consent gate must actually block, not just warn.
+    generates_spans:
+      - reg.swarm.act
+
+  - id: swarm-intelligence/swarm-check
+    name: "Re-measure, compute swarm-state distance d, emit next_focus + algedonic"
+    path: swarm-check.j2
+    type: KnowAct
+    description: >
+      Re-measure the swarm state post-Act (re-fetch workspace + wallet).
+      Compute the convergence metric: composite swarm-state distance
+      d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor - diversity)^2
+      + (1 - loop_closure)^2 ). d = 0 means the target condition is met on
+      all three axes. Emit next_focus (which axis dominates d). Emit the
+      algedonic signal: any 402 or un-acknowledged curator dispatch is
+      surfaced as a loop-break regardless of d. Vacuous-truth default: zero
+      dispatches → loop_closure 1.0 (vacuously satisfied).
+    generates_spans:
+      - reg.swarm.check
+
+  # ── Reference documents (not executable .j2 templates) ──
+  - id: swarm-intelligence/swarm-patterns
+    name: "Reference: PSO/ACO/Reynolds/Onto4MAT tuning palette for ABW swarms"
+    path: swarm-patterns.yaml
+    type: RenderAct
+    description: >
+      Reference: the swarm-algorithm tuning palette mapped onto ABW's
+      hire/fire/delegate vocabulary. PSO velocity terms (c1 cognitive, c2
+      social, omega inertia) → ABW composition moves. ACO pheromone
+      deposition/evaporation → hire/fire. Reynolds separation/alignment/
+      cohesion → diversity/coordination/coherence. Onto4MAT team properties
+      as the measurable substrate. Includes the three deficit classes and
+      their tuning responses, plus the canonical failure mode (premature
+      convergence / diversity collapse) and its detection signal.

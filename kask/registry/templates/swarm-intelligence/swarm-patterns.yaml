@@ -1,0 +1,179 @@
+# Swarm-algorithm tuning palette for the swarm-intelligence skill
+# hKask v0.31.0
+#
+# Maps classical swarm-intelligence algorithms (PSO, ACO, Reynolds boids) onto
+# ABW's hire/fire/delegate vocabulary. Each tuning term corresponds to a
+# concrete composition move. The substrate is Onto4MAT team properties
+# (alignment, cohesion, separation) measured against the ABW workspace roster.
+#
+# Sources:
+#   - Bansal, Singh, Pal (2019), Evolutionary and Swarm Intelligence Algorithms,
+#     Springer SCI v779 — PSO velocity update, ACO pheromone cycle.
+#   - Labra (2026), Cross-Domain Swarm Intelligence Transfer via Universal
+#     Sensor Ontology and Experience Embeddings — Onto4MAT, Reynolds, SOSA.
+#   - Reynolds (1987), Flocks, Herds, and Schools.
+#   - Kennedy & Eberhart (1995), Particle Swarm Optimization.
+#   - Dorigo (1992), Optimization, Learning and Natural Algorithms (ACO).
+#   - ABW integration plan: kask/docs/plans/abw-swarm-intelligence.md (2026-08-01).
+
+substrate:
+  ontology: Onto4MAT
+  source: "Kiesel et al. 2022; Labra 2026"
+  team_properties:
+    - id: alignment
+      onto4mat: hasAlignmentWithTeam
+      reynolds: alignment
+      measure: "delegation-graph density — fraction of agents whose produces[] overlaps another hired agent's accepts[]"
+      high_means: "the swarm can hand work off internally"
+    - id: cohesion
+      onto4mat: hasCohesionWithTeam
+      reynolds: cohesion
+      measure: "fraction of the workspace's declared dependencies.required[] satisfied by hired agents"
+      high_means: "the swarm is self-sufficient"
+    - id: separation
+      onto4mat: hasTeamSeparation
+      reynolds: separation
+      measure: "distinct (agent_type, model, temperature) tuples / agent count"
+      high_means: "the swarm is diverse (not a monoculture) — anti-premature-convergence signal"
+
+tuning_palette:
+  # ── PSO (Kennedy & Eberhart 1995) ──
+  # v ← ωv + c1·r1·(pbest−x) + c2·r2·(gbest−x)
+  - id: raise_c1
+    term: c1 (cognitive scaling)
+    abw_move: hire_diverse_agent
+    effect: "broaden the search — the swarm explores more of the transform space (personal-best attraction)"
+    when: "coherence_deficit + low diversity (premature convergence)"
+    source: "Bansal 2019: c1 regulates the maximum step size toward personal best"
+
+  - id: lower_omega
+    term: omega (inertia)
+    abw_move: fire_redundant_duplicate
+    effect: "reduce momentum — the swarm escapes the current basin and explores"
+    when: "coherence_deficit + low diversity (stuck in a basin)"
+    source: "Bansal 2019: inertia weight balances exploration/exploitation"
+
+  - id: raise_c2
+    term: c2 (social scaling)
+    abw_move: assign_coordinator_compound_agent
+    effect: "pull toward gbest — the swarm aligns on the best-known solution"
+    when: "coherence_deficit + high diversity but low alignment"
+    source: "Bansal 2019: c2 regulates the maximum step size toward global best"
+
+  # ── ACO (Dorigo 1992) ──
+  - id: pheromone_deposition
+    term: pheromone deposition
+    abw_move: hire_covering_agent
+    effect: "strengthen the path to the uncovered region of the transform space"
+    when: "variety_deficit (uncovered required_transforms)"
+    source: "Bansal 2019: as more ants find the path, the concentration of pheromone gets stronger"
+
+  - id: pheromone_evaporation
+    term: pheromone evaporation
+    abw_move: fire_redundant_duplicate
+    effect: "forget stale paths — remove over-deposited pheromone so the swarm can explore"
+    when: "coherence_deficit + redundant duplicates crowding out diversity"
+    source: "Bansal 2019: pheromone evaporates with time; longer paths have more evaporation"
+
+  # ── Reynolds (1987) flocking ──
+  - id: reynolds_separation
+    term: separation
+    abw_move: ensure_type_diversity
+    effect: "avoid crowding — prevent the swarm from collapsing onto a single agent type"
+    when: "diversity below floor (premature convergence)"
+    source: "Reynolds 1987; Labra 2026: steer to avoid crowding local flockmates"
+
+  - id: reynolds_alignment
+    term: alignment
+    abw_move: assign_coordinator_compound_agent
+    effect: "steer toward the average heading — align diverse agents on a shared direction"
+    when: "high diversity but low alignment (agents not coordinated)"
+    source: "Reynolds 1987; Labra 2026: steer toward the average heading of local flockmates"
+
+  - id: reynolds_cohesion
+    term: cohesion
+    abw_move: satisfy_dependencies
+    effect: "steer toward the average position — close the dependency gaps so the swarm is self-sufficient"
+    when: "dependencies.required[] not satisfied by hired agents"
+    source: "Reynolds 1987; Labra 2026: steer toward the average position of local flockmates"
+
+deficit_classes:
+  - id: variety_deficit
+    signal: "variety_coverage < target"
+    ontology: "Ashby requisite variety"
+    tuning_response: [pheromone_deposition, reynolds_cohesion]
+    source: "ABW plan §4.2 (Ashby variety check); Bansal 2019 (ACO)"
+
+  - id: coherence_deficit_low_diversity
+    signal: "diversity < diversity_floor (premature convergence)"
+    ontology: "PSO/ACO failure mode"
+    tuning_response: [raise_c1, lower_omega, pheromone_evaporation, reynolds_separation]
+    source: "Bansal 2019: unable to manage a proper balance between exploration and exploitation"
+
+  - id: coherence_deficit_low_alignment
+    signal: "high diversity but low alignment (Thagard coherence flat/declining)"
+    ontology: "PSO social + Reynolds alignment"
+    tuning_response: [raise_c2, reynolds_alignment]
+    source: "Bansal 2019 (c2); Reynolds 1987 (alignment)"
+
+  - id: loop_break
+    signal: "un-reconciled dispatches OR un-acknowledged curator data-sharing"
+    ontology: "cybernetic 5-property closure"
+    tuning_response: []  # no composition change — reconciliation repair only
+    source: "ABW plan §4.1; .rules unwrap_or(0) trap"
+
+failure_modes:
+  - id: premature_convergence
+    detection: "diversity < diversity_floor (0.25)"
+    cause: "the swarm has collapsed onto a single agent type and lost exploration ability"
+    intervention: "raise_c1 + lower_omega + pheromone_evaporation"
+    source: "Bansal 2019: the canonical PSO/ACO failure mode"
+
+  - id: unbounded_gain
+    detection: "credits consumed without a per-dispatch budget gate"
+    cause: "N agents × M calls = unbounded cost amplification (ABW plan §4.1 gain risk)"
+    intervention: "enforce DispatchIntent.estimated_credits gate; abort if un-gated"
+    source: "ABW plan §4.1; .rules advertised-invariants trap"
+
+  - id: open_algedonic_channel
+    detection: "402 or un-acknowledged curator dispatch"
+    cause: "the feedback loop is open — cost/consent is not feeding back to the operator"
+    intervention: "escalate; do not claim convergence regardless of d"
+    source: ".rules unwrap_or(0) trap; ABW plan §4.1 closure"
+
+abw_invariants:
+  - id: no_delegation_chains
+    rule: "delegates receive all workspace tools EXCEPT delegate_to_agent and execute_agent"
+    enforcement: "every proposed delegate move is one level deep; respects_no_delegation_chains must be true"
+    source: "ABW plan §0 (verified swarm semantics)"
+
+  - id: consent_gate_blocks
+    rule: "no swarm_update_swarm or swarm_delegate call without a signed credits_authorized token"
+    enforcement: "ACT phase aborts the move if the token is missing"
+    source: "ABW plan §3.6; .rules advertised-invariants trap"
+
+  - id: curator_opt_in_default
+    rule: "curator_involved defaults to false; no task content reaches Xaman Ek without explicit per-dispatch opt-in"
+    enforcement: "DispatchIntent.curator_involved defaults false; set true only with separate consent"
+    source: "ABW plan §3.7"
+
+vacuous_truth_defaults:
+  # These prevent 0/0 from breaking the metrics. Recorded here so the SENSE
+  # and CHECK templates apply them consistently (grill-me Level 4 fix).
+  - metric: variety_coverage
+    condition: "required_transforms is empty"
+    value: 1.0
+    flag: trivial_task
+    rationale: "vacuously satisfied — no required transform is uncovered"
+  - metric: variety_coverage
+    condition: "required_transforms non-empty AND agents empty"
+    value: 0.0
+    rationale: "nothing is covered"
+  - metric: diversity
+    condition: "agents empty"
+    value: 0.0
+    rationale: "an empty swarm has zero diversity — fails the floor, driving the first hire"
+  - metric: loop_closure
+    condition: "total_dispatches = 0"
+    value: 1.0
+    rationale: "vacuously satisfied — no dispatch is un-reconciled"

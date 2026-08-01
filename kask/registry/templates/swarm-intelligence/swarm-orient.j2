@@ -1,0 +1,129 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    swarm_state: object
+    task: string
+    target_condition: object|null
+  output:
+    deficit_class: string
+    deficit_details: object
+    coordination_problem: string
+    cybernetic_assessment: object|null
+    on_target: boolean
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: swarm-intelligence/swarm-orient.j2 #}
+{# Functional Role: KnowAct — Classify the gap #}
+{# Produces: orientation #}
+{# Phase 2 — ORIENT (PLAN: classify gap via Ashby + PSO balance + Thagard) #}
+{# hKask v0.31.0 — Swarm Intelligence #}
+{#
+  Classify the gap between sensed state and target condition. The gap falls
+  into one of three deficit classes, each rooted in a different ontology:
+  variety deficit (Ashby requisite variety), coherence deficit (PSO/ACO
+  premature convergence + Thagard), loop-break (cybernetic 5-property
+  closure). The class determines which tuning palette DECIDE applies.
+#}
+
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a swarm-orientation analyst. Classify the gap between the sensed swarm state and the target condition.
+
+## Swarm State (from SENSE)
+```json
+{{ swarm_state | tojson }}
+```
+
+## Task
+{{ task }}
+
+{% if target_condition and target_condition | length > 0 %}
+## Target Condition
+```json
+{{ target_condition | tojson }}
+```
+{% else %}
+## Target Condition (defaults)
+- variety_coverage >= 0.9
+- diversity >= 0.25
+- loop_closure = 1.0
+{% endif %}
+
+## Step 1 — Classify the deficit
+
+Classify the gap into exactly one of:
+
+### (a) Variety deficit
+`variety_coverage < target`. The swarm's hired agents do not cover the task's
+required_transforms. This is an Ashby requisite-variety failure: the swarm's
+response repertoire does not span the disturbance set. (Anchor: Ashby's Law of
+Requisite Variety; ABW plan §4.2.)
+
+Record which required_transforms are uncovered.
+
+### (b) Coherence deficit
+Either:
+- Thagard coherence is flat or declining across iterations (if a coherence
+  signal is available — see delegate_notes if not), OR
+- `diversity < diversity_floor` (0.25). This is premature convergence — the
+  canonical PSO/ACO failure mode where the swarm has collapsed onto a single
+  agent type and lost the ability to explore. (Anchor: Bansal 2019, "unable
+  to manage a proper balance between exploration and exploitation.")
+
+Sub-classify: `coherence_low_diversity` (needs diversification) vs
+`coherence_low_alignment` (diverse but not coordinated — needs a coordinator).
+
+### (c) Loop-break
+Un-reconciled dispatches (estimated_credits not matching actual spend in
+wallet/transactions) OR un-acknowledged curator data-sharing (a dispatch with
+`curator_involved = true` that has no consent record). This is a cybernetic
+closure failure — the feedback loop is open. (Anchor: ABW plan §4.1; .rules
+"unwrap_or(0) on regulation-loop sense inputs" trap.)
+
+### (d) On-target
+All three axes meet target. No deficit.
+
+## Step 2 — Classify the coordination problem (Axelrod)
+
+If the deficit is (a) or (b), classify whether the task presents a
+**cooperation problem** (agents have overlapping/conflicting objectives and
+will interact repeatedly — there is a shadow of the future) or a
+**division-of-labor problem** (agents have complementary capabilities and the
+task is largely one-shot). (Anchor: Axelrod 1984, cooperation without central
+authority; Henrich, cooperative dilemmas.)
+
+- Cooperation problem → DECIDE should favor reciprocity-based coordination
+  (TIT FOR TAT / generous TFT) and a coordinator compound agent.
+- Division-of-labor problem → DECIDE should favor hiring to cover the missing
+  transforms; coordination is structural (dependencies), not strategic.
+
+## Step 3 — Cybernetic 5-property assessment (only for loop-break)
+
+If the deficit is (c) loop-break, delegate to `pragmatic-cybernetics` for the
+5-property assessment of the swarm dispatch loop:
+- **Polarity**: is cost feeding back to the dispatch gate, or is it a
+  reinforcing loop (more dispatches → more credits → no stop)?
+- **Delay**: ABW API latency — is state stale when the gate reads it?
+- **Gain**: N agents × M calls = unbounded cost amplification without a
+  per-dispatch budget gate.
+- **Closure**: are credits consumed AND curator data-sharing both fed back to
+  the operator?
+- **Fidelity**: ABW streaming granularity — is the state read fine enough?
+
+Record the assessment in cybernetic_assessment. For other deficit classes,
+set cybernetic_assessment = null.
+
+## Output
+
+Produce a JSON object with: deficit_class (one of "variety_deficit",
+"coherence_deficit", "loop_break", "on_target"), deficit_details,
+coordination_problem (one of "cooperation", "division_of_labor", "n/a"),
+cybernetic_assessment (object or null), on_target (boolean), delegate_notes.

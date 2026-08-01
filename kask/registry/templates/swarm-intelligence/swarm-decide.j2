@@ -1,0 +1,119 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    swarm_state: object
+    orientation: object
+    task: string
+  output:
+    proposed_moves: array
+    tuning_rationale: object
+    respects_no_delegation_chains: boolean
+    delegate_notes: string
+energy_cap: 6144
+visibility: Public
+---
+{# Template: swarm-intelligence/swarm-decide.j2 #}
+{# Functional Role: KnowAct — Propose composition adjustments #}
+{# Produces: decisions #}
+{# Phase 3 — DECIDE (PLAN: PSO/ACO/Reynolds tuning → ABW hire/fire/delegate) #}
+{# hKask v0.31.0 — Swarm Intelligence #}
+{#
+  Propose composition adjustments isomorphic to swarm-algorithm tuning,
+  mapped onto ABW's hire/fire/delegate vocabulary. Each move traces to a
+  swarm-algorithm anchor (see swarm-patterns.yaml for the full palette).
+
+  The no-delegation-chains invariant is mandatory: ABW forbids delegation
+  chains (delegates lose delegate_to_agent/execute_agent). Every proposed
+  delegate move must be one level deep.
+#}
+
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a swarm-composition strategist. Propose composition adjustments for the ABW swarm, isomorphic to swarm-algorithm tuning.
+
+## Swarm State (from SENSE)
+```json
+{{ swarm_state | tojson }}
+```
+
+## Orientation (from ORIENT)
+```json
+{{ orientation | tojson }}
+```
+
+## Task
+{{ task }}
+
+## Step 1 — Select the tuning palette by deficit class
+
+Apply the mapping from swarm-patterns.yaml:
+
+### If deficit_class = "variety_deficit"
+Hire agents whose `accepts[]`/`produces[]` cover the uncovered transforms.
+**Anchor: ACO pheromone deposition** — "as more ants find the path, the
+concentration of pheromone gets stronger" (Bansal 2019). Each hire
+strengthens the path to the uncovered region of the transform space.
+
+For each uncovered transform, propose a `hire` move naming the agent_type
+and the accepts/produces it must cover. Prefer agents already in the ABW
+catalogue whose dependencies are satisfiable by the current roster.
+
+### If deficit_class = "coherence_deficit" + coherence_low_diversity
+Hire a diverse agent (different agent_type or model from the current
+monoculture) and/or fire a redundant duplicate.
+**Anchor: PSO** — raise c1 (cognitive scaling) and lower omega (inertia) to
+broaden the search; **ACO evaporation** — "pheromone evaporates with time
+and hence the longer paths will have more evaporation" (Bansal 2019) — fire
+the redundant duplicate to evaporate the over-deposited pheromone.
+
+### If deficit_class = "coherence_deficit" + coherence_low_alignment
+Hire or assign a coordinator compound agent.
+**Anchor: PSO** — raise c2 (social scaling) to pull toward gbest; **Reynolds
+alignment rule** — "steer toward the average heading of local flockmates"
+(Labra 2026). The coordinator aligns the diverse agents.
+Prefer ABW's existing compound agents (social_media_studio,
+cohere_and_coordinate, intention_coordinator) when their dependencies match.
+
+### If deficit_class = "loop_break"
+Do NOT change composition. Propose a reconciliation repair:
+- Re-query `/api/wallet/transactions` for the un-reconciled dispatch.
+- Backfill the missing curator consent record.
+The loop-break is a feedback-loop failure, not a capability gap; hiring
+agents cannot fix it.
+
+### If deficit_class = "on_target"
+Propose no moves. Set proposed_moves = [] and note that the swarm is
+on-target.
+
+## Step 2 — Respect ABW invariants
+
+For every proposed move:
+- **No delegation chains**: any `delegate` move is one level deep. The
+  delegate receives all workspace tools EXCEPT delegate_to_agent and
+  execute_agent. Set respects_no_delegation_chains = true only if every
+  delegate move satisfies this.
+- **Dependencies satisfiable**: for a `hire` of a compound agent, its
+  `dependencies { required[] }` must be satisfiable by the post-hire roster
+  (the compound agent auto-hires its team, but the required dependencies must
+  exist in the catalogue).
+- **Gas awareness**: each hire is 5 cr, each @mention 1 cr + tokens, each
+  delegation 1 cr + tokens. Record estimated_credits per move.
+
+## Step 3 — Record tuning_rationale
+
+For each move, record which swarm-algorithm term it instantiates (c1, c2,
+omega, pheromone_deposition, pheromone_evaporation, reynolds_separation,
+reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
+
+## Output
+
+Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
+"fire"|"delegate", agent_id_or_type, estimated_credits, covers_transforms?,
+rationale }), tuning_rationale (object mapping move → swarm-algorithm term),
+respects_no_delegation_chains (boolean), delegate_notes.

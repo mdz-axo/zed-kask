@@ -23,8 +23,8 @@ use std::time::Duration;
 use anyhow::Result;
 use editor::Editor;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle, Window,
-    actions, uniform_list,
+    App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, uniform_list,
 };
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
 use serde::Deserialize;
@@ -1264,6 +1264,92 @@ impl SwarmPanel {
                             .child(self.compose.agents.clone()),
                     ),
             )
+            // Xaman Ek composition consultant — the panel calls the MCP tool
+            // to plan the team, then offers the recommended agents as a
+            // one-click pre-fill of the field above.
+            .child(
+                v_flex()
+                    .gap_2()
+                    .p_3()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(border)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Label::new("★ Xaman Ek")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Accent),
+                            )
+                            .child(
+                                Label::new("composition consultant")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .border_1()
+                                    .border_color(border)
+                                    .rounded_sm()
+                                    .child(self.compose.xaman_query.clone()),
+                            )
+                            .child(
+                                Button::new(
+                                    "ask-xaman",
+                                    if self.compose.xaman_busy {
+                                        "Asking…"
+                                    } else {
+                                        "Ask"
+                                    },
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .disabled(self.compose.xaman_busy)
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.ask_xaman(cx);
+                                    },
+                                )),
+                            ),
+                    )
+                    .when_some(self.compose.xaman_response.clone(), |this, response| {
+                        this.child(
+                            Label::new(response)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .when(!self.compose.xaman_suggested_agents.is_empty(), |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    Label::new(format!(
+                                        "Suggested: {}",
+                                        self.compose.xaman_suggested_agents.join(", ")
+                                    ))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                                )
+                                .child(
+                                    Button::new("apply-xaman", "Use team")
+                                        .style(ButtonStyle::Filled)
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.apply_xaman_suggestions(cx);
+                                        })),
+                                ),
+                        )
+                    }),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -1673,7 +1759,7 @@ impl SerializableItem for SwarmPanel {
 
     fn deserialize(
         _project: Entity<project::Project>,
-        workspace: workspace::WeakEntity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _workspace_id: workspace::WorkspaceId,
         _item_id: workspace::ItemId,
         _window: &mut Window,
@@ -1682,7 +1768,7 @@ impl SerializableItem for SwarmPanel {
         // Stateless item — nothing to persist beyond the fact that it's open.
         // The panel reconstructs its state from ABW on first render.
         cx.spawn(async move |cx| {
-            workspace.update_in(cx, |workspace, window, cx| SwarmPanel::new(window, cx))
+            workspace.update_in(cx, |_workspace, window, cx| SwarmPanel::new(window, cx))
         })
     }
 
@@ -1696,6 +1782,10 @@ impl SerializableItem for SwarmPanel {
     ) -> Option<Task<Result<()>>> {
         // Stateless item — nothing to persist beyond the fact that it's open.
         None
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
     }
 }
 

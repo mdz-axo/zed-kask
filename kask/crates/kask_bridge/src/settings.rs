@@ -1586,11 +1586,13 @@ mod tests {
         let env = settings.mcp_env();
         assert!(!env.contains_key("HKASK_ABW_API_URL"));
         assert!(!env.contains_key("HKASK_ABW_MAX_CREDITS"));
+        assert!(!env.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
             "the ABW API key is a credential, not config — it must never appear in mcp_env()"
         );
         assert_eq!(settings.swarm.max_credits_per_dispatch, 50);
+        assert!(!settings.swarm.curator_consent_default);
     }
 
     #[test]
@@ -1598,6 +1600,7 @@ mod tests {
         let mut settings = KaskSettings::default();
         settings.swarm.max_credits_per_dispatch = 100;
         settings.swarm.api_url = "https://staging.agent-bestiary.world".to_string();
+        settings.swarm.curator_consent_default = true;
         let env = settings.mcp_env();
         assert_eq!(
             env.get("HKASK_ABW_MAX_CREDITS").map(String::as_str),
@@ -1606,6 +1609,11 @@ mod tests {
         assert_eq!(
             env.get("HKASK_ABW_API_URL").map(String::as_str),
             Some("https://staging.agent-bestiary.world")
+        );
+        assert_eq!(
+            env.get("HKASK_ABW_CURATOR_CONSENT_DEFAULT")
+                .map(String::as_str),
+            Some("true")
         );
     }
 

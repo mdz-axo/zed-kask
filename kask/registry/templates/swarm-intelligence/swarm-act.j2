@@ -1,0 +1,101 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    decisions: object
+    swarm_id: string
+    task: string
+  output:
+    dispatch_intents: array
+    gate_decisions: array
+    emitted_calls: array
+    aborted_reasons: array
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: swarm-intelligence/swarm-act.j2 #}
+{# Functional Role: KnowAct — Emit gated composition change #}
+{# Produces: act_result #}
+{# Phase 4 — ACT (DO: gated swarm_update_swarm / swarm_delegate) #}
+{# hKask v0.31.0 — Swarm Intelligence #}
+{#
+  Emit the gated composition change. The consent gate is mandatory and must
+  actually block, not just warn (.rules "Advertised invariants need
+  enforcement points" trap). No swarm_update_swarm or swarm_delegate call is
+  emitted without a signed credits_authorized token from the panel.
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a swarm-dispatch executor. Emit the gated composition changes for the ABW swarm.
+
+## Decisions (from DECIDE)
+```json
+{{ decisions | tojson }}
+```
+
+## Swarm ID
+{{ swarm_id }}
+
+## Task
+{{ task }}
+
+## Step 1 — Construct a DispatchIntent for each proposed move
+
+For each proposed hire/fire/delegate, construct:
+
+```json
+{
+  "swarm_id": "{{ swarm_id }}",
+  "task": "{{ task }}",
+  "estimated_credits": "<from the move's estimated_credits, summed if multiple moves share a dispatch>",
+  "curator_involved": false,
+  "data_shared": ["<derived from the agents' accepts[] and the task — what data categories reach the agent>"]
+}
+```
+
+`curator_involved` defaults to **false** (ABW plan §3.7: Private/opt-in is the
+default). Set to true only if the move explicitly invokes the Xaman Ek
+curator, which requires separate per-dispatch opt-in.
+
+## Step 2 — Route through the consent gate
+
+Each DispatchIntent must produce a GateDecision:
+- `Proceed { credits_authorized }` — the operator authorized the spend. The
+  signed credits_authorized token is required for the MCP call.
+- `Abort { reason }` — the operator declined. Record the reason; emit no
+  spend for this move.
+
+The consent gate MUST block. If the panel cannot produce a signed
+credits_authorized token, the move is Aborted with reason
+"missing_consent_token". This is the enforcement point for the .rules
+"Advertised invariants need enforcement points" trap.
+
+## Step 3 — Emit the gated MCP calls
+
+For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
+- `hire` → `swarm_update_swarm` (POST /api/workspaces/{id}/add or
+  /api/agents/{id}/hire)
+- `fire` → `swarm_update_swarm` (/api/agents/{id}/fire)
+- `delegate` → `swarm_delegate` (workspace delegation semantics, one level
+  deep, delegate loses delegate_to_agent/execute_agent)
+
+For each Abort, emit no call. Record the abort reason in aborted_reasons.
+
+## Step 4 — Record what was emitted
+
+emitted_calls lists the actual MCP calls made (move_type, agent, tool_name,
+credits_authorized). This is the ground truth the CHECK phase reconciles
+against /api/wallet/transactions.
+
+## Output
+
+Produce a JSON object with: dispatch_intents (array), gate_decisions (array
+of { decision: "Proceed"|"Abort", credits_authorized?, reason? }), emitted_calls
+(array), aborted_reasons (array), delegate_notes.
