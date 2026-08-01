@@ -788,8 +788,6 @@ data: [DONE]
             seed: None,
             disable_thinking: false,
             adapter: None,
-            bypass_fusion: false,
-            fusion_config: None,
             system_prompt: None,
         };
         let messages = vec![ChatMessage::user("Write a sentence.")];
@@ -831,8 +829,6 @@ data: [DONE]
             seed: None,
             disable_thinking: true,
             adapter: None,
-            bypass_fusion: false,
-            fusion_config: None,
             system_prompt: None,
         };
         let messages = vec![ChatMessage::user("Summarize.")];
@@ -864,8 +860,6 @@ data: [DONE]
             seed: None,
             disable_thinking: false,
             adapter: None,
-            bypass_fusion: false,
-            fusion_config: None,
             system_prompt: None,
         };
         let messages = vec![ChatMessage::user("Hello.")];

@@ -207,8 +207,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.heal.unmatched",
     // ── Inference ──
     "reg.inference",
-    // ── Fusion (multi-model deliberation) ──
-    "reg.fusion",
     // ── Kata / Skill / Keystore ──
     "reg.kata",
     "reg.keystore",

@@ -10,7 +10,7 @@
 > divergences are the D-seams listed below + the `[workspace.members]` /
 > `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
-## The divergence surface (D1–D14)
+## The divergence surface (D1–D15)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These
 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior
@@ -33,8 +33,9 @@ an hKask crate behind one of these seams instead.
 | D12 | OpenAI/Anthropic-compatible env var name | `crates/language_models/src/provider/api_compatible.rs` | Upstream computes the API-key env var name as `format!("{}_API_KEY", id).to_case(Case::UpperSnake)`, which splits `DeepInfra` → `DEEP_INFRA_API_KEY` and leaves `fal.ai`/`Together AI` as invalid env var names (`FAL.AI_API_KEY`, `TOGETHER_AI_API_KEY`). The entire kask ecosystem (`.env` template, MCP servers, keystore, UI text, docs) uses the concatenated alphanumeric form (`DEEPINFRA_API_KEY`, `FALAI_API_KEY`, `TOGETHERAI_API_KEY`), so the upstream computation never matches the env vars kask users set. The `// zed-kask:` block in `ApiCompatibleProviderState::new` strips non-alphanumerics and uppercases instead of using `convert_case`. `convert_case` was removed from `crates/language_models/Cargo.toml` (still used by other crates, so the workspace dep stays). Pinned by `test_api_key_env_var_name_kask_contract` in `api_compatible.rs`. |
 | D13 | OpenRouter output budget | `crates/open_router/src/open_router.rs` + `crates/language_models/src/provider/open_router.rs` + `crates/open_router/Cargo.toml` | Upstream omits `max_tokens` from completion requests entirely (`Model::max_output_tokens()` hardcodes `None`). OpenRouter then reserves the model's full default output size (e.g. 64k for claude-haiku-4.5, 128k for glm-5.2) against the key's credit limit before dispatching, and rejects with 402 on keys whose remaining limit can't cover the reservation — even for a one-line prompt. Zed-kask parses `top_provider.max_completion_tokens` from the `/models` and `/models/user` responses into a new `Model::max_output_tokens` field, which flows into the request as an explicit `max_tokens` budget. Settings-defined `available_models[].max_output_tokens` (already in `OpenRouterAvailableModel` upstream, previously unwired) overrides the API-derived value. Pinned by `test_max_completion_tokens_from_api_becomes_request_budget`. |
 | D14 | Streaming text reveal timer interval | `crates/acp_thread/src/acp_thread.rs` | Upstream hardcodes `StreamingTextBuffer::TASK_UPDATE_MS = 16` (60fps). During active streaming, this fires a `Markdown::append` + `cx.notify()` on the foreground thread 60 times per second, saturating the render loop and starving the `BlinkManager`'s 500ms timer — the cursor flashes irregularly/rapidly. Zed-kask increases it to 50ms (20fps): still smooth for text reveal (the human eye can't perceive text appearing at >20fps) but 3x less render pressure. Pinned by `test_streaming_reveal_timer_interval_kask_contract`. |
+| D15 | Bounded cursor-blink resume task | `crates/editor/src/blink_manager.rs` | Upstream detaches a new 500ms resume task on every selection change. Rapid typing therefore accumulates uncancellable foreground wake-ups; blur also leaves pending blink/resume callbacks valid across a later refocus. Zed-kask stores one restartable resume task, keeps `blinking_paused` consistent with the actual state, and invalidates pending callbacks on disable. Pinned by `test_pause_blinking_restarts_single_resume_deadline` and `test_disable_cancels_pending_resume`. |
 
-## Other zed-kask-modified files (supporting D1–D14)
+## Other zed-kask-modified files (supporting D1–D15)
 
 These files carry `// zed-kask:` comments but are supporting edits, not
 primary divergence seams:
@@ -87,7 +88,7 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 
 1. `git fetch upstream && git merge upstream/main`
 2. Conflicts will only appear in:
-   - The D-seam files listed above (D1–D14)
+   - The D-seam files listed above (D1–D15)
    - `[workspace.members]` / `[workspace.dependencies]` in root `Cargo.toml`
 3. Everything under `kask/` is additive → never conflicts.
 4. After resolving, run `bash kask/scripts/check-hkask-no-zed-deps.sh` to

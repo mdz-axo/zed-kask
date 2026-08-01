@@ -66,8 +66,6 @@ struct ManifestFile {
     inputs: Option<serde_json::Value>,
     #[serde(default)]
     principles: Option<serde_json::Value>,
-    #[serde(default)]
-    fusion: Option<hkask_types::fusion::FusionConfig>,
 }
 
 /// Inner header from the `manifest:` key in YAML files.
@@ -161,7 +159,6 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         category: file.manifest.category,
         inputs: file.inputs,
         principles: file.principles,
-        fusion: file.fusion,
     };
 
     info!(

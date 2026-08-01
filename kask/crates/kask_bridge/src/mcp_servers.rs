@@ -201,6 +201,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SWARM_MODE",
             "HKASK_LOCAL_AGENTS_DIR",
             "HKASK_SWARM_LEDGER_PATH",
+            // Data dir — needed so `resolve_under_data_dir` in the swarm
+            // server resolves `local_agents_dir` under the same root as the
+            // parent process. Without this, a relative default
+            // (`agents/local/curated`) resolves against the MCP server's CWD
+            // (Zed's working dir, typically home or project root — not the
+            // zed-kask repo), and local agent cards are never found.
+            "HKASK_DATA_DIR",
         ]),
     },
     BuiltinMcpServer {
@@ -617,6 +624,7 @@ mod tests {
             "HKASK_LOCAL_AGENTS_DIR".to_string(),
             "/custom/dir".to_string(),
         );
+        config_env.insert("HKASK_DATA_DIR".to_string(), "/data/hkask".to_string());
         config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "ops@example.com".to_string(),
@@ -629,6 +637,10 @@ mod tests {
         assert!(filtered.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
         assert!(filtered.contains_key("HKASK_SWARM_MODE"));
         assert!(filtered.contains_key("HKASK_LOCAL_AGENTS_DIR"));
+        assert!(
+            filtered.contains_key("HKASK_DATA_DIR"),
+            "swarm server must receive HKASK_DATA_DIR so it can resolve local_agents_dir"
+        );
         assert!(
             !filtered.contains_key("HKASK_SMTP_USERNAME"),
             "swarm server must not receive curator email config"

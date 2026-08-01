@@ -142,6 +142,28 @@ impl Default for SwarmConfig {
     }
 }
 
+/// Resolve `local_agents_dir` against the hKask data directory.
+///
+/// A relative path (the default `agents/local/curated`) is joined under the
+/// data dir resolved by `hkask_types::agent_paths::resolve_under_data_dir` —
+/// this ensures the MCP server finds the same agent cards regardless of where
+/// the parent process spawned it (the swarm server inherits Zed's CWD, which
+/// is typically the user's home or project root — not the zed-kask repo). An
+/// absolute path (operator-set via `HKASK_LOCAL_AGENTS_DIR`) is used as-is.
+///
+/// Extracted from `from_env` as a pure function so the resolution logic is
+/// testable without manipulating process env vars (this crate is
+/// `#![forbid(unsafe_code)]`, so `std::env::set_var` is unavailable in tests).
+fn resolve_local_agents_dir(local_agents_dir: &str) -> String {
+    if std::path::Path::new(local_agents_dir).is_absolute() {
+        local_agents_dir.to_string()
+    } else {
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(local_agents_dir))
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
 impl SwarmConfig {
     /// Build from environment, returning the config plus any warnings about
     /// degraded operation (missing key → catalogue-only mode).
@@ -172,6 +194,7 @@ impl SwarmConfig {
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.local_agents_dir);
+        let local_agents_dir = resolve_local_agents_dir(&local_agents_dir);
         let warning = if api_key.is_none() && mode == SwarmMode::Abw {
             Some(
                 "HKASK_ABW_API_KEY not set and mode=abw — swarm server in catalogue-only mode; \
@@ -3426,6 +3449,43 @@ mod tests {
         let config = SwarmConfig::default();
         assert_eq!(config.mode, SwarmMode::Abw);
         assert_eq!(config.local_agents_dir, "agents/local/curated");
+    }
+
+    // v2 §15: a relative `local_agents_dir` must resolve under the hKask
+    // data dir, not the MCP server's CWD. The swarm server inherits Zed's
+    // working directory (home or project root — not the zed-kask repo), so a
+    // relative default would never find agent cards. Mirrors the
+    // `resolve_under_data_dir` pattern used by every other kask MCP server.
+    // An absolute `HKASK_LOCAL_AGENTS_DIR` override is used as-is.
+    //
+    // Tests the pure `resolve_local_agents_dir` helper (extracted from
+    // `from_env`) because this crate is `#![forbid(unsafe_code)]` and cannot
+    // call `std::env::set_var` in tests.
+    #[test]
+    fn resolve_local_agents_dir_keeps_absolute_path_as_is() {
+        let resolved = resolve_local_agents_dir("/absolute/custom/agents");
+        assert_eq!(
+            resolved, "/absolute/custom/agents",
+            "absolute path must be used as-is"
+        );
+    }
+
+    #[test]
+    fn resolve_local_agents_dir_joins_relative_under_data_dir() {
+        // The default relative path is joined under the data dir. We can't
+        // assert the exact result (it depends on HKASK_DATA_DIR / XDG_DATA_HOME
+        // / HOME at test time), but it must end with the relative suffix and
+        // must NOT be the bare relative path (which would resolve against CWD).
+        let resolved = resolve_local_agents_dir("agents/local/curated");
+        assert!(
+            resolved.ends_with("agents/local/curated"),
+            "relative path must be joined under data dir, got: {resolved}"
+        );
+        assert_ne!(
+            resolved, "agents/local/curated",
+            "relative path must not resolve against CWD (would never find cards \
+             when the MCP server inherits Zed's working dir)"
+        );
     }
 
     // ── LocalAgentRegistry (v2 §15 Slice 8) ─────────────────────────────────

@@ -85,7 +85,6 @@ fn all_models(cx: &App) -> GroupedModels {
             provider
                 .provided_models(cx)
                 .into_iter()
-                .filter(|model| lm_registry.passes_model_filter(model.as_ref()))
                 .map(|model| ModelInfo::new(&**provider, model, &favorites_index))
         })
         .collect();

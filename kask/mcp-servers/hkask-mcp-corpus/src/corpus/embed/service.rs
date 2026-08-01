@@ -398,135 +398,29 @@ impl EmbedService {
                 crate::runtime::load_classifier_config(&config.triple_classifier, registry_dir)?;
             let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
 
-            if let Some(ref fusion) = config.fusion {
-                // ── Fusion path: route through the fusion orchestrator ──
-                // The panel models are specified in the corpus config's fusion block.
-                // The algo judge merges the panelists' JSON responses (no LLM judge call).
-                tracing::info!(
-                    total_passages = passage_count,
-                    judge = %fusion.judge,
-                    panel_count = fusion.panel.len(),
-                    "Starting fusion-routed h_mem extraction"
-                );
+            // ── Single-model semantic h_mem extraction ──
+            let settings = HkaskSettings::load();
+            let settings_model = settings.classifier_model();
+            let mut model_config = classifier_config.clone();
+            if !settings_model.is_empty() {
+                model_config.model = settings_model;
+            }
 
-                // Use the shared inference port (routes through zed's
-                // LanguageModelRegistry via the IPC bridge). The fusion
-                // config in LLMParameters is forwarded to zed, which has
-                // its own FusionLanguageModel provider.
-                let semaphore =
-                    std::sync::Arc::new(tokio::sync::Semaphore::new(classifier_config.concurrency));
+            tracing::info!(
+                total_passages = passage_count,
+                model = %model_config.model,
+                "Single-model h_mem extraction"
+            );
 
-                let mut handles = Vec::with_capacity(texts.len());
-                for (i, text) in texts.iter().enumerate() {
-                    let inference_port = inference_port.clone();
-                    let fusion = fusion.clone();
-                    let system_prompt = classifier_config.system_prompt.clone();
-                    let permit = semaphore.clone();
-                    let text = text.clone();
-                    let temp = classifier_config.temperature;
-                    let max_tok = classifier_config.max_tokens;
+            let a_extractions = crate::runtime::extract_triples_batch(
+                &texts,
+                &model_config,
+                Arc::clone(&inference_port),
+            )
+            .await?;
 
-                    handles.push(tokio::spawn(async move {
-                        let _permit = permit.acquire().await;
-                        // P3+P4: send system prompt as a proper system message
-                        // (not prepended to user content), and set explicit
-                        // sampling params matching the old extract_triples_one
-                        // behavior (no top-p or top-k filtering).
-                        let prompt = format!("## Passage\n{text}");
-                        let params = hkask_types::LLMParameters {
-                            temperature: temp as f32,
-                            max_tokens: max_tok,
-                            top_p: 1.0,
-                            top_k: 0,
-                            bypass_fusion: false,
-                            fusion_config: Some(fusion),
-                            system_prompt: Some(system_prompt),
-                            ..Default::default()
-                        };
-                        let result = inference_port.generate(&prompt, &params, None).await;
-                        (i, result)
-                    }));
-                }
-
-                let mut extractions: Vec<TripleExtraction> =
-                    vec![TripleExtraction::default(); texts.len()];
-                let mut failed_count = 0usize;
-                for handle in handles {
-                    match handle.await {
-                        Ok((i, Ok(result))) => {
-                            extractions[i] = crate::runtime::parse_triple_extraction(&result.text)
-                                .unwrap_or_default();
-                        }
-                        Ok((i, Err(e))) => {
-                            tracing::warn!(index = i, error = %e, "Fusion extraction failed");
-                            failed_count += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "Fusion extraction task panicked");
-                            failed_count += 1;
-                        }
-                    }
-                }
-
-                // P6: if ALL fusion tasks failed, fall back to single-model
-                // extraction rather than storing empty extractions silently.
-                if failed_count == texts.len() && !texts.is_empty() {
-                    tracing::warn!(
-                        total = texts.len(),
-                        "All fusion tasks failed — falling back to single-model extraction"
-                    );
-                    let settings = HkaskSettings::load();
-                    let settings_model = settings.classifier_model();
-                    let mut model_config = classifier_config.clone();
-                    if !settings_model.is_empty() {
-                        model_config.model = settings_model;
-                    }
-                    let fallback = crate::runtime::extract_triples_batch(
-                        &texts,
-                        &model_config,
-                        Arc::clone(&inference_port),
-                    )
-                    .await?;
-                    extractions = fallback;
-                }
-
-                for (passage, ext) in all_passages.iter_mut().zip(extractions.iter()) {
-                    passage.semantic_triples = ext.clone();
-                }
-
-                let topics_extracted = extractions.iter().filter(|e| !e.topic.is_empty()).count();
-                let total_concepts: usize = extractions.iter().map(|e| e.concepts.len()).sum();
-                tracing::info!(
-                    topics_extracted,
-                    total_concepts,
-                    total_passages = passage_count,
-                    "Fusion h_mem extraction complete"
-                );
-            } else {
-                // ── Single-model fallback (no fusion configured) ────
-                let settings = HkaskSettings::load();
-                let settings_model = settings.classifier_model();
-                let mut model_config = classifier_config.clone();
-                if !settings_model.is_empty() {
-                    model_config.model = settings_model;
-                }
-
-                tracing::info!(
-                    total_passages = passage_count,
-                    model = %model_config.model,
-                    "Single-model h_mem extraction (no fusion configured)"
-                );
-
-                let a_extractions = crate::runtime::extract_triples_batch(
-                    &texts,
-                    &model_config,
-                    Arc::clone(&inference_port),
-                )
-                .await?;
-
-                for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
-                    passage.semantic_triples = ext.clone();
-                }
+            for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
+                passage.semantic_triples = ext.clone();
             }
         } else {
             tracing::info!("HMem classifier disabled — skipping semantic extraction");

@@ -1,217 +1,197 @@
-# Divergence Slimming + Seam Simplification — Plan
+# Fusion System Removal — Plan
 
-Date: 2026-07-31 · Status: **COMPLETE** (all slices landed; tests green)
+- **Creator**: zed agent (task-breakdown skill, v0.31.0)
+- **Date**: 2026-08-01
+- **Status**: Planned
+- **bibo:Document** — plan.md governs the fusion deprecation removal
+- **pko:ProcedureTarget** — zed-kask fusion subsystem (all surfaces: settings, orchestrator, router, discovery, manifests, docs)
 
-## Outcome summary
+## Overview
 
-- **Phase A (reverts)**: all 4 non-essential `default.json` default groups reverted
-  (rust-analyzer off, auto-install toml/csv/jinja, Jinja globs, bash/yaml/taplo LSPs);
-  settings_store write-skip reverted (upstream candidate); 7 files restored
-  byte-identical to merge-base (trusted_worktrees, acp_diff, alacritty, 2 CI
-  actions, 2 CI workflows); OpenRouter key-prefix logging + visibility bumps
-  reverted (kept only the D13 `max_output_tokens` plumbing).
-- **Phase B (docs)**: DIVERGENCE.md updated — D3/D4/D5/D6 rewritten post-removal,
-  D13 stale log reference removed, 11 previously undocumented seams listed.
-- **Phase C (seam simplification)**: C1 self-referential `token.verify()` gate
-  removed (runtime.rs); C2 partially descoped — `AuthContext`, `verify.rs`
-  require_*_access, and `NoOpTokenRegistry` deleted, but `TokenRegistry`/
-  `TokenRegistryStore` KEPT (live consumer: curator `list_tokens` consent audit
-  — the audit's "zero consumers" claim was wrong); C3 `BridgeToolPort` collapsed
-  (McpRuntime passed directly); C4 `LoggingMemoryPort` + early wiring deleted;
-  C5 duplicate condenser/tool-invoker wiring in main.rs deleted; C6
-  `direct_chat_strategy` knob + Guard settings page deleted.
-- **Deferred**: LedgerObserver subscriber bus (needs operator decision);
-  upstream PRs for trusted_worktrees/settings_store/head-tail fixes.
+The fusion system (multi-model panel deliberation) is deprecated and must be
+removed entirely. The removal collapses all inference onto the single-model
+path — which already exists as the fallback in `crates/zed/src/main.rs`
+(`fusion_model.clone().unwrap_or_else(|| ...)` resolves `kask.models.default_model`
+or zed's default model). Deletion test (deep-module): every fusion component is
+a wrapper over single-model inference; removing it leaves the single-model path,
+so complexity vanishes → DELETE.
 
-## Keystore / sovereignty-token verdicts (confirmed)
+## Architecture decisions
 
-1. Sovereignty-token removal: complete (19c5ca5f80 + C1 residue removed).
-2. Keystore duplication: absent — hkask-keystore uses `keyring` directly
-   everywhere; no injection seam, no parallel CredentialsProvider path.
-   D5 row rewritten to reflect this.
+1. **The generic model-name resolver survives, renamed.** `resolve_fusion_models`
+   is a generic registry resolver (provider-prefixed name → `Arc<dyn LanguageModel>`)
+   with two non-fusion consumers: `LanguageModelInferencePort::generate_with_model`
+   (`kask_bridge/src/inference.rs`, model-override resolution for MCP servers) and
+   `main.rs` (`kask.models.default_model` resolution). It moves to
+   `kask_bridge/src/model_resolution.rs` as `resolve_model_names` with its two
+   resolver unit tests. Everything else in `fusion_model.rs` (FusionLanguageModel,
+   MultiModelInferencePort, FusionProviderState, FusionLanguageModelProvider,
+   favorites) dies.
+2. **`bypass_fusion` / `fusion_config` on `LLMParameters` are write-only** — never
+   read anywhere in production (the fusion model doesn't consult them; the
+   MediaRouter/IPC path ignores them). Removing the fields is safe once all
+   writers (executor, fusion orchestrator, MCP server literals) are cleaned.
+3. **`ModelFilterFn` (prompt pricing / intelligence filter) is dead infrastructure** —
+   `set_model_filter_fn` has no production caller (only a test). It dies with its
+   call sites in `crates/agent/src/agent.rs`, `crates/agent_ui/src/language_model_selector.rs`,
+   and `crates/language_model/src/registry.rs`.
+4. **`NonEmptyVec`, `ConvergenceVerdict`, `FusionMode`, `AlgoMethod`, `FusionSkill`
+   die with `hkask-types/src/fusion.rs`** — no external consumers.
+5. **RRF fusion in `hkask-mcp-research` is unrelated** (Reciprocal Rank Fusion,
+   search ranking) — explicitly out of scope, do not touch.
+6. **kask_bridge depends on zed crates; `crates/zed` will not compile between
+   Phase 1 and Phase 2.** Phase-1 checkpoint covers kask crates only; the zed
+   binary is fixed in Phase 2.
+7. **Operator config migration**: previously-written `agent.favorite_models`
+   entries (`kask-fusion/fusion` + discovered favorites) persist in the user's
+   settings.json after removal. Code-side: the auto-favorite write is deleted;
+   the stale settings entries are an operator-side cleanup (documented, not
+   auto-migrated).
+8. **`.rules`/`GEMINI.md` fusion entries become stale.** Per rules hygiene, they
+   are NOT edited inline; a `Suggested .rules removals` note goes in the PR
+   description.
 
-## Validation
+## Dependency graph
 
-- `cargo check`: zed, kask_bridge, hkask-mcp, hkask-capability, settings_content,
-  settings_ui, language_models — all clean.
-- `cargo nextest`: 762 agent + 148 bridge/capability/mcp/settings_content +
-  71 settings/auto_update/kask_panel — all pass.
-- Upstream diff audit: `default.json` shows only telemetry/auto_update/
-  credentials_url; settings_store shows only the auto_update test pin.
+| # | Node | depends_on | depth | notes |
+|---|------|-----------|-------|-------|
+| 1 | `hkask-types` (fusion module, LLMParameters fields) | — | 0 | Foundation; breaks everything below until consumers cleaned |
+| 2 | `hkask-inference` (orchestrator, artificial_analysis, config) | 1 | 1 | Deletes `fusion_orchestrator.rs` + `artificial_analysis.rs` |
+| 3 | `hkask-templates` (manifest fusion fields, executor) | 1 | 1 | `BundleManifest.fusion`, `BundleManifestStep.fusion`, executor plumbing |
+| 4 | `kask_bridge` (fusion_model, settings, skill_executor) | 1,2,3 | 2 | Resolver extraction + deletion of fusion_model.rs |
+| 5 | MCP servers (corpus fusion path, LLMParameters literals) | 1,4 | 3 | corpus `embed/service.rs`, condenser, kata-kanban |
+| 6 | `crates/language_model` + `agent` + `agent_ui` (ModelFilterFn) | — | 0 | Independent; do first to unblock kask_bridge check |
+| 7 | `crates/settings_content` + `settings_ui` (fusion settings + page) | 1 | 1 | KaskFusionSettingsContent, fusion page |
+| 8 | `crates/zed/src/main.rs` (composition root) | 4,6,7 | 3 | Largest removal site |
+| 9 | Manifests + SKILL.md + docs | — | 0 | No compile impact; memory_remember.yaml semantic change |
 
-## Methodology notes (grill-me self-challenge outcomes)
+## Phases, tasks, checkpoints
 
-- The sub-agent audit claimed TokenRegistry had "zero production consumers" —
-  grep proved it wrong (curator MCP `list_tokens`). Corrected before deletion.
-- An E0004 in remote_connection during test builds was a stale-artifact flake;
-  not reproducible after rebuild, unrelated to the changes.
-- Working-tree edits were committed incrementally by the operator during the
-  session (commits f5ed02574e…7edd0e7cc8); content verified equivalent to plan.
+### Phase 1 — kask crates (foundation sweep)
 
-## Hypothesis (H1) and null (H0)
+**T1 — Remove ModelFilterFn from the language_model crate**
+- slice: deprecate/pricing-filter
+- files: `crates/language_model/src/registry.rs`, `crates/agent/src/agent.rs`, `crates/agent_ui/src/language_model_selector.rs`
+- AC: no `ModelFilterFn` / `model_filter_fn` / `passes_model_filter` / `set_model_filter_fn` references remain; `agent` `refresh_list` and selector filter calls removed; `test_refresh_list_drops_models_that_fail_the_model_filter` deleted.
+- verification: `cargo check -p language_model -p agent -p agent_ui`
+- deps: None
 
-- **H1**: Removing the 12 identified non-essential upstream-file modifications
-  and 7 theater/ritual seam surfaces loses no behavior zed-kask depends on.
-- **H0**: At least one candidate removal silently breaks a kask behavior.
-- **Discriminating test**: after each slice, `cargo check -p <touched crates>`
-  + `cargo nextest run -p <touched crates>` must pass; Phase A additionally
-  requires `git diff 5e1fd392f6 HEAD -- <file>` to show only sanctioned seams.
+**T2 — Delete fusion types from hkask-types**
+- slice: deprecate/types
+- files: `kask/crates/hkask-types/src/fusion.rs` (delete), `hkask_types.rs` (module decl), `template.rs` (LLMParameters fields + `edge_work`), `event.rs` (`reg.fusion`)
+- AC: `fusion` module deleted; `bypass_fusion`/`fusion_config` removed from `LLMParameters`; `reg.fusion` removed from CANONICAL_NAMESPACES; no `hkask_types::fusion` references remain.
+- verification: `cargo check -p hkask-types` (after T3–T5 land, see checkpoint)
+- deps: None (temporarily breaks dependents — coordinated with T3–T5)
 
-## Phase A — Revert non-essential upstream modifications (8 tasks)
+**T3 — Delete the fusion orchestrator and Artificial Analysis discovery**
+- slice: deprecate/orchestrator
+- files: `kask/crates/hkask-inference/src/fusion_orchestrator.rs` (delete), `artificial_analysis.rs` (delete), `config.rs` (parse_fusion_config, `InferenceConfig.fusion`, re-exports, doc comments), `hkask_inference.rs` (module decls, re-exports, doc), `chat_protocol.rs` (test literals)
+- AC: both source files deleted; no `FusionConfig`/`FusionMode`/`orchestrate`/`discover_favorites`/`FavoriteModel` references in the crate; `InferenceConfig` retains only media/provider fields.
+- verification: `cargo check -p hkask-inference`
+- deps: T2
 
-Surgical reverts only; the pin tests for telemetry/auto_update defaults stay.
+**T4 — Remove fusion from hkask-templates manifests + executor**
+- slice: deprecate/manifest-fields
+- files: `kask/crates/hkask-templates/src/bundle/manifest.rs`, `manifest_loader.rs`, `executor.rs`, `tests/yaml_schema_validation.rs`, executor test literals (`fusion: None`)
+- AC: `BundleManifest.fusion` and `BundleManifestStep.fusion` removed; `manifest_fusion_config` plumbing and `step.fusion` match removed from `execute_select`/`execute_manifest`; fusion yaml-schema test removed.
+- verification: `cargo check -p hkask-templates`
+- deps: T2
 
-- **A1. `assets/settings/default.json` surgical revert.** Remove four blocks:
-  rust-analyzer `enabled: false`; `auto_install_extensions` toml/csv/jinja;
-  `Jinja` file-globs mapping; bash-language-server/yaml-language-server/taplo
-  `enabled: true`. KEEP: telemetry off, auto_update off, `credentials_url`.
-  AC: `git diff 5e1fd392f6 -- assets/settings/default.json` shows only the
-  three kept blocks. Verify: `cargo nextest run -p auto_update -p settings`.
-- **A2. `crates/settings/src/settings_store.rs` partial revert.** Remove the
-  "skip write if unchanged" block (upstream candidate; kask call sites are
-  user-driven, no observer loops exist). KEEP the `AutoUpdateSetting{false}`
-  test assertion. Verify: `cargo nextest run -p settings`.
-- **A3. Checkout reverts (7 files, one command).**
-  `git checkout 5e1fd392f6 -- crates/project/src/trusted_worktrees.rs
-  crates/acp_thread/src/diff.rs crates/terminal/src/alacritty.rs
-  .github/workflows/run_tests.yml .github/workflows/extension_tests.yml
-  .github/actions/run_tests/action.yml .github/actions/run_tests_windows/action.yml`
-  AC: files byte-identical to merge-base. Verify: `cargo check -p project -p acp_thread -p terminal`.
-- **A4. OpenRouter key-prefix logging removal** (`crates/language_models/src/provider/open_router.rs`):
-  remove the `log::info!` key-prefix hunk AND the two `fn`→`pub(crate)` visibility
-  bumps added with it (verify no other module uses them first). Verify: `cargo check -p language_models`.
-- **Checkpoint A**: full `./script/clippy` clean on touched crates; upstream diff
-  audit shows only sanctioned seams remain in those files.
+**T5 — Remove fusion from kask_bridge (resolver extraction + deletion)**
+- slice: deprecate/bridge
+- files: `kask_bridge/src/fusion_model.rs` (delete), `model_resolution.rs` (new — `resolve_model_names` moved from fusion_model.rs + 2 unit tests), `inference.rs` (resolver call site), `settings.rs` (KaskFusionSettings, Default, to_fusion_config, From impl), `skill_executor.rs` (judge_model/panel_models context injection), `kask_bridge.rs` (re-exports)
+- AC: `fusion_model.rs` deleted; `resolve_model_names` lives in `model_resolution.rs` and `LanguageModelInferencePort` model-override resolution still works; no `KaskFusionSettings`/`FusionLanguageModel` references in the crate.
+- verification: `cargo check -p kask_bridge`
+- deps: T2, T3, T4, T1
 
-## Phase B — DIVERGENCE.md gap closure (1 task)
+**T6 — Remove fusion from MCP servers**
+- slice: deprecate/mcp
+- files: `kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs` (fusion path), `corpus/embed/types.rs` (CorpusConfig.fusion), `corpus/discover/config.rs`, `hkask-mcp-condenser/src/hkask_mcp_condenser.rs` (literals), `hkask-mcp-kata-kanban/src/kata.rs` (literals), `hkask-mcp-corpus/src/compose.rs` (literals)
+- AC: corpus triple extraction runs single-model only; no `fusion_config`/`bypass_fusion` literals remain.
+- verification: `cargo check -p hkask-mcp-corpus -p hkask-mcp-condenser -p hkask-mcp-kata-kanban`
+- deps: T2, T5
 
-- **B1. Document the ~10 discovered undocumented seams** so Phase A's retained
-  edits stop being invisible merge-cost: `windows_resources` (D7 title),
-  `gpui_tokio::handle_async`, `RuleFrontmatter`/conditional rules,
-  terminal_tool tuning (spillover, head/tail fix, shell-subst wording),
-  `tools.rs` u64 deserializer, `agent_panel` curator hunks,
-  `language_model` ModelFilterFn/api_url, `open_ai/list_models`,
-  `.env` loading + printenv, `zed_urls.rs` scheme. Each gets a one-line entry
-  in the "Other zed-kask-modified files" section or its D-seam row.
+**Checkpoint 1** — `cargo check -p hkask-types -p hkask-inference -p hkask-templates -p kask_bridge -p hkask-mcp-corpus -p hkask-mcp-condenser -p hkask-mcp-kata-kanban -p language_model -p agent -p agent_ui` passes. Known-broken: `crates/zed` (fixed in Phase 2).
 
-## Phase C — Seam simplification: theater removal (6 tasks, from audit)
+### Phase 2 — zed-side (settings, UI, composition root)
 
-Each is an independent essentialist deletion with a cargo-verified blast radius.
+**T7 — Remove the fusion settings section**
+- slice: deprecate/settings
+- files: `crates/settings_content/src/settings_content.rs`
+- AC: `KaskFusionSettingsContent` deleted; `KaskSettingsContent.fusion` field removed; no `kask.fusion` JSON schema surface.
+- verification: `cargo check -p settings_content`
+- deps: T2
 
-- **C1. Remove self-referential `token.verify()` gate** in
-  `kask/crates/hkask-mcp/src/runtime.rs:505` (signature checked against the
-  token's own embedded key — denies nothing). Keep `is_valid_for` capability
-  match. Fix the "OCAP" comment to state what's actually enforced.
-  Verify: `cargo nextest run -p hkask-mcp -p hkask-capability`.
-- **C2. Delete dead OCAP surface** (~500 lines): `AuthContext` (hkask-capability
-  auth.rs — zero production constructors), `verify.rs` require_read/write_access
-  (only self-test callers), `TokenRegistry` trait + `NoOpTokenRegistry` +
-  `TokenRegistryStore` (~300 lines SQL, constructed only in its own test).
-  AC: zero references remain; `cargo check --workspace` passes.
-- **C3. Collapse `BridgeToolPort`** (pure pass-through to `McpRuntime`, which
-  already implements `ToolPort`): main.rs passes `Arc<McpRuntime>` as the port;
-  delete `kask/crates/kask_bridge/src/tool_port.rs`. Verify: `cargo check -p kask_bridge -p zed`.
-- **C4. Delete `LoggingMemoryPort` + early wiring** in main.rs:760-776 (turns
-  pre-login were silently dropped anyway; `thread.rs:2879` already no-ops on
-  `None`). Verify: `cargo nextest run -p kask_bridge -p agent`.
-- **C5. Delete duplicate hook wiring** in main.rs:1769-1789 (deferred
-  `set_tool_invoker` + `set_thread_condenser` re-wiring identical to the
-  pre-login block; neither is model/user-dependent). AC: single wiring site
-  each. Verify: `cargo check -p zed`.
-- **C6. Remove `direct_chat_strategy` setting + UI knob** (declared
-  "buffer|incremental|cascade_only", default cascade_only, read nowhere — a
-  settings page configuring a one-inhabitant enum). Touch: kask_bridge/settings.rs,
-  settings_content.rs, kask_page/guard.rs, kask_page.rs, DIVERGENCE.md D4 text.
-  Verify: `cargo nextest run -p kask_bridge -p settings_ui`.
-- **Checkpoint C**: `cargo check --workspace`; hkask test suites green;
-  DIVERGENCE.md updated for D3/D4/D6 wording.
+**T8 — Remove the fusion settings UI page**
+- slice: deprecate/settings-ui
+- files: `crates/settings_ui/src/pages/kask_page/fusion.rs` (delete), `crates/settings_ui/src/pages/kask_page.rs` (mod decl, re-export, SubPageLink, `kask_string_input` fusion arms)
+- AC: fusion page file deleted; kask settings page has no Fusion entry; `kask_string_input` no longer writes `kask.fusion`.
+- verification: `cargo check -p settings_ui`
+- deps: T7
 
-## Loose-end sweep (2026-07-31, third round)
+**T9 — Remove the fusion composition wiring from main.rs**
+- slice: deprecate/composition-root
+- files: `crates/zed/src/main.rs`
+- AC: `fusion_config`, `async_cx_for_fusion`, `fusion_configured`, auto-discovery block, `FusionLanguageModel` construction, `FusionLanguageModelProvider` registration, auto-favorite block, `fusion_alert_tx` all removed; `kask.models.default_model` resolves via `resolve_model_names`; inference falls back to the single model.
+- verification: `cargo check -p zed`
+- deps: T1, T5, T7, T8
 
-- **Docs sweep**: 12 files updated — mcp-servers/README + companies.md
-  (governance section now says capability-match, not OCAP/signature),
-  kask_bridge/reference.md (BridgeToolPort/a2a_secret/LoggingMemoryPort
-  references removed), hkask-capability reference/explanation/tutorial/
-  how-to rewritten for the post-collapse token model, hkask-storage/
-  hkask-types/hkask-mcp-server references fixed, explanation/README index
-  row updated. `.rules` GuardedStream trap deleted (resolved in D4).
-- **Keystore dead surface**: `get_or_create_ocap_secret`, `resolve_a2a_secret`,
-  `resolve_secret_chain`, `resolve_treasury_key`, `resolve_wallet_seed`,
-  `sign_wallet_bytes`, `InternalSecrets` + `derive_all_internal_secrets*`,
-  `MASTER_KEY_SALT`, `CURRENT_KEY_VERSION`, `KEY_A2A_SECRET`, `KEY_OCAP_SECRET`,
-  `A2A_SECRET`/`OCAP_SECRET`/`TREASURY_HEDERA`/`WALLET_SEED` derivation
-  contexts — all removed (zero production consumers). Kept: `resolve()`,
-  `resolve_db_passphrase{,_string}`, `Keychain`, encryption, `derive_sub_key`
-  (live via `SecretRef::Derived` in the DB provisioning path).
-  `ed25519-dalek` dropped from hkask-keystore + hkask-templates Cargo.tomls.
-- Validation: workspace check clean (0 errors); 311 + 89 tests pass across
-  keystore/types/capability/storage/templates/regulation.
-- RuleFrontmatter: kept (operator confirmed always used).
+**Checkpoint 2** — `cargo check -p zed -p settings_ui -p settings_content -p language_model -p agent -p agent_ui` passes.
 
-## Follow-up simplifications (2026-07-31, second round)
+### Phase 3 — manifests + docs
 
-- **Token ceremony collapse (item #1): COMPLETE.** `DelegationToken` is now a
-  plain in-process capability struct — `signature`/`public_key` fields,
-  `verify()`/`verify_cryptographic()`, `derive_signing_key`, `TokenSignature`,
-  the `SigningPayload`, base64 serialization, attenuation-chain crypto, and
-  the Kani tamper-detection harnesses all deleted. `panel_default_token`
-  mints directly (no static zeroed key). Registry persistence
-  (`token_registry.rs`) writes empty strings to the legacy
-  signature_hex/public_key_hex columns (schema unchanged — no migration).
-  `with_heal_cb`/`HealCallback` on `RegulationLedger` deleted (zero prod
-  callers). Cargo.toml: ed25519-dalek, base64, uuid deps dropped;
-  crate description updated. Contract tests rewritten to pin the
-  capability-match gate (is_valid_for, allows_*, deterministic id).
-- **Hook-collapse (item #2): COMPLETE.** `set_tool_router` and
-  `set_metacognition_provider` converted from OnceLock + "already set" warn
-  ceremony to plain re-settable Mutex hooks, matching the other 4 kask hooks.
-- **Docs (item #4): COMPLETE.** DIVERGENCE.md + .rules D1–D10 → D1–D13;
-  `.rules` GuardedStream trap marked RESOLVED.
-- Validation: 1084 tests pass across hkask-capability/hkask-storage/
-  hkask-regulation/hkask-mcp/hkask-templates/agent; workspace check clean.
-  Also landed: `mcp_server_in_scope` free function (operator's per-tab MCP
-  scoping pin test needed the helper extracted).
+**T10 — Remove fusion from skill manifests**
+- slice: deprecate/manifests
+- files: `kask/registry/manifests/memory_remember.yaml` (`fusion: true` steps + comments), `kask/registry/manifests/{bug-hunt,capabilities-reasoner,create-skill,deep-module,diagnose,essentialist,falsifiability,gradient-hunter,grill-me,idiomatic-rust,prompt-enhance,refactor-architecture,scenario-builder}.yaml` (`# Fusion: omitted` comment blocks), `kask/registry/classify/hmem-extractor.yaml` (fusion comment)
+- AC: no `fusion` token remains in any `kask/registry/**/*.yaml`; memory_remember extraction no longer references the algo judge.
+- verification: `grep -ri fusion kask/registry --include=*.yaml` → no hits
+- deps: None
 
-## Deferred items — resolution
+**T11 — Remove Fusion Mode sections from skill companions**
+- slice: deprecate/skill-docs
+- files: `.agents/skills/{bug-hunt,capabilities-reasoner,deep-module,diagnose,essentialist,falsifiability,grill-me,idiomatic-lisp,idiomatic-rust,lean-prover,lora-training,refactor-architecture,task-breakdown}/SKILL.md`
+- AC: no `kask.fusion` / `HKASK_FUSION` / `## Fusion Mode` references remain in `.agents/skills/**/SKILL.md`; methodology sections (PDCA loops, convergence) retain their non-fusion meaning.
+- verification: `grep -ri "fusion" .agents/skills --include=SKILL.md` → no hits
+- deps: None
 
-- **LedgerObserver subscriber bus: REMOVED.** Deleted `LedgerObserver` trait,
-  `DepletionSignal`, `BackpressureSignal` (hkask-types), the `subscribers`
-  field, `subscribe`/`subscribe_async`/`publish_event`/`emit_backpressure`,
-  `LedgerSink`, and `emit_critical_depletion` (hkask-regulation), plus the
-  `emit_backpressure` call in cybernetics_loop and 2 bus tests. The heal
-  callback survived as `run_heal_cb` (called on critical alerts). In its
-  place, the REAL observability path was closed: composition root now wires
-  `NoopEventSink` at startup and upgrades both the CyberneticsLoop and
-  McpRuntime governance sinks to `RegulationArchive` on the curator's pod.db
-  in the deferred post-login task (new `set_event_sink` setters on both, new
-  `open_curator_regulation_archive` bridge helper). The curator MCP server's
-  `reg_query`/`curator_algedonic_log` tools — previously reading a DB nothing
-  wrote to — now have a producer. Validation: 262 tests pass across
-  hkask-types/hkask-regulation/hkask-mcp/kask_bridge; `cargo check -p zed`
-  clean.
-- **Upstream PRs**: declined by operator.
+**T12 — Update fork docs**
+- slice: deprecate/docs
+- files: `DIVERGENCE.md` (D8 row, ModelFilterFn entry), `kask/crates/hkask-inference/README.md`, `kask/crates/hkask-memory/README.md`, `kask/docs/architecture/zed-host-architecture-plan.md`, `kask/docs/diataxis/hkask-inference/reference.md`
+- AC: no fusion references in these docs; D8 lists `resolve_model_names` instead of `FusionLanguageModel`; ModelFilterFn removed from the modified-files list.
+- verification: `grep -ri fusion DIVERGENCE.md kask/docs kask/crates/hkask-inference/README.md kask/crates/hkask-memory/README.md` → no hits
+- deps: None
 
-## Keystore / sovereignty-token question (resolved)
+**Checkpoint 3** — repo-wide `grep -ri fusion` returns only intentional matches (`.rules`, `GEMINI.md`, `hkask-mcp-research` RRF, historical docs).
 
-1. **Sovereignty token removal: CONFIRMED complete.** Commit 19c5ca5f80 removed
-   a2a_secret threading; remaining self-referential verify gate is C1.
-2. **Keystore duplication: CONFIRMED ABSENT.** The `keyring`-injection seam
-   described in DIVERGENCE.md D5 no longer exists — `hkask-keystore/keychain.rs`
-   uses the `keyring` crate directly everywhere; no OnceLock injection, no
-   parallel zed `CredentialsProvider` path. D5 text is stale → fix in B1/C-slices.
-   What remains in hkask-keystore (DB passphrase chain, encryption) passed the
-   G1 deletion test in the prior audit and stays.
+### Phase 4 — validation
+
+**T13 — Validate the removal**
+- slice: deprecate/validation
+- files: none (verification only)
+- AC: touched kask crates + zed compile; `reg.fusion` span emitters gone; no runtime reference to `kask.fusion` remains.
+- verification: `cargo check` for the full touched set; `cargo test -p hkask-templates -p kask_bridge -p hkask-inference` (targeted); `./script/clippy` on touched crates.
+- deps: all
+
+**Checkpoint 4** — targeted tests + clippy pass. PR description carries `Suggested .rules removals` for the obsolete fusion entries.
 
 ## Risks
 
-| Risk | Mitigation |
-|---|---|
-| Reverting settings_store skip-if-unchanged reintroduces a re-render loop | Grep showed no observer-loop call sites; tests pin behavior |
-| Removing LoggingMemoryPort changes pre-login UX | Call site already tolerates None; behavior identical (turns were dropped either way) |
-| Upstream merge conflicts from retained undoc'd seams | B1 documents them before any upstream sync |
-| C2 removes a registry a future revocation feature needs | Docs will state "revocation not yet enforced" per .rules; re-add with its consumer |
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| `resolve_fusion_models` deleted instead of relocated → MCP model_override breaks | MCP servers (condenser/corpus/training) use wrong model silently | Extract to `model_resolution.rs` with unit tests moved; verify `LanguageModelInferencePort` override path |
+| crates/zed broken between phases | no incremental check of zed | Checkpoint 1 scoped to kask crates; zed fixed in T9 |
+| `fusion: true` removed from memory_remember.yaml changes memory extraction behavior | memory extraction silently single-model | Documented; single-model is the intended post-fusion behavior |
+| Stale `kask-fusion/fusion` favorite persists in user settings.json | dead entry in model picker | Documented operator-side cleanup (not auto-migrated) |
+| RRF fusion in research MCP touched by blanket grep | search ranking broken | Explicitly excluded in T10/T11/T12 scope |
+| `.rules`/`GEMINI.md` fusion guidance becomes stale | future agents follow dead guidance | PR description `Suggested .rules removals` (rules hygiene — no inline edit) |
+| `reg.fusion` removed from CANONICAL_NAMESPACES while an emitter survives | unregistered span target (silent) | All `reg.fusion` emitters deleted in T2/T3/T5; grep-verified |
 
-## Open questions for operator
+## Open questions
 
-1. LedgerObserver: register a real observer or delete the bus? (deferred above)
-2. Upstream PRs for the three general bug fixes — do you want me to prepare them?
+1. **Operator settings migration** — previously auto-favorited models (`kask-fusion/fusion` + Artificial Analysis discoveries) persist in the user's `settings.json`. Should the removal include a settings migration that prunes `agent.favorite_models` entries with provider `kask-fusion` or the discovered OpenRouter models? (Not code-required; recommended as a manual operator step.)
+2. **`reg.fusion` namespace** — confirmed all emitters are deleted. If any regulation consumer watches `reg.fusion` for alerting, it will silently see nothing; the span namespace removal is correct.
+3. **corpus fusion config** — `CorpusConfig.fusion` (yaml `fusion:` block in corpus config files) is removed; existing corpus.yaml files with a `fusion:` block will ignore the unknown field (serde default). Operator cleanup recommended.
+
+## Refinement History
+
+- Iteration 1 (initial): decomposed into 13 tasks across 4 phases. Refinements applied from survey findings: (a) resolver survival extracted as explicit task T5 (sizing/red-flag — a naive "delete fusion_model.rs" would have broken MCP model-override); (b) ModelFilterFn moved to its own task T1 (red-flag — it lives in upstream crates and needs agent/agent_ui call-site removal); (c) RRF fusion exclusion made explicit in risks (red-flag — blanket grep would hit `hkask-mcp-research`).

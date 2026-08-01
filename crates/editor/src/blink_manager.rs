@@ -1,4 +1,4 @@
-use gpui::Context;
+use gpui::{Context, Task};
 use settings::SettingsStore;
 use std::time::Duration;
 use ui::App;
@@ -14,6 +14,9 @@ pub struct BlinkManager {
     enabled: bool,
     /// Whether the blinking is enabled in the settings.
     blink_enabled_in_settings: fn(&App) -> bool,
+    // zed-kask: replacing this task cancels the previous idle deadline, so rapid
+    // selection changes keep exactly one resume callback alive. See DIVERGENCE.md D15.
+    resume_task: Option<Task<()>>,
 }
 
 impl BlinkManager {
@@ -35,6 +38,7 @@ impl BlinkManager {
             visible: true,
             enabled: false,
             blink_enabled_in_settings,
+            resume_task: None,
         }
     }
 
@@ -45,18 +49,20 @@ impl BlinkManager {
 
     pub fn pause_blinking(&mut self, cx: &mut Context<Self>) {
         self.show_cursor(cx);
+        self.blinking_paused = true;
 
         let epoch = self.next_blink_epoch();
-        let interval = Duration::from_millis(500);
-        cx.spawn(async move |this, cx| {
+        let interval = self.blink_interval;
+        self.resume_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(interval).await;
             this.update(cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-        })
-        .detach();
+                .ok();
+        }));
     }
 
     fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
         if epoch == self.blink_epoch {
+            self.resume_task = None;
             self.blinking_paused = false;
             self.blink_cursors(epoch, cx);
         }
@@ -105,6 +111,9 @@ impl BlinkManager {
 
     /// Disable the blinking of the cursor.
     pub fn disable(&mut self, _cx: &mut Context<Self>) {
+        self.resume_task = None;
+        self.blinking_paused = false;
+        self.next_blink_epoch();
         self.visible = false;
         self.enabled = false;
     }
@@ -116,5 +125,66 @@ impl BlinkManager {
     #[cfg(test)]
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext};
+
+    #[gpui::test]
+    fn test_pause_blinking_restarts_single_resume_deadline(cx: &mut TestAppContext) {
+        let blink_manager =
+            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
+
+        blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.enable(cx);
+            blink_manager.pause_blinking(cx);
+            assert!(blink_manager.blinking_paused);
+            assert!(blink_manager.visible);
+            assert!(blink_manager.resume_task.is_some());
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(400));
+        blink_manager.update(cx, |blink_manager, cx| blink_manager.pause_blinking(cx));
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        blink_manager.read_with(cx, |blink_manager, _| {
+            assert!(blink_manager.blinking_paused);
+            assert!(blink_manager.visible);
+            assert!(blink_manager.resume_task.is_some());
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        blink_manager.read_with(cx, |blink_manager, _| {
+            assert!(!blink_manager.blinking_paused);
+            assert!(!blink_manager.visible);
+            assert!(blink_manager.resume_task.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_disable_cancels_pending_resume(cx: &mut TestAppContext) {
+        let blink_manager =
+            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
+
+        blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.enable(cx);
+            blink_manager.pause_blinking(cx);
+            blink_manager.disable(cx);
+            assert!(!blink_manager.blinking_paused);
+            assert!(blink_manager.resume_task.is_none());
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        blink_manager.read_with(cx, |blink_manager, _| {
+            assert!(!blink_manager.enabled);
+            assert!(!blink_manager.visible);
+            assert!(blink_manager.resume_task.is_none());
+        });
     }
 }

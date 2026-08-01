@@ -11,13 +11,6 @@ use thiserror::Error;
 /// Returns Some(extension_id) if the provider should be hidden when that extension is installed.
 pub type BuiltinProviderHidingFn = Box<dyn Fn(&str) -> Option<&'static str> + Send + Sync>;
 
-/// Function type for filtering models out of the available-models list.
-/// Returns `true` if the model should be **kept**, `false` if it should be
-/// de-listed. Used to implement cross-provider economic guardrails (e.g.
-/// hiding models whose output price exceeds a threshold) without requiring
-/// every provider to know about pricing.
-pub type ModelFilterFn = Box<dyn Fn(&dyn LanguageModel) -> bool + Send + Sync>;
-
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
     cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -68,10 +61,6 @@ pub struct LanguageModelRegistry {
     installed_llm_extension_ids: HashSet<Arc<str>>,
     /// Function to check if a built-in provider should be hidden by an extension.
     builtin_provider_hiding_fn: Option<BuiltinProviderHidingFn>,
-    /// Optional cross-provider model filter. Returns `true` to keep a model,
-    /// `false` to de-list it. Set by `language_models` to implement economic
-    /// guardrails (deny-listing expensive models regardless of provider).
-    model_filter_fn: Option<ModelFilterFn>,
 }
 
 #[derive(Debug)]
@@ -226,13 +215,6 @@ impl LanguageModelRegistry {
         self.builtin_provider_hiding_fn = Some(hiding_fn);
     }
 
-    /// Sets the cross-provider model filter. Returns `true` to keep a model,
-    /// `false` to de-list it from `available_models`. Used to implement
-    /// economic guardrails that apply across all providers.
-    pub fn set_model_filter_fn(&mut self, filter_fn: ModelFilterFn) {
-        self.model_filter_fn = Some(filter_fn);
-    }
-
     /// Called when an extension is installed/loaded.
     /// If the extension provides language models, track it so we can hide the corresponding built-in.
     pub fn extension_installed(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
@@ -302,21 +284,10 @@ impl LanguageModelRegistry {
         &'a self,
         cx: &'a App,
     ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
-        let filter = self.model_filter_fn.as_ref();
         self.providers
             .values()
             .filter(|provider| provider.is_authenticated(cx))
             .flat_map(|provider| provider.provided_models(cx))
-            .filter(move |model| filter.map_or(true, |f| f(model.as_ref())))
-    }
-
-    /// Returns `true` if `model` passes the cross-provider model filter
-    /// (economic guardrails). Callers that build model lists from
-    /// `visible_providers()` + `provided_models()` must apply this to every
-    /// model so expensive models are de-listed from every surface, not just
-    /// `available_models()`.
-    pub fn passes_model_filter(&self, model: &dyn LanguageModel) -> bool {
-        self.model_filter_fn.as_ref().map_or(true, |f| f(model))
     }
 
     pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {

@@ -369,8 +369,6 @@ impl ComposeService {
             seed: None,
             disable_thinking: false,
             adapter: None,
-            bypass_fusion: false,
-            fusion_config: None,
             system_prompt: None,
         };
         let result = inference.generate(&system_prompt, &params, None).await?;

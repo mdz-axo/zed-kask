@@ -9,9 +9,6 @@
 //!   chat/vision/embed through zed's `LanguageModelRegistry`.
 //! - `InferenceConfig` — shared configuration (base URLs, API keys, default model).
 //! - `ProviderId` — provider routing enum used by the training adapter router.
-//! - `fusion_orchestrator` — multi-model panel deliberation.
-//! - `artificial_analysis::FavoriteModel` — model favorites discovery.
-//! - `artificial_analysis` — independent benchmark data for fusion panel discovery.
 
 // Used via derive macros (serde/thiserror/async_trait) — invisible to unused_crate_dependencies lint
 #![allow(unused_crate_dependencies)]
@@ -36,13 +33,11 @@
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
 //! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
 
-pub mod artificial_analysis;
 pub mod chat_protocol;
 pub mod config;
 pub mod deepinfra_backend;
 pub mod fal_backend;
 pub mod fal_workflow;
-pub mod fusion_orchestrator;
 pub mod inference_ipc_client;
 pub mod media_router;
 pub mod model_constants;
@@ -51,9 +46,7 @@ pub mod openai_compat;
 pub mod openrouter_backend;
 
 // Re-exports — public API
-pub use config::{
-    AlgoMethod, FusionConfig, FusionMode, FusionSkill, InferenceConfig, ProviderConfig, ProviderId,
-};
+pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 pub use media_router::MediaRouter;
 pub use ollama_registry::{
@@ -178,7 +171,7 @@ impl RouterModelEntry {
 ///
 /// 1. `InferenceIpcClient` — if `HKASK_INFERENCE_SOCKET` is set and the
 ///    socket is reachable. This routes inference through zed's
-///    `LanguageModelRegistry` (with fusion, guard, and zed's configured
+///    `LanguageModelRegistry` (with guard and zed's configured
 ///    API keys). Chat, vision, embed, and list_models all go through here.
 /// 2. `MediaRouter` — constructed from `InferenceConfig::from_env()`.
 ///    This handles only media generation (fal.ai/DeepInfra). Chat/vision/

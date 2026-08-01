@@ -131,7 +131,6 @@ pub fn default_corpus_config(author_slug: &str) -> CorpusConfig {
         tag_weights: Default::default(),
         classifier: String::new(),
         triple_classifier: String::new(),
-        fusion: None,
     }
 }
 

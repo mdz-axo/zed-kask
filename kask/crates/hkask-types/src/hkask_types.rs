@@ -9,7 +9,6 @@ pub mod curator;
 pub mod document;
 pub mod error;
 pub mod event;
-pub mod fusion;
 pub mod goal;
 pub mod id;
 pub mod inference_ipc;

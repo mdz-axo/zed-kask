@@ -69,7 +69,7 @@ impl LanguageModelInferencePort {
                     let override_name = override_name.clone();
                     let resolved = cx.update(|cx| {
                         let registry = language_model::LanguageModelRegistry::read_global(cx);
-                        crate::resolve_fusion_models(
+                        crate::model_resolution::resolve_model_names(
                             registry,
                             std::slice::from_ref(&override_name),
                             cx,

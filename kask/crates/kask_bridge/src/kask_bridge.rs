@@ -9,30 +9,23 @@
 
 mod condenser_bridge;
 mod context_injector;
-mod fusion_model;
 mod identity;
 mod inference;
 mod inference_ipc_server;
 mod inference_providers;
 mod mcp_servers;
 mod memory;
+mod model_resolution;
 mod settings;
 mod skill_executor;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
-pub use fusion_model::{
-    FUSION_MODEL_ID, FUSION_PROVIDER_ID, FusionLanguageModel, FusionLanguageModelProvider,
-    discover_favorites, favorite_model_selections, fusion_model_selection, resolve_fusion_models,
-    should_auto_discover,
-};
-/// Re-export so the composition root can name the type without depending on
-/// `hkask-inference` directly.
-pub use hkask_inference::artificial_analysis::FavoriteModel;
+pub use model_resolution::resolve_model_names;
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
-/// types (matching the `FavoriteModel` pattern above).
+/// types.
 pub use hkask_inference::{InferenceConfig, MediaRouter};
 pub use identity::{
     ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
@@ -55,7 +48,7 @@ pub use mcp_servers::{
 pub use memory::{BridgeMemoryPort, RealMemoryPort, open_curator_regulation_archive};
 pub use settings::{
     KaskCodegraphSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
-    KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings, KaskFusionSettings,
+    KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
     KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
     KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
     KaskTrainingSettings, SwarmModeConfig,

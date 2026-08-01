@@ -12,8 +12,6 @@
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
 //! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, Together AI, RunPod, OpenRouter, KiloCode, ollama, Cline; default: DeepInfra)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
-//! - `HKASK_FUSION_JUDGE_MODEL` / `HKASK_FUSION_PANEL_MODELS` / `HKASK_FUSION_MODE` / `HKASK_FUSION_SKILLS` — fusion config
-//! - `HKASK_FUSION_DISABLED=1` — disable fusion
 //!
 //! # API Key Resolution
 //!
@@ -161,26 +159,6 @@ impl ProviderId {
     }
 }
 
-// Configuration for provider-agnostic multi-model fusion.
-//
-// When set, all text generation calls route through the fusion group by default.
-// Individual calls can bypass with `LLMParameters.bypass_fusion = true`.
-//
-// # Environment Variables
-//
-// - `HKASK_FUSION_JUDGE_MODEL` — judge model for fusion (e.g., "OpenRouter/deepseek-v4-pro")
-// - `HKASK_FUSION_PANEL_MODELS` — comma-separated panel models (e.g., "OpenRouter/auto,KiloCode/anthropic/claude-sonnet-4.5")
-// - `HKASK_FUSION_MODE` — judge deliberation mode (default: synthesis)
-// - `HKASK_FUSION_SKILLS` — comma-separated skill anchors for the judge
-// - `HKASK_FUSION_MAX_ROUNDS` — max rounds for deliberation mode (default: 5)
-// - `HKASK_FUSION_ALGO_METHOD` — algo merge strategy when judge is `algo` (default: merge)
-// - `HKASK_FUSION_DISABLED` — set to "1" to disable fusion
-
-/// Fusion types moved to hkask-types::fusion — re-exported for back-compat.
-pub use hkask_types::fusion::{
-    AlgoMethod, ConvergenceVerdict, FusionConfig, FusionMode, FusionSkill, NonEmptyVec,
-};
-
 /// Configuration for the inference router.
 ///
 /// Holds connection settings for DeepInfra, fal.ai, Together AI, and OpenRouter.
@@ -216,12 +194,6 @@ pub struct InferenceConfig {
     pub timeout_secs: u64,
     pub pool_max_idle: usize,
     pub default_model: String,
-
-    /// Structured fusion configuration (provider-agnostic).
-    /// When set, all text generation calls route through fusion by default.
-    /// Calls with `LLMParameters.bypass_fusion = true` bypass the override.
-    /// Default: None (fusion disabled).
-    pub fusion: Option<FusionConfig>,
 }
 
 impl Default for InferenceConfig {
@@ -247,7 +219,6 @@ impl Default for InferenceConfig {
             timeout_secs: 120,
             pool_max_idle: 5,
             default_model: "OpenRouter/z-ai/glm-5.2".to_string(),
-            fusion: None,
         }
     }
 }
@@ -283,9 +254,6 @@ impl InferenceConfig {
 
         let fal_api_key = resolve_api_key("FALAI_API_KEY");
 
-        // Fusion: parse structured env vars.
-        let fusion = parse_fusion_config();
-
         Self {
             default_provider: resolve_default_provider(),
             deepinfra_base_url: di.base_url,
@@ -312,7 +280,6 @@ impl InferenceConfig {
                 .unwrap_or(256),
             default_model: resolve_config_str("HKASK_DEFAULT_MODEL")
                 .unwrap_or_else(|| "OpenRouter/z-ai/glm-5.2".to_string()),
-            fusion,
         }
     }
 
@@ -398,67 +365,14 @@ fn parse_provider_code(raw: &str) -> ProviderId {
 ///
 /// Reads only the env var. Does not fall back to the `hkask` keychain —
 /// that namespace is reserved for sovereignty keys per the `hkask_keystore`
-/// module contract. Config values (`HKASK_DEFAULT_MODEL`, `HKASK_FUSION_*`,
-/// etc.) are injected by the parent zed process via `mcp_env()` or set in
-/// the operator's shell.
+/// module contract. Config values (`HKASK_DEFAULT_MODEL`, etc.) are injected
+/// by the parent zed process via `mcp_env()` or set in the operator's shell.
 fn resolve_config_str(key: &str) -> Option<String> {
     if let Ok(val) = std::env::var(key)
         && !val.is_empty()
     {
         return Some(val);
     }
-    None
-}
-
-/// Parse fusion configuration from environment variables or keychain.
-///
-/// Returns `None` if no fusion is configured.
-fn parse_fusion_config() -> Option<FusionConfig> {
-    // Explicit disable: HKASK_FUSION_DISABLED=1 (env or keychain)
-    let disabled = resolve_config_str("HKASK_FUSION_DISABLED").unwrap_or_default();
-    if disabled == "1" {
-        return None;
-    }
-
-    // Parse shared optional fields (env or keychain)
-    let mode = resolve_config_str("HKASK_FUSION_MODE")
-        .and_then(|m| m.parse().ok())
-        .unwrap_or_default();
-    let skills: Vec<FusionSkill> = resolve_config_str("HKASK_FUSION_SKILLS")
-        .unwrap_or_default()
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-    let max_rounds = resolve_config_str("HKASK_FUSION_MAX_ROUNDS")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
-    let algo_method = resolve_config_str("HKASK_FUSION_ALGO_METHOD")
-        .and_then(|m| m.parse().ok())
-        .unwrap_or_default();
-
-    // Structured config: HKASK_FUSION_JUDGE_MODEL + HKASK_FUSION_PANEL_MODELS (env or keychain)
-    let judge = resolve_config_str("HKASK_FUSION_JUDGE_MODEL").unwrap_or_default();
-    if !judge.is_empty() {
-        let panel_str = resolve_config_str("HKASK_FUSION_PANEL_MODELS").unwrap_or_default();
-        let panel: Vec<String> = panel_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let panel = NonEmptyVec::from_vec(panel)?;
-        return Some(FusionConfig {
-            judge,
-            panel,
-            mode,
-            skills,
-            max_rounds,
-            algo_method,
-            coherence_threshold: None,
-            panel_sizing_enabled: false,
-            pressure_adaptive_enabled: false,
-        });
-    }
-
     None
 }
 

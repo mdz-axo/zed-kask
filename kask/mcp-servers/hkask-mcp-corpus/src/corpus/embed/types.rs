@@ -147,13 +147,6 @@ pub struct CorpusConfig {
     /// Model selection, Few-Shot strategy, and fallback are documented in the YAML config.
     #[serde(default = "default_triple_classifier")]
     pub triple_classifier: String,
-
-    /// Fusion config for multi-model triple extraction. When present, the
-    /// corpus pipeline routes triple extraction through the fusion
-    /// orchestrator (typically `judge: algo` for algorithmic merge). Panel
-    /// models are specified here; the algo judge merges their JSON responses.
-    #[serde(default)]
-    pub fusion: Option<hkask_types::fusion::FusionConfig>,
 }
 
 fn default_corpus_type() -> String {

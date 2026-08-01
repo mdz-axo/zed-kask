@@ -534,13 +534,6 @@ impl ManifestExecutor {
         // rjoule_alerted, plus the cap/threshold reads) with one tracker.
         let mut budget = BudgetTracker::new(&manifest.gas, &manifest.rjoule);
 
-        // Manifest-level fusion control: when manifest.fusion is Some(config),
-        // all steps use this per-manifest fusion config (custom judge/panel/mode).
-        // When None, follows the global default (global fusion if configured).
-        // Per-step fusion: Some(false) bypasses, Some(true) forces manifest config,
-        // None inherits the manifest behavior.
-        let manifest_fusion_config = manifest.fusion.clone();
-
         // Initial convergence context (status: running, iteration 0).
         let snap = budget.snapshot();
         convergence.inject_running(
@@ -861,14 +854,7 @@ impl ManifestExecutor {
 
                     // ── Standard actions: select, populate, execute ──
                     "select" => {
-                        context = self
-                            .execute_select(
-                                step,
-                                context,
-                                &mut budget,
-                                manifest_fusion_config.as_ref(),
-                            )
-                            .await?;
+                        context = self.execute_select(step, context, &mut budget).await?;
                         // Check budget exhaustion after select (unified gas + rJoule).
                         if let Some(_exhausted) = budget.check_exhausted(iteration) {
                             let snap = budget.snapshot();
@@ -1164,7 +1150,6 @@ impl ManifestExecutor {
         step: &BundleManifestStep,
         mut context: HashMap<String, Value>,
         budget: &mut BudgetTracker,
-        manifest_fusion_config: Option<&hkask_types::fusion::FusionConfig>,
     ) -> Result<HashMap<String, Value>> {
         // Apply input_mapping: resolve {{ }} string values (and $ref objects) from the
         // context and promote them to top-level template variables. Without this, mapped
@@ -1184,22 +1169,6 @@ impl ManifestExecutor {
         let (prompt, raw_template_content) = self.render_step_template_with_raw(step, &context)?;
 
         let mut params = self.default_params.clone();
-
-        // Resolve per-step fusion override: step.fusion takes priority,
-        // then manifest-level config, then the global default.
-        // Some(false) -> bypass fusion (single-model, for deterministic rubrics).
-        // Some(true) -> force manifest config (or global if manifest has none).
-        // None -> inherit: use manifest config if present, else global default.
-        match step.fusion {
-            Some(false) => {
-                params.bypass_fusion = true;
-            }
-            Some(true) | None => {
-                if let Some(config) = manifest_fusion_config {
-                    params.fusion_config = Some(config.clone());
-                }
-            }
-        }
 
         // Resolve the output schema for this step. If a schema is available
         // (from step.output_schema or the template's contract.output frontmatter),
@@ -3395,7 +3364,6 @@ mod tests {
             })),
             phase: CascadePhase::Core,
             condition: None,
-            fusion: None,
         };
         let template_content =
             "[inference]\ncontract:\n  output:\n    from_manifest: string\n---\nbody\n";
@@ -3434,7 +3402,6 @@ mod tests {
             output_schema: None,
             phase: CascadePhase::Core,
             condition: None,
-            fusion: None,
         };
         let template_content = "[inference]\ncontract:\n  output:\n    from_template: string\n    score: number\n---\nbody\n";
         let schema =
@@ -3475,7 +3442,6 @@ mod tests {
             output_schema: None,
             phase: CascadePhase::Core,
             condition: None,
-            fusion: None,
         };
         let template_content = "No frontmatter here.";
         assert!(resolve_output_schema(&step, template_content).is_none());
@@ -3703,7 +3669,6 @@ mod tests {
             output_schema: None,
             phase: crate::bundle::cascade::CascadePhase::default(),
             condition: None,
-            fusion: None,
         };
 
         let mut context = HashMap::new();
@@ -3947,7 +3912,6 @@ convergence:
             output_schema: None,
             phase: crate::bundle::cascade::CascadePhase::default(),
             condition: None,
-            fusion: None,
         };
 
         let (parent_context, _gas, _rjoule) = executor

@@ -504,103 +504,6 @@ pub struct KaskTrainingSettings {
     pub cache_dir: String,
 }
 
-/// Multi-model fusion inference configuration (the `"kask.fusion"` section).
-///
-/// When `enabled` is true, the Curator and the kask panel route inference
-/// through a panel of models judged by `judge_model` according to `mode`.
-/// Mirrors `hkask_types::FusionConfig` but lives in the non-secret settings
-/// layer so users can edit it in the settings UI.
-///
-/// **Two-layer default design (intentional):** `judge_model` and `panel_models`
-/// default to empty strings in `Default`. When empty, `to_fusion_config()`
-/// falls back to `FusionConfig::kask_default()`, which reads env vars
-/// (`HKASK_FUSION_JUDGE_MODEL`, `HKASK_FUSION_PANEL_MODELS`) and falls back to
-/// hardcoded model names. This two-layer design lets operators override fusion
-/// models via env vars without changing settings.json, while users can set
-/// explicit models in settings.json when they want persistence. Do not merge
-/// these layers — putting env-var-reading in `Default` would make it
-/// non-deterministic (the same anti-pattern as the inference-providers fix).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct KaskFusionSettings {
-    /// Master toggle. When false, fusion is disabled. Default: `true`.
-    pub enabled: bool,
-
-    /// Judge/fuser model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.2"`).
-    /// When empty, defers to `FusionConfig::kask_default()`.
-    pub judge_model: String,
-
-    /// Comma-separated panel models (provider-prefixed). When empty, defers
-    /// to `FusionConfig::kask_default()` or auto-discovery (Slice 4).
-    pub panel_models: String,
-
-    /// Judge deliberation mode: `"synthesis"` | `"best-of-n"` | `"critique"` |
-    /// `"deliberation"` | `"pi"`. When empty, defaults to `"synthesis"`.
-    ///
-    /// Note: `"algo"` is intentionally NOT a valid `mode` value — the
-    /// `FusionMode` enum has no `Algo` variant, so `mode = "algo"` silently
-    /// coerces to `Synthesis`. The algo judge is activated by setting
-    /// `judge_model = "algo"` (the Judge Model field), which short-circuits
-    /// `mode` entirely. See the fusion orchestrator's `judge == "algo"` branch.
-    pub mode: String,
-
-    /// Algo merge strategy when `judge_model == "algo"`: `"merge"` | `"vote"`.
-    /// When empty, defaults to `"merge"`. Ignored when the judge is a real
-    /// model name (not `"algo"`).
-    pub algo_method: String,
-
-    /// Comma-separated skill anchors (e.g. `"pragmatic-semantics,coding-guidelines"`).
-    /// Each must match a `FusionSkill` serde rename.
-    pub skills: String,
-
-    /// Max rounds for `deliberation` mode. Default 5.
-    pub max_rounds: u32,
-
-    /// Auto-discovery max prompt price per million tokens (USD).
-    /// Default 2.0. Used by fusion auto-discovery (Artificial Analysis) to
-    /// filter candidate panel models by input token price.
-    pub discovery_max_price: f64,
-
-    /// Auto-discovery minimum AA Intelligence Index.
-    /// Default 40.0. Used by fusion auto-discovery (Artificial Analysis) to
-    /// filter candidate panel models by intelligence score.
-    pub discovery_min_intelligence: f64,
-
-    /// Coherence threshold (0.0–1.0) for measured convergence in deliberation
-    /// mode. When set, the orchestrator computes epistemic tension ξ and
-    /// coherence Γ from panel response embeddings; if Γ exceeds this threshold,
-    /// Coherence threshold for measured convergence. Not yet implemented —
-    /// setting this has no effect until the embedding source is wired.
-    pub coherence_threshold: Option<f64>,
-
-    /// Enable query-complexity-based panel sizing. When `true`, simple queries
-    /// dispatch fewer panel models (1 for Simple, 2 for Medium, all for Complex).
-    /// Default: `false`.
-    pub panel_sizing_enabled: bool,
-
-    /// Enable substrate-aware degradation. When `true`, panel size is reduced
-    /// under high latency pressure. Default: `false`.
-    pub pressure_adaptive_enabled: bool,
-}
-
-impl Default for KaskFusionSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            judge_model: String::default(),
-            panel_models: String::default(),
-            mode: "synthesis".to_string(),
-            algo_method: "merge".to_string(),
-            skills: String::default(),
-            max_rounds: 5,
-            discovery_max_price: 2.0,
-            discovery_min_intelligence: 40.0,
-            coherence_threshold: None,
-            panel_sizing_enabled: false,
-            pressure_adaptive_enabled: false,
-        }
-    }
-}
-
 /// Kask-wide model configuration.
 ///
 /// Provider-prefixed model names that override the kask built-in defaults.
@@ -675,70 +578,6 @@ impl KaskModelsSettings {
 impl Settings for KaskSettings {
     fn from_settings(s: &settings_content::SettingsContent) -> Self {
         s.kask.clone().map(|c| c.into()).unwrap_or_default()
-    }
-}
-
-impl KaskFusionSettings {
-    /// Convert the settings-layer representation into the runtime `FusionConfig`.
-    ///
-    /// Returns `None` when fusion is disabled (`enabled == false`) or when the
-    /// panel models string fails to parse into a non-empty panel.
-    ///
-    /// When `judge_model` or `panel_models` are empty, falls back to
-    /// `FusionConfig::kask_default()` so users can enable fusion with just the
-    /// master toggle and get sensible defaults.
-    #[must_use]
-    pub fn to_fusion_config(&self) -> Option<hkask_types::fusion::FusionConfig> {
-        if !self.enabled {
-            return None;
-        }
-
-        // Parse mode (fall back to synthesis on unknown values).
-        let mode = self
-            .mode
-            .parse::<hkask_types::fusion::FusionMode>()
-            .unwrap_or_default();
-
-        // Parse algo method (fall back to merge on unknown values).
-        let algo_method = self
-            .algo_method
-            .parse::<hkask_types::fusion::AlgoMethod>()
-            .unwrap_or_default();
-
-        // Parse skills — silently drop unknown anchors.
-        let skills: Vec<hkask_types::fusion::FusionSkill> = self
-            .skills
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse().ok())
-            .collect();
-
-        // Start from kask_default so empty judge/panel fields get sensible
-        // defaults rather than producing an invalid config.
-        let mut config = hkask_types::fusion::FusionConfig::kask_default();
-        if !self.judge_model.trim().is_empty() {
-            config.judge = self.judge_model.trim().to_string();
-        }
-        if !self.panel_models.trim().is_empty() {
-            let panel: Vec<String> = self
-                .panel_models
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if let Some(non_empty) = hkask_types::fusion::NonEmptyVec::from_vec(panel) {
-                config.panel = non_empty;
-            }
-        }
-        config.mode = mode;
-        config.algo_method = algo_method;
-        config.skills = skills;
-        config.max_rounds = self.max_rounds;
-        config.coherence_threshold = self.coherence_threshold;
-        config.panel_sizing_enabled = self.panel_sizing_enabled;
-        config.pressure_adaptive_enabled = self.pressure_adaptive_enabled;
-        Some(config)
     }
 }
 
@@ -1252,32 +1091,6 @@ impl From<KaskTrainingSettingsContent> for KaskTrainingSettings {
         Self {
             host: c.host.unwrap_or(default.host),
             cache_dir: c.cache_dir.unwrap_or(default.cache_dir),
-        }
-    }
-}
-
-impl From<KaskFusionSettingsContent> for KaskFusionSettings {
-    fn from(c: KaskFusionSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            enabled: c.enabled.unwrap_or(default.enabled),
-            judge_model: c.judge_model.unwrap_or(default.judge_model),
-            panel_models: c.panel_models.unwrap_or(default.panel_models),
-            mode: c.mode.unwrap_or(default.mode),
-            algo_method: c.algo_method.unwrap_or(default.algo_method),
-            skills: c.skills.unwrap_or(default.skills),
-            max_rounds: c.max_rounds.unwrap_or(default.max_rounds),
-            discovery_max_price: c.discovery_max_price.unwrap_or(default.discovery_max_price),
-            discovery_min_intelligence: c
-                .discovery_min_intelligence
-                .unwrap_or(default.discovery_min_intelligence),
-            coherence_threshold: c.coherence_threshold,
-            panel_sizing_enabled: c
-                .panel_sizing_enabled
-                .unwrap_or(default.panel_sizing_enabled),
-            pressure_adaptive_enabled: c
-                .pressure_adaptive_enabled
-                .unwrap_or(default.pressure_adaptive_enabled),
         }
     }
 }

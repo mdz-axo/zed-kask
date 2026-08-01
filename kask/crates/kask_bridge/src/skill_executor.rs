@@ -176,19 +176,6 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 Value::String(std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").unwrap_or_default()),
             );
         }
-        // Fusion models from env vars
-        if !context.contains_key("judge_model") {
-            context.insert(
-                "judge_model".into(),
-                Value::String(
-                    std::env::var("HKASK_FUSION_JUDGE_MODEL")
-                        .unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2".to_string()),
-                ),
-            );
-        }
-        if !context.contains_key("panel_models") {
-            context.insert("panel_models".into(), Value::String(std::env::var("HKASK_FUSION_PANEL_MODELS").unwrap_or_else(|_| "OpenRouter/z-ai/glm-5.2,OpenRouter/qwen/qwen3-235b-a22b,OpenRouter/minimax/minimax3".to_string())));
-        }
 
         let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(

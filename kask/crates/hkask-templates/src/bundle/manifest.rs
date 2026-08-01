@@ -65,14 +65,6 @@ pub struct BundleManifestStep {
     /// "a AND b" (both truthy), "a OR b" (either truthy).
     #[serde(default)]
     pub condition: Option<String>,
-    /// Per-step fusion override. When `Some(true)`, this step routes through
-    /// the fusion multi-model panel even if the manifest-level fusion is false.
-    /// When `Some(false)`, this step bypasses fusion even if the manifest-level
-    /// fusion is true. When `None`, inherits the manifest-level fusion setting.
-    /// Convergence checks and gates typically set `fusion: false` to avoid
-    /// multi-model deliberation on deterministic rubric evaluation.
-    #[serde(default)]
-    pub fusion: Option<bool>,
 }
 
 impl BundleManifestStep {
@@ -116,13 +108,6 @@ pub struct BundleManifest {
     pub inputs: Option<serde_json::Value>,
     #[serde(default)]
     pub principles: Option<serde_json::Value>,
-    /// Manifest-level fusion configuration. When `Some`, all steps in this
-    /// manifest route through this fusion config (panel models in parallel,
-    /// judge synthesizes). When `None`, follows the global default. Per-step
-    /// `fusion: Some(false)` bypasses fusion for that step; `fusion: Some(true)`
-    /// forces the manifest config even if the manifest-level config is None.
-    #[serde(default)]
-    pub fusion: Option<hkask_types::fusion::FusionConfig>,
 }
 
 impl BundleManifest {
