@@ -672,8 +672,7 @@ fn main() {
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let cybernetics_loop_for_panel = cybernetics_loop.clone();
-        let energy_estimator: std::sync::Arc<dyn hkask_regulation::EnergyEstimator> =
-            std::sync::Arc::new(hkask_mcp::FlatEnergyEstimator::new());
+        let energy_estimator = hkask_mcp::FlatEnergyEstimator::new();
         let mcp_runtime = std::sync::Arc::new(
             hkask_mcp::McpRuntime::new()
                 .with_governance(cybernetics_loop, event_sink, energy_estimator),

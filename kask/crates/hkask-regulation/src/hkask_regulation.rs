@@ -11,7 +11,6 @@ pub mod cybernetics_loop; // Loop 6
 pub(crate) mod dampener; // Loop 6 — regulation
 pub mod energy; // Loop 6 — energy budgets (hJoules)
 pub mod energy_budget_management; // Loop 6 — energy budget registration/reservation/settlement
-pub mod energy_estimator; // Loop 6 — tool cost estimation trait
 
 pub mod infra_span;
 pub mod metacognition;
@@ -36,7 +35,6 @@ pub use algedonic::{AlertEmailSink, RuntimeAlert};
 pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{AgentGasStatus, DEFAULT_GAS_ALERT_THRESHOLD, GasBudget, GasCost, GasError};
 pub use energy_budget_management::GasBudgetManager;
-pub use energy_estimator::EnergyEstimator;
 pub use metacognition::{
     AlertEvent, AlertSink, EscalationAlert, EscalationTrigger, HealthSnapshot, MetacognitionConfig,
     MetacognitionLoop,

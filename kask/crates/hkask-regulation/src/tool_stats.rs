@@ -7,7 +7,7 @@
 //! - **Layer 1 (cost):** Reserve at the 90th percentile instead of a point estimate,
 //!   tightening with more observations. Wired into the `McpRuntime::invoke` /
 //!   `ToolGovernance` membrane (in `hkask-mcp`) as a distribution-based override of
-//!   the EnergyEstimator's point estimate.
+//!   the `FlatEnergyEstimator`'s flat point estimate.
 //! - **Layer 2 (reliability):** Pre-escalate when success probability drops below
 //!   a threshold, detecting degrading tools before they fail.
 //! - **Layer 3 (auto-calibration):** Cost data feeds back into the estimator —

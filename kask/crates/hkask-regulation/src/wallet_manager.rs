@@ -32,7 +32,8 @@ pub struct WalletBalance {
 /// Uses SQLite via WalletStore for persistence.
 ///
 /// Also owns the runtime gas→rJoule conversion rate, which is calibrated
-/// by `WalletGasCalibrator` via `set_gas_per_rjoule`.
+/// externally via `set_gas_per_rjoule` (exposed through the `WalletBudgetPort`
+/// trait in `hkask-types`).
 pub struct WalletManager {
     store: Option<Arc<WalletStore>>,
     well_manager: Option<Arc<RwLock<WellManager>>>,

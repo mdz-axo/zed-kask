@@ -48,8 +48,14 @@ impl Default for FlatEnergyEstimator {
     }
 }
 
-impl hkask_regulation::EnergyEstimator for FlatEnergyEstimator {
-    fn estimate_cost(&self, _server: &str, _tool: &str, _args: &Value) -> u64 {
+impl FlatEnergyEstimator {
+    /// Estimate the energy cost of a tool invocation.
+    ///
+    /// Returns the flat cost (default 10 gas). The `server`, `tool`, and `args`
+    /// parameters are accepted for parity with the call site's needs but do not
+    /// affect the estimate — this is a flat-cost estimator, not a calibrated one.
+    #[must_use]
+    pub fn estimate_cost(&self, _server: &str, _tool: &str, _args: &Value) -> u64 {
         self.cost
     }
 }
@@ -177,7 +183,7 @@ fn resolve_mcp_binary(server_id: &str, command: &str) -> String {
 struct ToolGovernance {
     cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
     event_sink: Arc<dyn hkask_types::RegulationSink>,
-    estimator: Arc<dyn hkask_regulation::EnergyEstimator>,
+    estimator: FlatEnergyEstimator,
 }
 
 #[derive(Clone)]
@@ -216,7 +222,7 @@ impl McpRuntime {
         mut self,
         cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
         event_sink: Arc<dyn hkask_types::RegulationSink>,
-        estimator: Arc<dyn hkask_regulation::EnergyEstimator>,
+        estimator: FlatEnergyEstimator,
     ) -> Self {
         self.governance = Some(ToolGovernance {
             cybernetics,

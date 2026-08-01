@@ -62,8 +62,8 @@ pub trait LedgerObserver: Send + Sync {
 /// Storage port for Regulation event queries.
 ///
 /// Abstracts the RegulationArchive behind a trait so the cybernetic regulation
-/// layer (GasReport, CalibratedEnergyEstimator, WalletGasCalibrator) can be
-/// tested without a real SQLite database.
+/// layer (GasBudgetManager, WalletManager) can be tested without a real SQLite
+/// database.
 ///
 /// Concrete impl: `RegulationArchive` in `hkask-storage`.
 pub trait LedgerStoragePort: Send + Sync {
