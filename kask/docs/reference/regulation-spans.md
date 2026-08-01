@@ -181,7 +181,7 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 
 **File:** `crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted as tracing events by `crates/hkask-regulation/src/cybernetics_loop.rs` and `crates/hkask-services-core/src/error/regulation_record.rs`
 
-Wallet spans are canonical namespace strings (not a dedicated `WalletSpan` enum). The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup; `gas_per_rjoule` now lives in `regulation::WalletManager` which implements `WalletBudgetPort`. Wallet types live in `hkask-types`. The `InfraSpan::WalletConversion` variant covers the `reg.wallet.conversion` namespace; the remaining wallet spans are emitted as raw tracing events.
+Wallet spans are canonical namespace strings (not a dedicated `WalletSpan` enum). The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`. Wallet types live in `hkask-types`. The `InfraSpan::WalletConversion` variant covers the `reg.wallet.conversion` namespace; the remaining wallet spans are emitted as raw tracing events.
 
 | Namespace | Emitted When |
 |---|---|
@@ -287,7 +287,7 @@ Spans are emitted through two mechanisms:
 
 ### 4.2 Storage
 
-RegulationRecords are persisted to a `RegulationArchive` (SQLite-backed) via the `LedgerStoragePort` trait. The store supports:
+RegulationRecords are persisted to a `RegulationArchive` (SQLite-backed, used directly — no port trait). The store supports:
 
 - **`query_algedonic()`** — filtered queries by span category, time window, and agent. Used to aggregate gas consumption per tool/agent.
 

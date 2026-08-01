@@ -49,7 +49,6 @@ observable events.
 | `RuntimeAlert` | `kask/crates/hkask-regulation/src/algedonic.rs:37` |
 | `AlertSeverity` enum | `kask/crates/hkask-regulation/src/algedonic.rs:26` |
 | `AlertEmailSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:54` |
-| `RuntimePolicy` trait | `kask/crates/hkask-regulation/src/runtime_policy.rs:47` |
 | `PolicyVerdict` enum | `kask/crates/hkask-regulation/src/runtime_policy.rs:14` |
 | `DefaultPolicy` | `kask/crates/hkask-regulation/src/runtime_policy.rs:66` |
 | `ToolStats` | `kask/crates/hkask-regulation/src/tool_stats.rs:73` |
@@ -137,7 +136,6 @@ classDiagram
     CyberneticsLoop ..> ProposedAction : consumes
     MetacognitionLoop --> EscalationAlert : emits
     RuntimeAlert --> AlertSeverity
-    WalletManager ..> WalletBudgetPort : implements
     WalletManager --> Well : draws from
     WalletManager --> GasBudget : manages
 ```
@@ -164,11 +162,10 @@ spawns `publish_event` on a caller-supplied tokio handle so emitters on
 threads without a reactor context (e.g. the GPUI foreground thread) can
 forward spans without panicking.
 
-The `RuntimePolicy` trait (`runtime_policy.rs:47`) decides whether to allow,
+The `DefaultPolicy` (`runtime_policy.rs:66`) decides whether to allow,
 block, require human confirmation, or log an action. The `PolicyVerdict`
 enum (`runtime_policy.rs:14`) has four variants: `Allow`, `Block(String)`,
-`RequireHuman(String)`, and `Log(String)`. The `DefaultPolicy`
-(`runtime_policy.rs:66`) implements four rules: human-in-loop tools require
+`RequireHuman(String)`, and `Log(String)`. `DefaultPolicy` implements four rules: human-in-loop tools require
 confirmation, untrusted data flowing to `Sink`-tainted tools is blocked,
 sessions exceeding `max_actions_per_session` are blocked, and `Source`-tainted
 tools are logged.
@@ -213,11 +210,10 @@ also has three levels: `Info`, `Warning`, `Critical`.
 
 ## Wallet and gas budget
 
-The `WalletManager` (`wallet_manager.rs:36`) implements the `WalletBudgetPort`
-trait from `hkask-types`. It manages per-agent rJoule balances via a
-`WalletStore`, holds a `gas_per_rjoule: AtomicU64` conversion rate (moved
-here from the deleted `hkask-wallet` crate), and delegates gas draws to a
-`WellManager`. The `WalletBalance` struct (`wallet_manager.rs:26`) holds the
+The `WalletManager` (`wallet_manager.rs:36`) manages per-agent rJoule balances via a
+`WalletStore` and delegates gas draws to a `WellManager`. The gas→rJoule
+conversion rate is configured via `WalletConfig.gas_per_rjoule` in `hkask-types`.
+The `WalletBalance` struct (`wallet_manager.rs:26`) holds the
 current `gas` and `rjoule` balances.
 
 The `Well` struct (`well.rs:28`) is a replenishment source. Each well has a
@@ -233,8 +229,7 @@ gas allocation, enforcing the invariant `remaining + reserved ≤ cap`.
 - [hkask-regulation Explanation](./explanation.md): state diagram of the
   homeostatic loop.
 - [hkask-types Reference](../hkask-types/reference.md): the
-  `WalletBudgetPort`, `LedgerObserver`, `LedgerStoragePort`, and
-  `EscalationSeverity` types this crate implements or consumes.
+  `LedgerObserver` type this crate consumes, and the `EscalationSeverity` type from `hkask-storage`.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P9 (feedback loops) and P12 (authenticated host mandate).
 

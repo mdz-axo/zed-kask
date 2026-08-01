@@ -32,10 +32,7 @@ use crate::energy::{AgentGasStatus, GasBudget, GasCost, GasError};
 use crate::energy_budget_management::GasBudgetManager;
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
-use crate::sensor_provider::{
-    EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor, WalletBalanceRatioSensor,
-    WalletKeyHealthSensor,
-};
+use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};
 use crate::set_points::{InferenceThrottleMode, SetPoints};
 use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
@@ -153,13 +150,6 @@ impl CyberneticsLoop {
             registry.register(Arc::new(VarietySensor::new(
                 Arc::clone(&ledger),
                 set_points.variety_max_deficit,
-            )));
-            registry.register(Arc::new(WalletKeyHealthSensor::new(Arc::clone(
-                &gas_budget_manager,
-            ))));
-            registry.register(Arc::new(WalletBalanceRatioSensor::new(
-                Arc::clone(&gas_budget_manager),
-                0.1, // alert when below 10%
             )));
             Arc::new(registry)
         };
@@ -788,11 +778,8 @@ impl RegulationLoop for CyberneticsLoop {
         let mut signals = Vec::new();
 
         // All sensing is now done through the SensorBus.
-        // Wallet balance ratio, energy remaining, variety deficit, wallet key health,
-        // and tool reliability are all sensed by registered Sensor implementations.
-        //
-        // The inline wallet ratio sensing that was here has been migrated to
-        // WalletBalanceRatioSensor (v0.32.0) — see ADR-056.
+        // Energy remaining, variety deficit, and tool reliability are all sensed
+        // by registered Sensor implementations.
 
         // Append signals from pluggable sensor providers.
         let registry_signals = self.sensor_registry.sense_all(LoopId::Cybernetics).await;

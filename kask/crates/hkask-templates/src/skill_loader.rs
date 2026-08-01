@@ -86,7 +86,7 @@ impl SkillLoader {
     /// Create a new skill loader with an explicit reader.
     ///
     /// expect: "The system loads skills into the template registry"
-    /// \[P3\] Motivating: Generative Space — testable loader with injected I/O
+    /// \[P3\] Motivating: Generative Space — loader with configurable I/O
     /// pre:  project_root is a valid directory path
     /// post: returns SkillLoader configured for the given root and reader
     pub fn with_reader(project_root: impl Into<PathBuf>, reader: FsSkillReader) -> Self {

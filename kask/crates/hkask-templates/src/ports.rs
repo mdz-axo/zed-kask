@@ -1,7 +1,8 @@
-//! Port traits for registry and template execution
+//! Error types and filesystem reader for registry and template execution
 //!
-//! Defines the hexagonal architecture ports for template dispatch system.
-//! Per architecture v0.21.0: Rust is the loom, YAML/Jinja2 is the thread.
+//! Defines the error taxonomy (`TemplateError`, `SkillFinding`,
+//! `ManifestResolveError`) and the `FsSkillReader` filesystem wrapper used by
+//! `SkillLoader`.
 
 use hkask_types::NotFound;
 

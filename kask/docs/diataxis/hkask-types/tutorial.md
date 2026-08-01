@@ -13,7 +13,7 @@ mds_categories: [lifecycle]
 This tutorial introduces the hexagonal port traits that `hkask-types`
 defines. You will learn what a port trait is, how it mediates between kask
 and zed, and how to read the trait hierarchy. By the end, you will
-understand why `InferencePort`, `MemoryPort`, and `WalletBudgetPort` exist
+understand why `InferencePort` and `MemoryPort` exist
 and where their implementations live.
 
 ## Learning path

@@ -406,6 +406,8 @@ impl GasBudgetManager {
 
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
     /// Return wallet-backed agents whose balance is zero.
+    /// Currently returns empty — wallet-backed budgets were removed as dead code.
+    /// Retained for sensor_provider.rs compatibility.
     pub async fn wallet_exhausted_agents(&self) -> Vec<WebID> {
         Vec::new()
     }
@@ -466,16 +468,17 @@ impl GasBudgetManager {
     }
 
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
-    /// Iterate over wallet-backed budgets to produce wallet health signals.
-    /// Returns `(balance_ratio, cap_ratio)` for each wallet-backed agent.
-    /// balance_ratio: 0.0 = empty, 1.0 = full (relative to a nominal capacity).
+    /// Wallet balance ratios for sensor health signals.
+    /// Currently returns empty — wallet-backed budgets were removed as dead code.
+    /// Retained for WalletBalanceRatioSensor compatibility.
     pub async fn wallet_balance_ratios(&self) -> Vec<(f64, f64)> {
         Vec::new()
     }
 
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
-    /// Check API key health for all wallet-backed budgets.
-    /// Returns `(agent, reason)` for each key that is exhausted or expired.
+    /// Wallet key health alerts.
+    /// Currently returns empty — wallet-backed budgets were removed as dead code.
+    /// Retained for WalletKeyHealthSensor compatibility.
     pub async fn wallet_key_alerts(&self) -> Vec<(WebID, String)> {
         Vec::new()
     }

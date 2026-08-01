@@ -40,7 +40,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 | `HumanUser` | zed account (replaces deleted `hkask-identity` user store) | Human identity, role, provider link — owned by zed-kask, not a parallel hKask identity store | P1 |
 | `UserPod` | `hkask-types` | Agent identity with persona, voice, wallet link | P6 |
 | Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a userpod (Inactive\|Active\|ServerMode) — pod abstraction deleted in 2026-07-25 cleanup | P1 |
-| `Wallet` | `hkask-regulation::WalletManager` (replaces deleted `hkask-wallet`) | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer. `gas_per_rjoule` now lives in `regulation::WalletManager` which implements `WalletBudgetPort`. | P9 |
+| `Wallet` | `hkask-regulation::WalletManager` (replaces deleted `hkask-wallet`) | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer. `gas_per_rjoule` conversion rate is configured via `WalletConfig` in `hkask-types`. | P9 |
 | `ApiKey` | `hkask-types` (wallet types; replaces deleted `hkask-wallet`) | Scoped API key with spending limits and expiry | P1 |
 | `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
 | `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, gas budgets | P9 |
@@ -102,7 +102,7 @@ The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkas
 | `hkask-services-chat` | zed's agent panel (`crates/agent`, `agent_ui`) — zed owns chat |
 | `hkask-services-onboarding` | zed's first-launch flow — zed owns onboarding |
 | `hkask-services-skill` | `hkask-templates` / `ManifestExecutor` (D1) — skill execution is native, no service layer |
-| `hkask-services-wallet` | In-process wallet primitives (`hkask-regulation::WalletManager` + `hkask-ledger`); no service layer — consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly (`hkask-wallet` deleted; `gas_per_rjoule` moved to `regulation::WalletManager`) |
+| `hkask-services-wallet` | In-process wallet primitives (`hkask-regulation::WalletManager` + `hkask-ledger`); no service layer — consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly (`hkask-wallet` deleted; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`) |
 
 Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve at T3.0):
 
@@ -562,7 +562,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | **Regulation** | `ledger()`, `cybernetics()`, `loops()`, `energy()`, `tool_stats()` | `hkask-regulation` handles |
 | **Memory** | `build_per_agent_memory(db, sink)`, `per_agent_memory(agent)`, `consolidate_agent_memory(agent, request)`, `consolidation_status_for(agent)` | `hkask-memory` handles — single OCAP-gated, consent-checked consolidation entry point |
 | **Templates** | `templates()`, `manifest_executor()` | `hkask-templates` — skill execution (D1) |
-| **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-regulation::WalletManager` primitives (replaces deleted `hkask-wallet`) — no service layer; consumers compose directly. `gas_per_rjoule` now lives in `regulation::WalletManager` which implements `WalletBudgetPort`. |
+| **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-regulation::WalletManager` primitives (replaces deleted `hkask-wallet`) — no service layer; consumers compose directly. `gas_per_rjoule` conversion rate is configured via `WalletConfig` in `hkask-types`. |
 | **Identity** | `webid()` | WebID for the active user/curator data directory |
 | **Inference** | `inference_port()`, `gas_remaining()`, `gas_cap()` | `hkask-inference` — reads API keys from zed `CredentialsProvider` (D9b) |
 | **Guard** | `governed_tool(webid)`, `guard_strategy()` | `hkask-guard` (D4) — Magna Carta floor in the inference path |
@@ -576,13 +576,13 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign` (moved from deleted `hkask-pods`), `HMemEntry` (moved from deleted `hkask-git-cas`), `ExpectProposal` (moved from deleted `hkask-test-harness`) |
 | `hkask-storage` | Domain, Lifecycle | `hMem`, `WalletStore`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
-| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CyberneticsLoop`, variety/algedonic, `WalletManager` (implements `WalletBudgetPort`; `gas_per_rjoule` tracking) |
+| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CyberneticsLoop`, variety/algedonic, `WalletManager` (gas/rJoule balance, `gas_per_rjoule` config via `WalletConfig`) |
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
 | `hkask-capability` | Trust | OCAP — sovereignty enforcement, capability tokens |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Storage backend → zed `CredentialsProvider` (D9b) |
-| ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` moved to `regulation::WalletManager` which implements `WalletBudgetPort`; wallet types live in `hkask-types` |
+| ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `WalletManager` uses it for gas/rJoule conversion; wallet types live in `hkask-types` |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 10 MCP servers |

@@ -49,7 +49,6 @@ pub use runtime::StoredSkillSpan;
 pub use runtime_policy::{DefaultPolicy, PolicyConfig, PolicyVerdict};
 pub use sensor_provider::{
     EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry, ToolReliabilitySensor, VarietySensor,
-    WalletBalanceRatioSensor, WalletKeyHealthSensor,
 };
 pub use set_points::{
     DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD, DEFAULT_CONNECTOR_LATENCY_MAX_SECS,

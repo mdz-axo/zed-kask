@@ -11,13 +11,8 @@ Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of
 | `energy` | Gas budgets (`hJoules`), `GasBudget`, `GasCost` |
 | `energy_budget_management` | Budget registration, reservation, settlement |
 
-| `governed_tool` | Tool invocation membrane — Regulation-gated MCP calls |
 | `algedonic` | Algedonic signal channel (positive/negative valence) |
-| `circuit_breaker` | Regulation circuit breaker |
 | `types::loops` | `CurationInput`, `LoopAction`, `CuratorDirective` |
-| `seam_watcher` | Seam drift detection and inventory |
-| `slo_manager` | SLO evaluation, error budgets, breach escalation |
-| `storage_guard` | Autonomous disk space management (Loop 7) |
 | `wallet_manager` | Wallet-backed energy budgets |
 | `runtime_policy` | Layer 6 defense — pre-execution policy check (VeriGuard/AgentGuard) |
 
@@ -31,17 +26,12 @@ Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of
 The OCAP-gated tool invocation membrane (`McpRuntime::invoke` / `ToolGovernance`) lives in `hkask-mcp`; it consumes this crate's `CyberneticsLoop`, `GasBudget`, and `ToolStats` primitives via the hold-settle pattern.
 
 | `GasBudget` | Energy budget with hJoule accounting |
-| `CircuitBreaker` | Fail-open regulation circuit breaker |
 | `SetPoints` | Configurable regulatory thresholds |
-| `SloManager` | SLO evaluation with error budget tracking |
-| `StorageGuardLoop` | Autonomous disk space reclamation |
-| `RuntimePolicy` | Pre-execution policy check trait (Allow/Block/RequireHuman/Log) |
-| `DefaultPolicy` | FIDES taint flow + rate limiting + human-in-the-loop enforcement |
+| `DefaultPolicy` | Pre-execution policy check (Allow/Block/RequireHuman/Log) — FIDES taint flow + rate limiting + human-in-the-loop enforcement |
 
 ## Dependencies
 
-- `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError)
-- `hkask-ports` — hexagonal port traits (InferencePort)
-- `hkask-storage` — persistence (via ports)
+- `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError, InferencePort)
+- `hkask-storage` — persistence
 - `hkask-capability` — OCAP delegation tokens
 - `tokio`, `tracing`, `serde`, `chrono`

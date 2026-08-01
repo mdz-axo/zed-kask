@@ -17,4 +17,4 @@ mitigation: "Label every MCP tool as Source/Sink/Pure/Endorser. Block Source→S
 source: "https://arxiv.org/pdf/2505.23643 — Microsoft Research FIDES"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced
-note: "Type is now integrated — see RR-0013 for the ToolInfo field check. Taint labels are looked up at runtime via get_tool_info() and passed to RuntimePolicy::check()."
+note: "Type is now integrated — see RR-0013 for the ToolInfo field check. Taint labels are looked up at runtime via get_tool_info() and passed to DefaultPolicy::check()."
