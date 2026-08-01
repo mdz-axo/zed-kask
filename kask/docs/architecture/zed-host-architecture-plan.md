@@ -152,7 +152,7 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 **Discipline:** D1–D14 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
 ## 6. Migration Status
 
-> The phased migration plan (Phases 0–9) that previously occupied this section has been removed per `DOCUMENTATION_STANDARDS.md` §10 ("No aspirational content in `architecture/`"). All phases are complete: D1–D14 are wired (see §3 divergence map), dead code pruning is done, the regulation system is wired, and the pod abstraction is removed. The remaining open items (T3.4 double-gate, T4.2/T4.3 memory/thread-watcher, T6.2 clean-machine verification, T9.3 direct-chat guard) are deferred verification and design decisions, not architecture. The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.
+> The phased migration plan that previously occupied this section has been removed per `DOCUMENTATION_STANDARDS.md` §10. All phases are complete: D1–D14 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.
 
 ---
 
@@ -207,7 +207,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 
 ## 8. Architecture Notes
 
-> The planning process artifacts (open questions, self-critique, review findings) that previously occupied this section have been removed per `DOCUMENTATION_STANDARDS.md` §10 ("No aspirational content in `architecture/`"). All review findings (R1–R12) were resolved during implementation. The architecture is described in §0–§7, §11–§14 above and below. The `DIVERGENCE.md` at the repo root is the authoritative divergence surface record.
+> The planning process artifacts (open questions, review findings) that previously occupied this section have been removed per `DOCUMENTATION_STANDARDS.md` §10. All review findings were resolved during implementation. The architecture is described in §0–§7, §11–§14. The `DIVERGENCE.md` at the repo root is the authoritative divergence surface record.
 
 ---
 

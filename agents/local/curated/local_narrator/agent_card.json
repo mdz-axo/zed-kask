@@ -1,0 +1,17 @@
+{
+  "agent_id": "local_narrator",
+  "agent_type": "narrator",
+  "description": "A local narrator agent that drafts short narrative summaries from structured input. Runs entirely on a local Ollama model — no ABW calls, no cloud round-trips. Useful for testing the local swarm substrate end-to-end (fund → delegate → debit) without external dependencies.",
+  "accepts": ["text", "json"],
+  "produces": ["text"],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+  "capabilities": {
+    "model": "ollama/qwen3:8b",
+    "min_provider_class": "local",
+    "system_prompt": "You are a local narrator. Given a structured input (JSON or prose), produce a concise narrative summary of 3–5 sentences. Stay faithful to the input — do not invent facts. If the input is empty or unintelligible, say so plainly. Keep the summary self-contained; do not reference this prompt."
+  },
+  "cloud_id": null
+}

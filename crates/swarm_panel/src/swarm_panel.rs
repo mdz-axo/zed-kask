@@ -31,13 +31,15 @@ use anyhow::Result;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle,
-    WeakEntity, Window, actions, uniform_list,
+    App, Context, Entity, EventEmitter, Focusable, ReadGlobal as _, Render, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
 };
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
 use project::Project;
 use serde::Deserialize;
 use serde_json::json;
+use settings::Settings as _;
+use settings::SettingsStore;
 use ui::{
     ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
     ToggleButtonSimple, WithScrollbar, prelude::*,
@@ -91,25 +93,45 @@ fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
         "## Agent Swarm Panel — Steer Mode\n\
          \n\
          You are operating in the Agent Swarm panel's Steer mode, scoped to the \
-         `{SWARM_SERVER}` MCP server. The swarm server's tools \
-         (`swarm_list_agents`, `swarm_get_swarm`, `swarm_hire_cost`, \
-         `swarm_request_consent`, `swarm_hire`, `swarm_delegate`, `swarm_xaman`) \
-         are available in this conversation.\n\
+         `{SWARM_SERVER}` MCP server. The swarm server exposes two tool sets, \
+         selected by the operator via the `kask.swarm.mode` setting (`abw` or \
+         `local`):\n\
+         \n\
+         **ABW tools** (`mode: abw`, the default): `swarm_list_agents`, \
+         `swarm_get_swarm`, `swarm_hire_cost`, `swarm_request_consent`, \
+         `swarm_hire`, `swarm_delegate`, `swarm_xaman`. These route to Agent \
+         Bestiary World and require the ABW API key.\n\
+         \n\
+         **Local tools** (`mode: local`): `swarm_list_local_agents`, \
+         `swarm_fund_local`, `swarm_delegate_local`, `swarm_clone_to_local`, \
+         `swarm_push_to_cloud`. These run on the local substrate \
+         (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no ABW \
+         round-trips. The local ledger is operator-funded — call \
+         `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
+         `PaymentRequired`. There is no consent token in local mode: the balance \
+         check is the gate. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
+         cards between the local registry (`agents/local/curated/<id>/agent_card.json`) \
+         and ABW; a cloned card carries `cloud_id` to track the sync link.\n\
          \n\
          {workspace_note}\n\
          \n\
          The `swarm-intelligence` skill is available for swarm composition and \
-         steering. When the operator asks to compose, configure, tune, or steer a \
-         swarm toward a target condition, invoke the `swarm-intelligence` skill \
-         with the swarm id and the operator's task. The skill runs a SENSE → ORIENT \
-         → DECIDE → ACT → CHECK → CONVERGE loop.\n\
+         steering in both modes. When the operator asks to compose, configure, \
+         tune, or steer a swarm toward a target condition, invoke the \
+         `swarm-intelligence` skill with the swarm id (or the local registry) \
+         and the operator's task. The skill runs a SENSE → ORIENT → DECIDE → ACT \
+         → CHECK → CONVERGE loop and branches on `{{ mode }}` (local vs abw) at \
+         the SENSE/ACT/CHECK steps. Pass `mode` in the skill context so the \
+         templates select the right data source and gate.\n\
          \n\
-         The consent gate is enforced by `swarm_request_consent` (mints a \
-         single-use, action+target-scoped token) and `swarm_hire`/`swarm_delegate` \
-         (consume the token before spending). Do not hire or delegate without \
-         first calling `swarm_request_consent` and passing the returned token to \
-         the spend tool. The consent gate is the enforcement point — it must \
-         actually block, not just warn.
+         The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
+         (mints a single-use, action+target-scoped token) and `swarm_hire`/\
+         `swarm_delegate` (consume the token before spending). Do not hire or \
+         delegate without first calling `swarm_request_consent` and passing the \
+         returned token to the spend tool. The consent gate is the enforcement \
+         point — it must actually block, not just warn. In local mode there is no \
+         consent token; the `credits_authorized` + ledger balance check is the \
+         gate.\n\
 \
          The per-dispatch credit ceiling (`HKASK_ABW_MAX_CREDITS`, default 50) is \
          a hard server-side gate. `swarm_hire` and `swarm_create_swarm` refuse \
@@ -118,8 +140,8 @@ fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
          to check `within_budget` — if false, tell the operator to raise \
          `HKASK_ABW_MAX_CREDITS` rather than attempting the hire. For delegation, \
          set `credits_authorized` to the ceiling or lower; do not mint a delegate \
-         consent for more than the ceiling.
-"
+         consent for more than the ceiling. The same ceiling applies to \
+         `swarm_delegate_local` in local mode.\n"
     )
     .into()
 }
@@ -1171,6 +1193,39 @@ impl SwarmPanel {
         cx.notify();
     }
 
+    /// Read the current swarm mode from `kask.swarm.mode` settings. Returns
+    /// `Abw` when unset (the default). The panel reads the mode here (not
+    /// from the MCP server) because the server's mode is derived from the
+    /// same setting via env vars — the setting is the single source of truth.
+    /// Used by the header mode toggle to show the active backend.
+    fn current_swarm_mode(cx: &mut Context<Self>) -> kask_bridge::SwarmModeConfig {
+        kask_bridge::KaskSettings::get_global(cx).swarm.mode.clone()
+    }
+
+    /// Set `kask.swarm.mode` in the user settings file. Persists via
+    /// `SettingsStore::update_settings_file`, which writes to `settings.json`
+    /// and triggers a global settings reload. The MCP server restarts with
+    /// the updated `HKASK_SWARM_MODE` env var (the `ContextServerStore`
+    /// observes the registry, which `sync_kask_mcp_servers` re-syncs on
+    /// settings change). This is the operator-facing toggle for v2 §15 —
+    /// flipping it re-routes the swarm server between ABW and the local
+    /// substrate without a code revert.
+    fn set_swarm_mode(&mut self, mode: kask_bridge::SwarmModeConfig, cx: &mut Context<Self>) {
+        let content_mode = match mode {
+            kask_bridge::SwarmModeConfig::Abw => settings_content::SwarmModeContent::Abw,
+            kask_bridge::SwarmModeConfig::Local => settings_content::SwarmModeContent::Local,
+        };
+        SettingsStore::global(cx).update_settings_file(<dyn Fs>::global(cx), move |settings, _| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .mode = Some(content_mode);
+        });
+        cx.notify();
+    }
+
     /// Lazily construct the `ConversationView` for Steer mode if it doesn't
     /// exist yet. Mirrors `KaskPanel::ensure_thread_for_tab`: constructs a
     /// `CuratorAgentServer` scoped to the swarm MCP server, with a system
@@ -1655,6 +1710,10 @@ impl SwarmPanel {
                 let show_clone = source == AgentSource::Cloud;
                 // Push-to-cloud button: visible for Local agents only.
                 let show_push = source == AgentSource::Local;
+                // Pre-clone agent_name for each button closure that needs it.
+                let hire_name = agent_name.clone();
+                let clone_name = agent_name.clone();
+                let push_name = agent_name.clone();
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -1714,20 +1773,16 @@ impl SwarmPanel {
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
                                     .disabled(self.spend_in_flight.is_some())
-                                    .on_click({
-                                        let agent_name = agent_name.clone();
-                                        cx.listener(
-                                            move |this, _, _, cx| {
-                                                this.begin_hire(agent_name.clone(), cx);
-                                            },
-                                        )
-                                    })),
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.begin_hire(hire_name.clone(), cx);
+                                        },
+                                    )),
                                 )
                                 .when(show_clone, |this| {
-                                    let agent_name = agent_name.clone();
                                     this.child(
                                         Button::new(
-                                            SharedString::from(format!("clone-{agent_name}")),
+                                            SharedString::from(format!("clone-{clone_name}")),
                                             "Clone to Local",
                                         )
                                         .style(ButtonStyle::Subtle)
@@ -1735,16 +1790,15 @@ impl SwarmPanel {
                                         .disabled(self.spend_in_flight.is_some())
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
-                                                this.clone_to_local(agent_name.clone(), cx);
+                                                this.clone_to_local(clone_name.clone(), cx);
                                             }),
                                         ),
                                     )
                                 })
                                 .when(show_push, |this| {
-                                    let agent_name = agent_name.clone();
                                     this.child(
                                         Button::new(
-                                            SharedString::from(format!("push-{agent_name}")),
+                                            SharedString::from(format!("push-{push_name}")),
                                             "Push to Cloud",
                                         )
                                         .style(ButtonStyle::Subtle)
@@ -1752,7 +1806,7 @@ impl SwarmPanel {
                                         .disabled(self.spend_in_flight.is_some())
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
-                                                this.push_to_cloud(agent_name.clone(), cx);
+                                                this.push_to_cloud(push_name.clone(), cx);
                                             }),
                                         ),
                                     )
@@ -2273,6 +2327,58 @@ impl Render for SwarmPanel {
                                 )
                             }),
                     )
+                    // v2 §15: the mode toggle re-routes the swarm server
+                    // between ABW (v1) and the local substrate (v2). Writing
+                    // `kask.swarm.mode` persists to settings.json and restarts
+                    // the MCP server with the updated `HKASK_SWARM_MODE` env
+                    // var. The toggle is always visible so the operator can
+                    // switch backends without editing JSON.
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Label::new("Backend:")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div().child(
+                                    ToggleButtonGroup::single_row(
+                                        "swarm-backend-mode",
+                                        [
+                                            ToggleButtonSimple::new(
+                                                "ABW",
+                                                cx.listener(|this, _event, _, cx| {
+                                                    this.set_swarm_mode(
+                                                        kask_bridge::SwarmModeConfig::Abw,
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                            ToggleButtonSimple::new(
+                                                "Local",
+                                                cx.listener(|this, _event, _, cx| {
+                                                    this.set_swarm_mode(
+                                                        kask_bridge::SwarmModeConfig::Local,
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        ],
+                                    )
+                                    .style(ToggleButtonGroupStyle::Outlined)
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(28.)))
+                                    .label_size(LabelSize::Small)
+                                    .auto_width()
+                                    .selected_index(match Self::current_swarm_mode(cx) {
+                                        kask_bridge::SwarmModeConfig::Abw => 0,
+                                        kask_bridge::SwarmModeConfig::Local => 1,
+                                    })
+                                    .into_any_element(),
+                                ),
+                            ),
+                    )
                     .children(self.render_consent_banner(cx))
                     // Hire-flow errors surface near the consent banner.
                     .when_some(self.hire_error.clone(), |this, err| {
@@ -2554,7 +2660,10 @@ mod tests {
     #[test]
     fn panel_tool_names_match_server() {
         // These strings must match the #[tool] fn names in
-        // `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
+        // `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. Keep this list in sync
+        // when adding/removing a server tool — a rename in `hkask-mcp-swarm`
+        // must be reflected here so the panel's `invoke_tool` call sites
+        // don't silently degrade to "tool not found".
         assert_eq!(SWARM_SERVER, "swarm");
         for tool in [
             "swarm_list_agents",
@@ -2562,6 +2671,7 @@ mod tests {
             "swarm_get_agent",
             "swarm_list_apps",
             "swarm_ontology_templates",
+            "swarm_execute_agent",
             "swarm_hire_cost",
             "swarm_request_consent",
             "swarm_hire",
@@ -2573,6 +2683,12 @@ mod tests {
             "swarm_create_swarm",
             "swarm_xaman",
             "swarm_create_app",
+            // v2 §15 local tools (Slices 9 + 11).
+            "swarm_fund_local",
+            "swarm_delegate_local",
+            "swarm_list_local_agents",
+            "swarm_clone_to_local",
+            "swarm_push_to_cloud",
         ] {
             assert!(tool.starts_with("swarm_"));
         }
@@ -2747,6 +2863,45 @@ mod tests {
         assert!(
             prompt.contains("within_budget"),
             "steer prompt must tell the model to check within_budget before hiring"
+        );
+    }
+
+    // v2 §15: the steer prompt must describe the local tools so the curator
+    // knows to use them when the operator has set `kask.swarm.mode: local`.
+    // The local runtime is constructed even in ABW mode (the operator can
+    // mix), so the tools are always available. Pins the §15.5 Slice 11
+    // follow-up: "Update the Steer-mode system prompt to describe the local
+    // tools and the mode toggle."
+    #[test]
+    fn steer_prompt_describes_local_tools() {
+        let prompt = steer_system_prompt(Some("ws_test"));
+        for tool in [
+            "swarm_list_local_agents",
+            "swarm_fund_local",
+            "swarm_delegate_local",
+            "swarm_clone_to_local",
+            "swarm_push_to_cloud",
+        ] {
+            assert!(
+                prompt.contains(tool),
+                "steer prompt must describe the local tool {tool}"
+            );
+        }
+        // The mode toggle must be named so the curator can tell the operator
+        // how to switch backends.
+        assert!(
+            prompt.contains("kask.swarm.mode"),
+            "steer prompt must name the kask.swarm.mode setting"
+        );
+        // The local ledger funding requirement must be stated so the curator
+        // funds before delegating (the §15.6 constraint — no auto-replenish).
+        assert!(
+            prompt.contains("swarm_fund_local"),
+            "steer prompt must tell the curator to fund the local ledger"
+        );
+        assert!(
+            prompt.contains("PaymentRequired"),
+            "steer prompt must name the PaymentRequired error for an unfunded ledger"
         );
     }
 

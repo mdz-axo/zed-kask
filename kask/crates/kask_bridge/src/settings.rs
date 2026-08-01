@@ -442,19 +442,14 @@ pub struct KaskSwarmSettings {
 /// circular dependency (the bridge crate does not depend on the server
 /// crate). The two enums MUST stay in sync — see the `Default` impl comment
 /// on `KaskSwarmSettings`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SwarmModeConfig {
     /// Route to Agent Bestiary World (v1 behavior).
+    #[default]
     Abw,
     /// Route to local substrate crates (v2, §15).
     Local,
-}
-
-impl Default for SwarmModeConfig {
-    fn default() -> Self {
-        Self::Abw
-    }
 }
 
 impl std::fmt::Display for SwarmModeConfig {

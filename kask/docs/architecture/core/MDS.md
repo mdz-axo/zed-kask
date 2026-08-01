@@ -440,8 +440,6 @@ coherence_metric:
 
 ## 9. Documentation Structure
 
-> **Incorporated from:** `docs/specifications/specs/MDS_SCAFFOLD.md`
-
 ### 9.1 Category → Directory Mapping
 
 Where each MDS category's authoritative documents live:
@@ -449,10 +447,10 @@ Where each MDS category's authoritative documents live:
 | # | MDS Category | Primary Directory | Key Documents |
 |---|--------------|-------------------|---------------|
 | 1 | **Domain** | `architecture/` | MDS.md, zed-host-architecture-plan.md |
-| 2 | **Composition** | `architecture/` | MDS.md, zed-host-architecture-plan.md §Four-Loop Architecture |
-| 3 | **Trust** | `architecture/` | magna-carta.md, PRINCIPLES.md |
-| 4 | **Lifecycle** | `architecture/` + `plans/` | MDS.md, deployment-and-backup.md |
-| 5 | **Curation** | `architecture/` + `specifications/` | WRITING_EXCELLENCE.md, DOCUMENTATION_STANDARDS.md |
+| 2 | **Composition** | `architecture/` | MDS.md, zed-host-architecture-plan.md §13 (Composition & Connection Surfaces) |
+| 3 | **Trust** | `architecture/core/` | magna-carta.md, PRINCIPLES.md |
+| 4 | **Lifecycle** | `architecture/` + `plans/` | MDS.md, zed-host-architecture-plan.md |
+| 5 | **Curation** | `architecture/` | DOCUMENTATION_STANDARDS.md (includes Writing Excellence protocol in Appendix A) |
 
 **Rule:** New documents go in the directory of their primary MDS category. Cross-cutting documents go in the directory of their dominant category.
 
@@ -465,15 +463,13 @@ Draft → Active → Deprecated → Superseded → Removed
 | State | Rule |
 |-------|------|
 | **Active** | Must map to ≥1 MDS category via `mds_categories` frontmatter |
-| **Deprecated** | Move to `docs/archive/YYYY-MM-DD-<label>/` |
-| **Superseded** | Move to archive; successor must reference it |
-| **Removed** | `git rm` from working tree; git history is archive of record |
+| **Deprecated** | `git rm` from active tree at next review; git history is the archive of record |
+| **Superseded** | `git rm`; successor carries the content forward |
+| **Removed** | `git rm` from working tree; recoverable via `git log --diff-filter=D` |
 
 ### 9.3 Verification
 
-```bash
-bash docs/ci/check-links.sh    # Zero broken cross-references
-```
+Cross-references are verified by the link checker in CI (relative links within the repository). Broken links fail the verification gate.
 
 ---
 
@@ -498,7 +494,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ## Composition Root (replaces the deleted AgentService specification)
 
-> **Supersedes:** the pre-fork `AgentService Specification` (incorporated from `docs/specifications/specs/MDS-agent-service.md`). The standalone `AgentService` orchestration layer, the `hkask-cli` `ReplState` wrapper, and the `hkask-api` `ApiState` wrapper are **deleted**. The proposed `KaskCore` singleton was **never implemented** — the zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
+> The pre-fork `AgentService` orchestration layer, `hkask-cli` `ReplState` wrapper, and `hkask-api` `ApiState` wrapper are **deleted**. The proposed `KaskCore` singleton was **never implemented** — the zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
 
 **Boundary:** In-process only. MCP servers reach hKask primitives via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach hKask through the guard layer (D4) and the in-process transport (D1–D3). There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
 

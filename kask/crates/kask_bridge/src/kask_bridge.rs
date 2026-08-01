@@ -57,7 +57,8 @@ pub use settings::{
     KaskCodegraphSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
     KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings, KaskFusionSettings,
     KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskTrainingSettings,
+    KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
+    KaskTrainingSettings, SwarmModeConfig,
 };
 pub use skill_executor::BridgeManifestExecutor;
 

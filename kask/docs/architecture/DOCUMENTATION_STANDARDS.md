@@ -240,11 +240,15 @@ For the authoritative MDS category → directory mapping, see [`MDS.md`](../arch
 
 | Content | Location |
 |---------|----------|
-| Specifications, design docs | `docs/specifications/` |
-| Architecture Decision Records | `docs/architecture/` |
+| Architecture, design docs, ADRs | `docs/architecture/` |
+| Reference documentation | `docs/reference/` |
+| Explanation documentation | `docs/explanation/` |
 | Plans, roadmaps | `docs/plans/` |
-| Standards, policies | `docs/specifications/` |
+| Standards, policies | `docs/architecture/` |
 | Status reports, inventories | `docs/status/` |
+| QA strategy, contracts | `docs/qa/` |
+| Per-crate Diataxis docs | `docs/diataxis/` |
+| Research reports | `docs/research/` |
 | Crate coding context (brief) | `<workspace>/crates/<crate>/README.md` |
 
 ### 6.3 Enforcement

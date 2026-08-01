@@ -3,7 +3,7 @@ title: "Agent Bestiary World (ABW) Swarm Intelligence — Integration Plan"
 audience: [zed-kask integrators, hKask architects, ABW partnership]
 last_updated: 2026-08-01
 version: "0.9.1"
-status: "v1 feature-complete (slices 1–7 + Xaman Ek). v2 local-cloud hybrid evolution plan below (§15+) incorporates fermi source analysis, local orchestration substrate, and metacircular Lisp policy layer. v2 slices unimplemented."
+status: "v1 feature-complete (slices 1–7 + Xaman Ek). v2 local-cloud hybrid evolution (§15+) complete: Slices 8–11 implemented (local swarm mode, local agent registry, swarm_fund_local, swarm_delegate_local, mode-aware swarm-intelligence skill, panel local agents + clone/push). v2 incorporates fermi source analysis, local orchestration substrate, and metacircular Lisp policy layer. Post-slice follow-ups: steer-mode system prompt update, panel mode toggle, sample local agent card (done)."
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
 ---
@@ -1038,7 +1038,26 @@ new substrate.
 Each slice is independently shippable, set-point-compliant, and reversible by
 config change (not code revert).
 
-#### Slice 8 — `SwarmConfig.mode` + `LocalAgentRegistry`
+**Build status (2026-08-01):** All 4 slices complete. The v2 plan was
+simplified from 6 slices / 6 tools / 1 new skill to 4 slices / 2 new tools / 0
+new skills after applying the deletion test to every proposed abstraction
+(§15.1 documents the 9 rejected abstractions). Slice 11 expanded to 5 new MCP
+tools total (the planned 2 plus `swarm_list_local_agents`,
+`swarm_clone_to_local`, `swarm_push_to_cloud`) because the panel delegates
+filesystem writes to the server rather than doing them in-process — keeping
+the panel a thin view over MCP tool results. Verification: `cargo build -p
+hkask-mcp-swarm` and `cargo build -p swarm_panel` succeed; 45 `hkask-mcp-swarm`
+lib tests pass; 4 `kask_bridge` swarm tests pass; `cargo clippy -p
+hkask-mcp-swarm --lib` clean; all 5 `swarm-intelligence` Jinja2 templates parse.
+
+
+#### Slice 8 — `SwarmConfig.mode` + `LocalAgentRegistry`  ✅ DONE
+
+**Status (2026-08-01):** Complete. 10 new tests in `hkask-mcp-swarm`, 4
+updated tests in `kask_bridge`. `SwarmMode` enum, `mode`/`local_agents_dir`
+fields, `LocalAgentRegistry`, and `mcp_env()` allowlist
+(`HKASK_SWARM_MODE`, `HKASK_LOCAL_AGENTS_DIR`, `HKASK_SWARM_LEDGER_PATH`)
+all wired. Default `Abw` preserves v1 behavior.
 
 **What:**
 - Add `mode: SwarmMode` enum (`Abw`, `Local`) to `SwarmConfig`,
@@ -1060,7 +1079,16 @@ constructor = revert.
 
 **Reverses by:** Setting `mode: "abw"` — local tools become unreachable.
 
-#### Slice 9 — `swarm_fund_local` + `swarm_delegate_local`
+#### Slice 9 — `swarm_fund_local` + `swarm_delegate_local`  ✅ DONE
+
+**Status (2026-08-01):** Complete. `LazyLocalSwarmRuntime` (lazy init via
+`tokio::sync::OnceCell` — the `run_server` factory is sync) holds
+`hkask-ledger`, `hkask-inference`, `hkask-guard`. `swarm_fund_local` is
+operator-funded (§15.6). `swarm_delegate_local` is the single local execution
+primitive: scan input → check balance → call inference → scan output → debit
+ledger. No consent token, no `workspace_id`, no hire. New deps: `hkask-ledger`,
+`hkask-inference`, `hkask-guard`, `hkask-storage`, `uuid`, `chrono`, `r2d2`,
+`r2d2_sqlite`, `dirs`.
 
 **What:**
 - Add `swarm_fund_local(credits)` MCP tool — operator deposits local credits
@@ -1094,7 +1122,15 @@ viable and the server stays ABW-only.
 fails, the debit stands (the compute was spent) but the result is quarantined.
 Delay: one tool call. Closure: ledger commit.
 
-#### Slice 10 — `swarm-intelligence` skill becomes mode-aware
+#### Slice 10 — `swarm-intelligence` skill becomes mode-aware  ✅ DONE
+
+**Status (2026-08-01):** Complete. All 5 executable templates
+(`swarm-{sense,orient,decide,act,check}.j2`) branch on `{{ mode }}`.
+SENSE/ACT/CHECK branch on `local` vs `abw` data sources and gates;
+ORIENT/DECIDE are mode-agnostic (operate on state shape). DECIDE Step 1:
+`local` → "hire" = operator adds card to local registry (no
+`swarm_hire_local`); `abw` → prefer ABW catalogue. Version stays `0.31.0`.
+Templates parse-validated with `jinja2.Environment.parse`.
 
 **What:**
 - Update the `swarm-intelligence` skill's templates to branch on `{{ mode }}`:
@@ -1127,7 +1163,33 @@ steps. If Lisp saves >50% tokens, it earns its substrate.
 **Reverses by:** Setting `mode: "abw"` — the skill's ABW templates are
 unchanged.
 
-#### Slice 11 — Panel: local agents + "Clone to Local" button
+#### Slice 11 — Panel: local agents + "Clone to Local" button  ✅ DONE
+
+**Status (2026-08-01):** Complete, expanded beyond the original spec. In
+addition to the planned "Clone to Local" panel file-write, three MCP tools
+were added (the panel delegates to the server, which owns the filesystem
+write — keeping the panel a thin view):
+
+- `swarm_list_local_agents` — lists cards from `agents/local/curated/`,
+  each carrying `cloud_id` for sync state.
+- `swarm_clone_to_local(agent_name)` — fetches the ABW card, sets
+  `min_provider_class: local`, writes to
+  `agents/local/curated/<id>/agent_card.json`, sets `cloud_id`.
+- `swarm_push_to_cloud(agent_name)` — pushes a local card's updates back to
+  ABW (requires `cloud_id` to be set).
+
+Panel changes: `AgentSource` enum (`Cloud` ☁ / `Local` ■ / `Synced` ⇅) with
+badge; `source` field on panel's `AgentCard`; `cloud_id` on `LocalAgentCard`;
+`fetch_all` fetches local agents in parallel with ABW agents + swarms (3
+in-flight fetches); merge logic upgrades cloud agents to `Synced` when a local
+card's `cloud_id` matches; "Clone to Local" button on Cloud cards, "Push to
+Cloud" button on Local cards.
+
+**Post-slice follow-ups (tracked separately, all complete 2026-08-01):**
+1. ✅ Update Steer-mode system prompt to describe the 5 local tools + mode toggle.
+2. ✅ Add a mode toggle (`Abw` | `Local`) to the panel header via
+   `ToggleButtonGroup`, writing `kask.swarm.mode` to settings.json.
+3. ✅ Sample local agent card at `agents/local/curated/local_narrator/`.
 
 **What:**
 - Update `SwarmPanel` Browse tab to show local agents (from
