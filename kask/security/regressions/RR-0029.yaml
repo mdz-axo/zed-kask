@@ -1,0 +1,24 @@
+id: RR-0029
+title: "llm-guard caret spec in hkask-guard/Cargo.toml bypasses workspace exact pin"
+surface: supply-chain
+cwe: CWE-1357
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-guard/Cargo.toml
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: medium
+detection:
+  kind: grep
+  # Detect a direct caret-spec declaration of llm-guard in the guard crate's
+  # Cargo.toml. The fix: use `llm-guard.workspace = true` to inherit the
+  # workspace's `=0.2.0` exact pin (declared in the root Cargo.toml under
+  # [workspace.dependencies]). RR-0025 only scans the workspace root, so it
+  # missed this per-crate bypass.
+  pattern: '^llm-guard = "0\.2"$'
+  include: "kask/crates/hkask-guard/Cargo.toml"
+mitigation: "Change kask/crates/hkask-guard/Cargo.toml from `llm-guard = \"0.2\"` to `llm-guard.workspace = true` so it inherits the workspace's `=0.2.0` exact pin. A `cargo update -p llm-guard` would otherwise float to the latest 0.2.x without CI catching it — llm-guard is the security-critical scanner (Layer 1 input filtering, Layer 7 output filtering)."
+source: "Cycle 2 kali-audit — supply-chain pin bypass (RR-0025 scope gap)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

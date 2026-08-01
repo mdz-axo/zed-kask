@@ -16,6 +16,7 @@
 //! Skills anchor the judge's reasoning with hKask's pragmatic methodology.
 
 use crate::config::{AlgoMethod, ConvergenceVerdict, FusionConfig, FusionMode, FusionSkill};
+use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatToolDefinition, InferenceError, InferencePort, InferenceResult, InferenceUsage,
@@ -534,23 +535,12 @@ fn parse_json_lenient(text: &str) -> serde_json::Value {
         return v;
     }
 
-    let trimmed = text.trim();
-
-    // Markdown code fence
-    if let Some(json_start) = trimmed.find("```json") {
-        let after_fence = &trimmed[json_start + 7..];
-        if let Some(v) = after_fence
-            .find("```")
-            .and_then(|end| serde_json::from_str(after_fence[..end].trim()).ok())
-        {
-            return v;
-        }
-    }
-
-    // Bare JSON object boundaries
-    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}'))
-        && let Ok(v) = serde_json::from_str(&trimmed[start..=end])
-    {
+    // Brace-balanced extraction (RR-0028): the old `find('{')`…`rfind('}')`
+    // approach silently merged an injected JSON block in the model's reasoning
+    // preamble with its real answer. `extract_json_from_response` returns
+    // exactly one top-level object, defeating the injection.
+    let extracted = llm_json::extract_json_from_response(text);
+    if let Ok(v) = serde_json::from_str::<Value>(&extracted) {
         return v;
     }
 

@@ -57,6 +57,7 @@ use hkask_regulation::SkillFeedbackSpan;
 use hkask_types::NotFound;
 use hkask_types::ToolTaint;
 use hkask_types::WebID;
+use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, ChatToolFunction, InferencePort, InferenceResult};
 use serde_json::Value;
@@ -1289,11 +1290,24 @@ impl ManifestExecutor {
     ) -> Result<HashMap<String, Value>> {
         // Resolve bindings from input_mapping and merge into context.
         // Uses {"$ref": "dot.path"} syntax — same as execute_tool_invoke.
-        if let Some(ref mapping) = step.input_mapping {
+        if let Some(ref mapping) = step.input_mapping
+            && let Value::Object(orig_map) = mapping
+        {
             let resolved = bind_parameters(mapping, &context);
-            if let Value::Object(map) = resolved {
-                for (k, v) in map {
-                    context.insert(k, v);
+            if let Value::Object(resolved_map) = resolved {
+                // Iterate original and resolved maps in lockstep: the original
+                // mapping value carries the $ref / {{ }} markers that
+                // propagate_taint_for_binding inspects to find referenced keys;
+                // the resolved value is what gets inserted into context.
+                for (k, orig_v) in orig_map {
+                    let bound = resolved_map.get(k).cloned().unwrap_or(Value::Null);
+                    // Propagate taint from referenced Source entries to the new
+                    // binding key (RR-0027 — same FIDES closure break as RR-0026,
+                    // missed here because execute_populate uses bind_parameters
+                    // instead of resolve_mapping_value). Pass the *original*
+                    // mapping value (with $ref markers), not the resolved value.
+                    self.propagate_taint_for_binding(orig_v, k);
+                    context.insert(k.clone(), bound);
                 }
             }
         }
@@ -2316,30 +2330,17 @@ fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
     if let Ok(v) = serde_json::from_str(text) {
         return Ok(v);
     }
-    let trimmed = text.trim();
-    if let Some(json_start) = trimmed.find("```json") {
-        let after_fence = &trimmed[json_start + 7..];
-        if let Some(json_end) = after_fence.find("```") {
-            return serde_json::from_str(after_fence[..json_end].trim()).map_err(|e| {
-                TemplateError::Manifest(format!(
-                    "Step {}: Failed to parse JSON response: {}",
-                    step_ordinal, e
-                ))
-            });
-        }
-    }
-    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
-        return serde_json::from_str(&trimmed[start..=end]).map_err(|e| {
-            TemplateError::Manifest(format!(
-                "Step {}: Failed to parse JSON response: {}",
-                step_ordinal, e
-            ))
-        });
-    }
-    Err(TemplateError::Manifest(format!(
-        "Step {}: No JSON found in inference response",
-        step_ordinal
-    )))
+    // Brace-balanced extraction (RR-0028): the old `find('{')`…`rfind('}')`
+    // approach silently merged an injected JSON block in the model's reasoning
+    // preamble with its real answer. `extract_json_from_response` returns
+    // exactly one top-level object, defeating the injection.
+    let extracted = llm_json::extract_json_from_response(text);
+    serde_json::from_str(&extracted).map_err(|e| {
+        TemplateError::Manifest(format!(
+            "Step {}: Failed to parse JSON response: {}",
+            step_ordinal, e
+        ))
+    })
 }
 
 /// Extract the `contract.output` block from a `.j2` template's frontmatter.
@@ -3620,6 +3621,65 @@ mod tests {
         assert!(
             executor.check_untrusted_input(&sink_input),
             "After taint propagation, $ref to the bound key must be detected as untrusted"
+        );
+    }
+
+    /// RR-0027: execute_populate must call propagate_taint_for_binding before
+    /// context.insert, otherwise Source-tainted values bound via $ref lose
+    /// their taint label and bypass the FIDES Source→Sink block. This is the
+    /// same closure break as RR-0026, missed because execute_populate uses
+    /// bind_parameters (not resolve_mapping_value).
+    #[tokio::test]
+    async fn execute_populate_propagates_source_taint() {
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
+
+        // Build a populate step with an inline template (no file I/O) and an
+        // input_mapping that binds the Source-tainted step_1_result to "data".
+        let step = BundleManifestStep {
+            ordinal: 2,
+            action: "populate".to_string(),
+            description: "bind step_1_result into data".to_string(),
+            renderer: None,
+            template_ref: Some("{{ data }}".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: Some(serde_json::json!({
+                "data": {"$ref": "step_1_result"}
+            })),
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            fusion: None,
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "step_1_result".to_string(),
+            Value::String("untrusted external content".to_string()),
+        );
+
+        let result = executor
+            .execute_populate(&step, context)
+            .await
+            .expect("execute_populate should succeed with an inline template and $ref binding");
+
+        // The bound key "data" must be labeled Source — propagate_taint_for_binding
+        // was called before context.insert. Before the fix, the label was missing
+        // and a downstream Sink tool would see "data" as Pure.
+        let labels = executor.taint_labels.lock().expect("taint mutex");
+        assert_eq!(
+            labels.get("data").copied(),
+            Some(ToolTaint::Source),
+            "execute_populate must propagate Source taint through $ref bindings \
+             (RR-0027) — without the propagate_taint_for_binding call, the bound \
+             key is silently labeled Pure and bypasses the FIDES Source→Sink block"
+        );
+        // Sanity: the rendered template consumed the bound value.
+        assert_eq!(
+            result.get("step_2_populated").and_then(|v| v.as_str()),
+            Some("untrusted external content"),
         );
     }
 }

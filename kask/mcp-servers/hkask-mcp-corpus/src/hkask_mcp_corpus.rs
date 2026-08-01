@@ -31,7 +31,6 @@ pub mod convert;
 pub mod corpus;
 mod helpers;
 pub mod inference_svc;
-mod json_extract;
 pub mod model_cache;
 pub mod ocr;
 pub mod runtime;
@@ -44,7 +43,8 @@ pub(crate) use template::render_docproc_template;
 pub(crate) use helpers::{
     chunk_structure, chunk_word_bounds, cosine_similarity, serialize_passages, tokens_to_words,
 };
-pub(crate) use json_extract::extract_json_from_response;
+// LLM JSON extraction is shared via `hkask_types::json_extract` (RR-0028).
+pub(crate) use hkask_types::json_extract::extract_json_from_response;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 

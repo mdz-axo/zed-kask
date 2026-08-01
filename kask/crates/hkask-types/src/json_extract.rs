@@ -1,13 +1,18 @@
 //! JSON extraction from LLM responses — brace-balanced parsing.
 //!
-//! `extract_json_from_response` strips code fences and extracts the first
-//! balanced top-level JSON object. This is the security-critical primitive
-//! that prevents injected JSON blocks in chunk text from hijacking the
-//! model's real answer (RR-0017).
+//! Shared security-critical primitive for parsing JSON from LLM output.
+//! Prevents injected JSON blocks in reasoning preambles from hijacking the
+//! model's real answer (OWASP LLM02:2025, CWE-1336).
+//!
+//! Originally extracted from `hkask-mcp-corpus/src/json_extract.rs` (RR-0017)
+//! so all LLM-output parsers use the same secure primitive instead of
+//! duplicating the vulnerable `find('{')`…`rfind('}')` pattern.
 
 /// Strip markdown code fences from LLM JSON responses.
-/// Models often wrap JSON in ```json ... ``` blocks.
-pub(crate) fn strip_json_fences(text: &str) -> String {
+///
+/// Models often wrap JSON in ```json ... ``` blocks. This also handles
+/// fences without a language tag (``` ... ```).
+pub fn strip_json_fences(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.starts_with("```") {
         // Find the first newline after the opening fence
@@ -46,7 +51,7 @@ pub(crate) fn strip_json_fences(text: &str) -> String {
 /// object is found (callers fall back to error handling on parse failure).
 ///
 /// Proven against GLM-5.2 (~640-830 reasoning tokens) and Qwen3-235B-A22B-Instruct.
-pub(crate) fn extract_json_from_response(text: &str) -> String {
+pub fn extract_json_from_response(text: &str) -> String {
     let de_fenced = strip_json_fences(text);
     match find_balanced_json_object(&de_fenced) {
         Some(slice) => slice.to_string(),
@@ -65,7 +70,7 @@ pub(crate) fn extract_json_from_response(text: &str) -> String {
 /// injecting a JSON-looking block in chunk text that the LLM echoes in its
 /// reasoning preamble, which the old `find('{')` ... `rfind('}')` approach
 /// would silently merge with the model's real answer.
-fn find_balanced_json_object(text: &str) -> Option<&str> {
+pub fn find_balanced_json_object(text: &str) -> Option<&str> {
     let bytes = text.as_bytes();
     let start = bytes.iter().position(|&b| b == b'{')?;
     let mut depth: i32 = 0;

@@ -14,6 +14,7 @@ pub mod goal;
 pub mod id;
 pub mod inference_ipc;
 
+pub mod json_extract;
 pub mod keychain_keys;
 pub mod loops;
 pub mod macros;

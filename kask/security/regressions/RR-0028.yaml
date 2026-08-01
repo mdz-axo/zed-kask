@@ -1,0 +1,23 @@
+id: RR-0028
+title: "LLM JSON extraction in executor.rs and fusion_orchestrator.rs uses first-{ to last-} (RR-0017 class)"
+surface: llm-io
+cwe: CWE-1336
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0005
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-templates/src/executor.rs, kask/crates/hkask-inference/src/fusion_orchestrator.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: high
+detection:
+  kind: grep
+  # Detect the vulnerable first-{ to last-} pattern in the two files that
+  # were not covered by RR-0017 (scoped to mcp-servers/hkask-mcp-corpus/src/lib.rs).
+  # The fix: use hkask_types::json_extract::extract_json_from_response
+  # (brace-balanced) instead of find('{')...rfind('}').
+  pattern: "find\\('\\{'\\).*rfind\\('\\}'\\)"
+  include: "kask/crates/hkask-templates/src/executor.rs kask/crates/hkask-inference/src/fusion_orchestrator.rs"
+mitigation: "Use brace-balanced JSON extraction via hkask_types::json_extract::extract_json_from_response instead of find('{')...rfind('}'). The secure primitive was extracted from hkask-mcp-corpus into hkask-types/src/json_extract.rs so all LLM-output parsers share it. The old approach silently merged an injected JSON block (echoed by the LLM in its reasoning preamble) with the model's real answer, allowing a poisoned chunk to control parsed output. Brace-balanced extraction returns exactly one top-level object, defeating the injection."
+source: "Adversarial review of docproc ontology tagging (RR-0017) — same bug class found in two more files during cycle 2 kali-audit"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

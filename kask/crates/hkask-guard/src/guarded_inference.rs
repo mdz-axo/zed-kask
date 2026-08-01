@@ -39,6 +39,7 @@ struct GuardedStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + 'a>>,
     guard: Arc<ContentGuard>,
     accumulated: String,
+    accumulated_reasoning: String,
     scanned: bool,
 }
 
@@ -57,9 +58,16 @@ impl<'a> Stream for GuardedStream<'a> {
             std::task::Poll::Ready(None) => {
                 // Stream ended — scan the accumulated output.
                 let result = this.guard.scan_output(&this.accumulated);
+                let reasoning_result = this.guard.scan_output(&this.accumulated_reasoning);
                 this.scanned = true;
-                if result.output.is_modified() {
+                let text_modified = result.output.is_modified();
+                let reasoning_modified = reasoning_result.output.is_modified();
+                if text_modified || reasoning_modified {
                     let sanitized = result.output.content(&this.accumulated).to_string();
+                    let sanitized_reasoning = reasoning_result
+                        .output
+                        .content(&this.accumulated_reasoning)
+                        .to_string();
                     // Emit a redaction chunk: the sanitized text replaces the
                     // accumulated text. The consumer concatenates deltas, so
                     // emitting the full sanitized text as a final delta would
@@ -79,8 +87,16 @@ impl<'a> Stream for GuardedStream<'a> {
                     // message should be reconstructed from the sanitized
                     // version. This is a known tradeoff — see ART-1 note.
                     std::task::Poll::Ready(Some(Ok(InferenceStreamChunk {
-                        text_delta: sanitized,
-                        reasoning_delta: String::new(),
+                        text_delta: if text_modified {
+                            sanitized
+                        } else {
+                            String::new()
+                        },
+                        reasoning_delta: if reasoning_modified {
+                            sanitized_reasoning
+                        } else {
+                            String::new()
+                        },
                         model: String::new(),
                         finish_reason: Some("redacted".to_string()),
                         usage: None,
@@ -92,6 +108,7 @@ impl<'a> Stream for GuardedStream<'a> {
             }
             std::task::Poll::Ready(Some(Ok(chunk))) => {
                 this.accumulated.push_str(&chunk.text_delta);
+                this.accumulated_reasoning.push_str(&chunk.reasoning_delta);
                 std::task::Poll::Ready(Some(Ok(chunk)))
             }
             std::task::Poll::Ready(Some(Err(e))) => {
@@ -119,6 +136,20 @@ impl GuardedInferencePort {
             inner,
             guard: Arc::new(guard),
         }
+    }
+}
+
+/// Scan `result.reasoning` the same way as `result.text`. Thinking-mode
+/// models can echo system-prompt content (including the canary token) into
+/// the reasoning trace, so skipping it defeats canary/secret detection.
+fn sanitize_reasoning(guard: &ContentGuard, result: &mut InferenceResult) {
+    if let Some(reasoning) = result.reasoning.take() {
+        let out = guard.scan_output(&reasoning);
+        result.reasoning = Some(if out.output.is_modified() {
+            out.output.content(&reasoning).to_string()
+        } else {
+            reasoning
+        });
     }
 }
 
@@ -155,6 +186,7 @@ impl InferencePort for GuardedInferencePort {
             if out.output.is_modified() {
                 result.text = out.output.content(&result.text).to_string();
             }
+            sanitize_reasoning(&guard, &mut result);
             Ok(result)
         })
     }
@@ -185,6 +217,7 @@ impl InferencePort for GuardedInferencePort {
             if out.output.is_modified() {
                 result.text = out.output.content(&result.text).to_string();
             }
+            sanitize_reasoning(&guard, &mut result);
             Ok(result)
         })
     }
@@ -223,6 +256,7 @@ impl InferencePort for GuardedInferencePort {
             if out.output.is_modified() {
                 result.text = out.output.content(&result.text).to_string();
             }
+            sanitize_reasoning(&guard, &mut result);
             Ok(result)
         })
     }
@@ -250,6 +284,7 @@ impl InferencePort for GuardedInferencePort {
                 if out.output.is_modified() {
                     result.text = out.output.content(&result.text).to_string();
                 }
+                sanitize_reasoning(&guard, result);
             }
             Ok(results)
         })
@@ -281,6 +316,7 @@ impl InferencePort for GuardedInferencePort {
             if out.output.is_modified() {
                 result.text = out.output.content(&result.text).to_string();
             }
+            sanitize_reasoning(&guard, &mut result);
             Ok(result)
         })
     }

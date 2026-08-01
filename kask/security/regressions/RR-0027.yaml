@@ -1,0 +1,19 @@
+id: RR-0027
+title: "execute_populate skips propagate_taint_for_binding (FIDES closure break — RR-0026 class)"
+surface: code
+cwe: CWE-20
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-templates/src/executor.rs
+discovered_by: kali-audit
+discovered_at: 2026-07-31
+severity: high
+detection:
+  kind: cargo-test
+  pattern: "execute_populate_propagates_source_taint"
+  include: "crates/hkask-templates/src/executor.rs"
+mitigation: "Call self.propagate_taint_for_binding(v, k) before context.insert(k, v) in execute_populate, matching the pattern at the resolve_mapping_value call sites (L815/L1174/L1335). The test runs execute_populate with a Source-tainted context entry bound via $ref and asserts the bound key is labeled Source. Same closure break class as RR-0026, missed because execute_populate uses bind_parameters instead of resolve_mapping_value."
+source: "https://www.microsoft.com/en-us/research/publication/2025/05/fides-information-flow-control-for-large-language-model-prompt-pipelines/"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
