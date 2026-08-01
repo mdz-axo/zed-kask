@@ -40,7 +40,6 @@ use crate::set_points::{InferenceThrottleMode, SetPoints};
 use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
 use crate::tool_stats::ToolStats;
-use crate::wallet_budget::WalletBackedBudget;
 use crate::wallet_manager::WalletManager;
 use crate::well::WellManager;
 
@@ -548,18 +547,6 @@ impl CyberneticsLoop {
             .read()
             .await
             .register_gas_budget(agent, budget)
-            .await;
-    }
-
-    /// Register a wallet-backed budget for an agent (Phase 5).
-    /// Wallet budgets are checked before gas budgets in the membrane.
-    ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn register_wallet_budget(&self, agent: WebID, budget: WalletBackedBudget) {
-        self.gas_budget_manager
-            .read()
-            .await
-            .register_wallet_budget(agent, budget)
             .await;
     }
 

@@ -143,24 +143,16 @@ pub enum ManifestResolveError {
     NotASkill { reference: String, category: String },
 }
 
-/// Injected filesystem reader for skill loading (purity seam — mirrors
-/// Nika's `resolve_skills(wf, &mut dyn FnMut)` pattern). Production wires
-/// `FsSkillReader`; tests wire a mock. This keeps `SkillLoader` testable
-/// without a real filesystem and enables check≡run by construction.
-pub trait SkillReader {
-    /// Read a file's contents as UTF-8 text.
-    ///
-    /// # Errors
-    /// Returns an error if the file cannot be read or is not valid UTF-8.
-    fn read_to_string(&self, path: &std::path::Path) -> std::io::Result<String>;
-}
-
 /// Production filesystem reader — thin wrapper over `std::fs::read_to_string`.
 #[derive(Debug, Clone, Copy)]
 pub struct FsSkillReader;
 
-impl SkillReader for FsSkillReader {
-    fn read_to_string(&self, path: &std::path::Path) -> std::io::Result<String> {
+impl FsSkillReader {
+    /// Read a file's contents as UTF-8 text.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read or is not valid UTF-8.
+    pub fn read_to_string(&self, path: &std::path::Path) -> std::io::Result<String> {
         std::fs::read_to_string(path)
     }
 }

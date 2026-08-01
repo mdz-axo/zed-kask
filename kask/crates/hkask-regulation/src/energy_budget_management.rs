@@ -19,7 +19,6 @@
 //! the Curation directive. `apply_clear_override()` resumes normal replenishment.
 
 use crate::energy::{AgentGasStatus, GasBudget, GasCost, GasError};
-use crate::wallet_budget::WalletBackedBudget;
 use crate::wallet_manager::WalletManager;
 use hkask_types::WebID;
 use std::collections::HashMap;
@@ -48,10 +47,6 @@ struct OverrideRecord {
 /// without going through the full loop.
 pub struct GasBudgetManager {
     gas_budgets: Arc<RwLock<HashMap<WebID, GasBudget>>>,
-    /// Wallet-backed budgets — checked before gas budgets.
-    /// When an agent has a wallet budget, gas operations debit rJoules
-    /// instead of consuming from the dimensionless gas pool.
-    wallet_budgets: Arc<RwLock<HashMap<WebID, WalletBackedBudget>>>,
     active_overrides: Arc<RwLock<HashMap<WebID, OverrideRecord>>>,
     /// Previous remaining values for consumption velocity computation.
     previous_remaining: RwLock<HashMap<WebID, u64>>,
@@ -71,7 +66,6 @@ impl GasBudgetManager {
     pub fn new() -> Self {
         Self {
             gas_budgets: Arc::new(RwLock::new(HashMap::new())),
-            wallet_budgets: Arc::new(RwLock::new(HashMap::new())),
             active_overrides: Arc::new(RwLock::new(HashMap::new())),
             previous_remaining: RwLock::new(HashMap::new()),
             wallet_manager: None,
@@ -92,14 +86,6 @@ impl GasBudgetManager {
     }
 
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
-    /// Register a wallet-backed budget for an agent.
-    /// Wallet budgets are checked before gas budgets.
-    pub async fn register_wallet_budget(&self, agent: WebID, budget: WalletBackedBudget) {
-        let mut budgets = self.wallet_budgets.write().await;
-        budgets.insert(agent, budget);
-    }
-
-    /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
     /// Check whether an agent can proceed with the given energy cost estimate.
     ///
     /// Checks wallet budgets first, then gas budgets.
@@ -112,13 +98,7 @@ impl GasBudgetManager {
         {
             return wm.can_proceed(agent, gas).await;
         }
-        // 2. Check WalletBackedBudget (rJoule-backed, Hedera)
-        let wallet_budgets = self.wallet_budgets.read().await;
-        if let Some(budget) = wallet_budgets.get(agent) {
-            return budget.can_proceed(gas);
-        }
-        drop(wallet_budgets);
-        // 3. Fall back to gas budget
+        // 2. Fall back to gas budget
         let budgets = self.gas_budgets.read().await;
         if let Some(budget) = budgets.get(agent) {
             budget.can_proceed(gas)
@@ -146,13 +126,7 @@ impl GasBudgetManager {
         {
             return wm.spend(agent, gas).await;
         }
-        // 2. Check WalletBackedBudget (rJoule)
-        let wallet_budgets = self.wallet_budgets.read().await;
-        if let Some(budget) = wallet_budgets.get(agent) {
-            return budget.reserve(gas);
-        }
-        drop(wallet_budgets);
-        // 3. Fall back to gas budget
+        // 2. Fall back to gas budget
         let mut budgets = self.gas_budgets.write().await;
         if let Some(budget) = budgets.get_mut(agent) {
             budget.reserve(gas)
@@ -176,13 +150,7 @@ impl GasBudgetManager {
         {
             return Ok(actual_gas); // already spent during reserve
         }
-        // 2. Wallet-backed budget (rJoule)
-        let wallet_budgets = self.wallet_budgets.read().await;
-        if let Some(budget) = wallet_budgets.get(agent) {
-            return budget.settle(reserved_gas, actual_gas);
-        }
-        drop(wallet_budgets);
-        // 3. Fall back to gas budget
+        // 2. Fall back to gas budget
         let mut budgets = self.gas_budgets.write().await;
         if let Some(budget) = budgets.get_mut(agent) {
             budget.settle(reserved_gas, actual_gas)
@@ -439,12 +407,7 @@ impl GasBudgetManager {
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
     /// Return wallet-backed agents whose balance is zero.
     pub async fn wallet_exhausted_agents(&self) -> Vec<WebID> {
-        let wallets = self.wallet_budgets.read().await;
-        wallets
-            .iter()
-            .filter(|(_, wb)| !wb.can_proceed(GasCost(1)))
-            .map(|(id, _)| *id)
-            .collect()
+        Vec::new()
     }
 
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
@@ -507,43 +470,13 @@ impl GasBudgetManager {
     /// Returns `(balance_ratio, cap_ratio)` for each wallet-backed agent.
     /// balance_ratio: 0.0 = empty, 1.0 = full (relative to a nominal capacity).
     pub async fn wallet_balance_ratios(&self) -> Vec<(f64, f64)> {
-        let budgets = self.wallet_budgets.read().await;
-        let mut ratios = Vec::new();
-        for budget in budgets.values() {
-            // Get the wallet balance and compute a ratio.
-            // We use a nominal capacity of 1_000_000 rJ as the denominator
-            // (this is a simplified model — production would use 30-day moving avg).
-            match budget.wallet_manager.get_balance(budget.wallet_id) {
-                Ok(balance) => {
-                    let nominal_cap: f64 = 1_000_000.0; // 1M rJ nominal capacity
-                    let ratio = (balance.rjoules as f64 / nominal_cap).clamp(0.0, 1.0);
-                    ratios.push((ratio, 1.0));
-                }
-                Err(_) => {
-                    // Wallet error → treat as empty
-                    ratios.push((0.0, 1.0));
-                }
-            }
-        }
-        ratios
+        Vec::new()
     }
 
     /// expect: "The system manages per-agent energy budgets with depletion detection, replenishment, and budget-aware querying"
     /// Check API key health for all wallet-backed budgets.
     /// Returns `(agent, reason)` for each key that is exhausted or expired.
     pub async fn wallet_key_alerts(&self) -> Vec<(WebID, String)> {
-        let budgets = self.wallet_budgets.read().await;
-        let mut alerts = Vec::new();
-        for (agent, budget) in budgets.iter() {
-            if let Some(health) = budget.check_key_health() {
-                if health.exhausted {
-                    alerts.push((*agent, "key_exhausted".into()));
-                }
-                if health.expired {
-                    alerts.push((*agent, "key_expired".into()));
-                }
-            }
-        }
-        alerts
+        Vec::new()
     }
 }

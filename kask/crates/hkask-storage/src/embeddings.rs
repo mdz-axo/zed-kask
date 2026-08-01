@@ -647,55 +647,6 @@ impl EmbeddingStore {
     }
 }
 
-// ── EmbeddingPort implementation ──────────────────────────────────────
-
-impl hkask_types::embedding_port::EmbeddingPort for EmbeddingStore {
-    fn store(&self, entity_ref: &str, embedding: Vec<f32>) -> Result<(), InfrastructureError> {
-        self.store(entity_ref, &embedding, "default")
-            .map(|_| ())
-            .map_err(|e| InfrastructureError::database(e.to_string()))
-    }
-
-    fn get(
-        &self,
-        entity_ref: &str,
-    ) -> Result<Option<hkask_types::embedding_port::StoredEmbedding>, InfrastructureError> {
-        match self.get(entity_ref) {
-            Ok(se) => Ok(Some(hkask_types::embedding_port::StoredEmbedding {
-                entity_ref: se.entity_ref.clone(),
-                embedding: se.vector.clone(),
-                dimension: se.vector.len(),
-            })),
-            Err(EmbeddingError::NotFound(_)) => Ok(None),
-            Err(e) => Err(InfrastructureError::database(e.to_string())),
-        }
-    }
-
-    fn search(
-        &self,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<hkask_types::embedding_port::StoredEmbedding>, InfrastructureError> {
-        self.search(query_embedding, limit)
-            .map(|results| {
-                results
-                    .into_iter()
-                    .map(|sr| hkask_types::embedding_port::StoredEmbedding {
-                        entity_ref: sr.embedding.entity_ref.clone(),
-                        embedding: sr.embedding.vector.clone(),
-                        dimension: sr.embedding.vector.len(),
-                    })
-                    .collect()
-            })
-            .map_err(|e| InfrastructureError::database(e.to_string()))
-    }
-
-    fn delete(&self, entity_ref: &str) -> Result<(), InfrastructureError> {
-        self.delete(entity_ref)
-            .map_err(|e| InfrastructureError::database(e.to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

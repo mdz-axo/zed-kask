@@ -28,7 +28,6 @@ pub mod types; // Loop 6 → Inference energy estimation
 pub mod agent_wallet_store;
 pub mod runtime; // Loop 6 — runtime
 pub mod runtime_policy; // Layer 6 — runtime action policy (VeriGuard + AgentGuard)
-pub mod wallet_budget; // Loop 6 — wallet-backed energy budgets (Phase 5)
 pub mod wallet_manager;
 pub mod well;
 pub use algedonic::{AlertEmailSink, RuntimeAlert};
@@ -47,7 +46,7 @@ pub use runtime::LedgerSink;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use runtime::StoredSkillSpan;
-pub use runtime_policy::{DefaultPolicy, PolicyConfig, PolicyVerdict, RuntimePolicy};
+pub use runtime_policy::{DefaultPolicy, PolicyConfig, PolicyVerdict};
 pub use sensor_provider::{
     EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry, ToolReliabilitySensor, VarietySensor,
     WalletBalanceRatioSensor, WalletKeyHealthSensor,
@@ -61,4 +60,3 @@ pub use set_points::{
 pub use skill_span::SkillFeedbackSpan;
 pub use tool_stats::ToolStats;
 pub use types::loops::{CurationInput, ExperienceClassification, RegulationLoop, RegulatoryAction};
-pub use wallet_budget::WalletBackedBudget;

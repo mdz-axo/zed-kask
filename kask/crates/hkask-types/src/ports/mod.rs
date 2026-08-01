@@ -5,14 +5,11 @@
 //! concrete implementations.
 
 pub mod embedding;
-pub mod embedding_port;
-pub mod escalation;
 pub mod inference_port;
 pub mod inference_types;
 pub mod memory_port;
 pub mod registry;
 pub mod regulation;
-pub mod wallet_budget_port;
 
 pub use embedding::EmbeddingGenerationError;
 pub use inference_port::{
@@ -27,7 +24,5 @@ pub use registry::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
 pub use regulation::{
-    BackpressureSignal, ConsolidationOutcome, ConsolidationRequest, DecayConfig, DepletionSignal,
-    LedgerObserver, LedgerStoragePort, WeightedEvent,
+    BackpressureSignal, ConsolidationOutcome, ConsolidationRequest, DepletionSignal, LedgerObserver,
 };
-pub use wallet_budget_port::{WalletBudgetError, WalletBudgetPort};

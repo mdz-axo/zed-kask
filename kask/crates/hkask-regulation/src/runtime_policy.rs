@@ -40,29 +40,12 @@ impl Default for PolicyConfig {
     }
 }
 
-/// Runtime policy trait — checks proposed actions before execution.
-///
-/// Implementations enforce taint flow rules, rate limiting, human-in-the-loop
-/// gates, and action distribution shift detection.
-pub trait RuntimePolicy: Send + Sync {
-    /// Check a proposed action against the policy.
-    ///
-    /// expect: "The system checks every proposed tool invocation before execution"
-    /// pre:  tool_name is the tool being invoked
-    ///       tool_taint is the FIDES taint label of the tool
-    ///       has_untrusted_input indicates whether any input arguments carry untrusted data
-    ///       action_number is the action's position in the session trajectory (1-based)
-    /// post: returns Allow, Block, RequireHuman, or Log verdict
-    fn check(
-        &self,
-        tool_name: &str,
-        tool_taint: ToolTaint,
-        has_untrusted_input: bool,
-        action_number: u64,
-    ) -> PolicyVerdict;
-}
-
 /// Default policy: enforces FIDES taint flow rules + rate limiting.
+///
+/// This is the single runtime policy implementation. It is held directly
+/// (as `Arc<DefaultPolicy>`) by callers — no trait indirection is needed
+/// because there is only one implementation and the consumer crate
+/// (`hkask-templates`) already depends on `hkask-regulation` directly.
 pub struct DefaultPolicy {
     config: PolicyConfig,
 }
@@ -75,16 +58,16 @@ impl DefaultPolicy {
     pub fn new(config: PolicyConfig) -> Self {
         Self { config }
     }
-}
 
-impl Default for DefaultPolicy {
-    fn default() -> Self {
-        Self::new(PolicyConfig::default())
-    }
-}
-
-impl RuntimePolicy for DefaultPolicy {
-    fn check(
+    /// Check a proposed action against the policy.
+    ///
+    /// expect: "The system checks every proposed tool invocation before execution"
+    /// pre:  tool_name is the tool being invoked
+    ///       tool_taint is the FIDES taint label of the tool
+    ///       has_untrusted_input indicates whether any input arguments carry untrusted data
+    ///       action_number is the action's position in the session trajectory (1-based)
+    /// post: returns Allow, Block, RequireHuman, or Log verdict
+    pub fn check(
         &self,
         tool_name: &str,
         tool_taint: ToolTaint,
@@ -124,6 +107,12 @@ impl RuntimePolicy for DefaultPolicy {
         }
 
         PolicyVerdict::Allow
+    }
+}
+
+impl Default for DefaultPolicy {
+    fn default() -> Self {
+        Self::new(PolicyConfig::default())
     }
 }
 

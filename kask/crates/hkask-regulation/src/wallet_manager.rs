@@ -1,18 +1,13 @@
 //! Wallet — Per-agent gas/rJoule balance store.
 //!
 //! Backed by SQLite via AgentWalletStore. Wallets are created by the Curator daemon
-//! on agent registration. Agents spend from wallets via WalletBackedBudget.
+//! on agent registration. Agents spend from wallets via `WalletManager::spend`.
 
 use crate::agent_wallet_store::{AgentWalletError, WalletStore};
 use crate::energy::{GasCost, GasError};
 use crate::well::WellManager;
 use hkask_types::WebID;
-use hkask_types::{
-    ApiKeyCapability, Encumbrance, RJoule, WalletBudgetError, WalletBudgetPort, WalletId,
-    id::ApiKeyId,
-};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 impl From<AgentWalletError> for GasError {
@@ -30,14 +25,9 @@ pub struct WalletBalance {
 
 /// Manages agent wallets — creation, spending, balance queries.
 /// Uses SQLite via WalletStore for persistence.
-///
-/// Also owns the runtime gas→rJoule conversion rate, which is calibrated
-/// externally via `set_gas_per_rjoule` (exposed through the `WalletBudgetPort`
-/// trait in `hkask-types`).
 pub struct WalletManager {
     store: Option<Arc<WalletStore>>,
     well_manager: Option<Arc<RwLock<WellManager>>>,
-    gas_per_rjoule: AtomicU64,
 }
 
 impl WalletManager {
@@ -46,7 +36,6 @@ impl WalletManager {
         Self {
             store: None,
             well_manager: None,
-            gas_per_rjoule: AtomicU64::new(hkask_types::GAS_PER_RJOULE),
         }
     }
 
@@ -54,7 +43,6 @@ impl WalletManager {
         Self {
             store: Some(store),
             well_manager: None,
-            gas_per_rjoule: AtomicU64::new(hkask_types::GAS_PER_RJOULE),
         }
     }
 
@@ -196,67 +184,6 @@ impl WalletManager {
         } else {
             false
         }
-    }
-}
-
-impl WalletBudgetPort for WalletManager {
-    fn gas_to_rjoules(&self, gas: u64) -> RJoule {
-        let rate = self.gas_per_rjoule.load(Ordering::Relaxed);
-        RJoule::new(gas.saturating_div(rate).max(1))
-    }
-
-    fn get_encumbrance(&self, _key_id: ApiKeyId) -> Option<Encumbrance> {
-        None
-    }
-
-    fn emit_key_alert(&self, _key_id: ApiKeyId, _exhausted: bool, _expired: bool) {
-        // No-op — key health alerts are not tracked in the regulation wallet.
-    }
-
-    fn can_afford(&self, _wallet_id: WalletId, _cost_rj: RJoule) -> bool {
-        // The regulation wallet tracks per-agent gas balances, not per-wallet-id
-        // rJoule balances. Affordability is checked via `can_proceed` on the
-        // agent's gas balance. This method is a conservative no.
-        false
-    }
-
-    fn get_api_key(&self, _key_id: ApiKeyId) -> Option<ApiKeyCapability> {
-        None
-    }
-
-    fn get_balance(
-        &self,
-        _wallet_id: WalletId,
-    ) -> Result<hkask_types::WalletBalance, WalletBudgetError> {
-        Err(WalletBudgetError::Wallet(
-            "regulation wallet tracks per-agent balances, not per-wallet-id".into(),
-        ))
-    }
-
-    fn gas_per_rjoule(&self) -> u64 {
-        self.gas_per_rjoule.load(Ordering::Relaxed)
-    }
-
-    fn set_gas_per_rjoule(&self, rate: u64) {
-        self.gas_per_rjoule.store(rate, Ordering::Relaxed);
-    }
-
-    fn consume(&self, _key_id: ApiKeyId, _gas_rj: RJoule) -> Result<(), WalletBudgetError> {
-        Err(WalletBudgetError::Wallet(
-            "API key encumbrance accounting not available — regulation wallet tracks per-agent gas balances".into(),
-        ))
-    }
-
-    fn settle_rjoules(
-        &self,
-        _wallet_id: WalletId,
-        _reserved_rj: RJoule,
-        _actual_rj: RJoule,
-    ) -> Result<(), WalletBudgetError> {
-        Err(WalletBudgetError::Wallet(
-            "rJoule settlement not available — regulation wallet settles via per-agent gas spend"
-                .into(),
-        ))
     }
 }
 

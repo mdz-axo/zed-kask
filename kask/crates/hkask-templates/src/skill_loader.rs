@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing;
 
-use crate::ports::{FsSkillReader, Result, SkillReader, TemplateError};
+use crate::ports::{FsSkillReader, Result, TemplateError};
 
 /// Parsed SKILL.md front matter.
 ///
@@ -64,9 +64,8 @@ pub struct SkillLoadResult {
 pub struct SkillLoader {
     /// Root directory for skill discovery (typically the project root).
     project_root: PathBuf,
-    /// Injected filesystem reader (purity seam). Production uses
-    /// `FsSkillReader`; tests inject a mock. Defaults to `FsSkillReader`.
-    reader: Box<dyn SkillReader>,
+    /// Filesystem reader. Defaults to `FsSkillReader`.
+    reader: FsSkillReader,
 }
 
 impl SkillLoader {
@@ -80,17 +79,17 @@ impl SkillLoader {
     pub fn new(project_root: impl Into<PathBuf>) -> Self {
         Self {
             project_root: project_root.into(),
-            reader: Box::new(FsSkillReader),
+            reader: FsSkillReader,
         }
     }
 
-    /// Create a new skill loader with an injected reader (test seam).
+    /// Create a new skill loader with an explicit reader.
     ///
     /// expect: "The system loads skills into the template registry"
     /// \[P3\] Motivating: Generative Space — testable loader with injected I/O
-    /// pre:  project_root is a valid directory path, reader implements SkillReader
+    /// pre:  project_root is a valid directory path
     /// post: returns SkillLoader configured for the given root and reader
-    pub fn with_reader(project_root: impl Into<PathBuf>, reader: Box<dyn SkillReader>) -> Self {
+    pub fn with_reader(project_root: impl Into<PathBuf>, reader: FsSkillReader) -> Self {
         Self {
             project_root: project_root.into(),
             reader,

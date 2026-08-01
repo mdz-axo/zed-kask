@@ -35,9 +35,7 @@ pub use hkask_types::SkillZone;
 pub use manifest_loader::{
     ManifestLoadError, load_manifest_from_file, load_manifest_from_yaml, resolve_manifest,
 };
-pub use ports::{
-    FsSkillReader, ManifestResolveError, Result, SkillFinding, SkillReader, TemplateError,
-};
+pub use ports::{FsSkillReader, ManifestResolveError, Result, SkillFinding, TemplateError};
 pub use prompt_strategy::PromptStrategy;
 
 pub use registry::{Registry, process_manifest_yaml, template_file, template_yaml_file};

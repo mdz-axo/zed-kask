@@ -11,8 +11,6 @@ path = "src/hkask_regulation.rs"
 
 [dependencies]
 hkask-types = { path = "../hkask-types" }
-# Regulation defines WalletBudgetPort; regulation::WalletManager implements it
-# directly (gas/rJoule tracking without chain/wallet infrastructure).
 hkask-storage = { path = "../hkask-storage" }
 
 serde.workspace = true
