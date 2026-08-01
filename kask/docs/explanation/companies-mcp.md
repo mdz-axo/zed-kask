@@ -284,6 +284,6 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 
 - [Companies MCP Server Reference](../reference/mcp-servers/companies.md) — full tool catalog, configuration, and behavioral boundaries
 - [Tool Routing and Dispatch Flow](../reference/mcp-servers/companies.md) — DIAG-RF-004 dispatch diagram (inline)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams
 - [Sovereignty and Observability](sovereignty-and-observability.md) — capability tokens and Regulation alerts
 - [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture

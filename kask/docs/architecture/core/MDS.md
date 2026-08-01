@@ -8,18 +8,13 @@ domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
 
-> **Restoration note (2026-07-27):** This file was deleted in commit
-> `a32a7847a4` (2026-07-25) and restored from git history on 2026-07-27
-> because `DIAGRAMS_INDEX.md`, `corpus.yaml`, and the `tdd`/`diagnose`
-> skills cite it as authoritative. Version bumped to 0.31.1 to mark the
-> restoration. The file was deleted a second time by another agent and
-> restored again.
+
 
 # MDS — Minimal Domain Specification
 
 **Purpose:** A minimal, capability-driven specification framework for hKask. Specs are grants ("CAN verb on resource via interface"), not fences ("MUST NOT"). Five categories, five tools, one completeness predicate.
 
-**Supersedes:** The previous 9-category DDMVSS. All MDS references in the codebase should be updated.
+
 
 **Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the deleted `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), `hkask-templates`/`ManifestExecutor` (skill execution), and in-process wallet primitives (no service layer). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 11 MCP servers are listed in the architecture plan §2.2/§2.4. (Corrected 2026-07-29 from a stale "29 surviving crates" claim — verified by `ls kask/crates/`.)
 
@@ -160,40 +155,9 @@ Curation decisions (Accept/Revise/Reject) are made by the Curator or human — n
 
 ## 4. Spec Operations & QA Integration
 
-> **Pragmatic-semantics note (2026-07-29 audit):** This section describes the **planned (OUGHT)** spec-operations surface. `SpecStore`, `SqliteSpecStore`, `DefaultSpecCurator`, and the `spec_types` module (`Spec`, `GoalSpec`, `SpecCategory`, `SpecId`) are **not yet implemented** in `hkask-storage` — verified by grep of `kask/crates/hkask-storage/src/`. The `kask spec` CLI subcommands and `kask qa spec-check` are likewise not yet built. This section is retained as the design specification for the intended surface; readers should treat the tables and code paths below as the *intended* API, not a verifiable code reference. The MDS category framework (§1–§3, §5–§10) and the `KaskCore` composition-root spec (below) are independent of this surface and remain authoritative.
+## 4. Spec Operations & QA Integration
 
-Specifications are managed through in-process surfaces plus QA validation. The standalone `hkask-cli` `kask spec` subcommands and the `hkask-api` REST endpoints are **deleted**. Spec capture/list/validate/cultivate now run through the in-process `kask` admin CLI and the curator MCP server; MCP does not expose spec capture/list/validate/cultivate beyond surfacing spec drift via the Curator server.
-
-### 4.1 In-Process CLI Surface (`kask spec`)
-
-Thin passthrough to `SpecStore` in `hkask-storage`. No intermediate service layer — the in-process `kask` admin CLI builds `Spec` domain objects and persists them directly. (This is **not** the deleted `hkask-cli` — it is the slimmer zed-kask `kask` admin CLI for backup/wallet/repair/admin, which also exposes spec operations.)
-
-| Command | Operation | Delegate |
-|---------|-----------|----------|
-| `kask spec capture` | Create a spec with name, category, domain, criteria | `SpecStore::save()` |
-| `kask spec list` | List specs, optionally filtered by MDS category | `SpecStore::list_all()` / `list_by_category()` |
-| `kask spec validate` | Evaluate a single spec via `DefaultSpecCurator::evaluate()` | Curator agent |
-| `kask spec cultivate` | Validate + display per-category coherence requirements | Curator agent |
-| `kask spec render` | Render a spec through a Jinja2 template | `minijinja` + `SpecStore::load()` |
-
-### 4.2 In-Process Surface (no HTTP API)
-
-The deleted `hkask-api` REST endpoints (`GET /api/specs`, `POST /api/specs/capture`, etc.) are **removed**. There is no standalone HTTP API server in zed-kask. Spec reads/writes go through the in-process `SpecStore` directly, invoked by:
-
-- the `kask` admin CLI (above),
-- the curator MCP server (for drift surfacing),
-- zed-kask surfaces (kask panel) that hold an in-process handle.
-
-All consumers share the same `SpecStore` backend and the same `Spec` / `GoalSpec` / `SpecCategory` / `SpecId` domain types from `hkask-storage::spec_types` — no service-layer intermediary, no HTTP transport.
-
-### 4.3 QA Integration (planned)
-
-Spec validation, coherence checking, and quality assessment will move into the QA system when `kask qa spec-check` is built. Currently, spec validation runs through `DefaultSpecCurator::evaluate()` directly.
-
-| Command | Operation | Status |
-|---------|----------|--------|
-| `kask qa spec-check` | Full collection check: category coverage + per-spec quality | Not yet built |
-| `kask qa spec-check --spec-id <uuid>` | Single-spec validation via `DefaultSpecCurator::evaluate()` | Not yet built |
+> **Not yet implemented.** `SpecStore`, `SqliteSpecStore`, `DefaultSpecCurator`, and the `spec_types` module are not yet built in `hkask-storage`. The `kask spec` CLI subcommands and `kask qa spec-check` are likewise not yet built. Per `DOCUMENTATION_STANDARDS.md` §10 ("No aspirational content in `architecture/`"), the design specification for this surface has been removed. The MDS category framework (§1–§3, §5–§10) is independent of this surface and remains authoritative. The corpus/replica tools below ARE implemented.
 
 ### 4.4 Replica Integration (`corpus_rewrite`)
 
@@ -205,16 +169,6 @@ The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as th
 | `corpus_compose` | `hkask-mcp-corpus` | Generate prose in any author's style (underlying engine) |
 | `corpus_compare` | `hkask-mcp-corpus` | Evaluate document against persona centroids (per-dimension scoring) |
 
-### 4.5 The Spec Store
-
-The canonical persistence surface is `hkask_storage::SpecStore` (implemented by `SqliteSpecStore`). All spec operations — in-process CLI, curator MCP, and QA — read and write through this single interface. Domain types (`Spec`, `GoalSpec`, `SpecCategory`, `SpecId`) live in `hkask-storage::spec_types`.
-
-```
-kask CLI ──→ SpecStore ──→ SQLite
-Curator MCP ──→ SpecStore ──→ SQLite
-QA  ──→ SpecStore ──→ SQLite  (spec-check)
-     ──→ DefaultSpecCurator  (validation)
-```
 
 ---
 
@@ -279,17 +233,19 @@ MDS is capability-driven, not constraint-driven:
 
 ## 6. MDS Cycle
 
+> **Not yet implemented.** The `SpecStore`, `DefaultSpecCurator`, and `kask spec` / `kask qa spec-check` CLI surfaces are not yet built (see §4 note). The cycle below is the intended design.
+
 ```
 MDS_cycle(S, D) :=
   let spec = capture(D)            // Build Spec from domain description
-  store.save(spec)                 // Persist via SpecStore
-  curate(spec)                     // Validate via DefaultSpecCurator
-  qa spec-check                    // Category coverage + quality gate
+  store.save(spec)                 // Persist via SpecStore (not yet built)
+  curate(spec)                     // Validate via DefaultSpecCurator (not yet built)
+  qa spec-check                    // Category coverage + quality gate (not yet built)
   human_or_curator decides:        // External governance
     Accept | Revise | Reject
 ```
 
-Spec capture and listing go through `SpecStore` directly. Validation and curation delegate to `DefaultSpecCurator`. Collection-wide health checks run through `kask qa spec-check`. Curation decisions remain external.
+The MDS category framework (§1–§3, §5, §7–§10) is independent of this cycle and remains authoritative. Curation decisions remain external.
 
 [^beck-tdd]: Beck, Kent. *Test-Driven Development: By Example.* Addison-Wesley, 2003. — The red-green-refactor cycle that MDS's capture→decompose→validate→curate cycle parallels.
 
@@ -536,7 +492,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ---
 
-*MDS v0.31.3 — five categories, SpecStore + QA. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 11 MCP servers compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`).*
+*MDS v0.31.4 — five categories. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 11 MCP servers compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
 
 ---
 

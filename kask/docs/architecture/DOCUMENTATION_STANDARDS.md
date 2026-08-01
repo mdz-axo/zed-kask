@@ -8,12 +8,7 @@ domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
 
-> **Restoration note (2026-07-27):** This file was deleted in commit
-> `a32a7847a4` (2026-07-25) and restored from git history on 2026-07-27
-> because `DIAGRAMS_INDEX.md`, `corpus.yaml`, and the `tdd`/`diagnose`
-> skills cite it as authoritative. Version bumped to 0.31.1 to mark the
-> restoration. The file was deleted a second time by another agent and
-> restored again.
+
 
 
 ## 1. Purpose
@@ -370,8 +365,8 @@ Documents spanning multiple categories list all applicable categories in the met
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-07-24
-version: "0.31.0"
+last_updated: 2026-08-01
+version: "0.31.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]

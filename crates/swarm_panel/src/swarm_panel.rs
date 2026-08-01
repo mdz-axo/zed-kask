@@ -278,6 +278,24 @@ struct ExecutionStats {
     total_executions: Option<u64>,
 }
 
+// ── Local agent response (v2 §15 Slice 11) ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct LocalAgentListResponse {
+    agents: Vec<LocalAgentInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAgentInfo {
+    agent_id: String,
+    agent_type: String,
+    #[serde(default)]
+    description: String,
+    /// The ABW agent id this local card is synced with. `None` = local-only.
+    #[serde(default)]
+    cloud_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct WorkspaceListResponse {
     workspaces: Vec<WorkspaceInfo>,
@@ -670,79 +688,252 @@ impl SwarmPanel {
         .detach();
 
         // Swarms (requires the ABW API key).
-        cx.spawn(async move |this, cx| {
-            let result = invoker
-                .invoke_tool(SWARM_SERVER, "swarm_get_swarm", json!({}))
-                .await;
-            this.update(cx, |this, cx| {
-                this.in_flight = this.in_flight.saturating_sub(1);
-                match result {
-                    Ok(output) => {
-                        if let Some(b) = extract_wallet_balance(&output) {
-                            this.wallet_balance = Some(b);
-                        }
-                        match parse_tool_response(&output)
-                            .and_then(|c| serde_json::from_value::<WorkspaceListResponse>(c).ok())
-                        {
-                            Some(response) => {
-                                let mut swarms = response
-                                    .workspaces
-                                    .into_iter()
-                                    .map(|w| {
-                                        SwarmEntry::Swarm(SwarmCard {
-                                            id: w.id.unwrap_or_default(),
-                                            name: w.name.unwrap_or_default(),
-                                            description: w.description.unwrap_or_default(),
-                                            agent_count: w.agent_count.unwrap_or(0),
-                                            budget: w.workspace_budget.unwrap_or(0),
-                                            remaining: w.workspace_remaining.unwrap_or(0),
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_get_swarm", json!({}))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.in_flight = this.in_flight.saturating_sub(1);
+                    match result {
+                        Ok(output) => {
+                            if let Some(b) = extract_wallet_balance(&output) {
+                                this.wallet_balance = Some(b);
+                            }
+                            match parse_tool_response(&output).and_then(|c| {
+                                serde_json::from_value::<WorkspaceListResponse>(c).ok()
+                            }) {
+                                Some(response) => {
+                                    let mut swarms = response
+                                        .workspaces
+                                        .into_iter()
+                                        .map(|w| {
+                                            SwarmEntry::Swarm(SwarmCard {
+                                                id: w.id.unwrap_or_default(),
+                                                name: w.name.unwrap_or_default(),
+                                                description: w.description.unwrap_or_default(),
+                                                agent_count: w.agent_count.unwrap_or(0),
+                                                budget: w.workspace_budget.unwrap_or(0),
+                                                remaining: w.workspace_remaining.unwrap_or(0),
+                                            })
                                         })
-                                    })
-                                    .collect::<Vec<_>>();
-                                // Replace swarm entries, keep agent entries.
-                                this.entries.retain(|e| matches!(e, SwarmEntry::Agent(_)));
-                                swarms.append(&mut this.entries);
-                                this.entries = swarms;
-                                // Default the hire target to the first swarm if unset,
-                                // or re-validate it if the selected swarm disappeared.
-                                let selected_still_present =
-                                    this.selected_workspace.as_ref().is_some_and(|sel| {
-                                        this.entries.iter().any(|e| match e {
-                                            SwarmEntry::Swarm(s) => &s.id == sel,
-                                            _ => false,
-                                        })
-                                    });
-                                if !selected_still_present {
-                                    this.selected_workspace =
-                                        this.entries.iter().find_map(|e| match e {
-                                            SwarmEntry::Swarm(s) if !s.id.is_empty() => {
-                                                Some(s.id.clone())
-                                            }
-                                            _ => None,
+                                        .collect::<Vec<_>>();
+                                    // Replace swarm entries, keep agent entries.
+                                    this.entries.retain(|e| matches!(e, SwarmEntry::Agent(_)));
+                                    swarms.append(&mut this.entries);
+                                    this.entries = swarms;
+                                    // Default the hire target to the first swarm if unset,
+                                    // or re-validate it if the selected swarm disappeared.
+                                    let selected_still_present =
+                                        this.selected_workspace.as_ref().is_some_and(|sel| {
+                                            this.entries.iter().any(|e| match e {
+                                                SwarmEntry::Swarm(s) => &s.id == sel,
+                                                _ => false,
+                                            })
                                         });
+                                    if !selected_still_present {
+                                        this.selected_workspace =
+                                            this.entries.iter().find_map(|e| match e {
+                                                SwarmEntry::Swarm(s) if !s.id.is_empty() => {
+                                                    Some(s.id.clone())
+                                                }
+                                                _ => None,
+                                            });
+                                    }
+                                    this.swarms_error = None;
+                                    this.filter_entries(cx);
                                 }
-                                this.swarms_error = None;
-                                this.filter_entries(cx);
+                                None => {
+                                    this.swarms_error = Some(
+                                        format!("Failed to parse workspaces: {output}").into(),
+                                    );
+                                    this.filter_entries(cx);
+                                }
                             }
-                            None => {
-                                this.swarms_error =
-                                    Some(format!("Failed to parse workspaces: {output}").into());
+                        }
+                        Err(err) => {
+                            // Auth failures here are expected when no key is configured —
+                            // degrade to agents-only rather than an error state.
+                            log::warn!(
+                                "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
+                            );
+                            this.filter_entries(cx);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+        // Local agents (from agents/local/curated/ via swarm_list_local_agents).
+        // This fetch always succeeds (it reads the local filesystem, not ABW) —
+        // the only failure mode is the MCP server not being running, which is
+        // the same as the other fetches. Local agents are merged with cloud
+        // agents: if a local agent's `cloud_id` matches a cloud agent's id,
+        // the cloud agent is upgraded to `Synced` and the local agent is
+        // dropped (the cloud card is the display row; the local card is the
+        // execution target for local mode).
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_list_local_agents", json!({}))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.in_flight = this.in_flight.saturating_sub(1);
+                    match result {
+                        Ok(output) => {
+                            let parsed = parse_tool_response(&output).and_then(|c| {
+                                serde_json::from_value::<LocalAgentListResponse>(c).ok()
+                            });
+                            if let Some(response) = parsed {
+                                let local_agents = response.agents;
+                                // Mark cloud agents that have a matching local card as Synced.
+                                let local_ids: std::collections::HashSet<String> =
+                                    local_agents.iter().map(|a| a.agent_id.clone()).collect();
+                                let local_cloud_ids: std::collections::HashSet<String> =
+                                    local_agents
+                                        .iter()
+                                        .filter_map(|a| a.cloud_id.clone())
+                                        .collect();
+                                for entry in this.entries.iter_mut() {
+                                    if let SwarmEntry::Agent(card) = entry
+                                        && (local_ids.contains(&card.id)
+                                            || local_cloud_ids.contains(&card.id))
+                                    {
+                                        card.source = AgentSource::Synced;
+                                    }
+                                }
+                                // Add local-only agents (no matching cloud id) as Local entries.
+                                let existing_cloud_ids: std::collections::HashSet<String> = this
+                                    .entries
+                                    .iter()
+                                    .filter_map(|e| match e {
+                                        SwarmEntry::Agent(c) if c.source != AgentSource::Local => {
+                                            Some(c.id.clone())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect();
+                                for local in local_agents {
+                                    // Skip if already present as a cloud/synced agent.
+                                    if existing_cloud_ids.contains(&local.agent_id)
+                                        || local_cloud_ids.contains(&local.agent_id)
+                                    {
+                                        continue;
+                                    }
+                                    this.entries.push(SwarmEntry::Agent(AgentCard {
+                                        id: local.agent_id,
+                                        agent_type: local.agent_type,
+                                        description: local.description,
+                                        author: String::new(),
+                                        executions: 0,
+                                        source: AgentSource::Local,
+                                    }));
+                                }
                                 this.filter_entries(cx);
                             }
                         }
+                        Err(err) => {
+                            // Local agents fetch failure is not fatal — the
+                            // panel still shows cloud agents. Log and continue.
+                            log::debug!(
+                                "swarm-panel: local agents fetch failed (non-fatal): {err}"
+                            );
+                        }
                     }
-                    Err(err) => {
-                        // Auth failures here are expected when no key is configured —
-                        // degrade to agents-only rather than an error state.
-                        log::warn!(
-                            "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
-                        );
-                        this.filter_entries(cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Clone an ABW (cloud) agent to the local registry. Calls
+    /// `swarm_clone_to_local` on the swarm MCP server, which fetches the ABW
+    /// card, writes it to `agents/local/curated/<id>/agent_card.json`, and
+    /// sets `cloud_id` to mark it as synced. On success, re-fetches the agent
+    /// list so the source badge updates to `synced`.
+    fn clone_to_local(&mut self, agent_name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("clone-{agent_name}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_clone_to_local",
+                        json!({ "agent_name": agent_name }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            // Re-fetch to update the source badge.
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.hire_error =
+                                Some(format!("Failed to clone to local: {err}").into());
+                        }
                     }
-                }
-                cx.notify();
-            })
-            .ok();
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Push a local agent to ABW (cloud). Calls `swarm_push_to_cloud` on the
+    /// swarm MCP server, which creates or updates the ABW agent from the local
+    /// card and sets `cloud_id` on the local card to mark it as synced. On
+    /// success, re-fetches the agent list so the source badge updates to
+    /// `synced`.
+    fn push_to_cloud(&mut self, agent_name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("push-{agent_name}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_push_to_cloud",
+                        json!({ "agent_name": agent_name }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.hire_error =
+                                Some(format!("Failed to push to cloud: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -1457,6 +1648,13 @@ impl SwarmPanel {
         match entry {
             SwarmEntry::Agent(agent) => {
                 let agent_name = agent.id.clone();
+                let source = agent.source.clone();
+                let source_badge = source.badge();
+                let source_label = source.label();
+                // Clone-to-local button: visible for Cloud agents only.
+                let show_clone = source == AgentSource::Cloud;
+                // Push-to-cloud button: visible for Local agents only.
+                let show_push = source == AgentSource::Local;
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -1481,6 +1679,14 @@ impl SwarmPanel {
                                         .child(
                                             Label::new(format!("by {}", agent.author))
                                                 .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {}",
+                                                source_badge, source_label
+                                            ))
+                                            .color(Color::Accent)
+                                            .size(LabelSize::XSmall),
                                         ),
                                 )
                                 .child(Label::new(agent.description).color(Color::Muted)),
@@ -1508,12 +1714,49 @@ impl SwarmPanel {
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
                                     .disabled(self.spend_in_flight.is_some())
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.begin_hire(agent_name.clone(), cx);
-                                        },
-                                    )),
-                                ),
+                                    .on_click({
+                                        let agent_name = agent_name.clone();
+                                        cx.listener(
+                                            move |this, _, _, cx| {
+                                                this.begin_hire(agent_name.clone(), cx);
+                                            },
+                                        )
+                                    })),
+                                )
+                                .when(show_clone, |this| {
+                                    let agent_name = agent_name.clone();
+                                    this.child(
+                                        Button::new(
+                                            SharedString::from(format!("clone-{agent_name}")),
+                                            "Clone to Local",
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(self.spend_in_flight.is_some())
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.clone_to_local(agent_name.clone(), cx);
+                                            }),
+                                        ),
+                                    )
+                                })
+                                .when(show_push, |this| {
+                                    let agent_name = agent_name.clone();
+                                    this.child(
+                                        Button::new(
+                                            SharedString::from(format!("push-{agent_name}")),
+                                            "Push to Cloud",
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(self.spend_in_flight.is_some())
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.push_to_cloud(agent_name.clone(), cx);
+                                            }),
+                                        ),
+                                    )
+                                }),
                         ),
                 )
             }

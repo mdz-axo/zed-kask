@@ -1012,7 +1012,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 ## Cross-Reference
 
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams (skill execution, Curator agent, in-process MCP transport)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams (skill execution, Curator agent, in-process MCP transport)
 - [`PRINCIPLES.md` § P6 — Space for UserPods](../architecture/core/PRINCIPLES.md#p6--space-for-userpods)
 - [`kata.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata.rs) — `KataEngine::execute()` dispatch (L333-486)
 - [`kata/improvement.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
@@ -1070,7 +1070,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process vi
 
 
 - [Kata PDCA lifecycle state machine](#kata-pdca-lifecycle-state-machine)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams
 
 ### Kanban Task Lifecycle State Machine
 

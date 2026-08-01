@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-01
+version: "0.2.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -24,25 +24,27 @@ scattered across the codebase.
 
 | Symbol | Location |
 |--------|----------|
-| Early-block memory wiring | `crates/zed/src/main.rs:756` |
-| Deferred-task manifest wiring | `crates/zed/src/main.rs:1727` |
-| Deferred-task memory upgrade | `crates/zed/src/main.rs:1148` |
-| Deferred-task panel tool invoker | `crates/zed/src/main.rs:1523` |
-| `set_manifest_executor` | `crates/agent/src/agent.rs:2781` |
-| `set_memory_port` | `crates/agent/src/agent.rs:2860` |
-| `set_thread_condenser` | `crates/agent/src/agent.rs:2995` |
-| `set_tool_invoker` (panel) | `crates/kask_panel/src/kask_panel.rs:106` |
+| Regulation + metacognition wiring (early) | `crates/zed/src/main.rs:674,749` |
+| Deferred-task memory upgrade | `crates/zed/src/main.rs:1153` |
+| Deferred-task metacognition re-set | `crates/zed/src/main.rs:1173` |
+| Deferred-task context injector | `crates/zed/src/main.rs:1230` |
+| Deferred-task tool router | `crates/zed/src/main.rs:1280` |
+| Deferred-task panel tool invoker | `crates/zed/src/main.rs:1621` |
+| Deferred-task thread condenser | `crates/zed/src/main.rs:1635` |
+| Deferred-task manifest executor | `crates/zed/src/main.rs:1778` |
+| `set_tool_invoker` (panel) | `crates/kask_panel/src/kask_panel.rs:109` |
 | `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:30` |
-| `BridgeToolPort` | `kask/crates/kask_bridge/src/tool_port.rs:25` |
-| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1474` |
+| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1615` |
+| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:42` |
 
 ## Composition root sequence
 
 The sequence below shows the two-phase wiring. The early block runs at
-startup (before user auth); the deferred task runs after the zed user
-resolves. `set_memory_port` uses a `Mutex` (re-settable), so the early
-logging port is upgraded in place by the deferred task. The other hooks use
-`OnceLock` (set once).
+startup (before user auth) and wires the regulation system + metacognition
+provider; the deferred task runs after the zed user resolves and wires the
+model-dependent hooks (memory, manifest executor, panel). `set_memory_port`
+and `set_metacognition_provider` use `Mutex` (re-settable); the manifest
+executor and context injectors use `OnceLock` (set once).
 
 ```mermaid
 sequenceDiagram
@@ -52,27 +54,32 @@ sequenceDiagram
     participant Panel as kask_panel
 
     Note over Main: Early block (startup)
-    Main->>Bridge: construct LoggingMemoryPort
-    Main->>Bridge: wrap in BridgeMemoryPort
-    Main->>Agent: set_memory_port(logging)
-    Main->>Main: resolve a2a_secret (keyring)
+    Main->>Bridge: construct McpRuntime + CyberneticsLoop
+    Main->>Bridge: BridgeMetacognitionProvider
+    Main->>Agent: set_metacognition_provider
+    Main->>Main: spawn CyberneticsLoop tick + MetacognitionLoop
 
     Note over Main: Deferred task (post-login)
-    Main->>Bridge: construct RealMemoryPort
+    Main->>Bridge: provision_agent + RealMemoryPort
     Main->>Bridge: wrap in BridgeMemoryPort
     Main->>Agent: set_memory_port(real)
-    Main->>Bridge: construct BridgeManifestExecutor
-    Main->>Agent: set_manifest_executor(executor)
-    Main->>Bridge: construct BridgeThreadCondenser
-    Main->>Agent: set_thread_condenser(condenser)
+    Main->>Bridge: re-set metacognition provider with memory probe
+    Main->>Bridge: BridgeContextInjector + BridgeCuratorContextInjector
+    Main->>Agent: set_context_injector + set_curator_context_injector
+    Main->>Agent: set_tool_router (LazyToolRouter)
     Main->>Bridge: construct PanelToolInvoker
     Main->>Panel: set_tool_invoker(invoker)
+    Main->>Bridge: BridgeThreadCondenser
+    Main->>Agent: set_thread_condenser(condenser)
+    Main->>Bridge: LanguageModelInferencePort + GuardedInferencePort
+    Main->>Bridge: BridgeManifestExecutor
+    Main->>Agent: set_manifest_executor(executor)
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-002
-verified_date: 2026-07-29
-verified_against: crates/zed/src/main.rs:756,1148,1727,1523; crates/agent/src/agent.rs:2781,2860,2995; crates/kask_panel/src/kask_panel.rs:106
+verified_date: 2026-08-01
+verified_against: crates/zed/src/main.rs:672 (McpRuntime::with_governance), 749 (set_metacognition_provider), 1153 (set_memory_port), 1230 (set_context_injector), 1280 (set_tool_router), 1621 (set_tool_invoker), 1635 (set_thread_condenser), 1778 (set_manifest_executor); crates/kask_panel/src/kask_panel.rs:109
 status: VERIFIED
 -->
 
@@ -139,7 +146,7 @@ no reactor running."
 - [hkask-types Explanation](../hkask-types/explanation.md): the port trait
   mediation that this crate implements.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  the D1–D10 integration seams.
+  the D1–D14 integration seams.
 
 ---
 

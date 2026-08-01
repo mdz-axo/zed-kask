@@ -115,9 +115,10 @@ forwarding, and scans the output for secret leakage before returning.
 This placement is deliberate. The guard wraps the skill cascade path
 (`ManifestExecutor`), not zed's direct chat path. Direct chat uses zed's own
 `LanguageModel::stream_completion` with provider-side safety and a refusal
-fallback. The `kask.guard.direct_chat_strategy` setting controls this; the
-default is `cascade_only`, meaning the guard applies to skills but not to
-direct chat.[^owasp-llm]
+fallback. The `cascade_only` behavior is hardcoded (the
+`kask.guard.direct_chat_strategy` setting was deleted in the 2026-07-31
+simplification pass — see `tasks/plan.md` C6); the guard applies to skills
+but not to direct chat.[^owasp-llm]
 
 ## The memory bridge
 
@@ -158,10 +159,10 @@ skill output.
 
 - [hkask-types Reference](./reference.md): class diagram of all 10 port
   traits and their implementors.
-- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D10
+- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D14
   composition root wiring.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  the D1–D10 integration seams.
+  the D1–D14 integration seams.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P4 (OCAP boundaries) and P9 (feedback loops) that the guard layer enforces.
 

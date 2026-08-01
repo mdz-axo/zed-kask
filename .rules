@@ -240,21 +240,6 @@ created in the constructor (e.g. `self.focus_handle.clone()`), because that
 handle is reachable immediately. The trap is specific to delegated focus
 handles (child `Editor`, child `Input`, etc.).
 
-## Center-pane `Item` constructors must take `&Workspace` by borrow
-
-A center-pane `Item` constructed inside a `Workspace` action handler (e.g.
-`Toggle`) receives `cx: &mut Context<Workspace>` — the action closure already
-holds an `update` lease on the `Workspace` entity. Calling
-`cx.entity().read(cx)` inside the constructor re-enters the entity map's `read`
-while the lease is held → `double_lease_panic` ("cannot read
-workspace::Workspace while it is already being updated") at
-`crates/gpui/src/app/entity_map.rs:164`. The correct pattern is `pub fn
-new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Workspace>)
--> Entity<Self>` and read `workspace.project()` /
-`workspace.app_state().fs` through the borrow. `KaskPanel::new` uses this
-pattern; `SwarmPanel::new` did not and crashed on every launch until fixed.
-Any new center-pane `Item` must follow `KaskPanel::new`'s signature.
-
 # zed-kask integration traps
 
 These traps recur when modifying the Kask↔Zed seam. Each was hit multiple
@@ -599,7 +584,14 @@ exists). The `.rules` trap "Process-global hooks set at runtime need a
 startup-failure signal" generalizes: every advertised invariant needs an
 enforcement point, or the doc must say "not yet enforced."
 
+## `GuardedStream` is post-hoc redaction, not real-time blocking
 
+`GuardedStream` redacts streaming output *after* the stream completes — the
+leaked text has already been forwarded to the consumer in real-time chunks.
+The redaction chunk (`finish_reason: "redacted"`) sanitizes the *stored*
+version, not the *displayed* version. Do not assume streaming output scanning
+provides real-time blocking; it is post-hoc redaction, not pre-emission
+filtering.
 
 ## `input_mapping` bindings must propagate taint before `context.insert`
 
@@ -609,54 +601,3 @@ enforcement point, or the doc must say "not yet enforced."
 plain `HashMap` method with no taint awareness, and the FIDES Source→Sink
 block is silently bypassed. The compiler does not enforce this; it is a
 convention enforced by `RR-0026` (cargo-test kind).
-
-## MCP tool responses are wrapped in a `content` envelope — panel parse sites must unwrap before typed deserialization
-
-`execute_tool_semantic` (in `hkask-mcp-server`) wraps every tool's `Ok(Value)`
-in `McpToolOutput::new(value).to_json_string()`, producing
-`{"content": <value>}`. The `ToolPort::invoke` path returns this as a
-`serde_json::Value`, so panel call sites receive `{"content": {"agents": [...]}}`,
-not `{"agents": [...]}`. A direct `serde_json::from_str::<T>(&output)` where `T`
-expects the inner shape (e.g. `AgentListResponse { agents: Vec<...> }`) will
-always fail because the top-level key is `content`, not `agents` — the panel
-silently shows a parse error instead of the data. The panel must unwrap the
-envelope first. `swarm_panel::parse_tool_response` is the single seam for this
-— new panel call sites should use it rather than re-implementing the unwrap.
-The same pattern applies to any panel that calls
-`kask_panel::shared_tool_invoker()`. Found in `SwarmPanel::fetch_all`, where
-the agents and swarms lists were always empty because the typed deserialize
-targeted the inner content shape but the response was envelope-wrapped.
-
-## `PtySender::resize` logs ERROR after the PTY event loop exits — downgrade, don't fix the send
-
-When the alacritty `EventLoop` thread exits before the `Terminal` entity is
-dropped (child process exit, EOF, `drain_on_exit`), the `mpsc::Sender<Msg>`
-inside `Notifier` loses its receiver. Subsequent `InternalEvent::Resize`
-events from pane layout changes call `pty_tx.resize()`
-(`crates/terminal/src/alacritty.rs:93`), which previously logged
-`ERROR failed to resize alacritty pty: sending on a closed channel` once per
-resize tick until `Terminal` was dropped — observed as ~15 ERROR lines per
-2-minute window in operator logs.
-
-This is expected post-exit noise, not a real error: the term-grid resize
-(`resize(term, new_bounds)` at `terminal.rs:1669`) runs unconditionally and
-is the only resize that matters once the PTY is gone. The fix is to detect
-the closed channel and downgrade the log to `debug!` (or skip the send).
-Note `Notifier.0` wraps `EventLoopSender { sender: std::sync::mpsc::Sender }`
-— `std::sync::mpsc::Sender` has **no `is_closed()` method**, so liveness
-must be tracked separately (e.g. `Arc<AtomicBool>` set from the event-loop
-exit path) or detected from the `send()` result itself (the current code
-already branches on `Err` — just lower the log level there). The same
-`debug!`-on-closed-channel discipline is already used by `PtySender::shutdown`
-in the same file.
-
-# Lazy-load caches must distinguish not-loaded from loaded-empty
-
-A lazy-load cache that stores `Option<T>` and guards re-entry with
-`cached.is_none()` re-runs the load on every call when the load yields an
-empty result (`None`). The `None` sentinel is ambiguous: it means both "never
-loaded" and "loaded, got nothing." Use a separate load-attempted flag
-(`loaded: bool`) or `Option<Option<T>>` (`None` = not loaded, `Some(None)` =
-loaded-empty) so an empty result is cached after the first attempt. Found in
-`Thread::static_context`: the `is_none()` guard meant an empty curator memory
-recall fired a SQLite + embedding query on every turn for the entire session.
