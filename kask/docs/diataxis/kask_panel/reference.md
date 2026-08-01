@@ -1,8 +1,8 @@
 ---
 title: "kask_panel — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-01
+version: "0.2.1"
 status: "Active"
 domain: "UI"
 mds_categories: [domain, composition]
@@ -33,11 +33,11 @@ tool calls. The chat panel itself does NOT use this hook — it routes through
 | `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:179` |
 | `ToolDescriptor` | `crates/kask_panel/src/kask_panel.rs:82` |
 | `ToolInvoker` trait | `crates/kask_panel/src/kask_panel.rs:89` |
-| `set_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:106` |
-| `kanban_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:119` |
-| `init` fn | `crates/kask_panel/src/kask_panel.rs:447` |
-| `Item` impl | `crates/kask_panel/src/kask_panel.rs:324` |
-| `Focusable` impl | `crates/kask_panel/src/kask_panel.rs:316` |
+| `set_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:109` |
+| `kanban_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:122` |
+| `init` fn | `crates/kask_panel/src/kask_panel.rs:474` |
+| `Item` impl | `crates/kask_panel/src/kask_panel.rs:351` |
+| `Focusable` impl | `crates/kask_panel/src/kask_panel.rs:343` |
 | `PortfolioDashboardView` | `crates/kask_panel/src/portfolio_view.rs:170` |
 | `KanbanBoardView` | `crates/kask_panel/src/kanban_view.rs:90` |
 | `ScenariosView` | `crates/kask_panel/src/scenarios_view.rs:217` |
@@ -93,17 +93,17 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-PANEL-001
-verified_date: 2026-07-29
-verified_against: crates/kask_panel/src/kask_panel.rs:179,82,89; crates/kask_panel/src/portfolio_view.rs:170; crates/kask_panel/src/kanban_view.rs:90; crates/kask_panel/src/scenarios_view.rs:217
+verified_date: 2026-08-01
+verified_against: crates/kask_panel/src/kask_panel.rs:179,82,89,109,122; crates/kask_panel/src/portfolio_view.rs:170; crates/kask_panel/src/kanban_view.rs:90; crates/kask_panel/src/scenarios_view.rs:217
 status: VERIFIED
 -->
 
 ## Panel hooks
 
 One `set_*` hook populates the panel's `ToolInvoker`:
-`set_tool_invoker` (`kask_panel.rs:106`). It is wired in the deferred task
+`set_tool_invoker` (`kask_panel.rs:109`). It is wired in the deferred task
 in `main.rs` after the zed user resolves. The hook is read by
-`kanban_tool_invoker()` (`kask_panel.rs:119`), which the visualization
+`kanban_tool_invoker()` (`kask_panel.rs:122`), which the visualization
 views use. The chat panel does not read this hook.
 
 There is no `ScopedInference` trait, `RegulationStatus` trait, or

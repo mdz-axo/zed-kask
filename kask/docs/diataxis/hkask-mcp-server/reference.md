@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-01
+version: "0.2.1"
 status: "Active"
 domain: "MCP"
 mds_categories: [domain, composition]
@@ -21,7 +21,7 @@ standalone over stdio, deriving agent identity from `ServerContext.webid`.
 
 | Symbol | Location |
 |--------|----------|
-| `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:123` |
+| `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:134` |
 | `CapabilityTier` | `kask/crates/hkask-mcp-server/src/server/context.rs:67` |
 | `CredentialRequirement` | `kask/crates/hkask-mcp-server/src/server/context.rs:14` |
 | `ToolContext` trait | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:216` |
@@ -44,7 +44,7 @@ standalone over stdio, deriving agent identity from `ServerContext.webid`.
 
 ## Server framework model
 
-The `ServerContext` (`context.rs:123`) is the shared state that every MCP
+The `ServerContext` (`context.rs:134`) is the shared state that every MCP
 server holds. It carries the resolved `credentials` map, the `webid`
 (resolved from `HKASK_WEBID`, falling back to anonymous), and the
 `capability_tier`. The `CapabilityTier` (`context.rs:67`) is detected at
@@ -115,8 +115,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-MCP-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:14,67,123; kask/crates/hkask-mcp-server/src/server/tool_span.rs:17,216; kask/crates/hkask-mcp-server/src/server/error.rs:17,49
+verified_date: 2026-08-01
+verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:14,67,134; kask/crates/hkask-mcp-server/src/server/tool_span.rs:17,216; kask/crates/hkask-mcp-server/src/server/error.rs:17,49
 status: VERIFIED
 -->
 

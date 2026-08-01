@@ -80,7 +80,7 @@ Remove before adding. Every module must earn existence by reducing total system 
 
 This is not abstract philosophy — it's an operational filter with teeth:
 
-- **Who** — agent (generic), human user, userpod, role, owner (anchored by P12 authenticated host mandate)
+- **Who** — agent (generic), human user, per-user data directory, role, owner (anchored by P12 authenticated host mandate)
 - **What** — entity, artifact, resource, data, input, output, state
 - **When** — time, sequence, ordering, duration, schedule, temporal scope
 - **Where** — location, per-user data directory boundary, namespace, domain, spatial context
@@ -210,19 +210,19 @@ tracing::info!(target: "reg.{domain}", operation = "{verb}", {key} = %{value}, .
 - Target: `"reg.{canonical_domain}"` — uses the `reg.*` namespace convention. Essential domains map to `RegulationSpan` variants in `hkask-types::regulation`; performative spans (CLI, API) use stringly-typed tracing targets.
 - Message: Must be `"Regulation"` — enables ν-event filtering
 - Latency: Use `std::time::Instant`, emit as `latency_ms`
-- Authority: Every span carries a `userpod` or `owner` WebID
+- Authority: Every span carries a `webid` or `owner` WebID
 
 ---
 
 ### 1.4 Agent Principles (Nature of Agency)
 
 #### P10 — User Agency
-Users act as agents in the AI world through their userpod. Userpods present in A2A as agents (the generic "agent" concept is preserved); the hKask-specific bot/userpod role taxonomy is removed. User agency is bounded by sovereignty (P1) and capability (P4) — the userpod is the unit of agency, not a separate "userpod" or "bot" role.
+Users act as agents in the AI world through their per-user data directory. User agents present in A2A as agents (the generic "agent" concept is preserved); the hKask-specific bot/userpod role taxonomy is removed. User agency is bounded by sovereignty (P1) and capability (P4) — the per-user data directory is the unit of agency, not a separate "userpod" or "bot" role.
 
 #### P11 — Digital Public/Private Sphere
-Users, via their userpods, can explicitly control what is private versus shared; visibility is consent-governed. (The generic "agent" concept remains for A2A interop.)
+Users, via their per-user data directory, can explicitly control what is private versus shared; visibility is consent-governed. (The generic "agent" concept remains for A2A interop.)
 
-**P11.1 — SQLCipher File as Private Sphere Boundary (v0.29.0):** The pod's SQLCipher database file IS the private sphere boundary. Each pod owns its own encrypted file at `{data_dir}/agents/{sanitized_name}/pod.db`. No cross-pod data access is structurally possible — a pod cannot accidentally query another pod's data because it has no connection handle to that file. Backup IS copying the SQLCipher file. This was already the backup model; the storage layer now matches.
+**P11.1 — SQLCipher File as Private Sphere Boundary (v0.29.0):** The per-user data directory's SQLCipher database file IS the private sphere boundary. Each user owns their own encrypted file at `{data_dir}/agents/{sanitized_name}/pod.db`. No cross-user data access is structurally possible — a user cannot accidentally query another user's data because it has no connection handle to that file. Backup IS copying the SQLCipher file. This was already the backup model; the storage layer now matches.
 
 #### P12 — Authenticated Host Mandate
 Every action has an accountable host identity. No anonymous agency.
@@ -231,16 +231,16 @@ Every action has an accountable host identity. No anonymous agency.
 
 > **Incorporated from:** `docs/architecture/mandates/P12-authenticated-host-mandate.md`
 
-Every interaction with hKask carries a userpod (or Curator) host identity. After the in-process pivot, there is no standalone CLI, no HTTP API, and no daemon — hKask runs compiled into zed-kask. Four in-process interaction surfaces map to host classes:
+Every interaction with hKask carries a per-user data directory (or Curator) host identity. After the in-process pivot, there is no standalone CLI, no HTTP API, and no daemon — hKask runs compiled into zed-kask. Four in-process interaction surfaces map to host classes:
 
 | Surface | Host | WebID Source | Storage | Keychain |
 |---------|------|-------------|---------|----------|
-| **Agent panel** (zed Assistant) | Human user (via userpod) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active userpod from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/pod.db` (SQLCipher) | OS keychain via `hkask-keystore` |
-| **Kask panel (D10)** | Human user (via userpod) | Same composition-root resolution | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
-| **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via userpod) | `kask admin` subcommand resolves the userpod from settings | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
+| **Agent panel** (zed Assistant) | Human user (via per-user data directory) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active user from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/pod.db` (SQLCipher) | OS keychain via `hkask-keystore` |
+| **Kask panel (D10)** | Human user (via per-user data directory) | Same composition-root resolution | Same per-user SQLCipher file | OS keychain via `hkask-keystore` |
+| **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via per-user data directory) | `kask admin` subcommand resolves the user from settings | Same per-user SQLCipher file | OS keychain via `hkask-keystore` |
 | **In-process MCP** (the 11 MCP servers wired into zed-kask) | The active per-user data directory | Capability tokens minted at composition-root wiring time | Per-user SQLCipher DB | User-attested HKDF keys |
 
-**Dual-presence pattern:** The agent panel hosts both the user's userpod AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's userpod is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
+**Dual-presence pattern:** The agent panel hosts both the user's agent AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's agent is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 
 [^dublin-core]: Dublin Core Metadata Initiative. *DCMI Metadata Terms*. ISO 15836. <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>.
 [^bibo]: D'Arcus, B. & Giasson, F. *Bibliographic Ontology (BIBO)*. <https://bibliontology.com/>.

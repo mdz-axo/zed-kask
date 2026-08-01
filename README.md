@@ -52,7 +52,7 @@ The full Kask README (architecture diagrams, the four essential patterns, crate 
 
 Zed-Kask keeps Kask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that Kask crates never depend on Zed crates — Zed-Kask depends on Kask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
 
-The seam between the two sides is small and documented: ten divergence points (D1–D10) cover every edit to Zed's tree outside `kask/` — skill execution, the Curator agent, in-process MCP tools, the guard layer, sovereignty keys, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, and the Kask panel. See [`DIVERGENCE.md`](./DIVERGENCE.md) for the table and [`kask/docs/specs/`](./kask/docs/specs/) for the per-seam specifications.
+The seam between the two sides is small and documented: fourteen divergence points (D1–D14) cover every edit to Zed's tree outside `kask/` — skill execution, the Curator agent, in-process MCP tools, the guard layer, sovereignty keys, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, the Kask panel, plus four smaller seams (a `time` deprecation allow, an env-var-name fix, an OpenRouter output-budget fix, and a streaming-reveal timer interval). See [`DIVERGENCE.md`](./DIVERGENCE.md) for the table and [`kask/docs/specs/`](./kask/docs/specs/) for the per-seam specifications.
 
 ---
 

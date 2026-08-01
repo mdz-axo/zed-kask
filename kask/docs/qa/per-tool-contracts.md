@@ -1,7 +1,7 @@
 ---
 title: "Per-Tool QA Contracts"
 audience: [QA engineers, agents]
-last_updated: 2026-07-29
+last_updated: 2026-08-01
 version: "0.3.0"
 status: "Active"
 domain: "trust"
@@ -410,7 +410,7 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
 
 ## Coverage summary
 
-- Total tools: 195
+- Total tools: 206 (195 across the original 10 servers + 11 from the `swarm` server added 2026-08-01)
 - LLM I/O boundary tools (Category 7 applies): 50
   (codegraph: 2 — `codegraph_context`, `codegraph_index_embeddings`;
   companies: 2 — `company_screener`, `research_search`;
@@ -440,6 +440,6 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
   `corpus_convert`, `corpus_is_complex`, `corpus_chunk`, `corpus_explain`,
   `image_create_collage`, `audio_capture`, `web_ping`.
 
-The routine's total cell count is `195 × 7 = 1365`, minus the explicit
+The routine's total cell count is `206 × 7 = 1442`, minus the explicit
 N/A skips documented above. The coverage matrix converges when every
 non-N/A cell is `pass | fail | skipped-with-reason`.

@@ -532,6 +532,11 @@ impl SwarmClient {
 /// A local agent card — the minimal subset of fermi's `AgentCard` we need for
 /// catalogue + future execution. Mirrors the JSON shape in
 /// `agents/local/curated/<id>/agent_card.json`.
+///
+/// The `cloud_id` field tracks the sync link to an ABW agent: when present,
+/// the agent is `synced` (exists both locally and on ABW). When absent,
+/// the agent is `local` only. The operator sets `cloud_id` when cloning an
+/// ABW agent to local (Slice 11).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentCard {
     pub agent_id: String,
@@ -546,6 +551,11 @@ pub struct LocalAgentCard {
     pub dependencies: LocalAgentDependencies,
     #[serde(default)]
     pub capabilities: LocalAgentCapabilities,
+    /// The ABW agent id this local card is synced with. `None` = local-only.
+    /// When set, the panel shows a "synced" badge and the operator can push
+    /// local changes to ABW or pull ABW changes to local.
+    #[serde(default)]
+    pub cloud_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -1302,6 +1312,35 @@ pub struct DelegateLocalRequest {
     /// cost is `min(1 credit per 1000 tokens, credits_authorized)`. Must not
     /// exceed the per-dispatch ceiling (`HKASK_ABW_MAX_CREDITS`, default 50).
     pub credits_authorized: u32,
+}
+
+// ── Local mode request types (v2 §15 Slice 11) ─────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListLocalAgentsRequest {
+    /// Optional filter by agent_type. When empty, returns all local agents.
+    #[serde(default)]
+    pub agent_type: Option<String>,
+    /// Maximum number of agents to return (default 200).
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloneToLocalRequest {
+    /// The ABW agent id to clone to the local registry. The server fetches
+    /// the agent card from ABW, sets `min_provider_class: local`, writes it
+    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id`
+    /// to the ABW agent id (marking it as synced).
+    pub agent_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PushToCloudRequest {
+    /// The local agent id to push to ABW. The server reads the local card,
+    /// creates or updates the ABW agent via `swarm_create_agent`, and sets
+    /// `cloud_id` on the local card to the ABW agent id.
+    pub agent_name: String,
 }
 
 // ── Server struct ──────────────────────────────────────────────────────────
@@ -2535,6 +2574,255 @@ impl SwarmServer {
                 .map_err(SwarmError::into_tool_error)?;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
                 serde_json::json!({ "error": "failed to serialize result" })
+            }))
+        })
+        .await
+    }
+
+    // ── Local agent store tools (v2 §15 Slice 11) ───────────────────────────
+
+    /// List agents from the local registry. Returns the cards loaded from
+    /// `agents/local/curated/`. Each card carries a `cloud_id` field: when
+    /// present, the agent is synced with an ABW agent; when absent, it is
+    /// local-only. The panel uses this to show a `source` badge
+    /// (`local`, `synced`) alongside the ABW agent list.
+    #[tool(
+        description = "List all local agents from agents/local/curated/. Each agent card carries a cloud_id field: when present, the agent is synced with an ABW agent; when absent, it is local-only. Returns agents[] with agent_id, agent_type, description, accepts[], produces[], cloud_id."
+    )]
+    pub async fn swarm_list_local_agents(
+        &self,
+        parameters: Parameters<ListLocalAgentsRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_list_local_agents", Some("pko"), async {
+            let req = parameters.0;
+            let limit = req.limit.unwrap_or(200) as usize;
+            let mut agents = self.local_registry.list();
+            // Optional type filter.
+            if let Some(agent_type) = req.agent_type
+                && !agent_type.trim().is_empty()
+            {
+                agents.retain(|a| a.agent_type == agent_type);
+            }
+            agents.truncate(limit);
+            let count = agents.len();
+            Ok(serde_json::json!({
+                "agents": agents,
+                "total": count,
+            }))
+        })
+        .await
+    }
+
+    /// Clone an ABW agent to the local registry. Fetches the agent card from
+    /// ABW via `swarm_get_agent`, sets `min_provider_class: local`, writes it
+    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id` to
+    /// the ABW agent id (marking it as synced). Requires the ABW API key.
+    #[tool(
+        description = "Clone an ABW agent to the local registry. Fetches the card from ABW, sets min_provider_class: local, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. Requires ABW API key."
+    )]
+    pub async fn swarm_clone_to_local(
+        &self,
+        parameters: Parameters<CloneToLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_clone_to_local", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // Fetch the agent card from ABW.
+            let abw_card = self
+                .client
+                .get(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            // Build the local card from the ABW card.
+            let agent_id = abw_card
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&req.agent_name)
+                .to_string();
+            let agent_type = abw_card
+                .get("agent_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("research")
+                .to_string();
+            let description = abw_card
+                .get("metadata")
+                .and_then(|m| m.get("description"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            let accepts = abw_card
+                .get("accepts")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let produces = abw_card
+                .get("produces")
+                .and_then(|p| p.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let deps = abw_card
+                .get("dependencies")
+                .and_then(|d| d.as_object())
+                .map(|obj| LocalAgentDependencies {
+                    required: obj
+                        .get("required")
+                        .and_then(|r| r.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    optional: obj
+                        .get("optional")
+                        .and_then(|o| o.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .unwrap_or_default();
+            let model = abw_card
+                .get("capabilities")
+                .and_then(|c| c.get("model"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            let system_prompt = abw_card
+                .get("system_prompt")
+                .and_then(|s| s.as_str())
+                .map(String::from);
+            let local_card = LocalAgentCard {
+                agent_id: agent_id.clone(),
+                agent_type,
+                description,
+                accepts,
+                produces,
+                dependencies: deps,
+                capabilities: LocalAgentCapabilities {
+                    model,
+                    min_provider_class: "local".to_string(),
+                    system_prompt,
+                },
+                cloud_id: Some(req.agent_name.clone()),
+            };
+            // Write the card to the local registry directory.
+            let dir = self.client.config().local_agents_dir.clone();
+            let card_dir = std::path::Path::new(&dir).join(&agent_id);
+            std::fs::create_dir_all(&card_dir).map_err(|e| {
+                McpToolError::internal(format!(
+                    "failed to create local agent dir {}: {e}",
+                    card_dir.display()
+                ))
+            })?;
+            let card_path = card_dir.join("agent_card.json");
+            let json = serde_json::to_string_pretty(&local_card).map_err(|e| {
+                McpToolError::internal(format!("failed to serialize local card: {e}"))
+            })?;
+            std::fs::write(&card_path, json).map_err(|e| {
+                McpToolError::internal(format!("failed to write {}: {e}", card_path.display()))
+            })?;
+            // Reload the registry so the new card is visible.
+            self.local_registry
+                .load()
+                .map_err(|e| McpToolError::internal(format!("failed to reload registry: {e}")))?;
+            Ok(serde_json::json!({
+                "cloned": agent_id,
+                "cloud_id": req.agent_name,
+                "path": card_path.to_string_lossy(),
+                "synced": true,
+            }))
+        })
+        .await
+    }
+
+    /// Push a local agent to ABW. Reads the local card, creates or updates
+    /// the ABW agent via `POST /api/agents`, and sets `cloud_id` on the local
+    /// card to the ABW agent id (marking it as synced). Requires the ABW API
+    /// key. If the agent already has a `cloud_id`, the ABW agent is updated;
+    /// otherwise a new ABW agent is created.
+    #[tool(
+        description = "Push a local agent to ABW. Creates or updates the ABW agent from the local card, and sets cloud_id on the local card to mark it as synced. Requires ABW API key."
+    )]
+    pub async fn swarm_push_to_cloud(&self, parameters: Parameters<PushToCloudRequest>) -> String {
+        execute_tool_semantic(self, "swarm_push_to_cloud", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // Look up the local card.
+            let local_card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            // Build the ABW create/update payload from the local card.
+            let payload = serde_json::json!({
+                "agent_id": local_card.agent_id,
+                "agent_type": local_card.agent_type,
+                "description": local_card.description,
+                "accepts": local_card.accepts,
+                "produces": local_card.produces,
+                "dependencies": local_card.dependencies,
+                "model": local_card.capabilities.model,
+                "system_prompt": local_card.capabilities.system_prompt,
+            });
+            // POST to ABW. If the agent already exists (cloud_id is set),
+            // ABW updates it; otherwise a new agent is created.
+            let result = self
+                .client
+                .post("/agents", &payload)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            // Update the local card's cloud_id to mark it as synced.
+            let cloud_id = result
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&local_card.agent_id)
+                .to_string();
+            let mut updated_card = local_card.clone();
+            updated_card.cloud_id = Some(cloud_id.clone());
+            // Write the updated card back to the local registry.
+            let dir = self.client.config().local_agents_dir.clone();
+            let card_path = std::path::Path::new(&dir)
+                .join(&local_card.agent_id)
+                .join("agent_card.json");
+            let json = serde_json::to_string_pretty(&updated_card)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?;
+            std::fs::write(&card_path, json).map_err(|e| {
+                McpToolError::internal(format!("failed to write {}: {e}", card_path.display()))
+            })?;
+            self.local_registry
+                .load()
+                .map_err(|e| McpToolError::internal(format!("failed to reload: {e}")))?;
+            Ok(serde_json::json!({
+                "pushed": local_card.agent_id,
+                "cloud_id": cloud_id,
+                "synced": true,
+                "result": result,
             }))
         })
         .await

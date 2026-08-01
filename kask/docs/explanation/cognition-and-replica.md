@@ -1,7 +1,7 @@
 ---
 title: "Cognition and Replica — Fusion Design, Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-07-29
+last_updated: 2026-08-01
 version: "0.33.0"
 status: "Active"
 domain: "Cross-cutting"

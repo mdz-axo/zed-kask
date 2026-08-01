@@ -1,8 +1,8 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-07-29
-version: "0.31.1"
+last_updated: 2026-08-01
+version: "0.31.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -317,6 +317,8 @@ type.
 
 Writing Excellence is integrated into the MDS curation process via two
 mechanisms:
+
+> **Pragmatic-semantics note (2026-08-01 audit):** The two tools below are **planned (OUGHT)**, not implemented. `spec/curate/writing-excellence` and `spec/curate/evaluate` have zero hits in `kask/crates/` and `crates/` (verified by grep). They are retained as the design specification for the intended curation integration; readers should treat them as the *intended* surface, not a verifiable code reference. The 4-perspective rubric in Appendix A is the live standard reviewers apply manually today.
 
 1. **`spec/curate/writing-excellence`** — Standalone assessment tool that
    evaluates a specification document against the 4-perspective test and

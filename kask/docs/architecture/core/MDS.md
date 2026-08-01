@@ -2,7 +2,7 @@
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
 last_updated: 2026-08-01
-version: "0.31.3"
+version: "0.31.4"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -38,14 +38,13 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 | Entity | Crate / Surface | Description | Goal Principle |
 |--------|-------|-------------|---------------|
 | `HumanUser` | zed account (replaces deleted `hkask-identity` user store) | Human identity, role, provider link — owned by zed-kask, not a parallel hKask identity store | P1 |
-| `UserPod` | `hkask-types` | Agent identity with persona, voice, wallet link | P6 |
-| Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a userpod (Inactive\|Active\|ServerMode) — pod abstraction deleted in 2026-07-25 cleanup | P1 |
+| Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a user's agent identity (persona, voice, wallet link). The `UserPod` type does not exist in `hkask-types` — the per-user data directory *is* the agent identity container post-pivot. Pod abstraction deleted in 2026-07-25 cleanup. | P6, P1 |
 | `Wallet` | `hkask-regulation::WalletManager` (replaces deleted `hkask-wallet`) | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer. `gas_per_rjoule` conversion rate is configured via `WalletConfig` in `hkask-types`. | P9 |
 | `ApiKey` | `hkask-types` (wallet types; replaces deleted `hkask-wallet`) | Scoped API key with spending limits and expiry | P1 |
 | `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
 | `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, gas budgets | P9 |
 | `GasBudget` | `hkask-regulation` | Per-agent gas budget with cap, replenish rate, hold-settle pattern | P9 |
-| `KaskCore` | `kask_bridge` (D8) | In-process handle that MCP servers and zed-kask surfaces use to reach hKask primitives (replaces the deleted `AgentService` orchestration layer) | P5 |
+| ~~`KaskCore`~~ (never implemented) | ~~`kask_bridge` (D8)~~ | The proposed in-process handle was never built as a singleton; the composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` adapters. See `zed-host-architecture-plan.md` §13.3. | P5 |
 
 ### 1.2 Kata-Kanban Domain
 
@@ -93,7 +92,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 
 ### 1.4 Service Layer Subsystems (in-process)
 
-**Crate:** `hkask-services-core` + surviving specialized subcrates | **Goal Principle:** P5 (Essentialism) — thin scaffolding the in-process MCP servers depend on until the T3.0 refactor lands, at which point MCP servers take direct `KaskCore` handles and these dissolve.
+**Crate:** `hkask-services-core` (the only surviving `hkask-services-*` crate) | **Goal Principle:** P5 (Essentialism) — thin scaffolding (config, error types, settings) genuinely shared by 6 consumers. The other `hkask-services-*` subcrates were folded into their sole MCP server consumers (F6 refactor-architecture pass); the T3.0 refactor resolved by deleting the daemon transport outright (not by building `KaskCore` — `KaskCore` was never implemented; MCP servers run standalone with identity from `ServerContext.webid`).
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -116,7 +115,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 | ~~`hkask-services-runtime`~~ (folded) | Runtime services: classify + guard + provider_intel — folded into `hkask-mcp-corpus` (internal `runtime` module) | `P{N}-svc-runtime-*` | 13 | ✅ Folded |
 | ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
 | ~~`hkask-services-inference`~~ (folded) | Inference orchestration scaffolding — folded into `hkask-mcp-corpus` (internal `inference_svc` + `model_cache` modules) | `P{N}-svc-inference-*` | 7 | ✅ Folded |
-| `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`) — reads API keys from zed `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
+| `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`) — reads API keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
 
 ---
 
@@ -386,7 +385,7 @@ keystore:
   encryption: AES-256-GCM
   key_derivation: Argon2id + HKDF-SHA256
   storage: OS_keychain + SQLCipher
-  sovereignty_backend: zed CredentialsProvider (kask namespace, D9b)
+  sovereignty_backend: keyring crate (direct OS keychain; not zed CredentialsProvider)
 ```
 
 ### 7.4 Lifecycle Spec Template
@@ -564,7 +563,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | **Templates** | `templates()`, `manifest_executor()` | `hkask-templates` — skill execution (D1) |
 | **Wallet** | `wallet_manager()`, `api_key_issuer()` | `hkask-regulation::WalletManager` primitives (replaces deleted `hkask-wallet`) — no service layer; consumers compose directly. `gas_per_rjoule` conversion rate is configured via `WalletConfig` in `hkask-types`. |
 | **Identity** | `webid()` | WebID for the active user/curator data directory |
-| **Inference** | `inference_port()`, `gas_remaining()`, `gas_cap()` | `hkask-inference` — reads API keys from zed `CredentialsProvider` (D9b) |
+| **Inference** | `inference_port()`, `gas_remaining()`, `gas_cap()` | `hkask-inference` — reads API keys via the `keyring` crate directly |
 | **Guard** | `governed_tool(webid)`, `guard_strategy()` | `hkask-guard` (D4) — Magna Carta floor in the inference path |
 
 **Design rationale:** `KaskCore` groups domain-coherent infrastructure into deep modules (Ousterhout). Cross-cutting concerns (gas, governed tool, per-agent memory consolidation) remain direct methods because they span multiple sub-systems or require coordination logic. The deleted `AgentService`'s nested sub-context structs (`InfraContext`, `GovernanceContext`, `StorageContext`) are absorbed into `KaskCore`'s grouped accessors — the daemon/Matrix/a2a fields that existed only for the deleted standalone surfaces are **removed**. The `RegulationContext` struct was also deleted in the 2026-07-25 cleanup.
@@ -581,10 +580,10 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
 | `hkask-capability` | Trust | OCAP — sovereignty enforcement, capability tokens |
-| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Storage backend → zed `CredentialsProvider` (D9b) |
+| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `WalletManager` uses it for gas/rJoule conversion; wallet types live in `hkask-types` |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
-| `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys from `CredentialsProvider` (D9b) (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
+| `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-condenser` | Curation | Context condensation |
@@ -600,7 +599,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 | ~~`hkask-services-corpus`~~ (folded) | Domain | `CorpusService`, embedding pipelines — folded into `hkask-mcp-corpus` |
 | ~~`hkask-services-context`~~ (folded) | Lifecycle | `ContextService`, contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; guards were dead code |
 | ~~`hkask-services-compose`~~ (folded) | Composition | Template composition — folded into `hkask-mcp-corpus` |
-| `kask_bridge` | Composition | D8 — in-process bridge exposing `KaskCore` to MCP servers and zed-kask surfaces |
+| `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (no `KaskCore` singleton — composition root wires components directly) |
 | 11 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training |
 
 > **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (→ in-process wallet primitives), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
@@ -630,7 +629,7 @@ graph TD
         SVCCORE[hkask-services-core]
     end
     subgraph ZED["zed-kask host"]
-        CRED[CredentialsProvider D9b]
+        CRED[OS keychain via keyring crate]
         LM[language_model routing]
         AGENT[agent / agent_ui]
     end
@@ -647,8 +646,8 @@ graph TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-07-29
-verified_against: kask/docs/architecture/zed-host-architecture-plan.md §13.3, kask/crates/ directory listing
+verified_date: 2026-08-01
+verified_against: kask/docs/architecture/zed-host-architecture-plan.md §13.3, kask/crates/ directory listing, DIVERGENCE.md D5 (keystore uses keyring crate directly, not CredentialsProvider)
 status: VERIFIED
 -->
 
@@ -662,12 +661,12 @@ Domain crates **never** depend on zed-kask crates. MCP servers **never** link ze
 | Inference calls | `governed_inference` membrane with gas budget checks | P4 |
 | MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
 | Capability attenuation | Max depth limit, TTL expiry on tokens | P4 |
-| Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage in zed `CredentialsProvider` kask namespace (D5/D9b) | P1 |
+| Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage via the `keyring` crate directly (D5 — not zed `CredentialsProvider`) | P1 |
 
 ### Bootstrap Sequence
 
 1. `KaskCore::build(config)` assembles shared hKask infrastructure (storage, regulation, memory, templates, wallet primitives, MCP runtime).
-2. Sovereignty keys are resolved from zed's `CredentialsProvider` kask namespace (D5/D9b) via the trimmed `hkask-keystore`.
+2. Sovereignty keys are resolved via the trimmed `hkask-keystore` using the `keyring` crate directly (D5 — not zed's `CredentialsProvider`).
 3. Per-agent memory is created via `KaskCore::build_per_agent_memory(db)`.
 4. Consolidation is routed through `KaskCore::consolidate_agent_memory(agent_name, request)` — the single OCAP-gated, consent-checked entry point.
 5. zed-kask surfaces (kask panel, `kask` admin CLI) hold a `KaskCore` handle directly.

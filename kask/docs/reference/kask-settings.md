@@ -1,8 +1,8 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-07-29
-version: "0.32.1"
+last_updated: 2026-08-01
+version: "0.32.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -27,7 +27,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `mcp` | `KaskMcpSettings` | `Default` |
 | `data_services` | `KaskDataServiceSettings` | derived `Default` (all false) |
 | `curator` | `KaskCuratorSettings` | `Default` |
-| `guard` | `KaskGuardSettings` | `Default` |
 | `memory` | `KaskMemorySettings` | `Default` |
 | `condenser` | `KaskCondenserSettings` | `Default` |
 | `codegraph` | `KaskCodegraphSettings` | derived `Default` |
@@ -35,6 +34,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `corpus` | `KaskCorpusSettings` | `Default` |
 | `media` | `KaskMediaSettings` | derived `Default` |
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
+| `swarm` | `KaskSwarmSettings` | `Default` |
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `fusion` | `KaskFusionSettings` | `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
@@ -131,11 +131,9 @@ child processes.
 When `email` is `None` or unconfigured, the alert email sink falls back to the
 log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
 
-## Guard (`KaskGuardSettings`)
+## Guard
 
-| Field | Type | Default | Valid values |
-|-------|------|---------|--------------|
-| `direct_chat_strategy` | `String` | `"cascade_only"` | `"buffer"`, `"incremental"`, `"cascade_only"` |
+There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded. See DIVERGENCE.md D4.
 
 ## Memory (`KaskMemorySettings`)
 
@@ -197,6 +195,18 @@ log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `data_dir` | `String` | `""` | Scenario persistence directory; empty = in-memory |
+
+## Swarm (`KaskSwarmSettings`)
+
+Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-swarm-intelligence.md`.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `mode` | `SwarmModeConfig` | `"abw"` | `"abw"` (Agent Bestiary World, v1) or `"local"` (local substrate crates, v2 §15) |
+| `api_url` | `String` | `""` | ABW API base URL override; empty = `https://agent-bestiary.world` |
+| `max_credits_per_dispatch` | `u32` | `50` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
+| `curator_consent_default` | `bool` | `false` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
+| `local_agents_dir` | `String` | `""` | Directory for local agent cards (`<id>/agent_card.json`) in `local` mode; empty = `agents/local/curated` |
 
 ## Training (`KaskTrainingSettings`)
 

@@ -1,8 +1,8 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-07-29
-version: "0.31.1"
+last_updated: 2026-08-01
+version: "0.31.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -59,9 +59,12 @@ Grounded in the SOLID architecture principles[^solid]: true data ownership, fine
 Data sovereignty boundaries implement the principle of informational self-determination:[^westin-data]
 
 > **Note:** The `DataSovereigntyBoundary` struct that encoded this in Rust was
-> removed (zero consumers). The concept remains the architectural intent; the
-> `Visibility` enum (`Private`/`Shared`/`Public`) on each h_mem is the live
-> enforcement mechanism.
+> never implemented in the live codebase (the file `hkask-types/src/curation.rs`
+> does not exist as of 2026-08-01; grep finds zero hits for the symbol across
+> `kask/` and `crates/`). The concept remains the architectural intent; the
+> `Visibility` enum (`Private`/`Shared`/`Public`) on each h_mem in
+> `hkask-types/src/visibility.rs` is the live enforcement mechanism, plus the
+> OCAP capability-match gate in `McpRuntime::invoke`.
 
 **Default hKask Configuration:**
 - **Sovereign (Private):** episodic_memory, personal_context, capability_tokens, ocap_boundaries
@@ -137,7 +140,7 @@ A human user may define consent structures at different granularities:
 |---|---|
 | Master consent | Covers all agents for the user |
 | Per-agent consent | Specific to a single agent |
-| Per-agent-type consent | One structure for bots (A2A interaction), another for userpods (H2A bridging) |
+| Per-agent-type consent | One structure for bots (A2A interaction), another for the user's agent (H2A bridging) |
 
 Most-specific grant wins. The verification manifest asserts that consent resolution follows this hierarchy.
 
@@ -236,7 +239,7 @@ The Curator is not just a quality gate. The Curator is the Magna Carta enforcer,
    - Variety deficit > 100
    - Sovereignty compromised
    - Consent violation detected
-6. **Magna Carta Verification** — Review and resolve verification findings with the human user or the user's userpod
+6. **Magna Carta Verification** — Review and resolve verification findings with the human user or the user's agent
 
 ### Curation Decisions
 
@@ -260,7 +263,7 @@ The Cybernetic Nervous System monitors, providing algedonic signaling from the V
 **Algedonic Alert Threshold:** Variety deficit > 100
 
 When triggered, the Curator escalates to:
-- The human user or the user's userpod (via the agent panel, where the Curator is a native in-process agent — D2)
+- The human user or the user's agent (via the agent panel, where the Curator is a native in-process agent — D2)
 - External audit trail (Regulation spans)
 
 > **Note (v0.31.0, in-process pivot):** The "System administrator" escalation target is removed. hKask is single-user in-process; there is no sysadmin role. The Curator escalates to the user through the agent panel.
@@ -271,7 +274,7 @@ When triggered, the Curator escalates to:
 
 The Magna Carta Verifier is a skill that verifies each principle using YAML manifests and Jinja2 templates. It is part of the hKask verification infrastructure, anchored to the principles for stability as implementations evolve.
 
-> **Pragmatic-semantics note (2026-07-29 audit):** The assertions below reference `SovereigntyChecker` and `require_sovereignty` as the enforcement gate. These types are **not yet implemented** in code (verified by grep of `kask/crates/`). The manifest targets `hkask-types::visibility` and the `gate: require_sovereignty` field describe the **intended (OUGHT)** enforcement surface, not a verifiable code reference. The implemented surface is `DataSovereigntyBoundary` (in `hkask-types/src/curation.rs`), which carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function.
+> **Pragmatic-semantics note (2026-08-01 audit):** The assertions below reference `SovereigntyChecker` and `require_sovereignty` as the enforcement gate. These types are **not yet implemented** in code (verified by grep of `kask/crates/` — `SovereigntyChecker` appears only in a doc comment in `hkask-types/src/visibility.rs`; `require_sovereignty` has zero hits). The manifest targets `hkask-types::visibility` and the `gate: require_sovereignty` field describe the **intended (OUGHT)** enforcement surface, not a verifiable code reference. The implemented surface is the `Visibility` enum (`Private`/`Shared`/`Public`) in `hkask-types/src/visibility.rs`, which carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. The live denial gate is the OCAP capability-match in `McpRuntime::invoke`.
 
 ### Skill Structure
 
@@ -355,7 +358,7 @@ Verification is triggered by:
 
 ### Resolution Process
 
-When an assertion fails, the verification report is escalated to the Curator. The Curator reviews the finding with the human user or the user's userpod in a chat session. The resolution process is defined by the user in collaboration with the Curator — the user instructs the Curator on how to resolve issues, and the Curator follows that process.
+When an assertion fails, the verification report is escalated to the Curator. The Curator reviews the finding with the human user or the user's agent in a chat session. The resolution process is defined by the user in collaboration with the Curator — the user instructs the Curator on how to resolve issues, and the Curator follows that process.
 
 ---
 
@@ -378,7 +381,7 @@ pub struct UserSovereigntyState {
 
 ### Curator Pipeline Integration (OUGHT — not yet implemented)
 
-The `DefaultSpecCurator` is the **intended** curator that enforces the Magna Carta. It would record sovereignty checks as `reg.sovereignty.checked` `RegulationRecord`s when an event sink is wired. The per-user data directory's `SovereigntyChecker` (OUGHT) would enforce the sovereignty policy on every memory access. Neither type exists in code as of 2026-07-29; the `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction and has no successor yet.
+The `DefaultSpecCurator` is the **intended** curator that enforces the Magna Carta. It would record sovereignty checks as `reg.sovereignty.checked` `RegulationRecord`s when an event sink is wired. The per-user data directory's `SovereigntyChecker` (OUGHT) would enforce the sovereignty policy on every memory access. Neither type exists in code as of 2026-08-01; the `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction and has no successor yet.
 
 ```rust
 // OUGHT — intended design; not yet implemented in zed-kask

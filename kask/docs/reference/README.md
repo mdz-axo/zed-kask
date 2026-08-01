@@ -18,7 +18,7 @@ servers hosted on disk via zed's `context_server` infrastructure. The standalone
 HTTP API server, Matrix transport, daemon process, and REPL surfaces have been **deleted** and
 are not referenced here as current. See
 [`docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)
-for the D1–D10 integration seams and the essentialist split.
+for the D1–D14 integration seams and the essentialist split.
 
 ## Skill & Template Registry
 

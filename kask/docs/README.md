@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 > **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, MCP servers, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces.
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D10 integration plan, composition root, and current crate inventory.
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D14 integration plan, composition root, and current crate inventory.
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 major crates (40 artifacts).
 
@@ -20,7 +20,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 |----------|-------------|
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D10 integration seams, composition root, crate inventory, deletion history. |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D14 integration seams, composition root, crate inventory, deletion history. |
 | [`salience-specification.md`](architecture/salience-specification.md) | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`). |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — 4 sovereignty principles (P1–P4). |

@@ -96,7 +96,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
 | Security audit | `kali-audit` | `supply-chain-sentinel` (manifests) |
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
-| GPU training pod creation | [`docs/research/gpu-provider-research-2026-07-23.md`](docs/research/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
+| GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |
 | Skill matching for a task | `skill-router` | `skill-discovery` (if gaps found) |
 | Capability gap detection | `skill-discovery` | `skill-router` (after new skill installed) |

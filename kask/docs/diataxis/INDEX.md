@@ -57,5 +57,5 @@ Every artifact cites concrete file:line references in the current tree.
 ## See also
 
 - [`kask/docs/README.md`](../README.md): the kask docs portal.
-- [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D10 integration seams.
+- [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D14 integration seams.
 - [`kask/docs/DIAGRAMS_INDEX.md`](../DIAGRAMS_INDEX.md): cross-cutting diagram registry.

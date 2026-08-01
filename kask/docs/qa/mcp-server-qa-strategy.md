@@ -220,7 +220,7 @@ evidence produced.
 
 ### 3.2 Rust code path → `bug-hunt` + `kali-audit`
 
-- **Tools covered**: all 195 tools (the implementation path of every tool).
+- **Tools covered**: all 206 tools (the implementation path of every tool).
 - **Template/phase**: `bug-hunt` Charter → Probe → Oracle → Taxonomize →
   Report → Convergence, with Beizer taxonomy and the missing-tests
   detection sub-phase (which will surface the condenser/curator
@@ -240,7 +240,7 @@ evidence produced.
 
 ### 3.4 Runtime behavior → `runtime-posture-monitor`
 
-- **Tools covered**: all 195 tools, observed live during the QA routine.
+- **Tools covered**: all 206 tools, observed live during the QA routine.
 - **Template/phase**: `runtime-posture-monitor` 4-phase pipeline
   (select → classify → regulate → convergence) consuming `hkask.*`
   performative spans and `reg.tool` spans emitted by the routine itself.
@@ -250,7 +250,7 @@ evidence produced.
 
 ### 3.5 Code-graph / call-site coverage → `graph-audit`
 
-- **Tools covered**: all 195 tools (verification that the QA routine
+- **Tools covered**: all 206 tools (verification that the QA routine
   actually reaches each tool).
 - **Template/phase**: `graph-audit` code mode via the
   `hkask-mcp-codegraph` MCP server — query the symbol graph for each

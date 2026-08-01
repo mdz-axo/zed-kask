@@ -1,7 +1,7 @@
 ---
 title: "Skills and Composition"
 audience: [developers, operators, users]
-last_updated: 2026-07-29
+last_updated: 2026-08-01
 version: "0.33.0"
 status: "Active"
 domain: "Skill System"

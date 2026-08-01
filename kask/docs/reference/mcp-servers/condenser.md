@@ -1,7 +1,7 @@
 ---
 title: "Condenser MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-07-29
+last_updated: 2026-08-01
 version: "0.32.1"
 status: "Active"
 domain: "Composition"
