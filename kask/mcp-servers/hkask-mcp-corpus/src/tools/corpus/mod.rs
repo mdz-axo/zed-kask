@@ -110,7 +110,8 @@ impl CorpusServer {
                     .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?);
                 out.push('\n');
             }
-            std::fs::write(&req.output, &out).map_err(|e| {
+            let output_path = crate::path_safety::contain_for_write(&req.output)?;
+            std::fs::write(&output_path, &out).map_err(|e| {
                 McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
             })?;
 
@@ -483,7 +484,8 @@ impl CorpusServer {
                     .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?);
                 out.push('\n');
             }
-            std::fs::write(&req.output, &out).map_err(|e| {
+            let output_path = crate::path_safety::contain_for_write(&req.output)?;
+            std::fs::write(&output_path, &out).map_err(|e| {
                 McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
             })?;
 
@@ -853,7 +855,8 @@ impl CorpusServer {
                 ti += req.prompts_per_chunk;
             }
 
-            std::fs::write(&req.output, &out).map_err(|e| {
+            let output_path = crate::path_safety::contain_for_write(&req.output)?;
+            std::fs::write(&output_path, &out).map_err(|e| {
                 McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
             })?;
 
@@ -942,7 +945,8 @@ impl CorpusServer {
                 serde_json::to_string(&serde_json::json!({"instruction": q.instruction, "input": "", "output": q.output}))
                     .unwrap_or_default()
             }).collect::<Vec<_>>().join("\n");
-            std::fs::write(&req.output, train + "\n").map_err(|e| {
+            let output_path = crate::path_safety::contain_for_write(&req.output)?;
+            std::fs::write(&output_path, train + "\n").map_err(|e| {
                 McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
             })?;
             tracing::info!("  Wrote: {} QAs to {}", deduped_count, req.output);
@@ -1349,7 +1353,8 @@ impl CorpusServer {
 
             // Write output if not dry run
             if !req.dry_run && !chatml_lines.is_empty() {
-                std::fs::write(&req.output_jsonl, chatml_lines.join("\n") + "\n")
+                let output_path = crate::path_safety::contain_for_write(&req.output_jsonl)?;
+                std::fs::write(&output_path, chatml_lines.join("\n") + "\n")
                     .map_err(|e| {
                         McpToolError::internal(format!(
                             "Cannot write output '{}': {e}",

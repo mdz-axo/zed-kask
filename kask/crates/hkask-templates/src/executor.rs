@@ -2330,10 +2330,10 @@ fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
     if let Ok(v) = serde_json::from_str(text) {
         return Ok(v);
     }
-    // Brace-balanced extraction (RR-0028): the old `find('{')`…`rfind('}')`
-    // approach silently merged an injected JSON block in the model's reasoning
-    // preamble with its real answer. `extract_json_from_response` returns
-    // exactly one top-level object, defeating the injection.
+    // Brace-balanced extraction (RR-0028): the old first-brace to last-brace
+    // slice approach silently merged an injected JSON block in the model's
+    // reasoning preamble with its real answer. `extract_json_from_response`
+    // returns exactly one top-level object, defeating the injection.
     let extracted = llm_json::extract_json_from_response(text);
     serde_json::from_str(&extracted).map_err(|e| {
         TemplateError::Manifest(format!(
@@ -3640,7 +3640,7 @@ mod tests {
             action: "populate".to_string(),
             description: "bind step_1_result into data".to_string(),
             renderer: None,
-            template_ref: Some("{{ data }}".to_string()),
+            template_ref: Some("{{data}}".to_string()),
             mcp: None,
             compute_ref: None,
             gas_cap: 0,

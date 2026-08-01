@@ -535,10 +535,10 @@ fn parse_json_lenient(text: &str) -> serde_json::Value {
         return v;
     }
 
-    // Brace-balanced extraction (RR-0028): the old `find('{')`…`rfind('}')`
-    // approach silently merged an injected JSON block in the model's reasoning
-    // preamble with its real answer. `extract_json_from_response` returns
-    // exactly one top-level object, defeating the injection.
+    // Brace-balanced extraction (RR-0028): the old first-brace to last-brace
+    // slice approach silently merged an injected JSON block in the model's
+    // reasoning preamble with its real answer. `extract_json_from_response`
+    // returns exactly one top-level object, defeating the injection.
     let extracted = llm_json::extract_json_from_response(text);
     if let Ok(v) = serde_json::from_str::<Value>(&extracted) {
         return v;

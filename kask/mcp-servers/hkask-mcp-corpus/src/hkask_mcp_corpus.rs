@@ -33,6 +33,7 @@ mod helpers;
 pub mod inference_svc;
 pub mod model_cache;
 pub mod ocr;
+pub(crate) mod path_safety;
 pub mod runtime;
 pub mod template;
 pub mod tools;
@@ -244,8 +245,7 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
         )));
     }
 
-    let file_bytes = std::fs::read(path)
-        .map_err(|e| McpToolError::internal(format!("Failed to read file '{}': {}", path, e)))?;
+    let file_bytes = path_safety::read_capped(path, path_safety::MAX_READ_BYTES)?;
 
     if file_bytes.is_empty() {
         return Err(McpToolError::invalid_argument(format!(

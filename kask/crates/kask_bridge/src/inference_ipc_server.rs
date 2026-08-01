@@ -35,7 +35,7 @@ use hkask_types::inference_ipc::{
     ModelListEntry,
 };
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::oneshot;
 
@@ -53,11 +53,159 @@ pub struct InferenceIpcServer {
     _list_models_task: gpui::Task<()>,
 }
 
+/// Maximum size of a single newline-delimited IPC message.
+///
+/// Requests carry base64-encoded images and multi-message transcripts, so
+/// this is generous; 16 MiB caps unbounded `read_line` growth (CWE-400).
+/// Duplicated in `hkask-inference/src/inference_ipc_client.rs` because the
+/// shared types crate is owned by another workstream.
+const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Error returned by [`CappedReader::read_line`] when the peer sends more
+/// than `MAX_IPC_LINE_BYTES` without a newline.
+const LINE_TOO_LONG: &str = "IPC line exceeds MAX_IPC_LINE_BYTES";
+
+/// A connection-side reader that hands out one capped line at a time.
+struct CappedReader<R> {
+    inner: BufReader<R>,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> CappedReader<R> {
+    fn new(reader: R) -> Self {
+        Self {
+            inner: BufReader::new(reader),
+        }
+    }
+
+    /// Read one newline-delimited message, capped at `MAX_IPC_LINE_BYTES`.
+    ///
+    /// Returns `Ok(None)` on clean EOF before any bytes. An oversized line
+    /// is an error; the connection is unusable afterward because the
+    /// buffered remainder cannot be re-synchronized to a message boundary.
+    async fn read_line(&mut self) -> Result<Option<String>, std::io::Error> {
+        let mut line = String::new();
+        // Read at most cap+1 bytes so a line of exactly cap bytes followed by
+        // a newline is accepted, but anything longer is detected.
+        let mut capped = (&mut self.inner).take(MAX_IPC_LINE_BYTES + 1);
+        let bytes_read = capped.read_line(&mut line).await?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        if !line.ends_with('\n') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                LINE_TOO_LONG,
+            ));
+        }
+        line.pop();
+        Ok(Some(line))
+    }
+}
+
+/// The directory inference IPC sockets live in. Private to the current user
+/// (mode 0700) so other local users cannot reach the socket — the socket
+/// drives LLM calls billed to the operator's API keys.
+fn inference_socket_dir() -> Result<PathBuf, std::io::Error> {
+    let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(runtime_dir) if !runtime_dir.is_empty() => PathBuf::from(runtime_dir).join("kask"),
+        _ => {
+            let uid = own_uid();
+            std::env::temp_dir().join(format!("kask-inference-{uid}"))
+        }
+    };
+
+    ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+/// Our real uid without `unsafe`/`libc` (both forbidden in hkask crates).
+/// std exposes uid only through `MetadataExt` on files, so on Linux we read
+/// the owner of `/proc/self`. Elsewhere there is no std-only source; the
+/// fallback directory name uses 0, which is still per-user-private because
+/// the directory is created mode 0700.
+#[cfg(target_os = "linux")]
+fn own_uid() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self")
+        .map(|metadata| metadata.uid())
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn own_uid() -> u32 {
+    0
+}
+
+/// Create `dir` (and parents) with mode 0700, or tighten an existing dir to
+/// 0700. Fails rather than proceeding with a world-accessible directory.
+fn ensure_private_dir(dir: &std::path::Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    builder.create(dir).or_else(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            Ok(())
+        } else {
+            Err(e)
+        }
+    })?;
+
+    let current = std::fs::metadata(dir)?.permissions().mode() & 0o777;
+    if current != 0o700 {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
+            std::io::Error::other(format!(
+                "inference socket dir {} exists with mode {current:o} and chmod to 0700 failed: {e}",
+                dir.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Verify the connecting peer is the same unix user as this process.
+///
+/// On Linux, `SO_PEERCRED` (via tokio's safe `peer_cred()`) gives the peer
+/// uid; a mismatch is logged and rejected. On other unix platforms tokio has
+/// no safe peer-credential API, so we warn and rely on the 0700 directory +
+/// 0600 socket file as the access-control boundary.
+#[cfg(target_os = "linux")]
+fn peer_is_owner(stream: &tokio::net::UnixStream) -> bool {
+    match stream.peer_cred() {
+        Ok(cred) if cred.uid() == own_uid() => true,
+        Ok(cred) => {
+            tracing::warn!(
+                target: "reg.inference",
+                peer_uid = cred.uid(),
+                "Inference IPC rejected connection from different uid"
+            );
+            false
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.inference",
+                error = %e,
+                "Inference IPC peer_cred failed — rejecting connection"
+            );
+            false
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peer_is_owner(_stream: &tokio::net::UnixStream) -> bool {
+    tracing::warn!(
+        target: "reg.inference",
+        "Inference IPC peer-credential check unavailable on this platform — relying on filesystem permissions"
+    );
+    true
+}
+
 impl InferenceIpcServer {
     /// Start listening on a new Unix socket.
     ///
-    /// The socket path is randomly generated in the system temp directory.
-    /// The socket is removed when the server is dropped.
+    /// The socket path is randomly generated inside a per-user private
+    /// directory. The socket is removed when the server is dropped.
     ///
     /// `inference_port` is the port to dispatch chat requests to (typically
     /// the `GuardedInferencePort` wrapping `LanguageModelInferencePort`).
@@ -73,8 +221,10 @@ impl InferenceIpcServer {
         media_router: Option<Arc<hkask_inference::MediaRouter>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
-        // Generate a unique socket path.
-        let socket_path = generate_socket_path();
+        // Generate a unique socket path inside a per-user private directory
+        // so other local users cannot connect and spend the operator's API
+        // quota.
+        let socket_path = generate_socket_path()?;
 
         // Bind the listener on the tokio runtime (via gpui_tokio, not GPUI's
         // background executor — UnixListener::bind and accept require a tokio
@@ -97,6 +247,19 @@ impl InferenceIpcServer {
             .map_err(|e| {
                 std::io::Error::other(format!("Failed to bind inference IPC socket: {e}"))
             })?;
+
+        // Belt-and-braces: the parent dir is 0700, but also pin the socket
+        // itself to owner-only in case the dir mode is ever relaxed.
+        std::fs::set_permissions(
+            &socket_path,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+        )
+        .map_err(|e| {
+            std::io::Error::other(format!(
+                "Failed to set 0600 on inference IPC socket {}: {e}",
+                socket_path.display()
+            ))
+        })?;
 
         let port = inference_port.clone();
         let emb_port = embedding_port.clone();
@@ -171,6 +334,49 @@ impl InferenceIpcServer {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_dir_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = inference_socket_dir().expect("socket dir must be creatable");
+        let mode = std::fs::metadata(&dir)
+            .expect("socket dir must exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "socket dir must be owner-only, got {mode:o}");
+    }
+
+    #[tokio::test]
+    async fn capped_reader_rejects_overlong_line() {
+        let payload = vec![b'x'; (MAX_IPC_LINE_BYTES + 10) as usize];
+        let cursor = std::io::Cursor::new(payload);
+        let mut reader = CappedReader::new(cursor);
+        let result = reader.read_line().await;
+        assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    #[tokio::test]
+    async fn capped_reader_accepts_normal_lines() {
+        let cursor = std::io::Cursor::new(b"hello\nworld\n".to_vec());
+        let mut reader = CappedReader::new(cursor);
+        assert_eq!(reader.read_line().await.unwrap().as_deref(), Some("hello"));
+        assert_eq!(reader.read_line().await.unwrap().as_deref(), Some("world"));
+        assert_eq!(reader.read_line().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn capped_reader_eof_without_newline_is_error() {
+        let cursor = std::io::Cursor::new(b"no-newline".to_vec());
+        let mut reader = CappedReader::new(cursor);
+        let result = reader.read_line().await;
+        assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
+    }
+}
+
 impl Drop for InferenceIpcServer {
     fn drop(&mut self) {
         // Clean up the socket file.
@@ -178,14 +384,15 @@ impl Drop for InferenceIpcServer {
     }
 }
 
-/// Generate a unique Unix socket path in the system temp directory.
-fn generate_socket_path() -> PathBuf {
+/// Generate a unique Unix socket path inside the per-user private socket
+/// directory (see [`inference_socket_dir`]).
+fn generate_socket_path() -> Result<PathBuf, std::io::Error> {
     let pid = std::process::id();
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("kask-inference-{pid}-{nonce}.sock"))
+    Ok(inference_socket_dir()?.join(format!("kask-inference-{pid}-{nonce}.sock")))
 }
 
 /// Handle a single connection from an MCP server.
@@ -201,18 +408,27 @@ async fn handle_connection(
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
 ) {
+    if !peer_is_owner(&stream) {
+        return;
+    }
+
     let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
+    let mut reader = CappedReader::new(reader);
 
     loop {
-        line.clear();
-        match reader.read_line(&mut line).await {
-            Ok(0) => {
+        let line = match reader.read_line().await {
+            Ok(None) => {
                 // Connection closed.
                 break;
             }
-            Ok(_) => {}
+            Ok(Some(line)) => line,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                tracing::warn!(
+                    target: "reg.inference",
+                    "Inference IPC line exceeded {MAX_IPC_LINE_BYTES} bytes — closing connection"
+                );
+                break;
+            }
             Err(e) => {
                 tracing::warn!(
                     target: "reg.inference",
@@ -221,7 +437,7 @@ async fn handle_connection(
                 );
                 break;
             }
-        }
+        };
 
         let request: InferenceRequest = match serde_json::from_str(&line) {
             Ok(r) => r,

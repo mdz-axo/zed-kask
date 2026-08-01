@@ -292,7 +292,8 @@ impl CorpusServer {
             let router = Arc::clone(&self.inference_router);
 
             // Output file writer (with incremental flush every 10 completions)
-            let file = std::fs::File::create(&output).map_err(|e| {
+            let output_path = crate::path_safety::contain_for_write(&output)?;
+            let file = std::fs::File::create(&output_path).map_err(|e| {
                 McpToolError::internal(format!(
                     "Cannot create output file '{}': {e}",
                     output

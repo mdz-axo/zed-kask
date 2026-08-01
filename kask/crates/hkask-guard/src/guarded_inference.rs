@@ -347,6 +347,7 @@ impl InferencePort for GuardedInferencePort {
             inner,
             guard: Arc::clone(&self.guard),
             accumulated: String::new(),
+            accumulated_reasoning: String::new(),
             scanned: false,
         })
     }
@@ -373,6 +374,7 @@ impl InferencePort for GuardedInferencePort {
             inner,
             guard: Arc::clone(&self.guard),
             accumulated: String::new(),
+            accumulated_reasoning: String::new(),
             scanned: false,
         })
     }
@@ -404,6 +406,7 @@ impl InferencePort for GuardedInferencePort {
             inner,
             guard: Arc::clone(&self.guard),
             accumulated: String::new(),
+            accumulated_reasoning: String::new(),
             scanned: false,
         })
     }
@@ -584,6 +587,144 @@ mod tests {
         assert!(
             last.text_delta.contains("[REDACTED]"),
             "redacted chunk should contain the [REDACTED] marker"
+        );
+    }
+
+    /// Echo port that returns a fixed `reasoning` trace alongside the echoed
+    /// prompt — simulates thinking-mode models (Qwen3, GLM-5.2, DeepSeek-R1).
+    struct ReasoningEchoPort {
+        reasoning: String,
+    }
+
+    impl InferencePort for ReasoningEchoPort {
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let text = prompt.to_string();
+            let reasoning = self.reasoning.clone();
+            Box::pin(async {
+                Ok(InferenceResult {
+                    text,
+                    model: "echo".to_string(),
+                    usage: hkask_types::InferenceUsage::default(),
+                    finish_reason: "stop".to_string(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: Some(reasoning),
+                })
+            })
+        }
+
+        fn generate_stream(
+            &self,
+            prompt: &str,
+            _params: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>>
+        {
+            let text = prompt.to_string();
+            let reasoning = self.reasoning.clone();
+            Box::pin(futures_util::stream::once(async move {
+                Ok(InferenceStreamChunk {
+                    text_delta: text,
+                    reasoning_delta: reasoning,
+                    model: "echo".to_string(),
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    tool_calls: vec![],
+                })
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn canary_in_reasoning_field_is_redacted() {
+        // A thinking-mode model can echo the system prompt (including the
+        // canary token) into the reasoning trace while the visible text is
+        // clean. The reasoning field must be scanned too (OWASP LLM07).
+        let guard = ContentGuard::mandatory(&GuardConfig::default());
+        let canary = guard.canary().as_str().to_string();
+        let port = GuardedInferencePort::new(
+            Arc::new(ReasoningEchoPort {
+                reasoning: format!("thinking about the system prompt: {canary}"),
+            }),
+            guard,
+        );
+        let result = port
+            .generate(
+                "Normal text about architecture.",
+                &LLMParameters::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        let reasoning = result.reasoning.expect("reasoning should be present");
+        assert!(
+            !reasoning.contains(&canary),
+            "canary must be redacted from the reasoning field"
+        );
+        assert!(
+            reasoning.contains("[REDACTED-CANARY]"),
+            "reasoning should contain the redaction marker"
+        );
+    }
+
+    #[tokio::test]
+    async fn none_reasoning_passes_through_unmodified() {
+        let port = guarded_echo();
+        let result = port
+            .generate(
+                "Normal text about architecture.",
+                &LLMParameters::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Normal text about architecture.");
+        assert!(result.reasoning.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_canary_in_reasoning_delta_is_redacted() {
+        let guard = ContentGuard::mandatory(&GuardConfig::default());
+        let canary = guard.canary().as_str().to_string();
+        let port = GuardedInferencePort::new(
+            Arc::new(ReasoningEchoPort {
+                reasoning: format!("reasoning trace leaking {canary}"),
+            }),
+            guard,
+        );
+        let stream = port.generate_stream(
+            "Normal text about architecture.",
+            &LLMParameters::default(),
+            None,
+        );
+        let chunks: Vec<InferenceStreamChunk> = stream
+            .try_collect()
+            .await
+            .expect("stream should complete without error");
+        assert!(
+            chunks.len() >= 2,
+            "echo chunk + redaction chunk expected; got {} chunks",
+            chunks.len()
+        );
+        let last = chunks.last().expect("at least one chunk");
+        assert_eq!(
+            last.finish_reason.as_deref(),
+            Some("redacted"),
+            "final chunk should signal redaction via finish_reason"
+        );
+        assert!(
+            !last.reasoning_delta.contains(&canary),
+            "redacted chunk must not contain the canary in reasoning_delta"
+        );
+        assert!(
+            last.reasoning_delta.contains("[REDACTED-CANARY]"),
+            "redacted chunk should contain the redaction marker in reasoning_delta"
         );
     }
 }

@@ -41,9 +41,40 @@ use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
     InferenceResult, MediaGenerateParams,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
+
+/// Maximum size of a single newline-delimited IPC response line.
+///
+/// Responses carry generated text and base64 media, so this is generous;
+/// 16 MiB caps unbounded `read_line` growth (CWE-400). Must match the
+/// server side in `kask_bridge/src/inference_ipc_server.rs`; duplicated here
+/// because the shared types crate is owned by another workstream.
+const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Read one newline-delimited response from the socket, capped at
+/// `MAX_IPC_LINE_BYTES`. Returns `None` when the server closed the
+/// connection before sending any bytes; a line without a terminating
+/// newline (overlong or truncated) is an error.
+async fn read_response_line(stream: &mut UnixStream) -> Result<Option<String>, std::io::Error> {
+    // +1 so a line of exactly cap bytes followed by a newline is accepted
+    // while anything longer is detected as missing-newline.
+    let mut reader = BufReader::new(stream.take(MAX_IPC_LINE_BYTES + 1));
+    let mut line = String::new();
+    let bytes_read = reader.read_line(&mut line).await?;
+    if bytes_read == 0 {
+        return Ok(None);
+    }
+    if !line.ends_with('\n') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "IPC response exceeds MAX_IPC_LINE_BYTES or is truncated",
+        ));
+    }
+    line.pop();
+    Ok(Some(line))
+}
 
 /// An `InferencePort` that delegates to a Unix socket connection back to zed.
 ///
@@ -112,20 +143,17 @@ impl InferenceIpcClient {
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
         // Read the response line.
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
+        let line = read_response_line(stream)
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
 
-        if line.is_empty() {
+        let Some(line) = line else {
             // Connection closed by the server.
             *guard = None;
             return Err(InferenceError::Connection(
                 "IPC socket closed by server".into(),
             ));
-        }
+        };
 
         let response: InferenceResponse = serde_json::from_str(&line)
             .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
@@ -208,19 +236,16 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
+        let line = read_response_line(stream)
             .await
             .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC read failed: {e}")))?;
 
-        if line.is_empty() {
+        let Some(line) = line else {
             *guard = None;
             return Err(EmbeddingGenerationError::Connection(
                 "IPC socket closed by server".into(),
             ));
-        }
+        };
 
         let response: InferenceResponse = serde_json::from_str(&line)
             .map_err(|e| EmbeddingGenerationError::Json(format!("IPC deserialize failed: {e}")))?;
@@ -319,19 +344,16 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
+        let line = read_response_line(stream)
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
 
-        if line.is_empty() {
+        let Some(line) = line else {
             *guard = None;
             return Err(InferenceError::Connection(
                 "IPC socket closed by server".into(),
             ));
-        }
+        };
 
         let response: InferenceResponse = serde_json::from_str(&line)
             .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
@@ -418,19 +440,16 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
+        let line = read_response_line(stream)
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
 
-        if line.is_empty() {
+        let Some(line) = line else {
             *guard = None;
             return Err(InferenceError::Connection(
                 "IPC socket closed by server".into(),
             ));
-        }
+        };
 
         let response: InferenceResponse = serde_json::from_str(&line)
             .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
@@ -666,5 +685,43 @@ impl InferencePort for InferenceIpcClient {
         let params = params.clone();
         let this = self;
         async move { this.media_generate(&op, &params).await }.boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn read_response_line_rejects_overlong_line() {
+        let (mut sender, mut receiver) = UnixStream::pair().expect("socket pair");
+        let writer = tokio::spawn(async move {
+            let payload = vec![b'x'; (MAX_IPC_LINE_BYTES + 10) as usize];
+            sender.write_all(&payload).await
+        });
+        let result = read_response_line(&mut receiver).await;
+        assert!(
+            matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "expected InvalidData error, got {result:?}"
+        );
+        // The writer may fail with BrokenPipe once the receiver is dropped;
+        // either outcome is fine — just don't leak the task.
+        let _ = writer.await;
+    }
+
+    #[tokio::test]
+    async fn read_response_line_accepts_normal_line() {
+        let (mut sender, mut receiver) = UnixStream::pair().expect("socket pair");
+        sender.write_all(b"{\"ok\":true}\n").await.expect("write");
+        let line = read_response_line(&mut receiver).await.expect("read");
+        assert_eq!(line.as_deref(), Some("{\"ok\":true}"));
+    }
+
+    #[tokio::test]
+    async fn read_response_line_eof_is_none() {
+        let (sender, mut receiver) = UnixStream::pair().expect("socket pair");
+        drop(sender);
+        let line = read_response_line(&mut receiver).await.expect("read");
+        assert_eq!(line, None);
     }
 }

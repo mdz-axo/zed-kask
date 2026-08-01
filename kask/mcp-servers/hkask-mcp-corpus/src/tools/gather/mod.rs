@@ -11,7 +11,6 @@
 use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -193,7 +192,7 @@ impl CorpusServer {
                 )));
             }
 
-            let cache_dir = PathBuf::from(&params.cache_dir);
+            let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
             let cache_path = cache_dir.join(format!("{}.txt", params.slug));
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {

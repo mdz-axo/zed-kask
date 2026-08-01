@@ -9,6 +9,7 @@
 
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use hkask_types::InferencePort;
+use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
 use serde::Deserialize;
 use std::path::Path;
@@ -557,18 +558,13 @@ async fn extract_triples_one(
 
 /// Parse a TripleExtraction from classifier JSON response.
 pub fn parse_triple_extraction(content: &str) -> Result<TripleExtraction, ServiceError> {
-    // Try to extract JSON from the response (may be wrapped in markdown code blocks)
-    let json_str = if let Some(start) = content.find("{") {
-        if let Some(end) = content.rfind("}") {
-            &content[start..=end]
-        } else {
-            content
-        }
-    } else {
-        content
-    };
+    // Brace-balanced extraction (RR-0028): the old first-brace to last-brace
+    // slice approach silently merged an injected JSON block in the model's
+    // reasoning preamble with its real answer. `extract_json_from_response`
+    // returns exactly one top-level object, defeating the injection.
+    let json_str = llm_json::extract_json_from_response(content);
 
-    let parsed: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
         let msg = format!(
             "HMem extraction JSON parse error: {e}. Content: {}",
             &json_str[..json_str.len().min(200)]

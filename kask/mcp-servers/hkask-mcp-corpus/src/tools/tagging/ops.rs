@@ -404,7 +404,8 @@ impl CorpusServer {
                     .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?);
                 out.push('\n');
             }
-            std::fs::write(&req.output, &out).map_err(|e| {
+            let output_path = crate::path_safety::contain_for_write(&req.output)?;
+            std::fs::write(&output_path, &out).map_err(|e| {
                 McpToolError::internal(format!("Cannot write output '{}': {}", req.output, e))
             })?;
 
