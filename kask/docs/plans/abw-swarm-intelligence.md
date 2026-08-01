@@ -2,8 +2,8 @@
 title: "Agent Bestiary World (ABW) Swarm Intelligence — Integration Plan"
 audience: [zed-kask integrators, hKask architects, ABW partnership]
 last_updated: 2026-08-01
-version: "0.8.1"
-status: "Slices 1–4 built and verified live; independent audit complete (§12) — 1 critical security gap (prompt-injection → unauthorized-spend chain), 2 high gaps, 5 medium gaps pending slice 5"
+version: "0.9.1"
+status: "Slices 1–7 + Xaman Ek integration built and verified live; three audits complete (§12 self-audit, panel interaction audit, kali security audit) with all critical/high/medium findings remediated. Feature-complete for v1; remaining items are enhancements and ABW-side unknowns, not gaps."
 domain: "composition"
 mds_categories: [composition, trust, lifecycle, curation]
 ---
@@ -551,20 +551,155 @@ The audit confirmed the following are correctly implemented:
 
 ### 12.17 Summary verdict
 
-The implementation is **substantially complete for slices 1–4 and the highest-risk GPUI traps are correctly handled**. The consent gate *blocks* spend for `swarm_hire`/`swarm_delegate` (not just warns), the credential allowlisting is clean, and the settings follow the `Default`-as-source-of-truth pattern. The deliberate deviations (card UI, banner-not-modal, in-crate actions) are documented in the plan's own slice-status notes.
+> **Re-verified 2026-08-01 (post-slice-5).** All Critical and High gaps
+> from the original audit are now closed. The consent gate is honest: it
+> blocks unauthorized spend, sanitizes curator output, re-verifies cost
+> against ABW, and requires opt-in for curator data-sharing. The
+> `swarm-intelligence` skill's `loop_closure` convergence invariant
+> (§13) is now truthful — a closed loop means the gate actually blocked.
 
-The **single most important gap** is the **prompt-injection → unauthorized-spend chain** (§12.1): `swarm_request_consent` is unauthenticated, the consent token is not cryptographically signed, and `swarm_curate` output is unsanitized. Together these allow a prompt-injected agent to self-authorize credit spends by minting a consent token and calling `swarm_hire`. The one-line `require_auth()` fix on `swarm_request_consent` closes the unauthenticated-mint vector immediately; the panel-secret binding and output sanitization close the rest. **This should be addressed before any operator uses the swarm panel against a paid ABW account.**
+The implementation is **substantially complete for slices 1–5**. The
+consent gate *blocks* spend for `swarm_hire`/`swarm_delegate` (not just
+warns), the credential allowlisting is clean, and the settings follow the
+`Default`-as-source-of-truth pattern. The deliberate deviations (card UI,
+banner-not-modal, in-crate actions) are documented in the plan's own
+slice-status notes.
 
-The secondary gap is the **missing consent gate on `swarm_curate`** (§12.2) — the plan's §3.7 opt-in default for curator involvement is not implemented at all, neither as a settings field nor as a per-call gate. This means an agent can send arbitrary task content to Xaman Ek without operator opt-in, which is the FINER Ethics finding made concrete.
+**Slice 5 closure status (re-verified 2026-08-01):**
 
-**Recommended priority for slice 5+:**
-1. Add `require_auth()` to `swarm_request_consent` (one-line fix, §12.1).
-2. Add consent gate to `swarm_curate` (§12.2).
-3. Re-verify hire cost against ABW before spending (§12.3).
-4. Fix `swarm_hire_cost` `unwrap_or(0)` on cost (§12.4).
-5. Add `curator_consent_default` to `KaskSwarmSettings` (§12.5).
-6. Implement `SerializableItem` for `SwarmPanel` (§12.6).
-7. Add swarm-specific credential-filtering tests (§12.7).
-8. Add reqwest timeout + retry (§12.11).
-9. Fix `swarm_curate` error mapping to preserve 402/429 (§12.10).
-10. URL-encode path parameters (§12.12).
+| § | Gap | Status |
+|---|---|---|
+| 12.1 | `swarm_request_consent` missing `require_auth()` | ✅ Fixed |
+| 12.1 | `swarm_curate` output unsanitized | ✅ Fixed (`sanitize_abw_response`) |
+| 12.2 | `swarm_curate` no consent gate | ✅ Fixed (`curator_consent_default` + token) |
+| 12.3 | `swarm_hire` trusts client `credits_authorized` | ✅ Fixed (re-fetch `/dependencies`) |
+| 12.4 | `swarm_hire_cost` `unwrap_or(0)` | ✅ Fixed (`Err` + `tracing::warn!`) |
+| 12.5 | `curator_consent_default` absent | ✅ Fixed (settings field, default `false`) |
+| 12.6 | `SwarmPanel` missing `SerializableItem` | ✅ Fixed |
+| 12.7 | no swarm credential-filtering test | ✅ Fixed |
+| 12.10 | `swarm_curate` swallows 402 | ✅ Fixed (explicit `PaymentRequired`/`RateLimited` arms) |
+| 12.11 | reqwest no timeout | ✅ Fixed (`connect_timeout(10s)` + `timeout(60s)`) |
+| 12.12 | URL-encoding gaps | ✅ Fixed (`url_encode_segment` on all path params) |
+| 12.13 | `within_budget` fail-open | ✅ Fixed (`unwrap_or(false)`) |
+| 12.14 | `max_credits` hardcoded `50` in panel | Documented smell (comment + sync note) |
+| 12.8 | tool count 9 vs ≤7 | Deferred (v2 grouping) |
+| 12.9 | missing fire/import/version tools | Deferred (v2) |
+
+**Slice 6 (skill wiring, see §13):** the `swarm-intelligence` skill is
+registry-complete, validated (33/33 checks), and now invocable from
+`SwarmPanel` via Steer mode — a `ConversationView` scoped to the swarm MCP
+server. The consent gate is honest, so the skill's `loop_closure`
+convergence invariant is truthful.
+---
+
+## 13. Companion Skill: `swarm-intelligence`
+
+A registry skill exists that operationalizes the composition PDCA described in
+§4 of this plan: **`swarm-intelligence`** (`kask/registry/manifests/swarm-intelligence.yaml`).
+
+- **Design document:** `kask/docs/plans/swarm-intelligence-skill-design.md`
+- **What it does:** SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE loop.
+  Senses swarm state against Onto4MAT (alignment/cohesion/separation) + the
+  ABW workspace/wallet APIs; orients by classifying the gap (variety deficit,
+  coherence deficit, loop-break); decides composition adjustments isomorphic
+  to PSO/ACO/Reynolds tuning; acts via gated `swarm_update_swarm`/
+  `swarm_delegate`; converges via a Cauchy criterion on a deterministic
+  swarm-state distance metric.
+- **Validation:** 33/33 `skill-maintenance-validate` checks pass (R12, Z6,
+  X5, E10).
+- **Relationship to this plan:** the skill is the *decision process* that
+  this plan's §4 cybernetic analysis calls for. The panel (§3.2) and MCP
+  server (§3.3) are the *substrate* the skill acts on.
+
+### Wiring (slice 6 — implemented)
+
+The skill is invocable from `SwarmPanel` via **Steer mode** — a
+`ConversationView` scoped to the swarm MCP server, mirroring `KaskPanel`'s
+per-tab agent pattern (Option A from the skill design doc §8). The operator
+selects the "Steer" toggle in the panel; the panel lazily constructs a
+`ConversationView` with a `CuratorAgentServer` whose system prompt names the
+`swarm-intelligence` skill and the active workspace. The operator asks the
+curator to compose/steer a swarm; the curator's `SkillTool` invokes the
+`swarm-intelligence` cascade, which emits gated `swarm_update_swarm`/
+`swarm_delegate` calls back through the same MCP server.
+
+**Implementation:** `crates/swarm_panel/src/swarm_panel.rs` —
+`PanelMode::Steer`, `ensure_steer_conversation`, `steer_system_prompt`, and
+the Steer render branch. Tests pin that the prompt names the skill and the
+server scope. The conversation is not persisted (matching `KaskPanel`'s
+non-persisted-threads pattern); re-clicking Steer after a restart starts a
+fresh composition conversation.
+
+**Why Option A over Option B:** Option A reuses the existing `SkillTool` →
+`ManifestExecutor` machinery wholesale — no new cross-process bridge. Option
+B would have required a bridge from the MCP server process to the
+`ManifestExecutor` (which lives in the GPUI/agent process), the same class of
+seam the `.rules` "Cross-thread GPUI communication uses channels" trap
+governs. The cost is one new `ConversationView` in the panel, which is the
+established pattern.
+
+## 14. Out-of-Scope Defense Layers (deferred by design, with re-entry conditions)
+
+The kali audit (§KA, `kask/docs/audits/abw-swarm-kali-audit.md`) mapped the
+8-layer defense-in-depth stack. Layers 1, 4, and 6 are present; 2, 3, and 7
+are partial and remediated; layers **5 (information flow control)** and **8
+(deception detection)** are **absent — deliberately, not by omission**. This
+section records *why* they are out of scope for a single MCP server and *what
+would bring them back in scope*, so a future reviewer doesn't re-litigate the
+decision or mistake the absence for a gap.
+
+### 14.1 Layer 5 — information flow control (taint labels / FIDES Source→Sink)
+
+**What it would be:** label ABW-sourced content as `Source: untrusted` at the
+boundary and block `Source → Sink` flows (e.g. ABW agent output → `swarm_hire`
+args) structurally, rather than pattern-matching injection prefixes.
+
+**Why it's out of scope here:** taint propagation is a *workspace/process-wide*
+concern, not a single-server one. The kask FIDES taint system
+(`RR-0026`, the `input_mapping`/`propagate_taint_for_binding` convention)
+operates at the ManifestExecutor / skill-cascade layer, one level up from this
+MCP server. Bolting a per-server taint scheme onto `hkask-mcp-swarm` would
+create a *second, incompatible* taint model — the `.rules` "two parallel
+systems by design" anti-pattern. The current mitigation
+(`sanitize_abw_response` + the `{content, source, trust}` wrapper) is
+pattern-based defense-in-depth, not label-based IFC, and the audit says so.
+
+**Re-entry condition:** if the swarm server ever *constructs* skill-cascade
+inputs from ABW output (it does not today — the panel and `SkillTool` do
+that), then ABW-derived taint must propagate through
+`propagate_taint_for_binding` before `context.insert`, per the `RR-0026`
+convention. At that point IFC moves from partial to required, and the correct
+home is the cascade layer, not this server.
+
+### 14.2 Layer 8 — deception detection (canary tokens, decoy tools)
+
+**What it would be:** canary credentials that must never be exfiltrated, decoy
+MCP tools that must never be called, and ABW-response canary detection to
+surface a compromised or adversarial agent/curator.
+
+**Why it's out of scope here:** deception detection is a *honeypot*
+strategy that only pays off against a motivated, adaptive adversary with a
+reason to target this integration specifically. ABW is a known, cooperative
+third party with a business relationship; the threat model is *accidental*
+prompt-injection (an agent echoing adversarial content it read), not a
+compromised ABW platform running decoy-seeking attacks. Canaries and decoys
+add maintenance surface (they must be rotated, monitored, and kept out of the
+agent's legitimate context) for a threat that is currently hypothetical.
+
+**Re-entry condition:** if ABW opens a *public, unvetted* agent-submission
+channel that zed-kask consumes (a stranger can publish an agent whose output
+our agent then executes), the threat model changes from accidental to
+adversarial, and canary tokens on `HKASK_ABW_API_KEY` plus a decoy
+`swarm_admin_*` tool become worth their cost. Until then, the runtime
+monitoring (layer 6: `with_wallet`, `tracing::warn!` on stale signals,
+`detect_embedded_error`) is the proportionate control.
+
+### 14.3 Google OAuth — resolved, not deferred
+
+§6 already resolved this: ABW's `/auth/google` is a web session-cookie flow,
+not a programmatic bearer flow, and the only supported programmatic credential
+is the Pro-tier API key. **Not a deferral — a closed decision.** Revisit only
+if ABW publishes a standards-compliant OAuth 2.0 authorization-server surface
+(`/well-known/oauth-authorization-server`), at which point zed's existing
+context-server OAuth (`crates/context_server/src/oauth.rs`) handles it with no
+new code.

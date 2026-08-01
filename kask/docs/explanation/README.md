@@ -26,3 +26,4 @@ hKask is compiled into zed-kask as a set of native crates and in-process MCP ser
 | [Training and Adapters](training-and-adapters.md) | RunPod/Unsloth LoRA training path for Qwen3.6-27B and adapter lifecycle via the in-process training MCP server. | Domain supplement |
 | [RunPod LoRA Training Guide](runpod-lora-training-guide.md) | Step-by-step RunPod pod launch and Unsloth training execution. | Domain supplement |
 | [Security Skills Smoke Test](security-skills-smoke-test.md) | Manual smoke-test procedures for the security skills (supply-chain-sentinel, kali-audit, runtime-posture-monitor) invoked in-process from the agent panel. | Domain supplement |
+| [ABW Swarm Orchestration](abw-swarm-orchestration.md) | Agent Bestiary World integration — the four-mode Agent Swarm panel, agent authoring, team composition via Xaman Ek, the consent-gated spend model, the algedonic wallet channel, and the `swarm-intelligence` composition PDCA. | Domain supplement |

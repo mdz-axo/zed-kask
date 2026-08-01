@@ -750,6 +750,14 @@
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
       "cmd-shift-d": "debug_panel::ToggleFocus",
+      // zed-kask: kask center-pane items live in the cmd-shift-alt-<mnemonic> tier.
+      // The cmd-shift-<letter> workspace tier is saturated by upstream Zed panels
+      // (e/d/b/g/m) and the kask mnemonics (k/e/s) collide there. The cmd-shift-alt
+      // tier is kask-owned: no editor-context shadowing (all three fire regardless
+      // of focus) and zero collision risk with future upstream keymap changes.
+      "cmd-shift-alt-k": "kask_panel::Toggle",
+      "cmd-shift-alt-e": "kask_extensions_ui::Toggle",
+      "cmd-shift-alt-s": "swarm_panel::Toggle",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k n": "encoding_selector::Toggle",

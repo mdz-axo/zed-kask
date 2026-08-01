@@ -339,49 +339,6 @@ impl InferenceIpcServer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn socket_dir_is_private() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = inference_socket_dir().expect("socket dir must be creatable");
-        let mode = std::fs::metadata(&dir)
-            .expect("socket dir must exist")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o700, "socket dir must be owner-only, got {mode:o}");
-    }
-
-    #[tokio::test]
-    async fn capped_reader_rejects_overlong_line() {
-        let payload = vec![b'x'; (MAX_IPC_LINE_BYTES + 10) as usize];
-        let cursor = std::io::Cursor::new(payload);
-        let mut reader = CappedReader::new(cursor);
-        let result = reader.read_line().await;
-        assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
-    }
-
-    #[tokio::test]
-    async fn capped_reader_accepts_normal_lines() {
-        let cursor = std::io::Cursor::new(b"hello\nworld\n".to_vec());
-        let mut reader = CappedReader::new(cursor);
-        assert_eq!(reader.read_line().await.unwrap().as_deref(), Some("hello"));
-        assert_eq!(reader.read_line().await.unwrap().as_deref(), Some("world"));
-        assert_eq!(reader.read_line().await.unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn capped_reader_eof_without_newline_is_error() {
-        let cursor = std::io::Cursor::new(b"no-newline".to_vec());
-        let mut reader = CappedReader::new(cursor);
-        let result = reader.read_line().await;
-        assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
-    }
-}
-
 impl Drop for InferenceIpcServer {
     fn drop(&mut self) {
         // Clean up the socket file.
@@ -728,5 +685,48 @@ async fn dispatch_media(
         other => Err(InferenceError::Connection(format!(
             "unknown media op: {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_dir_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = inference_socket_dir().expect("socket dir must be creatable");
+        let mode = std::fs::metadata(&dir)
+            .expect("socket dir must exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "socket dir must be owner-only, got {mode:o}");
+    }
+
+    #[tokio::test]
+    async fn capped_reader_rejects_overlong_line() {
+        let payload = vec![b'x'; (MAX_IPC_LINE_BYTES + 10) as usize];
+        let cursor = std::io::Cursor::new(payload);
+        let mut reader = CappedReader::new(cursor);
+        let result = reader.read_line().await;
+        assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    #[tokio::test]
+    async fn capped_reader_accepts_normal_lines() {
+        let cursor = std::io::Cursor::new(b"hello\nworld\n".to_vec());
+        let mut reader = CappedReader::new(cursor);
+        assert_eq!(reader.read_line().await.unwrap().as_deref(), Some("hello"));
+        assert_eq!(reader.read_line().await.unwrap().as_deref(), Some("world"));
+        assert_eq!(reader.read_line().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn capped_reader_eof_without_newline_is_error() {
+        let cursor = std::io::Cursor::new(b"no-newline".to_vec());
+        let mut reader = CappedReader::new(cursor);
+        let result = reader.read_line().await;
+        assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
     }
 }

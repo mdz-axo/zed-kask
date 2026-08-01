@@ -23,17 +23,18 @@ struct.
 > **Hosting note (v0.31.0):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are loaded by zed's
 > `context_server` host; the `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 10 on-disk servers. Five servers from
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 11 on-disk servers. Five servers from
 > the original 16 have been deleted: `communication` (Matrix/TTS → zed voip), `filesystem` (zed
 > provides fs tools), `memory` (consolidated into the `hkask-memory` crate), `skill` (skill
 > execution is native via D1), and `regulation` (consolidated into the `hkask-regulation` crate);
-> `docproc` and `replica` were folded into `corpus`. See
+> `docproc` and `replica` were folded into `corpus`. The 11th server, `swarm` (Agent Bestiary
+> World integration), was added 2026-08-01. See
 > [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
 > §2.4.
 
 ## Server Catalog
 
-10 on-disk MCP servers:
+11 on-disk MCP servers:
 
 | Server | Crate | Domain | Tools | Math Engine |
 |--------|-------|--------|-------|-------------|
@@ -46,10 +47,11 @@ struct.
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 38 | — |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `hkask-mcp-research` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 18 | `hkask-forecast` |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World agent swarms + Xaman Ek curator | 17 | — |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | 8 | — |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
-> agent, D2). All 10 build clean.
+> agent, D2). All 11 build clean.
 
 ## Common Patterns
 
@@ -72,6 +74,7 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 - [Condenser MCP Server Reference](condenser.md) — 8 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
 - [Corpus MCP Server Reference](corpus.md) — corpus gathering, document processing, QA generation, style replicas
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — scenarios tool flow (DIAG-RF-005 inline)
+- [Swarm MCP Server Reference](swarm.md) — 17 tools, ABW agent swarms, Xaman Ek curator, consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [Architecture Patterns](../../explanation/architecture-patterns.md) — MCP dispatch sequence
 - CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)

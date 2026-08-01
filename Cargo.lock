@@ -20236,9 +20236,12 @@ dependencies = [
 name = "swarm_panel"
 version = "0.1.0"
 dependencies = [
+ "agent",
+ "agent_ui",
  "anyhow",
  "collections",
  "editor",
+ "fs",
  "gpui",
  "kask_panel",
  "log",

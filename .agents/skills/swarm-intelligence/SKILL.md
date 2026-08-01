@@ -1,7 +1,7 @@
 ---
 name: swarm-intelligence
 visibility: public
-description: "Convergent swarm-composition process for Agent Bestiary World (ABW) agent swarms. Senses current swarm state against the Onto4MAT multi-agent teaming ontology (alignment, cohesion, separation) and the ABW workspace/wallet APIs; orients by classifying the gap (variety deficit, coherence deficit, loop-break) via Ashby's requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning (c1/c2/omega), ACO pheromone deposition/evaporation, and Reynolds separation/alignment/cohesion; acts via gated swarm_update_swarm/swarm_delegate calls with a DispatchIntent consent gate; checks by reconciling actual spend and curator data-sharing against the algedonic channel; and converges via a Cauchy criterion on the swarm-state distance metric. Anchored to Reynolds (1987) flocking, Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT (Kiesel et al. 2022), W3C SSN/SOSA, Thagard coherence, Ashby requisite variety, and the ABW integration plan (zed-kask 2026-08-01). Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
+description: "Convergent swarm-composition process for Agent Bestiary World (ABW) agent swarms. Senses swarm state against the Onto4MAT multi-agent teaming ontology and the ABW workspace/wallet APIs; orients via Ashby's requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning, ACO pheromone deposition, and Reynolds separation/alignment/cohesion; acts via gated swarm_hire/swarm_delegate calls with a consent-token gate; checks spend and curator data-sharing against the algedonic channel; converges via a Cauchy criterion on the swarm-state distance metric. Anchored to Reynolds flocking, Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT, W3C SSN/SOSA, Thagard coherence, and Ashby requisite variety. Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
 ---
 
 # Swarm Intelligence
@@ -61,7 +61,7 @@ Do NOT use for:
 Check: Phase 1 — SENSE     → Measure current swarm state against Onto4MAT + ABW workspace/wallet
 Plan:  Phase 2 — ORIENT    → Classify the gap: variety deficit | coherence deficit | loop-break
 Plan:  Phase 3 — DECIDE    → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
-Do:    Phase 4 — ACT       → Emit gated swarm_update_swarm / swarm_delegate with DispatchIntent
+Do:    Phase 4 — ACT       → Emit gated swarm_hire / swarm_delegate with a consent token
 Check: Phase 5 — CHECK     → Re-measure, compute swarm-state distance d, emit next_focus + algedonic
 Check: Phase 6 — CONVERGE  → Cauchy criterion on d (deterministic, no LLM judgment)
 Act:   Phase 7 — LOOP      → Re-enter SENSE with prior_iteration if not converged

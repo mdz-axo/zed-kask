@@ -883,8 +883,8 @@ mod tests {
 
     #[test]
     fn parse_ssh_command_accepts_valid_hostname() {
-        let (username, host, port) = parse_ssh_command("ssh user@pod-42.example.com")
-            .expect("valid hostname must parse");
+        let (username, host, port) =
+            parse_ssh_command("ssh user@pod-42.example.com").expect("valid hostname must parse");
         assert_eq!(username, "user");
         assert_eq!(host, "pod-42.example.com");
         assert_eq!(port, None);

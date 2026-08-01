@@ -125,6 +125,7 @@ mds_categories: [domain, composition]
 | `lora-training` | Skill | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit. PDCA loop: select-method → audit-config → convergence-check → revise. | `registry/manifests/lora-training.yaml` · `registry/templates/lora-training/` |
 | `prompt-enhance` | Skill | General-purpose prompt enhancement: 7-type taxonomy routing (coding, reasoning, creative, classification, extraction, agent-task, meta) with 3-tier effort knob | `registry/manifests/prompt-enhance.yaml` · `registry/templates/prompt-enhance/` |
 | `sankey-flow` | Skill | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta`. Anchored to PKO Procedure. | `registry/manifests/sankey-flow.yaml` · `registry/templates/sankey-flow/` |
+| `swarm-intelligence` | Skill | ABW agent-swarm composition PDCA: SENSE swarm state (Onto4MAT + ABW workspace/wallet) → ORIENT (Ashby variety, PSO balance) → DECIDE (PSO/ACO/Reynolds tuning) → ACT (gated swarm_hire/swarm_delegate) → CHECK (algedonic) → CONVERGE (Cauchy). Acts on the `hkask-mcp-swarm` substrate; invoked from the Swarm panel's Steer mode. | `registry/manifests/swarm-intelligence.yaml` · `registry/templates/swarm-intelligence/` |
 
 ---
 
@@ -138,8 +139,8 @@ mds_categories: [domain, composition]
 | Kata & Coaching | 3 | Skills |
 | Meta & Maintenance | 7 skills + 1 template | Skills + Template |
 | Security & Posture | 3 | Skills |
-| Specialized | 14 | Skills |
-| **Catalogued here** | **47 skills + 1 template** | **48 capabilities** |
+| Specialized | 15 | Skills |
+| **Catalogued here** | **48 skills + 1 template** | **49 capabilities** |
 
 > **Filesystem reality:** `registry/templates/` contains 75 template directories; `registry/manifests/` contains 87 FlowDef manifests (45 category=skill, 42 non-skill). `.agents/skills/` (at the repo root) contains 44 SKILL.md directories. Counts verified 2026-07-29.
 >

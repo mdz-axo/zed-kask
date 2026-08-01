@@ -12,6 +12,13 @@
 //! empty state that surfaces fetch errors. v1 is read-only — hire/fire and
 //! spend actions are gated behind the cost/consent gate (see
 //! `kask/docs/plans/abw-swarm-intelligence.md` §3.6).
+//!
+//! **Steer mode** hosts a `ConversationView` scoped to the swarm MCP server,
+//! mirroring `KaskPanel`'s per-tab agent pattern. The operator asks the
+//! curator to compose/steer a swarm; the curator's `SkillTool` invokes the
+//! `swarm-intelligence` cascade (see `kask/docs/plans/abw-swarm-intelligence.md`
+//! §13). The conversation is not persisted — re-clicking Steer after a
+//! restart starts a fresh composition conversation.
 
 mod panel_button;
 
@@ -22,11 +29,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use editor::Editor;
+use fs::Fs;
 use gpui::{
     App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle,
     WeakEntity, Window, actions, uniform_list,
 };
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
+use project::Project;
 use serde::Deserialize;
 use serde_json::json;
 use ui::{
@@ -38,6 +47,14 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
     register_serializable_item,
 };
+
+// Steer mode: a `ConversationView` scoped to the swarm MCP server, mirroring
+// `KaskPanel`'s per-tab agent pattern. The curator's `SkillTool` invokes the
+// `swarm-intelligence` cascade when the operator asks to compose/steer a
+// swarm. See `kask/docs/plans/abw-swarm-intelligence.md` §13.
+use agent::ThreadStore;
+use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView};
+use gpui::SharedString;
 
 actions!(
     swarm_panel,
@@ -52,6 +69,50 @@ actions!(
 
 /// The MCP server id (matches `BUILT_IN_MCP_SERVERS`).
 const SWARM_SERVER: &str = "swarm";
+
+/// The system prompt injected into the Steer mode `ConversationView`. Tells
+/// the curator it is scoped to the swarm MCP server and that the
+/// `swarm-intelligence` skill is available for composition/steering. The
+/// curator's `SkillTool` discovers the skill from the `<available_skills>`
+/// list in its base system prompt; this prompt adds the swarm-specific
+/// context (active workspace, the skill's purpose).
+fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
+    let workspace_note = match selected_workspace {
+        Some(id) => format!(
+            "The operator's active swarm (ABW workspace) is `{id}`. \
+             When the operator asks to compose or steer a swarm without naming \
+             one, assume this workspace."
+        ),
+        None => "No swarm (ABW workspace) is currently selected. If the operator \
+            asks to compose a swarm, ask them to select one in the Browse tab first."
+            .to_string(),
+    };
+    format!(
+        "## Agent Swarm Panel — Steer Mode\n\
+         \n\
+         You are operating in the Agent Swarm panel's Steer mode, scoped to the \
+         `{SWARM_SERVER}` MCP server. The swarm server's tools \
+         (`swarm_list_agents`, `swarm_get_swarm`, `swarm_hire_cost`, \
+         `swarm_request_consent`, `swarm_hire`, `swarm_delegate`, `swarm_xaman`) \
+         are available in this conversation.\n\
+         \n\
+         {workspace_note}\n\
+         \n\
+         The `swarm-intelligence` skill is available for swarm composition and \
+         steering. When the operator asks to compose, configure, tune, or steer a \
+         swarm toward a target condition, invoke the `swarm-intelligence` skill \
+         with the swarm id and the operator's task. The skill runs a SENSE → ORIENT \
+         → DECIDE → ACT → CHECK → CONVERGE loop.\n\
+         \n\
+         The consent gate is enforced by `swarm_request_consent` (mints a \
+         single-use, action+target-scoped token) and `swarm_hire`/`swarm_delegate` \
+         (consume the token before spending). Do not hire or delegate without \
+         first calling `swarm_request_consent` and passing the returned token to \
+         the spend tool. The consent gate is the enforcement point — it must \
+         actually block, not just warn.\n"
+    )
+    .into()
+}
 
 pub fn init(cx: &mut App) {
     register_serializable_item::<SwarmPanel>(cx);
@@ -116,6 +177,11 @@ enum PanelMode {
     Browse,
     Author,
     Compose,
+    /// Steer: a `ConversationView` scoped to the swarm MCP server. The
+    /// operator asks the curator to compose/steer a swarm; the curator's
+    /// `SkillTool` invokes the `swarm-intelligence` cascade. Mirrors
+    /// `KaskPanel`'s per-tab `ConversationView` pattern.
+    Steer,
 }
 
 // ── View model ─────────────────────────────────────────────────────────────
@@ -240,9 +306,21 @@ fn extract_agent_mentions(content: &serde_json::Value) -> Vec<String> {
 // ── Panel ──────────────────────────────────────────────────────────────────
 
 pub struct SwarmPanel {
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    fs: std::sync::Arc<dyn Fs>,
     list: UniformListScrollHandle,
-    is_fetching: bool,
-    fetch_error: Option<SharedString>,
+    /// Number of fetch operations currently in flight (agents + swarms spawn
+    /// independently). `is_fetching()` is true while any are in the air —
+    /// avoids one fetch's completion hiding the other's spinner.
+    in_flight: usize,
+    /// Per-source fetch errors. Split so a slow agents fetch can't clobber a
+    /// swarms error (and vice versa) — the H1 cross-clobber finding.
+    agents_error: Option<SharedString>,
+    swarms_error: Option<SharedString>,
+    /// Error from the hire/consent flow (begin_hire, confirm_hire). Surfaced
+    /// near the consent banner, distinct from fetch errors.
+    hire_error: Option<SharedString>,
     filter: SwarmFilter,
     entries: Vec<SwarmEntry>,
     filtered_entry_indices: Vec<usize>,
@@ -260,12 +338,21 @@ pub struct SwarmPanel {
     selected_workspace: Option<String>,
     /// A spend currently in flight (after consent), shown as a busy state.
     spend_in_flight: Option<String>,
-    /// Which surface is active: browse, author, or compose.
+    /// Which surface is active: browse, author, compose, or steer.
     mode: PanelMode,
     /// Authoring form state.
     author: AuthorForm,
     /// Composition form state.
     compose: ComposeForm,
+    /// Lazily-constructed `ConversationView` for Steer mode, scoped to the
+    /// swarm MCP server. `None` until the operator first selects Steer.
+    /// Mirrors `KaskPanel`'s `threads: HashMap<usize, Entity<ConversationView>>`
+    /// — one retained view, reused across re-renders.
+    steer_conversation: Option<Entity<ConversationView>>,
+    /// Per-view connection store for the Steer `ConversationView`. Mirrors
+    /// `KaskPanel`'s per-tab `connection_stores` (one store = one connection
+    /// = one prompt, preventing cross-view prompt bleed).
+    steer_connection_store: Option<Entity<AgentConnectionStore>>,
 }
 
 /// State for the agent-authoring surface.
@@ -313,6 +400,9 @@ struct PendingHire {
 
 impl SwarmPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<Self> {
+        let workspace = cx.entity().downgrade();
+        let project = cx.entity().read(cx).project().clone();
+        let fs = cx.entity().read(cx).app_state().fs.clone();
         cx.new(|cx| {
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
@@ -335,8 +425,14 @@ impl SwarmPanel {
                     e
                 }),
                 system_prompt: cx.new(|cx| {
-                    let mut e = Editor::single_line(window, cx);
-                    e.set_placeholder_text("System prompt — the agent's instructions", window, cx);
+                    // Multi-line auto-height: system prompts are multi-paragraph
+                    // by nature (the L3 finding). Grows 4–16 lines with content.
+                    let mut e = Editor::auto_height(4, 16, window, cx);
+                    e.set_placeholder_text(
+                        "System prompt — the agent's instructions (multiple lines supported)",
+                        window,
+                        cx,
+                    );
                     e
                 }),
                 agent_type: "research".to_string(),
@@ -377,9 +473,14 @@ impl SwarmPanel {
             };
 
             let mut this = Self {
+                workspace,
+                project,
+                fs,
                 list: scroll_handle,
-                is_fetching: false,
-                fetch_error: None,
+                in_flight: 0,
+                agents_error: None,
+                swarms_error: None,
+                hire_error: None,
                 filter: SwarmFilter::All,
                 entries: Vec::new(),
                 filtered_entry_indices: Vec::new(),
@@ -393,16 +494,29 @@ impl SwarmPanel {
                 mode: PanelMode::Browse,
                 author,
                 compose,
+                steer_conversation: None,
+                steer_connection_store: None,
             };
             this.fetch_all(cx);
             this
         })
     }
 
+    /// True while any fetch (agents or swarms) is in the air.
+    fn is_fetching(&self) -> bool {
+        self.in_flight > 0
+    }
+
+    /// The single visible error, preferring agents then swarms. Rendered as a
+    /// status strip whenever present (not only in the empty state).
+    fn visible_error(&self) -> Option<&SharedString> {
+        self.agents_error.as_ref().or(self.swarms_error.as_ref())
+    }
+
     /// Fetch agents and swarms via the governed MCP tool path.
     fn fetch_all(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = kask_panel::shared_tool_invoker() else {
-            self.fetch_error = Some(
+            self.agents_error = Some(
                 "Tool invoker not wired — the swarm MCP server is unavailable. \
                  Ensure kask MCP servers are enabled (kask.mcp.load_default)."
                     .into(),
@@ -411,8 +525,9 @@ impl SwarmPanel {
             return;
         };
 
-        self.is_fetching = true;
-        self.fetch_error = None;
+        self.in_flight = 2;
+        self.agents_error = None;
+        self.swarms_error = None;
         cx.notify();
 
         // Agents (keyless-capable).
@@ -423,7 +538,7 @@ impl SwarmPanel {
                     .invoke_tool(SWARM_SERVER, "swarm_list_agents", json!({ "limit": 200 }))
                     .await;
                 this.update(cx, |this, cx| {
-                    this.is_fetching = false;
+                    this.in_flight = this.in_flight.saturating_sub(1);
                     if let Ok(balance) = &result
                         && let Some(b) = extract_wallet_balance(balance)
                     {
@@ -451,17 +566,18 @@ impl SwarmPanel {
                                 // Replace agent entries, keep swarm entries.
                                 this.entries.retain(|e| matches!(e, SwarmEntry::Swarm(_)));
                                 this.entries.extend(agents);
-                                this.fetch_error = None;
+                                this.agents_error = None;
                                 this.filter_entries(cx);
                             }
                             Err(err) => {
-                                this.fetch_error =
+                                this.agents_error =
                                     Some(format!("Failed to parse agents: {err}").into());
                                 this.filter_entries(cx);
                             }
                         },
                         Err(err) => {
-                            this.fetch_error = Some(format!("Failed to list agents: {err}").into());
+                            this.agents_error =
+                                Some(format!("Failed to list agents: {err}").into());
                             this.filter_entries(cx);
                         }
                     }
@@ -477,57 +593,71 @@ impl SwarmPanel {
             let result = invoker
                 .invoke_tool(SWARM_SERVER, "swarm_get_swarm", json!({}))
                 .await;
-            this.update(cx, |this, cx| match result {
-                Ok(output) => {
-                    if let Some(b) = extract_wallet_balance(&output) {
-                        this.wallet_balance = Some(b);
-                    }
-                    match serde_json::from_str::<WorkspaceListResponse>(&output) {
-                        Ok(response) => {
-                            let swarms = response
-                                .workspaces
-                                .into_iter()
-                                .map(|w| {
-                                    SwarmEntry::Swarm(SwarmCard {
-                                        id: w.id.unwrap_or_default(),
-                                        name: w.name.unwrap_or_default(),
-                                        description: w.description.unwrap_or_default(),
-                                        agent_count: w.agent_count.unwrap_or(0),
-                                        budget: w.workspace_budget.unwrap_or(0),
-                                        remaining: w.workspace_remaining.unwrap_or(0),
+            this.update(cx, |this, cx| {
+                this.in_flight = this.in_flight.saturating_sub(1);
+                match result {
+                    Ok(output) => {
+                        if let Some(b) = extract_wallet_balance(&output) {
+                            this.wallet_balance = Some(b);
+                        }
+                        match serde_json::from_str::<WorkspaceListResponse>(&output) {
+                            Ok(response) => {
+                                let mut swarms = response
+                                    .workspaces
+                                    .into_iter()
+                                    .map(|w| {
+                                        SwarmEntry::Swarm(SwarmCard {
+                                            id: w.id.unwrap_or_default(),
+                                            name: w.name.unwrap_or_default(),
+                                            description: w.description.unwrap_or_default(),
+                                            agent_count: w.agent_count.unwrap_or(0),
+                                            budget: w.workspace_budget.unwrap_or(0),
+                                            remaining: w.workspace_remaining.unwrap_or(0),
+                                        })
                                     })
-                                })
-                                .collect::<Vec<_>>();
-                            // Replace swarm entries, keep agent entries.
-                            this.entries.retain(|e| matches!(e, SwarmEntry::Agent(_)));
-                            let mut swarms = swarms;
-                            swarms.extend(this.entries.drain(..));
-                            this.entries = swarms;
-                            // Default the hire target to the first swarm if unset.
-                            if this.selected_workspace.is_none() {
-                                this.selected_workspace =
-                                    this.entries.iter().find_map(|e| match e {
-                                        SwarmEntry::Swarm(s) if !s.id.is_empty() => {
-                                            Some(s.id.clone())
-                                        }
-                                        _ => None,
+                                    .collect::<Vec<_>>();
+                                // Replace swarm entries, keep agent entries.
+                                this.entries.retain(|e| matches!(e, SwarmEntry::Agent(_)));
+                                swarms.append(&mut this.entries);
+                                this.entries = swarms;
+                                // Default the hire target to the first swarm if unset,
+                                // or re-validate it if the selected swarm disappeared.
+                                let selected_still_present =
+                                    this.selected_workspace.as_ref().is_some_and(|sel| {
+                                        this.entries.iter().any(|e| match e {
+                                            SwarmEntry::Swarm(s) => &s.id == sel,
+                                            _ => false,
+                                        })
                                     });
+                                if !selected_still_present {
+                                    this.selected_workspace =
+                                        this.entries.iter().find_map(|e| match e {
+                                            SwarmEntry::Swarm(s) if !s.id.is_empty() => {
+                                                Some(s.id.clone())
+                                            }
+                                            _ => None,
+                                        });
+                                }
+                                this.swarms_error = None;
+                                this.filter_entries(cx);
                             }
-                            this.filter_entries(cx);
-                        }
-                        Err(err) => {
-                            this.fetch_error =
-                                Some(format!("Failed to parse workspaces: {err}").into());
-                            this.filter_entries(cx);
+                            Err(err) => {
+                                this.swarms_error =
+                                    Some(format!("Failed to parse workspaces: {err}").into());
+                                this.filter_entries(cx);
+                            }
                         }
                     }
+                    Err(err) => {
+                        // Auth failures here are expected when no key is configured —
+                        // degrade to agents-only rather than an error state.
+                        log::warn!(
+                            "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
+                        );
+                        this.filter_entries(cx);
+                    }
                 }
-                Err(err) => {
-                    // Auth failures here are expected when no key is configured —
-                    // degrade to agents-only rather than an error state.
-                    log::warn!("swarm-panel: could not fetch workspaces (agents-only mode): {err}");
-                    this.filter_entries(cx);
-                }
+                cx.notify();
             })
             .ok();
         })
@@ -539,10 +669,17 @@ impl SwarmPanel {
     /// nothing, and populates `pending_hire` so the banner renders.
     fn begin_hire(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = kask_panel::shared_tool_invoker() else {
-            self.fetch_error = Some("Tool invoker not wired.".into());
+            self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
+        // Clear any stale pending consent — a new Hire click replaces it, and
+        // a failed cost fetch must not leave a confirmable banner against an
+        // unknown cost basis (the M2 finding).
+        if self.pending_hire.take().is_some() {
+            log::info!("swarm-panel: replaced pending hire consent with a new request");
+        }
+        self.hire_error = None;
         cx.spawn(async move |this, cx| {
             let result = invoker
                 .invoke_tool(
@@ -593,13 +730,13 @@ impl SwarmPanel {
                                 });
                             }
                             None => {
-                                this.fetch_error =
+                                this.hire_error =
                                     Some(format!("Failed to parse hire cost: {output}").into());
                             }
                         }
                     }
                     Err(err) => {
-                        this.fetch_error =
+                        this.hire_error =
                             Some(format!("Failed to estimate hire cost: {err}").into());
                     }
                 }
@@ -619,13 +756,13 @@ impl SwarmPanel {
             return;
         };
         let Some(workspace_id) = self.selected_workspace.clone() else {
-            self.fetch_error =
+            self.hire_error =
                 Some("No swarm selected to hire into. Create a workspace on ABW first.".into());
             cx.notify();
             return;
         };
         let Some(invoker) = kask_panel::shared_tool_invoker() else {
-            self.fetch_error = Some("Tool invoker not wired.".into());
+            self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
@@ -663,7 +800,10 @@ impl SwarmPanel {
                 Err(err) => {
                     this.update(cx, |this, cx| {
                         this.spend_in_flight = None;
-                        this.fetch_error = Some(format!("Consent failed: {err}").into());
+                        // Restore the banner so the operator can retry from the
+                        // estimate they already reviewed (the M4 finding).
+                        this.pending_hire = Some(pending.clone());
+                        this.hire_error = Some(format!("Consent failed: {err}").into());
                         cx.notify();
                     })
                     .ok();
@@ -674,7 +814,8 @@ impl SwarmPanel {
             let Some(token) = token else {
                 this.update(cx, |this, cx| {
                     this.spend_in_flight = None;
-                    this.fetch_error = Some("Consent did not return a token.".into());
+                    this.pending_hire = Some(pending.clone());
+                    this.hire_error = Some("Consent did not return a token.".into());
                     cx.notify();
                 })
                 .ok();
@@ -708,7 +849,7 @@ impl SwarmPanel {
                         this.fetch_all(cx);
                     }
                     Err(err) => {
-                        this.fetch_error = Some(format!("Hire failed: {err}").into());
+                        this.hire_error = Some(format!("Hire failed: {err}").into());
                     }
                 }
                 cx.notify();
@@ -729,9 +870,74 @@ impl SwarmPanel {
         cx.notify();
     }
 
-    fn set_mode(&mut self, mode: PanelMode, cx: &mut Context<Self>) {
+    fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;
+        // Move focus to the target mode's first field — otherwise focus stays
+        // on the now-hidden search editor and keyboard input goes nowhere (the
+        // M5 finding). Steer focuses its conversation's editor.
+        let handle = match mode {
+            PanelMode::Browse => self.query_editor.read(cx).focus_handle(cx),
+            PanelMode::Author => self.author.name.read(cx).focus_handle(cx),
+            PanelMode::Compose => self.compose.name.read(cx).focus_handle(cx),
+            PanelMode::Steer => self
+                .steer_conversation
+                .as_ref()
+                .map(|c| c.read(cx).focus_handle(cx))
+                .unwrap_or_else(|| self.query_editor.read(cx).focus_handle(cx)),
+        };
+        handle.focus(window, cx);
         cx.notify();
+    }
+
+    /// Lazily construct the `ConversationView` for Steer mode if it doesn't
+    /// exist yet. Mirrors `KaskPanel::ensure_thread_for_tab`: constructs a
+    /// `CuratorAgentServer` scoped to the swarm MCP server, with a system
+    /// prompt that tells the curator about the `swarm-intelligence` skill and
+    /// the active swarm. The curator's `SkillTool` invokes the cascade when
+    /// the operator asks to compose/steer a swarm.
+    ///
+    /// `window` is required because `ConversationView::new` may focus its
+    /// inner `MessageEditor`.
+    fn ensure_steer_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.steer_conversation.is_some() {
+            return;
+        }
+
+        let thread_store = ThreadStore::global(cx);
+        let agent_server = std::rc::Rc::new(
+            agent::CuratorAgentServer::new(self.fs.clone(), thread_store)
+                .with_extra_static_context(steer_system_prompt(self.selected_workspace.as_deref()))
+                .with_mcp_server_scope(SWARM_SERVER.into()),
+        );
+
+        let connection_store = self
+            .steer_connection_store
+            .get_or_insert_with(|| cx.new(|cx| AgentConnectionStore::new(self.project.clone(), cx)))
+            .clone();
+
+        let thread_id = agent_ui::ThreadId::new();
+        let conversation_view = cx.new(|cx| {
+            ConversationView::new(
+                agent_server,
+                connection_store,
+                Agent::Curator,
+                None, // no resume session
+                Some(thread_id),
+                None, // no work_dirs
+                None, // no title
+                None, // no initial content — the system prompt is injected
+                // via `with_extra_static_context`; the input editor starts
+                // empty so the operator types their composition intent.
+                self.workspace.clone(),
+                self.project.clone(),
+                None, // no thread_store — steer conversations are not persisted
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            )
+        });
+
+        self.steer_conversation = Some(conversation_view);
     }
 
     /// Create a new agent from the authoring form.
@@ -817,13 +1023,51 @@ impl SwarmPanel {
 
         cx.spawn(async move |this, cx| {
             // Mint a consent token per agent to hire (each hire is gated).
+            // Fetch the real hire cost per agent first (BH-02): a hardcoded
+            // `credits_authorized: 5` would under-authorize an agent that
+            // costs 20, and the server's re-verify would reject the hire —
+            // but only after the workspace was already created. Fetching the
+            // cost up front lets us abort before any ABW mutation and pass
+            // the real ceiling to the consent token.
+            // A spend path must not silently degrade: if any consent mint
+            // fails, abort the create rather than hiring a partial team.
             let mut consent_tokens = Vec::new();
+            let mut consent_failures = Vec::new();
             for agent in &agents {
+                // Step 1: fetch the real hire cost.
+                let cost_result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_hire_cost",
+                        json!({ "agent_name": agent }),
+                    )
+                    .await;
+                let credits = match cost_result {
+                    Ok(output) => {
+                        let parsed = serde_json::from_str::<serde_json::Value>(&output)
+                            .ok()
+                            .and_then(|v| v.get("content").cloned().or(Some(v)));
+                        parsed
+                            .and_then(|c| c.get("total_hire_cost").and_then(|v| v.as_u64()))
+                            .map(|c| c as u32)
+                    }
+                    Err(err) => {
+                        log::warn!("swarm-panel: hire cost fetch for '{agent}' failed: {err}");
+                        consent_failures.push(agent.clone());
+                        continue;
+                    }
+                };
+                let Some(credits) = credits else {
+                    log::warn!("swarm-panel: hire cost fetch for '{agent}' returned no total_hire_cost");
+                    consent_failures.push(agent.clone());
+                    continue;
+                };
+                // Step 2: mint the consent token with the real cost.
                 match invoker
                     .invoke_tool(
                         SWARM_SERVER,
                         "swarm_request_consent",
-                        json!({ "action": "hire", "target": agent, "credits_authorized": 5 }),
+                        json!({ "action": "hire", "target": agent, "credits_authorized": credits }),
                     )
                     .await
                 {
@@ -836,12 +1080,37 @@ impl SwarmPanel {
                                     .and_then(|t| t.as_str())
                                     .map(str::to_string)
                             });
-                        if let Some(t) = token {
-                            consent_tokens.push(t);
+                        match token {
+                            Some(t) => consent_tokens.push(t),
+                            None => {
+                                log::warn!("swarm-panel: consent mint for '{agent}' returned no token");
+                                consent_failures.push(agent.clone());
+                            }
                         }
                     }
-                    Err(_) => {}
+                    Err(err) => {
+                        log::warn!("swarm-panel: consent mint for '{agent}' failed: {err}");
+                        consent_failures.push(agent.clone());
+                    }
                 }
+            }
+
+            // Abort on any consent failure — do not create a swarm with a
+            // silently under-consented team.
+            if !consent_failures.is_empty() {
+                this.update(cx, |this, cx| {
+                    this.compose.busy = false;
+                    this.compose.status = Some(
+                        format!(
+                            "Consent failed for {} — swarm not created.",
+                            consent_failures.join(", ")
+                        )
+                        .into(),
+                    );
+                    cx.notify();
+                })
+                .ok();
+                return;
             }
 
             let result = invoker
@@ -863,8 +1132,34 @@ impl SwarmPanel {
                         if let Some(b) = extract_wallet_balance(&output) {
                             this.wallet_balance = Some(b);
                         }
-                        this.compose.status =
-                            Some(format!("Swarm '{}' created.", name.trim()).into());
+                        // Surface any per-hire errors the server reported
+                        // (BH-07): the workspace is created but some hires may
+                        // have failed (cost re-verify, network drop). The
+                        // operator must not see "Swarm created." while all
+                        // hires silently failed.
+                        let parsed = serde_json::from_str::<serde_json::Value>(&output)
+                            .ok()
+                            .and_then(|v| v.get("content").cloned().or(Some(v)));
+                        let hire_errors = parsed
+                            .and_then(|c| c.get("hire_errors").and_then(|e| e.as_array()).cloned())
+                            .unwrap_or_default();
+                        if hire_errors.is_empty() {
+                            this.compose.status =
+                                Some(format!("Swarm '{}' created.", name.trim()).into());
+                        } else {
+                            let failed: Vec<String> = hire_errors
+                                .iter()
+                                .filter_map(|e| {
+                                    e.get("agent").and_then(|a| a.as_str()).map(str::to_string)
+                                })
+                                .collect();
+                            this.compose.status = Some(format!(
+                                "Swarm '{}' created, but {} hire(s) failed: {}",
+                                name.trim(),
+                                failed.len(),
+                                failed.join(", ")
+                            ).into());
+                        }
                         this.fetch_all(cx);
                     }
                     Err(err) => {
@@ -893,10 +1188,65 @@ impl SwarmPanel {
         }
         self.compose.xaman_busy = true;
         self.compose.xaman_response = None;
+        // Clear stale suggestions — the "Use team" button must not pre-fill
+        // the previous recommendation while a new query is in flight (L5).
+        self.compose.xaman_suggested_agents.clear();
         cx.notify();
         let session_id = self.compose.xaman_session.clone();
 
         cx.spawn(async move |this, cx| {
+            // Mint a curate consent token before calling the curator. With the
+            // default `curator_consent_default: false`, the server requires a
+            // token (action "curate", target "xaman") — without it, every
+            // "Ask Xaman Ek" click is rejected with ConsentDenied (BH-03).
+            // Curator calls read task content but spend no credits, so the
+            // ceiling is 0.
+            let consent = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_request_consent",
+                    json!({ "action": "curate", "target": "xaman", "credits_authorized": 0 }),
+                )
+                .await;
+            let consent_token: Option<String> = match consent {
+                Ok(output) => serde_json::from_str::<serde_json::Value>(&output)
+                    .ok()
+                    .and_then(|v| v.get("content").cloned().or(Some(v)))
+                    .and_then(|c| {
+                        c.get("consent_token")
+                            .and_then(|t| t.as_str())
+                            .map(str::to_string)
+                    }),
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.compose.xaman_busy = false;
+                        this.compose.xaman_response = Some(
+                            format!(
+                                "Consent for Xaman Ek failed: {err}. \
+                             Set kask.swarm.curator_consent_default true to opt in globally."
+                            )
+                            .into(),
+                        );
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let Some(consent_token) = consent_token else {
+                this.update(cx, |this, cx| {
+                    this.compose.xaman_busy = false;
+                    this.compose.xaman_response = Some(
+                        "Consent for Xaman Ek returned no token. \
+                         Set kask.swarm.curator_consent_default true to opt in globally."
+                            .into(),
+                    );
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+
             let result = invoker
                 .invoke_tool(
                     SWARM_SERVER,
@@ -905,6 +1255,7 @@ impl SwarmPanel {
                         "message": message.trim(),
                         "session_type": "composition_design",
                         "session_id": session_id,
+                        "consent_token": consent_token,
                     }),
                 )
                 .await;
@@ -945,14 +1296,14 @@ impl SwarmPanel {
     }
 
     /// Pre-fill the agents field with Xaman Ek's recommended team.
-    fn apply_xaman_suggestions(&mut self, cx: &mut Context<Self>) {
+    fn apply_xaman_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.compose.xaman_suggested_agents.is_empty() {
             return;
         }
         let joined = self.compose.xaman_suggested_agents.join(", ");
         let agents_editor = self.compose.agents.clone();
         agents_editor.update(cx, |editor, cx| {
-            editor.set_text(joined, cx);
+            editor.set_text(joined, window, cx);
         });
         cx.notify();
     }
@@ -1013,7 +1364,11 @@ impl SwarmPanel {
                 break;
             }
             let entry_ix = self.filtered_entry_indices[ix];
-            let entry = self.entries[entry_ix].clone();
+            // Defensive: filtered indices can go stale relative to entries if
+            // a mutation path forgets filter_entries — skip rather than panic.
+            let Some(entry) = self.entries.get(entry_ix).cloned() else {
+                continue;
+            };
             cards.push(self.render_card(entry, cx));
         }
         cards
@@ -1049,7 +1404,7 @@ impl SwarmPanel {
                                                 .color(Color::Muted),
                                         ),
                                 )
-                                .child(Label::new(agent.description.clone()).color(Color::Muted)),
+                                .child(Label::new(agent.description).color(Color::Muted)),
                         )
                         .child(
                             v_flex()
@@ -1108,7 +1463,7 @@ impl SwarmPanel {
                                         .color(Color::Muted),
                                     ),
                             )
-                            .child(Label::new(swarm.description.clone()).color(Color::Muted)),
+                            .child(Label::new(swarm.description).color(Color::Muted)),
                     )
                     .child(
                         Label::new("Swarm")
@@ -1343,8 +1698,8 @@ impl SwarmPanel {
                                     Button::new("apply-xaman", "Use team")
                                         .style(ButtonStyle::Filled)
                                         .label_size(LabelSize::XSmall)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.apply_xaman_suggestions(cx);
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.apply_xaman_suggestions(window, cx);
                                         })),
                                 ),
                         )
@@ -1425,10 +1780,10 @@ impl SwarmPanel {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let message: SharedString = if self.is_fetching {
+        let message: SharedString = if self.is_fetching() {
             "Loading agents and swarms…".into()
-        } else if let Some(fetch_error) = &self.fetch_error {
-            format!("Failed to load swarm data: {fetch_error}").into()
+        } else if let Some(err) = self.visible_error() {
+            format!("Failed to load swarm data: {err}").into()
         } else {
             match self.filter {
                 SwarmFilter::All => {
@@ -1456,7 +1811,7 @@ impl SwarmPanel {
             .into()
         };
 
-        marketplace_empty_state(message, self.fetch_error.is_some())
+        marketplace_empty_state(message, self.visible_error().is_some())
     }
 
     /// The cost/consent gate banner. Renders only when a hire is pending
@@ -1552,6 +1907,12 @@ impl SwarmPanel {
 
 impl Render for SwarmPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // If deserialized into Steer mode (or the operator switched via a
+        // path that didn't go through the toggle handler), ensure the
+        // conversation exists before rendering.
+        if matches!(self.mode, PanelMode::Steer) {
+            self.ensure_steer_conversation(window, cx);
+        }
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1584,6 +1945,24 @@ impl Render for SwarmPanel {
                             }),
                     )
                     .children(self.render_consent_banner(cx))
+                    // Hire-flow errors surface near the consent banner.
+                    .when_some(self.hire_error.clone(), |this, err| {
+                        this.child(
+                            Label::new(err)
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        )
+                    })
+                    // Fetch errors surface as a status strip whenever present,
+                    // not only in the empty state (the M3 partial-degradation
+                    // finding — a working list can hide a failed source).
+                    .when_some(self.visible_error().cloned(), |this, err| {
+                        this.child(
+                            Label::new(format!("Load warning: {err}"))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                    })
                     // The three surfaces: Browse (discovery/sharing), Author
                     // (agents), Compose (swarms).
                     .child(
@@ -1593,20 +1972,27 @@ impl Render for SwarmPanel {
                                 [
                                     ToggleButtonSimple::new(
                                         "Browse",
-                                        cx.listener(|this, _event, _, cx| {
-                                            this.set_mode(PanelMode::Browse, cx);
+                                        cx.listener(|this, _event, window, cx| {
+                                            this.set_mode(PanelMode::Browse, window, cx);
                                         }),
                                     ),
                                     ToggleButtonSimple::new(
                                         "Author",
-                                        cx.listener(|this, _event, _, cx| {
-                                            this.set_mode(PanelMode::Author, cx);
+                                        cx.listener(|this, _event, window, cx| {
+                                            this.set_mode(PanelMode::Author, window, cx);
                                         }),
                                     ),
                                     ToggleButtonSimple::new(
                                         "Compose",
-                                        cx.listener(|this, _event, _, cx| {
-                                            this.set_mode(PanelMode::Compose, cx);
+                                        cx.listener(|this, _event, window, cx| {
+                                            this.set_mode(PanelMode::Compose, window, cx);
+                                        }),
+                                    ),
+                                    ToggleButtonSimple::new(
+                                        "Steer",
+                                        cx.listener(|this, _event, window, cx| {
+                                            this.ensure_steer_conversation(window, cx);
+                                            this.set_mode(PanelMode::Steer, window, cx);
                                         }),
                                     ),
                                 ],
@@ -1619,6 +2005,7 @@ impl Render for SwarmPanel {
                                 PanelMode::Browse => 0,
                                 PanelMode::Author => 1,
                                 PanelMode::Compose => 2,
+                                PanelMode::Steer => 3,
                             })
                             .into_any_element(),
                         ),
@@ -1686,6 +2073,30 @@ impl Render for SwarmPanel {
                         PanelMode::Compose => {
                             this.child(self.render_compose(cx)).into_any_element()
                         }
+                        PanelMode::Steer => {
+                            // The `ConversationView` is lazily constructed
+                            // in the Steer toggle handler; render it here. If
+                            // it's somehow absent (e.g. the panel was
+                            // deserialized into Steer mode), render a
+                            // placeholder — the operator can re-click Steer.
+                            match &self.steer_conversation {
+                                Some(view) => this.child(view.clone()).into_any_element(),
+                                None => this
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                Label::new(
+                                                    "Steer mode — re-click Steer to start a composition conversation",
+                                                )
+                                                .color(Color::Muted),
+                                            ),
+                                    )
+                                    .into_any_element(),
+                            }
+                        }
                         PanelMode::Browse => {
                             let count = self.filtered_entry_indices.len();
                             if count == 0 {
@@ -1715,7 +2126,20 @@ impl EventEmitter<ItemEvent> for SwarmPanel {}
 
 impl Focusable for SwarmPanel {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.query_editor.read(cx).focus_handle(cx)
+        // Mode-dependent: the search editor is only rendered in Browse, so
+        // delegating to it in other modes strands focus on a hidden editor
+        // (the H3 finding). Fall back to the search editor for Steer when the
+        // conversation isn't constructed yet.
+        match self.mode {
+            PanelMode::Browse => self.query_editor.read(cx).focus_handle(cx),
+            PanelMode::Author => self.author.name.read(cx).focus_handle(cx),
+            PanelMode::Compose => self.compose.name.read(cx).focus_handle(cx),
+            PanelMode::Steer => self
+                .steer_conversation
+                .as_ref()
+                .map(|c| c.read(cx).focus_handle(cx))
+                .unwrap_or_else(|| self.query_editor.read(cx).focus_handle(cx)),
+        }
     }
 }
 
@@ -1804,6 +2228,9 @@ mod tests {
         for tool in [
             "swarm_list_agents",
             "swarm_get_swarm",
+            "swarm_get_agent",
+            "swarm_list_apps",
+            "swarm_ontology_templates",
             "swarm_hire_cost",
             "swarm_request_consent",
             "swarm_hire",
@@ -1813,6 +2240,8 @@ mod tests {
             "swarm_generate_ontology",
             "swarm_create_agent",
             "swarm_create_swarm",
+            "swarm_xaman",
+            "swarm_create_app",
         ] {
             assert!(tool.starts_with("swarm_"));
         }
@@ -1838,5 +2267,63 @@ mod tests {
     fn extract_wallet_balance_absent_on_garbage() {
         assert_eq!(extract_wallet_balance("not json"), None);
         assert_eq!(extract_wallet_balance("{}"), None);
+    }
+
+    // Steer mode: the system prompt must name the `swarm-intelligence` skill
+    // and the swarm MCP server scope, so the curator knows to invoke the
+    // skill for composition/steering requests. Pins the §13 wiring.
+    #[test]
+    fn steer_system_prompt_names_skill_and_server() {
+        let prompt = steer_system_prompt(Some("ws_test"));
+        assert!(
+            prompt.contains("swarm-intelligence"),
+            "steer prompt must name the swarm-intelligence skill"
+        );
+        assert!(
+            prompt.contains(SWARM_SERVER),
+            "steer prompt must name the swarm MCP server scope"
+        );
+        assert!(
+            prompt.contains("ws_test"),
+            "steer prompt must include the selected workspace id"
+        );
+    }
+
+    #[test]
+    fn steer_system_prompt_handles_no_workspace() {
+        let prompt = steer_system_prompt(None);
+        assert!(
+            prompt.contains("No swarm"),
+            "steer prompt must guide the operator when no workspace is selected"
+        );
+    }
+
+    // KA-04: the steer prompt must not reference MCP tools that do not exist
+    // in the swarm server. The prior prompt advertised `swarm_update_swarm`,
+    // `DispatchIntent`, and `GateDecision::Proceed` — none of which are
+    // implemented. An advertised consent gate with no enforcement point is
+    // the `.rules` trap. This test pins that the prompt references only the
+    // actual ConsentStore-backed flow.
+    #[test]
+    fn steer_prompt_references_only_existing_tools() {
+        let prompt = steer_system_prompt(Some("ws_test"));
+        // Tools that do not exist in the MCP server.
+        assert!(
+            !prompt.contains("swarm_update_swarm"),
+            "steer prompt must not reference nonexistent swarm_update_swarm tool"
+        );
+        assert!(
+            !prompt.contains("DispatchIntent"),
+            "steer prompt must not reference nonexistent DispatchIntent type"
+        );
+        assert!(
+            !prompt.contains("GateDecision"),
+            "steer prompt must not reference nonexistent GateDecision type"
+        );
+        // The actual consent flow it should reference.
+        assert!(
+            prompt.contains("swarm_request_consent"),
+            "steer prompt must reference the actual swarm_request_consent tool"
+        );
     }
 }

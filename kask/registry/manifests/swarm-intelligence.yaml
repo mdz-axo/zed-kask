@@ -48,10 +48,10 @@ manifest:
     cognitive/social balance; decides composition adjustments isomorphic to
     PSO velocity tuning (c1/c2/omega), ACO pheromone deposition/evaporation,
     and Reynolds separation/alignment/cohesion; acts via gated
-    swarm_update_swarm/swarm_delegate calls with a DispatchIntent consent
-    gate; checks by reconciling actual spend and curator data-sharing against
-    the algedonic channel; and converges via a Cauchy criterion on the
-    swarm-state distance metric. Anchored to Reynolds (1987) flocking,
+    swarm_hire/swarm_delegate calls (consent-gated through
+    swarm_request_consent); checks by reconciling actual spend and
+    curator data-sharing against the algedonic channel; and converges via a
+    Cauchy criterion on the swarm-state distance metric. Anchored to Reynolds (1987) flocking,
     Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT (Kiesel et al. 2022), W3C
     SSN/SOSA, Thagard coherence, Ashby requisite variety, and the ABW
     integration plan (zed-kask 2026-08-01). Composes pragmatic-cybernetics,
@@ -174,9 +174,9 @@ steps:
         - Coherence deficit + high diversity but low alignment → hire/assign
           a coordinator compound agent (raise PSO c2 social — pull toward
           gbest; Reynolds alignment rule).
-        - Loop-break → do NOT change composition; emit a DispatchIntent
-          reconciliation repair (re-query /api/wallet/transactions for the
-          un-reconciled dispatch) and a curator-consent backfill.
+        - Loop-break → do NOT change composition; emit a reconciliation
+          repair (re-query /api/wallet/transactions for the un-reconciled
+          dispatch) and a curator-consent backfill.
       Recommendations reference the ABW compound-agent dependencies model
       (required/optional) and the no-delegation-chains invariant.
     renderer: minijinja
@@ -192,12 +192,14 @@ steps:
     action: select
     description: >
       ACT: Emit the gated composition change. For each proposed hire/fire/
-      delegate, construct a DispatchIntent { swarm_id, task,
-      estimated_credits (from ABW dependencies cost estimate),
-      curator_involved (default false per plan §3.7), data_shared (derived
-      from the agents' accepts[] and the task) }. The consent gate is
-      mandatory: no swarm_update_swarm or swarm_delegate call is emitted
-      without a signed credits_authorized token. If the operator Aborts, the
+      delegate, construct a consent request via swarm_request_consent
+      { action: "hire"|"delegate", target: agent_name|workspace_id,
+      credits_authorized: estimated_credits (from ABW dependencies cost
+      estimate), curator_involved (default false per plan §3.7),
+      data_shared (derived from the agents' accepts[] and the task) }.
+      The consent gate is mandatory: no swarm_hire or swarm_delegate call
+      is emitted without a valid consent_token from swarm_request_consent.
+      If the operator Aborts, the
       phase records the abort reason and emits no spend. This phase enforces
       the .rules "Advertised invariants need enforcement points" trap: the
       consent gate must actually block, not just warn.

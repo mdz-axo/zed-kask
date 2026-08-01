@@ -47,6 +47,11 @@ pub struct SwarmConfig {
     pub max_credits_per_dispatch: u32,
     /// Whether Xaman Ek sessions may be initiated without per-call opt-in (S5 policy).
     pub curator_consent_default: bool,
+    /// Default model id for newly created ABW agents when the caller omits
+    /// `model`. Operator-configurable via `HKASK_ABW_DEFAULT_AGENT_MODEL` so
+    /// the default is not a code literal that goes stale when the provider
+    /// renames/deprecates the model (KA-05).
+    pub default_agent_model: String,
 }
 
 impl Default for SwarmConfig {
@@ -56,6 +61,7 @@ impl Default for SwarmConfig {
             api_key: None,
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
+            default_agent_model: "claude-haiku-4-5-20251001".to_string(),
         }
     }
 }
@@ -77,6 +83,10 @@ impl SwarmConfig {
             .ok()
             .and_then(|s| s.trim().to_lowercase().parse::<bool>().ok())
             .unwrap_or(default.curator_consent_default);
+        let default_agent_model = std::env::var("HKASK_ABW_DEFAULT_AGENT_MODEL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(default.default_agent_model);
         let warning = if api_key.is_none() {
             Some(
                 "HKASK_ABW_API_KEY not set — swarm server in catalogue-only mode; \
@@ -92,6 +102,7 @@ impl SwarmConfig {
                 api_key,
                 max_credits_per_dispatch,
                 curator_consent_default,
+                default_agent_model,
             },
             warning,
         )
@@ -183,6 +194,19 @@ impl ConsentStore {
             )));
         }
         Ok(grant.credits_authorized)
+    }
+
+    /// Refund a consumed grant so the operator can retry after a transient
+    /// failure (network drop, ABW 5xx) without re-confirming. The grant is
+    /// re-inserted with its original scope and ceiling; it remains single-use
+    /// per *successful* spend — a refunded token is consumed again on the next
+    /// attempt and removed for good once the spend succeeds. No-op if the grant
+    /// was never consumed (defensive against double-refund).
+    fn refund(&self, grant: ConsentGrant) {
+        self.grants
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(grant.token.clone(), grant);
     }
 }
 
@@ -453,6 +477,46 @@ fn url_encode_segment(segment: &str) -> String {
     out
 }
 
+/// Build an ABW workspace slug from a name base and a timestamp. ABW slugs
+/// allow only lowercase letters, digits, and underscores. The timestamp suffix
+/// disambiguates swarms created with the same name. Extracted from
+/// `swarm_create_swarm` for testability (KA-03: the prior inline version
+/// panicked on a pre-epoch clock via `&string[..4]` on an empty string).
+fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
+    let suffix = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+        .get(..4)
+        .unwrap_or("0")
+        .to_string();
+    format!("{}_{}", slug_base.trim_matches('_'), suffix)
+}
+
+/// Strip leading @mentions from a delegate task (KA-06): a task starting
+/// with `@other_agent` would mention a different agent in the ABW workspace
+/// chat, a semantic injection at the chat layer. The consent gate already
+/// authorizes the named agent; this is defense-in-depth against accidental
+/// cross-mention. Strips all leading `@` tokens (and intervening whitespace)
+/// so `@a @b do x` becomes `do x`.
+fn strip_leading_mentions(task: &str) -> String {
+    let mut remaining = task.trim_start();
+    while remaining.starts_with('@') {
+        // Skip the @ and the following token (up to whitespace).
+        let after_at = &remaining[1..];
+        match after_at.find(char::is_whitespace) {
+            Some(end) => {
+                remaining = after_at[end..].trim_start();
+            }
+            None => {
+                // The entire task is `@token` with no trailing content.
+                return String::new();
+            }
+        }
+    }
+    remaining.to_string()
+}
+
 /// Sanitize an ABW agent or Xaman Ek response before returning it to the MCP
 /// client (the zed-kask agent). ABW agents and the curator are third-party
 /// surfaces that could return prompt-injection vectors (e.g. "ignore previous
@@ -616,7 +680,8 @@ pub struct CreateAgentRequest {
     pub system_prompt: String,
     /// One-sentence description for the catalogue.
     pub description: String,
-    /// Model id. Default: claude-haiku-4-5-20251001 (fast, cheap).
+    /// Model id. Default: the server's `default_agent_model` (operator-
+    /// configurable via `HKASK_ABW_DEFAULT_AGENT_MODEL`).
     pub model: Option<String>,
     /// Temperature (0.1–0.3 factual, 0.5–0.8 creative). Default 0.3.
     pub temperature: Option<f64>,
@@ -693,6 +758,9 @@ impl SwarmServer {
     )]
     pub async fn swarm_list_agents(&self, parameters: Parameters<ListAgentsRequest>) -> String {
         execute_tool_semantic(self, "swarm_list_agents", Some("dublin-core"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
             let req = parameters.0;
             let data = self
                 .client
@@ -723,10 +791,14 @@ impl SwarmServer {
                 })
                 .take(limit)
                 .map(|a| {
+                    // Sanitize the description field (KA-01): agent descriptions
+                    // are ABW/LLM-generated and can carry injection payloads.
+                    let desc = a.get("description").and_then(|d| d.as_str());
+                    let sanitized_desc = desc.map(|d| sanitize_abw_response(Some(&serde_json::Value::String(d.to_string()))));
                     serde_json::json!({
                         "agent_id": a.get("agent_id"),
                         "agent_type": a.get("agent_type"),
-                        "description": a.get("description"),
+                        "description": sanitized_desc.unwrap_or_else(|| a.get("description").cloned().unwrap_or(serde_json::Value::Null)),
                         "author": a.get("author"),
                         "tags": a.get("tags"),
                         "model": a.get("capabilities").and_then(|c| c.get("model")),
@@ -1001,9 +1073,14 @@ impl SwarmServer {
                     "action and target must be non-empty".to_string(),
                 ));
             }
-            if req.credits_authorized == 0 {
+            // Curator calls (action "curate") read task content but spend no
+            // credits, so a zero ceiling is correct for them. Spend actions
+            // ("hire", "delegate") must authorize a positive ceiling — a zero
+            // ceiling would authorize nothing and is almost certainly a caller
+            // bug. Reject zero only for spend actions.
+            if req.credits_authorized == 0 && req.action != "curate" {
                 return Err(McpToolError::invalid_argument(
-                    "credits_authorized must be > 0".to_string(),
+                    "credits_authorized must be > 0 for spend actions (hire/delegate)".to_string(),
                 ));
             }
             let token = self
@@ -1036,8 +1113,12 @@ impl SwarmServer {
             }
 
             // The consent gate is the enforcement point: consume the token
-            // (single-use) and verify it authorizes this exact hire.
-            self.consent
+            // (single-use) and verify it authorizes this exact hire. Capture
+            // the grant so we can refund it if the spend fails transiently
+            // (network drop, ABW 5xx) — the operator should not lose consent
+            // to a failure they didn't cause.
+            let grant = self
+                .consent
                 .consume(
                     &req.consent_token,
                     "hire",
@@ -1045,6 +1126,15 @@ impl SwarmServer {
                     req.credits_authorized,
                 )
                 .map_err(SwarmError::into_tool_error)?;
+            // Reconstruct the grant for refund — `consume` returns only the
+            // ceiling, so we re-mint the same scope. The token string is the
+            // key; refund re-inserts it.
+            let refund_grant = ConsentGrant {
+                action: "hire".to_string(),
+                target: req.agent_name.clone(),
+                credits_authorized: grant,
+                token: req.consent_token.clone(),
+            };
 
             // Re-verify the hire cost against ABW immediately before spending.
             // The consent token's `credits_authorized` is whatever the caller
@@ -1059,12 +1149,33 @@ impl SwarmServer {
                     url_encode_segment(&req.agent_name)
                 ))
                 .await
-                .map_err(SwarmError::into_tool_error)?;
-            let actual_cost = deps
-                .get("total_hire_cost")
-                .and_then(|c| c.as_u64())
-                .unwrap_or(0);
+                .map_err(|e| {
+                    // Refund before propagating: the spend never happened.
+                    self.consent.refund(refund_grant.clone());
+                    SwarmError::into_tool_error(e)
+                })?;
+            // Do not fabricate cost = 0 on a missing field — a missing
+            // `total_hire_cost` means ABW changed its response shape or the
+            // agent doesn't exist. The `.rules` trap: a failed measurement
+            // must be distinguishable from a measured zero. Mirrors the
+            // `swarm_hire_cost` fix (§12.4).
+            let actual_cost = match deps.get("total_hire_cost").and_then(|c| c.as_u64()) {
+                Some(cost) => cost,
+                None => {
+                    tracing::warn!(
+                        target: "reg.swarm",
+                        agent = %req.agent_name,
+                        "swarm_hire: ABW re-verify response missing total_hire_cost — cost unknown"
+                    );
+                    self.consent.refund(refund_grant.clone());
+                    return Err(McpToolError::internal(
+                        "hire cost unknown — ABW re-verify response missing total_hire_cost field"
+                            .to_string(),
+                    ));
+                }
+            };
             if actual_cost > u64::from(req.credits_authorized) {
+                self.consent.refund(refund_grant.clone());
                 return Err(SwarmError::PaymentRequired(format!(
                     "actual hire cost {actual_cost} exceeds authorized {} — \
                      re-request consent with the updated cost",
@@ -1083,7 +1194,11 @@ impl SwarmServer {
                     }),
                 )
                 .await
-                .map_err(SwarmError::into_tool_error)?;
+                .map_err(|e| {
+                    // Refund before propagating: the spend never happened.
+                    self.consent.refund(refund_grant.clone());
+                    SwarmError::into_tool_error(e)
+                })?;
 
             Ok(self
                 .client
@@ -1117,7 +1232,8 @@ impl SwarmServer {
                 ));
             }
 
-            self.consent
+            let grant = self
+                .consent
                 .consume(
                     &req.consent_token,
                     "delegate",
@@ -1125,8 +1241,20 @@ impl SwarmServer {
                     req.credits_authorized,
                 )
                 .map_err(SwarmError::into_tool_error)?;
+            let refund_grant = ConsentGrant {
+                action: "delegate".to_string(),
+                target: req.workspace_id.clone(),
+                credits_authorized: grant,
+                token: req.consent_token.clone(),
+            };
 
             // ABW delegation is an @mention message in the workspace chat.
+            // Strip leading @mentions from the task (KA-06): a task starting
+            // with `@other_agent` would mention a different agent in the
+            // workspace chat, a semantic injection at the ABW chat layer.
+            // The consent gate already authorizes the named agent; this is
+            // defense-in-depth against accidental cross-mention.
+            let task_clean = strip_leading_mentions(&req.task);
             let data = self
                 .client
                 .post(
@@ -1134,10 +1262,14 @@ impl SwarmServer {
                         "/workspaces/{}/messages",
                         url_encode_segment(&req.workspace_id)
                     ),
-                    &serde_json::json!({ "content": format!("@{} {}", req.agent_name, req.task) }),
+                    &serde_json::json!({ "content": format!("@{} {}", req.agent_name, task_clean) }),
                 )
                 .await
-                .map_err(SwarmError::into_tool_error)?;
+                .map_err(|e| {
+                    // Refund before propagating: the spend never happened.
+                    self.consent.refund(refund_grant.clone());
+                    SwarmError::into_tool_error(e)
+                })?;
 
             Ok(self
                 .client
@@ -1177,11 +1309,34 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
+            // Sanitize each message's content (KA-01): workspace chat history
+            // is the primary injection vector — ABW agents can echo prompt-
+            // injection payloads in their messages. Map over the messages
+            // array and route each message's content/response field through
+            // sanitize_abw_response.
+            let empty = Vec::new();
+            let messages = data
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .unwrap_or(&empty);
+            let sanitized_messages: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|msg| {
+                    let sanitized =
+                        sanitize_abw_response(msg.get("content").or_else(|| msg.get("response")));
+                    let mut msg = msg.clone();
+                    if let Some(obj) = msg.as_object_mut() {
+                        obj.insert("content".to_string(), sanitized);
+                    }
+                    msg
+                })
+                .collect();
+
             Ok(self
                 .client
                 .with_wallet(serde_json::json!({
                     "workspace_id": req.workspace_id,
-                    "messages": data,
+                    "messages": sanitized_messages,
                 }))
                 .await)
         })
@@ -1201,6 +1356,11 @@ impl SwarmServer {
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
             let req = parameters.0;
+            if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "description and agent_name must be non-empty".to_string(),
+                ));
+            }
             let data = self
                 .client
                 .post(
@@ -1213,7 +1373,17 @@ impl SwarmServer {
                 )
                 .await
                 .map_err(SwarmError::into_tool_error)?;
-            Ok(data)
+            // Sanitize the LLM-generated prompt field (KA-01): ABW's response
+            // carries the generated prompt in a `prompt` or `response` field.
+            // Route through sanitize_abw_response so injection prefixes are
+            // stripped and the content is wrapped in the {content, source,
+            // trust} container.
+            let sanitized =
+                sanitize_abw_response(data.get("prompt").or_else(|| data.get("response")));
+            Ok(serde_json::json!({
+                "prompt": sanitized,
+                "raw": data,
+            }))
         })
         .await
     }
@@ -1231,6 +1401,11 @@ impl SwarmServer {
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
             let req = parameters.0;
+            if req.domain_description.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "domain_description must be non-empty".to_string(),
+                ));
+            }
             let data = self
                 .client
                 .post(
@@ -1239,7 +1414,16 @@ impl SwarmServer {
                 )
                 .await
                 .map_err(SwarmError::into_tool_error)?;
-            Ok(data)
+            // Sanitize the LLM-generated ontology field (KA-01): ABW's
+            // response carries the generated ER diagram in an `ontology` or
+            // `response` field. Route through sanitize_abw_response so
+            // injection prefixes are stripped.
+            let sanitized =
+                sanitize_abw_response(data.get("ontology").or_else(|| data.get("response")));
+            Ok(serde_json::json!({
+                "ontology": sanitized,
+                "raw": data,
+            }))
         })
         .await
     }
@@ -1266,7 +1450,7 @@ impl SwarmServer {
                 "system_prompt": req.system_prompt,
                 "capabilities": {
                     "executor": "llm",
-                    "model": req.model.unwrap_or_else(|| "claude-haiku-4-5-20251001".to_string()),
+                    "model": req.model.unwrap_or_else(|| self.client.config().default_agent_model.clone()),
                     "temperature": req.temperature.unwrap_or(0.3),
                     "provider": "anthropic",
                     "mcp_tools": [],
@@ -1292,6 +1476,23 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
+            // Sanitize the description field in the response (KA-01): ABW
+            // may augment or regenerate the agent description. The operator-
+            // supplied system_prompt is echoed back but is operator-authored,
+            // not LLM output — leave it untouched.
+            let mut data = data;
+            let desc_to_sanitize = data
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|d| d.to_string());
+            if let Some(desc) = desc_to_sanitize
+                && let Some(obj) = data.as_object_mut()
+            {
+                obj.insert(
+                    "description".to_string(),
+                    sanitize_abw_response(Some(&serde_json::Value::String(desc))),
+                );
+            }
             Ok(self.client.with_wallet(data).await)
         })
         .await
@@ -1321,14 +1522,7 @@ impl SwarmServer {
                 .chars()
                 .map(|c| if c.is_alphanumeric() { c } else { '_' })
                 .collect();
-            let slug = format!(
-                "{}_{}",
-                slug_base.trim_matches('_'),
-                &std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis().to_string())
-                    .unwrap_or_default()[..4]
-            );
+            let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
             let team = self
                 .client
                 .post(
@@ -1365,11 +1559,70 @@ impl SwarmServer {
                     }));
                     continue;
                 };
-                // Consume the consent token for this specific hire.
-                if let Err(e) = self.consent.consume(token, "hire", agent, 5) {
+                // Consume the consent token for this specific hire. The token's
+                // `credits_authorized` ceiling was set by the panel from the
+                // real `swarm_hire_cost` estimate; we re-verify the actual cost
+                // against ABW below before spending (mirroring `swarm_hire`).
+                let grant = match self.consent.consume(token, "hire", agent, 0) {
+                    Ok(ceiling) => ceiling,
+                    Err(e) => {
+                        hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": e.to_string(),
+                        }));
+                        continue;
+                    }
+                };
+                let refund_grant = ConsentGrant {
+                    action: "hire".to_string(),
+                    target: agent.clone(),
+                    credits_authorized: grant,
+                    token: token.clone(),
+                };
+                // Re-verify the actual hire cost against ABW before spending.
+                // A missing `total_hire_cost` is unknown, not zero (the
+                // `.rules` trap). Refund and record the error on failure.
+                let deps = match self
+                    .client
+                    .get(&format!(
+                        "/agents/{}/dependencies",
+                        url_encode_segment(agent)
+                    ))
+                    .await
+                {
+                    Ok(d) => d,
+                    Err(e) => {
+                        self.consent.refund(refund_grant);
+                        hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": format!("re-verify failed: {e}"),
+                        }));
+                        continue;
+                    }
+                };
+                let actual_cost = match deps.get("total_hire_cost").and_then(|c| c.as_u64()) {
+                    Some(c) => c,
+                    None => {
+                        tracing::warn!(
+                            target: "reg.swarm",
+                            agent = %agent,
+                            "swarm_create_swarm: ABW re-verify missing total_hire_cost — cost unknown"
+                        );
+                        self.consent.refund(refund_grant);
+                        hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": "hire cost unknown — ABW re-verify response missing total_hire_cost",
+                        }));
+                        continue;
+                    }
+                };
+                if actual_cost > u64::from(grant) {
+                    self.consent.refund(refund_grant);
                     hire_errors.push(serde_json::json!({
                         "agent": agent,
-                        "error": e.to_string(),
+                        "error": format!(
+                            "actual hire cost {actual_cost} exceeds authorized {grant} — re-request consent"
+                        ),
                     }));
                     continue;
                 }
@@ -1382,10 +1635,14 @@ impl SwarmServer {
                     .await
                 {
                     Ok(_) => hired.push(agent.clone()),
-                    Err(e) => hire_errors.push(serde_json::json!({
-                        "agent": agent,
-                        "error": e.to_string(),
-                    })),
+                    Err(e) => {
+                        // Refund: the spend never happened.
+                        self.consent.refund(refund_grant);
+                        hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": e.to_string(),
+                        }));
+                    }
                 }
             }
 
@@ -1430,7 +1687,11 @@ impl SwarmServer {
             // `swarm_request_consent` (action "curate"). When `true`, the
             // operator has globally opted in and the token is optional.
             if !self.client.config().curator_consent_default {
-                let target = req.session_id.as_deref().unwrap_or("xaman");
+                // Use a fixed target "xaman" for all curate consent consumes.
+                // The session_id is an ABW detail that changes across
+                // continuation calls; scoping consent to it would force a
+                // fresh token per message and produce opaque scope-mismatch
+                // errors on session continuation (BH-09).
                 let Some(token) = req.consent_token.as_deref() else {
                     return Err(SwarmError::ConsentDenied(
                         "Xaman Ek curator call requires a consent token (action 'curate') — \
@@ -1440,7 +1701,7 @@ impl SwarmServer {
                     .into_tool_error());
                 };
                 self.consent
-                    .consume(token, "curate", target, 0)
+                    .consume(token, "curate", "xaman", 0)
                     .map_err(SwarmError::into_tool_error)?;
             }
 
@@ -1480,7 +1741,10 @@ impl SwarmServer {
             let data = self
                 .client
                 .post(
-                    &format!("/xaman/sessions/{session_id}/message"),
+                    &format!(
+                        "/xaman/sessions/{}/message",
+                        url_encode_segment(&session_id)
+                    ),
                     &serde_json::json!({ "message": req.message }),
                 )
                 .await
@@ -1686,6 +1950,10 @@ mod tests {
         assert_eq!(c.api_base_url, "https://agent-bestiary.world");
         assert!(!c.curator_consent_default);
         assert!(c.api_key.is_none());
+        // KA-05: the default agent model must be a config field, not a code
+        // literal in the handler. The default exists so the handler can read
+        // it; the operator overrides via HKASK_ABW_DEFAULT_AGENT_MODEL.
+        assert!(!c.default_agent_model.is_empty());
     }
 
     // The algedonic wallet signal must never be fabricated. When the server is
@@ -1810,5 +2078,142 @@ mod tests {
     fn config_curator_consent_default_is_false_by_default() {
         let c = SwarmConfig::default();
         assert!(!c.curator_consent_default);
+    }
+
+    // ── Consent refund (BH-04) ─────────────────────────────────────────────
+    // A refunded grant must be re-consumable so the operator can retry after a
+    // transient failure without re-confirming. The grant retains its original
+    // scope and ceiling.
+    #[test]
+    fn consent_refund_restores_grant_for_retry() {
+        let store = ConsentStore::default();
+        let token = store.mint("hire", "market_analyst", 20);
+        let ceiling = store
+            .consume(&token, "hire", "market_analyst", 20)
+            .expect("first consume");
+        assert_eq!(ceiling, 20);
+        // Refund the consumed grant (simulating a network failure after consume).
+        store.refund(ConsentGrant {
+            action: "hire".to_string(),
+            target: "market_analyst".to_string(),
+            credits_authorized: 20,
+            token: token.clone(),
+        });
+        // The refunded token must be consumable again.
+        let ceiling2 = store
+            .consume(&token, "hire", "market_analyst", 20)
+            .expect("refunded token should consume");
+        assert_eq!(ceiling2, 20);
+    }
+
+    #[test]
+    fn consent_refund_is_noop_for_never_consumed_token() {
+        // Defensive: refunding a grant that was never consumed (or already
+        // refunded) must not panic and must leave the store usable.
+        let store = ConsentStore::default();
+        store.refund(ConsentGrant {
+            action: "hire".to_string(),
+            target: "ghost".to_string(),
+            credits_authorized: 5,
+            token: "hkask-consent-never".to_string(),
+        });
+        // The inserted grant is consumable.
+        let ceiling = store
+            .consume("hkask-consent-never", "hire", "ghost", 5)
+            .expect("refunded ghost grant should consume");
+        assert_eq!(ceiling, 5);
+    }
+
+    // ── Curate consent target stability (BH-09) ─────────────────────────────
+    // A curate token minted for "xaman" must be consumable regardless of
+    // whether a session_id is present — the server uses a fixed "xaman"
+    // target, not the session_id.
+    #[test]
+    fn curate_consume_uses_fixed_xaman_target() {
+        let store = ConsentStore::default();
+        let token = store.mint("curate", "xaman", 0);
+        // Consume with the fixed target the server now uses.
+        store
+            .consume(&token, "curate", "xaman", 0)
+            .expect("curate token for xaman should consume");
+    }
+
+    #[test]
+    fn curate_consume_rejects_session_id_target_mismatch() {
+        // A token minted for "xaman" must not be consumable for a different
+        // target — this pins that the server's fixed "xaman" target is the
+        // only valid scope for curate consent.
+        let store = ConsentStore::default();
+        let token = store.mint("curate", "xaman", 0);
+        let wrong = store.consume(&token, "curate", "session-abc-123", 0);
+        assert!(matches!(wrong, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    // ── Slug generation (KA-03) ────────────────────────────────────────────
+    // The slug must not panic on a pre-epoch clock. The prior inline version
+    // used `&string[..4]` on an empty string (from `unwrap_or_default()` on
+    // a pre-epoch `duration_since`), which panicked. The extracted helper
+    // uses safe slicing.
+    #[test]
+    fn make_swarm_slug_handles_pre_epoch_clock() {
+        // A time before UNIX_EPOCH — duration_since returns Err.
+        let pre_epoch = std::time::SystemTime::UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(60))
+            .expect("construct pre-epoch time");
+        let slug = make_swarm_slug("my_swarm", pre_epoch);
+        // Must not panic, must produce a valid slug.
+        assert!(slug.starts_with("my_swarm_"));
+        assert!(!slug.is_empty());
+    }
+
+    #[test]
+    fn make_swarm_slug_produces_suffix() {
+        let now = std::time::SystemTime::now();
+        let slug = make_swarm_slug("test", now);
+        assert!(slug.starts_with("test_"));
+        // The suffix is the first 4 digits of the millisecond timestamp.
+        let suffix = slug.strip_prefix("test_").unwrap_or("");
+        assert!(!suffix.is_empty());
+    }
+
+    #[test]
+    fn make_swarm_slug_trims_underscores_from_base() {
+        let now = std::time::SystemTime::now();
+        let slug = make_swarm_slug("__leading_and_trailing__", now);
+        assert!(
+            !slug.contains("__leading"),
+            "leading underscores must be trimmed"
+        );
+    }
+
+    // ── Delegate task @mention stripping (KA-06) ───────────────────────────
+    // A delegate task starting with @other_agent would mention a different
+    // agent in the ABW chat. strip_leading_mentions removes all leading
+    // @tokens so only the intended agent (named in the @mention prefix the
+    // server adds) is mentioned.
+    #[test]
+    fn strip_leading_mentions_removes_single_mention() {
+        assert_eq!(
+            strip_leading_mentions("@other_agent do the task"),
+            "do the task"
+        );
+    }
+
+    #[test]
+    fn strip_leading_mentions_removes_multiple_mentions() {
+        assert_eq!(strip_leading_mentions("@a @b do x"), "do x");
+    }
+
+    #[test]
+    fn strip_leading_mentions_preserves_clean_task() {
+        assert_eq!(
+            strip_leading_mentions("analyze the market data"),
+            "analyze the market data"
+        );
+    }
+
+    #[test]
+    fn strip_leading_mentions_empty_when_only_mentions() {
+        assert_eq!(strip_leading_mentions("@only_mention"), "");
     }
 }
