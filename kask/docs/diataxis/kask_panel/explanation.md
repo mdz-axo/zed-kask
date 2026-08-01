@@ -23,7 +23,7 @@ and tab-switch logic.
 
 | Symbol | Location |
 |--------|----------|
-| `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:168` |
+| `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:179` |
 | `ToolInvoker` trait | `crates/kask_panel/src/kask_panel.rs:89` |
 | `set_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:106` |
 | `init` fn | `crates/kask_panel/src/kask_panel.rs:447` |
@@ -46,7 +46,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-PANEL-004
 verified_date: 2026-07-29
-verified_against: crates/kask_panel/src/kask_panel.rs:168,89,106,447,324,224
+verified_against: crates/kask_panel/src/kask_panel.rs:179,89,106,447,324,224
 status: VERIFIED
 -->
 

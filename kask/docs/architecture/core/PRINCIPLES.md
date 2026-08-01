@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-07-29
-version: "0.31.1"
+last_updated: 2026-08-01
+version: "0.31.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -113,9 +113,10 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **media** | PKO | DC+BIBO | OMC (media creation) |
 | **research** | PKO | DC+BIBO | — |
 | **scenarios** | PKO | DC+BIBO | — |
+| **swarm** | PKO | DC+BIBO | Onto4MAT (multi-agent teaming; Reynolds/Kennedy-Eberhart/Dorigo swarm-intelligence substrate) |
 | **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
 
-> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`kask/registry/` manifests + `hkask-templates`/`ManifestExecutor`); memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (curator may be unloaded via `kask.mcp.overrides`). (Corrected 2026-07-29: the prior reference to `crates/hkask-skills` was stale — that crate does not exist; the skill registry lives at `kask/registry/`.)
+> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`kask/registry/` manifests + `hkask-templates`/`ManifestExecutor`); memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 11 servers above are the surviving set on disk (curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration). (Corrected 2026-07-29: the prior reference to `crates/hkask-skills` was stale — that crate does not exist; the skill registry lives at `kask/registry/`.)
 
 **Bridge locations:**
 - Process axis vocabulary: `crates/hkask-bridge-dublincore/` (shared crate)
@@ -182,7 +183,7 @@ These six spans are the same for every skill, regardless of domain. The typed en
 
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|
-| Tool dispatch (all MCP servers) | `reg.tool.*` | ~170 | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |
+| Tool dispatch (all MCP servers) | `reg.tool.*` | ~206 (one per tool method, counted via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/` on 2026-08-01) | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |
 | Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge`, wrapped by `GuardedInferencePort` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
 | Fusion (multi-model deliberation — MCP-server-internal to `hkask-inference`; not exposed to in-process surfaces) | `reg.fusion` | 9 | ✅ orchestrate + per-round/mode events (convergence verdict, swap-revote, algo method) | `Fusion` |
 | Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
@@ -237,7 +238,7 @@ Every interaction with hKask carries a userpod (or Curator) host identity. After
 | **Agent panel** (zed Assistant) | Human user (via userpod) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active userpod from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/pod.db` (SQLCipher) | OS keychain via `hkask-keystore` |
 | **Kask panel (D10)** | Human user (via userpod) | Same composition-root resolution | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
 | **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via userpod) | `kask admin` subcommand resolves the userpod from settings | Same per-userpod SQLCipher file | OS keychain via `hkask-keystore` |
-| **In-process MCP** (the 10 MCP servers wired into zed-kask) | The active userpod | Capability tokens minted by the userpod at composition-root wiring time | Per-userpod DB | Userpod-attested HKDF keys |
+| **In-process MCP** (the 11 MCP servers wired into zed-kask) | The active per-user data directory | Capability tokens minted at composition-root wiring time | Per-user SQLCipher DB | User-attested HKDF keys |
 
 **Dual-presence pattern:** The agent panel hosts both the user's userpod AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's userpod is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 

@@ -5,6 +5,7 @@ contract:
     pre_act_state: object
     act_result: object
     swarm_id: string
+    mode: string
     target_condition: object|null
   output:
     post_act_state: object
@@ -23,7 +24,7 @@ visibility: Public
 {# Functional Role: KnowAct — Re-measure, compute d, emit next_focus + algedonic #}
 {# Produces: check_result #}
 {# Phase 5 — CHECK (CHECK: re-measure + convergence metric + algedonic) #}
-{# hKask v0.31.0 — Swarm Intelligence #}
+{# hKask v0.31.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Re-measure the swarm state post-Act and compute the convergence metric.
   The metric is a composite swarm-state distance d. The algedonic override
@@ -40,6 +41,9 @@ max_tokens = 3072
 thinking_budget = "full"
 
 You are a swarm-convergence analyst. Re-measure the swarm state post-Act and compute the convergence metric.
+
+## Mode
+{{ mode }}
 
 ## Pre-Act State (from SENSE)
 ```json
@@ -68,12 +72,36 @@ You are a swarm-convergence analyst. Re-measure the swarm state post-Act and com
 
 ## Step 1 — Re-measure the swarm state post-Act
 
+{% if mode == "local" %}
+Re-fetch the local agent registry via `swarm_list_local_agents` and the
+local ledger balance (from the last `swarm_delegate_local` response's
+`balance` field). Recompute variety_coverage, diversity, alignment,
+cohesion, separation exactly as in SENSE, against the post-Act roster.
+{% else %}
 Re-fetch the workspace roster and wallet via hkask-mcp-swarm (the agent
 orchestrates these calls). Recompute variety_coverage, diversity, alignment,
 cohesion, separation exactly as in SENSE, against the post-Act roster.
+{% endif %}
 
 ## Step 2 — Compute loop_closure
 
+{% if mode == "local" %}
+```
+loop_closure = (successful_delegations / total_delegations)
+```
+
+where:
+- `total_delegations` = count of emitted_calls from ACT.
+- `successful_delegations` = count of emitted_calls whose `swarm_delegate_local`
+  response did not return `PaymentRequired` or a guard error.
+
+There is no curator dispatch in local mode (no `curator_involved` field).
+The algedonic signal in local mode is the ledger balance itself — if it
+hits zero, the next delegation will fail.
+
+Vacuous-truth default: if `total_delegations = 0`, `loop_closure = 1.0`
+(vacuously satisfied).
+{% else %}
 ```
 loop_closure = (reconciled_dispatches / total_dispatches)
              AND (acknowledged_curator_dispatches / curator_dispatches)
@@ -90,6 +118,7 @@ Vacuous-truth default: if `total_dispatches = 0`, `loop_closure = 1.0`
 (vacuously satisfied — no dispatch is un-reconciled). This prevents a
 freshly composed swarm that has not yet dispatched from being falsely flagged
 as a loop-break.
+{% endif %}
 
 ## Step 3 — Compute the convergence metric (swarm-state distance)
 
@@ -106,6 +135,19 @@ convergence_metric = d.
 
 ## Step 4 — Algedonic override
 
+{% if mode == "local" %}
+Check for algedonic signals that override convergence:
+- Any `PaymentRequired` from `swarm_delegate_local` during the Act (the
+  ledger ran out of credits — the operator needs to fund via
+  `swarm_fund_local`).
+- Any guard rejection from `hkask-guard` (prompt injection detected on
+  input, or canary exfiltration detected on output).
+
+If either is present, set algedonic_signal = { type, detail } and the loop
+MUST NOT claim convergence regardless of d.
+
+If neither is present, algedonic_signal = null.
+{% else %}
 Check for algedonic signals that override convergence:
 - Any 402 (PaymentRequired) from the ABW API during the Act or re-fetch.
 - Any un-acknowledged curator dispatch (curator_involved = true with no
@@ -118,6 +160,7 @@ convergence invariant: a broken algedonic channel is never read as "no
 deviation."
 
 If neither is present, algedonic_signal = null.
+{% endif %}
 
 ## Step 5 — Emit next_focus
 

@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.1.1"
+last_updated: 2026-08-01
+version: "0.1.2"
 status: "Active"
 domain: "Foundation"
 mds_categories: [domain, composition]
@@ -22,22 +22,24 @@ and `hkask-templates`.
 | Symbol | Location |
 |--------|----------|
 | Crate root, module list | `kask/crates/hkask-types/src/hkask_types.rs:1` |
-| `pub use ports::*` re-export | `kask/crates/hkask-types/src/hkask_types.rs:72` |
+| `pub use ports::*` re-export | `kask/crates/hkask-types/src/hkask_types.rs:71` |
 | `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:86` |
 | `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:108` |
-| `LedgerObserver` trait | `kask/crates/hkask-types/src/ports/regulation.rs:64` |
-| `SkillRegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:288` |
-| `RegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:311` |
+| `RegulationSink` trait | `kask/crates/hkask-types/src/event.rs:795` |
+| `SkillRegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:287` |
+| `RegistryIndex` trait | `kask/crates/hkask-types/src/ports/registry.rs:310` |
 | `Id<T: IdKind>` newtype | `kask/crates/hkask-types/src/id/core.rs:20` |
 | `ToolPort` trait (in `hkask-capability`, not this crate) | `kask/crates/hkask-capability/src/tool_port.rs:47` |
 
 ## Port trait hierarchy
 
-The `ports/` module defines six port traits organized into four clusters.
+The `ports/` module defines port traits organized into clusters.
 Each port is a `Send + Sync` trait that abstracts an infrastructure boundary.
 Downstream crates implement these traits against concrete backends. The
 `ToolPort` trait lives in `hkask-capability` rather than this crate because it
-carries OCAP semantics; it is included here for context.
+carries OCAP semantics; it is included here for context. (`LedgerObserver`
+was removed; the Regulation event sink contract is now `RegulationSink` in
+`event.rs`.)
 
 ```mermaid
 classDiagram
@@ -53,12 +55,10 @@ classDiagram
         +recall_context(query, limit) MemoryFuture
         +recall_thread(thread_id, limit) MemoryFuture
     }
-    class LedgerObserver {
+    class RegulationSink {
         <<interface>>
-        +interest_mask() Vec~SpanNamespace~
-        +on_event(event)
-        +on_depletion(signal)
-        +on_backpressure(signal)
+        +persist(event) Result
+        +persist_if_absent(source_event_id, event) Result
     }
     class SkillRegistryIndex {
         <<interface>>
@@ -80,24 +80,25 @@ classDiagram
     InferencePort <|.. LanguageModelInferencePort
     InferencePort <|.. GuardedInferencePort
     InferencePort <|.. MultiModelInferencePort
-    MemoryPort <|.. LoggingMemoryPort
     MemoryPort <|.. RealMemoryPort
-    LedgerObserver <|.. RegulationLedger
+    RegulationSink <|.. RegulationArchive
     SkillRegistryIndex <|.. Registry
     RegistryIndex <|.. Registry
-    ToolPort <|.. BridgeToolPort
+    SkillRegistryIndex <|.. SqliteRegistry
+    RegistryIndex <|.. SqliteRegistry
+    ToolPort <|.. McpRuntime
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/regulation.rs:64; kask/crates/hkask-types/src/ports/registry.rs:288,311; kask/crates/hkask-capability/src/tool_port.rs:47
+verified_date: 2026-08-01
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/event.rs:795; kask/crates/hkask-types/src/ports/registry.rs:287,310; kask/crates/hkask-capability/src/tool_port.rs:47
 status: VERIFIED
 -->
 
 ## Port clusters
 
-The six ports group into four functional clusters by the infrastructure
+The port traits group into functional clusters by the infrastructure
 boundary they abstract. (The former Persistence cluster's port traits were
 removed; `EmbeddingStore` and `EscalationQueue` are now used directly — see
 the Persistence cluster section below.)
@@ -111,10 +112,10 @@ explicit `ChatMessage` array). All return `Pin<Box<dyn Future + Send>>`. The
 companion types `ModelEntry`, `InferenceStreamChunk`, `InferenceResult`,
 `ChatMessage`, and `ChatToolDefinition` live in the same file and
 `ports/inference_types.rs`. Implementors: `LanguageModelInferencePort` in
-`kask_bridge/src/inference.rs:246` (wraps zed's `LanguageModel`),
-`MultiModelInferencePort` in `kask_bridge/src/fusion_model.rs:338` (Fusion
+`kask_bridge/src/inference.rs:281` (wraps zed's `LanguageModel`),
+`MultiModelInferencePort` in `kask_bridge/src/fusion_model.rs:331` (Fusion
 multi-provider), and `GuardedInferencePort` in
-`hkask-guard/src/guarded_inference.rs:56` (decorator that adds content
+`hkask-guard/src/guarded_inference.rs:168` (decorator that adds content
 scanning).
 
 ### Memory cluster
@@ -123,32 +124,34 @@ scanning).
 recall. The trait exposes `ingest_turn`, `recall_context` (semantic + episodic
 recall by query), and `recall_thread` (recall by exact thread ID). The
 companion types `TurnRecord`, `MemorySnippet`, `MemoryError`, and the
-`MemoryFuture` type alias live in the same file. Implementors:
-`LoggingMemoryPort` in `kask_bridge/src/memory.rs:49` (no-op placeholder when
-no DB is configured), `RealMemoryPort` in `kask_bridge/src/memory.rs:695`
-(SQLite-backed), and `BridgeMemoryPort` in `kask_bridge/src/memory.rs:1484`
-(adapts `MemoryPort` to zed's `agent::ThreadMemoryPort` trait — note: this
-adapter implements zed's trait, not hKask's).
+`MemoryFuture` type alias live in the same file. Implementor:
+`RealMemoryPort` in `kask_bridge/src/memory.rs:42` (SQLite-backed). The
+adapter `BridgeMemoryPort` in `kask_bridge/src/memory.rs:1615` adapts
+`MemoryPort` to zed's `agent::ThreadMemoryPort` trait (it implements zed's
+trait, not hKask's). When no DB path is configured, the memory port hook
+stays `None` and the agent's thread ingest call site no-ops — there is no
+`LoggingMemoryPort` placeholder.
 
 ### Regulation cluster
 
-`LedgerObserver` (`ports/regulation.rs:64`) receives Regulation events via
-`interest_mask`-filtered `on_event`/`on_depletion`/`on_backpressure` callbacks.
-`RegulationArchive` (in `hkask-storage/src/regulation_store.rs:505`) persists and replays Regulation
-records (`query_algedonic`, `replay_weighted`, `persist_cursor`,
-`load_cursor`, `query_by_namespace`) and is used directly by consumers (no
-port trait). `WalletManager` (in `hkask-regulation/src/wallet_manager.rs:176`)
-manages gas-budget balance, encumbrance, and settlement (`gas_to_rjoules`,
-`get_encumbrance`, `can_afford`, `consume`, `settle_rjoules`) and is used
-directly by consumers (no port trait). `RegulationLedger` (as a
-`LedgerObserver` subscriber bus) lives in `hkask-regulation/src/runtime.rs:405`.
+`RegulationSink` (`event.rs:795`) is the trait that persists Regulation
+records (`persist`, `persist_if_absent`). `RegulationArchive` (in
+`hkask-storage/src/regulation_store.rs:72`) implements `RegulationSink` and
+persists/replays Regulation records (`query_algedonic`, `replay_weighted`,
+`persist_cursor`, `load_cursor`, `query_by_namespace`) and is used directly by
+consumers (no port trait beyond `RegulationSink`). `WalletManager` (in
+`hkask-regulation/src/wallet_manager.rs:28`) manages gas-budget balance,
+encumbrance, and settlement (`gas_to_rjoules`, `get_encumbrance`,
+`can_afford`, `consume`, `settle_rjoules`) and is used directly by consumers
+(no port trait). `RegulationLedger` (the in-memory subscriber bus) lives in
+`hkask-regulation/src/runtime.rs:423`.
 
 ### Persistence cluster
 
 Two concrete storage backends are used directly (no port traits).
-`EmbeddingStore` (in `hkask-storage/src/embeddings.rs:629`) stores, retrieves,
+`EmbeddingStore` (in `hkask-storage/src/embeddings.rs:105`) stores, retrieves,
 searches, and deletes vector embeddings. `EscalationQueue` (in
-`hkask-storage/src/escalation.rs:402`) manages escalation records (`list_pending`,
+`hkask-storage/src/escalation.rs:58`) manages escalation records (`list_pending`,
 `get`, `resolve`, `dismiss`, `persist_batch`, `add`). The runtime embedding
 port is `LanguageModelEmbeddingPort` in `kask_bridge` (unchanged).
 
@@ -156,12 +159,12 @@ port is `LanguageModelEmbeddingPort` in `kask_bridge` (unchanged).
 
 ### Registry cluster
 
-`SkillRegistryIndex` (`ports/registry.rs:288`) and `RegistryIndex`
-(`ports/registry.rs:311`) abstract the skill and template registry. The
+`SkillRegistryIndex` (`ports/registry.rs:287`) and `RegistryIndex`
+(`ports/registry.rs:310`) abstract the skill and template registry. The
 companion types `Skill`, `RegistryEntry`, `SkillZone`, and `RegistryError`
-live in the same file. Implementor: `Registry` in
-`hkask-templates/src/registry.rs:523` (in-memory) and the SQLite-backed
-`SqliteRegistry` in `hkask-templates/src/registry_sqlite.rs`.
+live in the same file. Implementors: `Registry` in
+`hkask-templates/src/registry.rs:145` (in-memory read-through cache) and the
+SQLite-backed `SqliteRegistry` in `hkask-templates/src/registry_sqlite.rs:65`.
 
 ## Identifier newtypes
 
@@ -175,7 +178,7 @@ This pattern prevents identifier confusion at compile time.
 
 ## Re-exports
 
-The crate root (`hkask_types.rs:72`) re-exports the entire `ports` module via
+The crate root (`hkask_types.rs:71`) re-exports the entire `ports` module via
 `pub use ports::*`. Downstream crates depend on `hkask-types` and receive all
 port traits, identifier newtypes, and domain types (`HMemEntry`, `WebID`,
 `RJoule`, `ObservableSpan`, `RegulationRecord`, `VoiceDesign`,

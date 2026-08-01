@@ -137,6 +137,6 @@ status: VERIFIED (v5 — Daemon node removed; record_experience edges repointed 
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — all 10 on-disk MCP servers
-- [Architecture Patterns](../../explanation/architecture-patterns.md) — MCP bootstrap and tool dispatch sequence
+- [MCP Server Registry](README.md) — all 11 on-disk MCP servers
+- [MCP Server Explanation](../../diataxis/hkask-mcp-server/explanation.md) — MCP bootstrap and tool dispatch sequence (replaces the deleted `explanation/architecture-patterns.md`)
 - [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D10 integration seams, essentialist split (hkask-services-chat deleted; chat owned by zed's `crates/agent`)

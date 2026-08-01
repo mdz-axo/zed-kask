@@ -1,8 +1,8 @@
 ---
 title: "Reference Documentation — Index"
 audience: [developers, operators, agents]
-last_updated: 2026-07-29
-version: "0.32.1"
+last_updated: 2026-08-01
+version: "0.32.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain]
@@ -13,7 +13,7 @@ mds_categories: [domain]
 Neutral, complete, descriptive-only documentation of the hKask system as it is hosted inside
 zed-kask. No procedures, no opinions, no explanations of why — only what.
 
-hKask runs in-process inside zed-kask: 19 hKask crates compiled into the editor and 10 MCP
+hKask runs in-process inside zed-kask: 19 hKask crates compiled into the editor and 11 MCP
 servers hosted on disk via zed's `context_server` infrastructure. The standalone `kask` CLI,
 HTTP API server, Matrix transport, daemon process, and REPL surfaces have been **deleted** and
 are not referenced here as current. See
@@ -30,11 +30,12 @@ for the D1–D10 integration seams and the essentialist split.
 
 ## MCP Servers
 
-- [MCP Server Registry](mcp-servers/README.md) — All 10 on-disk MCP servers with tool tables and capability tiers
+- [MCP Server Registry](mcp-servers/README.md) — All 11 on-disk MCP servers with tool tables and capability tiers
 - [Companies MCP Server](mcp-servers/companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger
 - [Condenser MCP Server](mcp-servers/condenser.md) — 8 tools, 3 compression algorithms, 2-phase condensation
 - [Corpus / DocProc MCP Server](mcp-servers/corpus.md) — Corpus gathering, document processing, QA generation, style replicas
 - [Scenarios MCP Server](mcp-servers/scenarios.md) — Event-tree forecasting pipeline
+- [Swarm MCP Server](mcp-servers/swarm.md) — Agent Bestiary World agent swarms, Xaman Ek curator, consent-gated spend
 
 ## LoRA Training
 

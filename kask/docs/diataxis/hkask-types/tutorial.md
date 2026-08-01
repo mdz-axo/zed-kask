@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Tutorial: Understanding the Port Traits"
 audience: [developers new to hKask]
-last_updated: 2026-07-29
-version: "0.1.1"
+last_updated: 2026-08-01
+version: "0.1.2"
 status: "Active"
 domain: "Foundation"
 mds_categories: [lifecycle]
@@ -28,7 +28,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-003
-verified_date: 2026-07-29
+verified_date: 2026-08-01
 verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108
 status: VERIFIED
 -->
@@ -43,7 +43,7 @@ pinned boxed futures because inference is asynchronous.
 
 Search for implementors with `grep -rn "impl InferencePort for"`. The
 primary implementor is `LanguageModelInferencePort` at
-`kask/crates/kask_bridge/src/inference.rs:246`, which wraps zed's
+`kask/crates/kask_bridge/src/inference.rs:281`, which wraps zed's
 `LanguageModel`.
 
 ## Steps 3-4: Trace the call path and read MemoryPort
@@ -55,8 +55,11 @@ adapter is the bridge.
 
 Now open `kask/crates/hkask-types/src/ports/memory_port.rs:108`. The
 `MemoryPort` trait defines `ingest_turn`, `recall_context`, and
-`recall_thread`. Its implementors are `LoggingMemoryPort` (no-op placeholder)
-and `RealMemoryPort` (SQLite-backed), both in `kask/crates/kask_bridge/src/memory.rs`.
+`recall_thread`. Its implementor is `RealMemoryPort` (SQLite-backed) in
+`kask/crates/kask_bridge/src/memory.rs`; `BridgeMemoryPort` in the same
+file adapts `MemoryPort` to zed's `agent::ThreadMemoryPort` trait. When no
+DB path is configured, the memory port hook stays `None` and the agent's
+thread ingest call site no-ops (there is no `LoggingMemoryPort` placeholder).
 
 ## Step 5: Compare the two patterns
 

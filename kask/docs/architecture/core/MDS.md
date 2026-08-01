@@ -1,8 +1,8 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-07-29
-version: "0.31.2"
+last_updated: 2026-08-01
+version: "0.31.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -537,7 +537,7 @@ bash docs/ci/check-links.sh    # Zero broken cross-references
 
 ---
 
-*MDS v0.31.2 — five categories, SpecStore + QA. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology.*
+*MDS v0.31.3 — five categories, SpecStore + QA. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 11 MCP servers compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`).*
 
 ---
 

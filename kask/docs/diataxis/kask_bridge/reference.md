@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-01
+version: "0.2.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust]
@@ -13,9 +13,11 @@ mds_categories: [domain, composition, trust]
 `kask_bridge` is the D8 composition root adapter — the sole bidirectional seam
 between zed-kask and hKask. It connects zed's internal types to hKask's port
 traits. Every integration seam (D1 through D10) passes through this crate. It
-defines `KaskSettings`, `BridgeToolPort`, `BridgeManifestExecutor`,
-`BridgeMemoryPort`, `LanguageModelInferencePort`, `FusionLanguageModel`, and
-the settings structs that configure the kask subsystem.
+defines `KaskSettings`, `BridgeManifestExecutor`, `BridgeMemoryPort`,
+`LanguageModelInferencePort`, `FusionLanguageModel`, and the settings structs
+that configure the kask subsystem. `McpRuntime` is passed directly as the
+`ToolPort` (the former `BridgeToolPort` adapter was collapsed in the
+2026-07-31 simplification pass — see `tasks/plan.md` C3).
 
 ## Source citations
 
@@ -26,18 +28,15 @@ the settings structs that configure the kask subsystem.
 | `KaskDataServiceSettings` | `kask/crates/kask_bridge/src/settings.rs:109` |
 | `KaskInferenceProvidersSettings` | `kask/crates/kask_bridge/src/settings.rs:143` |
 | `KaskCuratorSettings` | `kask/crates/kask_bridge/src/settings.rs:189` |
-| `KaskGuardSettings` | `kask/crates/kask_bridge/src/settings.rs:248` |
-| `KaskMemorySettings` | `kask/crates/kask_bridge/src/settings.rs:263` |
-| `KaskCondenserSettings` | `kask/crates/kask_bridge/src/settings.rs:297` |
-| `BridgeToolPort` | `kask/crates/kask_bridge/src/tool_port.rs:25` |
+| `KaskMemorySettings` | `kask/crates/kask_bridge/src/settings.rs:247` |
+| `KaskCondenserSettings` | `kask/crates/kask_bridge/src/settings.rs:281` |
 | `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:30` |
-| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1474` |
-| `LoggingMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:33` |
-| `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:46` |
-| `InferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:246` |
-| `FusionLanguageModel` | `kask/crates/kask_bridge/src/fusion_model.rs:86` |
-| `FusionProviderState` | `kask/crates/kask_bridge/src/fusion_model.rs:530` |
-| `resolve_fusion_models` | `kask/crates/kask_bridge/src/fusion_model.rs:450` |
+| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1615` |
+| `LanguageModelInferencePort` | `kask/crates/kask_bridge/src/inference.rs:52` |
+| `InferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:281` |
+| `FusionLanguageModel` | `kask/crates/kask_bridge/src/fusion_model.rs:87` |
+| `FusionProviderState` | `kask/crates/kask_bridge/src/fusion_model.rs:549` |
+| `resolve_fusion_models` | `kask/crates/kask_bridge/src/fusion_model.rs:454` |
 | `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22` |
 | `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:212` |
 
@@ -57,7 +56,6 @@ classDiagram
         +mcp: KaskMcpSettings
         +data_services: KaskDataServiceSettings
         +curator: KaskCuratorSettings
-        +guard: KaskGuardSettings
         +memory: KaskMemorySettings
         +condenser: KaskCondenserSettings
         +fusion: KaskFusionSettings
@@ -74,26 +72,24 @@ classDiagram
         +together_enabled: bool
         +openrouter_enabled: bool
     }
-    class KaskGuardSettings {
-        +direct_chat_strategy: String
-    }
     class KaskMemorySettings {
         +consolidation_cadence_secs: u64
         +confidence_floor: f64
         +recall_limit: u32
+        +recall_min_confidence: f64
+        +auto_inject: bool
     }
     class KaskCondenserSettings {
         +profile: String
         +auto_compress_tool_results: bool
         +persona_keywords: Vec~String~
-    }
-    class BridgeToolPort {
-        +runtime: Arc~McpRuntime~
+        +saliency_window: u32
     }
     class BridgeManifestExecutor {
         +inference: Arc~InferencePort~
         +tools: Arc~ToolPort~
-        +a2a_secret: Vec~u8~
+        +registry_manifests_dir: PathBuf
+        +registry_templates_dir: PathBuf
         +tokio_handle: Handle
     }
     class BridgeMemoryPort {
@@ -105,15 +101,14 @@ classDiagram
 
     KaskSettings --> KaskMcpSettings
     KaskSettings --> KaskInferenceProvidersSettings
-    KaskSettings --> KaskGuardSettings
     KaskSettings --> KaskMemorySettings
     KaskSettings --> KaskCondenserSettings
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-001
-verified_date: 2026-07-29
-verified_against: kask/crates/kask_bridge/src/settings.rs:35,89,143,248,263,297; kask/crates/kask_bridge/src/tool_port.rs:25; kask/crates/kask_bridge/src/skill_executor.rs:30; kask/crates/kask_bridge/src/memory.rs:1474; kask/crates/kask_bridge/src/fusion_model.rs:86
+verified_date: 2026-08-01
+verified_against: kask/crates/kask_bridge/src/settings.rs:35,89,143,247,281; kask/crates/kask_bridge/src/skill_executor.rs:30; kask/crates/kask_bridge/src/memory.rs:42,1615; kask/crates/kask_bridge/src/fusion_model.rs:87
 status: VERIFIED
 -->
 
@@ -128,19 +123,24 @@ Two bridge adapters implement hKask port traits against zed types:
   directly, with capability-match gating, gas/rjoule budgeting, and
   `reg.tool.*` span emission), and a `tokio::runtime::Handle` that is
   entered around manifest execution so `tokio::time::timeout` has a
-  reactor.
-- `BridgeMemoryPort` (`memory.rs:1474`) implements zed's `ThreadMemoryPort`
+  reactor. (The former `BridgeToolPort` adapter was collapsed in the
+  2026-07-31 simplification pass — `McpRuntime` is passed directly as the
+  `ToolPort`; see `tasks/plan.md` C3. The `a2a_secret` field was deleted
+  with the OCAP/a2a secret threading — see `tasks/plan.md` D5 verdict.)
+- `BridgeMemoryPort` (`memory.rs:1615`) implements zed's `ThreadMemoryPort`
   by delegating to hKask's `MemoryPort`. It wraps an `Arc<dyn MemoryPort>`
-  — a `RealMemoryPort`, wired once the zed user resolves (before that the
-  hook is `None` and turn ingest no-ops).
+  — a `RealMemoryPort` (`memory.rs:42`), wired once the zed user resolves
+  (before that the hook is `None` and turn ingest no-ops — the former
+  `LoggingMemoryPort` no-op placeholder was deleted in the 2026-07-31
+  simplification pass; see `tasks/plan.md` C4).
 
-The `LanguageModelInferencePort` (`inference.rs:46`, trait impl at `:246`)
+The `LanguageModelInferencePort` (`inference.rs:52`, trait impl at `:281`)
 implements hKask's `InferencePort` by wrapping zed's `LanguageModel`. It
 holds only a `tokio::sync::mpsc::UnboundedSender` — the actual inference
 call happens on the GPUI foreground executor via a spawned task that owns
 the `AsyncApp`. This channel pattern solves the GPUI/tokio `Send`+`Sync`
 boundary: the sender is `Send + Sync`, the receiver task is not, and the
-two never cross threads. The `FusionLanguageModel` (`fusion_model.rs:86`)
+two never cross threads. The `FusionLanguageModel` (`fusion_model.rs:87`)
 wraps multiple `LanguageModelInferencePort` instances for multi-model
 deliberation.
 

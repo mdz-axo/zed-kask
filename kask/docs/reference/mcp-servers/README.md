@@ -38,16 +38,16 @@ struct.
 
 | Server | Crate | Domain | Tools | Math Engine |
 |--------|-------|--------|-------|-------------|
-| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 9 | `hkask-mcp-codegraph` |
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting | 41 | `hkask-forecast` |
-| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 8 | — |
-| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | — |
+| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 8 | `hkask-mcp-codegraph` |
+| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting | 40 | `hkask-forecast` |
+| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 6 | — |
+| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 | — |
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | 11 | — |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 18 | — |
-| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 38 | — |
-| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `hkask-mcp-research` |
+| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 37 | — |
+| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 15 | `hkask-mcp-research` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 18 | `hkask-forecast` |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World agent swarms + Xaman Ek curator | 17 | — |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World agent swarms + Xaman Ek curator | 19 | — |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | 8 | — |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
@@ -66,17 +66,17 @@ All servers follow these patterns:
 
 ## Testing standard
 
-Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across all 10 servers.
+Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across all 11 servers.
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
-- [Condenser MCP Server Reference](condenser.md) — 8 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
+- [Companies MCP Server Reference](companies.md) — 40 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Condenser MCP Server Reference](condenser.md) — 6 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
 - [Corpus MCP Server Reference](corpus.md) — corpus gathering, document processing, QA generation, style replicas
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 17 tools, ABW agent swarms, Xaman Ek curator, consent-gated spend, algedonic wallet channel
+- [Swarm MCP Server Reference](swarm.md) — 19 tools, ABW agent swarms, Xaman Ek curator, consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
-- [Architecture Patterns](../../explanation/architecture-patterns.md) — MCP dispatch sequence
+- [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)
 - Companies MCP Code Review — adversarial code review of the companies server
 - Companies Semantic Graph Audit — internal module dependency graph health

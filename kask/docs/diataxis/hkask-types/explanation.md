@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.1.1"
+last_updated: 2026-08-01
+version: "0.1.2"
 status: "Active"
 domain: "Foundation"
 mds_categories: [trust, curation]
@@ -23,18 +23,18 @@ is the hexagonal architecture pattern applied at the crate boundary.
 |--------|----------|
 | `InferencePort` trait | `kask/crates/hkask-types/src/ports/inference_port.rs:86` |
 | `MemoryPort` trait | `kask/crates/hkask-types/src/ports/memory_port.rs:108` |
-| `LanguageModelInferencePort` adapter | `kask/crates/kask_bridge/src/inference.rs:46` |
-| `LanguageModelInferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:246` |
-| `BridgeMemoryPort` adapter | `kask/crates/kask_bridge/src/memory.rs:1474` |
-| `BridgeMemoryPort` impl (zed side) | `kask/crates/kask_bridge/src/memory.rs:1484` |
-| `GuardedInferencePort` | `kask/crates/hkask-guard/src/guarded_inference.rs:33` |
-| `GuardedInferencePort` impl | `kask/crates/hkask-guard/src/guarded_inference.rs:56` |
+| `LanguageModelInferencePort` adapter | `kask/crates/kask_bridge/src/inference.rs:52` |
+| `LanguageModelInferencePort` impl | `kask/crates/kask_bridge/src/inference.rs:281` |
+| `BridgeMemoryPort` adapter | `kask/crates/kask_bridge/src/memory.rs:1615` |
+| `BridgeMemoryPort` impl (zed side) | `kask/crates/kask_bridge/src/memory.rs:1625` |
+| `GuardedInferencePort` | `kask/crates/hkask-guard/src/guarded_inference.rs:131` |
+| `GuardedInferencePort` impl | `kask/crates/hkask-guard/src/guarded_inference.rs:168` |
 | `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:30` |
-| `BridgeToolPort` | `kask/crates/kask_bridge/src/tool_port.rs:25` |
-| `set_manifest_executor` hook | `crates/agent/src/agent.rs:2781` |
-| `set_memory_port` hook | `crates/agent/src/agent.rs:2860` |
-| `set_thread_condenser` hook | `crates/agent/src/agent.rs:2995` |
-| Deferred-task wiring | `crates/zed/src/main.rs:1727` |
+| `McpRuntime` (implements `ToolPort`) | `kask/crates/hkask-mcp/src/runtime.rs:508` |
+| `set_manifest_executor` hook | `crates/agent/src/agent.rs:2829` |
+| `set_memory_port` hook | `crates/agent/src/agent.rs:2908` |
+| `set_thread_condenser` hook | `crates/agent/src/agent.rs:3070` |
+| Deferred-task wiring | `crates/zed/src/main.rs:1780` |
 
 ## Why port traits exist
 
@@ -79,7 +79,7 @@ sequenceDiagram
     Bridge->>Zed: holds reference
     Main->>Guard: construct(Bridge, ContentGuard)
     Guard->>Bridge: wraps inference port
-    Main->>Exec: construct(Guard, ToolPort, ...)
+    Main->>Exec: construct(Guard, McpRuntime, ...)
     Exec->>Guard: holds inference port
     Main->>Agent: set_manifest_executor(Some(executor))
     Note over Agent: OnceLock now populated
@@ -99,14 +99,14 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-002
-verified_date: 2026-07-29
-verified_against: kask/crates/kask_bridge/src/inference.rs:46,246; kask/crates/hkask-guard/src/guarded_inference.rs:33,56; kask/crates/kask_bridge/src/skill_executor.rs:30; crates/zed/src/main.rs:1727; crates/agent/src/agent.rs:2781
+verified_date: 2026-08-01
+verified_against: kask/crates/kask_bridge/src/inference.rs:52,281; kask/crates/hkask-guard/src/guarded_inference.rs:131,168; kask/crates/kask_bridge/src/skill_executor.rs:30; crates/zed/src/main.rs:1780; crates/agent/src/agent.rs:2829
 status: VERIFIED
 -->
 
 ## The guard layer in the inference path
 
-`GuardedInferencePort` (`hkask-guard/src/guarded_inference.rs:33`) wraps the
+`GuardedInferencePort` (`hkask-guard/src/guarded_inference.rs:131`) wraps the
 `LanguageModelInferencePort` adapter. It sits between the skill cascade and
 zed's `LanguageModel`. Every inference call passes through the guard, which
 scans the input for prompt injection and role override attempts before
@@ -121,7 +121,7 @@ direct chat.[^owasp-llm]
 
 ## The memory bridge
 
-`BridgeMemoryPort` (`kask_bridge/src/memory.rs:1474`) adapts hKask's
+`BridgeMemoryPort` (`kask_bridge/src/memory.rs:1615`) adapts hKask's
 `MemoryPort` trait to zed's `agent::ThreadMemoryPort` trait. The two traits
 have different shapes: zed's trait is designed for the agent panel's thread
 persistence, while hKask's trait is designed for episodic and semantic memory
@@ -130,11 +130,11 @@ consolidation.
 The bridge translates between them. When a thread turn completes, the agent
 calls `BridgeMemoryPort::ingest_turn`, which extracts the user prompt, agent
 response, model, and title, then forwards them to the inner `MemoryPort`
-(which may be `LoggingMemoryPort` or `RealMemoryPort`) via a background task.
-The full hKask memory stack (SQLCipher, episodic and semantic consolidation,
-WebID mapping) lives behind `RealMemoryPort`. The default implementation when
-no DB path is configured is `LoggingMemoryPort` (`kask_bridge/src/memory.rs:33`),
-which logs at `info` level without persisting.
+(`RealMemoryPort`) via a background task. The full hKask memory stack
+(SQLCipher, episodic and semantic consolidation, WebID mapping) lives behind
+`RealMemoryPort`. When no DB path is configured, the memory port hook stays
+`None` and the agent's thread ingest call site no-ops — there is no
+`LoggingMemoryPort` placeholder.
 
 ## Why the wiring is deferred
 
@@ -147,11 +147,12 @@ unwired for the entire session when no model is configured at startup.
 
 The deferred task in `main.rs` runs after the zed user resolves. It
 constructs the `BridgeManifestExecutor` with the `GuardedInferencePort`, the
-`BridgeToolPort`, the A2A secret, and the registry paths, then calls
-`agent::set_manifest_executor(Some(executor))` at `main.rs:1727`. If the
-deferred task fails to find a model, the hooks remain `None` and the `skill`
-tool returns a no-op envelope. This fail-closed behavior is intentional: a
-missing model should not silently produce broken skill output.
+`McpRuntime` (which implements `ToolPort`), the A2A secret, and the registry
+paths, then calls `agent::set_manifest_executor(Some(executor))` at
+`main.rs:1780`. If the deferred task fails to find a model, the hooks remain
+`None` and the `skill` tool returns a no-op envelope. This fail-closed
+behavior is intentional: a missing model should not silently produce broken
+skill output.
 
 ## See also
 

@@ -5,6 +5,7 @@ contract:
     decisions: object
     swarm_id: string
     task: string
+    mode: string
   output:
     dispatch_intents: array
     gate_decisions: array
@@ -17,13 +18,13 @@ visibility: Public
 {# Template: swarm-intelligence/swarm-act.j2 #}
 {# Functional Role: KnowAct — Emit gated composition change #}
 {# Produces: act_result #}
-{# Phase 4 — ACT (DO: gated swarm_update_swarm / swarm_delegate) #}
-{# hKask v0.31.0 — Swarm Intelligence #}
+{# Phase 4 — ACT (DO: gated swarm_delegate / swarm_delegate_local) #}
+{# hKask v0.31.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
-  Emit the gated composition change. The consent gate is mandatory and must
-  actually block, not just warn (.rules "Advertised invariants need
-  enforcement points" trap). No swarm_update_swarm or swarm_delegate call is
-  emitted without a signed credits_authorized token from the panel.
+  Emit the gated composition change. The gate is mode-dependent:
+  - abw: consent token from swarm_request_consent (the v1 gate).
+  - local: ledger balance check (no consent token — §15.1.2 rejected).
+  No call is emitted without passing the gate.
 #}
 
 [inference]
@@ -33,7 +34,10 @@ verbosity = "standard"
 max_tokens = 3072
 thinking_budget = "full"
 
-You are a swarm-dispatch executor. Emit the gated composition changes for the ABW swarm.
+You are a swarm-dispatch executor. Emit the gated composition changes for the swarm.
+
+## Mode
+{{ mode }}
 
 ## Decisions (from DECIDE)
 ```json
@@ -64,8 +68,21 @@ For each proposed hire/fire/delegate, construct:
 default). Set to true only if the move explicitly invokes the Xaman Ek
 curator, which requires separate per-dispatch opt-in.
 
-## Step 2 — Route through the consent gate
+## Step 2 — Route through the gate
 
+{% if mode == "local" %}
+In local mode, the gate is the **ledger balance check** — no consent token
+(§15.1.2 rejected consent tokens on local tools). Each delegate call to
+`swarm_delegate_local` takes `credits_authorized` and checks it against the
+ledger balance + the per-dispatch ceiling. If the balance is insufficient,
+the call returns `PaymentRequired` — the same error ABW returns.
+
+Each DispatchIntent must produce a GateDecision:
+- `Proceed { credits_authorized }` — the operator authorized the spend.
+  The `credits_authorized` is passed directly to `swarm_delegate_local`.
+- `Abort { reason }` — the operator declined. Record the reason; emit no
+  spend for this move.
+{% else %}
 Each DispatchIntent must produce a GateDecision:
 - `Proceed { credits_authorized }` — the operator authorized the spend. The
   signed credits_authorized token is required for the MCP call.
@@ -76,9 +93,20 @@ The consent gate MUST block. If the panel cannot produce a signed
 credits_authorized token, the move is Aborted with reason
 "missing_consent_token". This is the enforcement point for the .rules
 "Advertised invariants need enforcement points" trap.
+{% endif %}
 
 ## Step 3 — Emit the gated MCP calls
 
+{% if mode == "local" %}
+For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
+- `delegate` → `swarm_delegate_local` with `{ agent_name, task,
+  credits_authorized }`. The agent must exist in the local registry
+  (`agents/local/curated/<id>/agent_card.json`). No `workspace_id` — the
+  workspace is the session (§15.1.9 rejected workspace_id on local tools).
+  No consent token — the balance check is the gate.
+
+For each Abort, emit no call. Record the abort reason in aborted_reasons.
+{% else %}
 For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
 - `hire` → `swarm_update_swarm` (POST /api/workspaces/{id}/add or
   /api/agents/{id}/hire)
@@ -87,6 +115,7 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
   deep, delegate loses delegate_to_agent/execute_agent)
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
+{% endif %}
 
 ## Step 4 — Record what was emitted
 

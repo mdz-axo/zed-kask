@@ -4,6 +4,7 @@ contract:
   input:
     swarm_state: object
     task: string
+    mode: string
     target_condition: object|null
   output:
     deficit_class: string
@@ -19,13 +20,12 @@ visibility: Public
 {# Functional Role: KnowAct — Classify the gap #}
 {# Produces: orientation #}
 {# Phase 2 — ORIENT (PLAN: classify gap via Ashby + PSO balance + Thagard) #}
-{# hKask v0.31.0 — Swarm Intelligence #}
+{# hKask v0.31.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
-  Classify the gap between sensed state and target condition. The gap falls
-  into one of three deficit classes, each rooted in a different ontology:
-  variety deficit (Ashby requisite variety), coherence deficit (PSO/ACO
-  premature convergence + Thagard), loop-break (cybernetic 5-property
-  closure). The class determines which tuning palette DECIDE applies.
+  Classify the gap between sensed state and target condition. This phase is
+  mode-agnostic — it operates on the state shape from SENSE, not on the data
+  source. The `mode` input is passed through for context but does not branch
+  the logic.
 #}
 
 [inference]

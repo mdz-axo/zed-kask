@@ -1,8 +1,8 @@
 ---
 title: "hKask MCP Server QA Strategy"
 audience: [QA engineers, security engineers, agents]
-last_updated: 2026-07-29
-version: "0.3.0"
+last_updated: 2026-08-01
+version: "0.3.1"
 status: "Active"
 domain: "trust"
 mds_categories: [trust, composition, lifecycle]
@@ -13,7 +13,7 @@ mds_categories: [trust, composition, lifecycle]
 A per-tool QA routine for every tool exposed by every hKask MCP server, with
 explicit pass/fail criteria, skill assignments, and observability hooks.
 
-**Scope**: 10 MCP servers, 195 tools (counted from source — never fabricated).
+**Scope**: 11 MCP servers, 206 tools (counted from source via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/` on 2026-08-01 — never fabricated).
 
 **Status of this document**: Phase 1 (inventory) is grounded in source reads.
 Phases 2-5 are the contract. The runnable routine lives alongside this doc
@@ -38,14 +38,14 @@ at `kask/scripts/qa-mcp-servers.sh` and the per-tool contracts at
 | 8 | `hkask-mcp-research` | `hkask-mcp-research` | stdio | `src/hkask_mcp_research.rs` | `run()` | **optional**: `HKASK_BRAVE_API_KEY`, `HKASK_FIRECRAWL_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_SERPAPI_API_KEY`, `HKASK_EXA_API_KEY`, `HKASK_BROWSERBASE_API_KEY` |
 | 9 | `hkask-mcp-scenarios` | `hkask-mcp-scenarios` | stdio | `src/hkask_mcp_scenarios.rs` | `run()` | (none; uses `reqwest::Client` for upstream research/companies calls) |
 | 10 | `hkask-mcp-training` | `hkask-mcp-training` | stdio | `src/hkask_mcp_training.rs` | `run()` | **optional**: `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`, `NEBIUS_PROJECT_ID`, `NEBIUS_SUBNET_ID`, `HKASK_TRAINING_HOST`, `RUNPOD_TEMPLATE_ID`, `RUNPOD_GPU_TYPE_ID`, `RUNPOD_CONTAINER_DISK_GB`, `RUNPOD_DOCKER_IMAGE`, `HKASK_TRAINING_DB`, `HKASK_DB_PASSPHRASE` |
+| 11 | `hkask-mcp-swarm` | `hkask-mcp-swarm` | stdio | `src/hkask_mcp_swarm.rs` | `run()` L2551 | **optional**: `HKASK_SWARM_DB`, `HKASK_DB_PASSPHRASE` |
 
 All servers use `hkask_mcp_server::run_server` → `run_stdio_server` (stdio
 transport). No SSE/HTTP server exists in the fleet.
 
-### Tool inventory (195 tools)
+### Tool inventory (206 tools)
 
-Tool counts: codegraph 9, companies 41, condenser 8, corpus 27, curator 11,
-kata-kanban 18, media 38, research 17, scenarios 18, training 8.
+Tool counts (verified 2026-08-01 via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/`): codegraph 8, companies 40, condenser 6, corpus 26, curator 11, kata-kanban 18, media 37, research 15, scenarios 18, training 8, swarm 19.
 
 The full per-tool table (with input schema struct, output shape, LLM I/O
 boundary, external deps, McpToolError kinds used) is in
@@ -53,16 +53,17 @@ boundary, external deps, McpToolError kinds used) is in
 
 | Server | Tools | LLM I/O boundary? | External deps hit |
 |---|---|---|---|
-| codegraph | 9 | yes — `codegraph_index_embeddings` calls embedding API; `codegraph_context` returns LLM-bound text | sqlite (bundled), tree-sitter, reqwest (DeepInfra/OpenRouter embeddings) |
-| companies | 41 | yes — `research_search` returns raw LLM/web claims; `company_screener` parses NL prompts | FMP, EODHD, Exa, Tavily, Brave (reqwest) |
-| condenser | 8 | yes — `condenser_compress`, `condenser_classify`, `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
-| corpus | 27 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
+| codegraph | 8 | yes — `codegraph_index_embeddings` calls embedding API; `codegraph_context` returns LLM-bound text | sqlite (bundled), tree-sitter, reqwest (DeepInfra/OpenRouter embeddings) |
+| companies | 40 | yes — `research_search` returns raw LLM/web claims; `company_screener` parses NL prompts | FMP, EODHD, Exa, Tavily, Brave (reqwest) |
+| condenser | 6 | yes — `condenser_compress`, `condenser_classify`, `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
+| corpus | 26 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
 | curator | 11 | no — reads Regulation ledger, does not call LLM | sqlite (SQLCipher) |
 | kata-kanban | 18 | no — pure state machine over sqlite | sqlite (SQLCipher) |
-| media | 38 | yes — `generate_image`, `generate_video`, `voice_design`, `generate_speech`, `transcribe`, `describe_image`, `gallery_analyze`, `video_caption` all return model output | DeepInfra, fal.ai, Together AI, ElevenLabs (reqwest) |
-| research | 17 | yes — `web_search`, `web_extract`, `web_browse`, `web_find_similar` return fetched/scraped content (indirect LLM boundary via tool output) | Brave, Firecrawl, Tavily, SerpAPI, Exa, Browserbase, arXiv, Semantic Scholar (reqwest) |
+| media | 37 | yes — `generate_image`, `generate_video`, `voice_design`, `generate_speech`, `transcribe`, `describe_image`, `gallery_analyze`, `video_caption` all return model output | DeepInfra, fal.ai, Together AI, ElevenLabs (reqwest) |
+| research | 15 | yes — `web_search`, `web_extract`, `web_browse`, `web_find_similar` return fetched/scraped content (indirect LLM boundary via tool output) | Brave, Firecrawl, Tavily, SerpAPI, Exa, Browserbase, arXiv, Semantic Scholar (reqwest) |
 | scenarios | 18 | yes — `scenario_brainstorm`, `scenario_synthesize`, `scenario_assess` call inference; `scenario_research` calls research server | inference port, research server, companies server |
 | training | 8 | yes — `training_validate_config`, `training_evaluate` call LLM; `training_submit` provisions GPU pods | RunPod, DeepInfra, Nebius, HuggingFace, OpenAI (reqwest) |
+| swarm | 19 | yes — `swarm_generate_prompt`, `swarm_generate_ontology` call LLM; `swarm_execute_agent` dispatches to local agents | sqlite (SQLCipher), local agent runtime |
 
 ### Existing test coverage (from source)
 
@@ -230,7 +231,7 @@ evidence produced.
 
 ### 3.3 Dependency manifest → `supply-chain-sentinel`
 
-- **Tools covered**: all 10 servers (Cargo.toml scope, not per-tool).
+- **Tools covered**: all 11 servers (Cargo.toml scope, not per-tool).
 - **Template/phase**: `supply-chain-sentinel` 4-phase pipeline
   (select → probe → report → convergence) over each server's `Cargo.toml`
   and the workspace `deny.toml`.

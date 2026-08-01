@@ -42,11 +42,11 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## MCP Servers (`KaskMcpSettings`)
 
-Toggle which of the 10 built-in kask MCP servers are loaded.
+Toggle which of the 11 built-in kask MCP servers are loaded.
 
 | Field | Type | Default |
 |-------|------|---------|
-| `load_default` | `bool` | `true` — load all 10 servers |
+| `load_default` | `bool` | `true` — load all 11 servers |
 | `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. `"curator": false`) |
 
 The master `load_default` toggle controls all servers; individual `overrides`

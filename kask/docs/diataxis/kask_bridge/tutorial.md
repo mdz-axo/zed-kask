@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Tutorial: Your First Kask Hook"
 audience: [developers new to zed-kask]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-01
+version: "0.2.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [lifecycle]
@@ -16,10 +16,10 @@ it in the composition root. By the end, you will understand the full path from
 trait definition to runtime wiring.
 
 **Reference patterns:** `set_manifest_executor`
-(`crates/agent/src/agent.rs:2781`), `set_memory_port`
-(`crates/agent/src/agent.rs:2860`), `BridgeMemoryPort`
-(`kask/crates/kask_bridge/src/memory.rs:1474`), deferred-task wiring
-(`crates/zed/src/main.rs:1727`), `KaskSettings`
+(`crates/agent/src/agent.rs:2829`), `set_memory_port`
+(`crates/agent/src/agent.rs:2908`), `BridgeMemoryPort`
+(`kask/crates/kask_bridge/src/memory.rs:1615`), deferred-task wiring
+(`crates/zed/src/main.rs:1778`), `KaskSettings`
 (`kask/crates/kask_bridge/src/settings.rs:35`).
 
 ## Learning path
@@ -37,7 +37,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-004
 verified_date: 2026-07-29
-verified_against: crates/agent/src/agent.rs:2781,2860; kask/crates/kask_bridge/src/memory.rs:1474; crates/zed/src/main.rs:1727; kask/crates/kask_bridge/src/settings.rs:35
+verified_against: crates/agent/src/agent.rs:2829,2908; kask/crates/kask_bridge/src/memory.rs:1615; crates/zed/src/main.rs:1778; kask/crates/kask_bridge/src/settings.rs:35
 status: VERIFIED
 -->
 
@@ -61,7 +61,7 @@ pub fn notification_port() -> Option<Arc<dyn NotificationPort>> {
 }
 ```
 
-Follow the pattern of `set_manifest_executor` at `agent.rs:2781`. Note that
+Follow the pattern of `set_manifest_executor` at `agent.rs:2829`. Note that
 `set_manifest_executor` itself logs a `warn!` when a second wiring attempt is
 rejected by the `OnceLock` — a stronger variant of the failure-branch warn
 that this tutorial teaches in Step 3.
@@ -75,11 +75,11 @@ This is the `.rules` trap: without the warning, operators cannot distinguish
 Create `kask/crates/kask_bridge/src/notification.rs` with a
 `BridgeNotificationPort` struct that implements `NotificationPort` by
 delegating to zed's notification surface. Follow the pattern of
-`BridgeMemoryPort` at `memory.rs:1474`.
+`BridgeMemoryPort` at `memory.rs:1615`.
 
 ## Steps 5-6: Wire in the deferred task and add settings
 
-In `crates/zed/src/main.rs`, inside the deferred task (around line 1727,
+In `crates/zed/src/main.rs`, inside the deferred task (around line 1778,
 where `set_manifest_executor` is called), construct the
 `BridgeNotificationPort` and call
 `agent::set_notification_port(Some(port))`. The wiring must happen inside

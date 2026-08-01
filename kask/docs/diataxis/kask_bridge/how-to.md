@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — How-to: Wire a New Kask Hook"
 audience: [developers]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-01
+version: "0.2.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [composition, lifecycle]
@@ -21,11 +21,11 @@ the deferred task.
 
 | Symbol | Location |
 |--------|----------|
-| `set_manifest_executor` | `crates/agent/src/agent.rs:2781` |
-| `set_memory_port` | `crates/agent/src/agent.rs:2860` |
-| `set_thread_condenser` | `crates/agent/src/agent.rs:2995` |
-| `set_tool_invoker` (panel) | `crates/kask_panel/src/kask_panel.rs:106` |
-| Deferred-task wiring | `crates/zed/src/main.rs:1727` |
+| `set_manifest_executor` | `crates/agent/src/agent.rs:2829` |
+| `set_memory_port` | `crates/agent/src/agent.rs:2908` |
+| `set_thread_condenser` | `crates/agent/src/agent.rs:3070` |
+| `set_tool_invoker` (panel) | `crates/kask_panel/src/kask_panel.rs:109` |
+| Deferred-task wiring | `crates/zed/src/main.rs:1778` |
 | `.rules` hook trap | `zed-kask/.rules` (zed-kask integration traps) |
 
 ## Procedure
@@ -43,7 +43,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-003
 verified_date: 2026-07-29
-verified_against: crates/agent/src/agent.rs:2781,2860,2995; crates/kask_panel/src/kask_panel.rs:106; crates/zed/src/main.rs:1727
+verified_against: crates/agent/src/agent.rs:2829,2908,3070; crates/kask_panel/src/kask_panel.rs:109; crates/zed/src/main.rs:1778
 status: VERIFIED
 -->
 
@@ -57,14 +57,15 @@ Define the port trait in `hkask-types/src/ports/`. The trait must be
 In `crates/agent/src/agent.rs`, add a `static ONCE_LOCK: OnceLock<Option<Arc<dyn NewTrait>>>`
 and two functions: `set_new_hook(value: Option<Arc<dyn NewTrait>>)` and
 `new_hook() -> Option<Arc<dyn NewTrait>>`. Follow the pattern of
-`set_manifest_executor` at `agent.rs:2781`.
+`set_manifest_executor` at `agent.rs:2829`.
 
-Note that `set_memory_port` (`agent.rs:2860`) uses a `Mutex` rather than a
+Note that `set_memory_port` (`agent.rs:2908`) uses a `Mutex` rather than a
 `OnceLock` — it is the one hook that is intentionally re-settable, because
-the composition root installs a `LoggingMemoryPort` at startup and upgrades
-it to a `BridgeMemoryPort` wrapping `RealMemoryPort` once the zed user
-resolves (see `main.rs:756` and `main.rs:1148`). Choose `Mutex` only when
-you need this upgrade-in-place behavior; otherwise prefer `OnceLock`.
+the composition root leaves the hook `None` at startup (no
+`LoggingMemoryPort` — deleted in the 2026-07-31 simplification pass) and
+upgrades it to a `BridgeMemoryPort` wrapping `RealMemoryPort` once the zed
+user resolves (see `main.rs:1153`). Choose `Mutex` only when you need this
+upgrade-in-place behavior; otherwise prefer `OnceLock`.
 
 ### Step 3: Add log::warn in the failure branch
 
@@ -79,11 +80,11 @@ deferred task wires multiple `set_*` hooks inside a single `if` block, the
 
 Create a bridge adapter struct in `kask/crates/kask_bridge/src/` that
 implements the new trait against zed types. Follow the pattern of
-`BridgeMemoryPort` at `memory.rs:1474`.
+`BridgeMemoryPort` at `memory.rs:1615`.
 
 ### Step 5: Wire in the deferred task
 
-In `crates/zed/src/main.rs`, inside the deferred task (around line 1727,
+In `crates/zed/src/main.rs`, inside the deferred task (around line 1778,
 where `set_manifest_executor` is called), construct the adapter and call
 `agent::set_new_hook(Some(adapter))`. The wiring must happen inside the
 deferred task because it depends on

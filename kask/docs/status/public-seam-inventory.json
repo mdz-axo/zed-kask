@@ -1,6 +1,6 @@
 {
-  "generated": "2026-07-29",
-  "note": "Structural inventory of the 19 kask crates under kask/crates/ (18 hkask-* + kask_bridge) and their lib roots. This is NOT a D-seam inventory — the D1–D10 integration seams are documented in docs/architecture/zed-host-architecture-plan.md §3. This inventory also excludes the 10 MCP server crates (kask/mcp-servers/) and the 2 zed-side crates (crates/kask_panel/, crates/kask_extensions_ui/). A full public-API surface enumeration (pub fn/struct/enum/trait/const/type counts per crate, with coverage by tests) requires an API-extraction tool that is not yet wired. The totals below are therefore 0 — they are placeholders until that tool runs. The `crates` map is populated with the lib root path and description for each crate so a future pass has the entry points.",
+  "generated": "2026-08-01",
+  "note": "Structural inventory of the 19 kask crates under kask/crates/ (18 hkask-* + kask_bridge) and their lib roots. This is NOT a D-seam inventory — the D1–D10 integration seams are documented in docs/architecture/zed-host-architecture-plan.md §3. This inventory also excludes the 11 MCP server crates (kask/mcp-servers/) and the 2 zed-side crates (crates/kask_panel/, crates/kask_extensions_ui/). A full public-API surface enumeration (pub fn/struct/enum/trait/const/type counts per crate, with coverage by tests) requires an API-extraction tool that is not yet wired. The totals below are therefore 0 — they are placeholders until that tool runs. The `crates` map is populated with the lib root path and description for each crate so a future pass has the entry points.",
   "totals": {
     "crate_name": "workspace",
     "total_items": 0,
@@ -48,7 +48,14 @@
     },
     "hkask-goal": {
       "lib_root": "src/hkask_goal.rs",
-      "description": "hKask goal types — minimal coordination substrate for multi-agent collaboration (extracted from hkask-services-core)",
+      "description": "DELETED in the 2026-07-25 cleanup — `GoalState` retained in `hkask-types`; `Goal`/`GoalArtifact`/`GoalCriterion` removed. This entry is retained as a tombstone; the crate directory no longer exists.",
+      "public_items": 0,
+      "covered": 0,
+      "uncovered": 0
+    },
+    "hkask-lisp": {
+      "lib_root": "src/hkask_lisp.rs",
+      "description": "Sandboxed Lisp interpreter for deterministic manifest compute steps (lisp.eval) — no I/O, no fs, no network, no env. Used by hkask-templates executor compute action.",
       "public_items": 0,
       "covered": 0,
       "uncovered": 0
@@ -83,7 +90,7 @@
     },
     "hkask-mcp-server": {
       "lib_root": "src/hkask_mcp_server.rs",
-      "description": "MCP server utilities, daemon transport, and startup verification for hKask MCP servers",
+      "description": "MCP server utilities and the `run_server` factory for hKask MCP servers (daemon transport and `bootstrap_mcp_server` were deleted in the 2026-07-25 cleanup).",
       "public_items": 0,
       "covered": 0,
       "uncovered": 0

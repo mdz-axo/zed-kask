@@ -30,7 +30,7 @@ tool calls. The chat panel itself does NOT use this hook — it routes through
 
 | Symbol | Location |
 |--------|----------|
-| `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:168` |
+| `KaskPanel` struct | `crates/kask_panel/src/kask_panel.rs:179` |
 | `ToolDescriptor` | `crates/kask_panel/src/kask_panel.rs:82` |
 | `ToolInvoker` trait | `crates/kask_panel/src/kask_panel.rs:89` |
 | `set_tool_invoker` | `crates/kask_panel/src/kask_panel.rs:106` |
@@ -44,7 +44,7 @@ tool calls. The chat panel itself does NOT use this hook — it routes through
 
 ## Panel architecture
 
-The `KaskPanel` struct (`kask_panel.rs:168`) is the main view. It holds a
+The `KaskPanel` struct (`kask_panel.rs:179`) is the main view. It holds a
 `WeakEntity<Workspace>`, a `Project`, an `fs`, a `FocusHandle`, the
 `active_tab` index into `BUILT_IN_MCP_SERVERS`, and a
 `HashMap<usize, Entity<ConversationView>>` — one retained `ConversationView`
@@ -94,7 +94,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-PANEL-001
 verified_date: 2026-07-29
-verified_against: crates/kask_panel/src/kask_panel.rs:168,82,89; crates/kask_panel/src/portfolio_view.rs:170; crates/kask_panel/src/kanban_view.rs:90; crates/kask_panel/src/scenarios_view.rs:217
+verified_against: crates/kask_panel/src/kask_panel.rs:179,82,89; crates/kask_panel/src/portfolio_view.rs:170; crates/kask_panel/src/kanban_view.rs:90; crates/kask_panel/src/scenarios_view.rs:217
 status: VERIFIED
 -->
 

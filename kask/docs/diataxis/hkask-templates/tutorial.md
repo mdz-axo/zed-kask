@@ -39,7 +39,7 @@ list of `BundleManifestStep` entries (`bundle/manifest.rs:35`), each with an
 `phase` (`Pre`/`Core`/`Post`, see `bundle/cascade.rs:8`).
 
 Each step's `action` selects a cascade branch in `ManifestExecutor::execute_manifest`
-(`executor.rs:413`): `select` (LLM inference), `populate` (render-only),
+(`executor.rs:512`): `select` (LLM inference), `populate` (render-only),
 `render` (RenderAct, no inference), `flowdef` (nested sub-manifest),
 `tool_invoke` (MCP tool call), `compute` (deterministic math primitive),
 `choice` (conditional branch), `loop` (PDCA re-entry), `abort`, or `escalate`.
@@ -48,7 +48,7 @@ Each step's `action` selects a cascade branch in `ManifestExecutor::execute_mani
 
 Write Jinja2 templates in `kask/registry/templates/<skill>/`. Load the
 manifest with `load_manifest_from_file` (`manifest_loader.rs:123`) and execute
-it with `ManifestExecutor::execute_manifest` (`executor.rs:413`). Step results
+it with `ManifestExecutor::execute_manifest` (`executor.rs:512`). Step results
 are stored in the context map under `step_{ordinal}_result` keys; the final
 result is the highest-ordinal `step_N_result` (see
 `kask_bridge/src/skill_executor.rs:251` for the ordinal-keyed extractor).

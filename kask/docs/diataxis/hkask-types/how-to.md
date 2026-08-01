@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — How-to: Implement a New Port"
 audience: [developers]
-last_updated: 2026-07-29
-version: "0.1.1"
+last_updated: 2026-08-01
+version: "0.1.2"
 status: "Active"
 domain: "Foundation"
 mds_categories: [composition]
@@ -21,7 +21,7 @@ its infrastructure backends.
 | `InferencePort` trait (reference) | `kask/crates/hkask-types/src/ports/inference_port.rs:86` |
 | `MemoryPort` trait (reference) | `kask/crates/hkask-types/src/ports/memory_port.rs:108` |
 | `ports/mod.rs` (re-export pattern) | `kask/crates/hkask-types/src/ports/mod.rs` |
-| `pub use ports::*` | `kask/crates/hkask-types/src/hkask_types.rs:72` |
+| `pub use ports::*` | `kask/crates/hkask-types/src/hkask_types.rs:71` |
 
 ## Procedure
 
@@ -36,8 +36,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TYPES-004
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/mod.rs; kask/crates/hkask-types/src/hkask_types.rs:72
+verified_date: 2026-08-01
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:86; kask/crates/hkask-types/src/ports/memory_port.rs:108; kask/crates/hkask-types/src/ports/mod.rs; kask/crates/hkask-types/src/hkask_types.rs:71
 status: VERIFIED
 -->
 
@@ -54,7 +54,7 @@ Add `pub mod <name>_port;` and `pub use <name>_port::*;` to
 
 ### Step 3: Re-export from crate root
 
-The `pub use ports::*;` at `hkask_types.rs:72` automatically re-exports
+The `pub use ports::*;` at `hkask_types.rs:71` automatically re-exports
 the new trait. No change needed if you followed step 2.
 
 ### Step 4: Implement in a downstream crate

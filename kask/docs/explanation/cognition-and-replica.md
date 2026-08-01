@@ -248,7 +248,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the 
 
 | Variant | Namespace | Purpose |
 |---------|-----------|--------|
-| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 10 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph` routes through `ToolSubsystem::Other` (no dedicated variant). |
+| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 11 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph` routes through `ToolSubsystem::Other` (no dedicated variant). |
 | `Inference` | `reg.inference` | LLM request/response |
 | `Fusion` | `reg.fusion` | Multi-model fusion deliberation (panel dispatch + judge orchestration) |
 | `AgentPod` | `reg.pod` | Pod lifecycle events |

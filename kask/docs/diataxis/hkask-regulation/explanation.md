@@ -23,8 +23,8 @@ snapshots that the `MetacognitionLoop` senses.
 | Symbol | Location |
 |--------|----------|
 | `RegulationCycleEntry` (captures all phases) | `kask/crates/hkask-regulation/src/runtime.rs:343` |
-| `RegulationLedger` | `kask/crates/hkask-regulation/src/runtime.rs:405` |
-| `CyberneticsLoop` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:79` |
+| `RegulationLedger` | `kask/crates/hkask-regulation/src/runtime.rs:423` |
+| `CyberneticsLoop` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:75` |
 | `MetacognitionLoop::run` | `kask/crates/hkask-regulation/src/metacognition.rs:212` |
 | `MetacognitionLoop::tick` | `kask/crates/hkask-regulation/src/metacognition.rs:223` |
 | `VarietyMonitor` | `kask/crates/hkask-regulation/src/runtime.rs:276` |
@@ -58,7 +58,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-002
 verified_date: 2026-07-29
-verified_against: kask/crates/hkask-regulation/src/runtime.rs:343,405; kask/crates/hkask-regulation/src/cybernetics_loop.rs:79; kask/crates/hkask-regulation/src/metacognition.rs:103,113,212,223; kask/crates/hkask-regulation/src/regulation_policy.rs:27; kask/crates/hkask-regulation/src/runtime_policy.rs:14
+verified_against: kask/crates/hkask-regulation/src/runtime.rs:343,405; kask/crates/hkask-regulation/src/cybernetics_loop.rs:75; kask/crates/hkask-regulation/src/metacognition.rs:103,113,212,223; kask/crates/hkask-regulation/src/regulation_policy.rs:27; kask/crates/hkask-regulation/src/runtime_policy.rs:14
 status: VERIFIED
 -->
 

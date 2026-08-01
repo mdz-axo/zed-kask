@@ -588,7 +588,7 @@ The `when_to_use` field is prose extracted from SKILL.md, not a structured manif
 
 ## Building MCP Servers
 
-zed-kask hosts 10 MCP servers in-process (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as builtin in-process servers inside the editor (D1–D3): the `context_server` transport hosts them natively, and servers are being refactored to take direct `KaskCore` handles instead of the stdio/daemon bootstrap. The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.
+zed-kask hosts 11 MCP servers in-process (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as builtin in-process servers inside the editor (D1–D3): the `context_server` transport hosts them natively, and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.
 
 ### Prerequisites
 
@@ -763,7 +763,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
 ];
 ```
 
-Each entry is a `BuiltinMcpServer { id, binary, description }` struct. In zed-kask, the `context_server` transport (D3) uses this registry to load servers in-process. The former `kask mcp start example` CLI has been removed; servers are loaded automatically by the editor at startup. As the in-process refactor (T3.0) progresses, servers will take direct `KaskCore` handles instead of the stdio/daemon bootstrap, and the `binary` field will be replaced by a direct factory registration. If you also add an `id`/`description`-only view, keep `BUILT_IN_MCP_SERVERS_IDS` and `BUILT_IN_MCP_SERVERS_PAIRS` in sync — the `ids_slice_matches_main_registry` and `pairs_slice_matches_main_registry` tests enforce this.
+Each entry is a `BuiltinMcpServer { id, binary, description, credentials, config_env }` struct. In zed-kask, the `context_server` transport (D3) uses this registry to load servers in-process. The former `kask mcp start example` CLI has been removed; servers are loaded automatically by the editor at startup. Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton and no planned "direct `KaskCore` handles" refactor; the composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3). The `binary` field remains the canonical factory entry point. If you also add an `id`/`description`-only view, keep `BUILT_IN_MCP_SERVERS_IDS` and `BUILT_IN_MCP_SERVERS_PAIRS` in sync — the `ids_slice_matches_main_registry` and `pairs_slice_matches_main_registry` tests enforce this.
 
 ### Testing the Server
 

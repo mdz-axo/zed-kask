@@ -5,6 +5,7 @@ contract:
     swarm_state: object
     orientation: object
     task: string
+    mode: string
   output:
     proposed_moves: array
     tuning_rationale: object
@@ -16,16 +17,19 @@ visibility: Public
 {# Template: swarm-intelligence/swarm-decide.j2 #}
 {# Functional Role: KnowAct — Propose composition adjustments #}
 {# Produces: decisions #}
-{# Phase 3 — DECIDE (PLAN: PSO/ACO/Reynolds tuning → ABW hire/fire/delegate) #}
-{# hKask v0.31.0 — Swarm Intelligence #}
+{# Phase 3 — DECIDE (PLAN: PSO/ACO/Reynolds tuning → hire/fire/delegate) #}
+{# hKask v0.31.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Propose composition adjustments isomorphic to swarm-algorithm tuning,
-  mapped onto ABW's hire/fire/delegate vocabulary. Each move traces to a
-  swarm-algorithm anchor (see swarm-patterns.yaml for the full palette).
+  mapped onto the swarm's hire/fire/delegate vocabulary. This phase is
+  mode-agnostic — it operates on the state shape from SENSE and the
+  orientation from ORIENT, not on the data source. The `mode` input is
+  passed through for context (the ACT phase uses it to select the correct
+  tool: `swarm_delegate` for abw, `swarm_delegate_local` for local).
 
-  The no-delegation-chains invariant is mandatory: ABW forbids delegation
-  chains (delegates lose delegate_to_agent/execute_agent). Every proposed
-  delegate move must be one level deep.
+  The no-delegation-chains invariant is mandatory: delegates lose
+  delegate_to_agent/execute_agent. Every proposed delegate move must be one
+  level deep.
 #}
 
 [inference]
@@ -61,8 +65,19 @@ concentration of pheromone gets stronger" (Bansal 2019). Each hire
 strengthens the path to the uncovered region of the transform space.
 
 For each uncovered transform, propose a `hire` move naming the agent_type
-and the accepts/produces it must cover. Prefer agents already in the ABW
+and the accepts/produces it must cover. Prefer agents already in the
 catalogue whose dependencies are satisfiable by the current roster.
+
+{% if mode == "local" %}
+In local mode, "hire" means the operator should add the agent card to
+`agents/local/curated/<id>/agent_card.json` (or clone it from ABW via the
+panel's "Clone to Local" button). The DECIDE phase proposes which agents to
+add; the operator does the file write. There is no `swarm_hire_local` tool
+(§15.1.1 rejected — the team is emergent from the call pattern).
+{% else %}
+Prefer agents already in the ABW catalogue whose dependencies are
+satisfiable by the current roster.
+{% endif %}
 
 ### If deficit_class = "coherence_deficit" + coherence_low_diversity
 Hire a diverse agent (different agent_type or model from the current
@@ -91,7 +106,7 @@ agents cannot fix it.
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
-## Step 2 — Respect ABW invariants
+## Step 2 — Respect invariants
 
 For every proposed move:
 - **No delegation chains**: any `delegate` move is one level deep. The
@@ -102,8 +117,15 @@ For every proposed move:
   `dependencies { required[] }` must be satisfiable by the post-hire roster
   (the compound agent auto-hires its team, but the required dependencies must
   exist in the catalogue).
+{% if mode == "local" %}
+- **Cost awareness**: each `swarm_delegate_local` call costs 1 credit per
+  1000 tokens, capped at `credits_authorized`. No hire cost (no
+  `swarm_hire_local` tool — §15.1.1 rejected). Record estimated_credits per
+  move as the `credits_authorized` the operator should set for the call.
+{% else %}
 - **Gas awareness**: each hire is 5 cr, each @mention 1 cr + tokens, each
   delegation 1 cr + tokens. Record estimated_credits per move.
+{% endif %}
 
 ## Step 3 — Record tuning_rationale
 

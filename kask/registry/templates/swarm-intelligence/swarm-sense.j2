@@ -4,6 +4,7 @@ contract:
   input:
     swarm_id: string
     task: string
+    mode: string
     target_condition: object|null
     prior_iteration: object|null
   output:
@@ -25,12 +26,12 @@ visibility: Public
 {# Template: swarm-intelligence/swarm-sense.j2 #}
 {# Functional Role: KnowAct — Sense current swarm state #}
 {# Produces: swarm_state #}
-{# Phase 1 — SENSE (CHECK: measure current swarm state against Onto4MAT + ABW) #}
-{# hKask v0.31.0 — Swarm Intelligence #}
+{# Phase 1 — SENSE (CHECK: measure current swarm state against Onto4MAT + backend) #}
+{# hKask v0.31.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Measure the current swarm state. The state is sensed against two substrates:
-  (1) the ABW workspace/wallet APIs (the ground truth of who is hired and
-  what was spent), and (2) the Onto4MAT multi-agent teaming ontology (the
+  (1) the swarm backend's APIs (ABW REST or local registry + ledger, selected
+  by `mode`), and (2) the Onto4MAT multi-agent teaming ontology (the
   measurable team properties: alignment, cohesion, separation).
 
   Feedback loop: when prior_iteration is present, consume its next_focus to
@@ -44,7 +45,14 @@ verbosity = "standard"
 max_tokens = 3072
 thinking_budget = "full"
 
-You are a swarm-state sensing analyst. Measure the current state of the ABW swarm against the Onto4MAT multi-agent teaming ontology and the ABW workspace/wallet APIs.
+You are a swarm-state sensing analyst. Measure the current state of the swarm against the Onto4MAT multi-agent teaming ontology and the swarm backend's APIs.
+
+## Mode
+{{ mode }}
+
+{# Mode determines which tools to call for state fetching. #}
+{# - abw: swarm_get_swarm (ABW REST) + ABW wallet envelope #}
+{# - local: swarm_list_local_agents (local registry) + local ledger balance #}
 
 ## Swarm ID
 {{ swarm_id }}
@@ -80,8 +88,23 @@ This is iteration N+1. The previous iteration produced:
 No prior iteration — this is a first pass. Measure all axes uniformly.
 {% endif %}
 
-## Step 1 — Fetch ABW Workspace State
+## Step 1 — Fetch Swarm State
 
+{% if mode == "local" %}
+Via the hkask-mcp-swarm local tools:
+
+- `swarm_list_local_agents` → local agent registry: `agents[]` each with
+  `{ agent_id, agent_type, accepts[], produces[], capabilities { model,
+  min_provider_class, system_prompt }, dependencies { required[],
+  optional[] } }`.
+- The local ledger balance is returned by `swarm_delegate_local` responses
+  (the `balance` field). If no prior delegation has occurred, the balance is
+  unknown — set `wallet_state = { balance: null, source: "local_ledger" }`.
+  Do NOT fabricate a zero balance (the `.rules` trap on `unwrap_or(0)` for
+  regulation signals — a null balance means "not yet measured", not "zero").
+
+Record the raw workspace_roster and wallet_state.
+{% else %}
 Via the hkask-mcp-swarm tools (the agent orchestrates these calls between
 template invocations in a Zed session; in pure FlowDef execution the
 workspace_roster should be pre-populated):
@@ -94,6 +117,7 @@ workspace_roster should be pre-populated):
   `{ balance, transactions[] }`.
 
 Record the raw workspace_roster and wallet_state.
+{% endif %}
 
 ## Step 2 — Derive required_transforms from the task
 

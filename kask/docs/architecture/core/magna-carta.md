@@ -99,9 +99,12 @@ Default is deny. Nothing passes without an explicit yes. Consent is not a one-ti
 
 ### Affirmative Consent Model
 
-The runtime type is a `bool` (`requires_affirmative_consent: bool`); the `DataSovereigntyBoundary::hkask_default()` sets it to `true`, satisfying the "default deny" charter.
+> **Pragmatic-semantics note (2026-08-01 audit):** The `DataSovereigntyBoundary` struct shown below is **not implemented** in code — verified by grep of `kask/crates/` (the file `hkask-types/src/curation.rs` does not exist; `DataSovereigntyBoundary` has zero hits across `kask/` and `crates/`). The code block is retained as the **intended (OUGHT)** design specification for the consent boundary. The live enforcement mechanism is the `Visibility` enum (`Private`/`Shared`/`Public`) on each h_mem in `hkask-types/src/visibility.rs`, plus the OCAP capability-match gate in `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs`). There is no `requires_affirmative_consent` runtime bool today.
+
+The intended runtime type is a `bool` (`requires_affirmative_consent: bool`); the intended `DataSovereigntyBoundary::hkask_default()` would set it to `true`, satisfying the "default deny" charter.
 
 ```rust
+// OUGHT — intended design; not yet implemented in hkask-types
 pub struct DataSovereigntyBoundary {
     // ...sovereign_data, shared_data, public_data...
     pub(crate) requires_affirmative_consent: bool,
@@ -140,7 +143,7 @@ Most-specific grant wins. The verification manifest asserts that consent resolut
 
 ### Fail-Closed Default
 
-`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-07-29) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The runtime `DataSovereigntyBoundary::hkask_default()` (IS — implemented in `hkask-types/src/curation.rs`) sets `requires_affirmative_consent = true`, which is the structural expression of this default-deny principle.
+`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-01) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the OCAP capability-match gate in `McpRuntime::invoke` — a call without a matching `DelegationToken` is denied.
 
 ---
 
@@ -358,14 +361,14 @@ When an assertion fails, the verification report is escalated to the Curator. Th
 
 ### Implementation
 
-> **Pragmatic-semantics note (2026-07-29 audit):** The code blocks below mix **IS** (implemented) and **OUGHT** (planned) surfaces. `DataSovereigntyBoundary` and `UserSovereigntyState` **are implemented** in `hkask-types/src/curation.rs` (verified by grep). `DefaultSpecCurator`, `check_sovereignty`, `SovereigntyChecker`, `SovereigntyConsent`, `DenyAllConsent`, and `require_sovereignty` are **not yet implemented** — they are the intended enforcement surface, retained as the design specification. The `hkask-pods` crate (including `PodContext`) was deleted in the 2026-07-25 cleanup; the per-user data directory replaces the pod abstraction. Readers should treat the unimplemented types as OUGHT, not IS.
+> **Pragmatic-semantics note (2026-08-01 audit):** The code blocks below mix **IS** (implemented) and **OUGHT** (planned) surfaces. The `Visibility` enum (`Private`/`Shared`/`Public`) in `hkask-types/src/visibility.rs` **is implemented** and is the live per-h_mem enforcement mechanism. `DataSovereigntyBoundary`, `UserSovereigntyState`, `DefaultSpecCurator`, `check_sovereignty`, `SovereigntyChecker`, `SovereigntyConsent`, `DenyAllConsent`, and `require_sovereignty` are **not yet implemented** — they are the intended enforcement surface, retained as the design specification. The file `hkask-types/src/curation.rs` does not exist; the per-user data directory replaces the pod abstraction. Readers should treat the unimplemented types as OUGHT, not IS.
 
 ### Sovereignty State Tracking
 
 Sovereignty state tracking implements privacy-by-design principles:[^solove-taxonomy]
 
 ```rust
-// IS — implemented in hkask-types/src/curation.rs
+// OUGHT — intended design; not yet implemented in hkask-types
 pub struct UserSovereigntyState {
     pub boundary: DataSovereigntyBoundary,
     pub explicit_consent: bool,
