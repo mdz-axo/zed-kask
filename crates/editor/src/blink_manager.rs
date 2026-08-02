@@ -25,9 +25,22 @@ impl BlinkManager {
         blink_enabled_in_settings: fn(&App) -> bool,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Make sure we blink the cursors if the setting is re-enabled
+        // zed-kask: only (re)start blinking when the setting transitions to enabled.
+        // Upstream calls `blink_cursors(this.blink_epoch, cx)` on every SettingsStore
+        // update. `blink_cursors` passes the epoch guard (epoch == self.blink_epoch
+        // is trivially true for the current epoch) and spawns a fresh 500ms timer on
+        // top of any already running. Each unrelated settings change (profile
+        // switch, model selection, favorite toggle, settings.json save) therefore
+        // accumulates a new overlapping blink cycle. After N settings changes the
+        // cursor strobes at (N+1)x the normal rate — the "frenetic, omnipresent"
+        // symptom. See DIVERGENCE.md D15.
         cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.blink_cursors(this.blink_epoch, cx)
+            let now_enabled = (this.blink_enabled_in_settings)(cx);
+            if now_enabled && !this.enabled {
+                this.enable(cx);
+            } else if !now_enabled && this.enabled {
+                this.disable(cx);
+            }
         })
         .detach();
 
@@ -186,5 +199,71 @@ mod tests {
             assert!(!blink_manager.visible);
             assert!(blink_manager.resume_task.is_none());
         });
+    }
+
+    /// D15: repeated SettingsStore updates must NOT accumulate overlapping blink
+    /// timers. Upstream's observer unconditionally calls `blink_cursors` on every
+    /// settings change, and `blink_cursors` spawns a fresh 500ms timer that runs
+    /// alongside the existing one. After N settings changes the cursor strobes at
+    /// (N+1)x the normal rate. The kask observer only (re)starts blinking on the
+    /// disabled→enabled transition, so unrelated settings changes (profile
+    /// switch, model selection, settings.json save) do not duplicate the timer.
+    ///
+    /// This test pins the fix: after enabling blink and firing 5 spurious
+    /// SettingsStore updates, advancing one interval toggles `visible` exactly
+    /// once (one timer), not 6 times (6 overlapping timers).
+    #[gpui::test]
+    fn test_settings_updates_do_not_accumulate_blink_timers(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal;
+        let store = cx.update(|cx| settings::SettingsStore::test(cx));
+        cx.update(|cx| cx.set_global(store));
+
+        let blink_manager =
+            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
+
+        // Start blinking.
+        blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.enable(cx);
+        });
+        // `enable` sets visible=false then blink_cursors toggles to visible=true
+        // and spawns the first 500ms timer.
+        cx.run_until_parked();
+        blink_manager.read_with(cx, |b, _| assert!(b.enabled));
+
+        // Simulate 5 unrelated settings changes (profile switch, model
+        // selection, settings.json save, etc.). Each fires the SettingsStore
+        // observer on the BlinkManager.
+        for _ in 0..5 {
+            cx.update(|cx| {
+                settings::SettingsStore::update_global(cx, |_, _| {});
+            });
+            cx.run_until_parked();
+        }
+
+        // Snapshot visible, advance exactly one interval, and assert exactly
+        // one toggle. If overlapping timers had accumulated, visible would
+        // toggle multiple times within the 500ms window.
+        let visible_before = blink_manager.read_with(cx, |b, _| b.visible);
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        let visible_after_one_interval = blink_manager.read_with(cx, |b, _| b.visible);
+        assert_ne!(
+            visible_before, visible_after_one_interval,
+            "D15: visible must toggle exactly once per interval. \
+             If it did not toggle, the blink timer was cancelled by a \
+             settings update. If it toggled multiple times, overlapping \
+             timers accumulated — the upstream bug."
+        );
+
+        // Advance another interval and assert a second single toggle back.
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        let visible_after_two_intervals = blink_manager.read_with(cx, |b, _| b.visible);
+        assert_eq!(
+            visible_before, visible_after_two_intervals,
+            "D15: after two intervals the cursor must return to the starting \
+             state (one toggle per interval). Overlapping timers would \
+             produce an out-of-phase result."
+        );
     }
 }

@@ -49,6 +49,47 @@ fi
 # System bin path for optional symlink.
 SYSTEM_BIN="/usr/local/bin"
 
+# prepare_install_dir — remove stale zed-kask / hkask-mcp-* binaries from
+# BIN_DIR before installing fresh ones.
+#
+# cp would overwrite the current binaries, but stale copies of servers that
+# were renamed or removed between releases (and the CLI itself) would linger
+# in BIN_DIR otherwise. kask owns the hkask-mcp-* namespace in BIN_DIR, so
+# removing every match is safe — there are no user-owned files under that
+# prefix.
+#
+# Idempotent: a fresh install dir produces a no-op with a single log line.
+# Args: expects BIN_DIR to be set by the caller.
+prepare_install_dir() {
+    if [ -z "${BIN_DIR:-}" ]; then
+        log_error "prepare_install_dir: BIN_DIR is not set"
+        return 1
+    fi
+
+    local removed=0
+    if [ -f "$BIN_DIR/zed-kask" ]; then
+        rm -f "$BIN_DIR/zed-kask"
+        log "Removed previous zed-kask binary"
+        removed=$((removed + 1))
+    fi
+
+    # Glob + guard instead of find: portable across GNU/BSD find and safe
+    # when BIN_DIR does not exist yet (fresh install).
+    local stale
+    for stale in "$BIN_DIR"/hkask-mcp-*; do
+        [ -f "$stale" ] || continue
+        rm -f "$stale"
+        log "Removed stale MCP server binary: $(basename "$stale")"
+        removed=$((removed + 1))
+    done
+
+    if [ "$removed" -eq 0 ]; then
+        log "No previous binaries found in $BIN_DIR"
+    else
+        log_success "Removed $removed stale binary(ies) from $BIN_DIR"
+    fi
+}
+
 # add_to_path — make BIN_DIR reachable from the user's shell.
 #
 # Strategy 1: symlink $SYSTEM_BIN/zed-kask → $BIN_DIR/zed-kask (already in PATH

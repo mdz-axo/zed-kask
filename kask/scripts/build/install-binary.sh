@@ -336,6 +336,7 @@ main() {
         exit 1
     }
 
+    prepare_install_dir
     install_binaries "$staging"
     add_to_path
     write_mcp_server_settings

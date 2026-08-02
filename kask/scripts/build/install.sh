@@ -696,6 +696,7 @@ main() {
             fi
 
             build_hkask
+            prepare_install_dir
             install_binary
             install_desktop_entry
             setup_environment
