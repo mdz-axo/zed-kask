@@ -1547,6 +1547,30 @@ pub struct KaskSettingsContent {
     /// `kask://credentials/<env_var>` for MCP server env injection.
     #[serde(default)]
     pub inference_providers: Option<KaskInferenceProvidersSettingsContent>,
+
+    /// Local collab server configuration. When enabled, zed-kask launches a
+    /// local collab server (`collab serve api`) at startup so the kask
+    /// extensions panel can fetch `/api/kask-skills` without depending on
+    /// the deployed `zed.dev` server having the kask route.
+    #[serde(default)]
+    pub collab: Option<KaskCollabSettingsContent>,
+}
+
+/// Local collab server configuration (the `"kask.collab"` section in
+/// settings.json).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCollabSettingsContent {
+    /// Whether to auto-launch the local collab server at startup.
+    pub enabled: Option<bool>,
+    /// SQLite connection string (e.g. `sqlite:kask_marketplace.db?mode=rwc`).
+    pub database_url: Option<String>,
+    /// HTTP port the collab server listens on.
+    pub http_port: Option<u16>,
+    /// Zed environment (`development`, `staging`, `production`).
+    pub zed_environment: Option<String>,
+    /// Marketplace base URL the extensions panel uses. When set, overrides
+    /// the `server_url`-based resolution in `kask_marketplace_base_url`.
+    pub marketplace_url: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

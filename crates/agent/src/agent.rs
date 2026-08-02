@@ -3036,11 +3036,15 @@ pub(crate) fn context_injector_for(
 }
 
 /// Thread condenser — compresses tool results before they enter the message
-/// history (D12).
+/// history (D8).
 ///
 /// Called from the tool-result handling path in `run_turn_internal`.
 /// When set, tool output text is compressed before being stored in the
 /// `AgentMessage.tool_results`. When `None`, tool results are stored verbatim.
+///
+/// Code-reading tools (read_file, grep, list_directory, etc.) are bypassed at
+/// the call site — see `NO_COMPRESS_TOOLS` in `thread.rs`. The condenser is
+/// intended for verbose terminal/build/test output, not source code.
 pub trait ThreadCondenser: Send + Sync {
     /// Compress a tool result's text output.
     ///
@@ -3049,7 +3053,7 @@ pub trait ThreadCondenser: Send + Sync {
     fn compress_tool_result(&self, tool_name: &str, output: &str) -> String;
 }
 
-/// Global hook for the thread condenser (D12).
+/// Global hook for the thread condenser (D8).
 ///
 /// Uses a `Mutex` (not `OnceLock`) so the condenser can be replaced after
 /// startup — the composition root installs an early condenser before the
@@ -3057,7 +3061,7 @@ pub trait ThreadCondenser: Send + Sync {
 static THREAD_CONDENSER: std::sync::Mutex<Option<Arc<dyn ThreadCondenser>>> =
     std::sync::Mutex::new(None);
 
-/// Set the global thread condenser (D12 composition root).
+/// Set the global thread condenser (D8 composition root).
 ///
 /// Re-settable — later calls replace the earlier condenser (e.g., upgrading
 /// from an early condenser to one constructed after the model resolves).

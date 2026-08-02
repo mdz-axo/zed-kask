@@ -20,7 +20,13 @@ pub fn get_dotenv_vars(current_dir: impl AsRef<Path>) -> Result<Vec<(String, Str
 
 pub fn load_dotenv() -> Result<()> {
     for (key, value) in get_dotenv_vars("./crates/collab")? {
-        unsafe { std::env::set_var(key, value) };
+        // Shell env wins — only set vars that aren't already in the process
+        // environment. This matches `dotenvy`'s behavior and lets operators
+        // override `.env.toml` values (e.g. DATABASE_URL for SQLite) without
+        // editing the file.
+        if std::env::var_os(&key).is_none() {
+            unsafe { std::env::set_var(key, value) };
+        }
     }
     Ok(())
 }

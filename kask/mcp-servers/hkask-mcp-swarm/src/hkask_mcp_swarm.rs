@@ -914,6 +914,14 @@ impl LocalSwarmRuntime {
 
     /// Scan output text through the content guard. Returns the (possibly
     /// sanitized) output text, or `Err` if canary exfiltration is detected.
+    ///
+    /// Policy: canary exfiltration is a hard failure (the system prompt was
+    /// leaked — OWASP LLM07), but secret leakage is sanitized and returned
+    /// (the output may be legitimately useful despite a false-positive secret
+    /// match). This asymmetry is intentional: canary = exfiltration = reject;
+    /// secret = leakage = sanitize and return. Do not "fix" this by making
+    /// both paths hard-fail — that would reject legitimate outputs that
+    /// happen to match a secret scanner pattern.
     fn scan_output(&self, text: &str) -> Result<String, SwarmError> {
         let result = self.guard.scan_output(text);
         if self.guard.check_canary(text) {
@@ -2898,10 +2906,19 @@ impl SwarmServer {
                 .to_string();
             let mut updated_card = local_card.clone();
             updated_card.cloud_id = Some(cloud_id.clone());
-            // Write the updated card back to the local registry.
+            // Write the updated card back to the local registry. Sanitize
+            // the agent_id for filesystem use (defense-in-depth — the card
+            // came from disk, but a manually-placed malicious card could
+            // carry a path-traversal id).
             let dir = self.client.config().local_agents_dir.clone();
+            let safe_id = sanitize_agent_id(&local_card.agent_id).ok_or_else(|| {
+                McpToolError::internal(format!(
+                    "agent_id '{}' contains no safe characters",
+                    local_card.agent_id
+                ))
+            })?;
             let card_path = std::path::Path::new(&dir)
-                .join(&local_card.agent_id)
+                .join(&safe_id)
                 .join("agent_card.json");
             let json = serde_json::to_string_pretty(&updated_card)
                 .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?;
@@ -3400,7 +3417,7 @@ mod tests {
     fn sanitize_agent_id_strips_path_traversal() {
         assert_eq!(
             sanitize_agent_id("../../etc/passwd").as_deref(),
-            Some("...etcpasswd")
+            Some("....etcpasswd")
         );
         assert_eq!(sanitize_agent_id("..").as_deref(), None, "only dots → None");
         assert_eq!(sanitize_agent_id(".").as_deref(), None, "single dot → None");

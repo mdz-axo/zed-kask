@@ -258,8 +258,23 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "block-beta",
         "block",
     ];
+    // Mermaid permits a YAML front-matter block (`---\n...\n---\n`) before the
+    // diagram directive (e.g. sankey-beta config). Merman strips it before
+    // detection; our matcher must too, otherwise the first token is `---` and
+    // every front-matter-bearing diagram is silently skipped.
+    let source = source.trim_start();
+    let source = source
+        .strip_prefix("---")
+        .and_then(|rest| {
+            // Find the closing `---` delimiter. If absent, fall through to the
+            // original source so the matcher still sees `---` (and correctly
+            // rejects it as unsupported).
+            let body = rest.trim_start_matches(['\r', '\n']);
+            body.find("\n---")
+                .map(|end| body[end + 4..].trim_start_matches(['\r', '\n']))
+        })
+        .unwrap_or(source);
     let first_token = source
-        .trim_start()
         .split(|c: char| c.is_whitespace() || c == '\n')
         .next()
         .unwrap_or("");
@@ -754,6 +769,46 @@ mod tests {
                 "{prefix} should be extracted as a supported diagram type"
             );
         }
+    }
+
+    #[test]
+    fn test_front_matter_diagram_is_extracted() {
+        // Mermaid permits a YAML front-matter block before the diagram directive
+        // (e.g. sankey-beta config: showValues, width, height, linkColor).
+        // Merman strips front-matter before detection; our matcher must too,
+        // otherwise the first token is `---` and the diagram is silently
+        // skipped — shown as code instead of rendered. This pins the
+        // sankey-flow skill's primary output path.
+        let markdown = concat!(
+            "```mermaid\n",
+            "---\n",
+            "config:\n",
+            "  sankey:\n",
+            "    showValues: true\n",
+            "    width: 900\n",
+            "    height: 500\n",
+            "    linkColor: source\n",
+            "---\n",
+            "sankey-beta\n",
+            "%% source,target,value\n",
+            "Kafka Events,Enricher,1200\n",
+            "Postgres CDC,Enricher,300\n",
+            "Enricher,Snowflake,1500\n",
+            "```",
+        );
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+        assert_eq!(
+            diagrams.len(),
+            1,
+            "sankey-beta with front-matter config should be extracted, not skipped"
+        );
+        let diagram = diagrams.values().next().unwrap();
+        assert!(
+            diagram.contents.contents.contains("sankey-beta"),
+            "The extracted diagram should be the sankey-beta"
+        );
     }
 
     #[gpui::test]

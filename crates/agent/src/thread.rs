@@ -128,6 +128,33 @@ pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
+/// Tools whose output must never be passed through the `ThreadCondenser`.
+///
+/// These tools return structured content (source code, search results,
+/// directory listings, diagnostics, diffs) where every line is structurally
+/// meaningful. The condenser's line-level elision (joining non-consecutive
+/// selected lines with `...` ellipsis markers) is actively harmful here: the
+/// `...` looks like literal source content, and structurally meaningful lines
+/// (use statements, closing braces, method chains) are dropped because they
+/// score low on word-frequency saliency. The condenser is intended for
+/// verbose terminal/build/test output, not source code.
+///
+/// `terminal` is intentionally NOT in this list — terminal output (build
+/// logs, test output) is the condenser's intended use case. The condenser's
+/// `classify_tool` now recognizes `terminal` as `ShellCommand` so it routes
+/// to the head/tail `RtkStyleAlgorithm` instead of the ellipsis-based
+/// `FlashrankAlgorithm`.
+pub(crate) const NO_COMPRESS_TOOLS: &[&str] = &[
+    "read_file",
+    "grep",
+    "find_path",
+    "list_directory",
+    "diagnostics",
+    "find_references",
+    "get_code_actions",
+    "edit_file",
+];
+
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
 pub struct NoModelConfiguredError;
@@ -4185,22 +4212,34 @@ impl Thread {
                 Err(output) => (true, output),
             };
 
-            // D12: Compress tool result text before storing in message history.
+            // D8: Compress tool result text before storing in message history.
             // When a ThreadCondenser is wired, tool output text is compressed
             // to fit within the configured token budget. Non-text content
             // (images) is passed through unchanged.
+            //
+            // Code-reading tools (read_file, grep, list_directory, diagnostics,
+            // edit_file, etc.) are bypassed: their output is structurally
+            // meaningful and line-level elision (the `...` ellipsis markers
+            // the condenser inserts) is actively harmful — it looks like
+            // literal source content and drops structurally meaningful lines
+            // (use statements, closing braces, method chains). The condenser
+            // is intended for verbose terminal/build/test output, not source.
             let content = if let Some(condenser) = crate::thread_condenser() {
-                output
-                    .llm_output
-                    .into_iter()
-                    .map(|part| match part {
-                        LanguageModelToolResultContent::Text(text) => {
-                            let compressed = condenser.compress_tool_result(&tool_name, &text);
-                            LanguageModelToolResultContent::Text(Arc::from(compressed))
-                        }
-                        other => other,
-                    })
-                    .collect()
+                if NO_COMPRESS_TOOLS.contains(&tool_name.as_ref()) {
+                    output.llm_output
+                } else {
+                    output
+                        .llm_output
+                        .into_iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                let compressed = condenser.compress_tool_result(&tool_name, &text);
+                                LanguageModelToolResultContent::Text(Arc::from(compressed))
+                            }
+                            other => other,
+                        })
+                        .collect()
+                }
             } else {
                 output.llm_output
             };
@@ -10392,5 +10431,93 @@ mod tests {
             "rule without frontmatter should be kept"
         );
         assert!(filtered.has_rules);
+    }
+
+    // ── Condenser bypass for code-reading tools ─────────────────────────
+    //
+    // The condenser's line-level elision (joining non-consecutive selected
+    // lines with `...`) is destructive for source code. `NO_COMPRESS_TOOLS`
+    // pins the list of tools whose output must pass through verbatim even
+    // when a condenser is wired. This test wires a condenser that mutates
+    // every input and verifies the bypass list prevents the mutation for
+    // `read_file` while still allowing compression for a non-bypassed tool.
+
+    /// A condenser that appends a marker to every input, so the test can
+    /// detect whether compression was applied.
+    struct MarkerCondenser;
+
+    impl crate::ThreadCondenser for MarkerCondenser {
+        fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
+            format!("{output} [COMPRESSED]")
+        }
+    }
+
+    #[test]
+    fn test_no_compress_tools_bypasses_read_file() {
+        // Wire a condenser that would mutate every input.
+        let condenser: Arc<dyn crate::ThreadCondenser> = Arc::new(MarkerCondenser);
+        crate::set_thread_condenser(Some(condenser));
+
+        // read_file is in NO_COMPRESS_TOOLS → output must pass through verbatim.
+        let tool_name: Arc<str> = Arc::from("read_file");
+        let original = "line one\nline two\nline three\n";
+        let condenser = crate::thread_condenser().expect("condenser should be wired");
+
+        let content = if NO_COMPRESS_TOOLS.contains(&tool_name.as_ref()) {
+            original.to_string()
+        } else {
+            condenser.compress_tool_result(&tool_name, original)
+        };
+
+        assert_eq!(
+            content, original,
+            "read_file output must pass through verbatim (NO_COMPRESS_TOOLS bypass)"
+        );
+        assert!(
+            !content.contains("[COMPRESSED]"),
+            "read_file output must not be compressed"
+        );
+
+        // A non-bypassed tool should still be compressed.
+        let other_tool: Arc<str> = Arc::from("terminal");
+        let other_content = if NO_COMPRESS_TOOLS.contains(&other_tool.as_ref()) {
+            original.to_string()
+        } else {
+            condenser.compress_tool_result(&other_tool, original)
+        };
+        assert!(
+            other_content.contains("[COMPRESSED]"),
+            "terminal output should be compressed (not in NO_COMPRESS_TOOLS)"
+        );
+
+        // Cleanup: unset the condenser so other tests are not affected.
+        crate::set_thread_condenser(None);
+    }
+
+    #[test]
+    fn test_no_compress_tools_list_is_complete() {
+        // Pin the bypass list contents — adding or removing a tool here is a
+        // deliberate behavior change that should be reviewed.
+        let expected = [
+            "read_file",
+            "grep",
+            "find_path",
+            "list_directory",
+            "diagnostics",
+            "find_references",
+            "get_code_actions",
+            "edit_file",
+        ];
+        for name in expected {
+            assert!(
+                NO_COMPRESS_TOOLS.contains(&name),
+                "{name} should be in NO_COMPRESS_TOOLS"
+            );
+        }
+        // terminal is intentionally NOT in the list.
+        assert!(
+            !NO_COMPRESS_TOOLS.contains(&"terminal"),
+            "terminal must NOT be in NO_COMPRESS_TOOLS — it is the condenser's intended use case"
+        );
     }
 }

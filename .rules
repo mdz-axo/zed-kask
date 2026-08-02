@@ -476,6 +476,17 @@ runtime sees them as on (the inference-providers display bug). All 14 kask
 settings UI sub-pages resolve `Content` → `Settings` via `From` and read
 concrete fields — no inlined `unwrap_or` defaults in the UI.
 
+## Model-name constants must not be duplicated across crates
+
+Model-name defaults in kask_bridge and hkask-services-core must reference
+`hkask_inference::model_constants::DEFAULT_*_MODEL` as `const` references,
+not re-declare literals. The drift class (kask-bridge said
+`openrouter/z-ai/glm-5.2`, model_constants said `OpenRouter/z-ai/glm-5.2`,
+kask-bridge embedding default was a chat model) silently routed embedding calls
+to a chat model and broke provider-prefix matching on case. The existing
+"Kask settings defaults must live in `Default` impls" rule governs intra-struct
+placement; this rule governs cross-crate duplication of the same constant.
+
 ## Kask MCP server credentials and config are scoped per-server
 
 Each `BuiltinMcpServer` in `kask_bridge::mcp_servers` has two allowlists:
@@ -489,6 +500,17 @@ receive `HKASK_SMTP_PASSWORD` (credential leak) or `HKASK_SMTP_USERNAME`
 in its process. New servers must use `Some(&[])` (no credentials/config) for
 both allowlists and add specific env vars as needed, never `None` (receives
 all). The `all_servers_have_credential_allowlist` test pins this.
+
+## MCP server allowlists must align with actual env-var reads
+
+Every env var in a server's `config_env`/`credentials` allowlist must be read
+by that server, and every env var the server reads via `std::env::var` or
+`ctx.credentials` must be in the allowlist. The
+`all_servers_have_credential_allowlist` test only checks `Some(&[])` minimum
+shape — it does not check content alignment. Over-granting leaks config to a
+compromised child process; under-granting silently drops operator overrides
+(server falls back to default). The existing "scoped per-server" rule governs
+allowlist shape; this rule governs content alignment.
 
 ## Manifests must not hardcode model names in the `fusion` block
 

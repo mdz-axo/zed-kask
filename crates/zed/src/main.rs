@@ -1419,6 +1419,140 @@ fn main() {
                     );
                 }
 
+                // D14: Local collab server launch. When `kask.collab.enabled` is
+                // true (the default), zed-kask launches a local `collab serve api`
+                // process so the kask extensions panel can fetch
+                // `/api/kask-skills` without depending on the deployed `zed.dev`
+                // server having the kask route. The server uses SQLite (no
+                // Postgres/S3 needed) for local dev.
+                //
+                // Per the `.rules` trap "background_spawn of tokio-dependent
+                // futures panics at poll time", this uses `gpui_tokio::Tokio::spawn`
+                // (not `cx.background_spawn`) because `tokio::process::Command`
+                // requires a tokio reactor. Per the "Process-global hooks need a
+                // startup-failure signal" trap, failures emit `log::warn!` with
+                // remediation guidance.
+                let collab_settings = kask_settings.collab.clone();
+                if collab_settings.enabled {
+                    // Propagate the marketplace URL to the process env so the
+                    // kask extensions panel (which resolves via
+                    // `HKASK_MARKETPLACE_URL` → server_url → localhost:3000)
+                    // picks up the local collab server's URL without needing a
+                    // direct kask_bridge dependency. Only set it when not
+                    // already configured by the operator — shell env wins.
+                    if std::env::var("HKASK_MARKETPLACE_URL").is_err() {
+                        let marketplace_url =
+                            collab_settings.marketplace_url.trim_end_matches('/');
+                        if !marketplace_url.is_empty() {
+                            // SAFETY: process-global mutation during startup
+                            // before any marketplace request is in flight.
+                            unsafe {
+                                std::env::set_var(
+                                    "HKASK_MARKETPLACE_URL",
+                                    marketplace_url,
+                                );
+                            }
+                            log::info!(
+                                "hKask marketplace URL set to {marketplace_url} \
+                                 from kask.collab.marketplace_url"
+                            );
+                        }
+                    }
+                    // Resolve the collab binary path. In dev this is
+                    // `target/<profile>/collab`; in installed binaries it's
+                    // alongside the zed binary.
+                    let collab_binary = std::env::current_exe()
+                        .ok()
+                        .and_then(|exe| {
+                            let dir = exe.parent()?.to_path_buf();
+                            let candidate = dir.join("collab");
+                            candidate.is_file().then_some(candidate)
+                        })
+                        .or_else(|| {
+                            // Dev fallback: target/debug/collab or target/release/collab
+                            let debug = std::path::PathBuf::from("target/debug/collab");
+                            let release = std::path::PathBuf::from("target/release/collab");
+                            if debug.is_file() {
+                                Some(debug)
+                            } else if release.is_file() {
+                                Some(release)
+                            } else {
+                                None
+                            }
+                        });
+                    match collab_binary {
+                        Some(binary) => {
+                            let database_url = collab_settings.database_url.clone();
+                            let http_port = collab_settings.http_port;
+                            let zed_environment = collab_settings.zed_environment.clone();
+                            gpui_tokio::Tokio::spawn(cx, async move {
+                                let mut cmd = tokio::process::Command::new(&binary);
+                                cmd.arg("serve").arg("api");
+                                // envy::from_env reads these as DATABASE_URL, HTTP_PORT, etc.
+                                cmd.env("DATABASE_URL", &database_url);
+                                cmd.env("HTTP_PORT", http_port.to_string());
+                                cmd.env("ZED_ENVIRONMENT", &zed_environment);
+                                // Required by Config (non-empty); dev-only is fine
+                                // for local SQLite marketplace browsing.
+                                cmd.env("ZED_CLOUD_INTERNAL_API_KEY", "dev-only");
+                                cmd.env("DATABASE_MAX_CONNECTIONS", "5");
+                                cmd.stdout(std::process::Stdio::null());
+                                cmd.stderr(std::process::Stdio::piped());
+                                match cmd.spawn() {
+                                    Ok(child) => {
+                                        log::info!(
+                                            "hKask local collab server launched: \
+                                             {} serve api (port {}, db {})",
+                                            binary.display(),
+                                            http_port,
+                                            database_url
+                                        );
+                                        // Await the child so it doesn't get
+                                        // reaped prematurely. The process runs
+                                        // for the lifetime of the app; when the
+                                        // app exits, the tokio runtime drops and
+                                        // the child is killed.
+                                        let _ = child.wait_with_output().await;
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "hKask local collab server failed to start: \
+                                             {e}. The kask extensions panel will not \
+                                             be able to fetch skills from \
+                                             http://localhost:{http_port}/api/kask-skills. \
+                                             Remediation: build the collab binary \
+                                             (`cargo build -p collab --features \
+                                             sqlite`) or set \
+                                             kask.collab.enabled = false in settings."
+                                        );
+                                    }
+                                }
+                            })
+                            .detach();
+                        }
+                        None => {
+                            log::warn!(
+                                "hKask local collab server enabled (kask.collab.enabled = \
+                                 true) but the `collab` binary was not found next to \
+                                 the zed binary or in target/{{debug,release}}/. The \
+                                 kask extensions panel will not be able to fetch skills \
+                                 from http://localhost:{} until the binary is built. \
+                                 Remediation: build the collab binary \
+                                 (`cargo build -p collab --features sqlite`) \
+                                 or set kask.collab.enabled = false in settings.",
+                                collab_settings.http_port
+                            );
+                        }
+                    }
+                } else {
+                    log::info!(
+                        "hKask local collab server disabled \
+                         (kask.collab.enabled = false) — the kask extensions panel \
+                         will resolve the marketplace URL via \
+                         HKASK_MARKETPLACE_URL / server_url / localhost:3000"
+                    );
+                }
+
                 // Sync model-dependent wiring (inside cx.update).
                 cx.update(|cx| {
                     let model_registry = language_model::LanguageModelRegistry::read_global(cx);

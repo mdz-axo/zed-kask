@@ -1,5 +1,5 @@
 //! Thread condenser — compresses tool results before they enter the message
-//! history (D12).
+//! history (D8).
 //!
 //! The `BridgeThreadCondenser` implements the `agent::ThreadCondenser` trait
 //! by delegating to a `hkask_condenser::CondenserEngine`. It:

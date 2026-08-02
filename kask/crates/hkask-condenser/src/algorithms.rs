@@ -634,7 +634,7 @@ impl AlgorithmRegistry {
 const KEYWORD_CATEGORIES: &[(&[&str], ContextCategory)] = &[
     (
         &[
-            "git", "docker", "cargo", "npm", "shell", "bash", "exec", "run",
+            "git", "docker", "cargo", "npm", "shell", "bash", "exec", "run", "terminal",
         ],
         ContextCategory::ShellCommand,
     ),

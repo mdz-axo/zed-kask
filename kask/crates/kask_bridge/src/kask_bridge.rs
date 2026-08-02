@@ -21,7 +21,6 @@ mod skill_executor;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
-pub use model_resolution::resolve_model_names;
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
@@ -46,9 +45,10 @@ pub use mcp_servers::{
     filter_config_env_for_server, filter_credentials_for_server, find_server,
 };
 pub use memory::{BridgeMemoryPort, RealMemoryPort, open_curator_regulation_archive};
+pub use model_resolution::resolve_model_names;
 pub use settings::{
-    KaskCodegraphSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
-    KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
+    KaskCodegraphSettings, KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings,
+    KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
     KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
     KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
     KaskTrainingSettings, SwarmModeConfig,

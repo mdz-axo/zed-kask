@@ -14,6 +14,7 @@ use collab::{
 };
 use collab::{REVISION, ServiceMode, VERSION};
 use db::Database;
+use sea_orm::ConnectionTrait;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
@@ -188,6 +189,24 @@ async fn main() -> Result<()> {
 async fn setup_app_database(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
     let mut db = Database::new(db_options).await?;
+
+    // zed-kask: for local SQLite dev, the database file starts empty. Apply
+    // the SQLite schema migration so `initialize_notification_kinds` and
+    // `ensure_kask_skill_tables` have tables to work with. In production
+    // (Postgres), the schema is applied out-of-band and the migration SQL
+    // is Postgres-specific, so this only runs for SQLite backends.
+    if db.pool.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
+        let migration_sql = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations.sqlite/20221109000000_test_schema.sql"
+        ));
+        db.pool
+            .execute(sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                migration_sql,
+            ))
+            .await?;
+    }
 
     db.initialize_notification_kinds().await?;
 

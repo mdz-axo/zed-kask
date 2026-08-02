@@ -149,7 +149,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `profile` | `String` | `"normal"` | `"heavy"` (10% retention, 30 max lines), `"normal"` (20%, 80), `"soft"` (60%, 200), `"light"` (95%, no max) |
-| `auto_compress_tool_results` | `bool` | `true` | Compress tool results before message history |
+| `auto_compress_tool_results` | `bool` | `false` | Compress tool results before message history |
 | `persona_keywords` | `Vec<String>` | `[]` | Saliency scoring keywords |
 | `saliency_window` | `u32` | `5` | Max tokens budget: `saliency_window * 100`, clamped [150, 2000] |
 
