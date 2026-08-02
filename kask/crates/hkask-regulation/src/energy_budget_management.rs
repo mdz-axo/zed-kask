@@ -89,8 +89,9 @@ impl GasBudgetManager {
     /// Check whether an agent can proceed with the given energy cost estimate.
     ///
     /// Checks wallet budgets first, then gas budgets.
-    /// Returns `true` if the agent has no registered budget (soft limit)
-    /// or if the budget has sufficient remaining capacity.
+    /// Returns `false` if the agent has no registered budget (fail-closed
+    /// deny — budgets must be seeded at the composition root, e.g. the
+    /// `kask-panel` persona seed in `crates/zed/src/main.rs`).
     pub async fn can_proceed(&self, agent: &WebID, gas: GasCost) -> bool {
         // 1. Check SQLite-backed WalletManager
         if let Some(ref wm) = self.wallet_manager

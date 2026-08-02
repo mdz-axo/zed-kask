@@ -207,6 +207,21 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 /// env var.
 static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 
+/// Gas budget cap for the `kask-panel` persona — the authority behind the
+/// kask panel's `ToolInvoker`, the FlowDef skill cascade's tool calls, and
+/// the inference-IPC `tool_invoke` dispatch (swarm delegated agents).
+///
+/// `GasBudgetManager::can_proceed` DENIES agents without a registered budget
+/// (fail-closed), and no other production path registers budgets (the curator
+/// directive channel is not wired, there is no wallet manager, and budget
+/// persistence is not configured). Without this seed, every governed tool call
+/// — including the swarm server's delegated-tool dispatch — fails with
+/// `EnergyBudgetExceeded`. 10 gas per tool call (FlatEnergyEstimator) → 100k
+/// gas = 10k calls before exhaustion; the regulation tick (10s) replenishes
+/// 10% (10k gas = 1k calls) per tick, so normal panel/curator activity never
+/// drains it while a runaway delegated loop is still bounded.
+const KASK_PANEL_GAS_BUDGET_CAP: u64 = 100_000;
+
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
 
@@ -663,6 +678,22 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
+        // Seed a gas budget for the `kask-panel` persona (see
+        // `KASK_PANEL_GAS_BUDGET_CAP` for the rationale — fail-closed gate,
+        // no other production budget-creation path). The McpRuntime's
+        // governance gate would otherwise refuse every governed tool call
+        // with `EnergyBudgetExceeded`, which includes the swarm IPC
+        // `tool_invoke` dispatch the local delegate loop depends on.
+        {
+            use hkask_regulation::{GasBudget, GasCost};
+            let panel_webid = hkask_types::WebID::from_persona(b"kask-panel");
+            let budget = GasBudget::new(GasCost(KASK_PANEL_GAS_BUDGET_CAP));
+            cx.foreground_executor()
+                .block_on(cybernetics_loop_inner.register_gas_budget(panel_webid, budget));
+            log::info!(
+                "seeded kask-panel gas budget (cap {KASK_PANEL_GAS_BUDGET_CAP} gas)"
+            );
+        }
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
             cybernetics_loop_inner,
         ));

@@ -156,7 +156,10 @@ fn steer_system_prompt(
          loop and branches on `{{{{ mode }}}}` (local vs abw) at the \
          SENSE/ACT/CHECK steps. Without `mode` in the context, the templates \
          default to `abw` — the skill would steer the ABW backend even when \
-         `kask.swarm.mode` is `local`.\n\
+         `kask.swarm.mode` is `local`. When invoking via a slash command\n\
+         (`/swarm-intelligence ...`), pass context as leading `key=value` pairs\n\
+         before the task text — e.g. `/swarm-intelligence mode=local swarm_id=ws-1\n\
+         compose my swarm` sets mode, swarm_id, and task.\n\
          \n\
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
          (mints a single-use, action+target-scoped token) and `swarm_hire`/\
@@ -308,7 +311,10 @@ struct SwarmCard {
     id: String,
     name: String,
     description: String,
-    agent_count: u64,
+    /// Number of hired agents. `None` when ABW's workspace payload omits the
+    /// field (the field name is NOT part of the verified API surface) — the
+    /// card renders "-" then, never a fabricated "0 agents".
+    agent_count: Option<u64>,
     budget: Option<u64>,
     remaining: Option<u64>,
 }
@@ -889,7 +895,7 @@ impl SwarmPanel {
                                                 id: w.id.unwrap_or_default(),
                                                 name: w.name.unwrap_or_default(),
                                                 description: w.description.unwrap_or_default(),
-                                                agent_count: w.agent_count.unwrap_or(0),
+                                                agent_count: w.agent_count,
                                                 budget: w.workspace_budget,
                                                 remaining: w.workspace_remaining,
                                             })
@@ -1569,6 +1575,17 @@ impl SwarmPanel {
                 .get_or_insert_default()
                 .mode = Some(content_mode);
         });
+        // The Steer conversation bakes the backend mode into its system prompt
+        // at construction (`ensure_steer_conversation` reads `current_swarm_mode`
+        // once). A mode toggle after Steer is open would leave the curator
+        // reading a stale mode (and passing it as `context.mode` to the skill
+        // cascade). Drop the conversation so the next Steer selection rebuilds
+        // with the new backend.
+        if self.steer_conversation.take().is_some() {
+            log::info!(
+                "swarm-panel: backend mode toggled — Steer conversation rebuilt with the new mode"
+            );
+        }
         cx.notify();
     }
 
@@ -2332,14 +2349,23 @@ impl SwarmPanel {
                                         .gap_2()
                                         .child(Label::new(swarm.name.clone()).color(Color::Default))
                                         .child(
-                                            Label::new(format!("{} agents", swarm.agent_count))
-                                                .color(Color::Accent),
+                                            Label::new(
+                                                swarm
+                                                    .agent_count
+                                                    .map(|n| format!("{n} agents"))
+                                                    .unwrap_or_else(|| "agents: -".to_string()),
+                                            )
+                                            .color(Color::Accent),
                                         )
                                         .child(
                                             Label::new(format!(
                                                 "⛽ {}/{}",
-                                                swarm.remaining.map_or("-".to_string(), |v| v.to_string()),
-                                                swarm.budget.map_or("-".to_string(), |v| v.to_string())
+                                                swarm
+                                                    .remaining
+                                                    .map_or("-".to_string(), |v| v.to_string()),
+                                                swarm
+                                                    .budget
+                                                    .map_or("-".to_string(), |v| v.to_string())
                                             ))
                                             .color(Color::Muted),
                                         ),

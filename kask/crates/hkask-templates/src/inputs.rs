@@ -107,9 +107,7 @@ pub fn validate_inputs(
 
     // Unknown user keys: warn only (manifests may declare inputs sparsely).
     for key in context.keys() {
-        if !declared_names.contains(&key.as_str())
-            && !system_keys.iter().any(|s| *s == key.as_str())
-        {
+        if !declared_names.contains(&key.as_str()) && !system_keys.contains(&key.as_str()) {
             tracing::warn!(
                 target: "hkask.templates.inputs",
                 key = %key,
@@ -192,6 +190,7 @@ fn json_type_name(v: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest_loader::load_manifest_from_yaml;
 
     fn ctx(pairs: &[(&str, Value)]) -> HashMap<String, Value> {
         pairs
@@ -305,5 +304,51 @@ mod tests {
     fn render_param_spec_empty_when_no_inputs() {
         assert_eq!(render_input_param_spec(None), "");
         assert_eq!(render_input_param_spec(Some(&Value::Array(vec![]))), "");
+    }
+
+    /// End-to-end: load_manifest_from_yaml accepts `enforce_inputs` (the
+    /// deny_unknown_fields gate on ManifestHeader) and wires it through to
+    /// validate_inputs.
+    #[test]
+    fn load_manifest_parses_enforce_inputs_and_validates() {
+        let yaml = r#"
+manifest:
+  id: test-skill
+  enforce_inputs: true
+inputs:
+  - name: change_spec
+    type: string
+    required: true
+  - name: fix_mode
+    type: string
+    required: false
+"#;
+        let manifest = load_manifest_from_yaml(yaml).expect("manifest parses");
+        assert_eq!(manifest.enforce_inputs, Some(true));
+
+        // Missing required `change_spec` → error when opted in.
+        let err = validate_inputs(
+            manifest.enforce_inputs,
+            manifest.inputs.as_ref(),
+            &HashMap::new(),
+            &["task"],
+        )
+        .unwrap_err();
+        assert!(err.contains("missing required input `change_spec`"));
+
+        // Well-formed context → ok.
+        let c = ctx(&[
+            ("change_spec", Value::String("do X".into())),
+            ("fix_mode", Value::String("blockers".into())),
+        ]);
+        assert!(
+            validate_inputs(
+                manifest.enforce_inputs,
+                manifest.inputs.as_ref(),
+                &c,
+                &["task"]
+            )
+            .is_ok()
+        );
     }
 }

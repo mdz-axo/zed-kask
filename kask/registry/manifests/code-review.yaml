@@ -45,6 +45,12 @@ manifest:
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
+  # Layer A opt-in: enforce the declared `inputs` contract at the skill-execution
+  # boundary. A code-review invocation that omits a required input
+  # (`change_spec`/`diff_base`) or passes a wrong-typed `context` value is
+  # rejected with a structured error instead of running the cascade on empty /
+  # wrong inputs. See hkask_templates::validate_inputs.
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"

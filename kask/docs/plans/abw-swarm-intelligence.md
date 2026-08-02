@@ -46,16 +46,17 @@ swarm server that invokes the `swarm-intelligence` skill). All ABW calls flow
 through the global `ToolInvoker` hook → `McpRuntime` (governed, OCAP + gas),
 never ad-hoc HTTP from the UI.
 
-### 3.3 Tool surface (23 tools)
+### 3.3 Tool surface (25 tools)
 
-ABW tools: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+ABW tools (17): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
 `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
 `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`.
-Local tools (v2 §15): `swarm_fund_local`, `swarm_delegate_local`,
+Local tools (8): `swarm_fund_local`, `swarm_delegate_local`,
 `swarm_list_local_agents`, `swarm_balance_local`, `swarm_clone_to_local`,
-`swarm_push_to_cloud`. Both tool sets are **always available in either mode** —
+`swarm_push_to_cloud`, `swarm_local_history`, `swarm_remove_local`. Both tool
+sets are **always available in either mode** —
 the operator chooses the tool explicitly; there is no `Hybrid` routing layer
 (§15.1.8). `SwarmConfig.mode` only selects the startup warning; no server tool
 branches on it. The panel pins the tool-name contract in
@@ -103,6 +104,28 @@ Transient failures refund the consumed grant so the operator can retry without
 re-confirming (`refund`). The panel renders the gate as a consent banner
 (`render_consent_banner`) and disables Confirm when `within_budget: false`.
 
+4. **Zed-side dispatch allowlist (2026-08-02)** — the local delegate loop's
+   tool dispatch carries the card's declared `server/tool` allowlist with
+   every `tool_invoke` IPC request; the zed-side IPC server refuses any tool
+   outside it **before** minting the panel token (fail closed on a missing
+   allowlist). The allowlist is therefore enforced at the dispatch boundary,
+   not only inside the child process.
+5. **Gas budget seed (2026-08-02)** — `GasBudgetManager::can_proceed` denies
+   agents without a registered budget (fail-closed). The composition root
+   seeds a `kask-panel` persona budget (`KASK_PANEL_GAS_BUDGET_CAP = 100_000`
+   in `crates/zed/src/main.rs`, 10% replenish per regulation tick), which is
+   the account every governed tool call — panel, skill cascade, and swarm
+   `tool_invoke` dispatch — charges.
+
+Known limit: consent tokens are stored in-memory **per server process**. The
+panel's hire flow and the Steer curator's spend flow route through different
+processes (governed `McpRuntime` vs per-project `ContextServerStore`), so a
+token minted by one is not consumable by the other. Same-process flows
+(panel confirm → panel spend; curator mint → curator spend) work; a mixed
+flow (confirm in the panel banner, spend from Steer) fails with a consent
+error. This is session-scoped by design, but the split is across processes —
+keep each spend flow within one process.
+
 ### 3.7 Curator opt-in is the default
 
 Xaman Ek reads task content, so `curator_consent_default` defaults to
@@ -133,6 +156,15 @@ argument (`SkillToolInput.context`, merged into the cascade context before
 `task`). Missing `mode` defaults to `"abw"` (manifest input_mapping
 `{{ mode | default('abw') }}`). The Steer system prompt carries the current
 mode and instructs the curator to pass it.
+
+The slash-command path (`/swarm-intelligence ...`, via
+`send_skill_invocation`) has no `SkillToolInput.context` channel, so leading
+`key=value` pairs in the argument text are parsed as context (see
+`parse_slash_command_context` in `agent.rs`). Example:
+`/swarm-intelligence mode=local swarm_id=ws-1 compose my swarm` sets
+`mode=local`, `swarm_id=ws-1`, and task `compose my swarm`. The slash-command
+prefix is stripped before the task reaches the cascade (previously the
+`/swarm-intelligence` prefix leaked into `task`).
 
 Known limits (as of 2026-08-02):
 - No `fire` tool — the ABW fire endpoint is not implemented. DECIDE flags

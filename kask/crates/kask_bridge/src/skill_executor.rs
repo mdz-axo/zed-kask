@@ -18,9 +18,28 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hkask_templates::{ManifestExecutor, load_manifest_from_yaml, process_manifest_yaml};
+use hkask_templates::{
+    ManifestExecutor, load_manifest_from_yaml, process_manifest_yaml, validate_inputs,
+};
 use hkask_types::InferencePort;
 use serde_json::Value;
+
+/// Context keys the runtime injects itself (not user-supplied params), excluded
+/// from the unknown-key check in `validate_inputs`. `task` is injected by the
+/// `SkillTool`/slash-command path; the `*_model` keys are injected by
+/// `execute_skill` below. Listed here so validation never flags them as typos.
+const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
+    "task",
+    "embedding_model",
+    "classifier_model",
+    "ocr_model",
+    "default_model",
+    "qa_model",
+    "tts_model",
+    "stt_model",
+    "vision_model",
+    "image_gen_model",
+];
 
 /// Bridge between zed's `SkillManifestExecutor` trait and hKask's `ManifestExecutor`.
 ///
@@ -107,6 +126,34 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         skill_name: &str,
         mut context: HashMap<String, Value>,
     ) -> Result<String, String> {
+        // Load the manifest FIRST so we can validate the caller-supplied context
+        // against its declared `inputs` (Layer A) before injecting runtime
+        // defaults or running the cascade. Validating before the model-default
+        // injection keeps the user-supplied keys distinguishable from the
+        // runtime-injected system keys (listed in SKILL_CONTEXT_SYSTEM_KEYS).
+        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
+            format!(
+                "No manifest found for skill '{skill_name}' (checked embedded registry and {})",
+                self.manifest_path(skill_name).display()
+            )
+        })?;
+        let manifest = load_manifest_from_yaml(&manifest_yaml)
+            .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
+
+        // Layer A: enforce the manifest's declared `inputs` contract at the
+        // boundary. Opt-in via `enforce_inputs: true` in the manifest; skills
+        // that don't opt in are unaffected (back-compat). Turns silent wrong-
+        // params (missing required, wrong-typed) into a structured error that
+        // propagates to the UI as a `SkillToolOutput::Error`.
+        if let Err(e) = validate_inputs(
+            manifest.enforce_inputs,
+            manifest.inputs.as_ref(),
+            &context,
+            SKILL_CONTEXT_SYSTEM_KEYS,
+        ) {
+            return Err(format!("Skill '{skill_name}' input validation failed: {e}"));
+        }
+
         // Inject config-driven model defaults into the template context so
         // templates can reference {{ embedding_model }}, {{ classifier_model }},
         // etc. instead of hardcoding model names. This is the single point
@@ -176,16 +223,6 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 Value::String(std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").unwrap_or_default()),
             );
         }
-
-        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
-            format!(
-                "No manifest found for skill '{skill_name}' (checked embedded registry and {})",
-                self.manifest_path(skill_name).display()
-            )
-        })?;
-
-        let manifest = load_manifest_from_yaml(&manifest_yaml)
-            .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
 
         // Construct a ManifestExecutor with the bridge's InferencePort and ToolPort.
         let executor = ManifestExecutor::new(
