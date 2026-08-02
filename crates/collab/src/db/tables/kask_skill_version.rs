@@ -12,6 +12,13 @@ pub struct Model {
     pub published_at: PrimitiveDateTime,
     pub dependencies: String,
     pub tarball_sha256: String,
+    /// Publisher's Ed25519 public key (hex) from the signed manifest.
+    pub public_key: String,
+    /// Ed25519 signature (hex) over the manifest's canonical bytes.
+    pub signature: String,
+    /// RFC 3339 expiration set at signing time. Skills whose `expires_at` has
+    /// passed are filtered from the catalog and purged by the sweep.
+    pub expires_at: String,
     pub download_count: i64,
 }
 

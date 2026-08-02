@@ -45,6 +45,9 @@ async fn make_version(
         description: description.into(),
         dependencies: Vec::new(),
         tarball_sha256: "abc123".into(),
+        public_key: "aa".repeat(32),
+        signature: "bb".repeat(64),
+        expires_at: "2027-01-01T00:00:00Z".into(),
         published_at: t0,
     }
 }

@@ -236,6 +236,9 @@ async fn upload_kask_skill(
                             description: manifest.description,
                             dependencies: manifest.dependencies,
                             tarball_sha256: manifest.tarball_sha256,
+                            public_key: manifest.public_key,
+                            signature: manifest.signature,
+                            expires_at: manifest.expires_at,
                             published_at: time::PrimitiveDateTime::new(now.date(), now.time()),
                         },
                     ])
@@ -509,6 +512,9 @@ async fn fetch_kask_skill_manifest(
         description: manifest.description,
         dependencies: manifest.dependencies,
         tarball_sha256: manifest.tarball_sha256,
+        public_key: manifest.public_key,
+        signature: manifest.signature,
+        expires_at: manifest.expires_at,
         published_at,
     })
 }

@@ -10985,6 +10985,7 @@ dependencies = [
  "futures 0.3.33",
  "gpui",
  "hex",
+ "hkask-keystore",
  "http_client",
  "log",
  "marketplace_ui_common",
@@ -10997,6 +10998,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zeroize",
 ]
 
 [[package]]

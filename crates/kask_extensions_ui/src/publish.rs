@@ -24,6 +24,10 @@ use async_tar::Builder;
 use bytes::Bytes;
 use cloud_api_types::KaskSkillManifest;
 use fs::{Fs, read_dir_items};
+use hkask_keystore::{
+    KEY_MAX_AGE_DAYS, derive_public_key, generate_signing_keypair, load_signing_key, sign,
+    store_signing_key,
+};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use sha2::{Digest, Sha256};
 /// The S3 key prefix for kask skills. Mirrors `extensions/` for extensions.
@@ -212,15 +216,48 @@ pub async fn package_skill_for_publish(
 
     let sha256 = hex::encode(Sha256::digest(&gz_bytes));
 
-    // Create the manifest JSON.
-    let manifest = KaskSkillManifest {
+    // Load the publisher's signing key, or generate + store a fresh one.
+    // The key lives in the OS keychain under `signing-keys/{source_user}`
+    // (hkask-keystore). Keychain failures are non-fatal for the publish
+    // itself (the in-memory key signs this manifest), but are warned so an
+    // operator can distinguish "key stored" from "key regenerated every
+    // publish" (`.rules` startup-failure-signal trap).
+    let signing_key = match load_signing_key(source_user) {
+        Some(key) => key,
+        None => {
+            let key = generate_signing_keypair();
+            if let Err(error) = store_signing_key(source_user, &key) {
+                log::warn!(
+                    "kask-extensions: failed to store the signing key for publisher \
+                     '{source_user}' in the OS keychain: {error}. The key will be \
+                     regenerated on the next publish. Remediation: check keychain \
+                     availability (Linux: DBus Secret Service) or set \
+                     kask.collab.enabled = false if the marketplace is unused."
+                );
+            }
+            key
+        }
+    };
+    let public_key = derive_public_key(&signing_key);
+
+    // Create the manifest JSON. `expires_at` is set at signing time to
+    // `now + KEY_MAX_AGE_DAYS` (the server cap) — the signature commits to
+    // it, so a tampered `expires_at` invalidates the signature (plan D2).
+    let expires_at =
+        (chrono::Utc::now() + chrono::Duration::days(KEY_MAX_AGE_DAYS as i64)).to_rfc3339();
+    let mut manifest = KaskSkillManifest {
         source_user: source_user.to_string(),
         skill_name: skill.name.clone(),
         version: version.to_string(),
         description: skill.description.clone(),
         dependencies: manifest_dependencies,
         tarball_sha256: sha256.clone(),
+        public_key: public_key.to_string(),
+        signature: String::new(),
+        expires_at,
     };
+    let canonical_bytes = manifest.canonical_signing_bytes()?;
+    manifest.signature = sign(&canonical_bytes, &signing_key).to_string();
     let manifest_json = serde_json::to_string(&manifest)?;
 
     Ok((gz_bytes, sha256, manifest_json))
@@ -591,6 +628,51 @@ mod tests {
         assert_eq!(
             resolve_marketplace_base(None, String::new()),
             "http://localhost:3000"
+        );
+    }
+
+    // zed-kask: pin the signing contract (plan Phase 1 acceptance) — a
+    // manifest signature verifies over the canonical bytes, tampering with
+    // `expires_at` invalidates it, and the canonical form excludes the
+    // `signature` field value.
+    #[test]
+    fn manifest_signature_verifies_over_canonical_bytes() {
+        let signing_key = generate_signing_keypair();
+        let public_key = derive_public_key(&signing_key);
+
+        let mut manifest = KaskSkillManifest {
+            source_user: "alice".to_string(),
+            skill_name: "essentialist".to_string(),
+            version: "2026-08-02.1".to_string(),
+            description: "test".to_string(),
+            dependencies: vec![],
+            tarball_sha256: "abc123".to_string(),
+            public_key: public_key.to_string(),
+            signature: String::new(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::days(KEY_MAX_AGE_DAYS as i64))
+                .to_rfc3339(),
+        };
+
+        let canonical = manifest.canonical_signing_bytes().unwrap();
+        manifest.signature = sign(&canonical, &signing_key).to_string();
+
+        // The signature must verify over the canonical bytes of the signed
+        // manifest (the `signature` field is cleared on both sides).
+        let signed_canonical = manifest.canonical_signing_bytes().unwrap();
+        let parsed_signature = manifest.signature.parse().unwrap();
+        assert!(
+            hkask_keystore::signing::verify(&signed_canonical, &parsed_signature, &public_key),
+            "signature must verify over canonical bytes"
+        );
+
+        // A tampered expires_at (beyond the signing-time value) must fail
+        // verification — the signature commits to the expiration (plan D2).
+        let mut tampered = manifest.clone();
+        tampered.expires_at = "2099-01-01T00:00:00Z".to_string();
+        let tampered_canonical = tampered.canonical_signing_bytes().unwrap();
+        assert!(
+            !hkask_keystore::signing::verify(&tampered_canonical, &parsed_signature, &public_key),
+            "tampered expires_at must invalidate the signature"
         );
     }
 }

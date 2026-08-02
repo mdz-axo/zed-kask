@@ -16,6 +16,9 @@ pub struct NewKaskSkillVersion {
     pub description: String,
     pub dependencies: Vec<String>,
     pub tarball_sha256: String,
+    pub public_key: String,
+    pub signature: String,
+    pub expires_at: String,
     pub published_at: time::PrimitiveDateTime,
 }
 
@@ -104,6 +107,21 @@ impl Database {
                 )
                 .col(
                     sea_orm::sea_query::ColumnDef::new(kask_skill_version::Column::TarballSha256)
+                        .text()
+                        .not_null(),
+                )
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_version::Column::PublicKey)
+                        .text()
+                        .not_null(),
+                )
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_version::Column::Signature)
+                        .text()
+                        .not_null(),
+                )
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_version::Column::ExpiresAt)
                         .text()
                         .not_null(),
                 )
@@ -345,6 +363,9 @@ impl Database {
                     published_at: ActiveValue::Set(new_version.published_at),
                     dependencies: ActiveValue::Set(new_version.dependencies.join(",")),
                     tarball_sha256: ActiveValue::Set(new_version.tarball_sha256.clone()),
+                    public_key: ActiveValue::Set(new_version.public_key.clone()),
+                    signature: ActiveValue::Set(new_version.signature.clone()),
+                    expires_at: ActiveValue::Set(new_version.expires_at.clone()),
                     download_count: ActiveValue::NotSet,
                 })
                 .on_conflict(
@@ -355,6 +376,9 @@ impl Database {
                     .update_columns([
                         kask_skill_version::Column::Dependencies,
                         kask_skill_version::Column::TarballSha256,
+                        kask_skill_version::Column::PublicKey,
+                        kask_skill_version::Column::Signature,
+                        kask_skill_version::Column::ExpiresAt,
                     ])
                     .to_owned(),
                 )
@@ -589,6 +613,9 @@ fn metadata_from_skill_and_version(
                     .collect()
             },
             tarball_sha256: version.tarball_sha256,
+            public_key: version.public_key,
+            signature: version.signature,
+            expires_at: version.expires_at,
         },
         published_at: convert_time_to_chrono(version.published_at),
         download_count: skill.total_download_count as u64,

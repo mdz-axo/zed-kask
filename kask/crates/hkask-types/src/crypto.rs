@@ -49,8 +49,10 @@ impl std::str::FromStr for Ed25519PublicKey {
 /// skill marketplace signing layer: publishers sign manifests, the
 /// collab server and client verify signatures before indexing or
 /// installing. Conversion to/from `ed25519_dalek::Signature` lives in
-/// `hkask-keystore`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// `hkask-keystore`. Exchanged as hex via `Display`/`FromStr` (serde
+/// implements arrays only up to 32 bytes, so the manifest carries the hex
+/// string instead of this newtype).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519Signature(pub [u8; 64]);
 
 impl Ed25519Signature {

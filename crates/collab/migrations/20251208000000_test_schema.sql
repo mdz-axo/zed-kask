@@ -229,6 +229,9 @@ CREATE TABLE public.kask_skill_versions (
     published_at timestamp without time zone DEFAULT now() NOT NULL,
     dependencies text DEFAULT '' NOT NULL,
     tarball_sha256 text NOT NULL,
+    public_key text NOT NULL,
+    signature text NOT NULL,
+    expires_at text NOT NULL,
     download_count bigint DEFAULT 0 NOT NULL
 );
 

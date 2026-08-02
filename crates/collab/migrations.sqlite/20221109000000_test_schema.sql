@@ -442,6 +442,9 @@ CREATE TABLE kask_skill_versions (
     published_at TEXT DEFAULT (datetime('now')) NOT NULL,
     dependencies TEXT DEFAULT '' NOT NULL,
     tarball_sha256 TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
     download_count INTEGER DEFAULT 0 NOT NULL,
     PRIMARY KEY (kask_skill_id, version)
 );
